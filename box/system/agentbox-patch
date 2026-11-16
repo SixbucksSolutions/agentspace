@@ -1,0 +1,44 @@
+#!/bin/bash
+# Patches Ubuntu to the latest packages for this release at every boot, then
+# reboots once if an update needs it. Leaves /run/agentbox/patched when done;
+# scripts\agentbox.ps1 up waits for that marker before letting SSH in.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+state=/run/agentbox
+mkdir -p "$state" /var/lib/agentbox
+rm -f "$state/patched"
+
+apt_opts=(
+  -o DPkg::Lock::Timeout=600
+  -o Dpkg::Options::=--force-confdef
+  -o Dpkg::Options::=--force-confold
+  -o APT::Get::Always-Include-Phased-Updates=true
+)
+
+echo "Updating package lists"
+apt-get "${apt_opts[@]}" -q update
+echo "Upgrading packages (dist-upgrade: new kernels and changed dependencies included)"
+apt-get "${apt_opts[@]}" -y -q dist-upgrade
+apt-get "${apt_opts[@]}" -y -q autoremove --purge
+apt-get clean
+echo "Refreshing snaps"
+snap refresh || echo "Snap refresh failed; continuing"
+
+if [ -f /run/reboot-required ]; then
+  # Reboot at most once per 15 minutes, so a package that always asks for a
+  # reboot cannot loop the box.
+  last=$(cat /var/lib/agentbox/last-patch-reboot 2>/dev/null || echo 0)
+  if [ $(( $(date +%s) - last )) -gt 900 ]; then
+    echo "Rebooting for: $(tr '\n' ' ' < /run/reboot-required.pkgs 2>/dev/null)"
+    date +%s > /var/lib/agentbox/last-patch-reboot
+    systemctl reboot
+    exit 0
+  fi
+  echo "Reboot still requested, but the box rebooted for patches under 15 minutes ago; skipping"
+fi
+
+echo "Updating the ubuntu user's tools"
+runuser -l ubuntu -c /usr/local/bin/agentbox-tools || echo "Tool update failed; continuing"
+
+touch "$state/patched"
+echo "Patched: $(. /etc/os-release; echo "$PRETTY_NAME"), kernel $(uname -r)"

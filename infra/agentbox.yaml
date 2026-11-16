@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agentbox: a Graviton EC2 host for coding agents. No inbound ports; reached over
+  Session Manager. Stops itself when idle, with a low-CPU CloudWatch alarm as a backstop.
+  The on-box services live in box/system and are installed by scripts\agentbox.ps1 sync.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: m9g.xlarge
+    Description: Changing it on an update stops and restarts the instance; the disk is kept.
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0f53b75f24b254b9d
+    Description: >-
+      Ubuntu 26.04 LTS arm64 (ubuntu-resolute-26.04-arm64-server-20261104.1). Pinned on purpose:
+      changing it replaces the instance and destroys its disk. The box patches itself at every boot.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-c43369a0
+    Description: Default subnet in us-west-2a, which assigns a public IPv4 at launch.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-01407765
+  RootVolumeGiB:
+    Type: Number
+    Default: 8
+    MinValue: 8
+    Description: The AMI's minimum. Grow it with scripts\agentbox.ps1 grow; EBS volumes never shrink.
+  SshPublicKey:
+    Type: String
+    Description: Public key installed for the ubuntu user.
+
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - { Key: project, Value: agentbox }
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref Role]
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: agentbox - no inbound; all outbound
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: 0.0.0.0/0 }
+      Tags:
+        - { Key: Name, Value: agentbox }
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SecurityGroup]
+      IamInstanceProfile: !Ref InstanceProfile
+      InstanceInitiatedShutdownBehavior: stop
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref RootVolumeGiB
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - { Key: Name, Value: agentbox }
+        - { Key: project, Value: agentbox }
+      # Runs at first boot only. Everything else is installed by scripts\agentbox.ps1 sync.
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          package_update: true
+          package_upgrade: true
+          packages: [git, tmux, jq, ripgrep, unzip]
+          ssh_authorized_keys:
+            - ${SshPublicKey}
+
+  # Backstop for a dead on-box idle check: stop after 3 hours averaging under 1% CPU.
+  # A stopped instance reports no data, which counts as not breaching.
+  IdleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: agentbox-idle-backstop
+      AlarmDescription: Stops agentbox after 3 hours averaging under 1% CPU.
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - { Name: InstanceId, Value: !Ref Instance }
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 36
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Sub arn:aws:automate:${AWS::Region}:ec2:stop
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance

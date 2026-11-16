@@ -1,0 +1,12 @@
+[Unit]
+Description=Patch Ubuntu fully at every boot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/agentbox-patch
+TimeoutStartSec=20min
+
+[Install]
+WantedBy=multi-user.target

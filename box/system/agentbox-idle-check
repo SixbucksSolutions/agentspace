@@ -1,0 +1,43 @@
+#!/bin/bash
+# Powers the box off after IDLE_MINUTES with no SSH or Session Manager session
+# and no CPU work. The instance's shutdown behavior is "stop".
+set -euo pipefail
+IDLE_MINUTES=60
+BUSY_CPU_SECONDS=6
+[ -r /etc/agentbox/idle.conf ] && . /etc/agentbox/idle.conf
+state=/run/agentbox
+mkdir -p "$state"
+now=$(date +%s)
+# /run is cleared at boot, so every boot starts a fresh idle window.
+[ -f "$state/last-active" ] || echo "$now" > "$state/last-active"
+
+# Busy CPU ticks across the whole box (user+nice+system+irq+softirq+steal).
+busy=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9}' /proc/stat)
+prev=$(cat "$state/busy" 2>/dev/null || echo "$busy")
+echo "$busy" > "$state/busy"
+cpu_s=$(( (busy - prev) / $(getconf CLK_TCK) ))
+
+reason=""
+if [ "$(ss -Htn state established '( sport = :22 )' | wc -l)" -gt 0 ]; then
+  reason="SSH session open"
+elif pgrep -f ssm-session-worker >/dev/null; then
+  reason="Session Manager session open"
+elif systemctl is-active --quiet agentbox-patch.service; then
+  reason="Patching"
+elif [ "$cpu_s" -ge "$BUSY_CPU_SECONDS" ]; then
+  reason="CPU work: $cpu_s s since last check"
+fi
+
+if [ -n "$reason" ]; then
+  echo "$now" > "$state/last-active"
+  echo "Active: $reason"
+  exit 0
+fi
+
+idle_min=$(( (now - $(cat "$state/last-active")) / 60 ))
+if [ "$idle_min" -ge "$IDLE_MINUTES" ]; then
+  echo "Idle for $idle_min min (limit $IDLE_MINUTES); powering off"
+  systemctl poweroff
+else
+  echo "Idle for $idle_min min of $IDLE_MINUTES (CPU $cpu_s s since last check)"
+fi
