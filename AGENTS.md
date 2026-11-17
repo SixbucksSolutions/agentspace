@@ -28,6 +28,18 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 - **This repo is public:** account IDs, account-specific parameters and tokens MUST NOT be
   committed (README, "Rules").
 
+## Roles and pull requests
+
+**Terry, 2026-11-16 (decision D16):**
+- **The architect** owns the design. It reviews each turn's pull request independently, squash
+  merges it, and deletes the branch.
+- **A dev lead** is one Opus/high session per turn. It works on the branch `mvp/tN`, runs the
+  implementer and reviewer subagents that D15 names for each story, reviews the result itself,
+  and opens one pull request to `main`. A dev lead MUST NOT merge its own pull request.
+- **Subagents** MUST NOT move cards or open pull requests.
+
+The git authority above belongs to the architect. A dev lead pushes only its own branch.
+
 ## Memory: git is a superset of it
 
 **Terry, 2026-11-16, standing order: every fact an agent keeps in its private memory MUST also be

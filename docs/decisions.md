@@ -162,7 +162,52 @@ stories until Terry says it is time for that epic.
   MUST be workable in parallel, in isolation from each other.
 
 #0002 was broken down first, into 2.01 to 2.08 (#0018 to #0025), with its two risk-first spikes at
-the front. Someday ideas stay uncarded in
+the front.
+
+### D15. Staffing: one implementer and one reviewer per story, models by blast radius
+
+**Decided, Terry, 2026-11-16.** Models are named `Model/effort`, with no version, meaning the
+latest.
+
+- **Each story gets one implementer subagent, then one independent reviewer subagent.** A story
+  of under 3 hours MUST NOT be split across implementers: the merge cost outweighs the time saved.
+- **The model follows what a mistake would break, not how hard the story looks:**
+  - **Fable/high** reviews only, and only where a miss is an auth bypass or a lockout.
+  - **Opus/high** implements anything ambiguous or risky, and reviews anything touching keys,
+    sshd or Terry's `~/.ssh/config`.
+  - **Sonnet/medium** does well-specified, mechanical work.
+- **#0002's staffing:**
+
+| Turn | Story | Implementer | Reviewer |
+|---|---|---|---|
+| T1 | 2.01 Spike: cert login | Opus/high | Sonnet/medium |
+| T1 | 2.03 CA key | Opus/high | Fable/high |
+| T2 | 2.02 Spike: clients | Sonnet/medium | Sonnet/medium |
+| T2 | 2.04 Box trusts the CA | Opus/high | Fable/high |
+| T2 | 2.05 Issue key and certificate | Sonnet/medium | Opus/high |
+| T3 | 2.06 Host aliases | Sonnet/medium | Opus/high |
+| T4 | 2.07 Renew and release | Sonnet/medium | Sonnet/medium |
+| T5 | 2.08 Prove on the box | Opus/medium | Opus/high |
+
+### D16. Roles: architect, dev lead per turn, subagents per story
+
+**Decided, Terry, 2026-11-16.**
+
+- **The architect** is the agent session that owns this repo's design: the roadmap, these
+  decisions and the board's epics. It independently reviews each turn's pull request, then
+  squash merges it into `main` and deletes its branch once it is approved.
+- **A dev lead** is a separate Opus/high session per turn, named for it (for example
+  "agentspace MVP T1"). It works on one branch for the turn (`mvp/tN`), spins up the subagents
+  that D15 names for every story in the turn, reviews their combined work itself, and then opens
+  one pull request to `main` for the architect. A dev lead MUST NOT merge its own pull request.
+- **Subagents** implement or review one story. They MUST NOT move cards or open pull requests.
+- **Cards:**
+  - The dev lead moves its turn's stories to In Progress when it starts them.
+  - The architect moves each story to Ready For Review when its pull request is merged.
+  - Only Terry moves a card to Completed.
+- **GitHub does not let one account approve its own pull request**, and every session pushes as
+  Terry. The architect's approval is therefore a review comment that says so, followed by the
+  squash merge. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
 
 ## Open questions
