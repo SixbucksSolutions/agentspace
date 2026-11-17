@@ -312,6 +312,11 @@ PowerShell 5.1 script, because `ssh-proxy.cmd` runs it as a ProxyCommand.
 **How the two scripts meet:** lease code that needs the CA checked MUST run `agentspace.ps1 ca`,
 which only checks an existing CA (D17), and stop if it fails. It MUST NOT copy `Assert-Ca`.
 
+**Terry left the language to the architect (2026-11-16):** pick what is easiest and fits the
+problem. He reaches for Python when prototyping because it is friendly to junior developers. That
+is worth weighing again for V1, but it does not move the MVP: the CA code (E2.03) and the issuing
+code (E2.05) are already PowerShell, and switching mid-epic costs more than it saves.
+
 **Q5's other half, the default and maximum TTL, stays with #0001.** Until then, issuing takes the
 TTL as a parameter.
 
@@ -327,6 +332,9 @@ prototyping happy paths."
   in the PR or a card.
 - **The architect makes the MVP's design calls itself** and records them here, rather than
   stopping for Terry, unless a call would commit agentspace to something costly to reverse.
+- **The MVP's code is expected to be thrown away.** Terry expects a clean-room restart for V1 or
+  V2, so what the MVP MUST leave behind is what it learned (these decisions, the findings, the
+  contract), not code worth keeping.
 
 ## Keys
 
