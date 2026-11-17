@@ -142,6 +142,67 @@ Include agentspace.d/*
   localswim token over Terry's own `agentspace` entry (#0028). The default
   ProxyCommand needs the checkout that has `.instance-id`; elsewhere, pass `-ProxyCommand`.
 
+### Use a lease from a project
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+How a project such as swimcoach runs its agents on a lease. The commands are in "The lease CLI"
+above and [docs/lease-api.md](docs/lease-api.md), the alias in "Lease host aliases", and the board
+in "The localswim board on the box" below. Story E3.03 ran these steps
+([D9](docs/decisions.md#d9-reachability-belongs-to-the-driver),
+[D12](docs/decisions.md#d12-board-access-is-unchanged)).
+
+1. **Create the lease from the main checkout**, `C:\Projects\agentspace`:
+
+   ```bat
+   bin\agentspace.cmd lease create --project swimcoach
+   ```
+
+   The default ProxyCommand needs that checkout's `.instance-id`. Run from anywhere else,
+   `AGENTSPACE_PROXY_COMMAND` MUST name a ProxyCommand that runs the main checkout's
+   `scripts\ssh-proxy.cmd`. The JSON gives the lease's `id`, its `expires_at` (8 hours from now
+   unless `--ttl` says otherwise) and `ssh.host_alias`, such as `agentspace-swimcoach-a62cb513`.
+2. **Put the project's repo on the box.** Nothing clones it for you. The repo MUST be in the
+   folder the agents will open, for example `ssh <alias> "git clone <url> ~/swimcoach"`. Every
+   lease is `ubuntu` in the MVP
+   ([D3](docs/decisions.md#d3-ssh-credential-per-agent-isolation-per-project)), so the checkout is
+   in a home that every lease shares, and it outlives the lease.
+3. **Connect** with `ssh <alias>`, or in the Claude desktop app add an SSH environment whose host
+   is the alias and open a session in the project's folder on the box (`/home/ubuntu/swimcoach`).
+   The first connection after a stop starts the box, and any connection may push the Bot token.
+   From cmd or PowerShell, `ssh` is Windows OpenSSH. From Git Bash it MUST be called by its full
+   path, `C:\Windows\System32\OpenSSH\ssh.exe`, because MSYS ssh mangles the ProxyCommand.
+4. **A desktop-app session MUST have a holder open on the laptop for as long as it needs the
+   board.** The app connects with `ClearAllForwardings=yes`, so the alias's `RemoteForward` lines
+   never apply to its own connection (card #0042). The holder holds them instead:
+
+   ```bat
+   C:\Windows\System32\OpenSSH\ssh.exe -N -o ExitOnForwardFailure=yes <alias>
+   ```
+
+   Only one connection on the box can hold the forwards (D12), so the holder exits rather than
+   run without them when another connection already has them. An interactive `ssh <alias>` that
+   holds them needs no holder. On the box, `localswim board list` checks the board; the wrapper
+   refuses with a stop-and-report message when it is unreachable.
+5. **Release the lease** when the work is done. Any checkout MAY run it, since the lease's state is
+   in `%USERPROFILE%\.agentspace` and release needs no ProxyCommand:
+
+   ```bat
+   bin\agentspace.cmd lease release <id>
+   ```
+
+   It deletes the alias file and the lease's key folder and leaves the `Include` line. It does
+   not end open sessions or revoke the certificate
+   ([D10](docs/decisions.md#d10-releasing-a-lease-does-not-revoke-its-certificate)), so the holder
+   and any session SHOULD be closed first. The desktop app's SSH environment SHOULD then be
+   removed, since its alias no longer exists. The project's checkout stays on the box.
+
+   **A closed holder can leave its forwards held on the box.** The Session Manager tunnel does not
+   tell sshd that the client has gone, and in E3.03 the dead holder's session still held 8811 and
+   53147 after more than 10 minutes, until it was killed by hand (D12's E3.03 finding, card
+   #0044). Until it is gone, a new holder would exit under `ExitOnForwardFailure`, and no session
+   on the box reaches the board. Clear it as D12's finding says.
+
 ### The localswim board on the box
 
 Terry's localswim board (`127.0.0.1:8811`) and the localpost queue behind its watcher
