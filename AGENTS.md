@@ -11,6 +11,8 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
+- **Where it stands:** [docs/handoff-mvp.md](docs/handoff-mvp.md), the architect's handoff after
+  the MVP shipped (2026-11-17). An agent picking agentspace up SHOULD read it first.
 - **The plan:** [docs/roadmap.md](docs/roadmap.md), from the MVP to someday-maybe ideas.
 - **The reasoning:** [docs/decisions.md](docs/decisions.md). A design choice MUST be recorded
   there, numbered, before or with the change that makes it, and a changed decision MUST say what
