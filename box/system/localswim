@@ -1,18 +1,18 @@
 #!/bin/bash
 # Runs the localswim CLI as Bot against Terry's board. The board runs on his laptop, and the
-# agentbox SSH entry forwards it to this box's loopback only while he is connected. The URL and
-# Bot token come from ~/.config/localswim/bot.env, which agentbox.ps1 writes when he connects
+# agentspace SSH entry forwards it to this box's loopback only while he is connected. The URL and
+# Bot token come from ~/.config/localswim/bot.env, which agentspace.ps1 writes when he connects
 # and the token has changed; they are set for this one run and never printed.
 set -euo pipefail
 bin=/usr/local/lib/localswim/localswim
 env_file="${HOME}/.config/localswim/bot.env"
 
 if [ ! -x "$bin" ]; then
-  echo "localswim: The CLI is not installed; run 'agentbox.ps1 sync' on the laptop." >&2
+  echo "localswim: The CLI is not installed; run 'agentspace.ps1 sync' on the laptop." >&2
   exit 1
 fi
 if [ ! -r "$env_file" ]; then
-  echo "localswim: No Bot credentials yet; they arrive when Terry connects with 'ssh agentbox'." >&2
+  echo "localswim: No Bot credentials yet; they arrive when Terry connects with 'ssh agentspace'." >&2
   exit 1
 fi
 

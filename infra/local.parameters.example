@@ -1,0 +1,4 @@
+# Copy to infra/local.parameters (not committed) and fill in. One KEY=VALUE per line;
+# scripts\agentspace.ps1 deploy passes each to CloudFormation.
+VpcId=vpc-xxxxxxxx
+SubnetId=subnet-xxxxxxxx

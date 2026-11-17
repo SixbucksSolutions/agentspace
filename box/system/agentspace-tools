@@ -1,5 +1,5 @@
 #!/bin/bash
-# Keeps the ubuntu user's toolchain current. Run at every boot by agentbox-patch:
+# Keeps the ubuntu user's toolchain current. Run at every boot by agentspace-patch:
 #   - Node: the newest LTS becomes fnm's default (npm is the one it ships with)
 #   - Codex: latest, reinstalled under that Node
 #   - uv: latest

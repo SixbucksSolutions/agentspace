@@ -1,2 +1,3 @@
 .instance-id
 .build/
+infra/local.parameters

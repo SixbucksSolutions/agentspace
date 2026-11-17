@@ -1,0 +1,6 @@
+[Unit]
+Description=agentspace idle check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/agentspace-idle-check

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs the agent toolchain for the ubuntu user. Safe to run again.
-# Run from the laptop:  ssh agentbox 'bash -s' < box/bootstrap.sh
+# Run from the laptop:  ssh agentspace 'bash -s' < box/bootstrap.sh
 set -euo pipefail
 
 echo "== GitHub CLI"
@@ -28,7 +28,7 @@ eval "$(fnm env --use-on-cd --version-file-strategy=recursive --shell bash)"
 EOF
 fi
 eval "$(fnm env --shell bash)"
-# The newest Node LTS; agentbox-tools moves the default forward at every boot.
+# The newest Node LTS; agentspace-tools moves the default forward at every boot.
 fnm install --lts
 fnm default "$(fnm ls-remote --lts | awk '{print $1}' | tail -1)"
 

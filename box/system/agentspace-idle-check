@@ -4,8 +4,8 @@
 set -euo pipefail
 IDLE_MINUTES=60
 BUSY_CPU_SECONDS=6
-[ -r /etc/agentbox/idle.conf ] && . /etc/agentbox/idle.conf
-state=/run/agentbox
+[ -r /etc/agentspace/idle.conf ] && . /etc/agentspace/idle.conf
+state=/run/agentspace
 mkdir -p "$state"
 now=$(date +%s)
 # /run is cleared at boot, so every boot starts a fresh idle window.
@@ -22,7 +22,7 @@ if [ "$(ss -Htn state established '( sport = :22 )' | wc -l)" -gt 0 ]; then
   reason="SSH session open"
 elif pgrep -f ssm-session-worker >/dev/null; then
   reason="Session Manager session open"
-elif systemctl is-active --quiet agentbox-patch.service; then
+elif systemctl is-active --quiet agentspace-patch.service; then
   reason="Patching"
 elif [ "$cpu_s" -ge "$BUSY_CPU_SECONDS" ]; then
   reason="CPU work: $cpu_s s since last check"

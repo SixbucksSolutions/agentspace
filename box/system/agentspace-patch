@@ -1,11 +1,11 @@
 #!/bin/bash
 # Patches Ubuntu to the latest packages for this release at every boot, then
-# reboots once if an update needs it. Leaves /run/agentbox/patched when done;
-# scripts\agentbox.ps1 up waits for that marker before letting SSH in.
+# reboots once if an update needs it. Leaves /run/agentspace/patched when done;
+# scripts\agentspace.ps1 up waits for that marker before letting SSH in.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-state=/run/agentbox
-mkdir -p "$state" /var/lib/agentbox
+state=/run/agentspace
+mkdir -p "$state" /var/lib/agentspace
 rm -f "$state/patched"
 
 apt_opts=(
@@ -27,10 +27,10 @@ snap refresh || echo "Snap refresh failed; continuing"
 if [ -f /run/reboot-required ]; then
   # Reboot at most once per 15 minutes, so a package that always asks for a
   # reboot cannot loop the box.
-  last=$(cat /var/lib/agentbox/last-patch-reboot 2>/dev/null || echo 0)
+  last=$(cat /var/lib/agentspace/last-patch-reboot 2>/dev/null || echo 0)
   if [ $(( $(date +%s) - last )) -gt 900 ]; then
     echo "Rebooting for: $(tr '\n' ' ' < /run/reboot-required.pkgs 2>/dev/null)"
-    date +%s > /var/lib/agentbox/last-patch-reboot
+    date +%s > /var/lib/agentspace/last-patch-reboot
     systemctl reboot
     exit 0
   fi
@@ -38,7 +38,7 @@ if [ -f /run/reboot-required ]; then
 fi
 
 echo "Updating the ubuntu user's tools"
-runuser -l ubuntu -c /usr/local/bin/agentbox-tools || echo "Tool update failed; continuing"
+runuser -l ubuntu -c /usr/local/bin/agentspace-tools || echo "Tool update failed; continuing"
 
 touch "$state/patched"
 echo "Patched: $(. /etc/os-release; echo "$PRETTY_NAME"), kernel $(uname -r)"

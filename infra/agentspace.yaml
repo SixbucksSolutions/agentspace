@@ -1,8 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agentbox: a Graviton EC2 host for coding agents. No inbound ports; reached over
+  agentspace: a Graviton EC2 host for coding agents. No inbound ports; reached over
   Session Manager. Stops itself when idle, with a low-CPU CloudWatch alarm as a backstop.
-  The on-box services live in box/system and are installed by scripts\agentbox.ps1 sync.
+  The on-box services live in box/system and are installed by scripts\agentspace.ps1 sync.
+  Resource names and tags keep the project's first name, agentbox: renaming them would replace
+  resources, and the stack cannot be renamed without replacing the instance.
 
 Parameters:
   InstanceType:
@@ -17,16 +19,17 @@ Parameters:
       changing it replaces the instance and destroys its disk. The box patches itself at every boot.
   SubnetId:
     Type: AWS::EC2::Subnet::Id
-    Default: subnet-c43369a0
-    Description: Default subnet in us-west-2a, which assigns a public IPv4 at launch.
+    Description: >-
+      A subnet that assigns a public IPv4 at launch, as a default VPC's subnets do. Set it in
+      infra/local.parameters, which is not committed.
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Default: vpc-01407765
+    Description: The subnet's VPC. Set it in infra/local.parameters, which is not committed.
   RootVolumeGiB:
     Type: Number
     Default: 8
     MinValue: 8
-    Description: The AMI's minimum. Grow it with scripts\agentbox.ps1 grow; EBS volumes never shrink.
+    Description: The AMI's minimum. Grow it with scripts\agentspace.ps1 grow; EBS volumes never shrink.
   SshPublicKey:
     Type: String
     Description: Public key installed for the ubuntu user.
@@ -80,7 +83,7 @@ Resources:
       Tags:
         - { Key: Name, Value: agentbox }
         - { Key: project, Value: agentbox }
-      # Runs at first boot only. Everything else is installed by scripts\agentbox.ps1 sync.
+      # Runs at first boot only. Everything else is installed by scripts\agentspace.ps1 sync.
       UserData:
         Fn::Base64: !Sub |
           #cloud-config

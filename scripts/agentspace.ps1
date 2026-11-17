@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Manages the agentbox EC2 instance from the laptop.
+  Manages the agentspace EC2 instance from the laptop.
 
 .DESCRIPTION
   deploy  Creates or updates the CloudFormation stack, then runs sync.
@@ -25,21 +25,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Region = 'us-west-2'
+# The CloudFormation stack keeps the project's first name: renaming a stack replaces the instance.
 $Stack = 'agentbox'
 $Root = Split-Path $PSScriptRoot -Parent
 $IdFile = Join-Path $Root '.instance-id'
 $Aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
 if (-not (Test-Path $Aws)) { $Aws = 'aws' }
-# The script's own ssh and scp calls skip the RemoteForwards in the agentbox SSH entry, so
+# The script's own ssh and scp calls skip the RemoteForwards in the agentspace SSH entry, so
 # they never collide with an interactive session that already holds those ports.
 $NoForward = @('-o', 'ClearAllForwardings=yes')
-# Every ssh this script starts runs the agentbox ProxyCommand, and so this script again. The
+# Every ssh this script starts runs the agentspace ProxyCommand, and so this script again. The
 # flag tells those nested runs not to push the localswim token a second time.
-$Nested = [bool]$env:AGENTBOX_NESTED
-$env:AGENTBOX_NESTED = '1'
+$Nested = [bool]$env:AGENTSPACE_NESTED
+$env:AGENTSPACE_NESTED = '1'
 $LocalswimRepo = 'C:\Projects\localswim'
 $LocalswimReceipt = Join-Path $env:LOCALAPPDATA 'localswim-v2\service.json'
-$PushedFile = Join-Path $env:LOCALAPPDATA 'agentbox\localswim-pushed.sha256'
+$PushedFile = Join-Path $env:LOCALAPPDATA 'agentspace\localswim-pushed.sha256'
 
 # Inside ssh's ProxyCommand (stdin a pipe, stderr the console), Windows PowerShell 5.1 sets
 # the console's output mode to VT processing alone as it starts, dropping
@@ -70,7 +71,7 @@ function Write-Message([string]$Text) {
 }
 
 function Say([string]$Text) { if (-not $Quiet) { Write-Message $Text } }
-function Fail([string]$Text) { Write-Message "agentbox: $Text"; exit 1 }
+function Fail([string]$Text) { Write-Message "agentspace: $Text"; exit 1 }
 
 function Invoke-Aws {
   $out = & $Aws @args --region $Region --output json 2>&1
@@ -106,9 +107,9 @@ function Test-SsmOnline([string]$Id) {
 # has finished. Returns 'patched', 'pending' or 'unknown'.
 function Get-PatchState([string]$Id) {
   # No commas, brackets or equals signs: the CLI's shorthand syntax would split on them.
-  $cmd = 'test -f /run/agentbox/patched && echo patched || (systemctl is-enabled --quiet agentbox-patch.service && echo pending || echo unknown)'
+  $cmd = 'test -f /run/agentspace/patched && echo patched || (systemctl is-enabled --quiet agentspace-patch.service && echo pending || echo unknown)'
   $sent = Invoke-Aws ssm send-command --instance-ids $Id --document-name AWS-RunShellScript `
-    --comment 'agentbox up: patch check' --parameters "commands=$cmd"
+    --comment 'agentspace up: patch check' --parameters "commands=$cmd"
   $cid = $sent.Command.CommandId
   for ($n = 0; $n -lt 20; $n++) {
     Start-Sleep -Seconds 1
@@ -126,7 +127,7 @@ function Wait-Ready([string]$Id) {
   $deadline = (Get-Date).AddMinutes(15)
   $said = ''
   while ($true) {
-    if ((Get-Date) -gt $deadline) { Fail "$Id was not ready within 15 minutes; check: ssh agentbox journalctl -u agentbox-patch" }
+    if ((Get-Date) -gt $deadline) { Fail "$Id was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch" }
     if (-not (Test-SsmOnline $Id)) { $msg = 'Waiting for Session Manager...' }
     else {
       $p = Get-PatchState $Id
@@ -182,12 +183,12 @@ function Push-Localswim([string]$Id, [switch]$Force) {
     # Windows PowerShell pipes text to native commands with a UTF-8 BOM unless told otherwise;
     # a BOM turns the first assignment into a command name. Send none, and strip one anyway.
     $OutputEncoding = [Text.UTF8Encoding]::new($false)
-    $content | & ssh @NoForward agentbox 'umask 077 && mkdir -p ~/.config/localswim && tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > ~/.config/localswim/bot.env' | Out-Null
-    if ($LASTEXITCODE -ne 0) { Say 'agentbox: Could not send the localswim token; the board will not work on the box this session.'; return }
+    $content | & ssh @NoForward agentspace 'umask 077 && mkdir -p ~/.config/localswim && tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > ~/.config/localswim/bot.env' | Out-Null
+    if ($LASTEXITCODE -ne 0) { Say 'agentspace: Could not send the localswim token; the board will not work on the box this session.'; return }
     New-Item -ItemType Directory -Force (Split-Path $PushedFile) | Out-Null
     Set-Content -Path $PushedFile -Value $sha -NoNewline
   } catch {
-    Say 'agentbox: Could not read the localswim Bot token; the board will not work on the box this session.'
+    Say 'agentspace: Could not read the localswim Bot token; the board will not work on the box this session.'
   } finally {
     $token = $null
     $content = $null
@@ -209,20 +210,25 @@ function Install-LocalswimCli {
   finally { Pop-Location; Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED }
   if ($LASTEXITCODE -ne 0) { Fail 'Building the localswim CLI failed.' }
   Say 'Copying the localswim CLI to the instance...'
-  & scp @NoForward -q $out 'agentbox:/tmp/localswim'
+  & scp @NoForward -q $out 'agentspace:/tmp/localswim'
   if ($LASTEXITCODE -ne 0) { Fail 'Copying the localswim CLI failed.' }
-  & ssh @NoForward agentbox 'sudo install -D -m 0755 /tmp/localswim /usr/local/lib/localswim/localswim && rm /tmp/localswim'
+  & ssh @NoForward agentspace 'sudo install -D -m 0755 /tmp/localswim /usr/local/lib/localswim/localswim && rm /tmp/localswim'
   if ($LASTEXITCODE -ne 0) { Fail 'Installing the localswim CLI failed.' }
 }
 
 switch ($Command) {
   'deploy' {
     $key = (Get-Content (Join-Path $HOME '.ssh\id_ed25519.pub') -Raw).Trim()
-    $tpl = Join-Path $Root 'infra\agentbox.yaml'
+    $tpl = Join-Path $Root 'infra\agentspace.yaml'
+    # Account-specific parameters (VpcId, SubnetId) live in infra\local.parameters, which is not
+    # committed; infra\local.parameters.example shows the format.
+    $localParams = Join-Path $Root 'infra\local.parameters'
+    if (-not (Test-Path $localParams)) { Fail "Missing $localParams; copy infra\local.parameters.example and fill it in." }
+    $overrides = @("SshPublicKey=$key") + @(Get-Content $localParams | Where-Object { $_ -match '^\s*[A-Za-z]+=\S' } | ForEach-Object { $_.Trim() })
     Say "Deploying stack '$Stack' in $Region..."
     & $Aws cloudformation deploy --region $Region --stack-name $Stack --template-file $tpl `
       --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset `
-      --tags project=agentbox --parameter-overrides "SshPublicKey=$key"
+      --tags project=agentbox --parameter-overrides @overrides
     if ($LASTEXITCODE -ne 0) { Fail 'Stack deploy failed; see the stack events in the console.' }
     Remove-Item $IdFile -ErrorAction SilentlyContinue
     Say "Instance: $(Get-InstanceId)"
@@ -233,18 +239,18 @@ switch ($Command) {
     Start-Box (Get-InstanceId)
     $src = Join-Path $Root 'box\system'
     Say 'Copying box/system to the instance...'
-    & ssh @NoForward agentbox 'rm -rf /tmp/agentbox-system'
-    & scp @NoForward -q -r $src 'agentbox:/tmp/agentbox-system'
+    & ssh @NoForward agentspace 'rm -rf /tmp/agentspace-system'
+    & scp @NoForward -q -r $src 'agentspace:/tmp/agentspace-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Copy to the instance failed.' }
-    & ssh @NoForward agentbox 'sudo bash /tmp/agentbox-system/install.sh && rm -rf /tmp/agentbox-system'
+    & ssh @NoForward agentspace 'sudo bash /tmp/agentspace-system/install.sh && rm -rf /tmp/agentspace-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Install on the instance failed.' }
     # Terry's global instructions for Claude Code, so agents on the box follow the same
     # standing orders as on the laptop. The laptop copy is the source; the box copy is replaced.
     $claudeMd = Join-Path $HOME '.claude\CLAUDE.md'
     if (Test-Path $claudeMd) {
       Say 'Copying ~/.claude/CLAUDE.md to the instance...'
-      & ssh @NoForward agentbox 'mkdir -p ~/.claude'
-      & scp @NoForward -q $claudeMd 'agentbox:.claude/CLAUDE.md'
+      & ssh @NoForward agentspace 'mkdir -p ~/.claude'
+      & scp @NoForward -q $claudeMd 'agentspace:.claude/CLAUDE.md'
       if ($LASTEXITCODE -ne 0) { Fail 'Copying CLAUDE.md to the instance failed.' }
     }
     Install-LocalswimCli
@@ -284,7 +290,7 @@ switch ($Command) {
     if ($i.State.Name -eq 'running') {
       Say 'Growing the filesystem online...'
       Start-Sleep -Seconds 10
-      & ssh @NoForward agentbox 'sudo growpart /dev/nvme0n1 1; sudo resize2fs /dev/nvme0n1p1 && df -h /'
+      & ssh @NoForward agentspace 'sudo growpart /dev/nvme0n1 1; sudo resize2fs /dev/nvme0n1p1 && df -h /'
     } else {
       Say 'The filesystem grows on its own at next boot.'
     }

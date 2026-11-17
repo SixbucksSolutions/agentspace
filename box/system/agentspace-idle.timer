@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the agentbox idle check every 5 minutes
+Description=Run the agentspace idle check every 5 minutes
 
 [Timer]
 OnBootSec=5min

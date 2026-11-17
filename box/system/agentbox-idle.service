@@ -1,6 +1,0 @@
-[Unit]
-Description=agentbox idle check
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/agentbox-idle-check
