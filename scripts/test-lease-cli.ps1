@@ -104,9 +104,14 @@ function Test-ErrorRun([string]$Via, [string[]]$Arguments, [string]$Code, [strin
 $stamp = Get-Date -Format 'yyyyMMddHHmmss'
 $root = Join-Path $env:TEMP "agentspace-test-lease-cli-$stamp-$PID"
 $savedStateDir = $env:AGENTSPACE_STATE_DIR
+$savedSshDir = $env:AGENTSPACE_SSH_DIR
+$savedProxy = $env:AGENTSPACE_PROXY_COMMAND
 try {
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   $env:AGENTSPACE_STATE_DIR = Join-Path $root 'state'
+  # No check here is meant to place a lease, but one that does stays out of the real ~/.ssh.
+  $env:AGENTSPACE_SSH_DIR = Join-Path $root 'ssh'
+  $env:AGENTSPACE_PROXY_COMMAND = 'C:\Windows\System32\cmd.exe /d /c exit 1'
 
   # --- The help blocks, from the doc ---------------------------------------------------------
   $docLines = ([IO.File]::ReadAllText((Join-Path $repo 'docs\lease-api.md')) -replace "`r`n", "`n") -split "`n"
@@ -203,9 +208,7 @@ try {
   Test-ErrorRun 'pwsh' @('lease', 'list', '--project', '-x-') invalid_value 'project'
 
   # --- Each stub answers internal once its line and values are good ------------------------------
-  Test-ErrorRun 'cmd' @('lease', 'create', '--project', 'SwimCoach', '--ttl', '1h 30m') internal '' 'agentspace lease create is not implemented yet.'
-  Test-ErrorRun 'pwsh' @('Lease', 'Create', '--PROJECT=x', '--platform', 'linux/aarch64/v8', '--profile', 'Agent-Linux@03', '--size', 'M', '--ttl', 'PT8H') internal '' 'agentspace lease create is not implemented yet.'
-  Test-ErrorRun 'pwsh' @('lease', 'get', $id) internal '' 'agentspace lease get is not implemented yet.'
+  # create and get are real since E1.04; scripts\test-lease-cmd-create-get.ps1 checks them.
   Test-ErrorRun 'pwsh' @('lease', 'renew', $id) internal '' 'agentspace lease renew is not implemented yet.'
   Test-ErrorRun 'pwsh' @('lease', 'renew', " $id ", '--ttl=90m') internal '' 'agentspace lease renew is not implemented yet.'
   Test-ErrorRun 'cmd' @('lease', 'release', $id) internal '' 'agentspace lease release is not implemented yet.'
@@ -442,6 +445,8 @@ while ([DateTime]::UtcNow -lt `$deadline) {
   Write-Result ($parts.Count -eq 2 -and [int]$parts[0] -gt 0 -and [int]$parts[1] -eq 0) "A concurrent reader never failed (reads, failures: $readerOut)"
 } finally {
   $env:AGENTSPACE_STATE_DIR = $savedStateDir
+  $env:AGENTSPACE_SSH_DIR = $savedSshDir
+  $env:AGENTSPACE_PROXY_COMMAND = $savedProxy
   if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }
 

@@ -403,10 +403,10 @@ process.
   place that throws leaves `leases.json` untouched, and the driver has already removed its own
   credential and alias. The block's locals are prefixed `__create`, for the scoping reason above.
   An unsatisfiable lease is a recorded lease with an ID and a `driver`, and it issues nothing.
-- **`scripts/test-lease-cli.ps1` still asserts that `create` and `get` are stubs.** Those checks
-  now fail, and `create` there writes records into its throwaway state file, which fails the
-  state-file checks after them. It MUST be updated, and until it is, running it also needs the
-  hooks above, or `create` reaches the real `~/.ssh`.
+- **`scripts/test-lease-cli.ps1` no longer checks `create` and `get` as stubs**, since a `create`
+  that succeeds there writes a record into its shared state file and breaks the state-file checks
+  after it. It also sets `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` to throwaway values,
+  so a check that places a lease by mistake never reaches the real `~/.ssh`.
 
 ### D9. Reachability belongs to the driver
 
