@@ -41,6 +41,24 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 
 The git authority above belongs to the architect. A dev lead pushes only its own branch.
 
+### The architect's watchdog on a dev lead
+
+**Terry, 2026-11-17.** While a dev lead is running, the architect MUST keep a 10-minute watchdog
+on it:
+- **Every status update from the dev lead resets the timer.** That means a message it sends, or a
+  note that one of its turns ended. The reset is `scripts\watchdog.ps1 -Lead <name> -Reset`, and
+  the timer itself runs in the background as `scripts\watchdog.ps1 -Lead <name>`, which exits when
+  it fires.
+- **When the timer fires, the architect checks whether the dev lead is busy:** mid-turn, or with
+  its subagents still running.
+  - **If it is busy,** the architect does nothing else, and restarts the timer.
+  - **If it is not busy,** the architect nudges it: finish the work in one turn, or reply
+    `BLOCKED:` with what it waits on. Waiting on its own subagents is not blocked.
+- **If two nudges within 30 minutes are both answered `BLOCKED`,** the architect removes the
+  watchdog and escalates to Terry that the dev lead is blocked, saying on what.
+- **A dev lead, when nudged, MUST either finish its current work in that turn or reply
+  `BLOCKED: <what it waits on>`.**
+
 ## Memory: git is a superset of it
 
 **Terry, 2026-11-16, standing order: every fact an agent keeps in its private memory MUST also be
