@@ -9,6 +9,9 @@ card numbers.
 
 ## The vision
 
+**Terry, 2026-11-16: "a whole mini IaaS platform and API that you own"**, where "you" is the agent
+working in this repo.
+
 **Projects ask agentspace for compute, and agentspace decides where it runs.** A project requests a
 lease and gets back a way to SSH in. It never knows or cares whether that lands on bare metal,
 Azure, EC2, a Fargate container or anything else (Terry, 2026-11-16). That freedom is the point:

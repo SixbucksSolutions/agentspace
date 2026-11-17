@@ -28,6 +28,16 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 - **This repo is public:** account IDs, account-specific parameters and tokens MUST NOT be
   committed (README, "Rules").
 
+## Memory: git is a superset of it
+
+**Terry, 2026-11-16, standing order: every fact an agent keeps in its private memory MUST also be
+in this repo**, in this file or a pushed doc. An agent that saves a memory MUST record the same
+fact here and push it in the same piece of work. A memory that the repo does not yet record is a
+gap to fix, not a place to keep things.
+
+**Why:** memory is private to one agent on one machine, while the repo is what every agent, every
+machine and Terry can read.
+
 ## The board
 
 **Work is tracked on the `agentspace` localswim board**
