@@ -414,6 +414,31 @@ process.
   after it. It also sets `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` to throwaway values,
   so a check that places a lease by mistake never reaches the real `~/.ssh`.
 
+**Findings from story E1.05 (2026-11-17).** D8 stands. E1.05 built `renew`, `release` and `list`.
+- **`renew` and `release` each do their lookup, driver call and record change inside one
+  `Update-LeaseState` block.** A driver failure throws out of the block and leaves the record as it
+  was. The block changes the record object in place and MUST NOT assign to a variable outside it,
+  because the block runs in a child scope and such an assignment would be lost. The command's
+  parameters are copied to differently named locals first, so that no local of
+  `Update-LeaseState` can shadow them (the E1.02 finding above).
+- **`renew` decides the state as `get` does** (`ConvertTo-LeaseOutput`), so a ready lease past its
+  `expires_at` is `invalid_state` naming `expired`. It sets `expires_at` from the driver's returned
+  valid-before time, and `ttl_seconds` to the TTL used.
+- **`release` leaves `released` and `unsatisfiable` records untouched**, so the first `released_at`
+  stays. A `pending` record is released with no driver call. A `ready` or `expired` one goes through
+  the driver, then loses `ssh` and keeps `expires_at`.
+- **`release` reads `AGENTSPACE_SSH_DIR` and passes it as `-SshDir` to the driver's release.** It is
+  an internal test and worktree hook, outside the contract in `docs/lease-api.md`. Unset, the driver
+  works in the real `~/.ssh`, so tests MUST set it to a throwaway folder.
+- **`list` sorts with ordinal comparison** of `created_at`, then `id`, so the order does not depend
+  on the culture. It reads without the lock.
+- **`scripts/test-lease-cli.ps1` no longer asserts that `renew`, `release` and `list` are stubs**;
+  `scripts/test-lease-cmd-renew-release-list.ps1` checks them. A command that succeeds inside the
+  CLI test's shared state folder would break its later state-file checks.
+- **A test output function that returns a value MUST NOT also write with `Write-Output`**, which
+  would join its text to the returned value. The E1.05 test writes its PASS and FAIL lines with
+  `Write-Host`.
+
 ### D9. Reachability belongs to the driver
 
 **Decided.** How to reach a lease (the ProxyCommand inside its host alias) MUST come from the
