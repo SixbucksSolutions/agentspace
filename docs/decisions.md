@@ -385,7 +385,7 @@ prototyping happy paths."
 - **Every JSON input and output MUST have a JSON Schema** (draft 2020-12), kept in the repo under
   `schemas/`, one file per document. The schema MUST be strict: `required` for every field that is
   always present, `additionalProperties: false`, and formats or patterns for IDs and times.
-  Terry: "Strong formal specs matter", which JSON had long lacked next to XML's XSD.
+  Terry: strong formal interface specs matter, which JSON had long lacked next to XML's XSD.
 - **A schema is checked against the real output, not just written.** A CLI's scripted checks MUST
   validate what it prints against its schema. On the laptop that is PowerShell 7's `Test-Json
   -SchemaFile`, which handles draft 2020-12 (checked on 7.6, 2026-11-16).
