@@ -255,8 +255,8 @@ ssh agentspace "journalctl -u ssh --since -1h --no-pager -o short-iso | grep 'ID
   two leases apart; the `ID` does.
 - An expired certificate stops new logins only. A session that was open when it expired keeps
   running (D10).
-- Refused logins MUST NOT be retried in a loop: after three, sshd shuts every login out for a
-  while, Terry's included (D7, E2.04 finding).
+- Refused logins MUST NOT be retried in a loop: after as few as two, sshd can shut every login out
+  for a while, Terry's included (D7's E2.04 finding, and D10's E2.08 finding).
 
 ## License
 

@@ -382,15 +382,27 @@ which was backed up first and restored byte for byte afterwards (same SHA-256).
   (publickey)`, and sshd logged `Refusing certificate ID "<lease id>" serial=0 signed by ED25519
   CA SHA256:G05h...: Certificate invalid: expired`.
 - **One expired attempt cost one certificate refusal, and ssh then offered the bare key.** With
-  `IdentitiesOnly yes`, ssh offered the certificate and then the lease's plain key; the plain key
-  appears only as two `AuthorizedKeysCommand .../eic_run_authorized_keys ... failed, status 22`
-  lines from EC2 Instance Connect (D7, E2.04 finding). No `PerSourcePenalties` line was logged.
+  `IdentitiesOnly yes`, ssh offered the certificate and then the lease's plain key. Each offer most
+  likely produced one `AuthorizedKeysCommand .../eic_run_authorized_keys ... failed, status 22`
+  line from EC2 Instance Connect (D7, E2.04 finding), two in all, with the same fingerprint, since
+  a certificate and its key share one. No `PerSourcePenalties` line was logged.
 - **The refused connection stayed open on the box for two minutes after ssh gave up.** The client
   exited at 19:03:34 UTC, but its `sshd-session` lived on until sshd logged `Timeout before
   authentication for connection from 127.0.0.1` at 19:05:33 UTC, `LoginGraceTime`'s 120 seconds
-  later. Most likely the Session Manager tunnel did not pass the close on to sshd. Each refused
-  attempt therefore holds a pre-authentication slot (`MaxStartups`) for two minutes, and ends in a
-  timeout that `PerSourcePenalties` may also count. Card E3.01 SHOULD take this into account.
+  later. Most likely the Session Manager tunnel did not pass the close on to sshd: a refused
+  client exits without sending a disconnect, while the open session's clean exit reached sshd as
+  `Received disconnect ... disconnected by user` two seconds before ssh returned. A refused
+  attempt through Session Manager therefore most likely holds a pre-authentication slot for two
+  minutes.
+- **That lingering refusal is penalised as `grace-exceeded`, not `authfail`.** `sshd -T` on the
+  box reports `persourcepenalties ... authfail:5 noauth:1 grace-exceeded:10 ... min:15`,
+  `persourcepenaltyexemptlist none`, `maxstartups 10:30:100` and `logingracetime 120`. sshd scores
+  a connection once, so this attempt scored 10 seconds, below the 15-second minimum, which is why
+  no penalty was logged. Two such refusals ending close together most likely reach the minimum
+  and shut 127.0.0.1 out, which is every login, Terry's included. Separately, about ten lingering
+  refusals within two minutes would fill `MaxStartups` and drop new connections whatever the
+  penalties do. Exempting 127.0.0.1 from penalties does not free those slots, so card E3.01
+  SHOULD also consider a shorter `LoginGraceTime`.
 - **A second session through any alias gets `Warning: remote port forwarding failed` for 8811 and
   53147** while another session holds those forwards on the box. The login still succeeds; only
   the second session's forwards are lost. The lease alias and Terry's `agentspace` entry forward
