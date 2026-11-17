@@ -289,19 +289,6 @@ latest.
   stories' pull requests is merged, and only then does the next turn's dev lead start. T2 to T5 of
   #0002 run this way, one after another.
 
-### D19. The MVP's bar is the happy path
-
-**Decided, Terry, 2026-11-16:** "as it's a lean MVP, nothing gets us pot committed, we are largely
-prototyping happy paths."
-
-- **A story SHOULD prove its happy path end to end and stop there.** Edge-case handling,
-  hardening and polish beyond the card's done-when SHOULD be carded as post-MVP work, not built.
-- **Reviews SHOULD block only on:** a broken happy path, a security hole (an auth bypass, a key or
-  token leak, a lockout), or anything that would be expensive to undo. Everything else is a note
-  in the PR or a card.
-- **The architect makes the MVP's design calls itself** and records them here, rather than
-  stopping for Terry, unless a call would commit agentspace to something costly to reverse.
-
 ### D18. The lease CLI is PowerShell 7
 
 **Decided, architect, 2026-11-16; settles Q5's language half.** The lease code (`agentspace lease`,
@@ -321,6 +308,19 @@ which only checks an existing CA (D17), and stop if it fails. It MUST NOT copy `
 
 **Q5's other half, the default and maximum TTL, stays with #0001.** Until then, issuing takes the
 TTL as a parameter.
+
+### D19. The MVP's bar is the happy path
+
+**Decided, Terry, 2026-11-16:** "as it's a lean MVP, nothing gets us pot committed, we are largely
+prototyping happy paths."
+
+- **A story SHOULD prove its happy path end to end and stop there.** Edge-case handling,
+  hardening and polish beyond the card's done-when SHOULD be carded as post-MVP work, not built.
+- **Reviews SHOULD block only on:** a broken happy path, a security hole (an auth bypass, a key or
+  token leak, a lockout), or anything that would be expensive to undo. Everything else is a note
+  in the PR or a card.
+- **The architect makes the MVP's design calls itself** and records them here, rather than
+  stopping for Terry, unless a call would commit agentspace to something costly to reverse.
 
 ## Keys
 
