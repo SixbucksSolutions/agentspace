@@ -677,9 +677,9 @@ stopped box. The README's "Use a lease from a project" is the how-to that came o
   longer due. The stamp was set aside again at 20:44:49, and nothing connected until Terry's run.
 - **The desktop app connected through the lease alias with a push due, from a stopped box.** Terry
   added the SSH environment `agentspace-swimcoach-a62cb513` in the Claude desktop app and clicked
-  Test connection; he did not open a session. The box had idle-stopped after the dev lead's checks
-  at 20:43, and booted at 22:12:11 (`uptime -s`), so start-on-connect worked through the lease
-  alias from the app.
+  Test connection; he did not open a session. The box had been stopped at 21:06:45 by the
+  CloudWatch backstop (D11's E3.03 finding), and booted at 22:12:11 (`uptime -s`), so
+  start-on-connect worked through the lease alias from the app.
 - **The app's connection pushed the token, with no hang.** sshd logged the push's nested login at
   22:12:37; its session opened at 22:12:37 and closed at 22:12:38. Afterwards `bot.env` had 96
   bytes, mode 600, two lines and a modification time of 22:12:38.002, in a folder of mode 700. The
@@ -775,6 +775,18 @@ which was backed up first and restored byte for byte afterwards (same SHA-256).
 no CPU work. An agent holding a lease but doing nothing can still have the box stopped under it;
 its next connection starts it again. **Replaced by card #0006**, which stops a host when it has no
 live leases.
+
+**Findings from story E3.03 (2026-11-17).** D11 stands, but the box has a second stopper that does
+not count sessions.
+- **The CloudWatch backstop stopped the box under two open SSH sessions** (card #0043). Terry's
+  E2.02 desktop-app connections had been open and quiet since 18:12. The on-box idle check logged
+  `Active: SSH session open` at 21:04:36, and at 21:06:45 the box logged `Power key pressed short`,
+  an EC2 stop from outside. The alarm `agentbox-idle-backstop` (3 hours averaging under 1% CPU)
+  went to ALARM and logged `Stop EC2 Instance ... action completed successfully` at the same
+  second. Both sessions died with the box.
+- **So a lease whose agent stays connected but quiet for 3 hours loses its box**, sessions
+  included, whatever the on-box check says; its next connection starts the box again. A working
+  agent keeps the CPU above 1%, so this is not an MVP blocker (D19).
 
 ### D12. Board access is unchanged
 
