@@ -119,6 +119,9 @@ Docs cite its cards as `#0001`.
   - `MVP` covers every MVP story broken down so far.
   - `T1` to `T5` each cover their turn's stories.
   - The architect edits `milestones.json` when stories are added or a turn starts.
+  - **`milestones.json` MUST be edited as text, never rewritten from `ConvertFrom-Json`.** Without
+    `-DateKind String`, PowerShell 7 turns each `start` into a DateTime, and writing it back loses
+    the ISO 8601 form and the `Z` (it happened on 2026-11-17, fixed in 8182010).
 - **Project `agentspace`, agent `claude`**, spelled that way every time.
 - **`active_hours` counts wall-clock time only while work is In Progress** (Terry, 2026-11-17):
   - The clock runs while at least one of the milestone's cards is in In Progress, and stops when
