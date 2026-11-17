@@ -426,6 +426,17 @@ prototyping happy paths."
   `schemas/`, one file per document. The schema MUST be strict: `required` for every field that is
   always present, `additionalProperties: false`, and formats or patterns for IDs and times.
   Terry: strong formal interface specs matter, which JSON had long lacked next to XML's XSD.
+- **Be very strict in what agentspace emits, and tolerant in what it accepts** (Terry,
+  2026-11-16, the robustness principle). Inputs and outputs therefore get separate schemas:
+  - **An output schema is as tight as the data allows.** One canonical form for every value: for
+    example, a UUID is always a lowercase UUIDv4.
+  - **An input schema accepts every reasonable spelling of the same value, and agentspace
+    normalizes it on the way in.** A UUID MAY arrive in any case and is lowercased before use.
+  - **Tolerance covers form, never meaning.** An input that could mean two different things, or
+    that would be unsafe as given (a lease ID with a path separator, say), MUST still be refused
+    with a clear error rather than guessed at.
+  - **Lease IDs are UUIDv4s**, emitted lowercase and accepted in any case. Epic #0001 adopts this.
+    E2.05's issuer takes whatever ID it is given, so the CLI MUST pass it the normalized form.
 - **A schema is checked against the real output, not just written.** A CLI's scripted checks MUST
   validate what it prints against its schema. On the laptop that is PowerShell 7's `Test-Json
   -SchemaFile`, which handles draft 2020-12 (checked on 7.6, 2026-11-16).
