@@ -109,10 +109,17 @@ Docs cite its cards as `#0001`.
   - `T1` to `T5` each cover their turn's stories.
   - The architect edits `milestones.json` when stories are added or a turn starts.
 - **Project `agentspace`, agent `claude`**, spelled that way every time.
-- **`active_hours` is wall-clock time since the milestone started**, and `cap_hours` is the plan's
-  wall-clock budget: the sum of the turn lengths for `MVP`, the turn's length for a `T` milestone.
-- **A story waiting on Terry himself MUST be moved to Needs Terry**, so it is counted there and the
-  report carries a `needs_me` line. In Progress does not reach his phone.
+- **`active_hours` counts wall-clock time only while work is In Progress** (Terry, 2026-11-17):
+  - The clock runs while at least one of the milestone's cards is in In Progress, and stops when
+    none is.
+  - A card waiting on Terry goes to Needs Terry, which pauses the clock for it. So does a
+    milestone with nothing in progress.
+  - The reporter keeps the running total in its state file, and never counts time when it was
+    not running.
+- **`cap_hours` is the plan's wall-clock budget:** the sum of the turn lengths for `MVP`, and the
+  turn's length for a `T` milestone.
+- **A story waiting on Terry himself MUST be moved to Needs Terry**, so it is counted there, the
+  report carries a `needs_me` line, and its clock pauses. In Progress does not reach his phone.
 
 ## Writing
 

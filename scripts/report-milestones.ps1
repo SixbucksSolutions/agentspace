@@ -30,17 +30,14 @@ function Get-Cards {
   foreach ($c in $b.cards) { [pscustomobject]@{ Ticket = [int]$c.ticket; Lane = $keys[$c.lane_id]; Title = $c.title } }
 }
 
-function New-Report($m, $cards) {
+function New-Report($m, $cards, [double]$active) {
   $mine = @($cards | Where-Object { $m.tickets -contains $_.Ticket })
   $count = { param($k) @($mine | Where-Object Lane -eq $k).Count }
-  # ConvertFrom-Json already turns an ISO time into a DateTime; take it as UTC either way.
-  $start = if ($m.start -is [DateTime]) { $m.start.ToUniversalTime() } else { [DateTimeOffset]::Parse($m.start).UtcDateTime }
-  $hours = [Math]::Round(([DateTime]::UtcNow - $start).TotalHours, 2)
   $report = [ordered]@{
     agent        = 'claude'
     project      = 'agentspace'
     milestone    = $m.name
-    active_hours = [Math]::Min([Math]::Max($hours, 0), 168)
+    active_hours = [Math]::Min([Math]::Max([Math]::Round($active, 2), 0), 168)
     cap_hours    = $m.cap_hours
     lanes        = [ordered]@{
       ready_for_work   = & $count 'ready_for_work'
@@ -66,43 +63,53 @@ function Send-Report($report) {
   [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out.Trim() }
 }
 
-# When each milestone was last reported, kept across runs so a restart never reports again inside
-# swimcoach's 5-minute limit. Under the profile, never AppData (D21).
+# Per milestone, kept across runs under the profile, never AppData (D21):
+# - when it was last reported, and its lanes then, so a restart never reports again inside
+#   swimcoach's 5-minute limit;
+# - its active hours, and when they were last counted. The clock runs only while at least one of
+#   the milestone's cards is In Progress (Terry, 2026-11-17); a card waiting on Terry sits in
+#   Needs Terry, which pauses it. Each poll adds at most 2 minutes, so time this script was not
+#   running is never counted.
 $StateFile = Join-Path $env:USERPROFILE '.agentspace\swimcoach-last.json'
-$last = @{}
-$lastLanes = @{}
-if (Test-Path $StateFile) {
-  $saved = Get-Content $StateFile -Raw | ConvertFrom-Json -AsHashtable
-  foreach ($k in $saved.Keys) {
-    $last[$k] = ([DateTimeOffset]::Parse("$($saved[$k].at)")).UtcDateTime
-    $lastLanes[$k] = $saved[$k].lanes
-  }
-}
+$state = @{}
+if (Test-Path $StateFile) { $state = Get-Content $StateFile -Raw | ConvertFrom-Json -AsHashtable }
 function Save-State {
-  $o = @{}
-  foreach ($k in $last.Keys) { $o[$k] = @{ at = $last[$k].ToString('o'); lanes = $lastLanes[$k] } }
   New-Item -ItemType Directory -Force (Split-Path $StateFile) | Out-Null
-  $o | ConvertTo-Json -Compress | Set-Content -NoNewline $StateFile
+  $state | ConvertTo-Json -Compress | Set-Content -NoNewline $StateFile
 }
+function Get-Time($v) { if ($v -is [DateTime]) { $v.ToUniversalTime() } else { ([DateTimeOffset]::Parse("$v")).UtcDateTime } }
 while ($true) {
   $milestones = (Get-Content $Config -Raw | ConvertFrom-Json).milestones
   $cards = @(Get-Cards)
   $now = [DateTime]::UtcNow
   foreach ($m in $milestones) {
-    $report = New-Report $m $cards
+    $st = $state[$m.name]
+    if (-not $st) { $st = @{}; $state[$m.name] = $st }
+    if ($null -eq $st.active) {
+      # First run for this milestone: start from the wall-clock time since it began.
+      $st.active = [Math]::Max(([DateTime]::UtcNow - (Get-Time $m.start)).TotalHours, 0)
+    }
+    $inProgress = @($cards | Where-Object { $m.tickets -contains $_.Ticket -and $_.Lane -eq 'in_progress' }).Count
+    if ($st.polled -and $inProgress -gt 0) {
+      $dt = [Math]::Min(($now - (Get-Time $st.polled)).TotalMinutes, 2)
+      if ($dt -gt 0) { $st.active = [double]$st.active + $dt / 60 }
+    }
+    if (-not $DryRun) { $st.polled = $now.ToString('o'); Save-State }
+
+    $report = New-Report $m $cards ([double]$st.active)
     $lanes = $report.lanes | ConvertTo-Json -Compress
-    $age = if ($last.ContainsKey($m.name)) { ($now - $last[$m.name]).TotalMinutes } else { [double]::MaxValue }
-    $changed = $lastLanes[$m.name] -ne $lanes
+    $age = if ($st.at) { ($now - (Get-Time $st.at)).TotalMinutes } else { [double]::MaxValue }
+    $changed = $st.lanes -ne $lanes
     if (-not ($age -ge 10 -or ($changed -and $age -ge 5))) { continue }
     $r = Send-Report $report
     $stamp = Get-Date -Format 'HH:mm:ss'
     switch ($r.Code) {
       0 {
-        if (-not $DryRun) { $last[$m.name] = $now; $lastLanes[$m.name] = $lanes; Save-State }
+        if (-not $DryRun) { $st.at = $now.ToString('o'); $st.lanes = $lanes; Save-State }
         Write-Host "$stamp $($m.name): $($r.Out)"
       }
       { $_ -in 5, 6 } { Write-Output "$stamp $($m.name): swimcoach exit $($r.Code), Terry's to fix: $($r.Out)"; exit $r.Code }
-      default { if (-not $DryRun) { $last[$m.name] = $now; Save-State }; Write-Output "$stamp $($m.name): swimcoach exit $($r.Code): $($r.Out)" }
+      default { if (-not $DryRun) { $st.at = $now.ToString('o'); Save-State }; Write-Output "$stamp $($m.name): swimcoach exit $($r.Code): $($r.Out)" }
     }
   }
   if (-not $Watch) { break }
