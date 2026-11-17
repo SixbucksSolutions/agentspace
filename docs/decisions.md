@@ -575,6 +575,58 @@ the alias.
   agentspace` printed the same settings before and after, and an empty `agentspace.d` parsed
   cleanly. Nothing connected; a login through a written alias is story E2.08's.
 
+**Findings from story E3.02 (2026-11-17).** D9 stands. Card #0026's hang is fixed in
+`scripts/agentspace.ps1`, and `scripts/test-push-localswim.ps1` checks the push without the box.
+- **The cause was an inherited environment variable, not the end of the input.** Windows OpenSSH
+  hands each process it starts, the ProxyCommand included, the state of its file descriptors in a
+  variable named `<GUID>_POSIX_FD_STATE` (on this laptop
+  `c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE`). `cmd.exe` and PowerShell pass it on, so the
+  push's own `ssh.exe` inherited it, and that ssh never read its stdin at all. Its `-vvv` log
+  reached `exec request accepted on channel 0` and then showed no read of stdin, while the same
+  push outside a ProxyCommand logged the end of its input straight after that line.
+- **The evidence (UTC).** A stand-in for the push, with the same Windows PowerShell 5.1 pipe into
+  `ssh agentspace` and a harmless remote `cat > /dev/null; echo got-eof`, finished in 5 seconds
+  from a non-interactive shell at 20:01:07. Run in place of `up` inside the ProxyCommand of a
+  non-interactive ssh, it hung until it was killed at 75 seconds, and the box still held its
+  `cat` at 20:03:18. Inside the ProxyCommand it also hung when the remote side read only
+  `head -n 2` (the box held the `head`), when ssh's stdin was a file instead of a pipe, and when
+  PowerShell's own stdin was `NUL`. A local `sort.exe` fed the same way finished at once. Removing
+  the variable before starting ssh made the `head -n 2` stand-in finish at 20:10:17. Why a
+  connection started from Terry's terminal never hung was not established.
+- **So `head -n 2` alone would not have fixed it**, though the card proposed it: an ssh that never
+  reads its stdin sends the box no lines at all.
+- **The fix:**
+  - **`agentspace.ps1` MUST remove every `*_POSIX_FD_STATE` variable from its environment as it
+    starts**, so no ssh or scp it starts inherits one.
+  - **The push's ssh is Windows OpenSSH by full path, and runs for at most 60 seconds.** At the
+    limit only that ssh process is killed, and nothing is recorded.
+  - **The box MUST NOT wait for the end of the push's input.** It reads two lines (`timeout 30
+    head -n 2`) into a `mktemp` file in `~/.config/localswim` under `umask 077`, checks that the
+    file has two lines with a URL and a token, renames it over `bot.env` with `mv`, and prints the
+    SHA-256 of the installed file. On any failure it removes the temporary file and exits 1, so
+    the old `bot.env` stays as it was.
+  - **The laptop MUST record the hash in `localswim-pushed.sha256` only when ssh exited 0 and the
+    box's SHA-256 equals its own SHA-256 of what it meant to write**, after the same CR, BOM and
+    blank-line normalization. Otherwise it warns and records nothing, and the next connection
+    tries again.
+- **The live run (UTC).** With the hash file set aside, `ssh -F <throwaway config> <host> 'stat
+  ...'` from a non-interactive shell, through this story's `ssh-proxy.cmd`, ran from 20:13:55 to
+  20:14:05 and exited 0. `up` printed `Sending the localswim Bot token to the instance...`, the
+  nested `up` printed `Ready` and did not push again, and the hash file came back with the value
+  it had before. A second run, with the outer ssh's stdin held open as the desktop app holds it,
+  ran from 20:14:25 to 20:14:35 and exited 0: sshd logged the push's login and logout at
+  20:14:31, `bot.env`'s modification time was 20:14:31.375, and the outer login followed at
+  20:14:33. Afterwards `bot.env` had 96 bytes, mode 600 and two lines, its SHA-256 matched what
+  the laptop would send, no temporary file was left, and no `head`, `tr`, `sed` or `cat` process
+  remained on the box. `ssh agentspace true` through Terry's own entry exited 0 at 20:14:51.
+- **`scripts/test-push-localswim.ps1` checks the confirm-before-record rule in Windows PowerShell
+  5.1.** It loads `Push-Localswim` from the script's syntax tree and runs it with a dummy token
+  and a stand-in for ssh. A wrong hash, a failed ssh and a hung ssh each warn and record nothing,
+  a confirmed send is recorded, and a failed forced send leaves the earlier record as it was.
+- **Not tried with a push due:** an interactive connection from Terry's terminal, and the desktop
+  app's own connection. The desktop app SHOULD be retried once with the hash file set aside, to
+  show that E2.02's `Connection timed out during banner exchange` is gone.
+
 ## What the MVP leaves alone
 
 ### D10. Releasing a lease does not revoke its certificate

@@ -139,7 +139,7 @@ Include agentspace.d/*
 - **Removing an alias leaves the `Include` in place**, and leaves the lease's key folder alone.
 - **`C:\Windows\System32\OpenSSH\ssh.exe -G <alias>`** prints the settings an alias gives.
 - **Today the alias's ProxyCommand is `scripts\ssh-proxy.cmd`**, whose `up` still pushes the
-  localswim token over Terry's own `agentspace` entry (#0028) and can hang (#0026). The default
+  localswim token over Terry's own `agentspace` entry (#0028). The default
   ProxyCommand needs the checkout that has `.instance-id`; elsewhere, pass `-ProxyCommand`.
 
 ### The localswim board on the box
@@ -173,6 +173,12 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   URL to `~/.config/localswim/bot.env` (mode 0600). The token travels over SSH on stdin: it MUST
   NOT be put on a command line, printed, or stored anywhere else. Nothing about it is kept on
   the laptop except a SHA-256 of what was last sent, in `%USERPROFILE%\.agentspace`.
+- **A send is recorded only once the box confirms it.** The box reads two lines, writes them to
+  a temporary file, renames it over `bot.env` and sends back the file's SHA-256, which `up`
+  compares with what it meant to write. A failed, unconfirmed or interrupted send leaves the old
+  `bot.env` in place, records nothing, and is tried again at the next connection. The send's ssh
+  is stopped after 60 seconds, so it cannot stall a connection. `scripts\test-push-localswim.ps1`
+  checks this without the box, in Windows PowerShell 5.1.
 - **The wrapper sets the URL and token for one run only**, and refuses with a stop-and-report
   message when the board is unreachable, so an agent learns why instead of seeing a timeout.
 - **A project's own localswim wrapper still decides how that project's agents call it.**

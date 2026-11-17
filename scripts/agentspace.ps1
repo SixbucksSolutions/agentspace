@@ -44,6 +44,12 @@ $NoForward = @('-o', 'ClearAllForwardings=yes')
 # flag tells those nested runs not to push the localswim token a second time.
 $Nested = [bool]$env:AGENTSPACE_NESTED
 $env:AGENTSPACE_NESTED = '1'
+# Windows OpenSSH gives each process it starts, the ProxyCommand included, the state of its file
+# descriptors in an environment variable named <GUID>_POSIX_FD_STATE. Inherited by an ssh that
+# this script starts inside a ProxyCommand, it makes that ssh never read its own stdin, so the
+# token push never sent its input and hung (card #0026). Nothing this script starts needs it.
+Get-ChildItem Env: | Where-Object Name -like '*_POSIX_FD_STATE' |
+  ForEach-Object { Remove-Item -LiteralPath "Env:\$($_.Name)" }
 $LocalswimRepo = 'C:\Projects\localswim'
 $LocalswimReceipt = Join-Path $env:LOCALAPPDATA 'localswim-v2\service.json'
 # Everything agentspace keeps on the laptop lives here, never under AppData: the Claude app
@@ -59,6 +65,10 @@ $SshKeygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'
 # Windows OpenSSH by full path: from Git Bash, a bare scp finds MSYS's, which mangles the
 # ProxyCommand (card #0027 moves the older bare calls over).
 $Scp = Join-Path $env:SystemRoot 'System32\OpenSSH\scp.exe'
+$Ssh = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'
+# How long the token push's ssh may run before it is killed, so a hang can never stall the
+# ProxyCommand. A push takes about 5 seconds.
+$PushTimeoutSec = 60
 $Icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
 # Windows PowerShell 5.1 drops an empty argument on its way to a native command, so an empty
 # passphrase is written as a pair of quotes there; PowerShell 7.3 and later pass '' as is.
@@ -188,8 +198,9 @@ function Start-Box([string]$Id) {
 # on the box (mode 0600), for the box's localswim wrapper. The service makes a new token at
 # every cold start, so this runs at each connection but sends only when the instance or the
 # token has changed since the last send. The token goes over SSH on stdin: never on a command
-# line, never printed, never stored on the laptop outside localswim's own DPAPI file. A failure
-# warns and never blocks the connection.
+# line, never printed, never stored on the laptop outside localswim's own DPAPI file. The box
+# confirms the write by sending back the file's SHA-256, and only a confirmed send is recorded
+# as sent (card #0026). A failure warns and never blocks the connection.
 function Push-Localswim([string]$Id, [switch]$Force) {
   if (-not (Test-Path $LocalswimReceipt)) { return }
   $token = $null
@@ -198,23 +209,69 @@ function Push-Localswim([string]$Id, [switch]$Force) {
     $receipt = Get-Content $LocalswimReceipt -Raw | ConvertFrom-Json
     $token = (Import-Clixml (Join-Path $receipt.credential_directory 'bot.xml')).GetNetworkCredential().Password
     $content = "LOCALSWIM_URL=$($receipt.base)`nLOCALSWIM_TOKEN=$token`n"
+  } catch {
+    Say 'agentspace: Could not read the localswim Bot token; the board will not work on the box this session.'
+    return
+  } finally {
+    $token = $null
+  }
+  try {
     $sha = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id`n$content"))
     $sha = [BitConverter]::ToString($sha).Replace('-', '')
     if (-not $Force -and (Test-Path $PushedFile) -and (Get-Content $PushedFile -Raw).Trim() -eq $sha) { return }
     Say 'Sending the localswim Bot token to the instance...'
-    # Windows PowerShell pipes text to native commands with a UTF-8 BOM unless told otherwise;
-    # a BOM turns the first assignment into a command name. Send none, and strip one anyway.
-    $OutputEncoding = [Text.UTF8Encoding]::new($false)
-    $content | & ssh @NoForward agentspace 'umask 077 && mkdir -p ~/.config/localswim && tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > ~/.config/localswim/bot.env' | Out-Null
-    if ($LASTEXITCODE -ne 0) { Say 'agentspace: Could not send the localswim token; the board will not work on the box this session.'; return }
+    # The box reads exactly two lines, so it never waits for the end of its input. It writes them
+    # to a temporary file beside bot.env (0600 under umask 077), checks that it holds the URL and
+    # the token, renames it into place and prints its SHA-256. On any failure it removes the
+    # temporary file, so bot.env is never left empty or partial. tr and sed strip CRs, blank lines
+    # and a UTF-8 BOM, which .NET can write ahead of the text it pipes to a process.
+    $remote = 'umask 077; d=$HOME/.config/localswim; mkdir -p $d && t=$(mktemp $d/bot.env.XXXXXX) || exit 1; ' +
+      'timeout 30 head -n 2 | tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > $t; ' +
+      'if test $(wc -l < $t) -eq 2 && grep -q ''^LOCALSWIM_URL=.'' $t && grep -q ''^LOCALSWIM_TOKEN=.'' $t && mv -f $t $d/bot.env; ' +
+      'then sha256sum < $d/bot.env; else rm -f $t; exit 1; fi'
+    $psi = New-Object Diagnostics.ProcessStartInfo $Ssh
+    # Windows PowerShell 5.1's ProcessStartInfo takes one argument string. The remote command
+    # holds no double quote, so a pair of them around it keeps it one argument.
+    $psi.Arguments = (@($NoForward) + 'agentspace' + "`"$remote`"") -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $p = [Diagnostics.Process]::Start($psi)
+    try {
+      $reader = $p.StandardOutput.ReadToEndAsync()
+      # An ssh that has already exited breaks the pipe; the missing confirmation reports it.
+      try { $p.StandardInput.Write($content); $p.StandardInput.Close() } catch { }
+      if (-not $p.WaitForExit($PushTimeoutSec * 1000)) {
+        # Only the ssh this function started is killed, never another process.
+        try { $p.Kill() } catch { }
+        Say "agentspace: Sending the localswim token took over $PushTimeoutSec seconds and was stopped; the board will not work on the box this session."
+        return
+      }
+      $out = if ($reader.Wait(10000)) { $reader.Result } else { '' }
+      $code = $p.ExitCode
+    } finally {
+      $p.Dispose()
+    }
+    $got = if ("$out" -match '(?m)^([0-9a-f]{64})\s') { $Matches[1] } else { $null }
+    if ($code -ne 0 -or $got -ne (Get-BotEnvHash $content)) {
+      Say 'agentspace: The instance did not confirm the localswim token; the board will not work on the box this session.'
+      return
+    }
     New-Item -ItemType Directory -Force (Split-Path $PushedFile) | Out-Null
     Set-Content -Path $PushedFile -Value $sha -NoNewline
   } catch {
-    Say 'agentspace: Could not read the localswim Bot token; the board will not work on the box this session.'
+    Say 'agentspace: Could not send the localswim token; the board will not work on the box this session.'
   } finally {
-    $token = $null
     $content = $null
   }
+}
+
+# The SHA-256, as lowercase hex, of bot.env as the box writes it from $Text: CRs, a leading UTF-8
+# BOM and blank lines removed, and every line ending in LF.
+function Get-BotEnvHash([string]$Text) {
+  $lines = @((($Text -replace "`r", '').TrimStart([char]0xFEFF) -split "`n") | Where-Object { $_ })
+  $bytes = [Text.Encoding]::UTF8.GetBytes((($lines -join "`n") + "`n"))
+  -join ([Security.Cryptography.SHA256]::Create().ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
 }
 
 # Builds the localswim CLI for the box from the laptop's localswim checkout, the same source as
