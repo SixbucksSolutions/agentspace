@@ -234,6 +234,30 @@ ssh agentspace journalctl -u agentspace-idle --since -1h
 ssh agentspace journalctl -u agentspace-patch -b
 ```
 
+### Which lease connected
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+sshd logs the key ID of every certificate login, and a lease's key ID is its lease ID (D7). To
+list the last hour's logins and refusals, or those of one lease:
+
+```bat
+ssh agentspace "journalctl -u ssh --since -1h --no-pager -o short-iso | grep -E 'Accepted|Refusing'"
+ssh agentspace "journalctl -u ssh --since -1h --no-pager -o short-iso | grep 'ID.*<lease id>'"
+```
+
+- A lease login reads `Accepted publickey for ubuntu from 127.0.0.1 port ... ssh2: ED25519-CERT
+  SHA256:... ID <lease id> (serial 0) CA ED25519 SHA256:G05h...`.
+- A login with an expired certificate reads `Refusing certificate ID "<lease id>" ...
+  Certificate invalid: expired`.
+- A login with Terry's own key reads `ED25519 SHA256:...` with no `ID`.
+- Every login comes from 127.0.0.1, where Session Manager delivers it, so the address never tells
+  two leases apart; the `ID` does.
+- An expired certificate stops new logins only. A session that was open when it expired keeps
+  running (D10).
+- Refused logins MUST NOT be retried in a loop: after three, sshd shuts every login out for a
+  while, Terry's included (D7, E2.04 finding).
+
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 Sixbucks Solutions, LLC.
