@@ -582,7 +582,7 @@ is worth weighing again for V1, but it does not move the MVP: the CA code (E2.03
 code (E2.05) are already PowerShell, and switching mid-epic costs more than it saves.
 
 **Q5's other half, the default and maximum TTL, stays with #0001.** Until then, issuing takes the
-TTL as a parameter.
+TTL as a parameter. D24 settled it in story E1.01.
 
 ### D19. The MVP's bar is the happy path
 
@@ -716,6 +716,41 @@ idle until someone happens to look.
 **Why:** questions from several sessions at once are noise on Terry's side. Most of them are
 answerable from what the architect already knows.
 
+### D24. A lease's TTL is 8 hours by default, at least 1 minute and at most 24 hours
+
+**Decided for the default and the minimum; MVP only for the maximum. Story E1.01, 2026-11-17;
+settles Q5's TTL half.** The contract is [lease-api.md](lease-api.md), "TTL".
+- **`create` with no TTL MUST get 8 hours.** `renew` with no TTL MUST reuse the lease's current
+  TTL.
+- **A TTL MUST be at least 1 minute and at most 24 hours, both inclusive.** A TTL outside that
+  range MUST be refused with `out_of_range` (exit 2), and MUST NOT be clamped to the nearest limit.
+- **Each certificate is valid from its issue time for the TTL.** `renew` issues a new one from the
+  time of the call, so it MAY shorten a lease as well as extend it.
+- **A lease MAY be renewed any number of times.** There is no cap on a lease's total life; the
+  maximum bounds each certificate, not the lease.
+
+**Why:**
+- **8 hours by default** is an agent's working session, a day of turns, and is the `--ttl 8h` of
+  the roadmap's sketch. A lease that is forgotten loses its credential the same day.
+- **24 hours at most, because release does not revoke (D10).** The maximum is the longest a
+  leaked, or released but copied, certificate can open a new connection. A day covers an
+  overnight unattended run with no renew loop; anything longer renews, which E2.07 made cheap: it
+  signs a certificate on the laptop and touches no host.
+- **No cap on renewals,** because the exposure argument is about one certificate: a leaked
+  certificate expires within the maximum however often its lease was renewed, and whoever holds
+  the leaked copy cannot renew it, since renewing needs the CA key (D17).
+- **1 minute at least,** so that a check of expiry (E1.04, E1.05) does not wait long. Below that,
+  a login through start-on-connect (29 seconds from a stopped box in E2.01) and a few seconds of
+  clock skew between laptop and box (E2.05) could use up the whole window.
+- **Refused, not clamped (D5's spirit):** a caller that asked for 48 hours and quietly got 24 would
+  lose new connections in the middle of its run, with nothing to tell it why.
+- **The TTL is independent of D11's idle stop.** A lease stays `ready` while the box is stopped,
+  and its next connection starts the box again.
+
+**The maximum is MVP only. Card #0010 revisits it:** once a released certificate can be revoked,
+the 24-hour bound protects only against a certificate that leaked from a lease still held, and a
+longer maximum MAY then be chosen.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -778,4 +813,4 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q2** | Where do per-project credentials (Claude Code, Codex, gh) live, so a fresh host or container needs no sign-in? Needs Terry. | #0009 |
 | **Q3** | How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
 | **Q4** | One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
-| **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 (D18). Still open: its default and maximum TTL. | #0001 |
+| **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 (D18). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |

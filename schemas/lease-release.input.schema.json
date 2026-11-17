@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-release.input.schema.json",
+  "title": "Release request (input, contract v0)",
+  "description": "What agentspace lease release takes: its argument on the command line, or this document as JSON. The ID is accepted in any case with surrounding whitespace, and lowercased before use. See docs/lease-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id"],
+  "properties": {
+    "id": {
+      "description": "The lease ID: a UUIDv4 in any case.",
+      "type": "string",
+      "pattern": "^\\s*[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\s*$"
+    }
+  }
+}

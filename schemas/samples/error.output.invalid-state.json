@@ -1,0 +1,1 @@
+{"code":"invalid_state","message":"Lease 'c0ffee12-3456-4789-8abc-def012345678' is expired and cannot be renewed. Create a new lease.","lease_id":"c0ffee12-3456-4789-8abc-def012345678","state":"expired"}

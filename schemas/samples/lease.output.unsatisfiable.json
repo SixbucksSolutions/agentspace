@@ -1,0 +1,15 @@
+{
+  "id": "e4a1c7f9-6d2b-4a8e-9f3c-1b5d7e9a2c86",
+  "project": "swimcoach",
+  "state": "unsatisfiable",
+  "platform": "linux/amd64",
+  "profile": "agent-linux@2",
+  "size": "xl",
+  "ttl_seconds": 28800,
+  "created_at": "2026-11-17T18:10:00Z",
+  "reasons": [
+    { "code": "unsupported_platform", "message": "Platform 'linux/amd64' is not supported; v0 supports linux/arm64 only." },
+    { "code": "unsupported_profile", "message": "Profile 'agent-linux@2' is not supported; v0 supports agent-linux with no version only." },
+    { "code": "unsupported_size", "message": "Size 'xl' is not supported; v0 supports size m only." }
+  ]
+}
