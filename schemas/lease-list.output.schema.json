@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-list.output.schema.json",
+  "title": "Lease list (output, contract v0)",
+  "description": "The leases that agentspace lease list prints, oldest first. Each item is a lease exactly as in lease.output.schema.json, whose $defs this file copies word for word, because Test-Json -SchemaFile does not resolve a $ref to another file. Strict: anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET. See docs/lease-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["leases"],
+  "properties": {
+    "leases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lease" }
+    }
+  },
+  "$defs": {
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "project", "state", "platform", "profile", "size", "ttl_seconds", "created_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/lease_id" },
+        "project": { "$ref": "#/$defs/project" },
+        "state": { "$ref": "#/$defs/state" },
+        "platform": { "$ref": "#/$defs/platform" },
+        "profile": { "$ref": "#/$defs/profile" },
+        "size": { "$ref": "#/$defs/size" },
+        "ttl_seconds": { "$ref": "#/$defs/ttl_seconds" },
+        "created_at": { "$ref": "#/$defs/time" },
+        "expires_at": { "$ref": "#/$defs/time" },
+        "released_at": { "$ref": "#/$defs/time" },
+        "ssh": { "$ref": "#/$defs/ssh" },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/reason" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "pending" } } },
+          "then": { "properties": { "expires_at": false, "released_at": false, "ssh": false, "reasons": false } }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "ready" } } },
+          "then": { "required": ["expires_at", "ssh"], "properties": { "released_at": false, "reasons": false } }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "expired" } } },
+          "then": { "required": ["expires_at"], "properties": { "released_at": false, "ssh": false, "reasons": false } }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "released" } } },
+          "then": { "required": ["released_at"], "properties": { "ssh": false, "reasons": false } }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "unsatisfiable" } } },
+          "then": { "required": ["reasons"], "properties": { "expires_at": false, "released_at": false, "ssh": false } }
+        }
+      ]
+    },
+    "lease_id": {
+      "description": "A UUIDv4 in lowercase.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?!\\n)"
+    },
+    "project": {
+      "description": "A project name, lowercase.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\\n)"
+    },
+    "state": {
+      "type": "string",
+      "enum": ["pending", "ready", "expired", "released", "unsatisfiable"]
+    },
+    "platform": {
+      "description": "An OCI os/arch[/variant], lowercase, with aarch64 written arm64 and the arm64 variant v8 dropped.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$(?!\\n)",
+      "not": { "pattern": "^[a-z0-9]+/aarch64(/[a-z0-9]+)?$|^[a-z0-9]+/arm64/v8$(?!\\n)" }
+    },
+    "profile": {
+      "description": "A profile name, lowercase, with an optional @version that has no leading zeros.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(@[1-9][0-9]*)?$(?!\\n)"
+    },
+    "size": {
+      "description": "A size class, lowercase.",
+      "type": "string",
+      "pattern": "^[a-z0-9]{1,8}$(?!\\n)"
+    },
+    "ttl_seconds": {
+      "description": "A TTL in whole seconds, from 1 minute to 24 hours (D24).",
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 86400
+    },
+    "time": {
+      "description": "A UTC time to the whole second, YYYY-MM-DDTHH:MM:SSZ.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$(?!\\n)"
+    },
+    "ssh": {
+      "description": "How to connect to a ready lease.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_alias", "user"],
+      "properties": {
+        "host_alias": {
+          "description": "The OpenSSH host alias, agentspace-<project>-<first 8 hex digits of the lease ID>. Callers treat it as opaque.",
+          "type": "string",
+          "pattern": "^agentspace-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{8}$(?!\\n)"
+        },
+        "user": {
+          "description": "The Unix user the alias logs in as.",
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$(?!\\n)"
+        }
+      }
+    },
+    "reason": {
+      "description": "Why an unsatisfiable lease cannot be met.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["unsupported_platform", "unsupported_profile", "unsupported_size", "no_capacity"]
+        },
+        "message": {
+          "description": "One sentence for a person, with no control characters.",
+          "type": "string",
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?!\\n)"
+        }
+      }
+    }
+  }
+}

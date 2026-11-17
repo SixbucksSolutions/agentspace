@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-renew.input.schema.json",
+  "title": "Renew request (input, contract v0)",
+  "description": "A request to agentspace lease renew. The v0 CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning. The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. See docs/lease-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id"],
+  "properties": {
+    "id": {
+      "description": "The lease ID: a UUIDv4 in any case.",
+      "type": "string",
+      "pattern": "^\\s*[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\s*$"
+    },
+    "ttl": {
+      "$ref": "#/$defs/ttl",
+      "description": "A duration with units. Null or absent means the lease's current ttl_seconds."
+    }
+  },
+  "$defs": {
+    "ttl": {
+      "description": "Short form (8h, 90m, 1h30m, '2 hours'; units d, h, m in lowercase only, s, and their words, largest first, each once) or ISO 8601 P[nD][T[nH][nM][nS]] in any case. A bare number, an uppercase M in the short form, weeks, months, years and fractions are refused.",
+      "type": ["string", "null"],
+      "maxLength": 64,
+      "pattern": "^\\s*(?:(?=[0-9])(?:[0-9]+\\s*(?:[dD](?:[aA][yY][sS]?)?)\\s*)?(?:[0-9]+\\s*(?:[hH](?:[oO][uU][rR][sS]?|[rR][sS]?)?)\\s*)?(?:[0-9]+\\s*(?:m|[mM][iI][nN](?:[sS]|[uU][tT][eE][sS]?)?)\\s*)?(?:[0-9]+\\s*(?:[sS](?:[eE][cC](?:[sS]|[oO][nN][dD][sS]?)?)?)\\s*)?|[pP](?=[0-9tT])(?:[0-9]+[dD])?(?:[tT](?=[0-9])(?:[0-9]+[hH])?(?:[0-9]+[mM])?(?:[0-9]+[sS])?)?\\s*)$"
+    }
+  }
+}

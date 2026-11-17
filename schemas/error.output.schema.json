@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/error.output.schema.json",
+  "title": "Error (output, contract v0)",
+  "description": "The one document an agentspace lease command writes to stderr when it fails. Its code fixes the exit code: internal 1; usage, invalid_value and out_of_range 2; not_found 3; invalid_state 4. Strict: anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET. Each code requires and forbids its own fields. See docs/lease-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": ["internal", "usage", "invalid_value", "out_of_range", "not_found", "invalid_state"]
+    },
+    "message": {
+      "description": "One or more sentences for a person: what was wrong, and what to do. No control characters; a quoted value escapes them as \\uXXXX or is left out.",
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?!\\n)"
+    },
+    "field": {
+      "description": "The flag or request member at fault, without dashes.",
+      "type": "string",
+      "enum": ["id", "project", "platform", "profile", "size", "ttl", "state"]
+    },
+    "lease_id": {
+      "description": "The normalized lease ID asked for: a UUIDv4 in lowercase.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?!\\n)"
+    },
+    "state": {
+      "description": "The state the lease is in.",
+      "type": "string",
+      "enum": ["pending", "ready", "expired", "released", "unsatisfiable"]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "internal" } } },
+      "then": { "properties": { "field": false, "lease_id": false, "state": false } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "usage" } } },
+      "then": { "properties": { "lease_id": false, "state": false } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "enum": ["invalid_value", "out_of_range"] } } },
+      "then": { "required": ["field"], "properties": { "lease_id": false, "state": false } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "not_found" } } },
+      "then": { "required": ["lease_id"], "properties": { "field": false, "state": false } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "invalid_state" } } },
+      "then": { "required": ["lease_id", "state"], "properties": { "field": false } }
+    }
+  ]
+}
