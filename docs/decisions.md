@@ -127,9 +127,9 @@ another principal were refused.
 `scripts/test-lease-credential.ps1` checks it.
 - **A lease's key pair lives in `%USERPROFILE%\.agentspace\leases\<lease id>\`** (D21; until E2.09
   it was under `%LOCALAPPDATA%`, which the Claude app redirected into its package cache) as
-  `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, the name ssh finds beside an `IdentityFile`. The
-  issuer refuses a lease ID that is not a simple token, and refuses a lease that already has a key;
-  renewing is story E2.07's.
+  `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, the name ssh finds beside an
+  `IdentityFile`. The issuer refuses a lease ID that is not a simple token, and refuses a lease
+  that already has a key; renewing is story E2.07's.
 - **The validity MUST be passed to `ssh-keygen -V` as an absolute UTC window,
   `YYYYMMDDHHMMSSZ:YYYYMMDDHHMMSSZ`, from the issue time to the issue time plus the TTL.** A relative
   `+8h` leaves the start to ssh-keygen, so the issuer could not return the exact expiry. Windows
@@ -500,9 +500,8 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 
 - **The CA's private key MUST live at `%USERPROFILE%\.agentspace\ca\agentspace_ca`** (D21; until
   E2.09 it was `%LOCALAPPDATA%\agentspace\ca\agentspace_ca`), with its public key beside it as
-  `agentspace_ca.pub`. Both files MUST stay out of the repo and out of
-  any folder that OneDrive or another service syncs. `agentspace.ps1 ca` creates them
-  once, and refuses to run when that folder's path is inside OneDrive or the repo. It MUST NOT be
+  `agentspace_ca.pub`. Both files MUST stay out of the repo and out of any folder that OneDrive or
+  another service syncs. `agentspace.ps1 ca` creates them once, and refuses to run when that folder's path is inside OneDrive or the repo. It MUST NOT be
   run elevated, since an elevated shell makes Administrators the owner of what it creates.
 - **The folder and the private key MUST be the current user's alone:** owned by the user, one rule
   granting the user full control, and nothing inherited. `ca` locks and checks the folder before
@@ -524,8 +523,10 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 - **Superseded by D21.** `%LOCALAPPDATA%` was chosen because it never roams, cannot be redirected
   to OneDrive, and agentspace already kept laptop state there. Inside the MSIX-packaged Claude
   app, writes there land in the package cache instead, so E2.09 moved the CA to
-  `%USERPROFILE%\.agentspace\ca`, which is not redirected and not inside OneDrive; `ca` still refuses
-  a OneDrive path. `~/.ssh` is not used because it holds identities and gets copied around.
+  `%USERPROFILE%\.agentspace\ca`, which is not redirected and not inside OneDrive; `ca` still
+  refuses a OneDrive path. Unlike `AppData\Local`, the profile root would roam under a roaming
+  profile; Terry's laptop has none (it is not domain-joined). `~/.ssh` is not used because it
+  holds identities and gets copied around.
 - **Disabling inheritance is load-bearing:** on Terry's laptop, `%USERPROFILE%` passes inherited
   access to SYSTEM and Administrators (checked in E2.09). Until E2.09, `%LOCALAPPDATA%` also passed
   inherited access to `CodexSandboxUsers` and to an AppContainer capability.
