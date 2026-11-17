@@ -41,6 +41,12 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 
 The git authority above belongs to the architect. A dev lead pushes only its own branch.
 
+**A dev lead SHOULD enter a story's worktree (`EnterWorktree`) before it launches that story's
+subagents** (found in T5, 2026-11-17). A worktree guard pins a subagent to its parent session's
+current worktree, so an implementer launched from elsewhere cannot write the story's files and
+has to hand back a patch for the dev lead to apply. With two or more stories in a turn, the dev
+lead enters each story's worktree in turn to launch its subagents.
+
 ### The architect is Terry's proxy
 
 **Terry, 2026-11-17: "you're my proxy".** Dev leads and subagents MUST NOT ask Terry directly.
