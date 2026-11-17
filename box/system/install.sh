@@ -42,29 +42,40 @@ systemctl enable --now agentspace-idle.timer
 systemctl enable agentspace-patch.service
 echo "Installed: idle check (timer $(systemctl is-active agentspace-idle.timer)), patch at boot ($(systemctl is-enabled agentspace-patch.service))"
 
-# Trust the agentspace SSH CA and close root login (decision D7). The new files stay only if
-# sshd -t accepts them; otherwise what was there before is put back, so a later restart or reboot
-# never meets a bad config. Other drop-ins in sshd_config.d are left alone.
+# Trust the agentspace SSH CA and close root login (decision D7), and keep refused logins from
+# locking everyone out (E3.01): one transaction for the CA key and both drop-ins. The new files
+# stay only if sshd -t accepts them; otherwise every file this run changed is put back, so a later
+# restart or reboot never meets a bad config. Other drop-ins in sshd_config.d are left alone.
 ca_pub=/etc/ssh/agentspace_ca.pub
-dropin=/etc/ssh/sshd_config.d/50-agentspace-ca.conf
+ca_dropin=/etc/ssh/sshd_config.d/50-agentspace-ca.conf
+logins_dropin=/etc/ssh/sshd_config.d/51-agentspace-logins.conf
 backup=$(mktemp -d)
 trap 'rm -rf "$backup"' EXIT
-for f in "$ca_pub" "$dropin"; do
+for f in "$ca_pub" "$ca_dropin" "$logins_dropin"; do
   if [ -e "$f" ]; then cp -p "$f" "$backup/"; fi
 done
-install -m 0644 agentspace_ca.pub     "$ca_pub"
-install -m 0644 50-agentspace-ca.conf "$dropin"
+install -m 0644 agentspace_ca.pub          "$ca_pub"
+install -m 0644 50-agentspace-ca.conf      "$ca_dropin"
+install -m 0644 51-agentspace-logins.conf  "$logins_dropin"
 if ! sshd -t; then
-  for f in "$ca_pub" "$dropin"; do
+  for f in "$ca_pub" "$ca_dropin" "$logins_dropin"; do
     if [ -e "$backup/$(basename "$f")" ]; then cp -p "$backup/$(basename "$f")" "$f"; else rm -f "$f"; fi
   done
   echo "install.sh: sshd -t rejected the new SSH config; put the old files back and did not reload ssh.service" >&2
   exit 1
 fi
 systemctl reload ssh.service
-effective=$(sshd -T | grep -Ei '^(trustedusercakeys|permitrootlogin) ' | sort | tr '\n' ' ')
+effective=$(sshd -T | grep -Ei '^(trustedusercakeys|permitrootlogin) ' | sort | tr '
+' ' ')
 if [ "$effective" != "permitrootlogin no trustedusercakeys $ca_pub " ]; then
   echo "install.sh: sshd reports '$effective'; another setting overrides 50-agentspace-ca.conf" >&2
   exit 1
 fi
+effective=$(sshd -T | grep -Ei '^(logingracetime|persourcepenaltyexemptlist) ' | sort | tr '
+' ' ')
+if [ "$effective" != "logingracetime 30 persourcepenaltyexemptlist 127.0.0.1 " ]; then
+  echo "install.sh: sshd reports '$effective'; another setting overrides 51-agentspace-logins.conf" >&2
+  exit 1
+fi
 echo "Installed: SSH trusts the agentspace CA ($(ssh-keygen -l -f "$ca_pub" | cut -d' ' -f2)), root login closed"
+echo "Installed: 127.0.0.1 exempt from sshd penalties, login grace time 30 seconds"
