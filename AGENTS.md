@@ -50,7 +50,9 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 The git authority above belongs to the architect. A dev lead pushes only its own branch.
 
 **Terry, 2026-11-17: the architect is pre-authorized to start the T7 and T8 dev leads** as soon as
-each turn's entry gates are met, meaning every PR of the turn before is merged. The Claude app
+each turn's entry gates are met, meaning every PR of the turn before is merged. **The same day he
+extended it to every v0.2 turn** (v0.2-T2 and v0.2-T3): each starts as soon as its stories' entry
+requirements are met, with its milestone, reporter and watchdog as for T1. The Claude app
 still lets a session start another only on a turn its user began, so where the app refuses, the
 architect puts the dev lead up as a card instead, and Terry starts it with one click.
 
