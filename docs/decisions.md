@@ -575,11 +575,12 @@ isolation (D14); turns run in series (D16).
 | T7 | E1.04, E1.05, E3.02 |
 | T8 | E3.03 |
 
-E2.08, E3.01 and E3.02 each test logins on the one box, so no two of them share a turn. **Until
-E3.01 lands, no story MAY cause more than one refused login on the box within two minutes**
-(`LoginGraceTime`): E2.08 found that a refused login through Session Manager lingers that long,
-and two such refusals can shut every login out, Terry's included (D10's E2.08 finding). E3.01 is
-the exception, and only once its exemption is installed.
+E2.08, E3.01 and E3.02 each test logins on the one box, so no two of them share a turn. Until
+E3.01 landed, no story was allowed more than one refused login within two minutes, since E2.08
+found that two could shut every login out. **E3.01 landed on 2026-11-17 (PR #12), and that limit
+is lifted:** 127.0.0.1 is exempt from sshd's penalties and a refused login is dropped after 30
+seconds (D7's E3.01 finding). Refused logins still MUST NOT be retried in a tight loop: about ten
+within 30 seconds would fill `MaxStartups`.
 
 ### D15. Staffing: one implementer and one reviewer per story, models by blast radius
 
