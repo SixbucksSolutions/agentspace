@@ -297,6 +297,38 @@ login's `sshd-session`, and its daemon ran the session's Claude Code.
 - **VS Code Remote-SSH was not tried:** it is not installed on the laptop and is not a client
   Terry uses.
 
+**Findings from story E2.06 (2026-11-17).** D9 stands. `scripts/lease-alias.ps1` writes and removes
+the alias.
+- **A lease's alias MUST be `agentspace-<project>-<shortid>`**, where the project is lowercase
+  (`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`) and the short ID is the first 8 hex characters of the
+  lowercase UUIDv4 lease ID (D20). A lease ID that is not a UUIDv4 MUST be refused.
+- **Each alias MUST be one file in `~/.ssh/agentspace.d`, named exactly for the alias.** Its first
+  line names the lease ID. An existing file that names another lease (a short-ID collision) MUST
+  be refused, not replaced or removed, and writing identical bytes MUST leave the file untouched.
+- **A path or ProxyCommand with a line break MUST be refused, and a literal `%` MUST be written as
+  `%%`**, since ssh expands `%` tokens in `IdentityFile`, `CertificateFile` and `ProxyCommand`.
+- **The `Include agentspace.d/*` line MUST go on line 1 of `~/.ssh/config`, inserted as bytes** with
+  the file's own line ending (and after its BOM, if it has one). The rest of the file MUST stay
+  byte-identical, and the file is swapped in with `File.Replace` so its ACL stays. A backup beside
+  it, with a verified SHA-256, MUST be made first. A config that does not exist MAY be created with
+  only that line.
+- **An `Include` found below a `Host` or `Match` line MUST be refused, not moved.** Moving it
+  would mean parsing and rewriting Terry's file; a person moves it.
+- **Removing an alias SHOULD leave the `Include` line in place.** It costs nothing while
+  `agentspace.d` is empty, and it keeps removal from ever editing the config.
+- **Temporary files MUST be written outside `agentspace.d`**, since the `Include` glob would read
+  them there.
+- **The default ProxyCommand MUST come from the checkout that has `.instance-id`**, because
+  `ssh-proxy.cmd` reads it from its own checkout; a worktree has none, so there the caller passes
+  `-ProxyCommand`.
+- **`ssh -G` prints each forward's host in brackets** (`remoteforward [127.0.0.1]:8811 ...`), which
+  matters to any check of a lease alias's `RemoteForward` lines.
+- **Checked once against Terry's real `~/.ssh/config` (2026-11-17), backed up and restored byte
+  for byte.** The config became the `Include` line plus the original bytes, with its ACL unchanged.
+  `ssh -G` resolved the alias through the real `Include` with no permission complaint, `ssh -G
+  agentspace` printed the same settings before and after, and an empty `agentspace.d` parsed
+  cleanly. Nothing connected; a login through a written alias is story E2.08's.
+
 ## What the MVP leaves alone
 
 ### D10. Releasing a lease does not revoke its certificate
