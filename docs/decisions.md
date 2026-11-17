@@ -94,7 +94,7 @@ through `TrustedUserCAKeys`.
 **The CA key MUST NOT be committed**, since this repo is public. D17 says where it lives on the
 laptop and how it is locked down; open question Q1 covers where it lives once the API is hosted.
 
-**Findings from story 2.01 (2026-11-16).** D7 stands. A certificate from a throwaway CA, with
+**Findings from story E2.01 (2026-11-16).** D7 stands. A certificate from a throwaway CA, with
 principal `ubuntu` and a 10-minute validity, logged in through `ssh-proxy.cmd` from a stopped box,
 and the `authorized_keys` login kept working beside it. Expired certificates and certificates for
 another principal were refused.
@@ -110,7 +110,7 @@ another principal were refused.
 - **Expiry is checked only at login.** A session that was open when its certificate expired kept
   running. See the finding under D10.
 - **By default a certificate permits a PTY, port, agent and X11 forwarding, and user rc.** Issuing
-  (story 2.05) SHOULD sign with `-O clear -O permit-pty -O permit-port-forwarding`. Port forwarding
+  (story E2.05) SHOULD sign with `-O clear -O permit-pty -O permit-port-forwarding`. Port forwarding
   MUST stay permitted, because the board reaches the box through `RemoteForward` (D12).
 - **An empty passphrase is passed differently by the two PowerShells.** Windows PowerShell 5.1
   drops `-N ''` and needs `-N '""'`; PowerShell 7.3 and later read `-N '""'` as a two-character
@@ -119,7 +119,7 @@ another principal were refused.
   SYSTEM and Administrators) under `%LOCALAPPDATA%`. No `icacls` step was needed for a lease key.
 - **EC2 Instance Connect's `eic_run_authorized_keys` runs for every refused key and fails today**
   (`failed, status 22`), although `sshd -T` reports `authorizedkeyscommand none`. Where it is
-  configured, and whether it is a second way to log in, is a question for story 2.04.
+  configured, and whether it is a second way to log in, is a question for story E2.04.
 
 ### D8. The MVP control plane is a CLI on the laptop
 
@@ -139,11 +139,11 @@ driver that placed it. EC2 uses Session Manager; another backend brings its own 
 
 **In the MVP that path is today's `scripts/ssh-proxy.cmd`**, which starts the box on connect.
 
-**Findings from story 2.01 (2026-11-16).** D9 stands. `ssh-proxy.cmd`, unchanged, served an alias
+**Findings from story E2.01 (2026-11-16).** D9 stands. `ssh-proxy.cmd`, unchanged, served an alias
 of another name under `ssh -F`: it ignores the alias name and reads `.instance-id` from its own
 checkout. From stopped to a certificate login took 29 seconds.
 
-The alias that worked, which story 2.06 builds on (paths shortened):
+The alias that worked, which story E2.06 builds on (paths shortened):
 
 ```
 Host <lease alias>
@@ -192,7 +192,7 @@ MUST NOT set it, because the board reaches the box through `RemoteForward` (D12)
 it expires. TTLs are short, so the exposure is bounded. **Replaced by card #0010**, which pushes a
 revocation list (KRL) to hosts.
 
-**Finding from story 2.01 (2026-11-16):** sshd checks a certificate's validity only at login, so
+**Finding from story E2.01 (2026-11-16):** sshd checks a certificate's validity only at login, so
 neither release nor expiry ends a session that is already open. They stop new connections only.
 
 ### D11. Today's idle stop stays
@@ -226,8 +226,11 @@ stories until Terry says it is time for that epic. Someday ideas stay uncarded i
 [roadmap.md](roadmap.md) until a real need shows up.
 
 **Stories, Terry, 2026-11-16:**
-- **A story's title is `N.nn: title`**, where `N` is its epic's card number and `nn` is a
-  zero-padded, 1-based number unique within the epic, for example `2.01`.
+- **A story's title is `EN.nn: title`**, where `N` is its epic's card number and `nn` is a
+  zero-padded, 1-based number unique within the epic, for example `E2.01`. The `E` is there so a
+  story reads as indexed by its epic (Terry, 2026-11-16), and docs, PRs and conversation MUST cite
+  stories the same way. Branches use the lowercase form, `mvp/e2.06`; E2.02, E2.04 and E2.05 were
+  already under way on `mvp/2.0x` branches when the rule came in, and keep them.
 - **A story MUST be under 3 hours of estimated active work to reach Ready For Review.** One that
   cannot be broken down that far MUST go to Terry for discussion, not onto the board as is.
 - **Stories go in Ready For Work, as children of their epic**, with their estimate and
@@ -237,8 +240,11 @@ stories until Terry says it is time for that epic. Someday ideas stay uncarded i
   turn: each story starts in the first turn its entry gates are met, and the stories in one turn
   MUST be workable in parallel, in isolation from each other.
 
-#0002 was broken down first, into 2.01 to 2.08 (#0018 to #0025), with its two risk-first spikes at
-the front.
+**Epic 2 went first, on purpose, to take the risk out of the MVP.** Every unknown that could
+change the lease contract was in #0002 (certificates through the start-on-connect path, the
+clients' handling of a certificate alias, sshd's trust rules), while #0001 is a CLI that writes
+JSON. #0002 was broken down first, into E2.01 to E2.08 (#0018 to #0025), with its two risk-first
+spikes at the front, and #0001 waits until #0002 has settled what the contract has to carry.
 
 ### D15. Staffing: one implementer and one reviewer per story, models by blast radius
 
@@ -256,14 +262,14 @@ latest.
 
 | Turn | Story | Implementer | Reviewer |
 |---|---|---|---|
-| T1 | 2.01 Spike: cert login | Opus/high | Sonnet/medium |
-| T1 | 2.03 CA key | Opus/high | Fable/high |
-| T2 | 2.02 Spike: clients | Sonnet/medium | Sonnet/medium |
-| T2 | 2.04 Box trusts the CA | Opus/high | Fable/high |
-| T2 | 2.05 Issue key and certificate | Sonnet/medium | Opus/high |
-| T3 | 2.06 Host aliases | Sonnet/medium | Opus/high |
-| T4 | 2.07 Renew and release | Sonnet/medium | Sonnet/medium |
-| T5 | 2.08 Prove on the box | Opus/medium | Opus/high |
+| T1 | E2.01 Spike: cert login | Opus/high | Sonnet/medium |
+| T1 | E2.03 CA key | Opus/high | Fable/high |
+| T2 | E2.02 Spike: clients | Sonnet/medium | Sonnet/medium |
+| T2 | E2.04 Box trusts the CA | Opus/high | Fable/high |
+| T2 | E2.05 Issue key and certificate | Sonnet/medium | Opus/high |
+| T3 | E2.06 Host aliases | Sonnet/medium | Opus/high |
+| T4 | E2.07 Renew and release | Sonnet/medium | Sonnet/medium |
+| T5 | E2.08 Prove on the box | Opus/medium | Opus/high |
 
 ### D16. Roles: architect, dev lead per turn, subagents per story
 
@@ -275,7 +281,7 @@ latest.
 - **A dev lead** is a separate Opus/high session per turn, named for it (for example
   "agentspace MVP T1"). It spins up the subagents that D15 names for every story in the turn and
   reviews each story's work itself. It then opens **one pull request per story** (Terry,
-  2026-11-16), from a branch of its own named for the story (`mvp/2.01`). A dev lead MUST NOT
+  2026-11-16), from a branch of its own named for the story (`mvp/e2.06`). A dev lead MUST NOT
   merge its own pull request.
 - **Subagents** implement or review one story. They MUST NOT move cards or open pull requests.
 - **Cards:**
@@ -300,7 +306,7 @@ PowerShell 5.1 script, because `ssh-proxy.cmd` runs it as a ProxyCommand.
 - The MVP's callers are all on the laptop (D8), and the laptop's tooling here is PowerShell.
 - Go would bring a build step, and its cross-platform advantage matters only once leases are
   requested from somewhere other than the laptop, which is #0011's hosted API, not the MVP.
-- PowerShell 7 drops the 5.1 quirks that cost stories 2.01 and 2.03 effort: the empty-argument
+- PowerShell 7 drops the 5.1 quirks that cost stories E2.01 and E2.03 effort: the empty-argument
   problem and stderr turning into terminating errors.
 
 **How the two scripts meet:** lease code that needs the CA checked MUST run `agentspace.ps1 ca`,
@@ -326,7 +332,7 @@ prototyping happy paths."
 
 ### D17. The CA key lives in %LOCALAPPDATA%, owner-only and without a passphrase
 
-**MVP only, 2026-11-16 (story 2.03).** **Replaced by card #0011**, which settles Q1 when the API
+**MVP only, 2026-11-16 (story E2.03).** **Replaced by card #0011**, which settles Q1 when the API
 is hosted and signing leaves the laptop.
 
 - **The CA's private key MUST live at `%LOCALAPPDATA%\agentspace\ca\agentspace_ca`**, with its

@@ -35,7 +35,7 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
   it, and deletes the branch.
 - **A dev lead** is one Opus/high session per turn. It runs the implementer and reviewer
   subagents that D15 names for each story, reviews each story itself, and opens **one pull
-  request per story** to `main`, from a branch named for the story (`mvp/2.01`). A dev lead MUST
+  request per story** to `main`, from a branch named for the story (`mvp/e2.06`). A dev lead MUST
   NOT merge its own pull request.
 - **Subagents** MUST NOT move cards or open pull requests.
 
@@ -58,7 +58,7 @@ machine and Terry can read.
 Docs cite its cards as `#0001`.
 
 - **Lanes, per Terry (2026-11-16):** MVP epics go in Ready For Work, and post-MVP work goes in
-  Backlog. An epic MUST NOT be broken into stories until Terry says so. Stories are titled `N.nn:
+  Backlog. An epic MUST NOT be broken into stories until Terry says so. Stories are titled `EN.nn:
   title`, are children of their epic, and MUST each be under 3 hours of active work to reach Ready
   For Review; one that cannot be goes to Terry first. An epic is In Progress from the moment its
   stories are laid out until its last story reaches Ready For Review, and its description carries

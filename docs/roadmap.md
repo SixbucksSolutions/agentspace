@@ -34,6 +34,9 @@ that can safely wait, waits (Terry: "aggressively lean").
 | Per-lease SSH certificates and host aliases | #0002 |
 | A real project runs its agents on a lease | #0003 |
 
+**Epic 2 runs first, on purpose:** every unknown that could change the contract lives in it, while
+Epic 1 is a CLI that writes JSON. Its stories are E2.01 to E2.08 (decision D14).
+
 **The contract sketch.** Epic #0001 MUST pin it down in `docs/lease-api.md`; this is the starting
 point, not the spec.
 
