@@ -767,7 +767,20 @@ which was backed up first and restored byte for byte afterwards (same SHA-256).
   E2.07 findings say.
 - **No token push was due**, so card #0026's hang was not met.
 
-<!-- E3.03 RELEASE: dev lead fills in -->
+**Findings from story E3.03 (2026-11-17).** D10 stands. The swimcoach lease was released from the
+main checkout with `bin\agentspace.cmd lease release a62cb513-...`, which exited 0 at 22:24:45
+with state `released` and `released_at` 2026-11-17T22:24:45Z.
+- **Release removed the lease's alias file and key folder, and left `~/.ssh/config` alone.**
+  Afterwards `~/.ssh/agentspace.d` was empty, `%USERPROFILE%\.agentspace\leases\<id>` was gone,
+  the config's SHA-256 was the same as before the release, and its line 1 was still `Include
+  agentspace.d/*`. The `Include` stays on purpose (E2.06): it is how the next lease's alias is
+  found.
+- **`ssh agentspace` worked afterwards** (exit 0 at 22:24:58), through Terry's own entry.
+- **Release ended nothing that was open.** At 22:25:56 the box still had the desktop app's
+  22:12:49 connection (`server --serve`) and the holder's `sshd-session`, both opened under the
+  lease's certificate; the app's 22:12:42 connection had closed by then, for a reason not
+  established. The holder still held the forwards at 22:24:58. No `ccd-cli` was running on the box at release, so no agent turn was
+  cut off. An open session is ended by closing it, never by release.
 
 ### D11. Today's idle stop stays
 
@@ -818,7 +831,23 @@ only while some other connection holds it.
 - **The holder is a workaround, not the fix.** Card #0042 (Backlog, not an MVP blocker),
   "Desktop-app sessions get no board: the app clears a lease alias's RemoteForward", tracks it.
 
-<!-- E3.03 BOARD RUN: dev lead fills in -->
+- **A swimcoach agent worked a card on the board from a desktop-app session on the lease.** Terry
+  opened a session on `agentspace-swimcoach-a62cb513` in `/home/ubuntu/swimcoach` and gave it a
+  throwaway prompt. Through `scripts/localswim.sh` the agent listed the swimcoach board's 7 lanes,
+  created swimcoach card #0057, "agentspace E3.03 lease check (throwaway)", in Backlog at 22:22:05,
+  commented on it at 22:22:09 with the box's hostname and the time, and archived it at 22:22:13.
+  The swimcoach board's activity log shows the three changes as `bot`, and the card reads back
+  archived with one comment. The board reached the box through the holder's forwards: no other
+  connection held them.
+- **Opening a session made no new login.** sshd logged no certificate login after the app's two at
+  22:12:42 and 22:12:49, and the app's `server --bridge` and `server --serve` stayed the same
+  processes, so the session ran over the connections Test connection had opened. Every other
+  login in that window was a check by the dev lead or the architect, with Terry's key.
+- **Killing the holder on the laptop did not free the forwards on the box.** The holder's
+  `ssh.exe` was stopped at 22:24:59, after release, and no proxy process was left on the laptop,
+  but its `sshd-session` on the box still held 127.0.0.1:8811 and :53147 at 22:25:19. This is
+  the E2.08 mechanism (D10): the Session Manager tunnel does not pass the close on to sshd.
+  <!-- E3.03 STALE FORWARD: dev lead fills in how long it lasted -->
 
 ## Defaults
 
