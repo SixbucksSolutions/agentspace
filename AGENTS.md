@@ -45,8 +45,10 @@ machine and Terry can read.
 Docs cite its cards as `#0001`.
 
 - **Lanes, per Terry (2026-11-16):** MVP epics go in Ready For Work, and post-MVP work goes in
-  Backlog. Epics MUST NOT be broken into stories until Terry says so (decision D14). Only Terry
-  moves a card to Completed.
+  Backlog. An epic MUST NOT be broken into stories until Terry says so. Stories are titled `N.nn:
+  title`, are children of their epic, and MUST each be under 3 hours of active work to reach Ready
+  For Review; one that cannot be goes to Terry first (decision D14). Only Terry moves a card to
+  Completed.
 - **A session SHOULD arm Terry's board watcher at its start**, as his global instructions
   describe: `C:\Projects\claude-localswim-watcher\watch.ps1 -Board agentspace -Reader agentspace`
   under the Monitor tool. The board is already in the watcher's `config.json`.

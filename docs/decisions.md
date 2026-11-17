@@ -146,8 +146,19 @@ fallback.
 ### D14. Roadmap horizons, epics before stories
 
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
-MVP epics go in Ready For Work, and post-MVP work goes in Backlog. Epics MUST NOT be broken into
-stories until Terry says it is time. Someday ideas stay uncarded in
+MVP epics go in Ready For Work, and post-MVP work goes in Backlog. An epic MUST NOT be broken into
+stories until Terry says it is time for that epic.
+
+**Stories, Terry, 2026-11-16:**
+- **A story's title is `N.nn: title`**, where `N` is its epic's card number and `nn` is a
+  zero-padded, 1-based number unique within the epic, for example `2.01`.
+- **A story MUST be under 3 hours of estimated active work to reach Ready For Review.** One that
+  cannot be broken down that far MUST go to Terry for discussion, not onto the board as is.
+- **Stories go in Ready For Work, as children of their epic**, with their estimate and
+  dependencies in the description.
+
+#0002 was broken down first, into 2.01 to 2.08 (#0018 to #0025), with its two risk-first spikes at
+the front. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
 
 ## Open questions
