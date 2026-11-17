@@ -7,8 +7,8 @@
   up      Starts the instance if needed, waits until it has finished patching, and sends
           the localswim Bot token if it changed.
   sync    Checks the agentspace SSH CA, then installs box/system (idle check, patch at boot,
-          localswim wrapper, the sshd drop-ins that trust the CA, close root login and exempt 127.0.0.1 from
-          login penalties) on the
+          localswim wrapper, the sshd drop-ins that trust the CA, close root login, exempt
+          127.0.0.1 from login penalties and shorten the login grace time) on the
           instance with the CA's public key, copies ~/.claude/CLAUDE.md there, builds and
           installs the localswim CLI, and sends the current localswim Bot token.
   down    Stops the instance.

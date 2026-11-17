@@ -65,14 +65,12 @@ if ! sshd -t; then
   exit 1
 fi
 systemctl reload ssh.service
-effective=$(sshd -T | grep -Ei '^(trustedusercakeys|permitrootlogin) ' | sort | tr '
-' ' ')
+effective=$(sshd -T | grep -Ei '^(trustedusercakeys|permitrootlogin) ' | sort | tr '\n' ' ')
 if [ "$effective" != "permitrootlogin no trustedusercakeys $ca_pub " ]; then
   echo "install.sh: sshd reports '$effective'; another setting overrides 50-agentspace-ca.conf" >&2
   exit 1
 fi
-effective=$(sshd -T | grep -Ei '^(logingracetime|persourcepenaltyexemptlist) ' | sort | tr '
-' ' ')
+effective=$(sshd -T | grep -Ei '^(logingracetime|persourcepenaltyexemptlist) ' | sort | tr '\n' ' ')
 if [ "$effective" != "logingracetime 30 persourcepenaltyexemptlist 127.0.0.1 " ]; then
   echo "install.sh: sshd reports '$effective'; another setting overrides 51-agentspace-logins.conf" >&2
   exit 1

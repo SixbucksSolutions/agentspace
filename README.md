@@ -75,7 +75,8 @@ powershell -File scripts\agentspace.ps1 ca
     leaves sshd running as it was, and fails. It leaves every other drop-in alone.
   - The sshd drop-in `/etc/ssh/sshd_config.d/51-agentspace-logins.conf`, from
     `box/system/51-agentspace-logins.conf`: `PerSourcePenaltyExemptList 127.0.0.1`, so refused
-    logins, which all arrive from 127.0.0.1 through Session Manager, never lock every login out,
+    logins, which all arrive from 127.0.0.1 through Session Manager, no longer earn a penalty
+    that locks every login out,
     and `LoginGraceTime 30`, so a refused login's connection is dropped after 30 seconds rather
     than 120 (D7, E3.01 finding). It shares the CA drop-in's `sshd -t` gate and rollback.
 
