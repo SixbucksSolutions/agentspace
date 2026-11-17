@@ -736,9 +736,9 @@ settles Q5's TTL half.** The contract is [lease-api.md](lease-api.md), "TTL".
   the roadmap's sketch. A lease that is forgotten loses its credential the same day.
 - **24 hours at most, because neither release nor renew revokes (D10).** The maximum, and not a
   lease's `expires_at`, is the longest that any one leaked, released but copied, or renewed-over
-  certificate can open a new connection. A day covers an
-  overnight unattended run with no renew loop; anything longer renews, which E2.07 made cheap: it
-  signs a certificate on the laptop and touches no host.
+  certificate can open a new connection. A day covers an overnight unattended run with no renew
+  loop; anything longer renews, which E2.07 made cheap: it signs a certificate on the laptop and
+  touches no host.
 - **No cap on renewals,** because the exposure argument is about one certificate: a leaked
   certificate expires within the maximum however often its lease was renewed, and whoever holds
   the leaked copy cannot renew it, since renewing needs the CA key (D17).
