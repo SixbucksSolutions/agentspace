@@ -725,15 +725,18 @@ settles Q5's TTL half.** The contract is [lease-api.md](lease-api.md), "TTL".
 - **A TTL MUST be at least 1 minute and at most 24 hours, both inclusive.** A TTL outside that
   range MUST be refused with `out_of_range` (exit 2), and MUST NOT be clamped to the nearest limit.
 - **Each certificate is valid from its issue time for the TTL.** `renew` issues a new one from the
-  time of the call, so it MAY shorten a lease as well as extend it.
+  time of the call, so it MAY shorten a lease as well as extend it. Neither `renew` nor `release`
+  revokes the previous certificate (D10), which stays valid until its own expiry, so after a
+  shortening `renew` it outlives the lease's `expires_at`.
 - **A lease MAY be renewed any number of times.** There is no cap on a lease's total life; the
   maximum bounds each certificate, not the lease.
 
 **Why:**
 - **8 hours by default** is an agent's working session, a day of turns, and is the `--ttl 8h` of
   the roadmap's sketch. A lease that is forgotten loses its credential the same day.
-- **24 hours at most, because release does not revoke (D10).** The maximum is the longest a
-  leaked, or released but copied, certificate can open a new connection. A day covers an
+- **24 hours at most, because neither release nor renew revokes (D10).** The maximum, and not a
+  lease's `expires_at`, is the longest that any one leaked, released but copied, or renewed-over
+  certificate can open a new connection. A day covers an
   overnight unattended run with no renew loop; anything longer renews, which E2.07 made cheap: it
   signs a certificate on the laptop and touches no host.
 - **No cap on renewals,** because the exposure argument is about one certificate: a leaked

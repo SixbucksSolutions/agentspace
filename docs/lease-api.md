@@ -49,6 +49,9 @@ serves it, and a reason or message that would need such a name MUST be written w
 - **Every time in output MUST be UTC, to the whole second, written `YYYY-MM-DDTHH:MM:SSZ`**, for
   example `2026-11-17T18:04:05Z`. No other form is emitted: no fraction, no offset, no lowercase
   `t` or `z`.
+- **A time is truncated to the whole second, never rounded.** A certificate's validity is
+  therefore issued from a whole second, so that `expires_at` MUST equal the current certificate's
+  valid-before time exactly.
 - **"Now" is the clock of the machine that answers the command.** In v0 that is the caller's
   machine.
 
@@ -80,6 +83,9 @@ covers form only:
 - **`-h` and `--help` print the help of the level they appear at and exit 0, wherever they appear
   on the line.** Nothing else on the line is checked or done; `agentspace lease create --help
   --ttl 99d` prints help and creates nothing.
+- **This holds in a flag's value position too:** `create --ttl --help` prints `create`'s help. After
+  an unknown command or subcommand there is no level to print, so `agentspace lease frob --help` is
+  a usage error (exit 2).
 - **`agentspace` with no command, and `agentspace lease` with no subcommand, are usage errors**
   (exit 2), so that a script never mistakes help text for JSON.
 
@@ -106,9 +112,9 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 | `platform` | String, [platform](#platform) | Always | The platform asked for, normalized. |
 | `profile` | String, [profile](#profile) | Always | The software profile asked for, normalized. |
 | `size` | String, [size](#size) | Always | The size asked for, normalized. |
-| `ttl_seconds` | Integer, 60 to 86400 | Always | The TTL of the current credential, or of the one asked for if none was issued. |
+| `ttl_seconds` | Integer, 60 to 86400 | Always | The TTL of the current certificate, or of the one asked for if none was issued. |
 | `created_at` | String, [time](#times) | Always | When `create` recorded the lease. |
-| `expires_at` | String, [time](#times) | `ready` and `expired`; `released` if it was ever ready | When the current credential stops being accepted for new connections. |
+| `expires_at` | String, [time](#times) | `ready` and `expired`; `released` if it was ever ready | When the current certificate stops being accepted for new connections. An older certificate MAY outlive it; see [What expiry and release do not do](#states). |
 | `released_at` | String, [time](#times) | `released` only | When `release` released the lease. |
 | `ssh` | Object | `ready` only | How to connect; see below. |
 | `ssh.host_alias` | String | Inside `ssh` | The name to give `ssh`: `ssh <host_alias>`. |
@@ -120,6 +126,8 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 **`ssh.host_alias` is `agentspace-<project>-<first 8 hex digits of id>`**, for example
 `agentspace-swimcoach-3f2a9c1e`. A caller MUST treat it as an opaque name to pass to `ssh` or to any
 client that reads the OpenSSH client configuration, and MUST NOT build it from the ID itself.
+**No two kept leases MAY share a host alias:** `create` MUST choose an ID whose alias no kept lease
+uses, and MUST generate a new ID when the first one's alias is taken.
 
 **`ssh.user` is the user the lease logs in as.** In v0 every project's leases log in as `ubuntu`
 (D3). A caller MUST read it from the lease and MUST NOT assume it, because per-project users will
@@ -180,8 +188,10 @@ runs at or after its `expires_at`. Nothing has to run at that moment: `get`, `li
 **What expiry and release do not do:**
 - **A connection that is already open MUST NOT be closed by expiry or release.** The expiry is
   checked only when a connection is made, so both stop new connections only.
-- **`release` does not revoke the credential.** It deletes the caller's copy, and a copy that
-  leaked stays usable until `expires_at` (D10). That is why the TTL has a maximum (D24).
+- **Neither `release` nor `renew` revokes a certificate (D10).** `release` deletes the caller's
+  copy, and `renew` replaces it. A copy of any certificate that leaked stays valid until its own
+  expiry. That is `expires_at` for the current certificate, and for an older one it MAY be later
+  than `expires_at`, when a `renew` shortened the lease. That is why the TTL has a maximum (D24).
 
 **How long a lease is kept:** a `released`, `expired` or `unsatisfiable` lease MUST stay readable
 by `get` and `list` for at least 24 hours after it reached that state. After that it MAY be
@@ -288,14 +298,15 @@ never a clock time.
   - A sign, a negative number, a unit given twice, units out of order, or anything else.
 - **Refused as `out_of_range`:** a well-formed TTL below 60 seconds or above 86400 seconds,
   including zero. The limits are checked after normalization, so `1440m` and `P1D` are both
-  allowed and `24h1s` is not.
+  allowed and `24h1s` is not. A well-formed TTL too large to compute, such as
+  `99999999999999999999h`, is also `out_of_range`, and MUST NOT be `internal`.
 
 ### State filter
 
 **Used by `list --state`.**
 - **Accepted:** one of the five [state names](#states), in any case, with surrounding whitespace.
   On the command line, `--state` MAY be repeated and each value MAY be a comma-separated list, as in
-  `--state ready,pending`. In a JSON request, `state` is one state name or an array of them.
+  `--state ready,pending`. In a request document, `state` is one state name or an array of them.
 - **Normalized to:** the set of lowercase state names, with duplicates dropped.
 
 ## Commands
@@ -311,7 +322,9 @@ agentspace [--help]
 agentspace <command> ...
 ```
 
-**The top level.** In v0 it has one command, `lease`.
+**The top level.** In this contract it has one command, `lease`. Other top-level commands MAY
+exist for the operator. They are outside this contract and are not listed in its help, and a
+caller MUST NOT use them.
 
 | Flag | Meaning |
 |---|---|
@@ -359,7 +372,7 @@ A ready lease carries an SSH host alias, the user it logs in as, and an expiry.
 Subcommands:
   create   Request a lease for a project
   get      Show one lease
-  renew    Issue a ready lease a new credential with a new expiry
+  renew    Issue a ready lease a new certificate with a new expiry
   release  Give a lease back and delete its local credential and alias
   list     Show leases, optionally filtered by project and state
 
@@ -412,8 +425,9 @@ them cannot be met, the lease is `unsatisfiable`, whatever the others are.
 | `--ttl <duration>` | [TTL](#ttl) | `8h` | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document:** [`lease-create.input.schema.json`](../schemas/lease-create.input.schema.json),
-with members `project`, `platform`, `profile`, `size` and `ttl`.
+**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+[`lease-create.input.schema.json`](../schemas/lease-create.input.schema.json), with members
+`project`, `platform`, `profile`, `size` and `ttl`.
 
 **Output:** the lease document. **Exit codes:** 0, 1 and 2.
 
@@ -457,8 +471,8 @@ passed is printed as `expired`.
 | `<id>` | [Lease ID](#lease-id) | Required. |
 | `-h`, `--help` | | Print the help below and exit 0. |
 
-**Request document:** [`lease-get.input.schema.json`](../schemas/lease-get.input.schema.json), with
-the member `id`.
+**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+[`lease-get.input.schema.json`](../schemas/lease-get.input.schema.json), with the member `id`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2 and 3.
 
@@ -486,13 +500,15 @@ agentspace lease renew <id> [--ttl <duration>]
 ```
 
 **Issues a `ready` lease a new certificate, valid from now for the TTL, and prints the lease.**
-- **`expires_at` becomes now plus the TTL**, whether that is later or earlier than before. The
-  previous certificate is not revoked, and stays valid until its own expiry (D10).
+- **`expires_at` becomes now plus the TTL**, whether that is later or earlier than before.
+- **The previous certificate is not revoked (D10), and stays valid until its own expiry.** When
+  `renew` shortens a lease, that expiry is later than the new `expires_at`, so a leaked copy of the
+  previous certificate outlives it.
 - **`ttl_seconds` becomes the TTL used.** Without `--ttl`, the lease's current `ttl_seconds` is
   used again.
 - **The key, the alias, the user and the ID do not change**, so clients that saved the alias need
   nothing new.
-- **Renewing is idempotent:** renewing twice leaves the same lease, with the second call's expiry.
+- **A retry is safe:** each call sets a new expiry from its own time, and changes nothing else.
 - **There is no limit on how many times a lease is renewed.** Each certificate is limited by the
   maximum TTL, and that is what bounds a leaked one (D24).
 
@@ -510,8 +526,9 @@ nothing:
 | `--ttl <duration>` | [TTL](#ttl) | The lease's `ttl_seconds` | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document:** [`lease-renew.input.schema.json`](../schemas/lease-renew.input.schema.json),
-with members `id` and `ttl`.
+**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+[`lease-renew.input.schema.json`](../schemas/lease-renew.input.schema.json), with members `id` and
+`ttl`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2, 3 and 4.
 
@@ -521,7 +538,9 @@ with members `id` and `ttl`.
 Usage: agentspace lease renew <id> [--ttl <duration>]
 
 Issues a ready lease a new certificate, valid from now for the TTL, and prints the lease.
-The key, host alias and user stay the same. The old certificate is not revoked.
+The key, host alias and user stay the same.
+The old certificate is not revoked. It stays valid until its own expiry.
+If this renew shortens the lease, that expiry is later than the new one.
 Only a ready lease can be renewed. An expired lease cannot: create a new one.
 
 Arguments:
@@ -554,17 +573,21 @@ agentspace lease release <id>
 
 - **Release is idempotent:** releasing a lease again succeeds and changes nothing, so a caller MAY
   retry it freely.
-- **Release does not revoke the certificate (D10).** A copy that leaked works until `expires_at`,
-  which a released lease still shows when it had one. Connections already open are not closed.
+- **Release does not revoke any certificate (D10).** A leaked copy of the current certificate works
+  until `expires_at`, which a released lease still shows when it had one. A leaked copy of an older
+  certificate works until its own expiry, which MAY be later if a `renew` shortened the lease.
+  Connections already open are not closed.
 - **An ID that names no lease is `not_found` (exit 3)**, not a success: there is no lease document
   to print, and success would hide a mistyped ID.
+- **A caller retrying `release` MAY treat exit 3 as nothing left to release.** A lease is kept for at
+  least 24 hours after it is released, so a real retry finds it and stays idempotent.
 
 | Argument or flag | Type | Notes |
 |---|---|---|
 | `<id>` | [Lease ID](#lease-id) | Required. |
 | `-h`, `--help` | | Print the help below and exit 0. |
 
-**Request document:**
+**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
 [`lease-release.input.schema.json`](../schemas/lease-release.input.schema.json), with the member
 `id`.
 
@@ -577,7 +600,8 @@ Usage: agentspace lease release <id>
 
 Gives a lease back, and prints it as JSON.
 Deletes the lease's local key, certificate and host alias.
-The certificate is not revoked: it stays valid until the lease's expiry.
+No certificate is revoked. Each stays valid until its own expiry.
+An older certificate's expiry is later than the lease's if a renew shortened it.
 Connections already open are not closed.
 Releasing a released or unsatisfiable lease changes nothing and exits 0.
 
@@ -610,8 +634,9 @@ agentspace lease list [--project <name>] [--state <state>[,<state>...]]...
 | `--state <state>` | [State filter](#state-filter) | Every state | MAY be repeated, and MAY be a comma-separated list. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document:** [`lease-list.input.schema.json`](../schemas/lease-list.input.schema.json),
-with members `project` and `state`.
+**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+[`lease-list.input.schema.json`](../schemas/lease-list.input.schema.json), with members `project`
+and `state`.
 
 **Output:** a list document, [`lease-list.output.schema.json`](../schemas/lease-list.output.schema.json):
 
@@ -651,6 +676,16 @@ Options:
 **No other exit code MAY be used.** Each non-zero exit code MUST come with one of the error codes
 beside it, and every failure that fits none of the others is `internal`.
 
+**When several errors apply, the first in this order MUST be reported, and only that one:**
+1. **`usage`**, for anything wrong with the command line itself.
+2. **`invalid_value` or `out_of_range`**, for the first bad value in the order of the command's
+   argument and flag table, so `field` names the first bad one.
+3. **`not_found`**, from looking the lease up.
+4. **`invalid_state`**, from the lease's state.
+
+So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2), and
+`renew <unknown id> --ttl 8` is `invalid_value` for `ttl`.
+
 **The error document** goes to stderr, compact, on one line. Its schema is
 [`error.output.schema.json`](../schemas/error.output.schema.json).
 
@@ -666,6 +701,10 @@ beside it, and every failure that fits none of the others is `internal`.
 message SHOULD quote the value that was refused, and SHOULD say how to fix it, as in `TTL '8' has
 no unit. Give one, as in '8h'.`
 
+**A message MUST NOT contain a control character** (U+0000 to U+001F, or U+007F), and the schema
+refuses one. A quoted value that contains one MUST have each written as `\u` and four hex digits,
+as in `\u000a`, or MUST be left out of the message.
+
 ## Schemas
 
 **Every JSON document in this contract has a schema under [`schemas/`](../schemas), in JSON Schema
@@ -676,24 +715,29 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 | `lease.output.schema.json` | One lease | Output of `create`, `get`, `renew`, `release` |
 | `lease-list.output.schema.json` | A list of leases | Output of `list` |
 | `error.output.schema.json` | One error | Stderr of every command that fails |
-| `lease-create.input.schema.json` | A `create` request | Input of `create` |
-| `lease-get.input.schema.json` | A `get` request | Input of `get` |
-| `lease-renew.input.schema.json` | A `renew` request | Input of `renew` |
-| `lease-release.input.schema.json` | A `release` request | Input of `release` |
-| `lease-list.input.schema.json` | A `list` request | Input of `list` |
+| `lease-create.input.schema.json` | A `create` request | The flags of `create` |
+| `lease-get.input.schema.json` | A `get` request | The argument of `get` |
+| `lease-renew.input.schema.json` | A `renew` request | The argument and flag of `renew` |
+| `lease-release.input.schema.json` | A `release` request | The argument of `release` |
+| `lease-list.input.schema.json` | A `list` request | The flags of `list` |
 
 - **Output schemas are strict:** `additionalProperties` is false everywhere, every field that is
   always present is required, each state requires and forbids its own fields, and IDs and times
   have patterns. `format` is given as well, but only as an annotation, since validators need not
   enforce it.
+- **Every anchored output pattern ends with `$(?!\n)`, not a bare `$`.** In .NET's regular
+  expressions, which `Test-Json` uses, `$` also matches before a final line feed, so a bare `$`
+  would accept `"swimcoach\n"`. `(?!\n)` means the same in ECMA-262 and .NET, and costs nothing
+  where `$` is already strict.
 - **Input schemas are tolerant in form and strict in meaning.** They accept the spellings in
   [Values](#values), allow `null` for an optional member to mean "not given", and refuse unknown
   members, because an unknown member is most likely a misspelled one whose value would otherwise
   be dropped. A range (the TTL limits) cannot be checked by a pattern, so passing the schema does
   not make a TTL acceptable.
-- **An input document is what a request carries.** On the command line its members are the flags
-  and arguments of the same names, and a hosted API (card #0011) MUST accept the same documents as
-  JSON. In JSON, insignificant whitespace is allowed anywhere.
+- **The v0 CLI takes flags and arguments only, and never reads a JSON request.** An input
+  document defines a request: its members are the flags and arguments of the same names, it is
+  what a request is validated against, and a hosted API (card #0011) MUST accept it as JSON. In
+  JSON, insignificant whitespace is allowed anywhere.
 - **Each schema is self-contained**, with shared parts copied into its own `$defs`, because
   PowerShell's `Test-Json -SchemaFile` does not resolve a `$ref` to another file. The lease
   definition in the list schema's `$defs` MUST stay identical to the lease schema, which
