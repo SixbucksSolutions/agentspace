@@ -382,9 +382,16 @@ prototyping happy paths."
   - An HTTP API gets an OpenAPI spec.
   - A CLI gets an awscli-style reference: every command layer, every flag, every output field and
     every exit code, with help at each level that says the same thing as the reference.
-- **The handoff is built before the rewrite starts**, as its own work (card #0030). Until then,
-  every MVP interface SHOULD be built so that it can be specified this way: `agentspace lease`
-  SHOULD have `--help` at every level, and its JSON SHOULD be stable enough to write a schema for.
+- **Every JSON input and output MUST have a JSON Schema** (draft 2020-12), kept in the repo under
+  `schemas/`, one file per document. The schema MUST be strict: `required` for every field that is
+  always present, `additionalProperties: false`, and formats or patterns for IDs and times.
+  Terry: "Strong formal specs matter", which JSON had long lacked next to XML's XSD.
+- **A schema is checked against the real output, not just written.** A CLI's scripted checks MUST
+  validate what it prints against its schema. On the laptop that is PowerShell 7's `Test-Json
+  -SchemaFile`, which handles draft 2020-12 (checked on 7.6, 2026-11-16).
+- **The handoff is built before the rewrite starts**, as its own work (card #0030). In the MVP,
+  `agentspace lease` gets its JSON schemas with epic #0001, since they cost little while the
+  contract is being written. It SHOULD also have `--help` at every level.
 
 ## Keys
 
