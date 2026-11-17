@@ -885,7 +885,7 @@ in card #0013), not a fallback.
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
 **Its horizons were replaced by D26 (2026-11-17):** releases v0.2 to v1.0, one epic each, then
 After 1.0 and Someday. The rules on epics and stories below stand, except that a release's
-stories are named `X.Y.nn` (D29).
+stories are named `X.Y.Tm.n` (D29).
 MVP epics go in Ready For Work, and post-MVP work goes in Backlog. An epic MUST NOT be broken into
 stories until Terry says it is time for that epic. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
@@ -1314,14 +1314,26 @@ required.
 - **v0.2 and v0.3 go first** because they are small, mostly on the box, and fix what blocks real
   use today.
 
-### D29. A release's stories are `X.Y.nn`, its turns `vX.Y-Tn`
+### D29. A release's stories are `X.Y.Tm.n`, named for their turn
 
-**Decided, Terry, 2026-11-17:** a release epic's stories are titled `X.Y.nn: title`, where `X.Y` is
-the release and `nn` is the story's 1-based number within it, zero-padded to two digits, as in
-`0.2.01: sshd drops a dead client's session`. **This replaces D14's `EN.nn` for release epics.**
-MVP stories keep their `EN.nn` names.
-- **Docs, pull requests and conversation MUST cite a release story the same way:** `0.2.01`.
-- **Its branch is `vX.Y/X.Y.nn`**, as in `v0.2/0.2.01`.
+**Decided, Terry, 2026-11-17:** a release epic's stories are titled `X.Y.Tm.n: title`:
+- **`X.Y`** is the release.
+- **`m`** is the earliest turn in which the story's entry requirements are met.
+- **`n`** numbers the stories within turn `m`. It is namespaced per turn, so it MUST restart at 1
+  in every turn: `0.2.T1.1`, `0.2.T1.2`, then `0.2.T2.1` (Terry, 2026-11-17).
+
+For example, `0.2.T1.1: sshd drops a dead client's session` and `0.2.T2.1: The token push rides
+the lease's own connection`, which needs 0.2.T1.1 merged first. **This replaces D14's `EN.nn` for
+release epics.** MVP stories keep their `EN.nn` names.
+- **The name is the execution plan.** A story's turn is read from its name, so laying out the turns
+  and naming the stories are one step. A story whose entry requirements change MUST be renamed
+  with them.
+- **Terry first asked for `X.Y.nn`, and moved to `X.Y.Tm.n` the same day,** once the stories had
+  dependencies. v0.2's stories were renamed before any work started: 0.2.01 became 0.2.T1.1,
+  0.2.03 became 0.2.T1.2, 0.2.02 became 0.2.T2.1, 0.2.04 became 0.2.T2.2, and 0.2.05 became
+  0.2.T3.1.
+- **Docs, pull requests and conversation MUST cite a release story the same way:** `0.2.T1.1`.
+- **Its branch is the name in lowercase, under `vX.Y/`**, as in `v0.2/0.2.t1.1`.
 - **A release's turns are `vX.Y-T1`, `vX.Y-T2` and so on**, so they never collide with the MVP's
   T1 to T8. Each turn is a swimcoach milestone of that name, and the release itself is one more,
   `vX.Y`, which counts all of its stories and never the epic.
@@ -1334,7 +1346,7 @@ a release is always his click. The architect MUST NOT grant Bot that move on its
 
 ### D30. A keeper on the laptop holds the board's forwards
 
-**Direction, architect, 2026-11-17; built in v0.2 by 0.2.03 and 0.2.04, shown in 0.2.05.**
+**Direction, architect, 2026-11-17; built in v0.2 by 0.2.T1.2 and 0.2.T2.2, shown in 0.2.T3.1.**
 Replaces D12's hand-run holder (card #0042).
 - **A keeper on the laptop holds the board's forwards for as long as a lease is ready.** Each pass
   reads lease state read-only. With no holder running and a lease ready, it starts one, `ssh.exe
@@ -1347,9 +1359,9 @@ Replaces D12's hand-run holder (card #0042).
 - **One holder per host.** Only one connection on a host can bind the forwards (D12). Every lease
   is on one box until v0.7, which makes it one per project host.
 - **It retries a holder that fails with backoff, never in a tight loop** (D14). A dead session
-  keeps the ports until 0.2.01's `ClientAliveInterval` bound drops it.
+  keeps the ports until 0.2.T1.1's `ClientAliveInterval` bound drops it.
 - **It runs as a logon scheduled task for Terry's user.** That is persistent configuration on his
-  laptop, so it is registered only with his yes, in 0.2.05.
+  laptop, so it is registered only with his yes, in 0.2.T3.1.
 
 **Why a keeper and not the ProxyCommand or `lease create`:**
 - **A holder started by the ProxyCommand** belongs to the process tree of whichever connection ran
