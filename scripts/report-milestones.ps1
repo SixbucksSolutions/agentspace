@@ -102,7 +102,7 @@ while ($true) {
     $changed = $st.lanes -ne $lanes
     if (-not ($age -ge 10 -or ($changed -and $age -ge 5))) { continue }
     $r = Send-Report $report
-    $stamp = Get-Date -Format 'HH:mm:ss'
+    $stamp = (Get-Date).ToString('h:mmtt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
     switch ($r.Code) {
       0 {
         if (-not $DryRun) { $st.at = $now.ToString('o'); $st.lanes = $lanes; Save-State }

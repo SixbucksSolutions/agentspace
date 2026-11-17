@@ -137,5 +137,9 @@ Docs cite its cards as `#0001`.
 - **Every rule in a doc MUST use RFC 2119 wording**, and the doc MUST say so at the top.
 - **Every line, bullet and table cell that is a phrase MUST start with a capital**, except where
   it starts with a number, an identifier, a flag or a path.
+- **A time of day shown to Terry MUST be written `h:mm` plus `am` or `pm` in the laptop's time
+  zone** (`12:34pm`, `5:19am`; Terry, 2026-11-17), in conversation and in program output a human
+  reads. Machine-readable timestamps (JSON, state files, ISO 8601 that code parses) keep their
+  own format.
 - **Humor and casual register belong in conversation with Terry, never in commits, docs, code
   comments or program output.**
