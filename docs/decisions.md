@@ -294,6 +294,94 @@ way.
 **Replaced by card #0011**, a hosted API, once a caller that is not on the laptop needs a lease. The
 CLI then becomes a client of it, and its JSON stays the same.
 
+**Findings from story E1.02 (2026-11-17).** D8 stands. E1.02 built the CLI's skeleton: the entry
+point, `--help`, the errors and exit codes, the value normalizers and the state file, with each
+command a stub. `scripts/test-lease-cli.ps1` checks all of it in a throwaway folder.
+- **The entry point is `bin/agentspace.cmd` (cmd and PowerShell) and `bin/agentspace` (a POSIX sh
+  shim for Git Bash).** Each runs `pwsh -NoProfile -File scripts\lease-cli.ps1` with the
+  arguments unchanged. They MUST live outside `scripts/`: PowerShell prefers a `.ps1` to a `.cmd`
+  of the same name in one folder, so `agentspace` there would run `scripts\agentspace.ps1`. The
+  top level knows only `lease` and `--help`; the operator keeps running `agentspace.ps1` directly.
+  - The sh shim turns off MSYS path conversion (`MSYS_NO_PATHCONV=1`), so an argument that looks
+    like a path reaches the CLI as it was given, and converts the script's own path with `cygpath`.
+- **`lease-cli.ps1` MUST read its arguments from `[Environment]::GetCommandLineArgs()`, not
+  `$args`.** With `-File`, PowerShell binds a script's arguments as parameters first: it splits
+  `--ttl=1:30` into `--ttl=1` and `30`, and drops `--ttl:` and `-h:` without a trace, so `create
+  --project x --ttl:` would have created a lease. One case stays out of reach: an argument such as
+  `-:x` makes PowerShell fail before the script starts, with exit 1 and a message that is not an
+  error document.
+- **How the command line is read, where the contract leaves a choice:**
+  - A flag is `--name` or `--name=value`. A single dash is only for `-h`, so `-ttl` is unknown.
+  - A token that starts with `--` is never taken as a flag's value, so `--project --size m` is a
+    usage error for `project`. A token with one dash is a value (`--ttl -1h` is `invalid_value`).
+  - An unknown flag takes no value. Usage errors are held until the whole line is read, so a later
+    `-h` or `--help` still prints its level's help.
+  - Missing `--project` on `create`, and a missing `<id>`, are usage errors with `field` set.
+- **Output is written as UTF-8 bytes straight to the process's standard streams**, with LF line
+  ends and no byte order mark. PowerShell's own output would end lines with CRLF on Windows.
+  `--help` text is kept in `lease-cli.ps1`, and the test compares it byte for byte with the block
+  after each "**Help:**" in `docs/lease-api.md`, read at test time, so the two cannot drift.
+- **A stub answers `internal` (exit 1), `agentspace lease <command> is not implemented yet.`**
+  The contract has no "not implemented" error and allows no other exit code.
+- **E1.02 owns the value normalizers, in `scripts/lease-values.ps1`:** `ConvertTo-LeaseIdValue`,
+  `ConvertTo-LeaseProjectValue`, `ConvertTo-LeasePlatformValue`, `ConvertTo-LeaseProfileValue`,
+  `ConvertTo-LeaseSizeValue`, `ConvertTo-LeaseTtlValue` (whole seconds) and
+  `ConvertTo-LeaseStateFilterValue`. `lease-cli.ps1` runs them on every value, in the order of
+  each command's table, before any command runs, so the contract's error order holds.
+  - **The command files MUST call these normalizers and MUST NOT write their own**, so that T7's
+    parallel stories E1.04 and E1.05 never duplicate them. A missing helper MUST be added to
+    `lease-values.ps1`.
+  - Values are matched with `-cmatch` and `[0-9]`. `-match` ignores case, which lets the Kelvin
+    sign through as a `k`, and `\d` matches digits of every script.
+  - "Surrounding whitespace" includes a line feed, so `--project "x\n"` is `x`.
+  - The TTL is computed in `BigInteger`, so `99999999999999999999h` is `out_of_range`, never
+    `internal`.
+- **A lease error is a thrown `System.Exception` whose `Data` carries `agentspace.lease.code`**,
+  and `.field`, `.lease_id` and `.state` where they apply. `New-LeaseError` in `lease-values.ps1`
+  makes one. The CLI prints it as its error document; any other exception becomes `internal`, with
+  the exception's message, so that message MUST NOT name a backend, a location or a machine (D1).
+  Control characters in any message are written as `\u` and four hex digits.
+- **Each command is one file, `scripts/lease-cmd-<command>.ps1`, defining one function that T7
+  fills in without touching `lease-cli.ps1`.** Each file's header documents its function in full.
+  The CLI calls it with normalized values and defaults applied, prints what it returns as compact
+  JSON, and turns what it throws into the error document:
+
+  | Command | Function |
+  |---|---|
+  | `create` | `Invoke-LeaseCreate -Project <string> -Platform <string> -Profile <string> -Size <string> -TtlSeconds <int>` |
+  | `get` | `Invoke-LeaseGet -LeaseId <string>` |
+  | `renew` | `Invoke-LeaseRenew -LeaseId <string> -TtlSeconds <int>`, where 0 means `--ttl` was not given |
+  | `release` | `Invoke-LeaseRelease -LeaseId <string>` |
+  | `list` | `Invoke-LeaseList -Project <string> -State <string[]>`, where empty means no filter |
+
+  - `create`, `get`, `renew` and `release` return the lease document from
+    `ConvertTo-LeaseOutput`. `list` returns `[ordered]@{ leases = @(...) }`.
+  - `not_found` and `invalid_state` are the command's to throw. Every `usage`, `invalid_value`
+    and `out_of_range` error has been reported before the function runs.
+- **The state file is `%USERPROFILE%\.agentspace\leases.json` (D21).** The environment variable
+  `AGENTSPACE_STATE_DIR`, when set, names another folder, and tests and worktrees MUST set it.
+  - The document is `{"version":0,"leases":[...]}`, checked against
+    `schemas/state/leases.state.schema.json` on every read and before every write. That schema is
+    internal, not part of the contract, and lives in a subfolder that `test-schemas.ps1` does not
+    scan.
+  - A record holds the lease document's fields, with its state stored as `pending`, `ready`,
+    `released` or `unsatisfiable`, plus an optional `driver`, the opaque name the driver returned.
+    `expired` MUST NOT be stored: `ConvertTo-LeaseOutput` derives it when now is at or after
+    `expires_at`, and drops `driver` and every field the state does not have.
+  - Times are kept as the exact strings written. `ConvertFrom-Json` turns such strings into
+    `DateTime` values unless it is given `-DateKind String` (PowerShell 7.5 and later).
+- **Writes are locked and atomic.** `Update-LeaseState` holds `leases.lock`, opened with
+  `FileShare.None`, for the whole read, change and write, waiting up to 30 seconds. It writes a
+  temporary file in the same folder and moves it over `leases.json`. A script block that throws,
+  or a result that fails the schema or repeats an ID, leaves the file byte for byte as it was.
+  `Read-LeaseState` takes no lock and opens the file with `FileShare` ReadWrite and Delete, so it
+  never blocks the move. The test runs three writers and a reader at once: every record arrived
+  and no read failed.
+- **A script block passed to `Update-LeaseState` sees that function's local variables.** PowerShell
+  looks a variable up through the scopes the block was called from, so the function's own
+  `$records` hid the caller's, and the first test run wrote nothing. Its locals are now prefixed
+  `__lease`, and a function that runs a caller's script block SHOULD do the same.
+
 ### D9. Reachability belongs to the driver
 
 **Decided.** How to reach a lease (the ProxyCommand inside its host alias) MUST come from the

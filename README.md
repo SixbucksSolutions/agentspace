@@ -110,6 +110,15 @@ powershell -File scripts\agentspace.ps1 ca
   with `pwsh -NoProfile -File scripts\test-lease-alias.ps1`, which works in a throwaway folder
   under `%USERPROFILE%\.agentspace`, never in the real `~/.ssh`, and prints PASS or FAIL per check.
 
+### The lease CLI
+
+`bin\agentspace.cmd`, and `bin/agentspace` for Git Bash, is `agentspace lease`, whose contract is
+[docs/lease-api.md](docs/lease-api.md). `--help` works at every level. Each subcommand is still a
+stub that answers `internal` (exit 1) once its arguments check out, until stories E1.04 and E1.05
+fill them in. Leases are kept in `%USERPROFILE%\.agentspace\leases.json`, or in the folder that
+`AGENTSPACE_STATE_DIR` names. Check it with `pwsh -NoProfile -File scripts\test-lease-cli.ps1`,
+which works in a throwaway folder under `%TEMP%` and prints PASS or FAIL per check.
+
 ### Lease host aliases
 
 Each lease gets one alias file, `~/.ssh/agentspace.d/agentspace-<project>-<shortid>`, written by
