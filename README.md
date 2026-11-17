@@ -7,6 +7,10 @@ are told to "run this in agentspace".
 **How it was built, what Terry set up, and how agents on it reach the laptop's localswim board:
 [docs/how-it-was-built.md](docs/how-it-was-built.md).**
 
+**Where it is going:** a lease API that lets projects ask for compute without knowing what hosts it.
+The plan is in [docs/roadmap.md](docs/roadmap.md), and the reasoning in
+[docs/decisions.md](docs/decisions.md). The work is on the `agentspace` localswim board.
+
 | Piece | What |
 |---|---|
 | Instance | m9g.xlarge (4 Graviton cores, 16 GiB), Ubuntu 26.04 LTS arm64 |
