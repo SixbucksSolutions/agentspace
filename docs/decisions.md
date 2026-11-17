@@ -147,7 +147,8 @@ fallback.
 
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
 MVP epics go in Ready For Work, and post-MVP work goes in Backlog. An epic MUST NOT be broken into
-stories until Terry says it is time for that epic.
+stories until Terry says it is time for that epic. Someday ideas stay uncarded in
+[roadmap.md](roadmap.md) until a real need shows up.
 
 **Stories, Terry, 2026-11-16:**
 - **A story's title is `N.nn: title`**, where `N` is its epic's card number and `nn` is a
@@ -208,8 +209,7 @@ latest.
   - Only Terry moves a card to Completed.
 - **GitHub does not let one account approve its own pull request**, and every session pushes as
   Terry. The architect's approval is therefore a review comment that says so, followed by the
-  squash merge. Someday ideas stay uncarded in
-[roadmap.md](roadmap.md) until a real need shows up.
+  squash merge.
 
 ## Keys
 
