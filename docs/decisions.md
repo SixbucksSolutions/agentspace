@@ -194,12 +194,13 @@ latest.
 **Decided, Terry, 2026-11-16.**
 
 - **The architect** is the agent session that owns this repo's design: the roadmap, these
-  decisions and the board's epics. It independently reviews each turn's pull request, then
+  decisions and the board's epics. It independently reviews each story's pull request, then
   squash merges it into `main` and deletes its branch once it is approved.
 - **A dev lead** is a separate Opus/high session per turn, named for it (for example
-  "agentspace MVP T1"). It works on one branch for the turn (`mvp/tN`), spins up the subagents
-  that D15 names for every story in the turn, reviews their combined work itself, and then opens
-  one pull request to `main` for the architect. A dev lead MUST NOT merge its own pull request.
+  "agentspace MVP T1"). It spins up the subagents that D15 names for every story in the turn and
+  reviews each story's work itself. It then opens **one pull request per story** (Terry,
+  2026-11-16), from a branch of its own named for the story (`mvp/2.01`). A dev lead MUST NOT
+  merge its own pull request.
 - **Subagents** implement or review one story. They MUST NOT move cards or open pull requests.
 - **Cards:**
   - The dev lead moves its turn's stories to In Progress when it starts them.
