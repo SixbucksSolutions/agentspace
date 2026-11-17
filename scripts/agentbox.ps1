@@ -28,32 +28,32 @@ $IdFile = Join-Path $Root '.instance-id'
 $Aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
 if (-not (Test-Path $Aws)) { $Aws = 'aws' }
 
-# ssh.exe puts the console in raw mode before it runs the ProxyCommand, so CR and LF would
-# print as glyphs and long lines would not wrap. Each message turns line processing back on,
-# writes, and restores the mode ssh set.
-function Write-Message([string]$Text) {
-  if (-not ('AgentboxConsole' -as [type])) {
-    Add-Type -TypeDefinition @'
+# Inside ssh's ProxyCommand (stdin a pipe, stderr the console), Windows PowerShell 5.1 sets
+# the console's output mode to VT processing alone as it starts, dropping
+# ENABLE_PROCESSED_OUTPUT and ENABLE_WRAP_AT_EOL_OUTPUT. Messages then print CR and LF as
+# glyphs, and ssh later saves that mode and builds the session's raw mode on it, so the whole
+# session shows glyphs and ignores escape sequences (clear, reset). Repair turns both back on
+# and leaves them on; it runs as the script starts, before each message and as it ends.
+Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class AgentboxConsole {
   [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int n);
   [DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr h, out uint m);
   [DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr h, uint m);
-  public static void WriteLine(string text) {
+  public static void Repair() {
     IntPtr h = GetStdHandle(-12);
     uint mode;
-    bool console = GetConsoleMode(h, out mode);
-    // ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT, without DISABLE_NEWLINE_AUTO_RETURN.
-    if (console) SetConsoleMode(h, (mode | 0x3u) & ~0x8u);
-    Console.Error.WriteLine(text);
-    Console.Error.Flush();
-    if (console) SetConsoleMode(h, mode);
+    // ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT on, DISABLE_NEWLINE_AUTO_RETURN off.
+    if (GetConsoleMode(h, out mode)) SetConsoleMode(h, (mode | 0x3u) & ~0x8u);
   }
 }
 '@
-  }
-  [AgentboxConsole]::WriteLine($Text)
+[AgentboxConsole]::Repair()
+
+function Write-Message([string]$Text) {
+  [AgentboxConsole]::Repair()
+  [Console]::Error.WriteLine($Text)
 }
 
 function Say([string]$Text) { if (-not $Quiet) { Write-Message $Text } }
@@ -210,3 +210,4 @@ switch ($Command) {
     }
   }
 }
+[AgentboxConsole]::Repair()
