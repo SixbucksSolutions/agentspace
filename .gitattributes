@@ -1,5 +1,4 @@
-box/** text eol=lf
-*.sh   text eol=lf
-*.yaml text eol=lf
+# LF everywhere; CRLF only for files that exist for Windows alone (Terry, 2026-11-16).
+*      text=auto eol=lf
 *.cmd  text eol=crlf
 *.ps1  text eol=crlf
