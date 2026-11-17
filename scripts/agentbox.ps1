@@ -28,8 +28,36 @@ $IdFile = Join-Path $Root '.instance-id'
 $Aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
 if (-not (Test-Path $Aws)) { $Aws = 'aws' }
 
-function Say([string]$Text) { if (-not $Quiet) { [Console]::Error.WriteLine($Text) } }
-function Fail([string]$Text) { [Console]::Error.WriteLine("agentbox: $Text"); exit 1 }
+# ssh.exe puts the console in raw mode before it runs the ProxyCommand, so CR and LF would
+# print as glyphs and long lines would not wrap. Each message turns line processing back on,
+# writes, and restores the mode ssh set.
+function Write-Message([string]$Text) {
+  if (-not ('AgentboxConsole' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class AgentboxConsole {
+  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int n);
+  [DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr h, out uint m);
+  [DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr h, uint m);
+  public static void WriteLine(string text) {
+    IntPtr h = GetStdHandle(-12);
+    uint mode;
+    bool console = GetConsoleMode(h, out mode);
+    // ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT, without DISABLE_NEWLINE_AUTO_RETURN.
+    if (console) SetConsoleMode(h, (mode | 0x3u) & ~0x8u);
+    Console.Error.WriteLine(text);
+    Console.Error.Flush();
+    if (console) SetConsoleMode(h, mode);
+  }
+}
+'@
+  }
+  [AgentboxConsole]::WriteLine($Text)
+}
+
+function Say([string]$Text) { if (-not $Quiet) { Write-Message $Text } }
+function Fail([string]$Text) { Write-Message "agentbox: $Text"; exit 1 }
 
 function Invoke-Aws {
   $out = & $Aws @args --region $Region --output json 2>&1
@@ -161,7 +189,7 @@ switch ($Command) {
     $volId = ($i.BlockDeviceMappings | Where-Object DeviceName -eq $i.RootDeviceName).Ebs.VolumeId
     $vol = (Invoke-Aws ec2 describe-volumes --volume-ids $volId).Volumes[0]
     $ssm = if ($i.State.Name -eq 'running') { if (Test-SsmOnline $id) { 'online' } else { 'not yet' } } else { '-' }
-    [Console]::Error.WriteLine(("Instance  {0}`nState     {1}`nType      {2}`nDisk      {3} GiB gp3 ({4})`nSSM       {5}" -f
+    Write-Message (("Instance  {0}`nState     {1}`nType      {2}`nDisk      {3} GiB gp3 ({4})`nSSM       {5}" -f
       $id, $i.State.Name, $i.InstanceType, $vol.Size, $volId, $ssm))
   }
 
