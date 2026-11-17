@@ -58,6 +58,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-ssh.ps1"
   $Ssh = Join-Path $work 'fake-ssh.cmd'
   $NoForward = @('-o', 'ClearAllForwardings=yes')
   $PushTimeoutSec = 5
+  $Taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
   $id = 'i-0123456789abcdef0'
   $sha = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("$id`n$expected"))).Replace('-', '')
 

@@ -489,7 +489,7 @@ MUST NOT set it, because the board reaches the box through `RemoteForward` (D12)
   input. The login stalled until the push was killed, its remote processes stayed open (and count
   as activity for the idle check), and `~/.config/localswim/bot.env` was left empty. The push MUST
   NOT wait for the end of its input, and SHOULD write a temporary file and rename it into place;
-  this is not yet done (card #0026).
+  this is not yet done (card #0026). Done in story E3.02, whose findings below give the real cause.
 
 **Findings from story E2.02 (2026-11-17).** D9 stands. The E2.01 alias, in a file of its own
 under `~/.ssh/agentspace.d` and pulled in by an `Include` in `~/.ssh/config`, logged in by
@@ -525,7 +525,7 @@ login's `sshd-session`, and its daemon ran the session's Claude Code.
   the tunnel never started, and the app gave up with `Connection timed out during banner exchange`.
   The hung push also left `bot.env` empty on the box while the laptop's hash recorded the token
   as sent, so no later connection pushed it again until the hash was cleared by hand (card
-  #0026).
+  #0026). Fixed in story E3.02 (below); story E3.03 retries the desktop app with a push due.
 - **A spike that trusts a throwaway CA SHOULD do it with a `cert-authority,principals="ubuntu"`
   line in `~/.ssh/authorized_keys`, not with an sshd drop-in.** sshd keeps the first value of
   `TrustedUserCAKeys` it reads, so a second drop-in would be ignored if it sorted after
@@ -579,8 +579,9 @@ the alias.
 `scripts/agentspace.ps1`, and `scripts/test-push-localswim.ps1` checks the push without the box.
 - **The cause was an inherited environment variable, not the end of the input.** Windows OpenSSH
   hands each process it starts, the ProxyCommand included, the state of its file descriptors in a
-  variable named `<GUID>_POSIX_FD_STATE` (on this laptop
-  `c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE`). `cmd.exe` and PowerShell pass it on, so the
+  variable named `<GUID>_POSIX_FD_STATE` (seen as
+  `c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE`; most likely a constant of Windows OpenSSH,
+  not checked, so the code matches any GUID). `cmd.exe` and PowerShell pass it on, so the
   push's own `ssh.exe` inherited it, and that ssh never read its stdin at all. Its `-vvv` log
   reached `exec request accepted on channel 0` and then showed no read of stdin, while the same
   push outside a ProxyCommand logged the end of its input straight after that line.
@@ -598,13 +599,15 @@ the alias.
 - **The fix:**
   - **`agentspace.ps1` MUST remove every `*_POSIX_FD_STATE` variable from its environment as it
     starts**, so no ssh or scp it starts inherits one.
-  - **The push's ssh is Windows OpenSSH by full path, and runs for at most 60 seconds.** At the
-    limit only that ssh process is killed, and nothing is recorded.
+  - **The push's ssh MUST be Windows OpenSSH by full path, and MUST be stopped after 20 seconds.**
+    A push takes 5 to 8 seconds, and a client such as the desktop app gives up on a slow banner,
+    so a longer limit would still lose the connection. At the limit the process tree that ssh
+    started (`taskkill /T`) is stopped, and nothing is recorded.
   - **The box MUST NOT wait for the end of the push's input.** It reads two lines (`timeout 30
     head -n 2`) into a `mktemp` file in `~/.config/localswim` under `umask 077`, checks that the
     file has two lines with a URL and a token, renames it over `bot.env` with `mv`, and prints the
-    SHA-256 of the installed file. On any failure it removes the temporary file and exits 1, so
-    the old `bot.env` stays as it was.
+    SHA-256 of the installed file. On any failure, or if its shell exits early, a `trap` removes
+    the temporary file, and it exits 1, so the old `bot.env` stays as it was.
   - **The laptop MUST record the hash in `localswim-pushed.sha256` only when ssh exited 0 and the
     box's SHA-256 equals its own SHA-256 of what it meant to write**, after the same CR, BOM and
     blank-line normalization. Otherwise it warns and records nothing, and the next connection
@@ -624,8 +627,15 @@ the alias.
   and a stand-in for ssh. A wrong hash, a failed ssh and a hung ssh each warn and record nothing,
   a confirmed send is recorded, and a failed forced send leaves the earlier record as it was.
 - **Not tried with a push due:** an interactive connection from Terry's terminal, and the desktop
-  app's own connection. The desktop app SHOULD be retried once with the hash file set aside, to
-  show that E2.02's `Connection timed out during banner exchange` is gone.
+  app's own connection. Story E3.03 (#0040) drives the desktop app through a lease, so it MUST set
+  `%USERPROFILE%\.agentspace\localswim-pushed.sha256` aside before its first desktop connection,
+  to show that E2.02's `Connection timed out during banner exchange` is gone.
+- **Review changes after the live run:** the time limit went from 60 to 20 seconds, the timeout
+  stops ssh's whole process tree, and the box's command gained the `trap`. The live run was then
+  repeated the same way, with the hash file set aside: it pushed and exited 0 in 7 seconds,
+  ending at 20:24:55 UTC, the hash file came back with the same value, `bot.env` had 96 bytes,
+  mode 600, two lines and a matching SHA-256, no temporary file or push process was left on the
+  box, and `ssh agentspace true` exited 0 at 20:25:14.
 
 ## What the MVP leaves alone
 

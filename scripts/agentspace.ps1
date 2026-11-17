@@ -67,8 +67,10 @@ $SshKeygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'
 $Scp = Join-Path $env:SystemRoot 'System32\OpenSSH\scp.exe'
 $Ssh = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'
 # How long the token push's ssh may run before it is killed, so a hang can never stall the
-# ProxyCommand. A push takes about 5 seconds.
-$PushTimeoutSec = 60
+# ProxyCommand. A push takes 5 to 8 seconds, and a client such as the desktop app gives up on a
+# slow banner, so the limit stays short.
+$PushTimeoutSec = 20
+$Taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
 $Icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
 # Windows PowerShell 5.1 drops an empty argument on its way to a native command, so an empty
 # passphrase is written as a pair of quotes there; PowerShell 7.3 and later pass '' as is.
@@ -226,6 +228,7 @@ function Push-Localswim([string]$Id, [switch]$Force) {
     # temporary file, so bot.env is never left empty or partial. tr and sed strip CRs, blank lines
     # and a UTF-8 BOM, which .NET can write ahead of the text it pipes to a process.
     $remote = 'umask 077; d=$HOME/.config/localswim; mkdir -p $d && t=$(mktemp $d/bot.env.XXXXXX) || exit 1; ' +
+      'trap ''rm -f $t'' EXIT; ' +
       'timeout 30 head -n 2 | tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > $t; ' +
       'if test $(wc -l < $t) -eq 2 && grep -q ''^LOCALSWIM_URL=.'' $t && grep -q ''^LOCALSWIM_TOKEN=.'' $t && mv -f $t $d/bot.env; ' +
       'then sha256sum < $d/bot.env; else rm -f $t; exit 1; fi'
@@ -242,7 +245,9 @@ function Push-Localswim([string]$Id, [switch]$Force) {
       # An ssh that has already exited breaks the pipe; the missing confirmation reports it.
       try { $p.StandardInput.Write($content); $p.StandardInput.Close() } catch { }
       if (-not $p.WaitForExit($PushTimeoutSec * 1000)) {
-        # Only the ssh this function started is killed, never another process.
+        # Only the ssh this function started is stopped, with the ProxyCommand chain it started
+        # (cmd, powershell, aws), never another process. Windows PowerShell 5.1 has no Kill($true).
+        try { & $Taskkill /T /F /PID $p.Id 2>&1 | Out-Null } catch { }
         try { $p.Kill() } catch { }
         Say "agentspace: Sending the localswim token took over $PushTimeoutSec seconds and was stopped; the board will not work on the box this session."
         return

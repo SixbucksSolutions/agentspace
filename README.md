@@ -177,7 +177,7 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   a temporary file, renames it over `bot.env` and sends back the file's SHA-256, which `up`
   compares with what it meant to write. A failed, unconfirmed or interrupted send leaves the old
   `bot.env` in place, records nothing, and is tried again at the next connection. The send's ssh
-  is stopped after 60 seconds, so it cannot stall a connection. `scripts\test-push-localswim.ps1`
+  is stopped after 20 seconds, so a hang delays a connection by at most that. `scripts\test-push-localswim.ps1`
   checks this without the box, in Windows PowerShell 5.1.
 - **The wrapper sets the URL and token for one run only**, and refuses with a stop-and-report
   message when the board is unreachable, so an agent learns why instead of seeing a timeout.
