@@ -13,8 +13,8 @@
   down    Stops the instance.
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
-  ca      Creates the agentspace SSH CA (ed25519) in %LOCALAPPDATA%\agentspace\ca the first
-          time, locked to the current user (decision D17). Later runs change nothing: they check
+  ca      Creates the agentspace SSH CA (ed25519) in %USERPROFILE%\.agentspace\ca the first
+          time, locked to the current user (decisions D17 and D21). Later runs change nothing: they check
           the key pair and its access rules, and print its paths and fingerprint. A half-made or
           loosened CA fails with what is wrong; ca never repairs or overwrites one.
 
@@ -45,10 +45,13 @@ $Nested = [bool]$env:AGENTSPACE_NESTED
 $env:AGENTSPACE_NESTED = '1'
 $LocalswimRepo = 'C:\Projects\localswim'
 $LocalswimReceipt = Join-Path $env:LOCALAPPDATA 'localswim-v2\service.json'
-$PushedFile = Join-Path $env:LOCALAPPDATA 'agentspace\localswim-pushed.sha256'
-# The agentspace SSH CA (decisions D7 and D17). The private key MUST stay in this directory, which
-# is neither in the repo nor synced; sync sends the public key from here.
-$CaDir = Join-Path $env:LOCALAPPDATA 'agentspace\ca'
+# Everything agentspace keeps on the laptop lives here, never under AppData: the Claude app
+# redirects writes there into its package cache, out of sight of every process outside it (D21).
+$StateDir = Join-Path $env:USERPROFILE '.agentspace'
+$PushedFile = Join-Path $StateDir 'localswim-pushed.sha256'
+# The agentspace SSH CA (decisions D7, D17 and D21). The private key MUST stay in this directory,
+# which is neither in the repo nor synced; sync sends the public key from here.
+$CaDir = Join-Path $StateDir 'ca'
 $CaKey = Join-Path $CaDir 'agentspace_ca'
 $CaPub = "$CaKey.pub"
 $SshKeygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'
@@ -321,9 +324,10 @@ switch ($Command) {
       }
       Say "Creating the agentspace SSH CA in $CaDir..."
       New-Item -ItemType Directory -Force $CaDir | Out-Null
-      # The directory stops inheriting from %LOCALAPPDATA%, which also grants other principals
-      # (sandbox users among them), and keeps one rule for the user that its files inherit. It is
-      # checked before the key exists, so a directory still open to others never gets one.
+      # The directory stops inheriting from %USERPROFILE%\.agentspace, which also grants other
+      # principals (SYSTEM and Administrators), and keeps one rule for the user that its files
+      # inherit. It is checked before the key exists, so a directory still open to others never
+      # gets one.
       $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
       $r = Invoke-Native $Icacls @($CaDir, '/inheritance:r', '/grant:r', "*${me}:(OI)(CI)F", '/q')
       if ($r.Code -ne 0) { Fail "icacls could not lock $CaDir to ${env:USERNAME}: $($r.Out)" }

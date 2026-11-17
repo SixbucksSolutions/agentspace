@@ -27,10 +27,11 @@ function New-LeaseCredential {
   $caOut = & powershell -NoProfile -File $agentspace ca 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) { throw "The CA check failed: $($caOut.Trim())" }
 
-  $caDir = Join-Path $env:LOCALAPPDATA 'agentspace\ca'
+  # Laptop state lives in %USERPROFILE%\.agentspace, never under AppData (D21).
+  $caDir = Join-Path $env:USERPROFILE '.agentspace\ca'
   $caKey = Join-Path $caDir 'agentspace_ca'
 
-  $dir = Join-Path $env:LOCALAPPDATA "agentspace\leases\$LeaseId"
+  $dir = Join-Path $env:USERPROFILE ".agentspace\leases\$LeaseId"
   $key = Join-Path $dir 'id_ed25519'
   $cert = "$key-cert.pub"
   # Renewal is a later story (2.07); an existing key MUST NOT be overwritten.
