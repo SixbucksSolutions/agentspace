@@ -4,6 +4,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# sync sends the CA's public key beside these files; it is never in the repo (decision D17).
+if [ ! -s agentspace_ca.pub ]; then
+  echo "install.sh: agentspace_ca.pub is missing; run scripts\\agentspace.ps1 sync, which sends it" >&2
+  exit 1
+fi
+
 # The project was first named agentbox. Retire that name's units and files, and carry this
 # boot's patch marker and the last patch reboot time over, so a box that already patched this
 # boot is not seen as patching again.
@@ -35,3 +41,30 @@ systemctl daemon-reload
 systemctl enable --now agentspace-idle.timer
 systemctl enable agentspace-patch.service
 echo "Installed: idle check (timer $(systemctl is-active agentspace-idle.timer)), patch at boot ($(systemctl is-enabled agentspace-patch.service))"
+
+# Trust the agentspace SSH CA and close root login (decision D7). The new files stay only if
+# sshd -t accepts them; otherwise what was there before is put back, so a later restart or reboot
+# never meets a bad config. Other drop-ins in sshd_config.d are left alone.
+ca_pub=/etc/ssh/agentspace_ca.pub
+dropin=/etc/ssh/sshd_config.d/50-agentspace-ca.conf
+backup=$(mktemp -d)
+trap 'rm -rf "$backup"' EXIT
+for f in "$ca_pub" "$dropin"; do
+  if [ -e "$f" ]; then cp -p "$f" "$backup/"; fi
+done
+install -m 0644 agentspace_ca.pub     "$ca_pub"
+install -m 0644 50-agentspace-ca.conf "$dropin"
+if ! sshd -t; then
+  for f in "$ca_pub" "$dropin"; do
+    if [ -e "$backup/$(basename "$f")" ]; then cp -p "$backup/$(basename "$f")" "$f"; else rm -f "$f"; fi
+  done
+  echo "install.sh: sshd -t rejected the new SSH config; put the old files back and did not reload ssh.service" >&2
+  exit 1
+fi
+systemctl reload ssh.service
+effective=$(sshd -T | grep -Ei '^(trustedusercakeys|permitrootlogin) ' | sort | tr '\n' ' ')
+if [ "$effective" != "permitrootlogin no trustedusercakeys $ca_pub " ]; then
+  echo "install.sh: sshd reports '$effective'; another setting overrides 50-agentspace-ca.conf" >&2
+  exit 1
+fi
+echo "Installed: SSH trusts the agentspace CA ($(ssh-keygen -l -f "$ca_pub" | cut -d' ' -f2)), root login closed"

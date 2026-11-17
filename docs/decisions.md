@@ -140,6 +140,46 @@ another principal were refused.
 - **PowerShell 7.6 passed `-N ''` through as an empty passphrase**, as the E2.01 finding expects for
   7.3 and later. The issuer checks every new key with `ssh-keygen -y -P ''`.
 
+**Findings from story E2.04 (2026-11-16).** D7 stands. After one `sync`, a certificate signed by
+the agentspace CA for `ubuntu` logged in (`ED25519-CERT ... ID <key id> ... CA ED25519
+SHA256:G05h...`), a certificate naming `root` was refused (`ROOT LOGIN REFUSED`), and Terry's
+`authorized_keys` login kept working.
+- **`sync` checks the CA with `Assert-Ca` before it starts the box**, then sends the public key
+  beside `box/system`. `install.sh` MUST replace `/etc/ssh/agentspace_ca.pub`, never append to it,
+  so a new CA drops the old one.
+- **`50-agentspace-ca.conf` sets `TrustedUserCAKeys` and `PermitRootLogin no`, and nothing else.**
+  Root login MUST stay closed while the CA is trusted: under Ubuntu's default `prohibit-password`,
+  a certificate naming `root` would otherwise log in as root.
+- **`install.sh` MUST run `sshd -t` before `systemctl reload ssh.service`, and on failure MUST put
+  back the files that were there and exit non-zero without reloading.** A reload with a bad config
+  already fails, because the unit's `ExecReload` runs `sshd -t`; a restart or reboot has no such
+  guard, which is why the old files are put back. `install.sh` then checks with `sshd -T` that
+  both values took effect, and MUST NOT remove or overwrite any other drop-in.
+- **The CA is trusted for every account, not only `ubuntu`.** A certificate naming `daemon` logged
+  in as `daemon` and could forward TCP, although that account has no shell. This grants nothing a
+  CA key holder lacks already, since the same holder can sign for `ubuntu`, and only `root` and
+  `ubuntu` have real shells. It MUST be narrowed (`AllowUsers` or `AuthorizedPrincipalsFile`) when
+  per-project users arrive (#0004).
+- **EC2 Instance Connect is configured outside `sshd_config`.** The `ec2-instance-connect` package
+  ships `/usr/lib/systemd/system/ssh.service.d/ec2-instance-connect.conf`, which starts sshd with
+  `-o AuthorizedKeysCommand .../eic_run_authorized_keys %u %f -o AuthorizedKeysCommandUser
+  ec2-instance-connect`. A hand-run `sshd -T` reads only the config files, so it reports
+  `authorizedkeyscommand none`, and command-line options win over every drop-in. `failed, status
+  22` is most likely curl's HTTP-error exit when no key has been pushed to the instance metadata,
+  which sshd treats as no keys.
+- **Instance Connect is a second way to log in, but not a new way into the box.** It needs IAM
+  `ec2-instance-connect:SendSSHPublicKey` on the instance, which publishes a key for 60 seconds,
+  and a path to port 22. The security group has no ingress rules and the region has no Instance
+  Connect endpoints, so that path is Session Manager, whose rights already give a shell with sudo.
+  `PermitRootLogin no` closes root through it too. Its logins carry no lease key ID. It SHOULD be
+  removed after the MVP, by purging the package from `box/system` or by an IAM deny.
+- **Refused logins can shut everyone out of SSH for a while.** Every connection through Session
+  Manager arrives from 127.0.0.1, and OpenSSH 10.2's `PerSourcePenalties` (defaults, no exempt
+  list) penalised that address for 16 seconds after three refused logins; repeated refusals can
+  reach its 600-second maximum, Terry's own login included. Session Manager's shell is unaffected,
+  so it is recoverable. `PerSourcePenaltyExemptList 127.0.0.1` SHOULD be considered before agents
+  retry expired certificates unattended.
+
 ### D8. The MVP control plane is a CLI on the laptop
 
 **MVP only.** `agentspace lease ...` runs on the laptop, prints JSON, and keeps lease state in a
