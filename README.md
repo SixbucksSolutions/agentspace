@@ -168,4 +168,4 @@ ssh agentspace journalctl -u agentspace-patch -b
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Terry Ott.
+[MIT](LICENSE). Copyright (c) 2026 Sixbucks Solutions, LLC.
