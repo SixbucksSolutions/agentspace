@@ -156,6 +156,10 @@ stories until Terry says it is time for that epic.
   cannot be broken down that far MUST go to Terry for discussion, not onto the board as is.
 - **Stories go in Ready For Work, as children of their epic**, with their estimate and
   dependencies in the description.
+- **An epic moves to In Progress when its stories are laid into Ready For Work, and stays there
+  until its last story reaches Ready For Review.** Its description carries the execution plan by
+  turn: each story starts in the first turn its entry gates are met, and the stories in one turn
+  MUST be workable in parallel, in isolation from each other.
 
 #0002 was broken down first, into 2.01 to 2.08 (#0018 to #0025), with its two risk-first spikes at
 the front. Someday ideas stay uncarded in
