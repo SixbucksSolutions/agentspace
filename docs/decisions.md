@@ -365,6 +365,53 @@ neither release nor expiry ends a session that is already open. They stop new co
 - **Release is idempotent.** A second call, or a call for a lease that never existed, succeeds and
   reports both removals as false.
 
+**Findings from story E2.08 (2026-11-17).** D7 and D10 stand. One throwaway lease (project
+`e208test`, a 7-minute certificate valid from 18:55:59 to 19:02:59 UTC) went through issue, alias,
+login, expiry and release on the real box, through an `Include` in Terry's real `~/.ssh/config`,
+which was backed up first and restored byte for byte afterwards (same SHA-256).
+- **The alias logged in by certificate**, through `ssh-proxy.cmd` in the main checkout, at
+  18:56:05 UTC. sshd logged `Accepted publickey for ubuntu from 127.0.0.1 port ... ssh2:
+  ED25519-CERT SHA256:... ID <lease id> (serial 0) CA ED25519 SHA256:G05h...`, so the journal
+  names the lease. Terry's own logins in the same window logged `ED25519 SHA256:...` with no `ID`.
+  The README's Logs section shows how to search for it.
+- **A session open at expiry kept running.** A loop started through the alias at 18:56:16 UTC
+  printed every 30 seconds through the expiry at 19:02:59 and on to its planned end (last line at
+  19:07:46 UTC), and ssh exited 0 at 19:08:18 UTC. sshd never ended it, as D10's E2.01 finding
+  says.
+- **After expiry a new login was refused.** One attempt at 19:03:30 UTC got `Permission denied
+  (publickey)`, and sshd logged `Refusing certificate ID "<lease id>" serial=0 signed by ED25519
+  CA SHA256:G05h...: Certificate invalid: expired`.
+- **One expired attempt cost one certificate refusal, and ssh then offered the bare key.** With
+  `IdentitiesOnly yes`, ssh offered the certificate and then the lease's plain key. Each offer most
+  likely produced one `AuthorizedKeysCommand .../eic_run_authorized_keys ... failed, status 22`
+  line from EC2 Instance Connect (D7, E2.04 finding), two in all, with the same fingerprint, since
+  a certificate and its key share one. No `PerSourcePenalties` line was logged.
+- **The refused connection stayed open on the box for two minutes after ssh gave up.** The client
+  exited at 19:03:34 UTC, but its `sshd-session` lived on until sshd logged `Timeout before
+  authentication for connection from 127.0.0.1` at 19:05:33 UTC, `LoginGraceTime`'s 120 seconds
+  later. Most likely the Session Manager tunnel did not pass the close on to sshd: a refused
+  client exits without sending a disconnect, while the open session's clean exit reached sshd as
+  `Received disconnect ... disconnected by user` two seconds before ssh returned. A refused
+  attempt through Session Manager therefore most likely holds a pre-authentication slot for two
+  minutes.
+- **That lingering refusal is penalised as `grace-exceeded`, not `authfail`.** `sshd -T` on the
+  box reports `persourcepenalties ... authfail:5 noauth:1 grace-exceeded:10 ... min:15`,
+  `persourcepenaltyexemptlist none`, `maxstartups 10:30:100` and `logingracetime 120`. sshd scores
+  a connection once, so this attempt scored 10 seconds, below the 15-second minimum, which is why
+  no penalty was logged. Two such refusals ending close together most likely reach the minimum
+  and shut 127.0.0.1 out, which is every login, Terry's included. Separately, about ten lingering
+  refusals within two minutes would fill `MaxStartups` and drop new connections whatever the
+  penalties do. Exempting 127.0.0.1 from penalties does not free those slots, so card E3.01
+  SHOULD also consider a shorter `LoginGraceTime`.
+- **A second session through any alias gets `Warning: remote port forwarding failed` for 8811 and
+  53147** while another session holds those forwards on the box. The login still succeeds; only
+  the second session's forwards are lost. The lease alias and Terry's `agentspace` entry forward
+  the same ports, so two concurrent sessions of either kind collide. This is D12's shared forward
+  seen from the client side, and card #0008 replaces it.
+- **Release removed the alias file and the lease folder**, and left `~/.ssh/config` alone, as the
+  E2.07 findings say.
+- **No token push was due**, so card #0026's hang was not met.
+
 ### D11. Today's idle stop stays
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
