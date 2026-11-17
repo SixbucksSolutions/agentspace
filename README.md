@@ -165,3 +165,7 @@ Each tool is signed in once per instance, by Terry, at the box's shell prompt.
 ssh agentspace journalctl -u agentspace-idle --since -1h
 ssh agentspace journalctl -u agentspace-patch -b
 ```
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Terry Ott.
