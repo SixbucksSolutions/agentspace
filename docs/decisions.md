@@ -79,6 +79,32 @@ container backends, where there is no host to own.
 **In the MVP there is one pooled driver: the existing EC2 box.** The CLI's code MUST keep it
 behind a driver boundary anyway, so a second driver means adding code, not reworking it.
 
+**Findings from story E1.03 (2026-11-17).** D6 stands. The boundary is two files in `scripts/`:
+- **`lease-driver.ps1` is the interface and names no backend** (D1; a check greps it for
+  `ec2` and `aws`). Its header comment is the full contract, kept in the repo so the CLI's
+  authors (E1.04, E1.05) can read it: `Register-LeaseDriver`, `Invoke-LeaseDriverPlace`,
+  `Invoke-LeaseDriverRenew` and `Invoke-LeaseDriverRelease`, with their parameters and return
+  members, the failure rule and the D1 rule on messages.
+- **Registration:** dot-sourcing `lease-driver.ps1` dot-sources every `lease-driver-*.ps1` beside
+  it, and each registers itself under an opaque name. `Place` asks the first registered driver
+  (there is one) and adds that driver's name to the result; renew and release look the driver up
+  by the name the CLI stored.
+- **`lease-driver-ec2.ps1` is the pooled driver** and the only file that names EC2. It calls
+  `New-LeaseCredential` and `Set-LeaseAlias` to place, `Update-LeaseCredential` to renew, and
+  `Remove-LeaseCredential` to release. Its `ExpiresAt` is the credential's `ExpiresUtc`, so it
+  equals the certificate's valid-before.
+- **Unsatisfiable is decided before anything is issued:** the platform MUST be `linux/arm64`, the
+  profile `agent-linux` with no version, and the size `m` (D5). Each unmet value adds one reason,
+  in the order `unsupported_platform`, `unsupported_profile`, `unsupported_size`, whose one-sentence
+  message quotes the value and names no backend. It is a returned state, not an exception.
+- **A failed alias step removes the credential before the error is rethrown.** If
+  `Remove-LeaseCredential` refuses (a foreign file sits at the alias), the lease folder is deleted
+  directly, and the foreign file is kept. The rethrown message is generic, with the original error
+  as its inner exception, because `Set-LeaseAlias`'s own messages talk about the machine.
+- **Checked** by `scripts/test-lease-driver.ps1`, which uses a throwaway lease ID under the real
+  leases root (the credential step has no root override and needs the real CA) and a throwaway
+  ssh folder, and hashes the real `~/.ssh` config and `agentspace.d` before and after.
+
 ### D7. SSH access through short-lived certificates from an agentspace CA
 
 **Decided.** agentspace signs each lease's key with its own SSH CA. The certificate's principal is
