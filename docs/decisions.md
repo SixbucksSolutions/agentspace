@@ -328,8 +328,10 @@ PowerShell 5.1 script, because `ssh-proxy.cmd` runs it as a ProxyCommand.
 - PowerShell 7 drops the 5.1 quirks that cost stories E2.01 and E2.03 effort: the empty-argument
   problem and stderr turning into terminating errors.
 
-**How the two scripts meet:** lease code that needs the CA checked MUST run `agentspace.ps1 ca`,
-which only checks an existing CA (D17), and stop if it fails. It MUST NOT copy `Assert-Ca`.
+**How the two scripts meet:** lease code that needs the CA checked MUST run `agentspace.ps1 ca`
+and stop if it fails. It MUST NOT copy `Assert-Ca`. `ca` checks an existing CA and changes nothing
+(D17), but on a laptop with no CA it creates one, which no host trusts until `sync` runs. That is
+acceptable for the MVP, where the CA already exists.
 
 **Terry left the language to the architect (2026-11-16):** pick what is easiest and fits the
 problem. He reaches for Python when prototyping because it is friendly to junior developers. That
