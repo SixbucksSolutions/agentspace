@@ -33,8 +33,9 @@ powershell -File scripts\agentbox.ps1 sync
 powershell -File scripts\agentbox.ps1 deploy
 ```
 
-`sync` installs `box/system` (the idle check and the boot-time patch service) on the instance;
-`deploy` updates the CloudFormation stack and then runs `sync`.
+`sync` installs `box/system` (the idle check and the boot-time patch service) on the instance,
+and copies the laptop's `~/.claude/CLAUDE.md` (Terry's global instructions for Claude Code) to
+the box; `deploy` updates the CloudFormation stack and then runs `sync`.
 
 ## Rules
 
@@ -51,6 +52,9 @@ RFC 2119 keywords; the capitals are load-bearing.
   running box current instead.
 - **Changes to the box's services MUST be made in `box/system` and installed with `sync`.**
   The template's user data runs only at first boot, so editing it changes nothing on a live box.
+- **The laptop's `~/.claude/CLAUDE.md` is the source; the box's copy MUST NOT be edited.**
+  `sync` replaces it. After changing the laptop copy, run `sync`; a Claude session already
+  running on the box picks it up only when a new session starts.
 - **The disk SHOULD stay above about 70% used**, by Terry's preference: grow it in small steps
   when it passes 85%. EBS volumes cannot shrink, and allow one change every 6 hours.
 - **Long agent runs SHOULD stay attached to a session or keep the CPU busy.** The idle check

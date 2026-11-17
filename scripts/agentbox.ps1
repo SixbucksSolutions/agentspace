@@ -5,7 +5,8 @@
 .DESCRIPTION
   deploy  Creates or updates the CloudFormation stack, then runs sync.
   up      Starts the instance if needed and waits until it has finished patching.
-  sync    Installs box/system (idle check, patch at boot) on the instance.
+  sync    Installs box/system (idle check, patch at boot) on the instance, and copies
+          ~/.claude/CLAUDE.md there.
   down    Stops the instance.
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
@@ -171,6 +172,15 @@ switch ($Command) {
     if ($LASTEXITCODE -ne 0) { Fail 'Copy to the instance failed.' }
     & ssh agentbox 'sudo bash /tmp/agentbox-system/install.sh && rm -rf /tmp/agentbox-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Install on the instance failed.' }
+    # Terry's global instructions for Claude Code, so agents on the box follow the same
+    # standing orders as on the laptop. The laptop copy is the source; the box copy is replaced.
+    $claudeMd = Join-Path $HOME '.claude\CLAUDE.md'
+    if (Test-Path $claudeMd) {
+      Say 'Copying ~/.claude/CLAUDE.md to the instance...'
+      & ssh agentbox 'mkdir -p ~/.claude'
+      & scp -q $claudeMd 'agentbox:.claude/CLAUDE.md'
+      if ($LASTEXITCODE -ne 0) { Fail 'Copying CLAUDE.md to the instance failed.' }
+    }
   }
 
   'up' {
