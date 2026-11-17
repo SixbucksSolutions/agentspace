@@ -158,8 +158,10 @@ RFC 2119 keywords; the capitals are load-bearing.
   counts an SSH or Session Manager session, or 6 CPU-seconds of work per 5 minutes, as activity;
   an agent left alone and waiting for 60 minutes gets the box powered off.
 - **Credentials MUST come from `aws login`**, never from long-lived access keys. When a sign-in
-  expires, run `aws login` from a fresh Incognito window; a browser holding another AWS session
-  returns a 400.
+  expires, run `aws login --remote` and open the URL it prints in a fresh Incognito window, with
+  every other Incognito window closed first; a browser holding another AWS session returns a 400.
+  `--remote` prints the URL instead of opening the default browser, and asks for the code the
+  page shows.
 - **Account-specific values and secrets MUST NOT be committed:** this repo is public.
   Account-specific parameters go in `infra\local.parameters`; tokens never touch the repo.
 - **Unix-relevant files MUST use LF line endings**; only Windows-specific files (`.cmd`, `.ps1`)
