@@ -41,6 +41,11 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 
 The git authority above belongs to the architect. A dev lead pushes only its own branch.
 
+**Terry, 2026-11-17: the architect is pre-authorized to start the T7 and T8 dev leads** as soon as
+each turn's entry gates are met, meaning every PR of the turn before is merged. The Claude app
+still lets a session start another only on a turn its user began, so where the app refuses, the
+architect puts the dev lead up as a card instead, and Terry starts it with one click.
+
 **A dev lead SHOULD enter a story's worktree (`EnterWorktree`) before it launches that story's
 subagents** (found in T5, 2026-11-17). A worktree guard pins a subagent to its parent session's
 current worktree, so an implementer launched from elsewhere cannot write the story's files and
