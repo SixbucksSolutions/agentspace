@@ -488,6 +488,33 @@ moves it.
   owner-only lockdown. Once the new copy is verified, the old copy in the package cache MUST be
   deleted, so only one copy of the key exists.
 
+### D22. The architect keeps a 10-minute watchdog on each dev lead
+
+**Decided, Terry, 2026-11-17.** The working rules are in [AGENTS.md](../AGENTS.md), "The
+architect's watchdog on a dev lead", and `scripts/watchdog.ps1` keeps the timer.
+- **The timer:** every status update from a dev lead resets it, and it fires after 10 minutes
+  without one.
+- **When it fires:**
+  - If the dev lead is busy, mid-turn or waiting on its own subagents, nothing happens.
+  - If it is idle, the architect nudges it to finish in one turn or answer `BLOCKED`.
+- **Escalation:** two `BLOCKED` answers within 30 minutes end the watchdog and go to Terry.
+
+**Why:** a dev lead that ends a turn without finishing, and without saying why, otherwise sits
+idle until someone happens to look.
+
+### D23. The architect is Terry's proxy
+
+**Decided, Terry, 2026-11-17:** "you're my proxy".
+- **Dev leads and subagents MUST bring questions meant for Terry to the architect.** The
+  architect answers what it can.
+- **The architect asks Terry only for what only he can do:** a check outside the Claude app, a
+  click in its UI, or a call costly to reverse (D19).
+- **A card waiting on Terry still goes to Needs Terry**, so it reaches his phone and pauses the
+  swimcoach clock.
+
+**Why:** questions from several sessions at once are noise on Terry's side. Most of them are
+answerable from what the architect already knows.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
