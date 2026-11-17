@@ -432,6 +432,12 @@ prototyping happy paths."
     example, a UUID is always a lowercase UUIDv4.
   - **An input schema accepts every reasonable spelling of the same value, and agentspace
     normalizes it on the way in.** A UUID MAY arrive in any case and is lowercased before use.
+  - **The same holds for the formats themselves:**
+    - **JSON** is accepted with any amount of whitespace, and emitted with none beyond what JSON
+      requires. In PowerShell that is `ConvertTo-Json -Compress`, with `-Depth` set explicitly:
+      its default depth of 2 silently flattens anything nested deeper.
+    - **CSV**, if agentspace ever reads or writes it, is accepted with optional quoting and any
+      common variant, and emitted under one strict, written rule for quoting and line endings.
   - **Tolerance covers form, never meaning.** An input that could mean two different things, or
     that would be unsafe as given (a lease ID with a path separator, say), MUST still be refused
     with a clear error rather than guessed at.
