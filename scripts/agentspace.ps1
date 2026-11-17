@@ -12,12 +12,16 @@
   down    Stops the instance.
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
+  ca      Creates the agentspace SSH CA (ed25519) in %LOCALAPPDATA%\agentspace\ca the first
+          time, locked to the current user (decision D17). Later runs change nothing: they check
+          the key pair and its access rules, and print its paths and fingerprint. A half-made or
+          loosened CA fails with what is wrong; ca never repairs or overwrites one.
 
   Every message goes to stderr, so `up` is safe inside an SSH ProxyCommand.
 #>
 param(
   [Parameter(Mandatory, Position = 0)]
-  [ValidateSet('deploy', 'up', 'sync', 'down', 'status', 'grow')]
+  [ValidateSet('deploy', 'up', 'sync', 'down', 'status', 'grow', 'ca')]
   [string]$Command,
   [int]$GiB = 2,
   [switch]$Quiet
@@ -41,6 +45,16 @@ $env:AGENTSPACE_NESTED = '1'
 $LocalswimRepo = 'C:\Projects\localswim'
 $LocalswimReceipt = Join-Path $env:LOCALAPPDATA 'localswim-v2\service.json'
 $PushedFile = Join-Path $env:LOCALAPPDATA 'agentspace\localswim-pushed.sha256'
+# The agentspace SSH CA (decisions D7 and D17). The private key MUST stay in this directory, which
+# is neither in the repo nor synced; sync sends the public key from here.
+$CaDir = Join-Path $env:LOCALAPPDATA 'agentspace\ca'
+$CaKey = Join-Path $CaDir 'agentspace_ca'
+$CaPub = "$CaKey.pub"
+$SshKeygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'
+$Icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+# Windows PowerShell 5.1 drops an empty argument on its way to a native command, so an empty
+# passphrase is written as a pair of quotes there; PowerShell 7.3 and later pass '' as is.
+$NoPassphrase = if ($PSNativeCommandArgumentPassing -and $PSNativeCommandArgumentPassing -ne 'Legacy') { '' } else { '""' }
 
 # Inside ssh's ProxyCommand (stdin a pipe, stderr the console), Windows PowerShell 5.1 sets
 # the console's output mode to VT processing alone as it starts, dropping
@@ -216,7 +230,124 @@ function Install-LocalswimCli {
   if ($LASTEXITCODE -ne 0) { Fail 'Installing the localswim CLI failed.' }
 }
 
+# Runs a native command with stderr folded into its output as text. Windows PowerShell 5.1 turns
+# a redirected stderr line into a terminating error under $ErrorActionPreference = 'Stop', which
+# would hide the exit code; stdin is closed, so a prompt fails instead of waiting unseen.
+function Invoke-Native([string]$Exe, [string[]]$Arguments) {
+  $saved = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { $out = $null | & $Exe @Arguments 2>&1 | ForEach-Object { "$_" } }
+  finally { $ErrorActionPreference = $saved }
+  [pscustomobject]@{ Code = $LASTEXITCODE; Out = (@($out) -join "`n").Trim() }
+}
+
+# The CA's directory and private key MUST be the current user's alone (D17): owned by the user,
+# one rule giving the user full control, nothing inherited. Returns what breaks that, or nothing.
+function Get-OwnerOnlyProblems([string]$Path) {
+  $me = [Security.Principal.WindowsIdentity]::GetCurrent().User
+  $full = [Security.AccessControl.FileSystemRights]::FullControl
+  $acl = Get-Acl -LiteralPath $Path
+  if ($acl.GetOwner([Security.Principal.SecurityIdentifier]) -ne $me) { "is owned by $($acl.Owner)" }
+  if (-not $acl.AreAccessRulesProtected) { 'inherits access rules from its parent' }
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  foreach ($rule in $rules) {
+    if ($rule.IdentityReference -eq $me -and $rule.AccessControlType -eq 'Allow') {
+      if (($rule.FileSystemRights -band $full) -ne $full) { "gives $env:USERNAME $($rule.FileSystemRights), not full control" }
+      continue
+    }
+    $who = try { $rule.IdentityReference.Translate([Security.Principal.NTAccount]).Value } catch { $rule.IdentityReference.Value }
+    if ($rule.AccessControlType -eq 'Allow') { "has a rule allowing $who" } else { "has a rule denying $who" }
+  }
+  if ($rules.Count -gt 1) { "has $($rules.Count) access rules instead of one" }
+}
+
+# Checks the CA (D17) without changing it: both files present, the directory and private key the
+# current user's alone, the private key readable without a passphrase, and the public key its own
+# ed25519 key. Fails with what is wrong, and returns the fingerprint. sync SHOULD call it before it
+# sends the public key to a host.
+function Assert-Ca {
+  if (-not (Test-Path -LiteralPath $CaKey)) { Fail "$CaKey does not exist; run ca." }
+  if (-not (Test-Path -LiteralPath $CaPub)) { Fail "$CaPub does not exist; run ca." }
+  foreach ($path in $CaDir, $CaKey) {
+    $problems = @(Get-OwnerOnlyProblems $path)
+    if ($problems) {
+      Fail ("$path MUST be $env:USERNAME's alone, but it $($problems -join '; '). ca does not change " +
+        "access rules on an existing CA. If anyone else may have read the key, replace the CA (D17). " +
+        "Otherwise lock it by hand: icacls `"$CaDir`" /inheritance:r /grant:r `"${env:USERNAME}:(OI)(CI)F`", " +
+        "then icacls `"$CaKey`" /reset, then icacls `"$CaKey`" /inheritance:d, then remove any other " +
+        "rule icacls still lists, and run ca again.")
+    }
+  }
+  # Reading the private key with an empty passphrase also proves it has none, as unattended
+  # signing needs.
+  $r = Invoke-Native $SshKeygen @('-y', '-P', $NoPassphrase, '-f', $CaKey)
+  if ($r.Code -ne 0) { Fail "ssh-keygen could not read $CaKey without a passphrase; the lease CLI signs unattended (D17)." }
+  $derived = $r.Out -split '\s+'
+  $stored = (Get-Content -LiteralPath $CaPub -Raw).Trim() -split '\s+'
+  if ($stored[0] -ne 'ssh-ed25519' -or $derived[0] -ne $stored[0] -or $derived[1] -ne $stored[1]) {
+    Fail "$CaPub is not the ed25519 public key of $CaKey. ca does not repair a mismatched pair."
+  }
+  $r = Invoke-Native $SshKeygen @('-l', '-f', $CaPub)
+  if ($r.Code -ne 0) { Fail "ssh-keygen could not read ${CaPub}: $($r.Out)" }
+  ($r.Out -split '\s+')[1]
+}
+
 switch ($Command) {
+  'ca' {
+    if (-not (Test-Path -LiteralPath $SshKeygen)) { Fail "$SshKeygen is missing; install the Windows OpenSSH client." }
+    foreach ($forbidden in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial, $Root)) {
+      if ($forbidden -and "$CaDir\".StartsWith($forbidden.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        Fail "$CaDir is inside $forbidden; the CA key MUST NOT live in a synced folder or in the repo."
+      }
+    }
+    $hasKey = Test-Path -LiteralPath $CaKey
+    $hasPub = Test-Path -LiteralPath $CaPub
+    if ($hasKey -and -not $hasPub) {
+      Fail "$CaKey exists but $CaPub does not. ca does not repair a half-made CA: restore the public key, or write it again from the private key with ssh-keygen -y, then run ca again."
+    }
+    if ($hasPub -and -not $hasKey) {
+      Fail "$CaPub exists but $CaKey does not: the CA's private key is lost, and nothing more can be signed with it. ca does not replace it on its own. To make a new CA, delete $CaPub and run ca again, then run sync for every host and re-issue every lease's certificate."
+    }
+    $created = $false
+    if (-not $hasKey) {
+      # An elevated token makes Administrators the owner of what it creates, which D17 forbids.
+      $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+      if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Fail 'ca MUST NOT create the CA from an elevated shell; run it without "Run as administrator".'
+      }
+      Say "Creating the agentspace SSH CA in $CaDir..."
+      New-Item -ItemType Directory -Force $CaDir | Out-Null
+      # The directory stops inheriting from %LOCALAPPDATA%, which also grants other principals
+      # (sandbox users among them), and keeps one rule for the user that its files inherit. It is
+      # checked before the key exists, so a directory still open to others never gets one.
+      $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+      $r = Invoke-Native $Icacls @($CaDir, '/inheritance:r', '/grant:r', "*${me}:(OI)(CI)F", '/q')
+      if ($r.Code -ne 0) { Fail "icacls could not lock $CaDir to ${env:USERNAME}: $($r.Out)" }
+      $problems = @(Get-OwnerOnlyProblems $CaDir)
+      if ($problems) {
+        Fail "$CaDir MUST be $env:USERNAME's alone before the CA is made in it, but it $($problems -join '; '). Remove the other rules, or delete the directory, and run ca again."
+      }
+      $comment = "agentspace-ca $env:COMPUTERNAME $(Get-Date -Format yyyy-MM-dd)"
+      $r = Invoke-Native $SshKeygen @('-q', '-t', 'ed25519', '-N', $NoPassphrase, '-C', $comment, '-f', $CaKey)
+      if ($r.Code -ne 0) { Fail "ssh-keygen could not create the CA: $($r.Out)" }
+      # ssh-keygen writes its own rules on the key, granting SYSTEM and Administrators as well.
+      # Resetting gives the key the directory's single rule; the second call stops inheriting it.
+      $r = Invoke-Native $Icacls @($CaKey, '/reset', '/q')
+      if ($r.Code -eq 0) { $r = Invoke-Native $Icacls @($CaKey, '/inheritance:d', '/q') }
+      if ($r.Code -ne 0) { Fail "icacls could not lock the new $CaKey to ${env:USERNAME}: $($r.Out). Delete $CaKey and $CaPub, and run ca again." }
+      $problems = @(Get-OwnerOnlyProblems $CaKey)
+      if ($problems) {
+        Fail "The new $CaKey MUST be $env:USERNAME's alone, but it $($problems -join '; '). Treat it as exposed: delete $CaKey and $CaPub, and run ca again."
+      }
+      $created = $true
+    }
+    $fingerprint = Assert-Ca
+    if ($created) { Say 'Created the agentspace SSH CA.' } else { Say 'The agentspace SSH CA already exists; nothing changed.' }
+    Say "Private key  $CaKey"
+    Say "Public key   $CaPub"
+    Say "Fingerprint  $fingerprint"
+  }
+
   'deploy' {
     $key = (Get-Content (Join-Path $HOME '.ssh\id_ed25519.pub') -Raw).Trim()
     $tpl = Join-Path $Root 'infra\agentspace.yaml'
