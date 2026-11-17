@@ -226,6 +226,63 @@ SHA256:G05h...`), a certificate naming `root` was refused (`ROOT LOGIN REFUSED`)
   so it is recoverable. `PerSourcePenaltyExemptList 127.0.0.1` SHOULD be considered before agents
   retry expired certificates unattended.
 
+**Findings from story E3.01 (2026-11-17).** D7 stands. `box/system/51-agentspace-logins.conf` sets
+`PerSourcePenaltyExemptList 127.0.0.1` and `LoginGraceTime 30`, and nothing else. It sorts after
+`50-agentspace-ca.conf` and before `60-cloudimg-settings.conf`, and no other file sets either
+keyword (the default `sshd_config` has `LoginGraceTime` commented out, and no `PerSource*` line). `50-agentspace-ca.conf` still sets
+only `TrustedUserCAKeys` and `PermitRootLogin`.
+- **`install.sh` installs the CA key and both drop-ins as one transaction.** It backs up what was
+  there, installs the files, runs `sshd -t`, and on failure puts back every file this run changed
+  and exits non-zero without reloading. After `systemctl reload ssh.service` it checks with
+  `sshd -T` that `logingracetime 30` and `persourcepenaltyexemptlist 127.0.0.1` took effect,
+  beside the E2.04 check, and fails loudly otherwise. `sync` installed it; `sshd -T` on the box
+  then reported `logingracetime 30`, `persourcepenaltyexemptlist 127.0.0.1`, `maxstartups
+  10:30:100` and the default `persourcepenalties`.
+- **Why 30 seconds.** `LoginGraceTime` starts when sshd accepts the TCP connection, which is after
+  the box is up, so boot time does not count. A whole `ssh agentspace true` through Session
+  Manager took 4.0 to 4.3 seconds from the laptop, including starting the proxy and the session,
+  and sshd took 0.23 seconds from accepting the connection to `Accepted publickey` (the E3.01
+  reviewer's measurement on two logins). Terry's default key `~/.ssh/id_ed25519` has no
+  passphrase (`ssh-keygen -y -P ""` exited 0), so no typing happens inside the grace time. 30
+  seconds leaves several times the observed time. A shorter value SHOULD NOT be used without
+  measuring a slow link; a client that needs longer, such as one that prompts for a passphrase
+  or a second factor, would be dropped at 30 seconds.
+- **`MaxStartups` stays at its default `10:30:100`.** With a 30-second grace time, filling the 10
+  free pre-authentication slots takes about ten lingering refusals within 30 seconds rather than
+  within 120, and the exemption removes the penalty route to a lockout. Changing it MUST wait for
+  evidence that it is still reached.
+- **Burst test.** A throwaway CA the box does not trust signed a throwaway key's certificate
+  (principal `ubuntu`, one hour; deleted afterwards, no change to the box's `authorized_keys`).
+  Six certificate logins through Session Manager and the real `ssh-proxy.cmd` started 4 to 5
+  seconds apart from 19:35:54 UTC, each refused with `Permission denied (publickey)`. The good
+  login `ssh agentspace true` started at 19:36:21 UTC, while all six refused connections were
+  still open on the box, and exited 0; sshd logged `Accepted publickey for ubuntu from 127.0.0.1`
+  at 19:36:24. A second good login at 19:36:33 and a third at 19:36:58, after the last refused
+  connection had timed out, also exited 0.
+- **The refused connections lingered for the new grace time, not 120 seconds.** sshd logged six
+  `Timeout before authentication for connection from 127.0.0.1` lines, at 19:36:28, :34, :36, :40,
+  :47 and :51, each 30 to 33 seconds after that connection's first journal line (the first
+  refusal's `AuthorizedKeysCommand` line is at 19:35:57). The journal held no line mentioning a penalty, a
+  dropped connection or `MaxStartups` for the whole window. This is the E2.08 mechanism (the
+  Session Manager tunnel does not pass the close on to sshd), now with a 30-second hold.
+- **The burst did not show the lockout it prevents.** D10's E2.08 finding predicts that two
+  lingering refusals reach the 15-second minimum penalty. This test ran after the exemption was
+  live, so it shows that six did not block a good login with the exemption in place, not that
+  the exemption was the cause; the pre-change case was not re-run, to avoid locking Terry out.
+  The journal does hold one before-case from the same day, under the defaults: at 06:12:16 UTC,
+  `srclimit_penalise: 127.0.0.1/32: activating ipv4 penalty of 16 seconds for penalty: exceeded
+  LoginGraceTime`. It is the only penalty line in the journal, and six grace timeouts within 23
+  seconds after the change produced none.
+- **Only 127.0.0.1 is exempt, not `::1`.** Every source address sshd has logged on the box is
+  127.0.0.1: the Session Manager worker dials `localhost`, which `/etc/hosts` maps to 127.0.0.1
+  only. An image that maps `localhost` to `::1` would bring the lockout back, so a new image
+  SHOULD be checked for it.
+- **A certificate from an untrusted CA logs no `Refusing certificate` line.** The only per-attempt
+  journal lines are the two `AuthorizedKeysCommand ... eic_run_authorized_keys` lines from EC2
+  Instance Connect (D7, E2.04 finding), so a refusal of that kind is visible in the journal only
+  as that pair and later the timeout. The `Refusing certificate ID ...` line of the README's Logs
+  section appears for a trusted CA's expired or invalid certificate.
+
 ### D8. The MVP control plane is a CLI on the laptop
 
 **MVP only.** `agentspace lease ...` runs on the laptop, prints JSON, and keeps lease state in a
