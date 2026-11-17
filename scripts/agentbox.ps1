@@ -28,6 +28,9 @@ $Root = Split-Path $PSScriptRoot -Parent
 $IdFile = Join-Path $Root '.instance-id'
 $Aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
 if (-not (Test-Path $Aws)) { $Aws = 'aws' }
+# The script's own ssh and scp calls skip the RemoteForwards in the agentbox SSH entry, so
+# they never collide with an interactive session that already holds those ports.
+$NoForward = @('-o', 'ClearAllForwardings=yes')
 
 # Inside ssh's ProxyCommand (stdin a pipe, stderr the console), Windows PowerShell 5.1 sets
 # the console's output mode to VT processing alone as it starts, dropping
@@ -167,18 +170,18 @@ switch ($Command) {
     Start-Box (Get-InstanceId)
     $src = Join-Path $Root 'box\system'
     Say 'Copying box/system to the instance...'
-    & ssh agentbox 'rm -rf /tmp/agentbox-system'
-    & scp -q -r $src 'agentbox:/tmp/agentbox-system'
+    & ssh @NoForward agentbox 'rm -rf /tmp/agentbox-system'
+    & scp @NoForward -q -r $src 'agentbox:/tmp/agentbox-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Copy to the instance failed.' }
-    & ssh agentbox 'sudo bash /tmp/agentbox-system/install.sh && rm -rf /tmp/agentbox-system'
+    & ssh @NoForward agentbox 'sudo bash /tmp/agentbox-system/install.sh && rm -rf /tmp/agentbox-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Install on the instance failed.' }
     # Terry's global instructions for Claude Code, so agents on the box follow the same
     # standing orders as on the laptop. The laptop copy is the source; the box copy is replaced.
     $claudeMd = Join-Path $HOME '.claude\CLAUDE.md'
     if (Test-Path $claudeMd) {
       Say 'Copying ~/.claude/CLAUDE.md to the instance...'
-      & ssh agentbox 'mkdir -p ~/.claude'
-      & scp -q $claudeMd 'agentbox:.claude/CLAUDE.md'
+      & ssh @NoForward agentbox 'mkdir -p ~/.claude'
+      & scp @NoForward -q $claudeMd 'agentbox:.claude/CLAUDE.md'
       if ($LASTEXITCODE -ne 0) { Fail 'Copying CLAUDE.md to the instance failed.' }
     }
   }
@@ -214,7 +217,7 @@ switch ($Command) {
     if ($i.State.Name -eq 'running') {
       Say 'Growing the filesystem online...'
       Start-Sleep -Seconds 10
-      & ssh agentbox 'sudo growpart /dev/nvme0n1 1; sudo resize2fs /dev/nvme0n1p1 && df -h /'
+      & ssh @NoForward agentbox 'sudo growpart /dev/nvme0n1 1; sudo resize2fs /dev/nvme0n1p1 && df -h /'
     } else {
       Say 'The filesystem grows on its own at next boot.'
     }

@@ -25,6 +25,38 @@ through Session Manager. The first connection after a stop takes a minute or two
 new kernel means a reboot. VS Code Remote-SSH and the Claude desktop app's SSH connections can use
 the same host name.
 
+The whole entry, since it lives outside this repo:
+
+```
+Host agentbox
+  User ubuntu
+  IdentityFile ~/.ssh/id_ed25519
+  ProxyCommand C:\Windows\System32\cmd.exe /d /c "C:\Projects\agentbox\scripts\ssh-proxy.cmd"
+  StrictHostKeyChecking accept-new
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+  RemoteForward 127.0.0.1:8811 127.0.0.1:8811
+  RemoteForward 127.0.0.1:53147 127.0.0.1:53147
+```
+
+### The localswim board on the box
+
+Terry's localswim board (`127.0.0.1:8811`) and the localpost queue behind its watcher
+(`127.0.0.1:53147`) run on the laptop. The two `RemoteForward` lines lend them to the box: while
+an `ssh agentbox` connection is open, both answer at the same addresses on the box's loopback,
+so agents there use the board exactly as they would on the laptop. The board stays on the laptop
+because the box is stopped most of the time, and a tunnel held open to a board on the box would
+keep it from ever stopping (Terry, 2026-11-16).
+
+- **The first connection binds the ports; later ones print "remote port forwarding failed" and
+  carry on**, using the first one's forward. When the first connection closes, the board
+  disappears from the box until a new connection opens, even if others are still open.
+- **`agentbox.ps1` passes `ClearAllForwardings=yes` to its own ssh and scp calls**, so they
+  never take the ports from an interactive session.
+- **An agent on the box MUST treat an unreachable board as a reason to stop and report, not to
+  work without a card.** The board goes away when Terry disconnects, as it does when the laptop
+  sleeps.
+
 ```bat
 powershell -File scripts\agentbox.ps1 status
 powershell -File scripts\agentbox.ps1 down
