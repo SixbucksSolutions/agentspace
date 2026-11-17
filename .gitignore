@@ -1,3 +1,6 @@
 .instance-id
 .build/
 infra/local.parameters
+# The SSH CA lives in %LOCALAPPDATA%\agentspace\ca (D17); a copy MUST NOT land in the repo.
+agentspace_ca
+agentspace_ca.pub

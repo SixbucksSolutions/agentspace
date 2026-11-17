@@ -57,6 +57,7 @@ powershell -File scripts\agentspace.ps1 down
 powershell -File scripts\agentspace.ps1 grow -GiB 2
 powershell -File scripts\agentspace.ps1 sync
 powershell -File scripts\agentspace.ps1 deploy
+powershell -File scripts\agentspace.ps1 ca
 ```
 
 - **`sync`** installs `box/system` on the instance: the idle check, the boot-time patch service
@@ -66,6 +67,12 @@ powershell -File scripts\agentspace.ps1 deploy
 - **`deploy`** updates the CloudFormation stack and then runs `sync`. The account-specific
   parameters (`VpcId`, `SubnetId`) come from `infra\local.parameters`, which is not committed;
   `infra\local.parameters.example` shows the format.
+- **`ca`** creates the agentspace SSH CA that signs lease certificates
+  ([D7](docs/decisions.md#d7-ssh-access-through-short-lived-certificates-from-an-agentspace-ca)),
+  once, as `%LOCALAPPDATA%\agentspace\ca\agentspace_ca` and `agentspace_ca.pub`, locked to the
+  current user (D17). Running it again changes nothing and prints the paths and fingerprint. It
+  refuses to overwrite a CA, and fails without repairing anything when the pair is half there,
+  mismatched or readable by anyone else.
 
 ### The localswim board on the box
 

@@ -91,8 +91,8 @@ through `TrustedUserCAKeys`.
 - Expiry needs no cleanup on the host.
 - sshd logs the key ID, so every connection names its lease.
 
-**The CA key MUST NOT be committed**, since this repo is public. Card #0002 decides where it lives
-on the laptop; open question Q1 covers where it lives once the API is hosted.
+**The CA key MUST NOT be committed**, since this repo is public. D17 says where it lives on the
+laptop and how it is locked down; open question Q1 covers where it lives once the API is hosted.
 
 ### D8. The MVP control plane is a CLI on the laptop
 
@@ -210,6 +210,51 @@ latest.
   Terry. The architect's approval is therefore a review comment that says so, followed by the
   squash merge. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
+
+## Keys
+
+### D17. The CA key lives in %LOCALAPPDATA%, owner-only and without a passphrase
+
+**MVP only, 2026-11-16 (story 2.03).** **Replaced by card #0011**, which settles Q1 when the API
+is hosted and signing leaves the laptop.
+
+- **The CA's private key MUST live at `%LOCALAPPDATA%\agentspace\ca\agentspace_ca`**, with its
+  public key beside it as `agentspace_ca.pub`. Both files MUST stay out of the repo and out of
+  any folder that OneDrive or another service syncs. `agentspace.ps1 ca` creates them
+  once, and refuses to run when that folder's path is inside OneDrive or the repo. It MUST NOT be
+  run elevated, since an elevated shell makes Administrators the owner of what it creates.
+- **The folder and the private key MUST be the current user's alone:** owned by the user, one rule
+  granting the user full control, and nothing inherited. `ca` locks and checks the folder before
+  it makes the key in it, locks the key once it exists, and fails without repairing anything when
+  it later finds either one otherwise; its message gives the `icacls` commands that lock them again.
+- **The private key MUST NOT have a passphrase, and SHOULD NOT be loaded into ssh-agent.** The
+  lease CLI signs unattended.
+- **The public key MUST NOT be committed.** `sync` sends it to hosts from the laptop as their
+  `TrustedUserCAKeys`, and SHOULD replace that file rather than add to it, so a new CA drops the
+  old one. `sync` SHOULD check the pair with `Assert-Ca` first, so a swapped public key never
+  becomes a host's trusted CA.
+- **`ca` MUST NOT overwrite or repair a CA.** A half-made, mismatched or loosened pair fails with
+  what is wrong, and a person decides what to do.
+- **If the private key is lost or exposed, the CA MUST be replaced:** delete both files, run `ca`,
+  run `sync` for every host, and re-issue every live lease's certificate. Certificates from the old
+  CA stop working on each host once it is synced.
+
+**Why:**
+- `%LOCALAPPDATA%` never roams and cannot be redirected to OneDrive, and agentspace already keeps
+  laptop state there. `~/.ssh` holds identities and gets copied around.
+- **Disabling inheritance is load-bearing:** on Terry's laptop, `%LOCALAPPDATA%` passes inherited
+  access to `CodexSandboxUsers` and to an AppContainer capability.
+- ssh-keygen's own rules on a new key also grant SYSTEM and Administrators. They are dropped
+  because those principals' privileges reach the file anyway, and owner-only is a rule `ca` can
+  check exactly.
+- An unencrypted key at rest exposes no more than `~/.ssh/id_ed25519` does today, which already
+  reaches `ubuntu` on the box. The box also has no inbound ports, so a stolen CA key reaches it
+  only together with AWS credentials for Session Manager.
+- ssh-agent is not used, although `ssh-keygen -s -U` can sign with a CA key held there: the
+  laptop's `ssh-agent` service is disabled, turning it on is a system setting, and once on it gives
+  every process running as Terry the same signing power as the file does.
+- A committed public key would make every fork's box trust Terry's CA, and every new CA would need
+  a commit.
 
 ## Open questions
 
