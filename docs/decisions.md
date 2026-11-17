@@ -121,6 +121,25 @@ another principal were refused.
   (`failed, status 22`), although `sshd -T` reports `authorizedkeyscommand none`. Where it is
   configured, and whether it is a second way to log in, is a question for story E2.04.
 
+**Findings from story E2.05 (2026-11-16).** D7 stands. `New-LeaseCredential` in
+`scripts/lease-credential.ps1` (PowerShell 7, D18) issues a lease's key and certificate, and
+`scripts/test-lease-credential.ps1` checks it.
+- **A lease's key pair lives in `%LOCALAPPDATA%\agentspace\leases\<lease id>\`** as `id_ed25519`,
+  `id_ed25519.pub` and `id_ed25519-cert.pub`, the name ssh finds beside an `IdentityFile`. The
+  issuer refuses a lease ID that is not a simple token, and refuses a lease that already has a key;
+  renewing is story E2.07's.
+- **The validity MUST be passed to `ssh-keygen -V` as an absolute UTC window,
+  `YYYYMMDDHHMMSSZ:YYYYMMDDHHMMSSZ`, from the issue time to the issue time plus the TTL.** A relative
+  `+8h` leaves the start to ssh-keygen, so the issuer could not return the exact expiry. Windows
+  OpenSSH 9.5p2 reads the `Z` as UTC.
+- **`ssh-keygen -L` prints the validity in the machine's local time, with no zone.** Anything that
+  compares it with UTC values MUST convert them first.
+- **The window starts at the laptop's clock, not before it.** If the laptop runs ahead of a host,
+  a new certificate is refused there as not yet valid until the clocks meet. The start SHOULD be
+  moved a few minutes back if that is ever seen.
+- **PowerShell 7.6 passed `-N ''` through as an empty passphrase**, as the E2.01 finding expects for
+  7.3 and later. The issuer checks every new key with `ssh-keygen -y -P ''`.
+
 ### D8. The MVP control plane is a CLI on the laptop
 
 **MVP only.** `agentspace lease ...` runs on the laptop, prints JSON, and keeps lease state in a
