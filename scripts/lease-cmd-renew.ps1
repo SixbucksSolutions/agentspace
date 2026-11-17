@@ -1,8 +1,8 @@
 #Requires -Version 7
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
-# agentspace lease renew (docs/lease-api.md, "agentspace lease renew"). Story E1.02 wrote this
-# stub; story E1.05 fills it in, and MUST NOT need to change scripts\lease-cli.ps1 to do so.
+# agentspace lease renew (docs/lease-api.md, "agentspace lease renew"). Story E1.02 wrote the stub,
+# and story E1.05 filled it in, without changing scripts\lease-cli.ps1.
 #
 # The function that scripts\lease-cli.ps1 calls, which MUST keep this name and these parameters:
 #   Invoke-LeaseRenew -LeaseId <string> -TtlSeconds <int>
@@ -47,7 +47,12 @@ function Invoke-LeaseRenew {
     }
     $state = (ConvertTo-LeaseOutput -Record $record)['state']
     if ($state -cne 'ready') {
-      throw (New-LeaseError -Code invalid_state -LeaseId $leaseIdValue -State $state -Message "Lease '$leaseIdValue' is $state, and only a ready lease can be renewed. Create a new lease if it is expired.")
+      $advice = switch ($state) {
+        'expired' { 'Create a new lease.' }
+        'pending' { 'Wait for it to be ready.' }
+        default { "The $state state is final." }
+      }
+      throw (New-LeaseError -Code invalid_state -LeaseId $leaseIdValue -State $state -Message "Lease '$leaseIdValue' is $state, and only a ready lease can be renewed. $advice")
     }
     $ttl = if ($ttlValue -gt 0) { $ttlValue } else { [int]$record['ttl_seconds'] }
     $renewed = Invoke-LeaseDriverRenew -Driver $record['driver'] -LeaseId $leaseIdValue -Project $record['project'] -Ttl ([TimeSpan]::FromSeconds($ttl))

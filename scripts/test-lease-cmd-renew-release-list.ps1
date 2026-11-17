@@ -72,11 +72,12 @@ function Test-Success([string]$Name, $Run, [string]$Schema) {
   if ($ok) { $Run.Out | ConvertFrom-Json -AsHashtable -DateKind String }
 }
 
-function Test-Failure([string]$Name, $Run, [int]$Code, [string]$ErrCode, [string]$State = '') {
+function Test-Failure([string]$Name, $Run, [int]$Code, [string]$ErrCode, [string]$State = '', [string]$LeaseId = '') {
   $doc = $null
   try { $doc = $Run.Err.TrimEnd("`n") | ConvertFrom-Json -AsHashtable -DateKind String } catch { }
   $ok = $Run.Code -eq $Code -and $Run.Out -eq '' -and $doc -and $doc['code'] -ceq $ErrCode -and (Test-Document $Run.Err.TrimEnd("`n") $errorSchema)
   if ($ok -and $State) { $ok = $doc['state'] -ceq $State -and $doc['message'].Contains($State) }
+  if ($ok -and $LeaseId -and $doc.ContainsKey('lease_id')) { $ok = $doc['lease_id'] -ceq $LeaseId }
   Write-Result $ok "$Name exits $Code as $ErrCode$(if ($State) { " naming $State" })"
   if (-not $ok) { Write-Host "      exit $($Run.Code), stdout: $($Run.Out.Trim()), stderr: $($Run.Err.Trim())" }
 }
@@ -109,7 +110,7 @@ function New-PlainRecord([string]$Id, [string]$Project, [string]$State, [string]
     ttl_seconds = 3600; created_at = $CreatedAt
   }
   switch ($State) {
-    'released' { $r.expires_at = '2026-11-17T01:00:00Z'; $r.released_at = '2026-11-17T00:30:00Z' }
+    'released' { $r.expires_at = Format-Time $now.AddMinutes(30); $r.released_at = Format-Time $now.AddMinutes(-30) }
     'unsatisfiable' {
       $r.platform = 'linux/amd64'
       $r.reasons = @([ordered]@{ code = 'unsupported_platform'; message = "Platform 'linux/amd64' is not supported; v0 supports linux/arm64 only." })
@@ -134,14 +135,33 @@ function Get-KeyHash([string]$Id) {
   if (Test-Path -LiteralPath $k) { (Get-FileHash -LiteralPath $k -Algorithm SHA256).Hash } else { 'absent' }
 }
 
-function Test-Order($Leases) {
-  $ordered = $true
-  for ($i = 1; $i -lt $Leases.Count; $i++) {
-    $c = [string]::CompareOrdinal($Leases[$i - 1]['created_at'], $Leases[$i]['created_at'])
-    if ($c -eq 0) { $c = [string]::CompareOrdinal($Leases[$i - 1]['id'], $Leases[$i]['id']) }
-    if ($c -ge 0) { $ordered = $false }
-  }
-  $ordered
+function Get-CertPath([string]$Id) { Join-Path $leasesRoot "$Id\id_ed25519-cert.pub" }
+
+function Get-CertHash([string]$Id) {
+  $c = Get-CertPath $Id
+  if (Test-Path -LiteralPath $c) { (Get-FileHash -LiteralPath $c -Algorithm SHA256).Hash } else { 'absent' }
+}
+
+# The certificate's valid-before as a UTC time text. ssh-keygen -L prints local time with no zone (D7).
+function Get-CertValidBefore([string]$Id) {
+  $out = & ssh-keygen -L -f (Get-CertPath $Id) 2>&1 | Out-String
+  if ($out -match 'Valid:\s+from\s+\S+\s+to\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})') {
+    $local = [DateTime]::SpecifyKind([DateTime]::ParseExact($Matches[1], 'yyyy-MM-dd''T''HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture), [DateTimeKind]::Local)
+    Format-Time $local
+  } else { 'unreadable' }
+}
+
+# The ids in the order the contract gives: created_at, then id, both ordinal.
+function Get-ExpectedOrder($Records) {
+  $list = [System.Collections.Generic.List[object]]::new()
+  foreach ($r in $Records) { $list.Add($r) }
+  $list.Sort([Comparison[object]]{
+    param($a, $b)
+    $c = [string]::CompareOrdinal($a['created_at'], $b['created_at'])
+    if ($c -eq 0) { $c = [string]::CompareOrdinal($a['id'], $b['id']) }
+    $c
+  })
+  @($list | ForEach-Object { $_['id'] })
 }
 
 try {
@@ -151,7 +171,7 @@ try {
 
   # --- Seed -------------------------------------------------------------------------------------
   $now = [DateTime]::UtcNow
-  $idRenew = New-Id; $idTtl = New-Id; $idRelease = New-Id; $idRelease2 = New-Id; $idExpiredRel = New-Id
+  $idRenew = New-Id; $idTtl = New-Id; $idRelease = New-Id; $idExpiredRel = New-Id
   $idExpired = New-Id; $idReleased = New-Id; $idUnsat = New-Id; $idPending = New-Id; $idPendingRel = New-Id; $idUnknown = New-Id
   $t = { param($min) Format-Time $now.AddMinutes($min) }
   $rRenew = New-ReadyRecord $idRenew 'alpha' (& $t -50)
@@ -164,10 +184,22 @@ try {
   $rReleased = New-PlainRecord $idReleased 'alpha' 'released' (& $t -45)
   $rUnsat = New-PlainRecord $idUnsat 'gamma' 'unsatisfiable' (& $t -44)
   $rPending = New-PlainRecord $idPending 'gamma' 'pending' (& $t -43)
-  $rPendingRel = New-PlainRecord $idPendingRel 'gamma' 'pending' (& $t -42)
-  $rRelease2 = New-PlainRecord $idRelease2 'beta' 'pending' (& $t -41)
+  # The two pending records share one created_at, so the id tiebreak decides their order.
+  $rPendingRel = New-PlainRecord $idPendingRel 'gamma' 'pending' (& $t -43)
   $records = @($rRenew, $rTtl, $rRelease, $rExpiredRel, $rExpired, $rReleased, $rUnsat, $rPending, $rPendingRel)
-  Write-State $records
+  $expectedOrder = Get-ExpectedOrder $records
+  # The file holds them shuffled, with the higher id of the tied pair first, so no order in the file
+  # matches the expected one by accident.
+  $byId = @{}
+  foreach ($r in $records) { $byId[$r['id']] = $r }
+  $perm = @(4, 0, 7, 2, 8, 5, 1, 6, 3)
+  $fileOrder = @($perm | ForEach-Object { $expectedOrder[$_] })
+  $tied = if ([string]::CompareOrdinal($idPending, $idPendingRel) -lt 0) { @($idPending, $idPendingRel) } else { @($idPendingRel, $idPending) }
+  $iLow = [array]::IndexOf($fileOrder, $tied[0]); $iHigh = [array]::IndexOf($fileOrder, $tied[1])
+  if ($iLow -lt $iHigh) { $fileOrder[$iLow] = $tied[1]; $fileOrder[$iHigh] = $tied[0] }
+  Write-State @($fileOrder | ForEach-Object { $byId[$_] })
+  $shuffled = (@($fileOrder) -join ',') -cne ($expectedOrder -join ',') -and [array]::IndexOf($fileOrder, $tied[1]) -lt [array]::IndexOf($fileOrder, $tied[0])
+  Write-Result $shuffled 'The seeded state file is out of order, with the tied pair in reverse id order'
   Write-Result (Test-Document (Get-Content -LiteralPath (Join-Path $stateDir 'leases.json') -Raw) $stateSchema) 'The seeded state file validates against the state schema'
   $aliasFiles = (Get-ChildItem -LiteralPath (Join-Path $sshDir 'agentspace.d') -ErrorAction SilentlyContinue).Count
   Write-Result ($aliasFiles -eq 5) "Five ready leases have an alias file in the throwaway ssh folder (found $aliasFiles)"
@@ -178,7 +210,8 @@ try {
   $doc = Test-Success 'list with no filter' $run $listSchema
   if ($doc) {
     Write-Result ($doc['leases'].Count -eq 9) "list with no filter returns all nine leases (found $($doc['leases'].Count))"
-    Write-Result (Test-Order $doc['leases']) 'list orders by created_at then id'
+    $gotOrder = @($doc['leases'] | ForEach-Object { $_['id'] })
+    Write-Result (($gotOrder -join ',') -ceq ($expectedOrder -join ',')) 'list returns the exact order: created_at, then id'
     $exp = $doc['leases'] | Where-Object { $_['id'] -ceq $idExpired }
     Write-Result ($exp -and $exp['state'] -ceq 'expired' -and -not $exp.ContainsKey('ssh')) 'list shows the past-expiry lease as expired, without ssh'
     Write-Result (-not ($run.Out -match 'driver|"ec2"')) 'list prints no driver name'
@@ -203,10 +236,15 @@ try {
 
   # --- renew --------------------------------------------------------------------------------------
   $keyBefore = Get-KeyHash $idRenew
+  $certBefore = Get-CertHash $idRenew
   $aliasBefore = $rRenew.ssh.host_alias
   $startedAt = [DateTime]::UtcNow
   $doc = Test-Success 'renew of a ready lease' (Invoke-Cli @('renew', $idRenew)) $leaseSchema
   if ($doc) {
+    $certAfter = Get-CertHash $idRenew
+    Write-Result ($certBefore -cne 'absent' -and $certAfter -cne 'absent' -and $certAfter -cne $certBefore) 'renew replaced the certificate file'
+    $validBefore = Get-CertValidBefore $idRenew
+    Write-Result ($validBefore -ceq $doc['expires_at']) "The renewed certificate's valid-before equals expires_at (certificate $validBefore, document $($doc['expires_at']))"
     $exp = Get-Instant $doc['expires_at']
     $delta = ($exp - $startedAt).TotalSeconds
     Write-Result ($delta -gt 28800 - 30 -and $delta -lt 28800 + 60) "renew sets expires_at to about now plus the TTL (off by $([int]($delta - 28800)) s)"
@@ -216,19 +254,21 @@ try {
     $stored = Read-StateRecords | Where-Object { $_['id'] -ceq $idRenew }
     Write-Result ($stored['expires_at'] -ceq $doc['expires_at'] -and $stored['driver']) 'renew saved the new expires_at in the state file and kept the driver'
   }
+  $certTtlBefore = Get-CertHash $idTtl
   $startedAt = [DateTime]::UtcNow
   $doc = Test-Success 'renew --ttl 90m' (Invoke-Cli @('renew', $idTtl, '--ttl', '90m')) $leaseSchema
   if ($doc) {
+    Write-Result ((Get-CertHash $idTtl) -cne $certTtlBefore -and (Get-CertValidBefore $idTtl) -ceq $doc['expires_at']) 'renew --ttl 90m replaced the certificate, whose valid-before equals expires_at'
     $delta = ((Get-Instant $doc['expires_at']) - $startedAt).TotalSeconds
     Write-Result ($doc['ttl_seconds'] -eq 5400 -and $delta -gt 5400 - 30 -and $delta -lt 5400 + 60) 'renew --ttl 90m sets ttl_seconds 5400 and a matching expires_at'
     $doc2 = Test-Success 'renew again without --ttl' (Invoke-Cli @('renew', $idTtl)) $leaseSchema
     if ($doc2) { Write-Result ($doc2['ttl_seconds'] -eq 5400) 'a second renew reuses the 5400 s TTL' }
   }
-  Test-Failure 'renew of an expired lease' (Invoke-Cli @('renew', $idExpired)) 4 invalid_state 'expired'
-  Test-Failure 'renew of a released lease' (Invoke-Cli @('renew', $idReleased)) 4 invalid_state 'released'
-  Test-Failure 'renew of an unsatisfiable lease' (Invoke-Cli @('renew', $idUnsat)) 4 invalid_state 'unsatisfiable'
-  Test-Failure 'renew of a pending lease' (Invoke-Cli @('renew', $idPending)) 4 invalid_state 'pending'
-  Test-Failure 'renew of an unknown lease' (Invoke-Cli @('renew', $idUnknown)) 3 not_found
+  Test-Failure 'renew of an expired lease' (Invoke-Cli @('renew', $idExpired)) 4 invalid_state 'expired' $idExpired
+  Test-Failure 'renew of a released lease' (Invoke-Cli @('renew', $idReleased)) 4 invalid_state 'released' $idReleased
+  Test-Failure 'renew of an unsatisfiable lease' (Invoke-Cli @('renew', $idUnsat)) 4 invalid_state 'unsatisfiable' $idUnsat
+  Test-Failure 'renew of a pending lease' (Invoke-Cli @('renew', $idPending)) 4 invalid_state 'pending' $idPending
+  Test-Failure 'renew of an unknown lease' (Invoke-Cli @('renew', $idUnknown)) 3 not_found '' $idUnknown
   $stillExpired = Read-StateRecords | Where-Object { $_['id'] -ceq $idExpired }
   Write-Result ($stillExpired['expires_at'] -ceq $rExpired.expires_at) 'A refused renew leaves the record as it was'
 
@@ -253,13 +293,16 @@ try {
   $doc = Test-Success 'release of an expired lease' (Invoke-Cli @('release', $idExpiredRel)) $leaseSchema
   if ($doc) {
     Write-Result ($doc['state'] -ceq 'released' -and -not (Test-Path -LiteralPath (Join-Path $leasesRoot $idExpiredRel))) 'release of an expired lease releases it and deletes its folder'
+    $leftExp = @(Get-ChildItem -LiteralPath (Join-Path $sshDir 'agentspace.d') -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$($idExpiredRel.Substring(0, 8))*" }).Count
+    Write-Result ($leftExp -eq 0) 'release of an expired lease deletes its alias file'
+    Write-Result ($doc['expires_at'] -ceq $rExpiredRel.expires_at) 'release of an expired lease keeps its expires_at'
   }
   $doc = Test-Success 'release of a pending lease' (Invoke-Cli @('release', $idPendingRel)) $leaseSchema
   if ($doc) { Write-Result ($doc['state'] -ceq 'released' -and $doc['released_at'] -and -not $doc.ContainsKey('expires_at')) 'release of a pending lease gives released with released_at and no expires_at' }
   $run = Invoke-Cli @('release', $idUnsat)
   $doc = Test-Success 'release of an unsatisfiable lease' $run $leaseSchema
   if ($doc) { Write-Result ($doc['state'] -ceq 'unsatisfiable' -and $doc['reasons'].Count -eq 1 -and -not $doc.ContainsKey('released_at')) 'release of an unsatisfiable lease returns it unchanged' }
-  Test-Failure 'release of an unknown lease' (Invoke-Cli @('release', $idUnknown)) 3 not_found
+  Test-Failure 'release of an unknown lease' (Invoke-Cli @('release', $idUnknown)) 3 not_found '' $idUnknown
 
   # --- After ----------------------------------------------------------------------------------------
   $text = Get-Content -LiteralPath (Join-Path $stateDir 'leases.json') -Raw

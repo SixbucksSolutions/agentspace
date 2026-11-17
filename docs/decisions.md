@@ -419,7 +419,8 @@ process.
   `Update-LeaseState` block.** A driver failure throws out of the block and leaves the record as it
   was. The block changes the record object in place and MUST NOT assign to a variable outside it,
   because the block runs in a child scope and such an assignment would be lost. The command's
-  parameters are copied to differently named locals first, for the same reason.
+  parameters are copied to differently named locals first, so that no local of
+  `Update-LeaseState` can shadow them (the E1.02 finding above).
 - **`renew` decides the state as `get` does** (`ConvertTo-LeaseOutput`), so a ready lease past its
   `expires_at` is `invalid_state` naming `expired`. It sets `expires_at` from the driver's returned
   valid-before time, and `ttl_seconds` to the TTL used.
