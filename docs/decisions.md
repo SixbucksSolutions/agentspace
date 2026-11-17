@@ -450,12 +450,50 @@ prototyping happy paths."
   `agentspace lease` gets its JSON schemas with epic #0001, since they cost little while the
   contract is being written. It SHOULD also have `--help` at every level.
 
+### D21. Laptop state lives in %USERPROFILE%\.agentspace, never in AppData
+
+**Decided, architect, 2026-11-17 (found during E2.02).** Everything agentspace keeps on the laptop
+(the CA, lease keys and certificates, the localswim token hash) MUST live under
+`%USERPROFILE%\.agentspace`. It MUST NOT live under `%LOCALAPPDATA%` or `%APPDATA%`. Story E2.09
+moves it.
+
+**Why:**
+- **The Claude desktop app is MSIX-packaged, and Windows redirects every write that a packaged
+  app's processes make under AppData into the package's own cache**
+  (`%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\...`).
+  - Every Claude Code session runs inside the app: the architect, the dev leads and their
+    subagents. So when E2.03 "created the CA in `%LOCALAPPDATA%gentspace\ca`", Windows put it
+    in that cache, and E2.05 put its lease keys there too.
+  - Inside the app, reads see the cache at the normal path, so every check passed.
+  - Outside the app (Terry's own terminal, and the app's SSH-connection process), the real
+    `%LOCALAPPDATA%gentspace` did not exist. Terry confirmed it with `dir` on 2026-11-17.
+- **What that broke:**
+  - A lease alias's key paths resolve to nothing for any ssh started outside the app.
+  - The token hash is invisible outside the app, so every connection from outside pushed the
+    token again and hit #0026.
+  - The CA private key lived in a cache that resetting or uninstalling the Claude app would
+    delete.
+- **The profile root is not redirected:** `~/.ssh` edits made from inside the app landed for
+  real.
+
+**How it applies:**
+- Any file that a process outside the app must see, or that must outlive the app, MUST NOT be
+  written under AppData by code that agents run.
+- Evidence gathered inside the app about paths under AppData proves nothing about the world
+  outside it. A check that matters MUST also run from outside, for example from Terry's own
+  terminal.
+- Moving the CA MUST keep its fingerprint, so hosts keep trusting it, and MUST re-apply D17's
+  owner-only lockdown. Once the new copy is verified, the old copy in the package cache MUST be
+  deleted, so only one copy of the key exists.
+
 ## Keys
 
 ### D17. The CA key lives in %LOCALAPPDATA%, owner-only and without a passphrase
 
 **MVP only, 2026-11-16 (story E2.03).** **Replaced by card #0011**, which settles Q1 when the API
-is hosted and signing leaves the laptop.
+is hosted and signing leaves the laptop. **Its location is replaced by D21:** the key moves to
+`%USERPROFILE%\.agentspace\ca`; everything else here (owner-only, no passphrase, never committed,
+never overwritten) stands.
 
 - **The CA's private key MUST live at `%LOCALAPPDATA%\agentspace\ca\agentspace_ca`**, with its
   public key beside it as `agentspace_ca.pub`. Both files MUST stay out of the repo and out of
