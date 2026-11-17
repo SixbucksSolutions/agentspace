@@ -64,7 +64,7 @@ powershell -File scripts\agentspace.ps1 ca
   before touching the instance if the pair is missing, mismatched or readable by anyone else
   (D17). It then installs `box/system` on the instance:
   - The idle check, the boot-time patch service and the localswim wrapper.
-  - The CA's public key, sent from `%LOCALAPPDATA%\agentspace\ca`, as
+  - The CA's public key, sent from `%USERPROFILE%\.agentspace\ca`, as
     `/etc/ssh/agentspace_ca.pub`. Each sync replaces the file rather than adding to it, so after
     a new CA only the new one is trusted.
   - The sshd drop-in `/etc/ssh/sshd_config.d/50-agentspace-ca.conf`, from
@@ -81,14 +81,14 @@ powershell -File scripts\agentspace.ps1 ca
   `infra\local.parameters.example` shows the format.
 - **`ca`** creates the agentspace SSH CA that signs lease certificates
   ([D7](docs/decisions.md#d7-ssh-access-through-short-lived-certificates-from-an-agentspace-ca)),
-  once, as `%LOCALAPPDATA%\agentspace\ca\agentspace_ca` and `agentspace_ca.pub`, locked to the
+  once, as `%USERPROFILE%\.agentspace\ca\agentspace_ca` and `agentspace_ca.pub`, locked to the
   current user (D17). Running it again changes nothing and prints the paths and fingerprint. It
   refuses to overwrite a CA, and fails without repairing anything when the pair is half there,
   mismatched or readable by anyone else.
 - **`scripts\lease-credential.ps1`** (PowerShell 7, D18) defines
   `New-LeaseCredential -LeaseId <id> -Ttl <TimeSpan>`, which the lease CLI dot-sources. It checks
   the CA with `agentspace.ps1 ca`, makes a new ed25519 key without a passphrase in
-  `%LOCALAPPDATA%\agentspace\leases\<id>\`, and signs it with principal `ubuntu`, the lease ID as
+  `%USERPROFILE%\.agentspace\leases\<id>\`, and signs it with principal `ubuntu`, the lease ID as
   key ID and a validity of exactly the TTL. It refuses a lease ID that is not a safe token and a
   lease that already has a key. Check it with
   `pwsh -NoProfile -File scripts\test-lease-credential.ps1`, which prints PASS or FAIL per check
@@ -124,7 +124,7 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   file and, when the instance or the token has changed since the last send, writes it with the
   URL to `~/.config/localswim/bot.env` (mode 0600). The token travels over SSH on stdin: it MUST
   NOT be put on a command line, printed, or stored anywhere else. Nothing about it is kept on
-  the laptop except a SHA-256 of what was last sent, in `%LOCALAPPDATA%\agentspace`.
+  the laptop except a SHA-256 of what was last sent, in `%USERPROFILE%\.agentspace`.
 - **The wrapper sets the URL and token for one run only**, and refuses with a stop-and-report
   message when the board is unreachable, so an agent learns why instead of seeing a timeout.
 - **A project's own localswim wrapper still decides how that project's agents call it.**

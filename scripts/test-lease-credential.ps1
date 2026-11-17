@@ -15,7 +15,7 @@ function Check([string]$Name, [bool]$Ok, [string]$Detail = '') {
 
 $stamp = Get-Date -Format 'yyyyMMddHHmmss'
 $id = "test-2.05-$stamp"
-$leases = Join-Path $env:LOCALAPPDATA 'agentspace\leases'
+$leases = Join-Path $env:USERPROFILE '.agentspace\leases'
 $ttl = [TimeSpan]::FromMinutes(10)
 try {
   $c = New-LeaseCredential -LeaseId $id -Ttl $ttl
@@ -41,7 +41,7 @@ try {
     $L -match '(?m)^\s+Extensions:\s*\r?\n\s+permit-port-forwarding\s*\r?\n\s+permit-pty\s*$' -or
     $L -match '(?m)^\s+Extensions:\s*\r?\n\s+permit-pty\s*\r?\n\s+permit-port-forwarding\s*$')
 
-  $caPub = Join-Path $env:LOCALAPPDATA 'agentspace\ca\agentspace_ca.pub'
+  $caPub = Join-Path $env:USERPROFILE '.agentspace\ca\agentspace_ca.pub'
   $caFp = ((& $keygen -l -f $caPub) -split '\s+')[1]
   Check 'Signing CA is the agentspace CA' ($L -match "Signing CA: \S+ (\S+)" -and $Matches[1] -eq $caFp)
 
