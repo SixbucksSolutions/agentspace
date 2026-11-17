@@ -6,9 +6,10 @@
   deploy  Creates or updates the CloudFormation stack, then runs sync.
   up      Starts the instance if needed, waits until it has finished patching, and sends
           the localswim Bot token if it changed.
-  sync    Installs box/system (idle check, patch at boot, localswim wrapper) on the instance,
-          copies ~/.claude/CLAUDE.md there, builds and installs the localswim CLI, and sends
-          the current localswim Bot token.
+  sync    Checks the agentspace SSH CA, then installs box/system (idle check, patch at boot,
+          localswim wrapper, the sshd drop-in that trusts the CA and closes root login) on the
+          instance with the CA's public key, copies ~/.claude/CLAUDE.md there, builds and
+          installs the localswim CLI, and sends the current localswim Bot token.
   down    Stops the instance.
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
@@ -51,6 +52,9 @@ $CaDir = Join-Path $env:LOCALAPPDATA 'agentspace\ca'
 $CaKey = Join-Path $CaDir 'agentspace_ca'
 $CaPub = "$CaKey.pub"
 $SshKeygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'
+# Windows OpenSSH by full path: from Git Bash, a bare scp finds MSYS's, which mangles the
+# ProxyCommand (card #0027 moves the older bare calls over).
+$Scp = Join-Path $env:SystemRoot 'System32\OpenSSH\scp.exe'
 $Icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
 # Windows PowerShell 5.1 drops an empty argument on its way to a native command, so an empty
 # passphrase is written as a pair of quotes there; PowerShell 7.3 and later pass '' as is.
@@ -263,8 +267,8 @@ function Get-OwnerOnlyProblems([string]$Path) {
 
 # Checks the CA (D17) without changing it: both files present, the directory and private key the
 # current user's alone, the private key readable without a passphrase, and the public key its own
-# ed25519 key. Fails with what is wrong, and returns the fingerprint. sync SHOULD call it before it
-# sends the public key to a host.
+# ed25519 key. Fails with what is wrong, and returns the fingerprint. sync calls it before it sends
+# the public key to a host.
 function Assert-Ca {
   if (-not (Test-Path -LiteralPath $CaKey)) { Fail "$CaKey does not exist; run ca." }
   if (-not (Test-Path -LiteralPath $CaPub)) { Fail "$CaPub does not exist; run ca." }
@@ -367,12 +371,18 @@ switch ($Command) {
   }
 
   'sync' {
+    # The CA is checked before the box is touched, so a swapped or loosened pair never becomes a
+    # host's trusted CA (D17). install.sh replaces the box's copy of the public key.
+    $fingerprint = Assert-Ca
     Start-Box (Get-InstanceId)
     $src = Join-Path $Root 'box\system'
     Say 'Copying box/system to the instance...'
     & ssh @NoForward agentspace 'rm -rf /tmp/agentspace-system'
     & scp @NoForward -q -r $src 'agentspace:/tmp/agentspace-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Copy to the instance failed.' }
+    Say "Copying the agentspace SSH CA's public key ($fingerprint) to the instance..."
+    & $Scp @NoForward -q $CaPub 'agentspace:/tmp/agentspace-system/agentspace_ca.pub'
+    if ($LASTEXITCODE -ne 0) { Fail "Copying the CA's public key to the instance failed." }
     & ssh @NoForward agentspace 'sudo bash /tmp/agentspace-system/install.sh && rm -rf /tmp/agentspace-system'
     if ($LASTEXITCODE -ne 0) { Fail 'Install on the instance failed.' }
     # Terry's global instructions for Claude Code, so agents on the box follow the same

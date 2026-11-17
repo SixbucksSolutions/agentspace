@@ -60,10 +60,22 @@ powershell -File scripts\agentspace.ps1 deploy
 powershell -File scripts\agentspace.ps1 ca
 ```
 
-- **`sync`** installs `box/system` on the instance: the idle check, the boot-time patch service
-  and the localswim wrapper. It copies the laptop's `~/.claude/CLAUDE.md` (Terry's global
-  instructions for Claude Code) there, builds and installs the localswim CLI, and sends the
-  current localswim Bot token.
+- **`sync`** checks the agentspace SSH CA first, with the same checks `ca` makes, and stops
+  before touching the instance if the pair is missing, mismatched or readable by anyone else
+  (D17). It then installs `box/system` on the instance:
+  - The idle check, the boot-time patch service and the localswim wrapper.
+  - The CA's public key, sent from `%LOCALAPPDATA%\agentspace\ca`, as
+    `/etc/ssh/agentspace_ca.pub`. Each sync replaces the file rather than adding to it, so after
+    a new CA only the new one is trusted.
+  - The sshd drop-in `/etc/ssh/sshd_config.d/50-agentspace-ca.conf`, from
+    `box/system/50-agentspace-ca.conf`: `TrustedUserCAKeys` points at that file, so certificates
+    the CA signs for `ubuntu` log in beside the `authorized_keys` key, and `PermitRootLogin no`
+    closes root login, by certificate or otherwise. `install.sh` runs `sshd -t` before
+    `systemctl reload ssh.service`; if the check fails, it puts back the files that were there,
+    leaves sshd running as it was, and fails. It leaves every other drop-in alone.
+
+  It also copies the laptop's `~/.claude/CLAUDE.md` (Terry's global instructions for Claude
+  Code) there, builds and installs the localswim CLI, and sends the current localswim Bot token.
 - **`deploy`** updates the CloudFormation stack and then runs `sync`. The account-specific
   parameters (`VpcId`, `SubnetId`) come from `infra\local.parameters`, which is not committed;
   `infra\local.parameters.example` shows the format.
@@ -132,6 +144,9 @@ RFC 2119 keywords; the capitals are load-bearing.
 - **`ImageId` MUST NOT be changed on the live stack.** CloudFormation replaces the instance to
   change its AMI, which destroys the disk and everything on it. The boot-time patch keeps the
   running box current instead.
+- **sshd settings MUST be changed through a drop-in in `box/system`, installed by `sync`, never
+  by editing the box.** sshd keeps the first value it reads for a keyword, so a new drop-in MUST
+  NOT set a keyword that another one already sets.
 - **Changes to the box's services MUST be made in `box/system` and installed with `sync`.**
   The template's user data runs only at first boot, so editing it changes nothing on a live box.
 - **The laptop's `~/.claude/CLAUDE.md` is the source; the box's copy MUST NOT be edited.**
