@@ -40,7 +40,11 @@ is the project: one Unix user per project, with its own home and secrets, shared
 project's agents.
 
 **In the MVP every project lands as `ubuntu`**, as agents do today. All projects are Terry's and
-already share the box this way, so isolation is safe to punt. Card #0004 adds it.
+already share the box this way, so isolation is safe to punt. Card #0004 was to add it.
+
+**The isolation half was replaced by D25 (2026-11-17):** each project gets a host of its own, so
+the project boundary is the host, not a Unix user on a shared one. #0004 is OBE and archived. The
+credential half (a key and certificate per lease) stands.
 
 **Why per project and not per agent:** agents in one project share a repo, toolchain caches and
 sign-ins. A user per agent would mean signing every tool in once per agent.
@@ -53,7 +57,8 @@ for a lease.
   root disk from 67% to 70% of 6.8 GB.
 - **A project's checkout MUST be on the box before its agents open a session in it.** Every lease
   is `ubuntu` in the MVP, so the checkout lives in the shared home, every lease sees it, and it
-  outlives the lease. Per-project users (#0004) change that.
+  outlives the lease. Under D25 the checkout lives on the project's own host, and v0.7 (#0047)
+  puts it there.
 
 ### D4. Platform as `os/arch`; software as a named profile; no distro field
 
@@ -88,6 +93,10 @@ container backends, where there is no host to own.
 
 **In the MVP there is one pooled driver: the existing EC2 box.** The CLI's code MUST keep it
 behind a driver boundary anyway, so a second driver means adding code, not reworking it.
+
+**Narrowed by D25 (2026-11-17):** a pooled driver's host serves one project, so leases of
+different projects are never packed onto one host. #0012 (placement across a shared pool) is OBE
+and archived.
 
 **Findings from story E1.03 (2026-11-17).** D6 stands. The boundary is two files in `scripts/`:
 - **`lease-driver.ps1` is the interface and names no backend** (D1; a check greps it for
@@ -214,8 +223,9 @@ SHA256:G05h...`), a certificate naming `root` was refused (`ROOT LOGIN REFUSED`)
 - **The CA is trusted for every account, not only `ubuntu`.** A certificate naming `daemon` logged
   in as `daemon` and could forward TCP, although that account has no shell. This grants nothing a
   CA key holder lacks already, since the same holder can sign for `ubuntu`, and only `root` and
-  `ubuntu` have real shells. It MUST be narrowed (`AllowUsers` or `AuthorizedPrincipalsFile`) when
-  per-project users arrive (#0004).
+  `ubuntu` have real shells. It SHOULD be narrowed (`AllowUsers` or `AuthorizedPrincipalsFile`) to
+  the users a lease logs in as. Per-project users (#0004) are OBE under D25, so card #0032 now
+  carries this.
 - **EC2 Instance Connect is configured outside `sshd_config`.** The `ec2-instance-connect` package
   ships `/usr/lib/systemd/system/ssh.service.d/ec2-instance-connect.conf`, which starts sshd with
   `-o AuthorizedKeysCommand .../eic_run_authorized_keys %u %f -o AuthorizedKeysCommandUser
@@ -787,8 +797,8 @@ with state `released` and `released_at` 2026-11-17T22:24:45Z.
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
 no CPU work. An agent holding a lease but doing nothing can still have the box stopped under it;
-its next connection starts it again. **Replaced by card #0006**, which stops a host when it has no
-live leases.
+its next connection starts it again. **Replaced by v0.8 (#0048)**, which stops a project's host
+when the project has no live leases (D25). It folded in card #0006.
 
 **Findings from story E3.03 (2026-11-17).** D11 stands, but the box has a second stopper that does
 not count sessions.
@@ -805,8 +815,10 @@ not count sessions.
 ### D12. Board access is unchanged
 
 **MVP only.** The first `ssh` connection still binds the localswim board's reverse forward for the
-whole box, and every lease uses it, because every lease is `ubuntu`. **Replaced by card #0008**,
-which must land with or before per-project users (#0004), since those break the shared token file.
+whole box, and every lease uses it, because every lease is `ubuntu`. **Replaced by card #0008.**
+Per-project users (#0004), which it once had to land with, are OBE under D25: each project's host
+has its own forward, so #0008 matters once two leases of one project share a host. v0.2 (#0045)
+makes the one-lease case work unattended (#0042, #0044).
 
 **Findings from story E3.03 (2026-11-17).** D12 stands, with a gap it did not foresee: the Claude
 desktop app's own connection never holds the forward, so a desktop-app session reaches the board
@@ -863,14 +875,16 @@ only while some other connection holds it.
 ### D13. arm64 is the default platform
 
 **Decided.** When a request names no platform, it gets `linux/arm64`, because Graviton costs less
-for the same agent work. `linux/amd64` is the planned second platform (card #0013), not a
-fallback.
+for the same agent work. `linux/amd64` is the planned second platform (v0.11, #0051, which folded
+in card #0013), not a fallback.
 
 ## How the work is run
 
 ### D14. Roadmap horizons, epics before stories
 
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
+**Its horizons were replaced by D26 (2026-11-17):** releases v0.2 to v1.0, one epic each, then
+After 1.0 and Someday. The rules on epics and stories below stand.
 MVP epics go in Ready For Work, and post-MVP work goes in Backlog. An epic MUST NOT be broken into
 stories until Terry says it is time for that epic. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
@@ -993,7 +1007,9 @@ Fable/high reviews it. E3.02 handles the Bot token. E3.03 is a live run whose ou
 
 ### D18. The lease CLI is PowerShell 7
 
-**Decided, architect, 2026-11-16; settles Q5's language half.** The lease code (`agentspace lease`,
+**MVP only. Replaced by D28 (Terry, 2026-11-17):** agentspace is Rust by v0.6, and PowerShell was
+the lean prototype's alone. Originally **decided, architect, 2026-11-16; settles Q5's language
+half.** The lease code (`agentspace lease`,
 and the issuing, renewing and releasing that #0002 builds for it) MUST be written for PowerShell 7
 (`#Requires -Version 7`), in files of its own under `scripts/`. `agentspace.ps1` stays a Windows
 PowerShell 5.1 script, because `ssh-proxy.cmd` runs it as a ProxyCommand.
@@ -1083,7 +1099,8 @@ prototyping happy paths."
 - **A schema is checked against the real output, not just written.** A CLI's scripted checks MUST
   validate what it prints against its schema. On the laptop that is PowerShell 7's `Test-Json
   -SchemaFile`, which handles draft 2020-12 (checked on 7.6, 2026-11-16).
-- **The handoff is built before the rewrite starts**, as its own work (card #0030). In the MVP,
+- **The handoff is built before the rewrite starts**, as its own work (card #0030, now release
+  v0.4, ahead of the Rust rewrite in v0.5 and v0.6; D28). In the MVP,
   `agentspace lease` gets its JSON schemas with epic #0001, since they cost little while the
   contract is being written. It SHOULD also have `--help` at every level.
 
@@ -1188,6 +1205,114 @@ settles Q5's TTL half.** The contract is [lease-api.md](lease-api.md), "TTL".
 the 24-hour bound protects only against a certificate that leaked from a lease still held, and a
 longer maximum MAY then be chosen.
 
+## After the MVP
+
+### D25. One host per project
+
+**Direction, Terry, 2026-11-17.** agentspace scales horizontally: each project gets a host of its
+own, and every lease for that project lands on it. Terry's vision: a project asks for agent
+capacity with its platform, profile, execution plan and staffing plan, and gets dedicated compute
+big enough to run that plan.
+- **A project's host is created by its first lease, and kept.** It is stopped when the project
+  holds no live lease and started by its next one (v0.8, #0048). Its disk keeps the project's
+  checkout, sign-ins and caches.
+- **Its size comes from the lease:** a stopped host is resized to the size asked for (v0.9,
+  #0049), and a size can be chosen from a plan (v0.10, #0050; D27).
+- **Leases of different projects MUST NOT share a host.**
+- **D1 stands:** nothing in a lease says which host serves it, or that the host is dedicated.
+
+**Why a persistent host per project rather than a fresh host per lease:**
+- **A fresh host starts empty:** no Claude Code, Codex or gh sign-ins, no checkout (D3's E3.03
+  finding) and cold caches. Automating sign-ins (#0009, Q2) is the hardest problem left open, and
+  this choice keeps it off the path to 1.0: Terry signs in once per project host instead (v0.7,
+  #0047).
+- **A stopped host costs only its disk**, and EC2 can change a stopped instance's type, which makes
+  sizing a lease cheap.
+- **Dedicated compute is the point.** A shared box cannot promise a project the CPU and memory its
+  plan needs.
+
+**What it changes:**
+- **D3's isolation half:** the boundary is the project's host. #0004 (a Unix user per project) and
+  #0007 (cgroup size classes) are OBE and archived.
+- **D6:** a pooled driver's host serves one project. #0012 (packing leases across a shared pool) is
+  OBE and archived.
+- **Fresh hosts per lease, if ever wanted, come after 1.0** with #0009 and #0014.
+
+### D26. Releases from v0.1 to v1.0, one epic each
+
+**Decided, Terry, 2026-11-17:** "I would rather do a large number of smaller scope steps between
+where we are and 1.0." The MVP is v0.1. Each later release is one epic, titled `vX.Y: title`, and
+the releases are taken in order. Release numbers count past 9: v0.10 follows v0.9.
+
+| Release | Epic | What |
+|---|---|---|
+| v0.2 | #0045 | Unattended leases: #0042, #0044, #0028 |
+| v0.3 | #0046 | Measure what an agent uses |
+| v0.4 | #0030 | Clean-room spec package for the Rust rewrite (D20, D28) |
+| v0.5 | #0054 | The lease CLI in Rust |
+| v0.6 | #0055 | The operator in Rust; PowerShell retired |
+| v0.7 | #0047 | A host per project (D25) |
+| v0.8 | #0048 | Host lifecycle and cost guard |
+| v0.9 | #0049 | Size classes |
+| v0.10 | #0050 | Plan-sized leases; contract v1 (D27) |
+| v0.11 | #0051 | `linux/amd64` platform |
+| v0.12 | #0052 | Plan from the board |
+| v1.0 | #0053 | A real project runs an epic on a plan-sized host |
+
+- **A release number is not the contract version.** The lease contract stays v0 until a release
+  changes an output (lease-api.md, "Versioning"); v0.10 is the first that does.
+- **D14's rules on epics and stories stand.** A release epic MUST NOT be broken into stories
+  until Terry says so, and its "Done when" is checked by a real run, not only by tests.
+- **Like the MVP, 1.0 is done when a real project works through it** (#0053), not when the code
+  works.
+
+### D27. A host is sized by concurrency, never by model or effort
+
+**Direction, architect, 2026-11-17; measured in v0.3 (#0046), applied in v0.9 (#0049) and v0.10
+(#0050).**
+- **A host's size MUST be chosen from the plan's peak concurrency**, meaning the most agents
+  working at once in any one turn, times a measured per-agent footprint for the project.
+- **A plan MAY carry each subagent's model and effort, and agentspace records them, but they MUST
+  NOT change the size.** They MAY feed the TTL, since they predict how long a turn takes.
+- **The footprint MUST come from measurement** (v0.3), never from an estimate.
+
+**Why:** the model runs at Anthropic, not on the host. What loads the host is the agents' tool
+calls: builds, test suites and browsers, run by subagents working at the same time. Under D15 a
+story's implementer and reviewer run one after the other, so a turn's peak is about its number of
+stories plus its dev lead.
+
+### D28. agentspace is Rust by v0.6; PowerShell was the prototype's
+
+**Decided, Terry, 2026-11-17:** cut over to Rust (first choice) or Go ("pretty far back second
+place but would accept if much simpler than Rust") by 1.0. PowerShell was permitted only because
+the MVP was a very lean prototype. **Replaces D18.**
+- **The rewrite is the clean-room drop of D19 and D20.** v0.4 (#0030) writes the specs, and the
+  Rust code MUST be built from them, never from the PowerShell code.
+- **The lease CLI MUST be Rust from v0.5 (#0054), and the operator (`agentspace.ps1`,
+  `ssh-proxy.cmd`) from v0.6 (#0055).** From v0.7 on, new product code MUST be Rust.
+- **Not product, so not ported:**
+  - The architect's process tools (`scripts/watchdog.ps1`, `scripts/report-milestones.ps1`) MAY
+    stay PowerShell.
+  - The shell that runs on a host (`box/`) stays shell. It configures Ubuntu, and Rust would add a
+    build per platform without making it clearer.
+- **Open defects against the PowerShell code** (#0027, #0029, #0034, #0041) MUST be carried into
+  v0.4's specs as requirements, and each is OBE once the Rust version meets it.
+
+**Why Rust and not Go:** Go is not much simpler for this work, which is what Terry's second place
+required.
+- Both have mature libraries for everything agentspace does: SSH keys and certificates, JSON Schema
+  validation, the AWS SDK and file locking.
+- Both shell out to the Session Manager plugin, as the prototype does.
+- Both build single native binaries for Windows and Linux.
+- Both toolchains are already on the laptop (cargo 1.99; Go 1.27, which builds localswim).
+
+**Why at v0.4, and not just before 1.0:**
+- **Every release from v0.7 on rewrites the driver** (hosts per project, lifecycle, sizes, plans).
+  Built in PowerShell first, each would be written twice.
+- **The PowerShell to port is the smallest it will ever be**, about 110 KB of product code.
+- **v0.2 and v0.3 go first** because they are small, mostly on the box, and fix what blocks real
+  use today.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -1250,4 +1375,4 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q2** | Where do per-project credentials (Claude Code, Codex, gh) live, so a fresh host or container needs no sign-in? Needs Terry. | #0009 |
 | **Q3** | How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
 | **Q4** | One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
-| **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 (D18). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |
+| **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 for the MVP (D18), then Rust (D28). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |

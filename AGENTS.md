@@ -13,7 +13,12 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
 
 - **Where it stands:** [docs/handoff-mvp.md](docs/handoff-mvp.md), the architect's handoff after
   the MVP shipped (2026-11-17). An agent picking agentspace up SHOULD read it first.
-- **The plan:** [docs/roadmap.md](docs/roadmap.md), from the MVP to someday-maybe ideas.
+- **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.1, and releases v0.2 to v1.0
+  are one Backlog epic each (D26). It goes from there to someday-maybe ideas. The Backlog MUST
+  match the roadmap at all times (Terry, 2026-11-17).
+- **The language:** agentspace's product code becomes Rust by v0.6, and all new product code MUST
+  be Rust from v0.7 on (D28). The PowerShell is the MVP prototype's, and the rewrite MUST be built
+  from specs, never from it (D20).
 - **The reasoning:** [docs/decisions.md](docs/decisions.md). A design choice MUST be recorded
   there, numbered, before or with the change that makes it, and a changed decision MUST say what
   replaced it rather than being deleted.
