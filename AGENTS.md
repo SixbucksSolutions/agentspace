@@ -51,6 +51,11 @@ subagents** (found in T5, 2026-11-17). A worktree guard pins a subagent to its p
 current worktree, so an implementer launched from elsewhere cannot write the story's files and
 has to hand back a patch for the dev lead to apply. With two or more stories in a turn, the dev
 lead enters each story's worktree in turn to launch its subagents.
+- **A subagent that is still running keeps the worktree it was launched in, but one that has
+  finished and is resumed with `SendMessage` is pinned to the dev lead's current worktree** (found
+  in T7, 2026-11-17: E1.04's implementer, resumed while the dev lead was in E3.02's worktree, had
+  its edits refused). Before resuming a story's subagent, the dev lead SHOULD enter that story's
+  worktree again, or make the follow-up fix itself.
 
 ### The architect is Terry's proxy
 
