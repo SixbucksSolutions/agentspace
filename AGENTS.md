@@ -139,7 +139,8 @@ Docs cite its cards as `#0001`.
   it starts with a number, an identifier, a flag or a path.
 - **A time of day shown to Terry MUST be written `h:mm` plus `am` or `pm` in the laptop's time
   zone** (`12:34pm`, `5:19am`; Terry, 2026-11-17), in conversation and in program output a human
-  reads. Machine-readable timestamps (JSON, state files, ISO 8601 that code parses) keep their
+  reads. The zone MUST be read from the system when the time is printed, never assumed or
+  hard-coded: Terry travels, and the laptop's zone travels with him. Machine-readable timestamps (JSON, state files, ISO 8601 that code parses) keep their
   own format.
 - **Humor and casual register belong in conversation with Terry, never in commits, docs, code
   comments or program output.**
