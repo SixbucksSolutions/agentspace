@@ -779,8 +779,9 @@ with state `released` and `released_at` 2026-11-17T22:24:45Z.
 - **Release ended nothing that was open.** At 22:25:56 the box still had the desktop app's
   22:12:49 connection (`server --serve`) and the holder's `sshd-session`, both opened under the
   lease's certificate; the app's 22:12:42 connection had closed by then, for a reason not
-  established. The holder still held the forwards at 22:24:58. No `ccd-cli` was running on the box at release, so no agent turn was
-  cut off. An open session is ended by closing it, never by release.
+  established. The holder still held the forwards at 22:24:58. No `ccd-cli` was running on the
+  box at release, so no agent turn was cut off. An open session is ended by closing it, never by
+  release.
 
 ### D11. Today's idle stop stays
 
@@ -830,7 +831,6 @@ only while some other connection holds it.
   :53147. `curl` to 127.0.0.1:8811 from the box returned 200.
 - **The holder is a workaround, not the fix.** Card #0042 (Backlog, not an MVP blocker),
   "Desktop-app sessions get no board: the app clears a lease alias's RemoteForward", tracks it.
-
 - **A swimcoach agent worked a card on the board from a desktop-app session on the lease.** Terry
   opened a session on `agentspace-swimcoach-a62cb513` in `/home/ubuntu/swimcoach` and gave it a
   throwaway prompt. Through `scripts/localswim.sh` the agent listed the swimcoach board's 7 lanes,
@@ -841,13 +841,22 @@ only while some other connection holds it.
   connection held them.
 - **Opening a session made no new login.** sshd logged no certificate login after the app's two at
   22:12:42 and 22:12:49, and the app's `server --bridge` and `server --serve` stayed the same
-  processes, so the session ran over the connections Test connection had opened. Every other
-  login in that window was a check by the dev lead or the architect, with Terry's key.
+  processes, so the session ran over the connections Test connection had opened. Which of the two
+  carried the session was not determined. Every other login in that window was a check by the dev
+  lead or the architect, with Terry's key.
 - **Killing the holder on the laptop did not free the forwards on the box.** The holder's
   `ssh.exe` was stopped at 22:24:59, after release, and no proxy process was left on the laptop,
   but its `sshd-session` on the box still held 127.0.0.1:8811 and :53147 at 22:25:19. This is
   the E2.08 mechanism (D10): the Session Manager tunnel does not pass the close on to sshd.
-  <!-- E3.03 STALE FORWARD: dev lead fills in how long it lasted -->
+  It still held them at 22:35:23, over 10 minutes later, checked once a minute. At 22:35:25 the
+  dev lead killed that one `sshd-session` by its PID, after checking that it was the holder's (no
+  tty, started 22:12:47), and both ports were free.
+- **While a dead client's session holds the forwards, no other connection on the box can bind the
+  board**, Terry's own sessions included. sshd's `ClientAliveInterval` defaults to 0, so it never
+  probes a client that has gone. Card #0044 (Backlog) weighs setting it in
+  `51-agentspace-logins.conf` against E3.01's grace-time reasoning. Until then a stale forward
+  MUST be cleared by hand: find the `sshd-session` that holds the port with `sudo ss -ltnp`, check
+  it is the one whose client has gone, and kill only that one.
 
 ## Defaults
 

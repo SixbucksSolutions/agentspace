@@ -170,6 +170,8 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
 3. **Connect** with `ssh <alias>`, or in the Claude desktop app add an SSH environment whose host
    is the alias and open a session in the project's folder on the box (`/home/ubuntu/swimcoach`).
    The first connection after a stop starts the box, and any connection may push the Bot token.
+   From cmd or PowerShell, `ssh` is Windows OpenSSH. From Git Bash it MUST be called by its full
+   path, `C:\Windows\System32\OpenSSH\ssh.exe`, because MSYS ssh mangles the ProxyCommand.
 4. **A desktop-app session MUST have a holder open on the laptop for as long as it needs the
    board.** The app connects with `ClearAllForwardings=yes`, so the alias's `RemoteForward` lines
    never apply to its own connection (card #0042). The holder holds them instead:
@@ -182,7 +184,8 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    run without them when another connection already has them. An interactive `ssh <alias>` that
    holds them needs no holder. On the box, `localswim board list` checks the board; the wrapper
    refuses with a stop-and-report message when it is unreachable.
-5. **Release the lease** when the work is done:
+5. **Release the lease** when the work is done. Any checkout MAY run it, since the lease's state is
+   in `%USERPROFILE%\.agentspace` and release needs no ProxyCommand:
 
    ```bat
    bin\agentspace.cmd lease release <id>
@@ -193,6 +196,12 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    ([D10](docs/decisions.md#d10-releasing-a-lease-does-not-revoke-its-certificate)), so the holder
    and any session SHOULD be closed first. The desktop app's SSH environment SHOULD then be
    removed, since its alias no longer exists. The project's checkout stays on the box.
+
+   **A closed holder can leave its forwards held on the box.** The Session Manager tunnel does not
+   tell sshd that the client has gone, and in E3.03 the dead holder's session still held 8811 and
+   53147 after more than 10 minutes, until it was killed by hand (D12's E3.03 finding, card
+   #0044). Until it is gone, a new holder would exit under `ExitOnForwardFailure`, and no session
+   on the box reaches the board. Clear it as D12's finding says.
 
 ### The localswim board on the box
 
