@@ -24,10 +24,24 @@
 #   This file MUST NOT normalize values itself; anything it needs MUST come from lease-values.ps1.
 #   It MAY dot-source scripts\lease-driver.ps1 (story E1.03) for the driver interface.
 #
-# Until then it answers internal (exit 1): the contract has no "not implemented" error, and no
-# other exit code MAY be used.
+# How it works (story E1.05): it reads the state file without the lock, turns each record into its
+# lease document as of one instant, filters on the project (exact) and on the derived state, and
+# sorts by created_at then id, both ordinal, so the order does not depend on the culture.
 
 function Invoke-LeaseList {
   param([string]$Project = '', [string[]]$State = @())
-  throw (New-LeaseError -Code internal -Message 'agentspace lease list is not implemented yet.')
+  $now = Get-LeaseNow
+  $docs = [System.Collections.Generic.List[object]]::new()
+  foreach ($record in (Read-LeaseState)) {
+    $doc = ConvertTo-LeaseOutput -Record $record -Now $now
+    if ($Project -and $doc['project'] -cne $Project) { continue }
+    if ($State.Count -gt 0 -and $State -cnotcontains $doc['state']) { continue }
+    $docs.Add($doc)
+  }
+  $docs.Sort([Comparison[object]]{
+    param($a, $b)
+    $c = [string]::CompareOrdinal($a['created_at'], $b['created_at'])
+    if ($c -ne 0) { $c } else { [string]::CompareOrdinal($a['id'], $b['id']) }
+  })
+  [ordered]@{ leases = $docs.ToArray() }
 }

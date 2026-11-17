@@ -207,13 +207,10 @@ try {
   Test-ErrorRun 'pwsh' @('lease', 'list', '--state', 'ready,bogus') invalid_value 'state'
   Test-ErrorRun 'pwsh' @('lease', 'list', '--project', '-x-') invalid_value 'project'
 
-  # --- Each stub answers internal once its line and values are good ------------------------------
-  # create and get are real since E1.04; scripts\test-lease-cmd-create-get.ps1 checks them.
-  Test-ErrorRun 'pwsh' @('lease', 'renew', $id) internal '' 'agentspace lease renew is not implemented yet.'
-  Test-ErrorRun 'pwsh' @('lease', 'renew', " $id ", '--ttl=90m') internal '' 'agentspace lease renew is not implemented yet.'
-  Test-ErrorRun 'cmd' @('lease', 'release', $id) internal '' 'agentspace lease release is not implemented yet.'
-  Test-ErrorRun 'pwsh' @('lease', 'list') internal '' 'agentspace lease list is not implemented yet.'
-  Test-ErrorRun 'pwsh' @('lease', 'list', '--state', 'ready,PENDING', '--state', 'expired', '--project', 'x') internal '' 'agentspace lease list is not implemented yet.'
+  # --- No command is a stub any more -------------------------------------------------------------
+  # create and get are real since E1.04, and renew, release and list since E1.05. A command that
+  # succeeds here would break the state-file checks below, so scripts\test-lease-cmd-create-get.ps1
+  # and scripts\test-lease-cmd-renew-release-list.ps1 check them instead.
 
   # The error check is proven able to fail: a control character in a message breaks the schema.
   Write-Result ((Test-Document '{"code":"usage","message":"a\nb"}' $errorSchema) -eq 'invalid') 'The error schema refuses a message with a line feed in it'

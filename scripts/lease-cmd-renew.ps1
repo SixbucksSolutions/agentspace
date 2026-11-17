@@ -23,10 +23,36 @@
 #   This file MUST NOT normalize values itself; anything it needs MUST come from lease-values.ps1.
 #   It MAY dot-source scripts\lease-driver.ps1 (story E1.03) for the driver interface.
 #
-# Until then it answers internal (exit 1): the contract has no "not implemented" error, and no
-# other exit code MAY be used.
+# How it works (story E1.05):
+# - The lookup, the driver call and the record change are one Update-LeaseState step, so they are
+#   atomic under the state lock. A driver failure throws out of the block and the record stays as it
+#   was. The block runs in a child scope, so it changes the record object in place and assigns to no
+#   variable outside the block.
+# - Only a lease that ConvertTo-LeaseOutput reports as ready is renewed; any other state, expired
+#   included, is invalid_state with that state.
+# - The driver gets the record's stored driver name and project. expires_at is the certificate's
+#   valid-before time that the driver returns.
+
+. (Join-Path $PSScriptRoot 'lease-driver.ps1')
 
 function Invoke-LeaseRenew {
   param([Parameter(Mandatory)][string]$LeaseId, [int]$TtlSeconds = 0)
-  throw (New-LeaseError -Code internal -Message 'agentspace lease renew is not implemented yet.')
+  $leaseIdValue = $LeaseId
+  $ttlValue = $TtlSeconds
+  Update-LeaseState -Script {
+    param($Records)
+    $record = Find-LeaseRecord -Records $Records -LeaseId $leaseIdValue
+    if (-not $record) {
+      throw (New-LeaseError -Code not_found -LeaseId $leaseIdValue -Message "No lease has the ID '$leaseIdValue'.")
+    }
+    $state = (ConvertTo-LeaseOutput -Record $record)['state']
+    if ($state -cne 'ready') {
+      throw (New-LeaseError -Code invalid_state -LeaseId $leaseIdValue -State $state -Message "Lease '$leaseIdValue' is $state, and only a ready lease can be renewed. Create a new lease if it is expired.")
+    }
+    $ttl = if ($ttlValue -gt 0) { $ttlValue } else { [int]$record['ttl_seconds'] }
+    $renewed = Invoke-LeaseDriverRenew -Driver $record['driver'] -LeaseId $leaseIdValue -Project $record['project'] -Ttl ([TimeSpan]::FromSeconds($ttl))
+    $record['expires_at'] = ConvertTo-LeaseTime $renewed.ExpiresAt
+    $record['ttl_seconds'] = $ttl
+    ConvertTo-LeaseOutput -Record $record
+  }
 }
