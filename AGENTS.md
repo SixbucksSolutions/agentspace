@@ -40,8 +40,9 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 **Terry, 2026-11-16 (decision D16):**
 - **The architect** owns the design. It reviews each pull request independently, squash merges
   it, and deletes the branch.
-- **A dev lead** is one Opus/high session per turn. It runs the implementer and reviewer
-  subagents that D15 names for each story, reviews each story itself, and opens **one pull
+- **A dev lead** is one Opus/high session per turn. It runs the subagents each story's
+  staffing names (D15 in the MVP; in a release, the plan on the story's card, with parallel
+  subagents, D31), reviews each story itself, and opens **one pull
   request per story** to `main`, from a branch named for the story (`mvp/e2.06`, or `v0.2/0.2.t1.1` in a release, D29). A dev lead MUST
   NOT merge its own pull request.
 - **Subagents** MUST NOT move cards or open pull requests.

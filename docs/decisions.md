@@ -950,6 +950,8 @@ latest.
 
 - **Each story gets one implementer subagent, then one independent reviewer subagent.** A story
   of under 3 hours MUST NOT be split across implementers: the merge cost outweighs the time saved.
+  **For release stories this was replaced by D31 (2026-11-17)**, which plans parallel subagents
+  inside each story. The model-by-blast-radius rule below stands.
 - **The model follows what a mistake would break, not how hard the story looks:**
   - **Fable/high** reviews only, and only where a miss is an auth bypass or a lockout.
   - **Opus/high** implements anything ambiguous or risky, and reviews anything touching keys,
@@ -1363,7 +1365,7 @@ Replaces D12's hand-run holder (card #0042).
 - **It runs as a logon scheduled task for Terry's user.** That is persistent configuration on his
   laptop, so it is registered only with his yes, in 0.2.T3.1.
 
-**Why a keeper and not the ProxyCommand or `lease create`:**
+**Why not the ProxyCommand or `lease create`:**
 - **A holder started by the ProxyCommand** belongs to the process tree of whichever connection ran
   it, the desktop app's included. It would die with that connection, or outlive it with nobody
   tracking it.
@@ -1371,6 +1373,40 @@ Replaces D12's hand-run holder (card #0042).
   ends. It also cannot stop the holder when the lease expires, which no command marks.
 - **A keeper that reconciles leases against one holder** handles every one of those cases, and is
   the shape a hosted control plane (#0011) would take anyway.
+
+### D31. Each story's card names every subagent, run in parallel where reasonable
+
+**Decided, Terry, 2026-11-17:** "Identify as much parallel subagent work as reasonable per story.
+Each story should have each subagent model, effort level, and its tasking called out in the
+staffing plan for the dev lead to fire up its subagents." The stories in one turn are already
+independent and run in parallel (D14); this is parallel work inside one story. **Replaces D15's
+one implementer and one reviewer per story, for release stories.** D15's rule that a model follows
+the blast radius stands.
+- **A story's card MUST carry its staffing plan.** It names every subagent with its `Model/effort`,
+  its tasking, the files it owns, and when it starts: at launch, or after which other subagents.
+  The dev lead launches subagents from it as written, from the story's worktree (AGENTS.md).
+- **Subagents that run at the same time MUST own disjoint files.** Where their work meets, the
+  card pins the interface before launch, so that neither waits on the other. The architect pins it
+  when laying out the stories.
+- **The shapes used, and why each is safe to run in parallel:**
+  - **A researcher or spike** writes no repo files: it reads documentation, or experiments in a
+    scratch folder. It feeds the implementer through the dev lead.
+  - **A test author** writes the tests from the card and the pinned interface alone, at the same
+    time as the implementer, and MUST NOT read the implementer's code until both are done. The
+    tests then check the spec, not the code (D20's spirit).
+  - **Two implementers** on disjoint files that meet only at a pinned interface.
+  - **A verifier** runs the live done-when at the same time as the reviewer reads the diff.
+  - **An observer** records evidence during a live run, over one connection, and writes no repo
+    files.
+- **Every story still ends with at least one independent reviewer**, who starts only when what it
+  reviews is done.
+- **Each plan states its peak:** the most subagents running at once. v0.3 (#0046) measures what
+  concurrent agents cost a host, and D27 sizes hosts from it.
+- **Parallelism that costs more than it saves is not planned.** A docs edit is folded into an
+  implementer's tasking rather than given a subagent of its own.
+
+**v0.2's plans** (#0056 to #0060) peak at 3, 2, 3, 2 and 2 subagents. With two stories per turn,
+T1 and T2 peak at 6 and 5 subagents at once, plus the dev lead.
 
 ## Keys
 
