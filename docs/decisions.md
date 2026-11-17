@@ -406,8 +406,9 @@ process.
   place that throws leaves `leases.json` untouched, and the driver has already removed its own
   credential and alias. A failure after a ready place, in the schema check or the write, happens
   outside the block, so `create` catches it, releases the lease through the driver, and rethrows
-  the original error; the test makes `leases.json` a directory to prove it. The block's locals are prefixed `__create`, for the scoping reason above.
-  An unsatisfiable lease is a recorded lease with an ID and a `driver`, and it issues nothing.
+  the original error; the test makes `leases.json` a directory to prove it. The block's locals are
+  prefixed `__create`, for the scoping reason above. An unsatisfiable lease is a recorded lease
+  with an ID and a `driver`, and it issues nothing.
 - **`scripts/test-lease-cli.ps1` no longer checks `create` and `get` as stubs**, since a `create`
   that succeeds there writes a record into its shared state file and breaks the state-file checks
   after it. It also sets `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` to throwaway values,

@@ -33,9 +33,9 @@
 #   driver, then rethrows the original error.
 # - The ID is a new lowercase UUIDv4, generated again while any recorded lease has its host alias
 #   (agentspace-<project>-<first 8 hex of the id>).
-# - Test hooks, read inline here (D8, E1.04 findings): AGENTSPACE_SSH_DIR, when set and not empty, is passed to
-#   the driver as -SshDir, and AGENTSPACE_PROXY_COMMAND as -ProxyCommand. Unset, the driver uses the
-#   real ~/.ssh and its default ProxyCommand.
+# - Test hooks, read inline here (D8, E1.04 findings): AGENTSPACE_SSH_DIR, when set and not empty,
+#   is passed to the driver as -SshDir, and AGENTSPACE_PROXY_COMMAND as -ProxyCommand. Unset, the
+#   driver uses the real ~/.ssh and its default ProxyCommand.
 
 . (Join-Path $PSScriptRoot 'lease-driver.ps1')
 
@@ -56,48 +56,48 @@ function Invoke-LeaseCreate {
   # Set inside the block once a ready lease is placed, so a later failure can release it.
   $__createDone = @{}
   try {
-  Update-LeaseState -Script {
-    param($__createRecords)
-    do {
-      $__createId = [guid]::NewGuid().ToString()
-      $__createAlias = "agentspace-$__createProject-$($__createId.Substring(0, 8))"
-      $__createTaken = $false
-      foreach ($__createOther in $__createRecords) {
-        if ("agentspace-$($__createOther['project'])-$(([string]$__createOther['id']).Substring(0, 8))" -ceq $__createAlias) { $__createTaken = $true }
+    Update-LeaseState -Script {
+      param($__createRecords)
+      do {
+        $__createId = [guid]::NewGuid().ToString()
+        $__createAlias = "agentspace-$__createProject-$($__createId.Substring(0, 8))"
+        $__createTaken = $false
+        foreach ($__createOther in $__createRecords) {
+          if ("agentspace-$($__createOther['project'])-$(([string]$__createOther['id']).Substring(0, 8))" -ceq $__createAlias) { $__createTaken = $true }
+        }
+      } while ($__createTaken)
+
+      $__createArgs = @{
+        LeaseId = $__createId; Project = $__createProject; Platform = $__createPlatform
+        Profile = $__createProfile; Size = $__createSize; Ttl = [TimeSpan]::FromSeconds($__createTtl)
       }
-    } while ($__createTaken)
+      if ($env:AGENTSPACE_SSH_DIR) { $__createArgs['SshDir'] = $env:AGENTSPACE_SSH_DIR }
+      if ($env:AGENTSPACE_PROXY_COMMAND) { $__createArgs['ProxyCommand'] = $env:AGENTSPACE_PROXY_COMMAND }
+      $__createPlaced = Invoke-LeaseDriverPlace @__createArgs
+      if ($__createPlaced.State -ceq 'ready') {
+        $__createDone['Placed'] = @{ Driver = [string]$__createPlaced.Driver; LeaseId = $__createId }
+      }
 
-    $__createArgs = @{
-      LeaseId = $__createId; Project = $__createProject; Platform = $__createPlatform
-      Profile = $__createProfile; Size = $__createSize; Ttl = [TimeSpan]::FromSeconds($__createTtl)
+      $__createRecord = [ordered]@{
+        id          = $__createId
+        project     = $__createProject
+        state       = [string]$__createPlaced.State
+        platform    = $__createPlatform
+        profile     = $__createProfile
+        size        = $__createSize
+        ttl_seconds = $__createTtl
+        created_at  = ConvertTo-LeaseTime (Get-LeaseNow)
+      }
+      if ($__createPlaced.State -ceq 'ready') {
+        $__createRecord['expires_at'] = ConvertTo-LeaseTime $__createPlaced.ExpiresAt
+        $__createRecord['ssh'] = [ordered]@{ host_alias = [string]$__createPlaced.HostAlias; user = [string]$__createPlaced.User }
+      } elseif ($__createPlaced.State -ceq 'unsatisfiable') {
+        $__createRecord['reasons'] = @($__createPlaced.Reasons | ForEach-Object { [ordered]@{ code = [string]$_.code; message = [string]$_.message } })
+      }
+      $__createRecord['driver'] = [string]$__createPlaced.Driver
+      $__createRecords.Add($__createRecord)
+      ConvertTo-LeaseOutput -Record $__createRecord
     }
-    if ($env:AGENTSPACE_SSH_DIR) { $__createArgs['SshDir'] = $env:AGENTSPACE_SSH_DIR }
-    if ($env:AGENTSPACE_PROXY_COMMAND) { $__createArgs['ProxyCommand'] = $env:AGENTSPACE_PROXY_COMMAND }
-    $__createPlaced = Invoke-LeaseDriverPlace @__createArgs
-    if ($__createPlaced.State -ceq 'ready') {
-      $__createDone['Placed'] = @{ Driver = [string]$__createPlaced.Driver; LeaseId = $__createId }
-    }
-
-    $__createRecord = [ordered]@{
-      id          = $__createId
-      project     = $__createProject
-      state       = [string]$__createPlaced.State
-      platform    = $__createPlatform
-      profile     = $__createProfile
-      size        = $__createSize
-      ttl_seconds = $__createTtl
-      created_at  = ConvertTo-LeaseTime (Get-LeaseNow)
-    }
-    if ($__createPlaced.State -ceq 'ready') {
-      $__createRecord['expires_at'] = ConvertTo-LeaseTime $__createPlaced.ExpiresAt
-      $__createRecord['ssh'] = [ordered]@{ host_alias = [string]$__createPlaced.HostAlias; user = [string]$__createPlaced.User }
-    } elseif ($__createPlaced.State -ceq 'unsatisfiable') {
-      $__createRecord['reasons'] = @($__createPlaced.Reasons | ForEach-Object { [ordered]@{ code = [string]$_.code; message = [string]$_.message } })
-    }
-    $__createRecord['driver'] = [string]$__createPlaced.Driver
-    $__createRecords.Add($__createRecord)
-    ConvertTo-LeaseOutput -Record $__createRecord
-  }
   } catch {
     $__createError = $_
     if ($__createDone.ContainsKey('Placed')) {
