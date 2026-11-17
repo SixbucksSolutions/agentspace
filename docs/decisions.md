@@ -245,6 +245,58 @@ MUST NOT set it, because the board reaches the box through `RemoteForward` (D12)
   NOT wait for the end of its input, and SHOULD write a temporary file and rename it into place;
   this is not yet done (card #0026).
 
+**Findings from story E2.02 (2026-11-17).** D9 stands. The E2.01 alias, in a file of its own
+under `~/.ssh/agentspace.d` and pulled in by an `Include` in `~/.ssh/config`, logged in by
+certificate with no host key prompt. The Claude desktop app connected through it on 2026-11-17 at
+18:12 UTC, and the box's sshd logged two logins as `ED25519-CERT ... ID spike-2.02 (serial 0) CA
+ED25519 SHA256:...`, signed by the spike's throwaway CA. Test connection passed, and Terry then
+ran a full Claude session on the box over that login: asked for `uname -m`, it answered
+`aarch64`. On the box, the app's remote server (`server --bridge`) ran under the certificate
+login's `sshd-session`, and its daemon ran the session's Claude Code.
+- **The desktop app does not request a PTY.** Both of its logins showed on the box as
+  `sshd-session: ubuntu@notty`, and the full session ran over one of them. The spike's signing
+  commands all passed `-O permit-pty`, so this shows that the app does not use a PTY, not that a
+  certificate without `permit-pty` was tested. D7's `-O permit-pty` stays, for interactive `ssh`
+  sessions.
+- **A plugin that sets hooks does not reach an SSH environment.** The app warned that `aws-core`
+  "wasn't copied" to the alias because its `.claude-plugin/plugin.json` sets hooks, which are
+  not sent over SSH; the plugins it does copy land in `~/.claude/remote/plugins`. A plugin that
+  sets hooks MUST be installed on the box itself if a lease needs it.
+- **The app installs its remote runtime on first connect, under `~/.claude/remote`:** `ccd-cli`
+  (348 MB), `srv` (8.2 MB), `plugins` (4.5 MB), `run` and `session-folders`, 361 MB in all. A lease
+  that starts from a clean box pays that download and disk at its first connection; on today's
+  8 GiB disk it is about 5% of the space.
+- **The `Include` MUST come before the first `Host` line of `~/.ssh/config`.** An `Include` after a
+  `Host` line belongs to that host's block. `Include agentspace.d/*` resolves against `~/.ssh` in
+  Windows OpenSSH, and `ssh -G <alias>` shows the alias's settings.
+- **A lease alias's key paths MUST name files that a process outside the Claude app can see.** The
+  desktop app's SSH connection runs outside the app's MSIX package, so a key written by an agent
+  under AppData resolves to nothing there (D21). Every login before E2.09 moved the keys was made
+  from inside the app, and proved nothing about the app's own connection.
+- **The Claude desktop app reads `~/.ssh/config` with its `Include` and runs the alias's
+  `ProxyCommand`:** its Test connection output showed `ssh-proxy.cmd`'s `Ready: i-...` lines.
+- **Card #0026 blocks the desktop app whenever a token push is due.** The push's nested ssh hung,
+  the tunnel never started, and the app gave up with `Connection timed out during banner exchange`.
+  The hung push also left `bot.env` empty on the box while the laptop's hash recorded the token
+  as sent, so no later connection pushed it again until the hash was cleared by hand (card
+  #0026).
+- **A spike that trusts a throwaway CA SHOULD do it with a `cert-authority,principals="ubuntu"`
+  line in `~/.ssh/authorized_keys`, not with an sshd drop-in.** sshd keeps the first value of
+  `TrustedUserCAKeys` it reads, so a second drop-in would be ignored if it sorted after
+  `50-agentspace-ca.conf` (E2.04), and would shadow it if it sorted before. The `cert-authority`
+  line also trusts the CA for `ubuntu` alone, and leaves sshd's configuration untouched. sshd logs
+  such a login with the same `ID <key id> ... CA ...` fields.
+- **An expired AWS sign-in reaches the desktop app as a raw PowerShell error (card #0034).** The
+  retest's first attempt failed before SSH started: the app showed `Proxy command failed` with a
+  `NativeCommandError` from `Invoke-Aws` in `scripts/agentspace.ps1`. Under
+  `$ErrorActionPreference = 'Stop'`, Windows PowerShell 5.1 turns the first line of the merged
+  `2>&1` stderr into a terminating error, so the "AWS sign-in has expired" message after the
+  `$LASTEXITCODE` check never ran. `Invoke-Aws` SHOULD read the AWS CLI's stderr under
+  `Continue`, as the script's `Invoke-Native` (used by the `ca` checks) already does; this is not
+  yet done.
+- **VS Code Remote-SSH was not tried:** it is not installed on the laptop and is not a client
+  Terry uses.
+
 ## What the MVP leaves alone
 
 ### D10. Releasing a lease does not revoke its certificate
