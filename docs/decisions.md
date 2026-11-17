@@ -94,6 +94,33 @@ through `TrustedUserCAKeys`.
 **The CA key MUST NOT be committed**, since this repo is public. D17 says where it lives on the
 laptop and how it is locked down; open question Q1 covers where it lives once the API is hosted.
 
+**Findings from story 2.01 (2026-11-16).** D7 stands. A certificate from a throwaway CA, with
+principal `ubuntu` and a 10-minute validity, logged in through `ssh-proxy.cmd` from a stopped box,
+and the `authorized_keys` login kept working beside it. Expired certificates and certificates for
+another principal were refused.
+- **Ubuntu 26.04 includes `/etc/ssh/sshd_config.d/*.conf` before any other setting, and the first
+  value wins.** The CA trust MUST be a drop-in installed from `box/system` by `sync`, and MUST NOT
+  set a keyword that another drop-in already sets; today the only other one,
+  `60-cloudimg-settings.conf`, sets `PasswordAuthentication no` alone. A name such as
+  `50-agentspace-ca.conf` SHOULD be used. `sudo sshd -t` MUST pass before `systemctl reload
+  ssh.service`, and the reload applies the change to new connections without a restart.
+- **sshd logs each certificate login's key ID and CA:** `Accepted publickey for ubuntu ...
+  ED25519-CERT SHA256:... ID <key id> (serial 0) CA ED25519 SHA256:...`. A refusal logs `Refusing
+  certificate ID "<key id>" ... Certificate invalid: expired`, or `name is not a listed principal`.
+- **Expiry is checked only at login.** A session that was open when its certificate expired kept
+  running. See the finding under D10.
+- **By default a certificate permits a PTY, port, agent and X11 forwarding, and user rc.** Issuing
+  (story 2.05) SHOULD sign with `-O clear -O permit-pty -O permit-port-forwarding`. Port forwarding
+  MUST stay permitted, because the board reaches the box through `RemoteForward` (D12).
+- **An empty passphrase is passed differently by the two PowerShells.** Windows PowerShell 5.1
+  drops `-N ''` and needs `-N '""'`; PowerShell 7.3 and later read `-N '""'` as a two-character
+  passphrase. Code that makes a key MUST handle both, or check afterwards with `ssh-keygen -y`.
+- **Windows OpenSSH accepted lease keys with the access rules ssh-keygen gives them** (the owner,
+  SYSTEM and Administrators) under `%LOCALAPPDATA%`. No `icacls` step was needed for a lease key.
+- **EC2 Instance Connect's `eic_run_authorized_keys` runs for every refused key and fails today**
+  (`failed, status 22`), although `sshd -T` reports `authorizedkeyscommand none`. Where it is
+  configured, and whether it is a second way to log in, is a question for story 2.04.
+
 ### D8. The MVP control plane is a CLI on the laptop
 
 **MVP only.** `agentspace lease ...` runs on the laptop, prints JSON, and keeps lease state in a
@@ -112,6 +139,50 @@ driver that placed it. EC2 uses Session Manager; another backend brings its own 
 
 **In the MVP that path is today's `scripts/ssh-proxy.cmd`**, which starts the box on connect.
 
+**Findings from story 2.01 (2026-11-16).** D9 stands. `ssh-proxy.cmd`, unchanged, served an alias
+of another name under `ssh -F`: it ignores the alias name and reads `.instance-id` from its own
+checkout. From stopped to a certificate login took 29 seconds.
+
+The alias that worked, which story 2.06 builds on (paths shortened):
+
+```
+Host <lease alias>
+  User ubuntu
+  IdentityFile <lease key>
+  CertificateFile <lease key>-cert.pub
+  IdentitiesOnly yes
+  HostKeyAlias agentspace
+  StrictHostKeyChecking yes
+  ProxyCommand C:\Windows\System32\cmd.exe /d /c "C:\Projects\agentspace\scripts\ssh-proxy.cmd"
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+```
+
+The spike's alias also set `ClearAllForwardings yes`, for its scripted runs only. A lease alias
+MUST NOT set it, because the board reaches the box through `RemoteForward` (D12).
+
+- **A lease alias MUST set `IdentityFile` to the lease key and `IdentitiesOnly yes`, and SHOULD set
+  `CertificateFile`.** With `CertificateFile` alone, ssh had no private key for the certificate,
+  fell back to the default `~/.ssh/id_*` keys and logged in through `authorized_keys`, which looks
+  like a pass but proves nothing. With `IdentityFile` alone, ssh finds `<key>-cert.pub` by name but
+  offers the bare key first.
+- **A lease alias MUST set `HostKeyAlias` to the host's existing `known_hosts` name (today
+  `agentspace`) and `StrictHostKeyChecking yes`.** The host key is then checked without an entry
+  per alias and without `accept-new`.
+- **`up` runs on every connection, and its localswim token push opens its own `ssh agentspace`.**
+  That nested connection uses Terry's `~/.ssh/config` entry and his `authorized_keys` key, whatever
+  `-F` the caller used, so a lease connection depends on that entry today. The push SHOULD be taken
+  out of the driver's reachability path.
+- **`agentspace.ps1` calls `ssh` and `scp` by bare name.** Started from Git Bash, PATH finds MSYS
+  ssh, which mangles the ProxyCommand (`exec: C:WindowsSystem32cmd.exe: not found`). The script
+  MUST call `C:\Windows\System32\OpenSSH\ssh.exe` and `scp.exe` by full path; this is not yet done.
+- **The nested token push can hang.** When an agent's non-interactive PowerShell started the
+  connection, with the lease alias or with `agentspace`, the remote side never saw the end of its
+  input. The login stalled until the push was killed, its remote processes stayed open (and count
+  as activity for the idle check), and `~/.config/localswim/bot.env` was left empty. The push MUST
+  NOT wait for the end of its input, and SHOULD write a temporary file and rename it into place;
+  this is not yet done.
+
 ## What the MVP leaves alone
 
 ### D10. Releasing a lease does not revoke its certificate
@@ -119,6 +190,9 @@ driver that placed it. EC2 uses Session Manager; another backend brings its own 
 **MVP only.** Release deletes the lease's key on the laptop, and the certificate stays valid until
 it expires. TTLs are short, so the exposure is bounded. **Replaced by card #0010**, which pushes a
 revocation list (KRL) to hosts.
+
+**Finding from story 2.01 (2026-11-16):** sshd checks a certificate's validity only at login, so
+neither release nor expiry ends a session that is already open. They stop new connections only.
 
 ### D11. Today's idle stop stays
 
