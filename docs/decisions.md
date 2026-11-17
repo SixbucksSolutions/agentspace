@@ -356,6 +356,18 @@ prototyping happy paths."
 - **The MVP's code is expected to be thrown away.** Terry expects a clean-room restart for V1 or
   V2, so what the MVP MUST leave behind is what it learned (these decisions, the findings, the
   contract), not code worth keeping.
+- **This is Terry's way of working, "plan to throw one away"** (Brooks, *The Mythical Man-Month*),
+  in his words of 2026-11-16:
+  - **Early drops find the requirements.** The MVP, and sometimes V1, are built as the work goes:
+    move fast, see what sticks, and accept pivots, scope creep and the tech debt that comes with
+    them.
+  - **Once it stabilizes, the prototype becomes the requirements oracle.** The next drop is told,
+    in effect, "that thing over there is 100% of what I want; build something that works exactly
+    like it but is not a prototype".
+  - **The next drop starts from zero, with no code reuse,** and MUST be a maintainable drop-in
+    replacement for the prototype.
+  - So the prototype's behavior SHOULD be easy to observe from outside (its contract, its JSON,
+    its logs), because that is what the next drop will be held to.
 
 ## Keys
 
