@@ -382,6 +382,32 @@ command a stub. `scripts/test-lease-cli.ps1` checks all of it in a throwaway fol
   `$records` hid the caller's, and the first test run wrote nothing. Its locals are now prefixed
   `__lease`, and a function that runs a caller's script block SHOULD do the same.
 
+**Findings from story E1.04 (2026-11-17).** D8 stands. E1.04 filled in `create` and `get`;
+`scripts/test-lease-cmd-create-get.ps1` runs them through `scripts\lease-cli.ps1` as a child
+process.
+- **Three environment variables are internal test and worktree hooks, outside the contract in
+  `docs/lease-api.md`.** Tests and worktrees MUST set all three; unset, each leaves the real
+  default in force.
+  - **`AGENTSPACE_STATE_DIR`** names the folder of `leases.json`. `lease-state.ps1` reads it.
+  - **`AGENTSPACE_SSH_DIR`**, when set and not empty, is passed as `-SshDir` to
+    `Invoke-LeaseDriverPlace` and `Invoke-LeaseDriverRelease`, so the alias file and the config
+    `Include` go to that folder instead of the real `~/.ssh`. `lease-cmd-create.ps1` reads it
+    now, and `lease-cmd-release.ps1` reads it in story E1.05. Each reads it itself, inline.
+  - **`AGENTSPACE_PROXY_COMMAND`**, when set and not empty, is passed as `-ProxyCommand` to
+    `Invoke-LeaseDriverPlace`. A worktree has no `.instance-id`, so without it `Set-LeaseAlias`
+    refuses to write the default ProxyCommand (D9). Only `lease-cmd-create.ps1` reads it.
+- **The credential step has no root override.** A test that creates a lease writes its key under
+  the real `%USERPROFILE%\.agentspace\leases\<id>`, so it MUST delete each such folder in a
+  `finally`, and SHOULD hash the real `~/.ssh/config` before and after.
+- **`create` picks the ID, places and writes the record inside one `Update-LeaseState` block.** A
+  place that throws leaves `leases.json` untouched, and the driver has already removed its own
+  credential and alias. The block's locals are prefixed `__create`, for the scoping reason above.
+  An unsatisfiable lease is a recorded lease with an ID and a `driver`, and it issues nothing.
+- **`scripts/test-lease-cli.ps1` still asserts that `create` and `get` are stubs.** Those checks
+  now fail, and `create` there writes records into its throwaway state file, which fails the
+  state-file checks after them. It MUST be updated, and until it is, running it also needs the
+  hooks above, or `create` reaches the real `~/.ssh`.
+
 ### D9. Reachability belongs to the driver
 
 **Decided.** How to reach a lease (the ProxyCommand inside its host alias) MUST come from the
