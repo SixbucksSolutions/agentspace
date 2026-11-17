@@ -172,16 +172,17 @@ MUST NOT set it, because the board reaches the box through `RemoteForward` (D12)
 - **`up` runs on every connection, and its localswim token push opens its own `ssh agentspace`.**
   That nested connection uses Terry's `~/.ssh/config` entry and his `authorized_keys` key, whatever
   `-F` the caller used, so a lease connection depends on that entry today. The push SHOULD be taken
-  out of the driver's reachability path.
+  out of the driver's reachability path (card #0028).
 - **`agentspace.ps1` calls `ssh` and `scp` by bare name.** Started from Git Bash, PATH finds MSYS
   ssh, which mangles the ProxyCommand (`exec: C:WindowsSystem32cmd.exe: not found`). The script
-  MUST call `C:\Windows\System32\OpenSSH\ssh.exe` and `scp.exe` by full path; this is not yet done.
+  MUST call `C:\Windows\System32\OpenSSH\ssh.exe` and `scp.exe` by full path; this is not yet done
+  (card #0027).
 - **The nested token push can hang.** When an agent's non-interactive PowerShell started the
   connection, with the lease alias or with `agentspace`, the remote side never saw the end of its
   input. The login stalled until the push was killed, its remote processes stayed open (and count
   as activity for the idle check), and `~/.config/localswim/bot.env` was left empty. The push MUST
   NOT wait for the end of its input, and SHOULD write a temporary file and rename it into place;
-  this is not yet done.
+  this is not yet done (card #0026).
 
 ## What the MVP leaves alone
 
