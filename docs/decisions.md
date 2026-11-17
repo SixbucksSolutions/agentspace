@@ -901,7 +901,10 @@ stories until Terry says it is time for that epic. Someday ideas stay uncarded i
 - **Stories go in Ready For Work, as children of their epic**, with their estimate and
   dependencies in the description.
 - **An epic moves to In Progress when its stories are laid into Ready For Work, and stays there
-  until its last story reaches Ready For Review.** Its description carries the execution plan by
+  until its last story reaches Ready For Review.** **Restated by Terry, 2026-11-17:** an epic goes
+  to In Progress as soon as work starts on any of its stories, and follows its last story to
+  Ready For Review as soon as that story arrives there. The architect moves the epic both times.
+  A release epic still in Backlog leaves it by Terry's hand (D29). Its description carries the execution plan by
   turn: each story starts in the first turn its entry gates are met, and the stories in one turn
   MUST be workable in parallel, in isolation from each other.
 

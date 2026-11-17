@@ -118,9 +118,10 @@ Docs cite its cards as `#0001`.
   Backlog. An epic MUST NOT be broken into stories until Terry says so. Stories are titled `EN.nn:
   title` in the MVP and `X.Y.Tm.n: title` in a release, where `m` is the earliest turn whose entry requirements
   the story meets and `n` numbers the stories within it, such as `0.2.T1.1` (D29), are children of their epic, and MUST each be under 3 hours of active work to reach Ready
-  For Review; one that cannot be goes to Terry first. An epic is In Progress from the moment its
-  stories are laid out until its last story reaches Ready For Review, and its description carries
-  the execution plan by turn (decision D14). Only Terry moves a card to Completed.
+  For Review; one that cannot be goes to Terry first. An epic goes to In Progress as soon as work
+  starts on any of its stories, and follows its last story to Ready For Review as soon as that
+  story arrives there (Terry, 2026-11-17). The architect moves it both times. Its description
+  carries the execution plan by turn (decision D14). Only Terry moves a card to Completed.
 - **A session SHOULD arm Terry's board watcher at its start**, as his global instructions
   describe: `C:\Projects\claude-localswim-watcher\watch.ps1 -Board agentspace -Reader agentspace`
   under the Monitor tool. The board is already in the watcher's `config.json`.
