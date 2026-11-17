@@ -488,8 +488,11 @@ isolation (D14); turns run in series (D16).
 | T7 | E1.04, E1.05, E3.02 |
 | T8 | E3.03 |
 
-E2.08, E3.01 and E3.02 each test logins on the one box, so no two of them share a turn. Until
-E3.01 lands, E2.08 MUST keep refused logins below three in any burst.
+E2.08, E3.01 and E3.02 each test logins on the one box, so no two of them share a turn. **Until
+E3.01 lands, no story MAY cause more than one refused login on the box within two minutes**
+(`LoginGraceTime`): E2.08 found that a refused login through Session Manager lingers that long,
+and two such refusals can shut every login out, Terry's included (D10's E2.08 finding). E3.01 is
+the exception, and only once its exemption is installed.
 
 ### D15. Staffing: one implementer and one reviewer per story, models by blast radius
 
