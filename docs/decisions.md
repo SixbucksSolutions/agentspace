@@ -369,6 +369,23 @@ prototyping happy paths."
   - So the prototype's behavior SHOULD be easy to observe from outside (its contract, its JSON,
     its logs), because that is what the next drop will be held to.
 
+### D20. The clean-room team gets specs and vision, never the prototype's code
+
+**Decided, Terry, 2026-11-16.**
+
+- **The team that rebuilds agentspace MUST NOT read the prototype's code to learn its intent.**
+  The old code is a black box, so it cannot shape or taint the new design. The team MAY run the
+  prototype and observe it, since that is what it is told to match (D19).
+- **Intent and vision MUST live in documents**: [roadmap.md](roadmap.md), these decisions, and
+  vision docs, written so they need no code to be understood.
+- **Every interface MUST have a spec pedantic enough to leave nothing to guess:**
+  - An HTTP API gets an OpenAPI spec.
+  - A CLI gets an awscli-style reference: every command layer, every flag, every output field and
+    every exit code, with help at each level that says the same thing as the reference.
+- **The handoff is built before the rewrite starts**, as its own work (card #0030). Until then,
+  every MVP interface SHOULD be built so that it can be specified this way: `agentspace lease`
+  SHOULD have `--help` at every level, and its JSON SHOULD be stable enough to write a schema for.
+
 ## Keys
 
 ### D17. The CA key lives in %LOCALAPPDATA%, owner-only and without a passphrase

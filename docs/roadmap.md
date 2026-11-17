@@ -96,6 +96,7 @@ works.
 | #0015 | A per-lease container driver (Fargate or Azure Container Instances) |
 | #0016 | More backends: Azure VMs, bare metal, a Mac mini at home |
 | #0017 | A placement policy that turns cost and start-latency hints into backends |
+| #0030 | The clean-room handoff: a vision doc and pedantic interface specs, so a rewrite never reads the prototype's code (D20) |
 
 ## Someday, maybe
 
