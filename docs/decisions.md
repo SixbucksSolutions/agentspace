@@ -386,22 +386,27 @@ command a stub. `scripts/test-lease-cli.ps1` checks all of it in a throwaway fol
 `scripts/test-lease-cmd-create-get.ps1` runs them through `scripts\lease-cli.ps1` as a child
 process.
 - **Three environment variables are internal test and worktree hooks, outside the contract in
-  `docs/lease-api.md`.** Tests and worktrees MUST set all three; unset, each leaves the real
-  default in force.
+  `docs/lease-api.md`.** A test MUST set `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` to
+  throwaway folders, and one that runs `create` MUST also set `AGENTSPACE_PROXY_COMMAND`. Unset,
+  each leaves the real default in force.
   - **`AGENTSPACE_STATE_DIR`** names the folder of `leases.json`. `lease-state.ps1` reads it.
   - **`AGENTSPACE_SSH_DIR`**, when set and not empty, is passed as `-SshDir` to
     `Invoke-LeaseDriverPlace` and `Invoke-LeaseDriverRelease`, so the alias file and the config
-    `Include` go to that folder instead of the real `~/.ssh`. `lease-cmd-create.ps1` reads it
-    now, and `lease-cmd-release.ps1` reads it in story E1.05. Each reads it itself, inline.
+    `Include` go to that folder instead of the real `~/.ssh`. `lease-cmd-create.ps1` reads it,
+    and `lease-cmd-release.ps1` (story E1.05) reads it too. Each reads it itself, inline.
   - **`AGENTSPACE_PROXY_COMMAND`**, when set and not empty, is passed as `-ProxyCommand` to
     `Invoke-LeaseDriverPlace`. A worktree has no `.instance-id`, so without it `Set-LeaseAlias`
     refuses to write the default ProxyCommand (D9). Only `lease-cmd-create.ps1` reads it.
 - **The credential step has no root override.** A test that creates a lease writes its key under
   the real `%USERPROFILE%\.agentspace\leases\<id>`, so it MUST delete each such folder in a
-  `finally`, and SHOULD hash the real `~/.ssh/config` before and after.
+  `finally`, and MUST delete only the IDs its own run made, since another process may use that
+  folder at the same time. It MUST hash the real `~/.ssh/config` and list `~/.ssh/agentspace.d`
+  before and after, and fail if either changed.
 - **`create` picks the ID, places and writes the record inside one `Update-LeaseState` block.** A
   place that throws leaves `leases.json` untouched, and the driver has already removed its own
-  credential and alias. The block's locals are prefixed `__create`, for the scoping reason above.
+  credential and alias. A failure after a ready place, in the schema check or the write, happens
+  outside the block, so `create` catches it, releases the lease through the driver, and rethrows
+  the original error; the test makes `leases.json` a directory to prove it. The block's locals are prefixed `__create`, for the scoping reason above.
   An unsatisfiable lease is a recorded lease with an ID and a `driver`, and it issues nothing.
 - **`scripts/test-lease-cli.ps1` no longer checks `create` and `get` as stubs**, since a `create`
   that succeeds there writes a record into its shared state file and breaks the state-file checks

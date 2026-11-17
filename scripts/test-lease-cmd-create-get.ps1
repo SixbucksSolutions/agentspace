@@ -43,10 +43,10 @@ function Get-RealSshState {
   "$c;$names"
 }
 
-function Invoke-Lease([string[]]$Arguments) {
+function Invoke-Lease([string[]]$Arguments, [string]$Top = 'lease') {
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $pwsh
-  foreach ($a in '-NoProfile', '-File', $cli, 'lease') { $psi.ArgumentList.Add($a) }
+  foreach ($a in '-NoProfile', '-File', $cli, $Top) { $psi.ArgumentList.Add($a) }
   foreach ($a in $Arguments) { $psi.ArgumentList.Add($a) }
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
@@ -65,10 +65,15 @@ $statePath = Join-Path $stateDir 'leases.json'
 $leasesRoot = Join-Path $env:USERPROFILE '.agentspace\leases'
 $before = if (Test-Path -LiteralPath $leasesRoot) { @(Get-ChildItem -LiteralPath $leasesRoot -Directory | ForEach-Object Name) } else { @() }
 $realBefore = Get-RealSshState
+$keygen = 'C:\Windows\System32\OpenSSH\ssh-keygen.exe'
+$savedState = $env:AGENTSPACE_STATE_DIR
+$savedSsh = $env:AGENTSPACE_SSH_DIR
+$savedProxy = $env:AGENTSPACE_PROXY_COMMAND
 $env:AGENTSPACE_STATE_DIR = $stateDir
 $env:AGENTSPACE_SSH_DIR = $sshDir
 $env:AGENTSPACE_PROXY_COMMAND = 'C:\Windows\System32\cmd.exe /d /c exit 1'
 $created = [System.Collections.Generic.List[string]]::new()
+$allIds = @()
 $uuid4 = '\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z'
 try {
   # A default create is ready.
@@ -82,7 +87,7 @@ try {
   Write-Result ($a -and $a['id'] -cmatch $uuid4) 'The ID is a lowercase UUIDv4'
   Write-Result ($a -and $a['project'] -ceq 'test-e104' -and $a['platform'] -ceq 'linux/arm64' -and $a['profile'] -ceq 'agent-linux' -and $a['size'] -ceq 'm') 'The defaults and the lowercased project are filled in'
   $span = if ($a) { ([DateTime]::Parse($a['expires_at']).ToUniversalTime() - [DateTime]::Parse($a['created_at']).ToUniversalTime()).TotalSeconds } else { -1 }
-  Write-Result ($a -and $a['ttl_seconds'] -eq 28800 -and [Math]::Abs($span - 28800) -le 2) 'Expires_at minus created_at is the 8 hour TTL'
+  Write-Result ($a -and $a['ttl_seconds'] -eq 28800 -and [Math]::Abs($span - 28800) -le 2) 'The span from created_at to expires_at is the 8 hour TTL'
   Write-Result ($a -and -not $r.Out.Contains('driver')) 'The driver name is not in the output'
   $alias = if ($a) { $a['ssh']['host_alias'] } else { '' }
   Write-Result ($a -and $alias -ceq "agentspace-test-e104-$($a['id'].Substring(0, 8))" -and $a['ssh']['user'] -ceq 'ubuntu') 'The ssh block names the alias and the user'
@@ -90,6 +95,12 @@ try {
   Write-Result ($a -and (Test-Path -LiteralPath $aliasFile) -and ((Get-Content -LiteralPath $aliasFile -Raw) -match [regex]::Escape($alias))) 'The alias file exists in the throwaway agentspace.d and names the lease'
   $leaseDir = if ($a) { Join-Path $leasesRoot $a['id'] } else { Join-Path $leasesRoot 'none' }
   Write-Result ((Test-Path -LiteralPath (Join-Path $leaseDir 'id_ed25519')) -and (Test-Path -LiteralPath (Join-Path $leaseDir 'id_ed25519-cert.pub'))) 'The key and certificate exist under the lease folder'
+
+  # The certificate's valid-before is expires_at. ssh-keygen prints local time with no zone (D7, E2.05).
+  $certText = (& $keygen -L -f (Join-Path $leaseDir 'id_ed25519-cert.pub')) -join "`n"
+  $validBefore = $null
+  if ($certText -match 'Valid: from \S+ to (\S+)') { $validBefore = [DateTime]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal).ToUniversalTime() }
+  Write-Result ($a -and $validBefore -and $validBefore -eq [DateTime]::Parse($a['expires_at'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)) 'The expires_at is the certificate valid-before'
 
   # TTL.
   $r2 = Invoke-Lease @('create', '--project', 'test-e104', '--ttl', '90m')
@@ -119,6 +130,30 @@ try {
   $ug = Invoke-Lease @('get', $ua['id'])
   Write-Result ($ug.Exit -eq 0 -and $ug.Out -ceq $u.Out) 'get returns the unsatisfiable lease as create printed it'
 
+  # A tolerant command line, as test-lease-cli.ps1 once checked it.
+  $t = Invoke-Lease -Top 'Lease' -Arguments @('Create', '--PROJECT=x', '--platform', 'linux/aarch64/v8', '--profile', 'Agent-Linux@03', '--size', 'M', '--ttl', 'PT8H')
+  $ta = $null
+  try { $ta = $t.Out | ConvertFrom-Json -AsHashtable -DateKind String } catch { }
+  if ($ta -and $ta['id']) { $created.Add($ta['id']) }
+  Write-Result ($t.Exit -eq 0 -and $ta -and $ta['state'] -ceq 'unsatisfiable' -and $ta['platform'] -ceq 'linux/arm64' -and $ta['profile'] -ceq 'agent-linux@3' -and
+    $ta['size'] -ceq 'm' -and $ta['ttl_seconds'] -eq 28800 -and @($ta['reasons']).Count -eq 1 -and $ta['reasons'][0]['code'] -ceq 'unsupported_profile') 'A tolerant create line is unsatisfiable with the values normalized'
+
+  # A write that fails after a ready place releases the lease. leases.json is made a directory, so the
+  # move over it fails; the throwaway ssh folder is separate, so its alias folder tells.
+  $badState = Join-Path $temp 'badstate'
+  $badSsh = Join-Path $temp 'badssh'
+  New-Item -ItemType Directory -Force -Path (Join-Path $badState 'leases.json') | Out-Null
+  $leasesNow = @(Get-ChildItem -LiteralPath $leasesRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
+  $env:AGENTSPACE_STATE_DIR = $badState
+  $env:AGENTSPACE_SSH_DIR = $badSsh
+  $f = Invoke-Lease @('create', '--project', 'test-e104')
+  $env:AGENTSPACE_STATE_DIR = $stateDir
+  $env:AGENTSPACE_SSH_DIR = $sshDir
+  $leaked = @(Get-ChildItem -LiteralPath $leasesRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $leasesNow -cnotcontains $_.Name })
+  $aliasLeft = @(Get-ChildItem -LiteralPath (Join-Path $badSsh 'agentspace.d') -Force -ErrorAction SilentlyContinue)
+  Write-Result ($f.Exit -eq 1 -and $f.Out -eq '' -and (Test-Valid $f.Err $errorSchema)) 'A failed write after place is internal, exit 1'
+  Write-Result ($leaked.Count -eq 0 -and $aliasLeft.Count -eq 0) "A failed write after place leaves no credential and no alias (new folders: $($leaked.Name -join ','))"
+
   # not_found.
   $unknown = [guid]::NewGuid().ToString()
   $nf = Invoke-Lease @('get', $unknown)
@@ -141,24 +176,27 @@ try {
   # The state file.
   Write-Result (Test-Valid (Get-Content -LiteralPath $statePath -Raw) $stateSchema) 'The state file validates against the state schema'
   $final = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -DateKind String -Depth 20
-  Write-Result (@($final['leases']).Count -eq 3) 'The state file holds the three leases that create made'
+  Write-Result (@($final['leases']).Count -eq 4) 'The state file holds the four leases that create recorded'
 } catch {
   Write-Result $false "No unexpected error: $($_.Exception.Message)"
 } finally {
-  foreach ($id in $created) {
+  $env:AGENTSPACE_STATE_DIR = $savedState
+  $env:AGENTSPACE_SSH_DIR = $savedSsh
+  $env:AGENTSPACE_PROXY_COMMAND = $savedProxy
+  # Only this run's IDs: those it recorded, and those in its throwaway state file. Another process
+  # may be using the real leases folder at the same time, so nothing else is deleted.
+  $allIds = @($created)
+  if (Test-Path -LiteralPath $statePath) {
+    try { $allIds += @((Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable -DateKind String -Depth 20)['leases'] | ForEach-Object { $_['id'] }) } catch { }
+  }
+  $allIds = @($allIds | Where-Object { $_ } | Sort-Object -Unique)
+  foreach ($id in $allIds) {
     $d = Join-Path $leasesRoot $id
     if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
-  }
-  # Anything else the run left under the real leases root, such as a folder from a failed child.
-  if (Test-Path -LiteralPath $leasesRoot) {
-    foreach ($d in Get-ChildItem -LiteralPath $leasesRoot -Directory) {
-      if ($before -cnotcontains $d.Name) { Remove-Item -LiteralPath $d.FullName -Recurse -Force }
-    }
   }
   if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
 Write-Result ((Get-RealSshState) -ceq $realBefore) 'The real ~/.ssh config and agentspace.d are unchanged'
-$after = if (Test-Path -LiteralPath $leasesRoot) { @(Get-ChildItem -LiteralPath $leasesRoot -Directory | ForEach-Object Name) } else { @() }
-Write-Result ((($after | Sort-Object) -join ',') -ceq (($before | Sort-Object) -join ',')) 'The real leases folder is as it was'
+Write-Result (@($allIds | Where-Object { Test-Path -LiteralPath (Join-Path $leasesRoot $_) }).Count -eq 0) 'None of this run''s lease folders is left under the real leases folder'
 Write-Output "$passes passed, $failures failed."
 if ($failures) { exit 1 }
