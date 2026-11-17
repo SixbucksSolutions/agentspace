@@ -45,6 +45,16 @@ already share the box this way, so isolation is safe to punt. Card #0004 adds it
 **Why per project and not per agent:** agents in one project share a repo, toolchain caches and
 sign-ins. A user per agent would mean signing every tool in once per agent.
 
+**Findings from story E3.03 (2026-11-17).** D3 stands. Nothing puts a project's repo on the box
+for a lease.
+- **swimcoach was not on the box.** The dev lead cloned it with `git clone
+  https://github.com/SixbucksSolutions/swimcoach.git ~/swimcoach` (gh is git's credential helper
+  for github.com, and the repo is public anyway): `origin/main` at 6eb57ad, 212 MB, which took the
+  root disk from 67% to 70% of 6.8 GB.
+- **A project's checkout MUST be on the box before its agents open a session in it.** Every lease
+  is `ubuntu` in the MVP, so the checkout lives in the shared home, every lease sees it, and it
+  outlives the lease. Per-project users (#0004) change that.
+
 ### D4. Platform as `os/arch`; software as a named profile; no distro field
 
 **Direction.** A request MAY name a `platform` in the OCI form (`linux/arm64`, `linux/amd64`,
@@ -525,7 +535,8 @@ login's `sshd-session`, and its daemon ran the session's Claude Code.
   the tunnel never started, and the app gave up with `Connection timed out during banner exchange`.
   The hung push also left `bot.env` empty on the box while the laptop's hash recorded the token
   as sent, so no later connection pushed it again until the hash was cleared by hand (card
-  #0026). Fixed in story E3.02 (below); story E3.03 retries the desktop app with a push due.
+  #0026). Fixed in story E3.02 (below). Story E3.03 retried the desktop app with a push due, and
+  the push confirmed with no banner timeout (E3.03 finding below).
 - **A spike that trusts a throwaway CA SHOULD do it with a `cert-authority,principals="ubuntu"`
   line in `~/.ssh/authorized_keys`, not with an sshd drop-in.** sshd keeps the first value of
   `TrustedUserCAKeys` it reads, so a second drop-in would be ignored if it sorted after
@@ -626,16 +637,66 @@ the alias.
   5.1.** It loads `Push-Localswim` from the script's syntax tree and runs it with a dummy token
   and a stand-in for ssh. A wrong hash, a failed ssh and a hung ssh each warn and record nothing,
   a confirmed send is recorded, and a failed forced send leaves the earlier record as it was.
-- **Not tried with a push due:** an interactive connection from Terry's terminal, and the desktop
-  app's own connection. Story E3.03 (#0040) drives the desktop app through a lease, so it MUST set
-  `%USERPROFILE%\.agentspace\localswim-pushed.sha256` aside before its first desktop connection,
-  to show that E2.02's `Connection timed out during banner exchange` is gone.
+- **Not tried with a push due in this story:** an interactive connection from Terry's terminal,
+  and the desktop app's own connection. Story E3.03 (#0040) set
+  `%USERPROFILE%\.agentspace\localswim-pushed.sha256` aside and then connected the desktop app
+  through a lease: the push confirmed and E2.02's `Connection timed out during banner exchange`
+  was gone (E3.03 finding below). An interactive connection from Terry's terminal with a push due
+  was not tried in E3.03 either.
 - **Review changes after the live run:** the time limit went from 60 to 20 seconds, the timeout
   stops ssh's whole process tree, and the box's command gained the `trap`. The live run was then
   repeated the same way, with the hash file set aside: it pushed and exited 0 in 7 seconds,
   ending at 20:24:55 UTC, the hash file came back with the same value, `bot.env` had 96 bytes,
   mode 600, two lines and a matching SHA-256, no temporary file or push process was left on the
   box, and `ssh agentspace true` exited 0 at 20:25:14.
+
+**Findings from story E3.03 (2026-11-17).** D9 stands. swimcoach took a real lease through the CLI,
+and the Claude desktop app reached the box through its alias, with a token push due, from a
+stopped box. The README's "Use a lease from a project" is the how-to that came out of it.
+- **The lease.** `bin\agentspace.cmd lease create --project swimcoach`, run from the main checkout
+  `C:\Projects\agentspace` (which has `.instance-id`), exited 0 at 20:42:59 with state `ready`, a
+  TTL of 28800 seconds, `expires_at` 2026-11-18T04:42:59Z and the alias
+  `agentspace-swimcoach-a62cb513`. `~/.ssh/config` had no `Include` and `~/.ssh/agentspace.d` did
+  not exist (E2.08 had restored the config), so `create` inserted `Include agentspace.d/*` as line
+  1, backed the config up as `config.agentspace-backup-20261117T204259Z`, and wrote a 697-byte alias
+  file. `ssh -G` on the alias showed user `ubuntu`, `identitiesonly yes`, `stricthostkeychecking
+  true`, `hostkeyalias agentspace`, both `remoteforward [127.0.0.1]:...` lines, the key and
+  certificate under `%USERPROFILE%\.agentspace\leases\<id>\`, and the main checkout's
+  `ssh-proxy.cmd` as ProxyCommand. A scripted login through the alias at 20:43:07 logged
+  `Accepted publickey ... ED25519-CERT ... ID a62cb513-... (serial 0) CA ED25519 SHA256:G05h...`.
+- **The push stamp is not `bot.env`'s hash.** `localswim-pushed.sha256` holds the SHA-256 of the
+  instance ID, a line feed and the content (`agentspace.ps1`), so it never equals `sha256sum
+  bot.env` on the box. A push is shown to be confirmed when the stamp comes back equal to the stamp
+  set aside (the same instance and the same token), and `bot.env`'s modification time moves. A
+  check MUST compare the stamp with the set-aside stamp, never with `bot.env`'s `sha256sum`.
+- **Setting the stamp aside MUST be the last step before the connection under test, with no other
+  connection in between.** Any connection to the box pushes while the stamp is missing, scripted
+  ones included. In this run the stamp was set aside at 20:43:21, and the dev lead's own `ssh
+  agentspace` box check at 20:43:41 then printed `Sending the localswim Bot token to the
+  instance...`; the box confirmed, and the stamp came back equal, so the desktop app's push was no
+  longer due. The stamp was set aside again at 20:44:49, and nothing connected until Terry's run.
+- **The desktop app connected through the lease alias with a push due, from a stopped box.** Terry
+  added the SSH environment `agentspace-swimcoach-a62cb513` in the Claude desktop app and clicked
+  Test connection; he did not open a session. The box had idle-stopped after the dev lead's checks
+  at 20:43, and booted at 22:12:11 (`uptime -s`), so start-on-connect worked through the lease
+  alias from the app.
+- **The app's connection pushed the token, with no hang.** sshd logged the push's nested login at
+  22:12:37; its session opened at 22:12:37 and closed at 22:12:38. Afterwards `bot.env` had 96
+  bytes, mode 600, two lines and a modification time of 22:12:38.002, in a folder of mode 700. The
+  laptop's stamp came back at 22:12:40 by the laptop's clock, equal to the stamp set aside.
+- **The push's nested login still uses Terry's own key (#0028 stands).** sshd logged it as
+  `Accepted publickey ... ED25519 SHA256:...` with no `ID`: it goes through Terry's `agentspace`
+  entry and `authorized_keys` key, not the lease's certificate.
+- **The app's certificate logins followed with no banner timeout.** sshd logged `ED25519-CERT ...
+  ID a62cb513-...` at 22:12:42, whose `sshd-session ... @notty` runs
+  `~/.claude/remote/srv/<hash>/server --bridge`, and at 22:12:49, which runs `server --serve`.
+  E2.02's `Connection timed out during banner exchange` with a push due is gone from the desktop
+  app, which closes E3.02's untried item for it and E2.02's card #0026 note.
+- **The app's remote log is `~/.claude/remote/run/<id>/remote-server.log`.** It was listening at
+  22:12:50, and at 22:14:30 its GitHandler looked at `/home/ubuntu/swimcoach`.
+- **Test connection ran no Claude Code on the box:** there was no `ccd-cli` process and no
+  transcript. The app keeps a session's transcript on the laptop, so the box's `~/.claude/projects`
+  is not evidence either way.
 
 ## What the MVP leaves alone
 
@@ -706,6 +767,8 @@ which was backed up first and restored byte for byte afterwards (same SHA-256).
   E2.07 findings say.
 - **No token push was due**, so card #0026's hang was not met.
 
+<!-- E3.03 RELEASE: dev lead fills in -->
+
 ### D11. Today's idle stop stays
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
@@ -718,6 +781,32 @@ live leases.
 **MVP only.** The first `ssh` connection still binds the localswim board's reverse forward for the
 whole box, and every lease uses it, because every lease is `ubuntu`. **Replaced by card #0008**,
 which must land with or before per-project users (#0004), since those break the shared token file.
+
+**Findings from story E3.03 (2026-11-17).** D12 stands, with a gap it did not foresee: the Claude
+desktop app's own connection never holds the forward, so a desktop-app session reaches the board
+only while some other connection holds it.
+- **Before the run nothing held the forward.** At 20:42 nothing on the box listened on 8811 or
+  53147 (`ss -ltnp`). Terry's two E2.02 desktop-app connections to the spike alias
+  `agentspace-spike`, open since 18:12, were still up and held no forwards.
+- **The desktop app clears every forward (card #0042).** The app's `ssh.exe` command lines, read
+  from the laptop's process list, carry `-o ClearAllForwardings=yes`, beside `-o
+  StrictHostKeyChecking=yes`, `-o ConnectTimeout=30`, `-o ServerAliveInterval=15 -o
+  ServerAliveCountMax=3`, `-o ForwardAgent=no` and `-T`. Their `-o ProxyCommand=` names the app's
+  own `claude-ssh-proxy.exe` with a file `%TEMP%\ccd-ssh-<random>\proxy-command.txt`, which held
+  the alias's own ProxyCommand line unchanged. One connection runs a remote shell loop, the other
+  the `sftp` subsystem.
+- **So a lease alias's `RemoteForward` lines never apply to the app's own connection**, and the
+  same holds for Terry's `agentspace` entry.
+- **A desktop-app session that needs the board MUST have a holder open on the laptop for as long
+  as it needs the board:** `C:\Windows\System32\OpenSSH\ssh.exe -N -o ExitOnForwardFailure=yes
+  <alias>`. In this run the holder was started only after the app's push had landed, so it never
+  pushed. It logged in by certificate under the lease ID at 22:12:47, and `sudo ss -ltnp` showed
+  its `sshd-session` (shown as `sshd-session: ubuntu`, with no tty) holding 127.0.0.1:8811 and
+  :53147. `curl` to 127.0.0.1:8811 from the box returned 200.
+- **The holder is a workaround, not the fix.** Card #0042 (Backlog, not an MVP blocker),
+  "Desktop-app sessions get no board: the app clears a lease alias's RemoteForward", tracks it.
+
+<!-- E3.03 BOARD RUN: dev lead fills in -->
 
 ## Defaults
 
