@@ -69,6 +69,32 @@ Docs cite its cards as `#0001`.
 - **localswim calls run as Bot.** Until this repo has its own wrapper, load the credential the way
   the watcher's `lib\env.ps1` does, for one run only (`Set-LocalswimEnv`, then
   `Clear-LocalswimEnv`). The token MUST NOT be printed or written anywhere.
+- **Watcher reader names MUST be unique per session.** The architect reads as `agentspace`; a dev
+  lead reads as `agentspace-tN`. Two sessions sharing a reader share one place in the mailbox, and
+  each event reaches only one of them.
+
+## Status on Terry's phone (swimcoach)
+
+**agentspace reports its milestones to Terry's swimcoach** (Terry, 2026-11-17), under the rules in
+`C:\Projects\swimcoach\docs\agents\swimcoach-reporting.md`, which MUST be followed as written:
+- At most one report per milestone every 5 minutes.
+- At least one every 10 minutes while work goes on.
+- Lanes counted for that milestone's cards only.
+- `stop` only when Terry says the milestone is complete.
+
+- **`scripts/report-milestones.ps1` does the reporting**, and the architect runs it with `-Watch`.
+  It counts lanes from the board for each milestone in `scripts/milestones.json`, and keeps its
+  last report times in `%USERPROFILE%\.agentspace\swimcoach-last.json`, so a restart never reports
+  inside the 5-minute limit. `-DryRun` prints what would be sent.
+- **Milestones:**
+  - `MVP` covers every MVP story broken down so far.
+  - `T1` to `T5` each cover their turn's stories.
+  - The architect edits `milestones.json` when stories are added or a turn starts.
+- **Project `agentspace`, agent `claude`**, spelled that way every time.
+- **`active_hours` is wall-clock time since the milestone started**, and `cap_hours` is the plan's
+  wall-clock budget: the sum of the turn lengths for `MVP`, the turn's length for a `T` milestone.
+- **A story waiting on Terry himself MUST be moved to Needs Terry**, so it is counted there and the
+  report carries a `needs_me` line. In Progress does not reach his phone.
 
 ## Writing
 
