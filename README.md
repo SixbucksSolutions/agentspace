@@ -74,6 +74,24 @@ RFC 2119 keywords; the capitals are load-bearing.
 ssh agentbox "bash -s" < box\bootstrap.sh
 ```
 
+### Signing the tools in
+
+Each tool is signed in once per instance, by Terry, at the box's shell prompt.
+
+- **Claude Code:** run `claude` and choose the option that shows a URL and a code.
+- **Codex:** its browser sign-in redirects to port 1455 on the machine running the browser,
+  so connect from the laptop with that port forwarded, then run `codex login` on the box and
+  open its URL in the laptop browser:
+
+  ```bat
+  ssh -L 1455:localhost:1455 agentbox
+  ```
+
+  Device-code sign-in (`codex login --device-auth`) SHOULD NOT be used: it needs a ChatGPT
+  security setting turned on, and device codes are a phishing route.
+- **gh:** `gh auth login`, choosing HTTPS and the web browser; it prints a code to enter at
+  `https://github.com/login/device`.
+
 ## Logs
 
 ```bat
