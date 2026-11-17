@@ -93,6 +93,10 @@ powershell -File scripts\agentspace.ps1 ca
   lease that already has a key. Check it with
   `pwsh -NoProfile -File scripts\test-lease-credential.ps1`, which prints PASS or FAIL per check
   and removes its throwaway leases.
+  The same file also defines `Update-LeaseCredential -LeaseId <id> -Ttl <TimeSpan>`, which signs a
+  new certificate for an existing key, and `Remove-LeaseCredential -Project <name> -LeaseId <uuid>`,
+  which deletes the lease's alias file and its folder and leaves `~/.ssh/config` alone. Check them
+  with `pwsh -NoProfile -File scripts\test-lease-renew-release.ps1`.
 - **`scripts\lease-alias.ps1`** (PowerShell 7, D18) defines `Set-LeaseAlias` and `Remove-LeaseAlias`
   (each `-Project <name> -LeaseId <uuid>`) and `Install-LeaseAliasInclude`, which the lease CLI
   dot-sources. They write and remove a lease's host alias, `agentspace-<project>-<first 8 hex of

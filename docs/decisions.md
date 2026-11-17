@@ -129,7 +129,7 @@ another principal were refused.
   it was under `%LOCALAPPDATA%`, which the Claude app redirected into its package cache) as
   `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, the name ssh finds beside an
   `IdentityFile`. The issuer refuses a lease ID that is not a simple token, and refuses a lease
-  that already has a key; renewing is story E2.07's.
+  that already has a key; `Update-LeaseCredential` renews it (E2.07, below).
 - **The validity MUST be passed to `ssh-keygen -V` as an absolute UTC window,
   `YYYYMMDDHHMMSSZ:YYYYMMDDHHMMSSZ`, from the issue time to the issue time plus the TTL.** A relative
   `+8h` leaves the start to ssh-keygen, so the issuer could not return the exact expiry. Windows
@@ -141,6 +141,20 @@ another principal were refused.
   moved a few minutes back if that is ever seen.
 - **PowerShell 7.6 passed `-N ''` through as an empty passphrase**, as the E2.01 finding expects for
   7.3 and later. The issuer checks every new key with `ssh-keygen -y -P ''`.
+
+**Findings from story E2.07 (2026-11-17).** D7 stands. `Update-LeaseCredential` in
+`scripts/lease-credential.ps1` renews a lease, and shares its CA check and signing step with
+`New-LeaseCredential`, so both sign with the same principal, options and absolute UTC window.
+- **Renewal MUST replace only the certificate.** It signs a copy of the lease's `.pub` named
+  `renew-<guid>.pub` inside the lease folder, then moves the new `renew-<guid>-cert.pub` over
+  `id_ed25519-cert.pub`, so the old certificate stays until the new one exists. The key is never
+  created or replaced, and a lease with no key is refused.
+- **Renewal is idempotent.** Each call signs again with a window from the call's time, and the
+  key stays byte-identical.
+- **Renewal lowercases the lease ID (D20) and issue does not.** The lease CLI (#0001) MUST pass
+  issue the normalized ID, as D20 already says, so the two agree on the key ID. Release accepts
+  only a UUIDv4, through `ConvertTo-LeaseId`, so a lease issued under another token cannot be
+  released; the CLI's lease IDs are all UUIDv4s.
 
 **Findings from story E2.04 (2026-11-16).** D7 stands. After one `sync`, a certificate signed by
 the agentspace CA for `ubuntu` logged in (`ED25519-CERT ... ID <key id> ... CA ED25519
@@ -339,6 +353,17 @@ revocation list (KRL) to hosts.
 
 **Finding from story E2.01 (2026-11-16):** sshd checks a certificate's validity only at login, so
 neither release nor expiry ends a session that is already open. They stop new connections only.
+
+**Findings from story E2.07 (2026-11-17).** D10 stands. `Remove-LeaseCredential` in
+`scripts/lease-credential.ps1` releases a lease.
+- **Release MUST delete the lease's alias file through `Remove-LeaseAlias` first**, which refuses an
+  alias file that names another lease; nothing else is deleted then. It then deletes the lease
+  folder under `%USERPROFILE%\.agentspace\leases` (D21) with its key, public key and certificate.
+- **Release MUST NOT edit `~/.ssh/config`.** The `Include agentspace.d/*` line stays.
+- **Release needs no CA and runs no CA check.** It does not revoke the certificate, which stays
+  valid until it expires.
+- **Release is idempotent.** A second call, or a call for a lease that never existed, succeeds and
+  reports both removals as false.
 
 ### D11. Today's idle stop stays
 
