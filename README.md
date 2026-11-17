@@ -113,9 +113,10 @@ powershell -File scripts\agentspace.ps1 ca
 ### The lease CLI
 
 `bin\agentspace.cmd`, and `bin/agentspace` for Git Bash, is `agentspace lease`, whose contract is
-[docs/lease-api.md](docs/lease-api.md). `--help` works at every level. Each subcommand is still a
-stub that answers `internal` (exit 1) once its arguments check out, until stories E1.04 and E1.05
-fill them in. Leases are kept in `%USERPROFILE%\.agentspace\leases.json`, or in the folder that
+[docs/lease-api.md](docs/lease-api.md). `--help` works at every level. `create` and `get` work
+(`scripts\test-lease-cmd-create-get.ps1` checks them); `renew`, `release` and `list` are still stubs
+that answer `internal` (exit 1) once their arguments check out, until story E1.05 fills them in.
+Leases are kept in `%USERPROFILE%\.agentspace\leases.json`, or in the folder that
 `AGENTSPACE_STATE_DIR` names. Check it with `pwsh -NoProfile -File scripts\test-lease-cli.ps1`,
 which works in a throwaway folder under `%TEMP%` and prints PASS or FAIL per check.
 

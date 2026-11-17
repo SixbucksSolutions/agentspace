@@ -1,8 +1,8 @@
 #Requires -Version 7
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
-# agentspace lease get (docs/lease-api.md, "agentspace lease get"). Story E1.02 wrote this stub;
-# story E1.04 fills it in, and MUST NOT need to change scripts\lease-cli.ps1 to do so.
+# agentspace lease get (docs/lease-api.md, "agentspace lease get"). Story E1.02 wrote the stub,
+# and story E1.04 filled it in, without changing scripts\lease-cli.ps1.
 #
 # The function that scripts\lease-cli.ps1 calls, which MUST keep this name and these parameters:
 #   Invoke-LeaseGet -LeaseId <string>
@@ -22,10 +22,12 @@
 #   This file MUST NOT normalize values itself; anything it needs MUST come from lease-values.ps1.
 #   It MAY dot-source scripts\lease-driver.ps1 (story E1.03) for the driver interface.
 #
-# Until then it answers internal (exit 1): the contract has no "not implemented" error, and no
-# other exit code MAY be used.
-
 function Invoke-LeaseGet {
   param([Parameter(Mandatory)][string]$LeaseId)
-  throw (New-LeaseError -Code internal -Message 'agentspace lease get is not implemented yet.')
+  $records = Read-LeaseState
+  $record = Find-LeaseRecord -Records $records -LeaseId $LeaseId
+  if (-not $record) {
+    throw (New-LeaseError -Code not_found -LeaseId $LeaseId -Message "No lease has ID '$LeaseId'.")
+  }
+  ConvertTo-LeaseOutput -Record $record
 }

@@ -1,8 +1,8 @@
 #Requires -Version 7
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
-# agentspace lease create (docs/lease-api.md, "agentspace lease create"). Story E1.02 wrote this
-# stub; story E1.04 fills it in, and MUST NOT need to change scripts\lease-cli.ps1 to do so.
+# agentspace lease create (docs/lease-api.md, "agentspace lease create"). Story E1.02 wrote the
+# stub, and story E1.04 filled it in, without changing scripts\lease-cli.ps1.
 #
 # The function that scripts\lease-cli.ps1 calls, which MUST keep this name and these parameters:
 #   Invoke-LeaseCreate -Project <string> -Platform <string> -Profile <string> -Size <string> -TtlSeconds <int>
@@ -23,8 +23,21 @@
 #   This file MUST NOT normalize values itself; anything it needs MUST come from lease-values.ps1.
 #   It MAY dot-source scripts\lease-driver.ps1 (story E1.03) for the driver interface.
 #
-# Until then it answers internal (exit 1): the contract has no "not implemented" error, and no
-# other exit code MAY be used.
+# How it works (story E1.04):
+# - The lease ID, the driver's place and the record's write all happen inside one Update-LeaseState
+#   script block, under the state file's lock. A place that fails throws out of the block, so the
+#   state file is left untouched; the driver removes its own credential and alias before it throws.
+# - A failure after a ready place (the schema check or the write, both in Update-LeaseState after
+#   the block) would leave a credential and an alias with no record, which the contract forbids. So
+#   the call is wrapped: on a failure after a ready place, create releases the lease through the
+#   driver, then rethrows the original error.
+# - The ID is a new lowercase UUIDv4, generated again while any recorded lease has its host alias
+#   (agentspace-<project>-<first 8 hex of the id>).
+# - Test hooks, read inline here (D8, E1.04 findings): AGENTSPACE_SSH_DIR, when set and not empty,
+#   is passed to the driver as -SshDir, and AGENTSPACE_PROXY_COMMAND as -ProxyCommand. Unset, the
+#   driver uses the real ~/.ssh and its default ProxyCommand.
+
+. (Join-Path $PSScriptRoot 'lease-driver.ps1')
 
 function Invoke-LeaseCreate {
   param(
@@ -34,5 +47,66 @@ function Invoke-LeaseCreate {
     [Parameter(Mandatory)][string]$Size,
     [Parameter(Mandatory)][int]$TtlSeconds
   )
-  throw (New-LeaseError -Code internal -Message 'agentspace lease create is not implemented yet.')
+  # The script block sees Update-LeaseState's locals (D8), so these names are specific to this file.
+  $__createProject = $Project
+  $__createPlatform = $Platform
+  $__createProfile = $Profile
+  $__createSize = $Size
+  $__createTtl = $TtlSeconds
+  # Set inside the block once a ready lease is placed, so a later failure can release it.
+  $__createDone = @{}
+  try {
+    Update-LeaseState -Script {
+      param($__createRecords)
+      do {
+        $__createId = [guid]::NewGuid().ToString()
+        $__createAlias = "agentspace-$__createProject-$($__createId.Substring(0, 8))"
+        $__createTaken = $false
+        foreach ($__createOther in $__createRecords) {
+          if ("agentspace-$($__createOther['project'])-$(([string]$__createOther['id']).Substring(0, 8))" -ceq $__createAlias) { $__createTaken = $true }
+        }
+      } while ($__createTaken)
+
+      $__createArgs = @{
+        LeaseId = $__createId; Project = $__createProject; Platform = $__createPlatform
+        Profile = $__createProfile; Size = $__createSize; Ttl = [TimeSpan]::FromSeconds($__createTtl)
+      }
+      if ($env:AGENTSPACE_SSH_DIR) { $__createArgs['SshDir'] = $env:AGENTSPACE_SSH_DIR }
+      if ($env:AGENTSPACE_PROXY_COMMAND) { $__createArgs['ProxyCommand'] = $env:AGENTSPACE_PROXY_COMMAND }
+      $__createPlaced = Invoke-LeaseDriverPlace @__createArgs
+      if ($__createPlaced.State -ceq 'ready') {
+        $__createDone['Placed'] = @{ Driver = [string]$__createPlaced.Driver; LeaseId = $__createId }
+      }
+
+      $__createRecord = [ordered]@{
+        id          = $__createId
+        project     = $__createProject
+        state       = [string]$__createPlaced.State
+        platform    = $__createPlatform
+        profile     = $__createProfile
+        size        = $__createSize
+        ttl_seconds = $__createTtl
+        created_at  = ConvertTo-LeaseTime (Get-LeaseNow)
+      }
+      if ($__createPlaced.State -ceq 'ready') {
+        $__createRecord['expires_at'] = ConvertTo-LeaseTime $__createPlaced.ExpiresAt
+        $__createRecord['ssh'] = [ordered]@{ host_alias = [string]$__createPlaced.HostAlias; user = [string]$__createPlaced.User }
+      } elseif ($__createPlaced.State -ceq 'unsatisfiable') {
+        $__createRecord['reasons'] = @($__createPlaced.Reasons | ForEach-Object { [ordered]@{ code = [string]$_.code; message = [string]$_.message } })
+      }
+      $__createRecord['driver'] = [string]$__createPlaced.Driver
+      $__createRecords.Add($__createRecord)
+      ConvertTo-LeaseOutput -Record $__createRecord
+    }
+  } catch {
+    $__createError = $_
+    if ($__createDone.ContainsKey('Placed')) {
+      try {
+        $__createRelease = @{ Driver = $__createDone['Placed'].Driver; LeaseId = $__createDone['Placed'].LeaseId; Project = $__createProject }
+        if ($env:AGENTSPACE_SSH_DIR) { $__createRelease['SshDir'] = $env:AGENTSPACE_SSH_DIR }
+        Invoke-LeaseDriverRelease @__createRelease
+      } catch { }
+    }
+    throw $__createError.Exception
+  }
 }
