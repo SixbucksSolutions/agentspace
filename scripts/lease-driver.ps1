@@ -49,6 +49,13 @@
 #   - Unsatisfiable is a returned state, not an exception, and issues nothing. Version 0 supports only
 #     linux/arm64, agent-linux with no version, and size m (D5); each unmet value is one reason, with
 #     the code unsupported_platform, unsupported_profile or unsupported_size, in that order.
+#   - The CLI MUST put only the thrown exception's own Message in an error document, never its
+#     inner exception or ToString(): a driver wraps an error that names a machine, and keeps it
+#     as the inner exception.
+#   - The driver's name MUST NOT reach any output. It is stored in the state file only.
+#   - The CLI MUST pass renew and release the project stored at place, and MUST choose a lease ID
+#     whose host alias no kept lease uses before it calls place (docs/lease-api.md, "Fields"). A
+#     driver reports an alias collision only as a failed place.
 #   - -SshDir and -ProxyCommand are for tests and worktrees. Unset, they take the defaults of
 #     Set-LeaseAlias in lease-alias.ps1.
 

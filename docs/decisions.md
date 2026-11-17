@@ -100,7 +100,11 @@ behind a driver boundary anyway, so a second driver means adding code, not rewor
 - **A failed alias step removes the credential before the error is rethrown.** If
   `Remove-LeaseCredential` refuses (a foreign file sits at the alias), the lease folder is deleted
   directly, and the foreign file is kept. The rethrown message is generic, with the original error
-  as its inner exception, because `Set-LeaseAlias`'s own messages talk about the machine.
+  as its inner exception, because `Set-LeaseAlias`'s own messages talk about the machine. The CLI
+  MUST therefore show only the outer message.
+- **A credential step that fails partway has its lease folder deleted, but only if that call
+  created it**, so a key with no certificate is never left behind, and an existing lease's key is
+  never touched.
 - **Checked** by `scripts/test-lease-driver.ps1`, which uses a throwaway lease ID under the real
   leases root (the credential step has no root override and needs the real CA) and a throwaway
   ssh folder, and hashes the real `~/.ssh` config and `agentspace.d` before and after.

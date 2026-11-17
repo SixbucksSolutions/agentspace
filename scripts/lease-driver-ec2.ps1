@@ -35,7 +35,15 @@ function Invoke-Ec2DriverPlace([hashtable]$Request) {
   }
 
   $id = ConvertTo-LeaseId $Request.LeaseId
-  $cred = New-LeaseCredential -LeaseId $id -Ttl $Request.Ttl
+  # A credential step that fails partway can leave a key with no certificate. Its folder is
+  # deleted then, but only if this call created it: an existing folder is another call's.
+  $leaseDir = Join-Path $env:USERPROFILE ".agentspace\leases\$id"
+  $existed = Test-Path -LiteralPath $leaseDir
+  try { $cred = New-LeaseCredential -LeaseId $id -Ttl $Request.Ttl }
+  catch {
+    if (-not $existed -and (Test-Path -LiteralPath $leaseDir)) { Remove-Item -LiteralPath $leaseDir -Recurse -Force }
+    throw
+  }
   try {
     $alias = @{ Project = $Request.Project; LeaseId = $id }
     if ($Request.SshDir) { $alias.SshDir = $Request.SshDir }
