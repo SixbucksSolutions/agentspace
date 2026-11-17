@@ -41,6 +41,17 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 
 The git authority above belongs to the architect. A dev lead pushes only its own branch.
 
+### The architect is Terry's proxy
+
+**Terry, 2026-11-17: "you're my proxy".** Dev leads and subagents MUST NOT ask Terry directly.
+- **A question meant for Terry goes to the architect.** The architect answers it when it can, from
+  the docs, the decisions, or a check of its own.
+- **The architect asks Terry only for what only he can do:** a check outside the Claude app, a
+  click in its UI, or a call that would commit agentspace to something costly to reverse (D19).
+  It relays his answer back.
+- **A card waiting on Terry still goes to Needs Terry**, so it reaches his phone, but the request
+  itself comes to him from the architect.
+
 ### The architect's watchdog on a dev lead
 
 **Terry, 2026-11-17.** While a dev lead is running, the architect MUST keep a 10-minute watchdog
