@@ -70,6 +70,13 @@ carry anything that names the backend.
 **The MVP is done when a real project runs its agents through a lease (#0003)**, not when the CLI
 works.
 
+**Status, 2026-11-17: all 17 MVP stories are merged.** In E3.03 (PR #17) a swimcoach agent, in a
+Claude desktop-app session on a lease, worked a card on the swimcoach board. Whether the MVP is
+complete is Terry's call, made by moving the last cards to Completed. The gaps it found are
+Backlog cards: #0042 (the desktop app clears a lease's board forwards), #0043 (the CloudWatch
+backstop stops a quiet box under open sessions), #0044 (a dead client's session keeps the board
+forwards) and #0041 (CLI hardening).
+
 ## Next: make one host properly multi-tenant
 
 **Clear what and why, open how.** Each is a Backlog card.
