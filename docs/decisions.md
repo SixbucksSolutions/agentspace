@@ -884,7 +884,8 @@ in card #0013), not a fallback.
 
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
 **Its horizons were replaced by D26 (2026-11-17):** releases v0.2 to v1.0, one epic each, then
-After 1.0 and Someday. The rules on epics and stories below stand.
+After 1.0 and Someday. The rules on epics and stories below stand, except that a release's
+stories are named `X.Y.nn` (D29).
 MVP epics go in Ready For Work, and post-MVP work goes in Backlog. An epic MUST NOT be broken into
 stories until Terry says it is time for that epic. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
@@ -1312,6 +1313,52 @@ required.
 - **The PowerShell to port is the smallest it will ever be**, about 110 KB of product code.
 - **v0.2 and v0.3 go first** because they are small, mostly on the box, and fix what blocks real
   use today.
+
+### D29. A release's stories are `X.Y.nn`, its turns `vX.Y-Tn`
+
+**Decided, Terry, 2026-11-17:** a release epic's stories are titled `X.Y.nn: title`, where `X.Y` is
+the release and `nn` is the story's 1-based number within it, zero-padded to two digits, as in
+`0.2.01: sshd drops a dead client's session`. **This replaces D14's `EN.nn` for release epics.**
+MVP stories keep their `EN.nn` names.
+- **Docs, pull requests and conversation MUST cite a release story the same way:** `0.2.01`.
+- **Its branch is `vX.Y/X.Y.nn`**, as in `v0.2/0.2.01`.
+- **A release's turns are `vX.Y-T1`, `vX.Y-T2` and so on**, so they never collide with the MVP's
+  T1 to T8. Each turn is a swimcoach milestone of that name, and the release itself is one more,
+  `vX.Y`, which counts all of its stories and never the epic.
+- **Every other rule in D14 stands:** each story is under 3 hours of active work, it starts in
+  Ready For Work as a child of its epic, and it carries its estimate and dependencies.
+
+**The Terry-preset board does not let Bot move a card from Backlog to In Progress** (localswim's
+README: that takes a `policy grant`). A release epic leaves Backlog by Terry's hand, so starting
+a release is always his click. The architect MUST NOT grant Bot that move on its own.
+
+### D30. A keeper on the laptop holds the board's forwards
+
+**Direction, architect, 2026-11-17; built in v0.2 by 0.2.03 and 0.2.04, shown in 0.2.05.**
+Replaces D12's hand-run holder (card #0042).
+- **A keeper on the laptop holds the board's forwards for as long as a lease is ready.** Each pass
+  reads lease state read-only. With no holder running and a lease ready, it starts one, `ssh.exe
+  -N -o ExitOnForwardFailure=yes <alias>`, through the ready lease that expires last.
+- **It stops a holder whose lease is no longer ready**, so a holder never keeps a host up past its
+  lease. Until v0.8 the on-box idle check counts the holder's session as activity, so the box runs
+  while any lease is ready, which is v0.8's rule anyway.
+- **It MUST NOT stop a process it did not start.** A PID is trusted only when its start time and
+  command line match the keeper's own record.
+- **One holder per host.** Only one connection on a host can bind the forwards (D12). Every lease
+  is on one box until v0.7, which makes it one per project host.
+- **It retries a holder that fails with backoff, never in a tight loop** (D14). A dead session
+  keeps the ports until 0.2.01's `ClientAliveInterval` bound drops it.
+- **It runs as a logon scheduled task for Terry's user.** That is persistent configuration on his
+  laptop, so it is registered only with his yes, in 0.2.05.
+
+**Why a keeper and not the ProxyCommand or `lease create`:**
+- **A holder started by the ProxyCommand** belongs to the process tree of whichever connection ran
+  it, the desktop app's included. It would die with that connection, or outlive it with nobody
+  tracking it.
+- **`lease create` is often an agent's tool call**, whose process tree is torn down when the call
+  ends. It also cannot stop the holder when the lease expires, which no command marks.
+- **A keeper that reconciles leases against one holder** handles every one of those cases, and is
+  the shape a hosted control plane (#0011) would take anyway.
 
 ## Keys
 

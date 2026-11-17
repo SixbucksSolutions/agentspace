@@ -42,7 +42,7 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
   it, and deletes the branch.
 - **A dev lead** is one Opus/high session per turn. It runs the implementer and reviewer
   subagents that D15 names for each story, reviews each story itself, and opens **one pull
-  request per story** to `main`, from a branch named for the story (`mvp/e2.06`). A dev lead MUST
+  request per story** to `main`, from a branch named for the story (`mvp/e2.06`, or `v0.2/0.2.01` in a release, D29). A dev lead MUST
   NOT merge its own pull request.
 - **Subagents** MUST NOT move cards or open pull requests.
 
@@ -113,7 +113,7 @@ Docs cite its cards as `#0001`.
 
 - **Lanes, per Terry (2026-11-16):** MVP epics go in Ready For Work, and post-MVP work goes in
   Backlog. An epic MUST NOT be broken into stories until Terry says so. Stories are titled `EN.nn:
-  title`, are children of their epic, and MUST each be under 3 hours of active work to reach Ready
+  title` in the MVP and `X.Y.nn: title` in a release, such as `0.2.01` (D29), are children of their epic, and MUST each be under 3 hours of active work to reach Ready
   For Review; one that cannot be goes to Terry first. An epic is In Progress from the moment its
   stories are laid out until its last story reaches Ready For Review, and its description carries
   the execution plan by turn (decision D14). Only Terry moves a card to Completed.
@@ -124,7 +124,8 @@ Docs cite its cards as `#0001`.
   the watcher's `lib\env.ps1` does, for one run only (`Set-LocalswimEnv`, then
   `Clear-LocalswimEnv`). The token MUST NOT be printed or written anywhere.
 - **Watcher reader names MUST be unique per session.** The architect reads as `agentspace`; a dev
-  lead reads as `agentspace-tN`. Two sessions sharing a reader share one place in the mailbox, and
+  lead reads as `agentspace-tN` in the MVP, and as `agentspace-vX.Y-tN` in a release (for example
+  `agentspace-v0.2-t1`). Two sessions sharing a reader share one place in the mailbox, and
   each event reaches only one of them.
 
 ## Status on Terry's phone (swimcoach)
@@ -144,6 +145,9 @@ Docs cite its cards as `#0001`.
   - `MVP` covers every MVP story, across all three epics, and never an epic card (Terry,
     2026-11-17).
   - `T1` to `T8` each cover their turn's stories (D14).
+  - **A release `vX.Y` covers all of its stories, never the epic, and `vX.Y-T1` and up each cover
+    one of its turns (D29).** The release milestone is added when its stories are laid out, and a
+    turn's milestone when that turn starts.
   - The architect edits `milestones.json` when stories are added or a turn starts.
   - **`milestones.json` MUST be edited as text, never rewritten from `ConvertFrom-Json`.** Without
     `-DateKind String`, PowerShell 7 turns each `start` into a DateTime, and writing it back loses
