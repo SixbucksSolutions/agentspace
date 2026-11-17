@@ -73,6 +73,14 @@ powershell -File scripts\agentspace.ps1 ca
   current user (D17). Running it again changes nothing and prints the paths and fingerprint. It
   refuses to overwrite a CA, and fails without repairing anything when the pair is half there,
   mismatched or readable by anyone else.
+- **`scripts\lease-credential.ps1`** (PowerShell 7, D18) defines
+  `New-LeaseCredential -LeaseId <id> -Ttl <TimeSpan>`, which the lease CLI dot-sources. It checks
+  the CA with `agentspace.ps1 ca`, makes a new ed25519 key without a passphrase in
+  `%LOCALAPPDATA%\agentspace\leases\<id>\`, and signs it with principal `ubuntu`, the lease ID as
+  key ID and a validity of exactly the TTL. It refuses a lease ID that is not a safe token and a
+  lease that already has a key. Check it with
+  `pwsh -NoProfile -File scripts\test-lease-credential.ps1`, which prints PASS or FAIL per check
+  and removes its throwaway leases.
 
 ### The localswim board on the box
 
