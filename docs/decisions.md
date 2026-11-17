@@ -117,6 +117,7 @@ another principal were refused.
   passphrase. Code that makes a key MUST handle both, or check afterwards with `ssh-keygen -y`.
 - **Windows OpenSSH accepted lease keys with the access rules ssh-keygen gives them** (the owner,
   SYSTEM and Administrators) under `%LOCALAPPDATA%`. No `icacls` step was needed for a lease key.
+  The same held under `%USERPROFILE%\.agentspace\leases` (E2.09).
 - **EC2 Instance Connect's `eic_run_authorized_keys` runs for every refused key and fails today**
   (`failed, status 22`), although `sshd -T` reports `authorizedkeyscommand none`. Where it is
   configured, and whether it is a second way to log in, is a question for story E2.04.
@@ -124,8 +125,9 @@ another principal were refused.
 **Findings from story E2.05 (2026-11-16).** D7 stands. `New-LeaseCredential` in
 `scripts/lease-credential.ps1` (PowerShell 7, D18) issues a lease's key and certificate, and
 `scripts/test-lease-credential.ps1` checks it.
-- **A lease's key pair lives in `%LOCALAPPDATA%\agentspace\leases\<lease id>\`** as `id_ed25519`,
-  `id_ed25519.pub` and `id_ed25519-cert.pub`, the name ssh finds beside an `IdentityFile`. The
+- **A lease's key pair lives in `%USERPROFILE%\.agentspace\leases\<lease id>\`** (D21; until E2.09
+  it was under `%LOCALAPPDATA%`, which the Claude app redirected into its package cache) as
+  `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, the name ssh finds beside an `IdentityFile`. The
   issuer refuses a lease ID that is not a simple token, and refuses a lease that already has a key;
   renewing is story E2.07's.
 - **The validity MUST be passed to `ssh-keygen -V` as an absolute UTC window,
@@ -462,11 +464,11 @@ moves it.
   app's processes make under AppData into the package's own cache**
   (`%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\...`).
   - Every Claude Code session runs inside the app: the architect, the dev leads and their
-    subagents. So when E2.03 "created the CA in `%LOCALAPPDATA%gentspace\ca`", Windows put it
+    subagents. So when E2.03 "created the CA in `%LOCALAPPDATA%\agentspace\ca`", Windows put it
     in that cache, and E2.05 put its lease keys there too.
   - Inside the app, reads see the cache at the normal path, so every check passed.
   - Outside the app (Terry's own terminal, and the app's SSH-connection process), the real
-    `%LOCALAPPDATA%gentspace` did not exist. Terry confirmed it with `dir` on 2026-11-17.
+    `%LOCALAPPDATA%\agentspace` did not exist. Terry confirmed it with `dir` on 2026-11-17.
 - **What that broke:**
   - A lease alias's key paths resolve to nothing for any ssh started outside the app.
   - The token hash is invisible outside the app, so every connection from outside pushed the
@@ -488,15 +490,17 @@ moves it.
 
 ## Keys
 
-### D17. The CA key lives in %LOCALAPPDATA%, owner-only and without a passphrase
+### D17. The CA key lives on the laptop, owner-only and without a passphrase
 
 **MVP only, 2026-11-16 (story E2.03).** **Replaced by card #0011**, which settles Q1 when the API
-is hosted and signing leaves the laptop. **Its location is replaced by D21:** the key moves to
-`%USERPROFILE%\.agentspace\ca`; everything else here (owner-only, no passphrase, never committed,
-never overwritten) stands.
+is hosted and signing leaves the laptop. **Its location was replaced by D21:** story E2.09 moved
+the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package cache) to
+`%USERPROFILE%\.agentspace\ca`, keeping its fingerprint `SHA256:G05h...`; everything else here
+(owner-only, no passphrase, never committed, never overwritten) stands.
 
-- **The CA's private key MUST live at `%LOCALAPPDATA%\agentspace\ca\agentspace_ca`**, with its
-  public key beside it as `agentspace_ca.pub`. Both files MUST stay out of the repo and out of
+- **The CA's private key MUST live at `%USERPROFILE%\.agentspace\ca\agentspace_ca`** (D21; until
+  E2.09 it was `%LOCALAPPDATA%\agentspace\ca\agentspace_ca`), with its public key beside it as
+  `agentspace_ca.pub`. Both files MUST stay out of the repo and out of
   any folder that OneDrive or another service syncs. `agentspace.ps1 ca` creates them
   once, and refuses to run when that folder's path is inside OneDrive or the repo. It MUST NOT be
   run elevated, since an elevated shell makes Administrators the owner of what it creates.
@@ -517,10 +521,14 @@ never overwritten) stands.
   CA stop working on each host once it is synced.
 
 **Why:**
-- `%LOCALAPPDATA%` never roams and cannot be redirected to OneDrive, and agentspace already keeps
-  laptop state there. `~/.ssh` holds identities and gets copied around.
-- **Disabling inheritance is load-bearing:** on Terry's laptop, `%LOCALAPPDATA%` passes inherited
-  access to `CodexSandboxUsers` and to an AppContainer capability.
+- **Superseded by D21.** `%LOCALAPPDATA%` was chosen because it never roams, cannot be redirected
+  to OneDrive, and agentspace already kept laptop state there. Inside the MSIX-packaged Claude
+  app, writes there land in the package cache instead, so E2.09 moved the CA to
+  `%USERPROFILE%\.agentspace\ca`, which is not redirected and not inside OneDrive; `ca` still refuses
+  a OneDrive path. `~/.ssh` is not used because it holds identities and gets copied around.
+- **Disabling inheritance is load-bearing:** on Terry's laptop, `%USERPROFILE%` passes inherited
+  access to SYSTEM and Administrators (checked in E2.09). Until E2.09, `%LOCALAPPDATA%` also passed
+  inherited access to `CodexSandboxUsers` and to an AppContainer capability.
 - ssh-keygen's own rules on a new key also grant SYSTEM and Administrators. They are dropped
   because those principals' privileges reach the file anyway, and owner-only is a rule `ca` can
   check exactly.
