@@ -13,11 +13,11 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
 
 - **Where it stands:** [docs/handoff-mvp.md](docs/handoff-mvp.md), the architect's handoff after
   the MVP shipped (2026-11-17). An agent picking agentspace up SHOULD read it first.
-- **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.1, and releases v0.2 to v1.0
+- **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.01, and releases v0.02 to v1.0
   are one Backlog epic each (D26). It goes from there to someday-maybe ideas. The Backlog MUST
   match the roadmap at all times (Terry, 2026-11-17).
-- **The language:** agentspace's product code becomes Rust by v0.6, and all new product code MUST
-  be Rust from v0.7 on (D28). The PowerShell is the MVP prototype's, and the rewrite MUST be built
+- **The language:** agentspace's product code becomes Rust by v0.06, and all new product code MUST
+  be Rust from v0.07 on (D28). The PowerShell is the MVP prototype's, and the rewrite MUST be built
   from specs, never from it (D20).
 - **The reasoning:** [docs/decisions.md](docs/decisions.md). A design choice MUST be recorded
   there, numbered, before or with the change that makes it, and a changed decision MUST say what
@@ -43,7 +43,7 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
 - **A dev lead** is one Opus/high session per turn. It runs the subagents each story's
   staffing names (D15 in the MVP; in a release, the plan on the story's card, with parallel
   subagents, D31), reviews each story itself, and opens **one pull
-  request per story** to `main`, from a branch named for the story (`mvp/e2.06`, or `v0.2/0.2.t1.1` in a release, D29). A dev lead MUST
+  request per story** to `main`, from a branch named for the story (`mvp/e2.06`, or `v0.02/e0.02-t03-s01` in a release, D29). A dev lead MUST
   NOT merge its own pull request.
 - **Subagents** MUST NOT move cards or open pull requests.
 
@@ -51,7 +51,7 @@ The git authority above belongs to the architect. A dev lead pushes only its own
 
 **Terry, 2026-11-17: the architect is pre-authorized to start the T7 and T8 dev leads** as soon as
 each turn's entry gates are met, meaning every PR of the turn before is merged. **The same day he
-extended it to every v0.2 turn** (v0.2-T2 and v0.2-T3): each starts as soon as its stories' entry
+extended it to every v0.02 turn** (v0.02-T2 and v0.02-T03): each starts as soon as its stories' entry
 requirements are met, with its milestone, reporter and watchdog as for T1. The Claude app
 still lets a session start another only on a turn its user began, so where the app refuses, the
 architect puts the dev lead up as a card instead, and Terry starts it with one click.
@@ -115,10 +115,14 @@ machine and Terry can read.
 Docs cite its cards as `#0001`.
 
 - **Lanes, per Terry (2026-11-16):** MVP epics go in Ready For Work, and post-MVP work goes in
-  Backlog. An epic MUST NOT be broken into stories until Terry says so. Stories are titled `EN.nn:
-  title` in the MVP and `X.Y.Tm.n: title` in a release, where `m` is the earliest turn whose entry requirements
-  the story meets and `n` numbers the stories within it, such as `0.2.T1.1` (D29), are children of their epic, and MUST each be under 3 hours of active work to reach Ready
-  For Review; one that cannot be goes to Terry first. An epic goes to In Progress as soon as work
+  Backlog. **On 2026-11-17 Terry moved the release epics on the path to 1.0 into Ready For Work**,
+  so Backlog now holds what comes after 1.0, defects and hardening. An epic MUST NOT be broken
+  into stories until Terry says so.
+- **Stories** are children of their epic, and MUST each be under 3 hours of active work to reach
+  Ready For Review; one that cannot be goes to Terry first. They are titled `EN.nn: title` in the
+  MVP, and `EX.YY-Tnn-Smm: title` in a release (D29): `nn` is the earliest turn whose entry
+  requirements the story meets, and `mm` numbers the stories within that turn, restarting at 01,
+  such as `E0.02-T03-S01`. v0.02's T1 and T2 stories keep their earlier `0.02.Tm.n` names. An epic goes to In Progress as soon as work
   starts on any of its stories, and follows its last story to Ready For Review as soon as that
   story arrives there (Terry, 2026-11-17). The architect moves it both times. Its description
   carries the execution plan by turn (decision D14). Only Terry moves a card to Completed.
@@ -129,8 +133,8 @@ Docs cite its cards as `#0001`.
   the watcher's `lib\env.ps1` does, for one run only (`Set-LocalswimEnv`, then
   `Clear-LocalswimEnv`). The token MUST NOT be printed or written anywhere.
 - **Watcher reader names MUST be unique per session.** The architect reads as `agentspace`; a dev
-  lead reads as `agentspace-tN` in the MVP, and as `agentspace-vX.Y-tN` in a release (for example
-  `agentspace-v0.2-t1`). Two sessions sharing a reader share one place in the mailbox, and
+  lead reads as `agentspace-tN` in the MVP, and as `agentspace-vX.YY-tnn` in a release (for
+  example `agentspace-v0.02-t03`; v0.02's first turn read as `agentspace-v0.02-t1`). Two sessions sharing a reader share one place in the mailbox, and
   each event reaches only one of them.
 
 ## Status on Terry's phone (swimcoach)
@@ -150,9 +154,10 @@ Docs cite its cards as `#0001`.
   - `MVP` covers every MVP story, across all three epics, and never an epic card (Terry,
     2026-11-17).
   - `T1` to `T8` each cover their turn's stories (D14).
-  - **A release `vX.Y` covers all of its stories, never the epic, and `vX.Y-T1` and up each cover
-    one of its turns (D29).** The release milestone is added when its stories are laid out, and a
-    turn's milestone when that turn starts.
+  - **A release `vX.YY` covers all of its stories, never the epic, and `vX.YY-Tnn` each cover one
+    of its turns (D29).** The release milestone is added when its stories are laid out, and a
+    turn's milestone when that turn starts. v0.02's first two keep the names they were reported
+    under, `v0.2` and `v0.2-T1`.
   - The architect edits `milestones.json` when stories are added or a turn starts.
   - **`milestones.json` MUST be edited as text, never rewritten from `ConvertFrom-Json`.** Without
     `-DateKind String`, PowerShell 7 turns each `start` into a DateTime, and writing it back loses

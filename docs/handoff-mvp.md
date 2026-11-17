@@ -136,10 +136,10 @@ Each is recorded where it applies; this is the index.
 
 ## What is open
 
-**Superseded the same day (2026-11-17) by the release ladder, v0.2 to v1.0, in
+**Superseded the same day (2026-11-17) by the release ladder, v0.02 to v1.0, in
 [roadmap.md](roadmap.md) (D25 to D28).** The list below is what was open at handoff. The roadmap
 and the Backlog are where things stand now: #0004, #0006, #0007, #0012 and #0013 are archived as
-OBE or folded into a release, and the four gaps below are v0.2 (#0045) and v0.8 (#0048).
+OBE or folded into a release, and the four gaps below are v0.02 (#0045) and v0.08 (#0048).
 
 All in Backlog, none started. Terry sets the order; this is the architect's read of it.
 

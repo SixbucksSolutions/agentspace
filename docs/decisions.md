@@ -57,7 +57,7 @@ for a lease.
   root disk from 67% to 70% of 6.8 GB.
 - **A project's checkout MUST be on the box before its agents open a session in it.** Every lease
   is `ubuntu` in the MVP, so the checkout lives in the shared home, every lease sees it, and it
-  outlives the lease. Under D25 the checkout lives on the project's own host, and v0.7 (#0047)
+  outlives the lease. Under D25 the checkout lives on the project's own host, and v0.07 (#0047)
   puts it there.
 
 ### D4. Platform as `os/arch`; software as a named profile; no distro field
@@ -797,7 +797,7 @@ with state `released` and `released_at` 2026-11-17T22:24:45Z.
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
 no CPU work. An agent holding a lease but doing nothing can still have the box stopped under it;
-its next connection starts it again. **Replaced by v0.8 (#0048)**, which stops a project's host
+its next connection starts it again. **Replaced by v0.08 (#0048)**, which stops a project's host
 when the project has no live leases (D25). It folded in card #0006.
 
 **Findings from story E3.03 (2026-11-17).** D11 stands, but the box has a second stopper that does
@@ -817,7 +817,7 @@ not count sessions.
 **MVP only.** The first `ssh` connection still binds the localswim board's reverse forward for the
 whole box, and every lease uses it, because every lease is `ubuntu`. **Replaced by card #0008.**
 Per-project users (#0004), which it once had to land with, are OBE under D25: each project's host
-has its own forward, so #0008 matters once two leases of one project share a host. v0.2 (#0045)
+has its own forward, so #0008 matters once two leases of one project share a host. v0.02 (#0045)
 makes the one-lease case work unattended (#0042, #0044).
 
 **Findings from story E3.03 (2026-11-17).** D12 stands, with a gap it did not foresee: the Claude
@@ -883,9 +883,9 @@ in card #0013), not a fallback.
 ### D14. Roadmap horizons, epics before stories
 
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
-**Its horizons were replaced by D26 (2026-11-17):** releases v0.2 to v1.0, one epic each, then
+**Its horizons were replaced by D26 (2026-11-17):** releases v0.02 to v1.0, one epic each, then
 After 1.0 and Someday. The rules on epics and stories below stand, except that a release's
-stories are named `X.Y.Tm.n` (D29).
+stories are named `EX.YY-Tnn-Smm` (D29).
 MVP epics go in Ready For Work, and post-MVP work goes in Backlog. An epic MUST NOT be broken into
 stories until Terry says it is time for that epic. Someday ideas stay uncarded in
 [roadmap.md](roadmap.md) until a real need shows up.
@@ -1013,7 +1013,7 @@ Fable/high reviews it. E3.02 handles the Bot token. E3.03 is a live run whose ou
 
 ### D18. The lease CLI is PowerShell 7
 
-**MVP only. Replaced by D28 (Terry, 2026-11-17):** agentspace is Rust by v0.6, and PowerShell was
+**MVP only. Replaced by D28 (Terry, 2026-11-17):** agentspace is Rust by v0.06, and PowerShell was
 the lean prototype's alone. Originally **decided, architect, 2026-11-16; settles Q5's language
 half.** The lease code (`agentspace lease`,
 and the issuing, renewing and releasing that #0002 builds for it) MUST be written for PowerShell 7
@@ -1106,7 +1106,7 @@ prototyping happy paths."
   validate what it prints against its schema. On the laptop that is PowerShell 7's `Test-Json
   -SchemaFile`, which handles draft 2020-12 (checked on 7.6, 2026-11-16).
 - **The handoff is built before the rewrite starts**, as its own work (card #0030, now release
-  v0.4, ahead of the Rust rewrite in v0.5 and v0.6; D28). In the MVP,
+  v0.04, ahead of the Rust rewrite in v0.05 and v0.06; D28). In the MVP,
   `agentspace lease` gets its JSON schemas with epic #0001, since they cost little while the
   contract is being written. It SHOULD also have `--help` at every level.
 
@@ -1220,9 +1220,9 @@ own, and every lease for that project lands on it. Terry's vision: a project ask
 capacity with its platform, profile, execution plan and staffing plan, and gets dedicated compute
 big enough to run that plan.
 - **A project's host is created by its first lease, and kept.** It is stopped when the project
-  holds no live lease and started by its next one (v0.8, #0048). Its disk keeps the project's
+  holds no live lease and started by its next one (v0.08, #0048). Its disk keeps the project's
   checkout, sign-ins and caches.
-- **Its size comes from the lease:** a stopped host is resized to the size asked for (v0.9,
+- **Its size comes from the lease:** a stopped host is resized to the size asked for (v0.09,
   #0049), and a size can be chosen from a plan (v0.10, #0050; D27).
 - **Leases of different projects MUST NOT share a host.**
 - **D1 stands:** nothing in a lease says which host serves it, or that the host is dedicated.
@@ -1230,7 +1230,7 @@ big enough to run that plan.
 **Why a persistent host per project rather than a fresh host per lease:**
 - **A fresh host starts empty:** no Claude Code, Codex or gh sign-ins, no checkout (D3's E3.03
   finding) and cold caches. Automating sign-ins (#0009, Q2) is the hardest problem left open, and
-  this choice keeps it off the path to 1.0: Terry signs in once per project host instead (v0.7,
+  this choice keeps it off the path to 1.0: Terry signs in once per project host instead (v0.07,
   #0047).
 - **A stopped host costs only its disk**, and EC2 can change a stopped instance's type, which makes
   sizing a lease cheap.
@@ -1244,22 +1244,27 @@ big enough to run that plan.
   OBE and archived.
 - **Fresh hosts per lease, if ever wanted, come after 1.0** with #0009 and #0014.
 
-### D26. Releases from v0.1 to v1.0, one epic each
+### D26. Releases from v0.01 to v1.0, one epic each
 
 **Decided, Terry, 2026-11-17:** "I would rather do a large number of smaller scope steps between
-where we are and 1.0." The MVP is v0.1. Each later release is one epic, titled `vX.Y: title`, and
-the releases are taken in order. Release numbers count past 9: v0.10 follows v0.9.
+where we are and 1.0." The MVP is v0.01. Each later release is one epic, titled `vX.YY: title`, and
+the releases are taken in order.
+- **The minor number has two digits** (Terry, 2026-11-17, by retitling the epics): `v0.02`, not
+  `v0.2`. So the releases sort in order, and v0.10 follows v0.09 everywhere.
+- **The plan was first written with one digit** (v0.2 to v0.12). Docs and cards were rewritten to
+  two digits the same day, except the swimcoach milestones `v0.2` and `v0.2-T1`, which keep the
+  names they were first reported under (D29).
 
 | Release | Epic | What |
 |---|---|---|
-| v0.2 | #0045 | Unattended leases: #0042, #0044, #0028 |
-| v0.3 | #0046 | Measure what an agent uses |
-| v0.4 | #0030 | Clean-room spec package for the Rust rewrite (D20, D28) |
-| v0.5 | #0054 | The lease CLI in Rust |
-| v0.6 | #0055 | The operator in Rust; PowerShell retired |
-| v0.7 | #0047 | A host per project (D25) |
-| v0.8 | #0048 | Host lifecycle and cost guard |
-| v0.9 | #0049 | Size classes |
+| v0.02 | #0045 | Unattended leases: #0042, #0044, #0028 |
+| v0.03 | #0046 | Measure what an agent uses |
+| v0.04 | #0030 | Clean-room spec package for the Rust rewrite (D20, D28) |
+| v0.05 | #0054 | The lease CLI in Rust |
+| v0.06 | #0055 | The operator in Rust; PowerShell retired |
+| v0.07 | #0047 | A host per project (D25) |
+| v0.08 | #0048 | Host lifecycle and cost guard |
+| v0.09 | #0049 | Size classes |
 | v0.10 | #0050 | Plan-sized leases; contract v1 (D27) |
 | v0.11 | #0051 | `linux/amd64` platform |
 | v0.12 | #0052 | Plan from the board |
@@ -1274,35 +1279,35 @@ the releases are taken in order. Release numbers count past 9: v0.10 follows v0.
 
 ### D27. A host is sized by concurrency, never by model or effort
 
-**Direction, architect, 2026-11-17; measured in v0.3 (#0046), applied in v0.9 (#0049) and v0.10
+**Direction, architect, 2026-11-17; measured in v0.03 (#0046), applied in v0.09 (#0049) and v0.10
 (#0050).**
 - **A host's size MUST be chosen from the plan's peak concurrency**, meaning the most agents
   working at once in any one turn, times a measured per-agent footprint for the project.
 - **A plan MAY carry each subagent's model and effort, and agentspace records them, but they MUST
   NOT change the size.** They MAY feed the TTL, since they predict how long a turn takes.
-- **The footprint MUST come from measurement** (v0.3), never from an estimate.
+- **The footprint MUST come from measurement** (v0.03), never from an estimate.
 
 **Why:** the model runs at Anthropic, not on the host. What loads the host is the agents' tool
 calls: builds, test suites and browsers, run by subagents working at the same time. Under D15 a
 story's implementer and reviewer run one after the other, so a turn's peak is about its number of
 stories plus its dev lead.
 
-### D28. agentspace is Rust by v0.6; PowerShell was the prototype's
+### D28. agentspace is Rust by v0.06; PowerShell was the prototype's
 
 **Decided, Terry, 2026-11-17:** cut over to Rust (first choice) or Go ("pretty far back second
 place but would accept if much simpler than Rust") by 1.0. PowerShell was permitted only because
 the MVP was a very lean prototype. **Replaces D18.**
-- **The rewrite is the clean-room drop of D19 and D20.** v0.4 (#0030) writes the specs, and the
+- **The rewrite is the clean-room drop of D19 and D20.** v0.04 (#0030) writes the specs, and the
   Rust code MUST be built from them, never from the PowerShell code.
-- **The lease CLI MUST be Rust from v0.5 (#0054), and the operator (`agentspace.ps1`,
-  `ssh-proxy.cmd`) from v0.6 (#0055).** From v0.7 on, new product code MUST be Rust.
+- **The lease CLI MUST be Rust from v0.05 (#0054), and the operator (`agentspace.ps1`,
+  `ssh-proxy.cmd`) from v0.06 (#0055).** From v0.07 on, new product code MUST be Rust.
 - **Not product, so not ported:**
   - The architect's process tools (`scripts/watchdog.ps1`, `scripts/report-milestones.ps1`) MAY
     stay PowerShell.
   - The shell that runs on a host (`box/`) stays shell. It configures Ubuntu, and Rust would add a
     build per platform without making it clearer.
 - **Open defects against the PowerShell code** (#0027, #0029, #0034, #0041) MUST be carried into
-  v0.4's specs as requirements, and each is OBE once the Rust version meets it.
+  v0.04's specs as requirements, and each is OBE once the Rust version meets it.
 
 **Why Rust and not Go:** Go is not much simpler for this work, which is what Terry's second place
 required.
@@ -1312,36 +1317,42 @@ required.
 - Both build single native binaries for Windows and Linux.
 - Both toolchains are already on the laptop (cargo 1.99; Go 1.27, which builds localswim).
 
-**Why at v0.4, and not just before 1.0:**
-- **Every release from v0.7 on rewrites the driver** (hosts per project, lifecycle, sizes, plans).
+**Why at v0.04, and not just before 1.0:**
+- **Every release from v0.07 on rewrites the driver** (hosts per project, lifecycle, sizes, plans).
   Built in PowerShell first, each would be written twice.
 - **The PowerShell to port is the smallest it will ever be**, about 110 KB of product code.
-- **v0.2 and v0.3 go first** because they are small, mostly on the box, and fix what blocks real
+- **v0.02 and v0.03 go first** because they are small, mostly on the box, and fix what blocks real
   use today.
 
-### D29. A release's stories are `X.Y.Tm.n`, named for their turn
+### D29. A release's stories are `EX.YY-Tnn-Smm`, named for their turn
 
-**Decided, Terry, 2026-11-17:** a release epic's stories are titled `X.Y.Tm.n: title`:
-- **`X.Y`** is the release.
-- **`m`** is the earliest turn in which the story's entry requirements are met.
-- **`n`** numbers the stories within turn `m`. It is namespaced per turn, so it MUST restart at 1
-  in every turn: `0.2.T1.1`, `0.2.T1.2`, then `0.2.T2.1` (Terry, 2026-11-17).
+**Decided, Terry, 2026-11-17:** a release epic's stories are titled `EX.YY-Tnn-Smm: title`. "Sooner
+or later we will hit double digit turns or stories, so let's plan for it now."
+- **`X.YY`** is the release, as in its epic's title (D26).
+- **`nn`** is the earliest turn in which the story's entry requirements are met, two digits.
+- **`mm`** numbers the stories within turn `nn`, two digits. It is namespaced per turn, so it MUST
+  restart at 01 in every turn: `E0.02-T03-S01`, then `E0.03-T01-S01`, `E0.03-T01-S02`,
+  `E0.03-T02-S01`.
 
-For example, `0.2.T1.1: sshd drops a dead client's session` and `0.2.T2.1: The token push rides
-the lease's own connection`, which needs 0.2.T1.1 merged first. **This replaces D14's `EN.nn` for
-release epics.** MVP stories keep their `EN.nn` names.
+**This replaces D14's `EN.nn` for release epics.** MVP stories keep their `EN.nn` names.
 - **The name is the execution plan.** A story's turn is read from its name, so laying out the turns
   and naming the stories are one step. A story whose entry requirements change MUST be renamed
   with them.
-- **Terry first asked for `X.Y.nn`, and moved to `X.Y.Tm.n` the same day,** once the stories had
-  dependencies. v0.2's stories were renamed before any work started: 0.2.01 became 0.2.T1.1,
-  0.2.03 became 0.2.T1.2, 0.2.02 became 0.2.T2.1, 0.2.04 became 0.2.T2.2, and 0.2.05 became
-  0.2.T3.1.
-- **Docs, pull requests and conversation MUST cite a release story the same way:** `0.2.T1.1`.
-- **Its branch is the name in lowercase, under `vX.Y/`**, as in `v0.2/0.2.t1.1`.
-- **A release's turns are `vX.Y-T1`, `vX.Y-T2` and so on**, so they never collide with the MVP's
-  T1 to T8. Each turn is a swimcoach milestone of that name, and the release itself is one more,
-  `vX.Y`, which counts all of its stories and never the epic.
+- **Docs, pull requests and conversation MUST cite a release story the same way:** `E0.02-T03-S01`.
+- **Its branch is the name in lowercase, under `vX.YY/`**, as in `v0.02/e0.02-t03-s01`.
+- **A release's turns are `vX.YY-Tnn`**, as in `v0.02-T03`, so they never collide with the MVP's T1
+  to T8. Each turn is a swimcoach milestone of that name, and the release itself is one more,
+  `vX.YY`, which counts all of its stories and never the epic.
+
+**How the names got here, all on 2026-11-17, and what keeps an older form.** Terry asked for
+`X.Y.nn`, then `X.Y.Tm.n` once the stories had dependencies, then padded the release to `X.YY`,
+then settled on `EX.YY-Tnn-Smm` from v0.02's T3 on, with "no need to do any renaming for T2".
+- **v0.02's T1 and T2 stories keep `0.02.Tm.n`:** 0.02.T1.1 (#0056), 0.02.T1.2 (#0058),
+  0.02.T2.1 (#0057) and 0.02.T2.2 (#0059), on branches `v0.02/0.02.t1.1` and so on. Their turns
+  are `v0.02-T1` and `v0.02-T2`.
+- **v0.02's T3 story is the first under this rule:** E0.02-T03-S01 (#0060), in turn `v0.02-T03`.
+- **The swimcoach milestones `v0.2` and `v0.2-T1` keep the names they were first reported under.**
+  Renaming one would leave a stale card on Terry's phone, which only his word can stop.
 - **Every other rule in D14 stands:** each story is under 3 hours of active work, it starts in
   Ready For Work as a child of its epic, and it carries its estimate and dependencies.
 
@@ -1351,22 +1362,22 @@ a release is always his click. The architect MUST NOT grant Bot that move on its
 
 ### D30. A keeper on the laptop holds the board's forwards
 
-**Direction, architect, 2026-11-17; built in v0.2 by 0.2.T1.2 and 0.2.T2.2, shown in 0.2.T3.1.**
+**Direction, architect, 2026-11-17; built in v0.02 by 0.02.T1.2 and 0.02.T2.2, shown in E0.02-T03-S01.**
 Replaces D12's hand-run holder (card #0042).
 - **A keeper on the laptop holds the board's forwards for as long as a lease is ready.** Each pass
   reads lease state read-only. With no holder running and a lease ready, it starts one, `ssh.exe
   -N -o ExitOnForwardFailure=yes <alias>`, through the ready lease that expires last.
 - **It stops a holder whose lease is no longer ready**, so a holder never keeps a host up past its
-  lease. Until v0.8 the on-box idle check counts the holder's session as activity, so the box runs
-  while any lease is ready, which is v0.8's rule anyway.
+  lease. Until v0.08 the on-box idle check counts the holder's session as activity, so the box runs
+  while any lease is ready, which is v0.08's rule anyway.
 - **It MUST NOT stop a process it did not start.** A PID is trusted only when its start time and
   command line match the keeper's own record.
 - **One holder per host.** Only one connection on a host can bind the forwards (D12). Every lease
-  is on one box until v0.7, which makes it one per project host.
+  is on one box until v0.07, which makes it one per project host.
 - **It retries a holder that fails with backoff, never in a tight loop** (D14). A dead session
-  keeps the ports until 0.2.T1.1's `ClientAliveInterval` bound drops it.
+  keeps the ports until 0.02.T1.1's `ClientAliveInterval` bound drops it.
 - **It runs as a logon scheduled task for Terry's user.** That is persistent configuration on his
-  laptop, so it is registered only with his yes, in 0.2.T3.1.
+  laptop, so it is registered only with his yes, in E0.02-T03-S01.
 
 **Why not the ProxyCommand or `lease create`:**
 - **A holder started by the ProxyCommand** belongs to the process tree of whichever connection ran
@@ -1403,12 +1414,12 @@ the blast radius stands.
     files.
 - **Every story still ends with at least one independent reviewer**, who starts only when what it
   reviews is done.
-- **Each plan states its peak:** the most subagents running at once. v0.3 (#0046) measures what
+- **Each plan states its peak:** the most subagents running at once. v0.03 (#0046) measures what
   concurrent agents cost a host, and D27 sizes hosts from it.
 - **Parallelism that costs more than it saves is not planned.** A docs edit is folded into an
   implementer's tasking rather than given a subagent of its own.
 
-**v0.2's plans** (#0056 to #0060) peak at 3, 2, 3, 2 and 2 subagents. With two stories per turn,
+**v0.02's plans** (#0056 to #0060) peak at 3, 2, 3, 2 and 2 subagents. With two stories per turn,
 T1 and T2 peak at 6 and 5 subagents at once, plus the dev lead.
 
 ## Keys
