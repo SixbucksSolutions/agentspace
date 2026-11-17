@@ -93,6 +93,34 @@ powershell -File scripts\agentspace.ps1 ca
   lease that already has a key. Check it with
   `pwsh -NoProfile -File scripts\test-lease-credential.ps1`, which prints PASS or FAIL per check
   and removes its throwaway leases.
+- **`scripts\lease-alias.ps1`** (PowerShell 7, D18) defines `Set-LeaseAlias` and `Remove-LeaseAlias`
+  (each `-Project <name> -LeaseId <uuid>`) and `Install-LeaseAliasInclude`, which the lease CLI
+  dot-sources. They write and remove a lease's host alias, `agentspace-<project>-<first 8 hex of
+  the lease ID>`, as a file in `~/.ssh/agentspace.d` (see "Lease host aliases" below). Check them
+  with `pwsh -NoProfile -File scripts\test-lease-alias.ps1`, which works in a throwaway folder
+  under `%USERPROFILE%\.agentspace`, never in the real `~/.ssh`, and prints PASS or FAIL per check.
+
+### Lease host aliases
+
+Each lease gets one alias file, `~/.ssh/agentspace.d/agentspace-<project>-<shortid>`, written by
+`Set-LeaseAlias` and deleted by `Remove-LeaseAlias`. `~/.ssh/config` reaches them through one line:
+
+```
+Include agentspace.d/*
+```
+
+- **The line MUST be above the first `Host` or `Match` line.** An `Include` after a `Host` line
+  belongs to that host's block. `Set-LeaseAlias` adds it as line 1 when it is missing, and refuses,
+  changing nothing, when it finds one below a `Host` line: a person has to move it.
+- **The path resolves against `~/.ssh`**, not the current directory.
+- **The first change backs up the config** as `config.agentspace-backup-<UTC time>` beside it,
+  checks the copy, and then inserts the one line. Nothing else in the file changes, byte for byte,
+  and its line endings and permissions stay as they were.
+- **Removing an alias leaves the `Include` in place**, and leaves the lease's key folder alone.
+- **`C:\Windows\System32\OpenSSH\ssh.exe -G <alias>`** prints the settings an alias gives.
+- **Today the alias's ProxyCommand is `scripts\ssh-proxy.cmd`**, whose `up` still pushes the
+  localswim token over Terry's own `agentspace` entry (#0028) and can hang (#0026). The default
+  ProxyCommand needs the checkout that has `.instance-id`; elsewhere, pass `-ProxyCommand`.
 
 ### The localswim board on the box
 
