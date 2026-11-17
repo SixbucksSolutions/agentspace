@@ -285,6 +285,29 @@ latest.
 - **GitHub does not let one account approve its own pull request**, and every session pushes as
   Terry. The architect's approval is therefore a review comment that says so, followed by the
   squash merge.
+- **Turns run in series** (Terry, 2026-11-16). A turn's dev lead is archived once every one of its
+  stories' pull requests is merged, and only then does the next turn's dev lead start. T2 to T5 of
+  #0002 run this way, one after another.
+
+### D18. The lease CLI is PowerShell 7
+
+**Decided, architect, 2026-11-16; settles Q5's language half.** The lease code (`agentspace lease`,
+and the issuing, renewing and releasing that #0002 builds for it) MUST be written for PowerShell 7
+(`#Requires -Version 7`), in files of its own under `scripts/`. `agentspace.ps1` stays a Windows
+PowerShell 5.1 script, because `ssh-proxy.cmd` runs it as a ProxyCommand.
+
+**Why:**
+- The MVP's callers are all on the laptop (D8), and the laptop's tooling here is PowerShell.
+- Go would bring a build step, and its cross-platform advantage matters only once leases are
+  requested from somewhere other than the laptop, which is #0011's hosted API, not the MVP.
+- PowerShell 7 drops the 5.1 quirks that cost stories 2.01 and 2.03 effort: the empty-argument
+  problem and stderr turning into terminating errors.
+
+**How the two scripts meet:** lease code that needs the CA checked MUST run `agentspace.ps1 ca`,
+which only checks an existing CA (D17), and stop if it fails. It MUST NOT copy `Assert-Ca`.
+
+**Q5's other half, the default and maximum TTL, stays with #0001.** Until then, issuing takes the
+TTL as a parameter.
 
 ## Keys
 
@@ -339,4 +362,4 @@ is hosted and signing leaves the laptop.
 | **Q2** | Where do per-project credentials (Claude Code, Codex, gh) live, so a fresh host or container needs no sign-in? Needs Terry. | #0009 |
 | **Q3** | How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
 | **Q4** | One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
-| **Q5** | Is the lease CLI PowerShell, like the scripts here, or Go, like localswim, giving one binary for Windows and Linux? Also its default and maximum TTL. | #0001 |
+| **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 (D18). Still open: its default and maximum TTL. | #0001 |
