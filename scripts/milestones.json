@@ -17,6 +17,12 @@
       "start": "2026-11-17T18:23:44Z",
       "cap_hours": 2,
       "tickets": [23]
+    },
+    {
+      "name": "T4",
+      "start": "2026-11-17T18:41:02Z",
+      "cap_hours": 1.5,
+      "tickets": [24]
     }
   ]
 }
