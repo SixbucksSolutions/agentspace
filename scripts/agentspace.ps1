@@ -14,9 +14,9 @@
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
   ca      Creates the agentspace SSH CA (ed25519) in %USERPROFILE%\.agentspace\ca the first
-          time, locked to the current user (decisions D17 and D21). Later runs change nothing: they check
-          the key pair and its access rules, and print its paths and fingerprint. A half-made or
-          loosened CA fails with what is wrong; ca never repairs or overwrites one.
+          time, locked to the current user (decisions D17 and D21). Later runs change nothing:
+          they check the key pair and its access rules, and print its paths and fingerprint. A
+          half-made or loosened CA fails with what is wrong; ca never repairs or overwrites one.
 
   Every message goes to stderr, so `up` is safe inside an SSH ProxyCommand.
 #>
