@@ -116,8 +116,9 @@ Docs cite its cards as `#0001`.
   last report times in `%USERPROFILE%\.agentspace\swimcoach-last.json`, so a restart never reports
   inside the 5-minute limit. `-DryRun` prints what would be sent.
 - **Milestones:**
-  - `MVP` covers every MVP story broken down so far.
-  - `T1` to `T5` each cover their turn's stories.
+  - `MVP` covers every MVP story, across all three epics, and never an epic card (Terry,
+    2026-11-17).
+  - `T1` to `T8` each cover their turn's stories (D14).
   - The architect edits `milestones.json` when stories are added or a turn starts.
   - **`milestones.json` MUST be edited as text, never rewritten from `ConvertFrom-Json`.** Without
     `-DateKind String`, PowerShell 7 turns each `start` into a DateTime, and writing it back loses

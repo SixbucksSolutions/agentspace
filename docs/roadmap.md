@@ -35,7 +35,8 @@ that can safely wait, waits (Terry: "aggressively lean").
 | A real project runs its agents on a lease | #0003 |
 
 **Epic 2 runs first, on purpose:** every unknown that could change the contract lives in it, while
-Epic 1 is a CLI that writes JSON. Its stories are E2.01 to E2.08 (decision D14).
+Epic 1 is a CLI that writes JSON. Its stories are E2.01 to E2.09; Epic 1's are E1.01 to E1.05,
+and Epic 3's are E3.01 to E3.03. They run in turns T1 to T8 (decision D14).
 
 **The contract sketch.** Epic #0001 MUST pin it down in `docs/lease-api.md`; this is the starting
 point, not the spec.

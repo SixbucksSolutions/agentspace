@@ -391,6 +391,34 @@ clients' handling of a certificate alias, sshd's trust rules), while #0001 is a 
 JSON. #0002 was broken down first, into E2.01 to E2.08 (#0018 to #0025), with its two risk-first
 spikes at the front, and #0001 waits until #0002 has settled what the contract has to carry.
 
+**Every MVP epic is broken down (Terry, 2026-11-17),** so that the swimcoach `MVP` milestone counts
+real stories rather than epic placeholders. The architect laid them out the same day:
+- **#0001 into E1.01 to E1.05 (#0035 to #0039):** the contract and schemas first, then the CLI
+  skeleton beside the EC2 driver, then the commands.
+- **#0003 into E3.01 to E3.03.** E3.01 (#0031) and E3.02 (#0026) were defects that MUST be fixed
+  before a real project uses a lease: a lockout from refused logins, and a token push that hangs
+  inside a ProxyCommand. Each became a story of #0003 under its own card number, rather than a
+  duplicate. E3.03 (#0040) is the real project's run.
+- **Defects #0027, #0028 and #0034 went to Backlog as post-MVP.** None blocks the happy path (D19).
+  #0034's cause, an expired `aws login`, has a documented fix in the README.
+
+**The execution plan by turn, across all three epics.** Stories in one turn run in parallel and in
+isolation (D14); turns run in series (D16).
+
+| Turn | Stories |
+|---|---|
+| T1 | E2.01, E2.03 |
+| T2 | E2.02, E2.04, E2.05, E2.09 |
+| T3 | E2.06 |
+| T4 | E2.07 |
+| T5 | E2.08, E1.01 |
+| T6 | E1.02, E1.03, E3.01 |
+| T7 | E1.04, E1.05, E3.02 |
+| T8 | E3.03 |
+
+E2.08, E3.01 and E3.02 each test logins on the one box, so no two of them share a turn. Until
+E3.01 lands, E2.08 MUST keep refused logins below three in any burst.
+
 ### D15. Staffing: one implementer and one reviewer per story, models by blast radius
 
 **Decided, Terry, 2026-11-16.** Models are named `Model/effort`, with no version, meaning the
@@ -403,7 +431,7 @@ latest.
   - **Opus/high** implements anything ambiguous or risky, and reviews anything touching keys,
     sshd or Terry's `~/.ssh/config`.
   - **Sonnet/medium** does well-specified, mechanical work.
-- **#0002's staffing:**
+- **The MVP's staffing** (#0002 on 2026-11-16, #0001 and #0003 on 2026-11-17):
 
 | Turn | Story | Implementer | Reviewer |
 |---|---|---|---|
@@ -414,7 +442,21 @@ latest.
 | T2 | E2.05 Issue key and certificate | Sonnet/medium | Opus/high |
 | T3 | E2.06 Host aliases | Sonnet/medium | Opus/high |
 | T4 | E2.07 Renew and release | Sonnet/medium | Sonnet/medium |
+| T2 | E2.09 Laptop state out of AppData | Opus/high | Opus/high |
 | T5 | E2.08 Prove on the box | Opus/medium | Opus/high |
+| T5 | E1.01 Contract and schemas | Opus/high | Opus/high |
+| T6 | E1.02 CLI skeleton and state file | Opus/high | Sonnet/medium |
+| T6 | E1.03 EC2 driver boundary | Sonnet/medium | Opus/high |
+| T6 | E3.01 Refused logins never lock out | Sonnet/medium | Fable/high |
+| T7 | E1.04 create and get | Sonnet/medium | Opus/high |
+| T7 | E1.05 renew, release and list | Sonnet/medium | Opus/high |
+| T7 | E3.02 Token push in a ProxyCommand | Opus/high | Opus/high |
+| T8 | E3.03 Swimcoach on a lease | Opus/high | Sonnet/medium |
+
+The reasoning per row: E1.01 is the contract a clean-room rewrite builds from, so a mistake there
+is the costliest to undo, and both roles are Opus/high. E1.03 to E1.05 write or delete keys and
+aliases, so their reviewers are Opus/high. E3.01 changes sshd, where a miss is a lockout, so
+Fable/high reviews it. E3.02 handles the Bot token. E3.03 is a live run whose output is findings.
 
 ### D16. Roles: architect, dev lead per turn, subagents per story
 
@@ -437,8 +479,8 @@ latest.
   Terry. The architect's approval is therefore a review comment that says so, followed by the
   squash merge.
 - **Turns run in series** (Terry, 2026-11-16). A turn's dev lead is archived once every one of its
-  stories' pull requests is merged, and only then does the next turn's dev lead start. T2 to T5 of
-  #0002 run this way, one after another.
+  stories' pull requests is merged, and only then does the next turn's dev lead start. T2 to T8
+  run this way, one after another, across all three MVP epics (D14).
 
 ### D18. The lease CLI is PowerShell 7
 
