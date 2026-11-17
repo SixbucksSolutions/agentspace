@@ -7,6 +7,7 @@ install -D -m 0644 idle.conf                /etc/agentbox/idle.conf
 install -D -m 0755 agentbox-idle-check      /usr/local/sbin/agentbox-idle-check
 install -D -m 0755 agentbox-patch           /usr/local/sbin/agentbox-patch
 install -D -m 0755 agentbox-tools           /usr/local/bin/agentbox-tools
+install -D -m 0755 localswim                /usr/local/bin/localswim
 install -D -m 0644 agentbox-idle.service    /etc/systemd/system/agentbox-idle.service
 install -D -m 0644 agentbox-idle.timer      /etc/systemd/system/agentbox-idle.timer
 install -D -m 0644 agentbox-patch.service   /etc/systemd/system/agentbox-patch.service

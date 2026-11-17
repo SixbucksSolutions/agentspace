@@ -4,9 +4,11 @@
 
 .DESCRIPTION
   deploy  Creates or updates the CloudFormation stack, then runs sync.
-  up      Starts the instance if needed and waits until it has finished patching.
-  sync    Installs box/system (idle check, patch at boot) on the instance, and copies
-          ~/.claude/CLAUDE.md there.
+  up      Starts the instance if needed, waits until it has finished patching, and sends
+          the localswim Bot token if it changed.
+  sync    Installs box/system (idle check, patch at boot, localswim wrapper) on the instance,
+          copies ~/.claude/CLAUDE.md there, builds and installs the localswim CLI, and sends
+          the current localswim Bot token.
   down    Stops the instance.
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
@@ -31,6 +33,13 @@ if (-not (Test-Path $Aws)) { $Aws = 'aws' }
 # The script's own ssh and scp calls skip the RemoteForwards in the agentbox SSH entry, so
 # they never collide with an interactive session that already holds those ports.
 $NoForward = @('-o', 'ClearAllForwardings=yes')
+# Every ssh this script starts runs the agentbox ProxyCommand, and so this script again. The
+# flag tells those nested runs not to push the localswim token a second time.
+$Nested = [bool]$env:AGENTBOX_NESTED
+$env:AGENTBOX_NESTED = '1'
+$LocalswimRepo = 'C:\Projects\localswim'
+$LocalswimReceipt = Join-Path $env:LOCALAPPDATA 'localswim-v2\service.json'
+$PushedFile = Join-Path $env:LOCALAPPDATA 'agentbox\localswim-pushed.sha256'
 
 # Inside ssh's ProxyCommand (stdin a pipe, stderr the console), Windows PowerShell 5.1 sets
 # the console's output mode to VT processing alone as it starts, dropping
@@ -152,6 +161,60 @@ function Start-Box([string]$Id) {
   Say "Ready: $Id"
 }
 
+# Writes the laptop localswim service's URL and current Bot token to ~/.config/localswim/bot.env
+# on the box (mode 0600), for the box's localswim wrapper. The service makes a new token at
+# every cold start, so this runs at each connection but sends only when the instance or the
+# token has changed since the last send. The token goes over SSH on stdin: never on a command
+# line, never printed, never stored on the laptop outside localswim's own DPAPI file. A failure
+# warns and never blocks the connection.
+function Push-Localswim([string]$Id, [switch]$Force) {
+  if (-not (Test-Path $LocalswimReceipt)) { return }
+  $token = $null
+  $content = $null
+  try {
+    $receipt = Get-Content $LocalswimReceipt -Raw | ConvertFrom-Json
+    $token = (Import-Clixml (Join-Path $receipt.credential_directory 'bot.xml')).GetNetworkCredential().Password
+    $content = "LOCALSWIM_URL=$($receipt.base)`nLOCALSWIM_TOKEN=$token`n"
+    $sha = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id`n$content"))
+    $sha = [BitConverter]::ToString($sha).Replace('-', '')
+    if (-not $Force -and (Test-Path $PushedFile) -and (Get-Content $PushedFile -Raw).Trim() -eq $sha) { return }
+    Say 'Sending the localswim Bot token to the instance...'
+    # Windows PowerShell pipes text to native commands with a UTF-8 BOM unless told otherwise;
+    # a BOM turns the first assignment into a command name. Send none, and strip one anyway.
+    $OutputEncoding = [Text.UTF8Encoding]::new($false)
+    $content | & ssh @NoForward agentbox 'umask 077 && mkdir -p ~/.config/localswim && tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > ~/.config/localswim/bot.env' | Out-Null
+    if ($LASTEXITCODE -ne 0) { Say 'agentbox: Could not send the localswim token; the board will not work on the box this session.'; return }
+    New-Item -ItemType Directory -Force (Split-Path $PushedFile) | Out-Null
+    Set-Content -Path $PushedFile -Value $sha -NoNewline
+  } catch {
+    Say 'agentbox: Could not read the localswim Bot token; the board will not work on the box this session.'
+  } finally {
+    $token = $null
+    $content = $null
+  }
+}
+
+# Builds the localswim CLI for the box from the laptop's localswim checkout, the same source as
+# the service it talks to, and installs it where the box's localswim wrapper runs it.
+function Install-LocalswimCli {
+  if (-not (Get-Command go -ErrorAction SilentlyContinue) -or -not (Test-Path $LocalswimRepo)) {
+    Say 'Skipping the localswim CLI: Go or C:\Projects\localswim is missing on the laptop.'
+    return
+  }
+  $out = Join-Path $Root '.build\localswim-linux-arm64'
+  Say 'Building the localswim CLI for linux/arm64...'
+  $env:GOOS = 'linux'; $env:GOARCH = 'arm64'; $env:CGO_ENABLED = '0'
+  Push-Location $LocalswimRepo
+  try { & go build -trimpath -o $out ./cmd/localswim }
+  finally { Pop-Location; Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED }
+  if ($LASTEXITCODE -ne 0) { Fail 'Building the localswim CLI failed.' }
+  Say 'Copying the localswim CLI to the instance...'
+  & scp @NoForward -q $out 'agentbox:/tmp/localswim'
+  if ($LASTEXITCODE -ne 0) { Fail 'Copying the localswim CLI failed.' }
+  & ssh @NoForward agentbox 'sudo install -D -m 0755 /tmp/localswim /usr/local/lib/localswim/localswim && rm /tmp/localswim'
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing the localswim CLI failed.' }
+}
+
 switch ($Command) {
   'deploy' {
     $key = (Get-Content (Join-Path $HOME '.ssh\id_ed25519.pub') -Raw).Trim()
@@ -184,10 +247,14 @@ switch ($Command) {
       & scp @NoForward -q $claudeMd 'agentbox:.claude/CLAUDE.md'
       if ($LASTEXITCODE -ne 0) { Fail 'Copying CLAUDE.md to the instance failed.' }
     }
+    Install-LocalswimCli
+    Push-Localswim (Get-InstanceId) -Force
   }
 
   'up' {
-    Start-Box (Get-InstanceId)
+    $id = Get-InstanceId
+    Start-Box $id
+    if (-not $Nested) { Push-Localswim $id }
   }
 
   'down' {

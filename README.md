@@ -57,6 +57,25 @@ keep it from ever stopping (Terry, 2026-11-16).
   work without a card.** The board goes away when Terry disconnects, as it does when the laptop
   sleeps.
 
+**Agents on the box run `localswim` as Bot**, for example `localswim board list`. It is a
+wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real CLI in
+`/usr/local/lib/localswim/localswim`:
+
+- **The CLI is built on the laptop by `sync`** from `C:\Projects\localswim` (Go,
+  `CGO_ENABLED=0`, linux/arm64, statically linked), so it speaks the same API as the service it
+  talks to. After the service is updated to a newer localswim, `sync` MUST be run again.
+- **The Bot token reaches the box when Terry connects.** localswim makes a new token at every
+  cold start, so `up` (run by every `ssh agentbox`) reads the current one from localswim's DPAPI
+  file and, when the instance or the token has changed since the last send, writes it with the
+  URL to `~/.config/localswim/bot.env` (mode 0600). The token travels over SSH on stdin: it MUST
+  NOT be put on a command line, printed, or stored anywhere else. Nothing about it is kept on
+  the laptop except a SHA-256 of what was last sent, in `%LOCALAPPDATA%\agentbox`.
+- **The wrapper sets the URL and token for one run only**, and refuses with a stop-and-report
+  message when the board is unreachable, so an agent learns why instead of seeing a timeout.
+- **A project's own localswim wrapper still decides how that project's agents call it.**
+  swimcoach's `scripts/localswim.ps1` reads the laptop's receipt and is Windows-only; using the
+  box wrapper from swimcoach is a change to swimcoach, under swimcoach's rules.
+
 ```bat
 powershell -File scripts\agentbox.ps1 status
 powershell -File scripts\agentbox.ps1 down
