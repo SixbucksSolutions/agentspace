@@ -68,6 +68,16 @@ lead enters each story's worktree in turn to launch its subagents.
   moved to E1.04's, both had their edits refused).
   - **For follow-up work, a dev lead SHOULD launch a fresh subagent rather than resume one.**
   - **A dev lead that does resume one MUST stay in that story's worktree until it finishes.**
+- **Any wake of a subagent follows the dev lead's current worktree, not only a `SendMessage`
+  resume** (found in v0.02-T1, 2026-11-17). 0.02.T1.1's implementer ended its run waiting on its
+  own background work, and woke on that notification while the dev lead was in 0.02.T1.2's
+  worktree. It was then pinned there, and its edits to T1.1's files were refused. It stopped
+  cleanly, and a fresh implementer launched from T1.1's worktree finished the work.
+  - **A subagent's tasking MUST say to finish in one run:** run long commands in the foreground
+    and wait for them, and never end the run waiting on background work or a note file. With two
+    stories in a turn, the dev lead is often in the other story's worktree when a wake comes.
+  - **A subagent that ends its run anyway is finished.** Its follow-up goes to a fresh subagent
+    launched from its story's worktree.
 
 ### The architect is Terry's proxy
 
