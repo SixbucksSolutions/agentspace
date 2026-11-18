@@ -1477,11 +1477,34 @@ against a throwaway state folder and a stub for `ssh.exe`
   - Stdout and stderr on one append-only handle to `board-holder-ssh.log`, shared for read, write
     and delete.
   - No window, and breakaway from a job where that is allowed.
-  - A deadline in the request, so a launcher that runs late starts nothing, and a pass that gave
-    up waiting never leaves a holder it did not record.
 
-  `-Launch` is not part of the pinned interface. 0.02.T2.2 MAY rely on it only as an
-  implementation detail.
+  Code outside `scripts/board-holder.ps1` MUST NOT call `-Launch`; it is not part of the pinned
+  interface.
+- **A launch request is claimed by creating a claim file with `CREATE_NEW`, never by a rename.**
+  A trial of four launchers renaming one request to one name had two of them succeed, and start
+  two holders, in 2 rounds of 9: the loser's rename of a file already given that name succeeds
+  too. With the claim file, the same trial started exactly one holder in 12 rounds of 12.
+  - A launcher claims the request before it starts anything, and one that cannot claim it starts
+    nothing. So a second launcher, from a `Win32_Process.Create` retry after a call that threw but
+    had made one, starts nothing.
+  - A pass that gives up waiting, or whose create failed, withdraws the request by claiming it
+    itself. If a launcher claimed it first, the pass waits up to 60 more seconds for its answer,
+    and records the holder if one comes.
+  - The request also carries a deadline, past which a launcher that claims it starts nothing.
+
+  What this guarantees, and no more: a holder the launcher starts is recorded by its pass, unless
+  the launcher claimed the request and then gave no answer within those 60 seconds, or the record
+  could not be written and the holder could not be stopped. In both cases the pass logs `failed`
+  with a reason that says a holder may be running, or runs, unrecorded.
+- **A stop that fails keeps the record.** When the stop could not open the holder with the right
+  to terminate it (one started elevated, met by a pass that is not, say), or stopped nothing for
+  another reason while the recorded holder still runs, the pass logs `failed` and keeps the
+  record, so the next pass tries again. `stopped` is logged only when the recorded holder is gone.
+- **Exit codes, by the architect's ruling (2026-11-17):** 0 when the pass ran, `failed` included,
+  and when it was skipped because another pass held `board-holder.lock` (logged `skipped
+  lease=- alias=- pid=- reason=locked`, never `idle`); 1 when lease state could not be read or the
+  pass met an error it does not handle, with a `failed` line; 2 for a usage error, such as an
+  unknown argument or a `-Now` that is not a time, as for the lease CLI, with nothing logged.
 - **The record names the holder process itself:** `ssh.exe` for an exe, or the `cmd.exe` running
   the batch for a `.cmd` stand-in. It never names a wrapper or the launcher.
 - **Identity is the PID plus the process start time to the millisecond** (`GetProcessTimes`, UTC),

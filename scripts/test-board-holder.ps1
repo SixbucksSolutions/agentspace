@@ -1,7 +1,7 @@
 #Requires -Version 7
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
-# Scripted check for the board holder keeper's one pass (story 0.2.T1.2, D30), run through the real
+# Scripted check for the board holder keeper's one pass (story 0.02.T1.2, D30), run through the real
 # entry point as a child process: pwsh -NoProfile -File scripts\board-holder.ps1 -SshExe <stub> [-Now t]
 # The checks are written from the story card's pinned interface and D30, not from the keeper's code.
 #
@@ -12,15 +12,23 @@
 # - The stand-in for ssh.exe is scripts\test-board-holder-stub.cmd, copied into the run's folder so
 #   that its command line is unique to this run. It prints a line, then waits about 20 minutes, and
 #   carries its arguments on its own command line; the ping it runs is its child, which makes a tree.
-# - Cleanup kills, in a finally and after every case, only processes whose command line names this
-#   run's copy of the stub, each with its tree (taskkill /T /F, by PID). Nothing else is stopped.
+# - Cleanup stops, in a finally and after every case, only processes whose command line names this
+#   run's copy of the stub, and their children: a process whose parent is still that stub and whose
+#   creation time is no earlier than the stub's, and so on down. Each is pinned by a handle and its
+#   start time checked before it is killed, so a reused PID is never killed. taskkill /T, which
+#   follows parent PIDs alone, is never used. Nothing else is stopped.
+# - One case denies PROCESS_TERMINATE on a stub of its own, through the stub's DACL, so that the
+#   keeper cannot open it to stop it. Cleanup gives that right back before it stops the stub.
 #
 # The cases, each its own set of checks: idle; start when a lease is ready; the holder's output goes
 # to board-holder-ssh.log; keep a running holder; stop on release, on expiry through -Now, at the
-# expiry second itself, and when the lease is gone; start afresh when the recorded PID is dead; leave
-# alone a PID reused by another process (start time differs), a process whose start time matches but
-# whose command line does not, and a process the keeper did not start that names the lease alias; choose
-# the ready lease that expires last; exit 1 when the lease state cannot be read.
+# expiry second itself, and when the lease is gone; a stop leaves alone a foreign process with the
+# same alias; start afresh when the recorded PID is dead; leave alone a PID reused by another
+# process (start time differs), a process whose start time matches but whose command line does
+# not, and a process the keeper did not start that names the lease alias; choose the ready lease
+# that expires last; exit 1 when the lease state cannot be read, with and without a holder running;
+# keep the record of a holder that cannot be opened to stop it; skip a pass while another holds
+# board-holder.lock; exit 2 on a -Now that is not a time.
 #
 # Every case MUST be shown able to fail. -SelfCheck does it: each case is run again with a
 # deliberately broken fixture (for example the lease is released where the case expects it ready,
@@ -116,6 +124,44 @@ function Read-LogLines {
 
 function Test-Alive([int]$ProcessId) { [bool](Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) }
 
+# Sets a process's DACL, so that one case can deny PROCESS_TERMINATE on a stub of its own. The test's
+# own user owns the stub, and an owner may always rewrite the DACL.
+if (-not ('AgentspaceTest.ProcessAcl' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+namespace AgentspaceTest
+{
+    public static class ProcessAcl
+    {
+        [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool SetKernelObjectSecurity(IntPtr h, uint information, byte[] descriptor);
+        const uint WRITE_DAC = 0x00040000;
+        const uint DACL_SECURITY_INFORMATION = 0x4;
+        public static void Set(int pid, string sddl)
+        {
+            var sd = new RawSecurityDescriptor(sddl);
+            byte[] bytes = new byte[sd.BinaryLength];
+            sd.GetBinaryForm(bytes, 0);
+            IntPtr h = OpenProcess(WRITE_DAC, false, pid);
+            if (h == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+            try { if (!SetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION, bytes)) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            finally { CloseHandle(h); }
+        }
+    }
+}
+'@
+}
+$userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# Every right for the user and SYSTEM; Lock adds a deny of PROCESS_TERMINATE (0x1) for everyone first.
+$openAcl = "D:(A;;0x1FFFFF;;;$userSid)(A;;0x1FFFFF;;;SY)"
+$lockedAcl = "D:(D;;0x1;;;WD)(A;;0x1FFFFF;;;$userSid)(A;;0x1FFFFF;;;SY)"
+function Lock-Process([int]$ProcessId) { [AgentspaceTest.ProcessAcl]::Set($ProcessId, $lockedAcl) }
+function Unlock-Process([int]$ProcessId) { try { [AgentspaceTest.ProcessAcl]::Set($ProcessId, $openAcl) } catch { } }
+
 function Get-CommandLine([int]$ProcessId) {
   $c = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
   if ($c) { [string]$c.CommandLine } else { '' }
@@ -140,20 +186,54 @@ function Get-StubProcesses {
     Where-Object { $_.CommandLine -and $_.CommandLine.Contains($stub) -and $_.ProcessId -ne $PID })
 }
 
+# Stops a process the test started, and its descendants: each child's parent is still the process
+# above it, and it was created no earlier than that process. Every process is pinned by a handle and
+# its start time checked against the snapshot before it is killed, so a reused PID is never
+# killed. Leaves go first. A process whose DACL a case locked gets its rights back first.
+function Stop-OwnTree([int]$ProcessId) {
+  $all = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
+  $root = $all | Where-Object { $_.ProcessId -eq $ProcessId } | Select-Object -First 1
+  if (-not $root) { return }
+  $tree = [System.Collections.Generic.List[object]]::new()
+  $tree.Add($root)
+  for ($i = 0; $i -lt $tree.Count; $i++) {
+    $up = $tree[$i]
+    foreach ($c in $all) {
+      if ($c.ParentProcessId -eq $up.ProcessId -and $c.ProcessId -ne $up.ProcessId -and $c.CreationDate -ge $up.CreationDate -and
+        -not ($tree | Where-Object { $_.ProcessId -eq $c.ProcessId })) { $tree.Add($c) }
+    }
+  }
+  for ($i = $tree.Count - 1; $i -ge 0; $i--) {
+    $m = $tree[$i]
+    Unlock-Process $m.ProcessId
+    try {
+      $p = [Diagnostics.Process]::GetProcessById([int]$m.ProcessId)
+      $null = $p.Handle
+      if ([Math]::Abs(($p.StartTime.ToUniversalTime() - $m.CreationDate.ToUniversalTime()).TotalMilliseconds) -lt 1) { $p.Kill() }
+    } catch { }
+  }
+}
+
 function Stop-Stubs {
-  foreach ($p in Get-StubProcesses) { & taskkill.exe /PID $p.ProcessId /T /F 2>&1 | Out-Null }
+  foreach ($p in Get-StubProcesses) { Stop-OwnTree $p.ProcessId }
   Wait-Until { (Get-StubProcesses).Count -eq 0 } 10 | Out-Null
 }
 
 # A stand-in process started by the test itself: it is foreign to the keeper. Returns its PID, its
-# start time as the record writes it, and its ping child.
+# start time as the record writes it, and its children, the ping among them.
 function Start-Stub([string]$Alias) {
   $p = Start-Process -FilePath $stub -ArgumentList @('-N', '-o', 'ExitOnForwardFailure=yes', $Alias) -PassThru -WindowStyle Hidden
   $null = $p.Handle
-  $kids = @()
-  Wait-Until { $script:kids = Get-ChildPids $p.Id; $script:kids.Count -gt 0 } 10 | Out-Null
-  $kids = @($script:kids)
+  Wait-Until {
+    @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$($p.Id) AND Name='PING.EXE'" -ErrorAction SilentlyContinue).Count -gt 0
+  } 10 | Out-Null
+  $kids = @(Get-ChildPids $p.Id)
   [pscustomobject]@{ Pid = $p.Id; Started = (Format-Utc $p.StartTime); Children = $kids }
+}
+
+# True when the process and every child recorded for it are alive.
+function Test-TreeAlive($Process) {
+  (Test-Alive $Process.Pid) -and $Process.Children.Count -gt 0 -and @($Process.Children | Where-Object { Test-Alive $_ }).Count -eq $Process.Children.Count
 }
 
 # Runs one pass of the keeper and returns its exit code. Its output goes to files, never to a pipe,
@@ -165,8 +245,8 @@ function Invoke-Keeper([string]$At) {
   if ($At) { $a += @('-Now', $At) }
   $p = Start-Process -FilePath $pwsh -ArgumentList $a -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
   $null = $p.Handle
-  if (-not $p.WaitForExit(90000)) {
-    & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null
+  if (-not $p.WaitForExit(120000)) {
+    Stop-OwnTree $p.Id
     return -999
   }
   $p.ExitCode
@@ -189,11 +269,11 @@ function Test-LogLine([string]$Line, [string]$Action, [string]$LeaseId, [string]
   $Line -cmatch ('\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ' + $Action + ' lease=' + [regex]::Escape($LeaseId) + ' alias=' + [regex]::Escape($Alias) + ' pid=' + $ProcessId + '(\s|\z)')
 }
 
-function Test-StartTimeClose([string]$Recorded, [string]$Actual) {
-  if ($Recorded -cnotmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\z') { return $false }
-  $x = [DateTime]::Parse($Recorded, $ci, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)
-  $y = [DateTime]::Parse($Actual, $ci, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)
-  [Math]::Abs(($x - $y).TotalMilliseconds) -le 5
+# The recorded start time MUST be exactly the process's creation time, in UTC, truncated to the
+# millisecond. Process.StartTime carries the creation time to 100 ns, and Format-Utc truncates it
+# (the "fff" format never rounds), so the two strings are compared exactly.
+function Test-StartTimeExact([string]$Recorded, [string]$Actual) {
+  $Recorded -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\z' -and $Recorded -ceq $Actual
 }
 
 # The checks after a stop: the holder and its tree are gone, the record is gone, one stopped line.
@@ -242,7 +322,7 @@ try {
     $alive = $recPid -gt 0 -and (Test-Alive $recPid)
     Write-Result $alive 'Start: the recorded PID is a running process after the pass exits'
     $startTime = if ($alive) { Format-Utc (Get-Process -Id $recPid).StartTime } else { '' }
-    Write-Result ($alive -and $rec -and (Test-StartTimeClose $rec['process_started_at'] $startTime)) 'Start: the record holds that process''s start time, UTC with milliseconds'
+    Write-Result ($alive -and $rec -and (Test-StartTimeExact $rec['process_started_at'] $startTime)) 'Start: the record holds exactly that process''s start time, UTC truncated to the millisecond'
     $cl = if ($alive) { Get-CommandLine $recPid } else { '' }
     $tail = '-N -o ExitOnForwardFailure=yes ' + [regex]::Escape((Get-Alias 'a')) + '"?\s*\z'
     Write-Result ($cl.Contains($stub) -and $cl -cmatch $tail) 'Start: the holder runs -SshExe -N -o ExitOnForwardFailure=yes <alias>'
@@ -309,6 +389,19 @@ try {
     Assert-Stopped 'Stop when the lease is gone' $h 'a'
   }
 
+  # A stop with a foreign process present: the keeper's own holder for alias 'a' and its tree are
+  # stopped, and a process it did not start, with the same alias, is left running with its child.
+  Invoke-Case 'Stop leaves a foreign process alone' {
+    Write-Leases @((New-ReleasedRecord 'a' '2026-11-17T13:00:00Z'))
+    $h = Start-TrustedHolder 'a'
+    $f = Start-Stub (Get-Alias 'a')
+    if ($script:mut) { Write-Record $f.Pid $f.Started (Get-Id 'a') (Get-Alias 'a') }
+    $code = Invoke-Keeper $now
+    Write-Result ($code -eq 0) 'Stop leaves a foreign process alone: the pass exits 0'
+    Assert-Stopped 'Stop leaves a foreign process alone' $h 'a'
+    Write-Result (Test-TreeAlive $f) 'Stop leaves a foreign process alone: the foreign process and its child are still alive'
+  }
+
   # A dead recorded PID: start afresh.
   Invoke-Case 'Dead PID' {
     $r = New-ReadyRecord 'a' '2026-11-17T13:00:00Z'
@@ -316,7 +409,7 @@ try {
     Write-Leases @($r)
     $dead = Start-Stub (Get-Alias 'a')
     Write-Record $dead.Pid $dead.Started (Get-Id 'a') (Get-Alias 'a')
-    & taskkill.exe /PID $dead.Pid /T /F 2>&1 | Out-Null
+    Stop-OwnTree $dead.Pid
     Wait-Until { -not (Test-Alive $dead.Pid) } 10 | Out-Null
     $code = Invoke-Keeper $now
     Write-Result ($code -eq 0) 'Dead PID: the pass exits 0'
@@ -382,7 +475,7 @@ try {
     if ($script:mut) { Write-Record $f.Pid $f.Started (Get-Id 'a') (Get-Alias 'a') }
     $code = Invoke-Keeper $now
     Write-Result ($code -eq 0) 'Foreign process, lease ready: the pass exits 0'
-    Write-Result (Test-Alive $f.Pid) 'Foreign process, lease ready: the foreign process is still alive'
+    Write-Result (Test-TreeAlive $f) 'Foreign process, lease ready: the foreign process and its child are still alive'
     $rec = Read-Record
     Write-Result ($rec -and [int]$rec['pid'] -ne $f.Pid -and (Test-Alive ([int]$rec['pid']))) 'Foreign process, lease ready: the record names a holder the keeper started, not the foreign process'
   }
@@ -415,6 +508,70 @@ try {
     Write-Result ($code -eq 1) 'Unreadable lease state: the pass exits 1'
     Write-Result ((Get-StubProcesses).Count -eq 0) 'Unreadable lease state: no holder is started'
     Write-Result ($null -eq (Read-Record)) 'Unreadable lease state: no record is written'
+  }
+
+  # Lease state that cannot be read, with a trusted holder running: the holder and its record are
+  # left as they are.
+  Invoke-Case 'Unreadable lease state, holder running' {
+    Write-Leases @((New-ReadyRecord 'a' '2026-11-17T13:00:00Z'))
+    $h = Start-TrustedHolder 'a'
+    $recordPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'
+    $before = [IO.File]::ReadAllText($recordPath)
+    if ($script:mut) { Write-Leases @((New-ReleasedRecord 'a' '2026-11-17T13:00:00Z')) }
+    else { [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json'), '{ this is not json') }
+    $code = Invoke-Keeper $now
+    Write-Result ($code -eq 1) 'Unreadable lease state, holder running: the pass exits 1'
+    Write-Result (Test-TreeAlive $h) 'Unreadable lease state, holder running: the holder and its child are still alive'
+    Write-Result ((Test-Path -LiteralPath $recordPath) -and [IO.File]::ReadAllText($recordPath) -ceq $before) 'Unreadable lease state, holder running: the record is unchanged'
+    Write-Result ((Get-StubProcesses | Where-Object { $_.ProcessId -ne $h.Pid }).Count -eq 0) 'Unreadable lease state, holder running: no other holder is started'
+    $log = Read-LogLines
+    Write-Result ($log.Count -eq 1 -and (Test-LogLine $log[0] 'failed' '-' '-' '-') -and $log[0] -cmatch ' reason=\S') 'Unreadable lease state, holder running: one failed line with a reason is logged'
+  }
+
+  # A trusted holder that the keeper cannot open with the right to stop it (a holder started
+  # elevated, met by a pass that is not): the DACL of the test's own stub denies PROCESS_TERMINATE.
+  # The pass MUST log failed and keep the record, so the next pass tries again.
+  Invoke-Case 'Holder that cannot be opened is kept' {
+    Write-Leases @((New-ReleasedRecord 'a' '2026-11-17T13:00:00Z'))
+    $h = Start-TrustedHolder 'a'
+    $recordPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'
+    $before = [IO.File]::ReadAllText($recordPath)
+    if (-not $script:mut) { Lock-Process $h.Pid }
+    $code = Invoke-Keeper $now
+    Write-Result ($code -eq 0) 'Holder that cannot be opened is kept: the pass exits 0'
+    Write-Result (Test-TreeAlive $h) 'Holder that cannot be opened is kept: the holder and its child are still alive'
+    Write-Result ((Test-Path -LiteralPath $recordPath) -and [IO.File]::ReadAllText($recordPath) -ceq $before) 'Holder that cannot be opened is kept: the record is kept unchanged'
+    $log = Read-LogLines
+    Write-Result ($log.Count -eq 1 -and (Test-LogLine $log[0] 'failed' (Get-Id 'a') (Get-Alias 'a') $h.Pid) -and
+      $log[0] -cmatch ' reason=The holder could not be opened to stop it') 'Holder that cannot be opened is kept: one failed line says the holder could not be opened'
+    Write-Result (-not ($log -cmatch ' stopped ')) 'Holder that cannot be opened is kept: no stopped line is logged'
+  }
+
+  # Another pass holds board-holder.lock: the pass is skipped, says so, and exits 0. A ready lease
+  # is there, so a pass that ran would start a holder.
+  Invoke-Case 'Lock busy' {
+    Write-Leases @((New-ReadyRecord 'a' '2026-11-17T13:00:00Z'))
+    $lockPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.lock'
+    $held = $null
+    if (-not $script:mut) {
+      $held = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    }
+    try { $code = Invoke-Keeper $now } finally { if ($held) { $held.Dispose() } }
+    Write-Result ($code -eq 0) 'Lock busy: the pass exits 0'
+    $log = Read-LogLines
+    Write-Result ($log.Count -eq 1 -and $log[0] -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ skipped lease=- alias=- pid=- reason=locked\z') 'Lock busy: one line "skipped lease=- alias=- pid=- reason=locked" is logged'
+    Write-Result ((Get-StubProcesses).Count -eq 0) 'Lock busy: no holder is started'
+    Write-Result ($null -eq (Read-Record)) 'Lock busy: no record is written'
+  }
+
+  # A -Now that is not a time: a usage error, exit 2, and nothing is done.
+  Invoke-Case 'Bad -Now' {
+    Write-Leases @((New-ReadyRecord 'a' '2026-11-17T13:00:00Z'))
+    $at = if ($script:mut) { $now } else { '2026-11-17T12:00:00' }
+    $code = Invoke-Keeper $at
+    Write-Result ($code -eq 2) 'Bad -Now: the pass exits 2'
+    Write-Result ((Get-StubProcesses).Count -eq 0) 'Bad -Now: no holder is started'
+    Write-Result ($null -eq (Read-Record)) 'Bad -Now: no record is written'
   }
 } finally {
   $env:AGENTSPACE_STATE_DIR = $savedState

@@ -17,11 +17,17 @@
 #   time to drop the dead session's forwards (D12).
 # - No trusted holder and no lease ready: nothing to do. Action idle.
 # - A start or stop that goes wrong: action failed, with the reason. The pass still ran.
+# - Another pass holds board-holder.lock: action skipped, with reason=locked. Nothing is looked at.
 #
-# Exit codes: 0 when the pass ran, whatever its action, failed included. 1 when the lease state
-# could not be read (a failed line is logged and the holder is left as it is), when -Now is not a
-# time in the contract's form (nothing is logged), or when the pass met an error it does not
-# handle (a failed line is logged).
+# Exit codes (architect's ruling, 2026-11-17):
+# - 0: the pass ran, whatever its action, failed included, or it was skipped because another pass
+#   held the lock. A skipped pass logs "skipped lease=- alias=- pid=- reason=locked", never idle.
+# - 1: the lease state could not be read, or the pass met an error it does not handle. A failed
+#   line is logged, and the holder is left as it is.
+# - 2: a usage error: an unknown, repeated or empty argument, a -Now that is not a time in the
+#   form YYYY-MM-DDTHH:MM:SSZ, or an -SshExe that is not a full path or holds a quote (or, for a
+#   batch, a percent sign). As for the lease CLI (docs/lease-api.md). The error goes to stderr,
+#   and nothing is logged.
 #
 # Files, all in the state folder: $env:AGENTSPACE_STATE_DIR, or %USERPROFILE%\.agentspace when that
 # is unset, as for lease-state.ps1 (D21). Tests MUST set AGENTSPACE_STATE_DIR to a throwaway folder.
@@ -35,12 +41,14 @@
 #   the holder the action concerns: the one started, kept or stopped, or for failed the one being
 #   started or stopped. A field with nothing to name is written '-'. An idle line names no holder,
 #   since there is none, so it is always "idle lease=- alias=- pid=-". A failed line for unreadable
-#   lease state or a busy lock is "failed lease=- alias=- pid=- reason=...". reason is the last field
-#   and runs to the end of the line; it never holds a control character.
+#   lease state is "failed lease=- alias=- pid=- reason=...", and a skipped line is always
+#   "skipped lease=- alias=- pid=- reason=locked". reason is written for failed and skipped only, is
+#   the last field and runs to the end of the line; it never holds a control character.
 # - board-holder-ssh.log, the holder's stdout and stderr, appended. It holds raw bytes in the
 #   console's code page, and nothing parses it. Its growth is not bounded yet.
 # - board-holder.lock, held with FileShare.None for the whole pass, so that two passes never both
-#   start a holder (one holder per host, D30). A pass that cannot take it in 10 seconds logs failed.
+#   start a holder (one holder per host, D30). A pass that cannot take it in 10 seconds logs
+#   skipped with reason=locked, and exits 0.
 #
 # Lease state is read with Read-LeaseState, which takes no lock and never blocks a writer. A lease
 # is ready when its stored state is ready and its expires_at is after -Now (default: the current
@@ -67,13 +75,30 @@
 #   two handles are inherited, it has no window, and its working folder is %USERPROFILE%, so it
 #   never holds a worktree open. The launcher writes the holder's PID, start time and command line
 #   to a result file, and exits; the holder runs on with no parent.
-# - -Launch is internal, not part of the interface. The request and the result are JSON files in
-#   the state folder, board-holder-launch.<guid>.json and .result.json, removed by the pass. The
-#   request carries a deadline: a launcher that reaches it late starts nothing, so a pass that has
-#   given up waiting never leaves a holder it did not record.
+# - -Launch is internal, not part of the interface. Code outside this script MUST NOT call it. The
+#   request and the result are JSON files in the state folder, board-holder-launch.<guid>.json and
+#   .result.json, with a claim file, board-holder-launch.<guid>.claim, all removed by the pass.
+# - The request is claimed by creating its claim file with FileMode.CreateNew (CREATE_NEW), which
+#   exactly one process can do, so that at most one launcher starts a holder for it, and never one
+#   for a pass that has given up. A rename is not used: a trial of four launchers renaming one
+#   request to one name had two of them succeed and start two holders, because the loser's rename
+#   of a file already given that name succeeds too.
+#   - A launcher MUST claim the request before it starts anything. A launcher that cannot claim
+#     it starts nothing and writes nothing. So a second launcher, from a Win32_Process.Create retry
+#     after a call that threw but had in fact made one, starts nothing.
+#   - A pass that gives up waiting, or whose Win32_Process.Create failed, withdraws the request by
+#     claiming it itself. If its claim wins, no launcher can claim the request, and none starts a
+#     holder. If a launcher claimed it first, the pass waits on for that launcher's answer, up to
+#     60 more seconds, and records the holder if one comes. If none comes, it logs failed with a
+#     reason that says a holder may be running unrecorded. It never retries in a loop (D14).
+#   - The pass removes the request before its claim file, so a launcher that claims the request
+#     after that finds no request, and starts nothing.
+#   - The request also carries a deadline: a launcher that claims it after the deadline starts
+#     nothing, and answers with that error.
 # - A holder made this way gets the user's logon environment, not this pwsh's variables.
 # - If the holder exits at once, or its record cannot be written, the pass logs failed; in the
-#   second case it stops the holder first, since an unrecorded holder could never be stopped.
+#   second case it stops the holder first, since an unrecorded holder could never be stopped, and
+#   the reason says whether that stop succeeded.
 #
 # Trust: this pass MUST NOT stop any process it did not start, even one whose command line names an
 # alias. A recorded PID is trusted only when all of these hold:
@@ -108,17 +133,49 @@
 # - Every handle is held until the end, so no PID in the tree is reused while it is being stopped.
 #   The tree is stopped leaves first, the holder last, then walked again for any child made
 #   meanwhile.
+# - StopTree says why it stopped nothing: the process is not running, it could not be opened with
+#   the right to stop it (a holder started elevated, met by a pass that is not, say), or its
+#   identity differs. The pass then probes the PID again. The record MUST be kept, and failed
+#   logged, while the recorded holder is still running; stopped is logged, and the record removed,
+#   only when the recorded holder is gone or was stopped.
 #
 # A holder that fails is not restarted in a loop: each pass starts at most one, and backoff
 # between passes belongs to -Watch, which 0.02.T2.2 adds (D14, D30).
-[CmdletBinding()]
-param(
-  [string]$SshExe = 'C:\Windows\System32\OpenSSH\ssh.exe',
-  [string]$Now,
-  [Parameter(DontShow)][string]$Launch
-)
+#
+# The arguments are parsed by this script, not by PowerShell's binder, so that every usage error
+# exits 2: names are matched exactly, case ignored, and each takes one value.
 
 $ErrorActionPreference = 'Stop'
+
+# Writes a usage error to stderr and exits 2. Nothing is logged.
+function Exit-Usage([string]$Message) {
+  [Console]::Error.WriteLine("board-holder.ps1: $Message")
+  [Console]::Error.WriteLine('Usage: board-holder.ps1 [-SshExe <full path>] [-Now <YYYY-MM-DDTHH:MM:SSZ>]')
+  exit 2
+}
+
+$SshExe = 'C:\Windows\System32\OpenSSH\ssh.exe'
+$Now = $null
+$Launch = $null
+$given = @{}
+for ($i = 0; $i -lt $args.Count; $i++) {
+  $raw = [string]$args[$i]
+  $name = switch -Exact (($raw -replace ':\z', '').ToLowerInvariant()) {
+    '-sshexe' { 'SshExe' }
+    '-now' { 'Now' }
+    '-launch' { 'Launch' }
+    default { $null }
+  }
+  if (-not $name) { Exit-Usage "Unknown argument '$raw'." }
+  if ($given.ContainsKey($name)) { Exit-Usage "-$name is given twice." }
+  if ($i + 1 -ge $args.Count -or [string]::IsNullOrWhiteSpace([string]$args[$i + 1]) -or ([string]$args[$i + 1]).StartsWith('-')) {
+    Exit-Usage "-$name needs a value."
+  }
+  $given[$name] = [string]$args[++$i]
+}
+if ($given.ContainsKey('SshExe')) { $SshExe = $given['SshExe'] }
+if ($given.ContainsKey('Now')) { $Now = $given['Now'] }
+if ($given.ContainsKey('Launch')) { $Launch = $given['Launch'] }
 . (Join-Path $PSScriptRoot 'lease-state.ps1')
 
 if (-not ('Agentspace.BoardHolder.Native' -as [type])) {
@@ -145,11 +202,16 @@ namespace Agentspace.BoardHolder
         public string CommandLine;
     }
 
-    // What StopTree did. Matched is false when the process was not the one recorded, in which case
-    // nothing was stopped. RootStopped is true when the root is no longer running.
+    // What StopTree did. Matched is false when nothing was stopped, and Outcome then says why:
+    // NotRunning (no process has the PID, or it has exited), CannotOpen (it could not be opened with
+    // the right to stop it; OpenError holds the Windows error), or IdentityDiffers (its creation time
+    // or command line is not the record's). Outcome is Matched otherwise. RootStopped is true when
+    // the root is no longer running.
     public sealed class StopResult
     {
         public bool Matched;
+        public string Outcome;
+        public int OpenError;
         public bool RootStopped;
         public int[] Stopped;
         public int[] Survivors;
@@ -397,6 +459,7 @@ namespace Agentspace.BoardHolder
         const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
         const uint CREATE_NO_WINDOW = 0x08000000;
         const int ERROR_ACCESS_DENIED = 5;
+        const int ERROR_INVALID_PARAMETER = 87;
         static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = new IntPtr(0x00020002);
         static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
@@ -508,9 +571,16 @@ namespace Agentspace.BoardHolder
 
         static SafeProcessHandle Open(int pid, uint access)
         {
-            if (pid <= 0) return null;
+            int error;
+            return Open(pid, access, out error);
+        }
+
+        static SafeProcessHandle Open(int pid, uint access, out int error)
+        {
+            error = 0;
+            if (pid <= 0) { error = ERROR_INVALID_PARAMETER; return null; }
             SafeProcessHandle h = OpenProcess(access, false, pid);
-            if (h.IsInvalid) { h.Dispose(); return null; }
+            if (h.IsInvalid) { error = Marshal.GetLastWin32Error(); h.Dispose(); return null; }
             return h;
         }
 
@@ -686,24 +756,37 @@ namespace Agentspace.BoardHolder
 
         // Stops the process with this PID and every descendant that can be proved to be its, but
         // only when the process is still running, was created at startedAt, and carries the holder
-        // command for sshExe and alias (HolderCommand.Matches). Otherwise nothing is stopped and
-        // Matched is false.
+        // command for sshExe and alias (HolderCommand.Matches). Otherwise nothing is stopped,
+        // Matched is false, and Outcome says why.
         public static StopResult StopTree(int pid, string startedAt, string sshExe, string alias)
         {
             const uint access = PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE;
-            var result = new StopResult { Matched = false, RootStopped = false, Stopped = new int[0], Survivors = new int[0] };
+            var result = new StopResult { Matched = false, Outcome = "NotRunning", RootStopped = false, Stopped = new int[0], Survivors = new int[0] };
             var members = new List<Member>();
             try
             {
-                SafeProcessHandle rootHandle = Open(pid, access);
-                if (rootHandle == null) return result;
+                int error;
+                SafeProcessHandle rootHandle = Open(pid, access, out error);
+                if (rootHandle == null)
+                {
+                    // ERROR_INVALID_PARAMETER: no process has this PID. Any other error, access
+                    // denied above all, means a process may be running that this pass cannot stop.
+                    result.Outcome = error == ERROR_INVALID_PARAMETER ? "NotRunning" : "CannotOpen";
+                    result.OpenError = error;
+                    return result;
+                }
                 var root = new Member { Pid = pid, Handle = rootHandle };
                 members.Add(root);
                 if (!IsRunning(rootHandle)) return result;
                 ProcessIdentity id = Identify(rootHandle, pid);
-                if (id == null || !string.Equals(id.StartedAt, startedAt, StringComparison.Ordinal) || !HolderCommand.Matches(id.CommandLine, sshExe, alias)) return result;
+                if (id == null || !string.Equals(id.StartedAt, startedAt, StringComparison.Ordinal) || !HolderCommand.Matches(id.CommandLine, sshExe, alias))
+                {
+                    result.Outcome = "IdentityDiffers";
+                    return result;
+                }
                 root.Creation = id.CreationFileTime;
                 result.Matched = true;
+                result.Outcome = "Matched";
 
                 // Walk the whole tree while it is alive, holding every handle.
                 var known = new HashSet<int> { pid };
@@ -763,7 +846,7 @@ function Write-HolderLog {
   $field = { param($v) if ([string]::IsNullOrWhiteSpace($v)) { '-' } else { $v -replace '\s', '_' } }
   $line = '{0} {1} lease={2} alias={3} pid={4}' -f (ConvertTo-LeaseTime $script:PassTime), $Action,
     (& $field $LeaseId), (& $field $Alias), (& $field $ProcessId)
-  if ($Action -ceq 'failed') {
+  if ($Action -ceq 'failed' -or $Action -ceq 'skipped') {
     $text = ($Reason -replace '[\x00-\x1f\x7f]+', ' ').Trim()
     if (-not $text) { $text = 'Unknown.' }
     $line += " reason=$text"
@@ -808,12 +891,20 @@ function Get-HolderCommand([string]$Exe, [string]$Alias) {
   [pscustomobject]@{ Application = $script:HolderCommand::Application($Exe); CommandLine = $script:HolderCommand::Build($Exe, $Alias) }
 }
 
-# Why a holder cannot be started with these paths, or $null when it can. A quote would end a quoted
-# path early, and cmd expands % in a batch's path, so a path holding one is refused, not escaped.
-function Test-HolderPaths([string]$Exe, [string]$Alias) {
+# Why -SshExe is not a usable path, from its text alone, or $null when it is. A quote would end a
+# quoted path early, and cmd expands % in a batch's path, so a path holding one is refused, not
+# escaped. The main block exits 2 on any of these; whether the file exists is the pass's concern.
+function Test-SshExeForm([string]$Exe) {
   if (-not [System.IO.Path]::IsPathFullyQualified($Exe)) { return "SshExe '$Exe' is not a full path." }
   if ($Exe.Contains('"')) { return "SshExe '$Exe' holds a quote." }
   if ($Exe.Contains('%') -and [System.IO.Path]::GetExtension($Exe) -in '.cmd', '.bat') { return "SshExe '$Exe' is a batch whose path holds a percent sign." }
+  $null
+}
+
+# Why a holder cannot be started with these paths, or $null when it can.
+function Test-HolderPaths([string]$Exe, [string]$Alias) {
+  $why = Test-SshExeForm $Exe
+  if ($why) { return $why }
   if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { return "SshExe '$Exe' does not exist." }
   if ($script:StateDir.Contains('"')) { return "The state folder '$($script:StateDir)' holds a quote." }
   if ($PSCommandPath.Contains('"')) { return "This script's path '$PSCommandPath' holds a quote." }
@@ -848,11 +939,43 @@ function Write-JsonFile([string]$Path, $Document) {
   }
 }
 
-# The launcher (-Launch): reads the request, starts the holder unless its deadline has passed, and
+# The claim file of a launch request: board-holder-launch.<guid>.json has
+# board-holder-launch.<guid>.claim, in the same folder.
+function Get-LaunchClaimPath([string]$RequestPath) {
+  [System.IO.Path]::ChangeExtension($RequestPath, '.claim')
+}
+
+# Claims a launch request by creating its claim file with FileMode.CreateNew (CREATE_NEW), which
+# exactly one caller can do. By says who claimed it. Returns $true when this caller claimed it, and
+# $false when the file already exists or could not be created.
+function Request-LaunchClaim([string]$ClaimPath, [string]$By) {
+  try {
+    $stream = [System.IO.FileStream]::new($ClaimPath, [System.IO.FileMode]::CreateNew,
+      [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+  } catch { return $false }
+  try {
+    $bytes = $script:Utf8.GetBytes("$By`n")
+    $stream.Write($bytes, 0, $bytes.Length)
+  } catch { } finally { $stream.Dispose() }
+  $true
+}
+
+# The launcher (-Launch): claims the request, starts the holder unless its deadline has passed, and
 # writes the result. It never reads the state folder from the environment, since a process made by
 # Win32_Process.Create has the logon environment, not the pass's.
 function Invoke-HolderLaunch([string]$RequestPath) {
-  $request = [System.IO.File]::ReadAllText($RequestPath) | ConvertFrom-Json -AsHashtable -DateKind String
+  # The claim comes before anything else. It fails when the claim file exists, because the pass
+  # withdrew the request or another launcher claimed it first; then this launcher starts nothing
+  # and writes nothing, since no pass is waiting for its answer.
+  $claimPath = Get-LaunchClaimPath $RequestPath
+  if (-not (Request-LaunchClaim $claimPath "launcher $PID")) { return }
+  try {
+    $request = [System.IO.File]::ReadAllText($RequestPath) | ConvertFrom-Json -AsHashtable -DateKind String
+  } catch {
+    # The pass has removed the request, so it waits for nothing. The claim is removed with it.
+    Remove-Item -LiteralPath $claimPath -Force -ErrorAction SilentlyContinue
+    return
+  }
   $answer = try {
     $notAfter = [DateTime]::Parse($request['not_after'], [Globalization.CultureInfo]::InvariantCulture,
       [Globalization.DateTimeStyles]::RoundtripKind)
@@ -874,6 +997,7 @@ function Start-Holder([string]$Exe, [string]$Alias) {
   $name = 'board-holder-launch.{0}' -f [guid]::NewGuid().ToString('n')
   $requestPath = Join-Path $script:StateDir "$name.json"
   $resultPath = Join-Path $script:StateDir "$name.result.json"
+  $claimPath = Get-LaunchClaimPath $requestPath
   $notAfter = [DateTime]::UtcNow.AddSeconds(30)
   try {
     Write-JsonFile $requestPath ([ordered]@{
@@ -889,20 +1013,37 @@ function Start-Holder([string]$Exe, [string]$Alias) {
     $startup = New-CimInstance -ClientOnly -Namespace root/cimv2 -ClassName Win32_ProcessStartup -Property @{ ShowWindow = [uint16]0 }
     $arguments = @{ CommandLine = $launcher; CurrentDirectory = $env:USERPROFILE; ProcessStartupInformation = $startup }
     # WMI can be slow to answer just after logon: three tries, 2 seconds apart, never more (D14).
+    # A call that threw may still have made a launcher, so a failed create is not the end: the
+    # request is withdrawn below like any other, and a launcher that claimed it is waited for.
     $created = $null
-    for ($try = 1; -not $created; $try++) {
+    $createError = $null
+    for ($try = 1; -not $created -and -not $createError; $try++) {
       try { $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments $arguments }
       catch {
-        if ($try -ge 3) { throw "Win32_Process.Create could not be called: $($_.Exception.Message)" }
-        Start-Sleep -Seconds 2
+        if ($try -ge 3) { $createError = "Win32_Process.Create could not be called: $($_.Exception.Message)" }
+        else { Start-Sleep -Seconds 2 }
       }
     }
-    if ($created.ReturnValue -ne 0) { throw "Win32_Process.Create returned $($created.ReturnValue)." }
-    # Wait for the answer until 5 seconds past the launcher's deadline, after which it starts
-    # nothing, so giving up here never leaves a holder unrecorded.
-    $giveUp = $notAfter.AddSeconds(5)
+    if ($created -and $created.ReturnValue -ne 0) { $createError = "Win32_Process.Create returned $($created.ReturnValue)." }
+    # Wait for the answer until 5 seconds past the launcher's deadline, or not at all when the
+    # create failed. Then withdraw the request by claiming it: if the pass's claim wins, no
+    # launcher can claim it, and none starts a holder. If a launcher claimed it first, that
+    # launcher may still start one, so wait on for its answer, up to 60 more seconds, and record
+    # the holder if one comes. The wait is bounded, and nothing is retried (D14).
+    $giveUp = if ($createError) { [DateTime]::UtcNow } else { $notAfter.AddSeconds(5) }
+    $why = if ($createError) { $createError } else { 'The launcher did not answer within 35 seconds.' }
+    $late = $null
     while (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
-      if ([DateTime]::UtcNow -gt $giveUp) { throw 'The launcher did not answer within 35 seconds.' }
+      $clock = [DateTime]::UtcNow
+      if ($clock -ge $giveUp) {
+        if (-not (Test-Path -LiteralPath $claimPath) -and (Request-LaunchClaim $claimPath 'abandoned')) {
+          throw "$why Its request was withdrawn, so no holder was started."
+        }
+        if (-not $late) { $late = $clock.AddSeconds(60) }
+        if ($clock -gt $late) {
+          throw "$why A launcher claimed the request, or it could not be withdrawn, and no answer came in 60 more seconds, so a holder may be running unrecorded."
+        }
+      }
       Start-Sleep -Milliseconds 100
     }
     $answer = [System.IO.File]::ReadAllText($resultPath) | ConvertFrom-Json -AsHashtable -DateKind String
@@ -913,7 +1054,9 @@ function Start-Holder([string]$Exe, [string]$Alias) {
     }
     $holder
   } finally {
-    foreach ($p in $requestPath, $resultPath) {
+    # The request goes before its claim, so a launcher that claims it after the claim is gone
+    # finds no request, and starts nothing.
+    foreach ($p in $requestPath, $claimPath, $resultPath) {
       if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
     }
   }
@@ -960,7 +1103,24 @@ function Invoke-HolderPass {
       Write-HolderLog -Action failed -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid -Reason "The holder could not be stopped: $($_.Exception.Message)"
       return 0
     }
-    if ($result.Matched -and -not $result.RootStopped) {
+    if (-not $result.Matched) {
+      # Nothing was stopped. The record MUST stay while the recorded holder is still running, so
+      # the next pass tries again; it goes only when that holder is gone.
+      $again = $script:Native::Probe($record.pid)
+      if (Test-Identity $again $record.process_started_at $SshExe $record.alias) {
+        $why = if ($result.Outcome -ceq 'CannotOpen') {
+          "The holder could not be opened to stop it: Windows error $($result.OpenError)."
+        } else {
+          "The holder could not be stopped: StopTree found $($result.Outcome), but the holder is still running."
+        }
+        Write-HolderLog -Action failed -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid -Reason $why
+        return 0
+      }
+      Remove-HolderRecord
+      Write-HolderLog -Action stopped -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid
+      return 0
+    }
+    if (-not $result.RootStopped) {
       # The record stays, so the next pass tries again.
       Write-HolderLog -Action failed -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid -Reason 'The holder is still running after it was stopped.'
       return 0
@@ -1003,7 +1163,11 @@ function Invoke-HolderPass {
     # An unrecorded holder could never be stopped, so it is stopped now, while it is known.
     $reason = $_.Exception.Message
     try { [void]$script:Native::StopTree($started.Pid, $started.StartedAt, $SshExe, $alias) } catch { }
-    Write-HolderLog -Action failed -LeaseId $leaseId -Alias $alias -ProcessId $started.Pid -Reason "The record could not be written, so the holder was stopped: $reason"
+    if (-not (Test-Identity ($script:Native::Probe($started.Pid)) $started.StartedAt $SshExe $alias)) {
+      Write-HolderLog -Action failed -LeaseId $leaseId -Alias $alias -ProcessId $started.Pid -Reason "The record could not be written, so the holder was stopped, or had exited: $reason"
+    } else {
+      Write-HolderLog -Action failed -LeaseId $leaseId -Alias $alias -ProcessId $started.Pid -Reason "The record could not be written, and the holder could not be stopped, so it runs unrecorded: $reason"
+    }
     return 0
   }
   Write-HolderLog -Action started -LeaseId $leaseId -Alias $alias -ProcessId $started.Pid
@@ -1018,12 +1182,11 @@ if ($Launch) {
   exit 0
 }
 
+$why = Test-SshExeForm $SshExe
+if ($why) { Exit-Usage $why }
 if ($Now) {
   try { $script:PassTime = ConvertFrom-LeaseTime $Now }
-  catch {
-    [Console]::Error.WriteLine("-Now '$Now' is not a time in the form YYYY-MM-DDTHH:MM:SSZ.")
-    exit 1
-  }
+  catch { Exit-Usage "-Now '$Now' is not a time in the form YYYY-MM-DDTHH:MM:SSZ." }
 } else {
   $script:PassTime = Get-LeaseNow
 }
@@ -1046,7 +1209,8 @@ try {
     }
   }
   if (-not $lock) {
-    Write-HolderLog -Action failed -Reason 'Another pass held board-holder.lock for 10 seconds.'
+    # Another pass is running: this one is skipped, and says so; it is never logged as idle.
+    Write-HolderLog -Action skipped -Reason 'locked'
     $code = 0
   } else {
     # The pass writes its log line to the pipeline and returns its exit code last.
