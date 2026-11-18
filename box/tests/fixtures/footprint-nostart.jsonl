@@ -1,0 +1,2 @@
+{"kind":"host","t":"2026-11-18T09:00:00.000-08:00","seq":1,"cpu_busy_s":10.0,"cpu_total_s":100.0,"mem_used_kib":1572864,"load1":0.5,"sampler_cpu_s":5.0}
+{"kind":"end","t":"2026-11-18T09:00:03.000-08:00","reason":"stop-file","samples":1}

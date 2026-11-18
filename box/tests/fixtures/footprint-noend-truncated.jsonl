@@ -1,0 +1,24 @@
+{"kind":"start","t":"2026-11-18T03:00:00.000-08:00","run":"clean-run","interval_s":2,"deadline":"2026-11-18T04:00:00.000-08:00","match":"claude","cpus":2,"mem_total_kib":16777216,"sampler":"agentspace-sample 1"}
+{"kind":"host","t":"2026-11-18T03:00:00.000-08:00","seq":1,"cpu_busy_s":100.0,"cpu_total_s":1000.0,"mem_used_kib":524288,"load1":0.5,"sampler_cpu_s":0.0}
+{"kind":"session","t":"2026-11-18T03:00:00.000-08:00","seq":1,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":20.0,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":50.0,"pss_kib":102400,"rss_kib":204800,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:02.000-08:00","seq":2,"cpu_busy_s":101.0,"cpu_total_s":1004.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":0.02}
+{"kind":"session","t":"2026-11-18T03:00:02.000-08:00","seq":2,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":20.2,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":50.2,"pss_kib":204800,"rss_kib":409600,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:04.000-08:00","seq":3,"cpu_busy_s":102.0,"cpu_total_s":1008.0,"mem_used_kib":1572864,"load1":0.5,"sampler_cpu_s":0.04}
+{"kind":"session","t":"2026-11-18T03:00:04.000-08:00","seq":3,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":20.4,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":50.6,"pss_kib":307200,"rss_kib":614400,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:06.000-08:00","seq":4,"cpu_busy_s":103.0,"cpu_total_s":1012.0,"mem_used_kib":2097152,"load1":0.5,"sampler_cpu_s":0.06}
+{"kind":"session","t":"2026-11-18T03:00:06.000-08:00","seq":4,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":20.6,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":51.2,"pss_kib":409600,"rss_kib":819200,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:08.000-08:00","seq":5,"cpu_busy_s":104.0,"cpu_total_s":1016.0,"mem_used_kib":2621440,"load1":0.5,"sampler_cpu_s":0.08}
+{"kind":"session","t":"2026-11-18T03:00:08.000-08:00","seq":5,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":20.8,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":52.0,"pss_kib":512000,"rss_kib":1024000,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:10.000-08:00","seq":6,"cpu_busy_s":105.0,"cpu_total_s":1020.0,"mem_used_kib":3145728,"load1":0.5,"sampler_cpu_s":0.1}
+{"kind":"session","t":"2026-11-18T03:00:10.000-08:00","seq":6,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":21.0,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":53.0,"pss_kib":614400,"rss_kib":1228800,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:12.000-08:00","seq":7,"cpu_busy_s":106.0,"cpu_total_s":1024.0,"mem_used_kib":3670016,"load1":0.5,"sampler_cpu_s":0.12}
+{"kind":"session","t":"2026-11-18T03:00:12.000-08:00","seq":7,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":21.2,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":54.2,"pss_kib":716800,"rss_kib":1433600,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:14.000-08:00","seq":8,"cpu_busy_s":107.0,"cpu_total_s":1028.0,"mem_used_kib":4194304,"load1":0.5,"sampler_cpu_s":0.14}
+{"kind":"session","t":"2026-11-18T03:00:14.000-08:00","seq":8,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":21.4,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":55.6,"pss_kib":819200,"rss_kib":1638400,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:16.000-08:00","seq":9,"cpu_busy_s":108.0,"cpu_total_s":1032.0,"mem_used_kib":4718592,"load1":0.5,"sampler_cpu_s":0.16}
+{"kind":"session","t":"2026-11-18T03:00:16.000-08:00","seq":9,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":21.6,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":57.2,"pss_kib":921600,"rss_kib":1843200,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:18.000-08:00","seq":10,"cpu_busy_s":109.0,"cpu_total_s":1036.0,"mem_used_kib":5242880,"load1":0.5,"sampler_cpu_s":0.18}
+{"kind":"session","t":"2026-11-18T03:00:18.000-08:00","seq":10,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":21.8,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":59.0,"pss_kib":1024000,"rss_kib":2048000,"procs":3}}
+{"kind":"host","t":"2026-11-18T03:00:20.000-08:00","seq":11,"cpu_busy_s":110.0,"cpu_total_s":1040.0,"mem_used_kib":5767168,"load1":0.5,"sampler_cpu_s":0.2}
+{"kind":"session","t":"2026-11-18T03:00:20.000-08:00","seq":11,"session":"4242-100000","cwd":"/home/ubuntu/proj","self":{"cpu_s":22.0,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":61.0,"pss_kib":1126400,"rss_kib":2252800,"procs":3}}
+{"kind":"end","t":"2026-11-18T03:00:20.0

@@ -266,6 +266,112 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    the keeper retries it with backoff. Only a session still holding them after 2 minutes is cleared by hand:
    it MUST be cleared as D12's E3.03 finding says.
 
+#### Measure a turn
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+How a project's agent measures the CPU and memory of a turn of work on its lease
+([D33](docs/decisions.md#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls)).
+Two tools do it: `agentspace-sample` records every Claude Code session on the box, and
+`agentspace-footprint` summarizes the record. `<alias>` is the lease's `ssh.host_alias` from lease step 1,
+and `<run>` is a name the agent picks, which MUST match `^[a-z0-9][a-z0-9-]{0,63}$`, such as
+`swimcoach-t05`. The steps run while the lease is live, so they come before releasing it (lease
+step 5 above).
+
+- **Both tools are installed on the box by `sync`**, which the architect runs. A project's agent
+  MUST NOT run `sync` itself. When `agentspace-sample` or `agentspace-footprint` is not found on
+  the box, the agent MUST ask the architect to run it.
+- **From Git Bash, `ssh` and `scp` MUST be called by their full paths**, as in lease step 3, so the
+  commands below are written that way. From cmd or PowerShell, plain `ssh` and `scp` are the same
+  Windows OpenSSH programs. Every command below passes `-o BatchMode=yes`, so a refused login
+  fails at once and MUST NOT be retried in a loop.
+
+1. **Start the sampler on the box, over the lease**, before the turn starts:
+
+   ```bash
+   /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-sample start <run>"
+   ```
+
+   It starts the sampler detached, so the sampler keeps running after this connection closes. It
+   prints the record's path, `~/agentspace-samples/<run>.jsonl`, and the sampler's PID, and
+   exits 0. The defaults are right for a turn: a sample every 2 seconds, a deadline 8 hours away,
+   and the default match for Claude Code's CLI. They MAY be changed with
+   `--interval <seconds>` (0.5 to 60), `--for <duration>` (`30m`, `8h` or `90s` style; above 12h
+   is refused) and `--match <regex>`.
+   - **It refuses with exit 2** when `~/agentspace-samples/<run>.jsonl` already exists, which
+     means a `<run>` MUST be new for every measurement, or when a sampler is already running.
+     One sampler runs on the box at a time.
+2. **Confirm it is running:**
+
+   ```bash
+   /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-sample status"
+   ```
+
+   It prints the running sampler's run, PID, samples so far and deadline, or
+   `No sampler is running.` The agent SHOULD check that the samples so far grow between two calls
+   before it starts the turn.
+3. **Run the turn.** The agent SHOULD note the box's time at its start and at its end, which
+   gives the window for `--from` and `--to` in the last step:
+
+   ```bash
+   /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "date -Iseconds"
+   ```
+4. **Stop the sampler** when the turn is over:
+
+   ```bash
+   /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-sample stop <run>"
+   ```
+
+   The sampler writes its end line within one interval and exits. `stop` waits up to three
+   intervals, prints the end line's reason, and exits 0, or 1 if the sampler is still running.
+   - **The sampler ends by itself at its deadline** (8 hours by default, at most 12), and writes
+     its end line first. A forgotten sampler keeps the box awake until then, since its own CPU
+     counts as activity to the idle check (D33), so `stop` SHOULD be run as soon as the turn is
+     over, and a `--for` much longer than the turn SHOULD NOT be given.
+5. **Fetch the record to the laptop** with Windows OpenSSH's `scp`, over the lease's alias.
+   `cd` to the folder that is to hold the record first, and give `.` as the destination:
+
+   ```bash
+   /c/Windows/System32/OpenSSH/scp.exe -o BatchMode=yes <alias>:agentspace-samples/<run>.jsonl .
+   ```
+
+   The path after the alias is `~/agentspace-samples/<run>.jsonl`, relative to the box's home.
+   The record stays on the box as well.
+6. **Summarize it.** `agentspace-footprint` takes the record and prints Markdown:
+
+   ```
+   agentspace-footprint <record.jsonl> [--from <ISO 8601>] [--to <ISO 8601>] [--json]
+   ```
+
+   - **On the laptop**, with its Python 3 on the file in the agentspace checkout's `box\system`
+     folder, from the folder the record was fetched to:
+
+     ```bash
+     python3 /c/Projects/agentspace/box/system/agentspace-footprint <run>.jsonl
+     ```
+
+     In cmd or PowerShell it is
+     `py -3 C:\Projects\agentspace\box\system\agentspace-footprint <run>.jsonl`.
+   - **On the box**, over the lease, which needs no fetch:
+
+     ```bash
+     /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-footprint agentspace-samples/<run>.jsonl"
+     ```
+   - **`--json`** prints one JSON object holding the same numbers, with the keys `run`, `host`,
+     `sessions`, `concurrency` and `notes`, instead of Markdown.
+   - **`--from` and `--to`** keep only the samples inside that window, both ends included. Each
+     takes an ISO 8601 time with a UTC offset, such as `2026-11-18T01:45:00-08:00`, which is the
+     form `date -Iseconds` prints in the "Run the turn" step. The agent SHOULD use them when the sampler ran
+     longer than the turn.
+   - **Exit 0, or 2 with a message on stderr** for a missing file or bad arguments. A malformed
+     line is skipped and counted in the notes, never fatal. A record with no end line, because
+     the sampler is still running or was killed, is summarized up to its last complete line, and
+     the notes say so.
+
+   The output gives the host's CPU cores busy and memory used in GiB, one row per session with
+   its own process and its tools apart, how many sessions ran at once, and the notes, each figure
+   as peak, p95 and p50.
+
 ### The localswim board on the box
 
 Terry's localswim board (`127.0.0.1:8811`) and the localpost queue behind its watcher
