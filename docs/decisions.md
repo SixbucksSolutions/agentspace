@@ -2234,6 +2234,10 @@ about 210 processes. Times are Pacific Standard Time, the box's and the laptop's
   from outside: commands, flags, output, files, exit codes, environment variables. It MUST NOT
   define behavior by a function name or a line of the prototype. It MAY name a prototype file in
   a note on where a requirement came from.
+- **Code the prototype sends to another machine is prototype code too** (architect, 2026-11-18,
+  for E0.04-T01-S03). A remote shell command, a script piped to a host, or a template's embedded
+  script is specified by what it MUST do on the far side, step by step, and its text MUST NOT be
+  carried into a spec, even though it can be seen in a process list. The rewrite writes its own.
 - **A defect or hardening card against the prototype is carried in as a requirement on the
   behavior,** and the doc names the card it closes (D28). The prototype's defect is never
   specified as behavior to copy.
