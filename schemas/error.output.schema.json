@@ -12,9 +12,9 @@
       "enum": ["internal", "usage", "invalid_value", "out_of_range", "not_found", "invalid_state"]
     },
     "message": {
-      "description": "One or more sentences for a person: what was wrong, and what to do. No control characters; a quoted value escapes them as \\uXXXX or is left out.",
+      "description": "One or more sentences for a person: what was wrong, and what to do. No control characters, and not empty or starting with a space; a quoted value escapes them as \\uXXXX or is left out.",
       "type": "string",
-      "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?!\\n)"
+      "pattern": "^[^\\u0000-\\u0020\\u007f][^\\u0000-\\u001f\\u007f]*$(?!\\n)"
     },
     "field": {
       "description": "The flag or request member at fault, without dashes.",
