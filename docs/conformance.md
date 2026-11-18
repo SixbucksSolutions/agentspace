@@ -894,8 +894,9 @@ so in its header, with the requirement and its card.
 - **Every `test-unmet-*` file FAILs against the prototype, and a rewrite MUST pass it, with one
   exception.** `test-unmet-default-transport-no-cache.ps1` FAILs against the prototype only from a
   checkout with no `.instance-id`; from the main checkout on the laptop, which holds one, the
-  prototype passes it, because a check cannot hide a file in the program's own checkout and MUST
-  NOT touch it. Its result lines still say `FAIL`, and nothing turns a `FAIL` into a `PASS`. Some
+  prototype passes it, because the prototype reads its own checkout's `.instance-id`, which a check
+  cannot hide and MUST NOT touch. Its result lines still say `FAIL`, and nothing turns a `FAIL`
+  into a `PASS`. **The exception goes away with v0.05, whose lease CLI has no checkout.** Some
   of a file's lines PASS against the prototype, since each file also checks what the failing line
   assumes.
 - **A runner MUST NOT count the FAIL of a `test-unmet-*` file as a regression of the prototype.**

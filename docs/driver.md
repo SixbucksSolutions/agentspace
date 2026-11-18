@@ -764,24 +764,35 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
 
 ## Open questions
 
-**What reading the prototype and its docs could not settle.** The clean-room review
-(E0.04-T03-S01) closes each one, or names the story that will.
+**What reading the prototype and its docs could not settle.** After the clean-room review
+(E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and
+none blocks building a drop-in of contract v0.
 
-1. **Q1: What is the transport between the CLI and a driver in the rewrite?** The prototype calls
+1. **Later, not blocking:** nothing about the boundary is visible from outside the CLI
+   ([The boundary](#the-boundary)), and the contract is written so that any transport carries it,
+   so a drop-in picks its own.
+   **Q1: What is the transport between the CLI and a driver in the rewrite?** The prototype calls
    a driver inside one process. No decision fixes the rewrite's, and the contract is written so
    that any transport carries it. Whether drivers are compiled into the CLI, started as programs,
    or reached over a network is a design call for v0.05 (D28), and decides how a conformance
    check can plug in a stub driver, which the prototype has no way to do.
-2. **Q2: How does the CLI choose a driver, and what does `unsatisfiable` mean with several?** The
+2. **Later, not blocking:** v0 has one driver ([The EC2 driver](#the-ec2-driver)), so there is no
+   choice to make among several.
+   **Q2: How does the CLI choose a driver, and what does `unsatisfiable` mean with several?** The
    prototype asks the first driver it loaded. D5 says a request no backend can meet is
    `unsatisfiable`, but nothing says whether every driver is asked, in what order, whose reasons
    are shown, or how a driver is chosen for a project that D25 gives a host of its own.
-3. **Q3: How does a `pending` lease become `ready` or `unsatisfiable`, and how is one given up?**
+3. **Later, not blocking:** v0's one driver never answers `pending`
+   ([What it supports](#what-it-supports)), so a v0 lease never needs a way out of it.
+   **Q3: How does a `pending` lease become `ready` or `unsatisfiable`, and how is one given up?**
    The states allow it ([lease-api.md](lease-api.md#states): "agentspace, when placement
    finishes"), but the boundary has no operation to ask a driver how a placement stands, to cancel
    one, or to hear that it finished. The prototype's driver never answers `pending`, so none has
    been needed, and its `release` of a `pending` lease asks no driver.
-4. **Q4: How does the boundary let the CLI undo a renew, or record before it takes effect, and
+4. **Later, not blocking:** [lease-api.md](lease-api.md#concurrency-and-atomicity) fixes what a
+   failed renew or release MUST leave, and any of the ways named below meets it, so the mechanism
+   is a drop-in's choice.
+   **Q4: How does the boundary let the CLI undo a renew, or record before it takes effect, and
    how does release avoid leaving a `ready` lease with part of its credential gone?**
    lease-api.md requires a failed renew to leave the previous certificate, and a failed release
    never to leave a `ready` lease without its credential (#0041). The prototype's driver changes
@@ -789,7 +800,9 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
    and a release that removes the alias and then fails on the folder leaves a `ready` lease with
    no alias. Either a two-step operation (prepare, then commit), an undo, or recording first
    would meet it.
-5. **Q5: Should the credential and the alias be the CLI's steps, with the driver supplying only
+5. **Later, not blocking:** a caller sees the same outcome either way, so where the steps live is a
+   drop-in's design choice.
+   **Q5: Should the credential and the alias be the CLI's steps, with the driver supplying only
    the login user, the transport and the host-key rule?** In the prototype the driver calls the
    routines that issue the credential and write the alias, though nothing in them is specific to
    EC2 except the user `ubuntu`, the transport and the host-key settings. If they are the CLI's, a
@@ -798,10 +811,15 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
 6. **Q6: Closed by [state.md, The alias file](state.md#the-alias-file): how a transport override is
    written into the alias.** It is the alias file's own rule: a line break is refused, and each
    percent sign is doubled, because `ssh` expands them.
-7. **Q7: Is the alias's host-key check the driver's?** Today's alias names the box's known-hosts
+7. **Later, not blocking:** v0 has one host, whose rule today's alias carries (D9), so the question
+   arises only with a second host.
+   **Q7: Is the alias's host-key check the driver's?** Today's alias names the box's known-hosts
    entry and demands a match, which is true only of the one box (D9). A second host needs its own
    rule, and no decision says who supplies it.
-8. **Q8: What happens when cleanup fails?** In two cases the prototype lets a cleanup's error
+8. **Later, not blocking:** this page requires the first failure to be the one reported, and
+   [lease-api.md](lease-api.md#concurrency-and-atomicity) what a failed command MUST leave, so what is left open is whether the message also
+   says that files stayed, which is wording that no caller parses.
+   **Q8: What happens when cleanup fails?** In two cases the prototype lets a cleanup's error
    replace the failure that began it, and the error is raw: a failed credential step whose folder
    removal then fails, and a failed alias step whose direct folder removal fails. After a `create`
    that fails in recording, the CLI releases the lease and ignores a failed release. This page
@@ -813,19 +831,29 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
    [state.md](state.md) lists. "Kept" in
    [Failure](#failure) means kept apart from the message, up to the CLI. Later, not blocking: a
    place to keep it, such as a log ([lease-api.md](lease-api.md#open-questions), Q10).
-10. **Q10: What does a lease on a Windows host look like at this boundary?** The result carries a
+10. **Later, not blocking:** Windows hosts come with v0.13 (#0081), and until then D4's lease model
+    is a Linux user and a certificate.
+    **Q10: What does a lease on a Windows host look like at this boundary?** The result carries a
     login user and an alias, which assume an SSH login. D4 says the lease model assumes a Linux
     user and a certificate until v0.13 (#0081), and the vision's V2 asks whether a certificate
     stays the way in. Whether the three operations survive that unchanged is not known.
-11. **Q11: Where does a driver keep its own per-lease state?** The CLI hands back only the driver's
+11. **Later, not blocking:** today's driver needs nothing more than the driver's name, the lease ID
+    and the project, and no v0 driver has a per-lease backend.
+    **Q11: Where does a driver keep its own per-lease state?** The CLI hands back only the driver's
     name, the lease ID and the project. Today's driver needs nothing more. A per-lease backend (a
     container, D6) would need an identity to find the compute again, and no file is assigned to it
     in state.md.
-12. **Q12: How long does place take, in the prototype?** It starts a second program for the CA check
+12. **Later, not blocking:** the 30-second wait is fixed by
+    [lease-api.md](lease-api.md#concurrency-and-atomicity), so how long the prototype takes is a
+    run's observation, not behavior a drop-in copies.
+    **Q12: How long does place take, in the prototype?** It starts a second program for the CA check
     and runs `ssh-keygen` three times, inside the CLI's lock. Only a run shows whether it comes
     near the 30-second wait that a concurrent `renew` or `release` has
     ([lease-api.md](lease-api.md#open-questions), Q11).
-13. **Q13: What does a foreign file at a lease's alias place do to its release?** Release refuses
+13. **Later, not blocking:** [state.md](state.md#release-and-what-it-leaves) states the behavior to
+    build, that release fails until a person moves or deletes the file, so another outcome would be
+    a later change.
+    **Q13: What does a foreign file at a lease's alias place do to its release?** Release refuses
     to delete it and fails, so the lease can never be released until a person removes the file.
     Whether that is the right outcome, or a `released` lease with the file left, is for the
     architect.
@@ -833,7 +861,10 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
     2026-11-18: D1 holds at connect time too, so the transport MUST keep the backend out of what it
     prints. It is now a requirement in [Reachability](#reachability), carried by card #0087. The
     number is kept so that the questions after it keep theirs.
-15. **Q15: Does D1 reach files on the caller's machine?** A client cannot tell the backend from the
+15. **Later, not blocking:** this page's SHOULD for a driver's name stands either way
+    ([The driver's name](#the-drivers-name)), and whether D1 reaches files on the caller's machine
+    is policy, not behavior to build.
+    **Q15: Does D1 reach files on the caller's machine?** A client cannot tell the backend from the
     CLI's output, but the lease state file stores the driver's name, and the alias file's
     transport line names the ProxyCommand program's full path, which `ssh -G <alias>` prints.
     D1 says a client MUST NOT be able to tell the backend, and does not say whether a client that
@@ -845,7 +876,10 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
     letter or `_`, then up to 31 lowercase letters, digits, `_` or `-`) binds a v0 driver's result,
     and a user it refuses fails the `create`. Widening the state schema later is internal, and
     changes no contract.
-17. **Q17: Does `ssh-keygen`'s error text reach the CLI's standard error in the prototype?** Making
+17. **Later, not blocking:** [The boundary](#the-boundary) states the rule to build, that a started
+    program's output is captured for the failure's cause and never shown, so only whether the
+    prototype meets it is open.
+    **Q17: Does `ssh-keygen`'s error text reach the CLI's standard error in the prototype?** Making
     the key and checking its passphrase capture nothing, so reading says it most likely does. Only
     a run with a failing `ssh-keygen` settles it.
 18. **Q18: Closed by [state.md](state.md#creation-in-order) (E0.04-T04-S01, 2026-11-18): a failed

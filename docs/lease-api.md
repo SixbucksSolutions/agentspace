@@ -1266,14 +1266,18 @@ operator's cards, #0027 and #0034, are [docs/operator.md](operator.md)'s.
 
 ## Open questions
 
-**What reading the prototype and its docs could not settle.** The clean-room review (E0.04-T03-S01)
-closes each one, or names the story that will.
+**What reading the prototype and its docs could not settle.** After the clean-room review
+(E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and
+none blocks building a drop-in of contract v0.
 
 1. **Closed by D8 (architect, 2026-11-18): contract v0's caller runs on Windows**, from cmd,
    PowerShell and Git Bash ([The program](#the-program)); the program's file name is outside the
    contract. Later, not blocking: a caller on Linux or macOS, which comes with the hosted control
    plane (#0011).
-2. **How `bin\agentspace.cmd` passes arguments that cmd treats specially**, such as `%`, `^`, `&`,
+2. **Later, not blocking:** [The program](#the-program) requires every argument to arrive
+   unchanged and leaves the file name outside the contract, so a drop-in meets that rule with its
+   own executable, and only whether the prototype's `.cmd` meets it is open.
+   **How `bin\agentspace.cmd` passes arguments that cmd treats specially**, such as `%`, `^`, `&`,
    `!` and embedded quotes. [The program](#the-program) requires them unchanged; only a run on
    Windows shows whether the prototype meets that.
 3. **Closed (E0.04-T04-S01, 2026-11-18): the Unicode `White_Space` characters, listed in
@@ -1282,20 +1286,32 @@ closes each one, or names the story that will.
    prototype trims what .NET's `String.Trim` calls
    whitespace, which reading suggests is the same set; a run would confirm it, and a difference
    there is the prototype's, not the contract's.
-4. **How the prototype escapes strings in its JSON output**, for instance whether `'`, `<`, `>`,
+4. **Later, not blocking:** a string MAY use any escape that JSON allows, and a caller MUST
+   compare parsed values, never bytes ([Output](#output)), so any valid escaping a drop-in chooses
+   is correct.
+   **How the prototype escapes strings in its JSON output**, for instance whether `'`, `<`, `>`,
    `&` or non-ASCII characters come out as `\u` escapes. This page allows any valid escaping; a
    conformance check that compares bytes would need to know.
 5. **Closed by D24: the back-dating of a certificate's valid-after time (#0029)**, which D24 sets
    at 5 minutes, as a SHOULD ([The credential](#the-credential)). Kept here so the numbers of the
    questions below do not change.
-6. **Whether `agent-linux`'s tools are on the `PATH` of a command run without an interactive login
+6. **Later, not blocking:** [`agent-linux`](#agent-linux) promises the tools only on the `PATH` of
+   an interactive login shell, and keeping that promise is the host's, not the CLI's, so a drop-in
+   prints the same lease either way.
+   **Whether `agent-linux`'s tools are on the `PATH` of a command run without an interactive login
    shell**, as in `ssh <host_alias> node --version`. Today Node and Codex are put on the `PATH` by
    lines at the end of `ubuntu`'s `~/.bashrc`, after Ubuntu's early return for non-interactive
    shells. Only a run through an alias settles what such a command finds.
-7. **Whether the board's forwards belong in the lease's alias at all** (D12, D30, card #0008), or
+7. **Later, not blocking:** v0's alias carries the forwards as
+   [docs/state.md](state.md#the-alias-file) gives them, and a caller MUST NOT rely on them
+   ([The credential](#the-credential)), so moving them to the keeper (#0008) changes nothing a
+   caller sees.
+   **Whether the board's forwards belong in the lease's alias at all** (D12, D30, card #0008), or
    should move to the keeper's own connection. Today a caller's second session on a host warns
    that its remote port forwarding failed.
-8. **Whether `ssh.user`'s pattern fits every host a later driver serves** (D4, v0.13, #0081). It
+8. **Later, not blocking:** every v0 lease logs in as `ubuntu` (D3), which the pattern accepts,
+   and a user it would refuse comes only with a later driver's host (v0.13, #0081).
+   **Whether `ssh.user`'s pattern fits every host a later driver serves** (D4, v0.13, #0081). It
    accepts 1 to 64 letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, which covers
    Unix and Windows local user names. A Windows domain user (`DOMAIN\user` or `user@domain`), or a
    name with a space, would not fit, and widening the pattern later would be a new contract
@@ -1306,7 +1322,10 @@ closes each one, or names the story that will.
 10. **Closed for contract v0 (E0.04-T04-S01, 2026-11-18): an `internal` error's original detail is
     not kept** ([Exit codes and errors](#exit-codes-and-errors)), as in the prototype. Later, not
     blocking: a place to keep it for diagnosis, such as a log.
-11. **How long a `create` holds other changing commands back.** The prototype holds its lock
+11. **Later, not blocking:** the 30-second limit is fixed
+    ([Concurrency and atomicity](#concurrency-and-atomicity)), so how long the prototype takes is a
+    run's observation, not behavior a drop-in copies.
+    **How long a `create` holds other changing commands back.** The prototype holds its lock
     through the whole of issuing, which starts a second shell for the CA check and runs
     `ssh-keygen` three times. Only a run shows whether that comes near the 30-second limit after
     which a concurrent `renew` or `release` fails as busy.
