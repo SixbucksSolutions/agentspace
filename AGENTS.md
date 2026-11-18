@@ -142,6 +142,14 @@ Docs cite its cards as `#0001`.
 - **localswim calls run as Bot.** Until this repo has its own wrapper, load the credential the way
   the watcher's `lib\env.ps1` does, for one run only (`Set-LocalswimEnv`, then
   `Clear-LocalswimEnv`). The token MUST NOT be printed or written anywhere.
+  - **A secret MUST NOT be passed as a command argument.** Pipe it on stdin or read it inside
+    the command, because an error can echo its arguments. In v0.02-T04, 2026-11-17, a binding
+    error echoed a `LOCALSWIM_TOKEN=` line into a subagent's tool output, which put the token in
+    a session transcript.
+  - **A PowerShell helper's name MUST NOT match an alias.** An alias wins over a function, so
+    the call goes to the alias instead. A helper named `H` ran `Get-History` (`h`), which caused
+    the leak above, and one named `Ls` ran `Get-ChildItem` (`ls`). Check a name with `Get-Alias
+    <name>` first.
 - **Watcher reader names MUST be unique per session.** The architect reads as `agentspace`; a dev
   lead reads as `agentspace-tN` in the MVP, and as `agentspace-vX.YY-tnn` in a release (for
   example `agentspace-v0.02-t03`; v0.02's first turn read as `agentspace-v0.02-t1`). Two sessions sharing a reader share one place in the mailbox, and
