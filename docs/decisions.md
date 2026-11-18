@@ -826,7 +826,26 @@ expected hash was computed by `Get-BotEnvHash`, and the stamp was set aside as t
   the box. `scripts\test-push-localswim.ps1` checks it with a stand-in tunnel that exits 7.
 - **The `Ready: <instance ID>` rule held:** the check filtered every `Ready:` line and every
   instance ID from what it printed.
-- **Still not tried:** the desktop app through the new path.
+- **Still not tried:** the desktop app through the new path. E0.02-T03-S01 tried it (below).
+
+**Findings from story E0.02-T03-S01 (2026-11-18).** D9 stands, and #0028 is closed for a lease
+alias, the desktop app included. The evidence is in
+[docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md). Times are UTC.
+- **With Terry's `agentspace` Host block removed, the lease alias pushed over the lease's
+  certificate.** The push's nested login, at 02:19:09Z, was `ED25519-CERT ... ID 534bdf04-...`,
+  and `bot.env` was rewritten inside it. The config was restored byte for byte, hash for hash.
+- **The desktop app's own proxy pushed over the lease's certificate.** The app wrote
+  `proxy-command.txt` with the alias's ProxyCommand, trailing alias included, at 04:24:30Z. Its
+  `ssh.exe` ran it through `claude-ssh-proxy.exe`, and the push's nested login, at 04:24:42Z, was
+  `ED25519-CERT ... ID 5034f839-...`. `bot.env` was rewritten 0.25 seconds later, inside that
+  session, and the laptop's stamp came back equal to the one set aside.
+- **Test connection did not show the push.** Terry saw only its closing `connection successful`
+  line, not `Sending the localswim Bot token to the instance...`. A push from the desktop app
+  MUST be confirmed on the box or by the laptop's stamp, never from the app's output.
+- **Two `up`s on a stopped box both push.** With the stamp deleted and the box stopped, the
+  recorder's connection over Terry's entry and the keeper's holder over the lease alias both
+  started `up` within seconds, and sshd logged two nested logins at 04:17:18Z, one per
+  credential. Each push wrote the same token, so nothing broke, but each push is a login.
 
 ## What the MVP leaves alone
 
@@ -1060,6 +1079,29 @@ The box runs OpenSSH 10.2p1 (`OpenSSH_10.2p1 Ubuntu-2ubuntu3.8`).
   so the check never saw an `sshd-session` pid, and phase 2 timed out waiting for the idle
   session's. Run 1's phase 1 result rests on the ports alone, and stands. The pattern is now
   `'^S\s*(\d+)\s+(\d+)\s+(.*)'`, and run 2 checked the holder's pids as well.
+
+**Findings from story E0.02-T03-S01 (2026-11-18).** D12 stands for one lease at a time, and the
+gap E3.03 found is closed by the keeper (D30): a desktop-app session reached the board with no
+holder started by hand. The evidence is in [docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md).
+Times are UTC.
+- **The keeper's holder held the forwards for the app's session.** On the box, `sudo ss -ltnp`
+  showed one `sshd-session` holding 127.0.0.1:8811 and :53147, and the login behind it was the
+  keeper's holder, by the lease's certificate. The app's own connections held nothing.
+- **An agent in the app session worked a card on swimcoach's board.** Through
+  `scripts/localswim.sh` it listed the board's seven lanes, created swimcoach card #0058,
+  "agentspace T03 lease check (throwaway)", in Backlog, commented on it with the box's host name
+  and the time (04:26Z), and archived it. The dev lead read the card back from the board: created
+  04:26:00Z, one comment at 04:26:05Z, `archived: true`. The agent's own read-back showed
+  `archived_at` null; that is localswim's response as observed, not chased here.
+- **0.02.T1.1's bound held for both kinds of stop.** A killed holder's session timed out 79.5
+  seconds after the kill, and a holder the keeper stopped at release timed out 86 seconds after the
+  stop. Both ports were free in the next 15-second sample each time.
+- **Archiving a desktop-app SSH session does not close its connections.** After Terry archived
+  the session, the app's two `ssh.exe` processes (parent `claude.exe`, both started 04:24Z) and
+  their sessions on the box were still up 3 minutes later, and release ended neither (D10). They
+  carry no forwards, so they did not hold the board, but they keep the box's idle check from
+  stopping it, and they keep a released lease's login open. The architect killed both by PID at
+  04:45Z with Terry's approval. Card #0064 tracks the fix, outside this story.
 
 ## Defaults
 
@@ -1654,6 +1696,43 @@ against a throwaway state folder and a stub for `ssh.exe`
 - **Known follow-ups, not done:**
   - `board-holder-ssh.log` grows without bound.
   - Each pass compiles its C# type, which takes about 1 to 3 seconds.
+
+**Findings from story E0.02-T03-S01 (2026-11-18).** D30 stands, with two gaps. The architect
+carded their fixes as v0.02-T04 stories, and this story changes neither the keeper nor its task.
+The evidence is in [docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md). Times are UTC.
+- **The logon task was registered with Terry's yes**, from the main checkout, at 02:22:25Z. Every
+  setting read back equals `install-board-holder.ps1 -DryRun`. It stays registered.
+- **Unattended, the keeper started a holder for each ready lease, kept it, and stopped it at
+  release.** Each holder logged in by its lease's certificate and held both ports. Each record
+  matched its process to the millisecond. After each release, the next pass logged `stopped`,
+  removed the record, and then logged `idle`.
+- **A killed holder was replaced, but the keeper's early retries stretched the outage.** The
+  recorded holder was checked against its record and killed by PID at 04:29:21Z. The keeper
+  started new holders at 04:29:30Z and 04:30:31Z, while the dead session still held the ports, so
+  each exited under `ExitOnForwardFailure`.
+  - **Each failed holder left a session on the box that also waited out the 90-second bound**,
+    timing out at 04:31:08Z and 04:32:09Z.
+  - The second attempt's login, at 04:30:39Z, came one second before the dead session timed out at
+    04:30:40Z. The backoff
+    then put the third attempt at 04:32:02Z, and it took the ports at 04:32:10Z. **The board was
+    gone for 2 minutes 49 seconds, against a bound of about 90 seconds.**
+  - **The fix to weigh:** after it loses a holder, the keeper SHOULD wait out the bound, or watch
+    for the ports to come free, before it starts the next one.
+- **Task Scheduler did not restart a crashed keeper.** The keeper's pwsh was checked and killed by
+  PID at 04:32:59Z. The launcher exited within 3 seconds with `LastTaskResult` 0xFFFFFFFF, and
+  the task went to Ready. Three minutes later it was still Ready, though RestartCount 3 and
+  RestartInterval PT1M read back as registered.
+  - **In this run Task Scheduler did not restart an action that exited non-zero.** Its
+    restart-on-failure most likely covers only a task that fails to start, so a crashed keeper
+    SHOULD be taken to stay down until the next logon. This was seen once, and the laptop's
+    TaskScheduler/Operational log is disabled, so it holds no events to say more.
+  - **The holder outlived its keeper**, since it was started through `Win32_Process.Create`. It
+    kept the ports, unsupervised.
+  - **The task was started by hand** (`Start-ScheduledTask`, definition unchanged) at 04:36:13Z,
+    with the architect's approval. The new keeper's first pass, at 04:36:14Z, logged `kept ...
+    pid=<the recorded holder>`. It adopted the holder, with no new holder and no new login.
+  - **The fix to weigh:** a restart that does not rely on the action failing to start, such as a
+    launcher that restarts the keeper, or a repeating trigger with `MultipleInstances IgnoreNew`.
 
 ### D31. Each story's card names every subagent, run in parallel where reasonable
 
