@@ -72,6 +72,16 @@ libc and the toolchain: Alpine was ruled out for this box because workerd and Pl
 on musl, not because it was Alpine. A distro field would also invite arch × distro × version
 combinations that nobody tests.
 
+**Windows hosts are in scope (Terry, 2026-11-18):** "if we need a windows EC2 instance as part of
+the agentspace fleet, that's in scope. Whole point is to be a multi-platform agent
+compute-on-demand service."
+- **A spec or design MUST NOT assume a host is Linux,** except where it describes today's EC2 box
+  as it is. The platform stays a parameter of the contract, and `windows/amd64` (and later
+  `windows/arm64`) are platforms like any other: unsatisfiable until a driver supports them (D5).
+- **Where a Windows host lands on the roadmap is Terry's call.** Until he places it, it stays the
+  roadmap's "Someday, maybe" entry, which already names the work: a lease model that assumes a
+  Linux user and an SSH certificate, and a host agent of its own.
+
 ### D5. An unmet request is unsatisfiable, never quietly downgraded
 
 **Decided.** A request no backend can meet MUST end in `unsatisfiable` with a reason. Placement
