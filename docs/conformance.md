@@ -286,9 +286,9 @@ already keeps each case's state in a throwaway folder.
 | `test-lease-renew-release.ps1` | Prototype code | It dot-sources the credential and alias scripts | The same as the line above |
 | `test-lease-alias.ps1` | Prototype code | It dot-sources the alias script and calls five functions | A throwaway subfolder inside the real `%USERPROFILE%\.agentspace` |
 | `test-lease-driver.ps1` | Prototype code | It dot-sources the driver, reads its source text and a variable | The real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed) |
-| `test-schemas.ps1` | Neither | No program is driven and no prototype code is loaded | None |
+| `test-schemas.ps1` | Neither; moved to `conformance/schemas/test-schemas.ps1` (E0.04-T03-S02) | No program is driven and no prototype code is loaded | None |
 | `test-push-localswim.ps1` | Prototype code | It extracts five functions from the operator's syntax tree and sets its variables; its process checks run a copied operator and an edited `ssh-proxy.cmd` beside a stand-in operator | None (everything is under `%TEMP%`) |
-| `test-board-holder.ps1`, with `test-board-holder-stub.cmd` | Conformance in method, not yet movable, except three installer cases that are prototype code | It names its keeper by a path parameter, and one case reads the real scheduled task | The real keeper task (read only, one case) |
+| `test-board-holder.ps1`, with `test-board-holder-stub.cmd` | Its 41 process cases are rewritten and moved to `conformance/keeper/test-keeper.ps1`, with a stub of its own (E0.04-T03-S02); its three installer cases stay here as prototype code | It named its keeper by a path parameter, and one installer case reads the real scheduled task | The real keeper task (read only, one installer case, which stays in `scripts/`) |
 | `check-forward-release.ps1` | Neither | A live check of the box, not a suite | The real box, through a ready lease's alias |
 
 **Five suites write lease folders under the real `%USERPROFILE%\.agentspace\leases` and sign each
@@ -428,6 +428,11 @@ or `schemas\` at most, which are spec artifacts and allowed.
 
 ### The operator and the token push
 
+**The push's checks stay prototype code until a build meets the seam that
+[docs/operator.md](operator.md) specifies** (E0.04-T03-S02): the environment variables that name
+the `aws` and `ssh` programs the operator runs, which a check needs to stand in for them. Until a
+build meets it, no stub can sit in front of the push, and nothing below moves.
+
 #### `scripts/test-push-localswim.ps1` (about 460 lines): prototype code
 
 - **Runs under** Windows PowerShell 5.1 only.
@@ -457,55 +462,123 @@ or `schemas\` at most, which are spec artifacts and allowed.
 
 ### The keeper suite
 
-#### `scripts/test-board-holder.ps1` (about 1,200 lines), with `scripts/test-board-holder-stub.cmd`: conformance in method, not yet movable
+#### `conformance/keeper/test-keeper.ps1`, with its own `conformance/keeper/ssh-stub.cmd`: conformance
 
-- **Drives:** The keeper as a separate process: `pwsh -NoProfile -File <keeper> -SshExe <stub>
-  [-Now t]`, and in `-Watch` mode with `-IntervalSeconds`, `-MaxPasses`, `-BackoffBaseSeconds`,
-  `-BackoffMaxSeconds`, `-FastFailureSeconds` and `-ReleaseGraceSeconds`. **It already names the
-  program under test**, through a `-Keeper <path>` parameter that defaults to the prototype's
-  keeper. It also has `-SelfCheck` (each case rerun with a broken fixture is expected to fail) and
-  `-Case <wildcard>`.
-- **Loads:** Nothing from the prototype in 43 of its 44 cases. One case dot-sources a function
-  out of the installer's syntax tree.
-- **Stubs:** `test-board-holder-stub.cmd` stands in for `ssh.exe`, a program outside agentspace.
-  The suite copies it into the run's folder and injects it through the keeper's `-SshExe`
-  parameter, not through `PATH`. Two more stubs are written into each case's folder. For one case
-  it puts a sentinel in a variable that is the harness's, not a documented one, to prove no secret
-  reaches the log.
-- **Folders:** Each case has its own throwaway state folder under `%TEMP%`, named by
-  `AGENTSPACE_STATE_DIR`, with a hand-written `leases.json` and `board-holder.json`. It never
-  uses the real `%USERPROFILE%\.agentspace`, `~/.ssh` or `ssh.exe`, and it kills only processes
-  whose command line names its own copy of the stub, and their children. **The one exception:**
-  the installer dry-run case reads Terry's real scheduled task, read only, before and after,
-  to prove the dry run changed nothing. A conformance copy MUST drop that read.
+**E0.04-T03-S02 rewrote the 41 process cases of `scripts/test-board-holder.ps1` as this check, and
+added one.** The original stays in `scripts/` with its three installer cases, which are prototype
+code ([below](#the-three-installer-cases-prototype-code)).
+
+- **Drives:** The keeper as a separate process, only through the program that
+  `AGENTSPACE_KEEPER_CMD` names, run with the keeper's own arguments unchanged
+  ([docs/keeper.md](keeper.md#command-line)): `<program> -SshExe <stub> [-Now t]`, and in `-Watch`
+  mode with `-IntervalSeconds`, `-MaxPasses`, `-BackoffBaseSeconds`, `-BackoffMaxSeconds`,
+  `-FastFailureSeconds` and `-ReleaseGraceSeconds`. When the variable is unset or empty, the
+  default is the shim `conformance/prototype/keeper.cmd`, found by
+  `conformance/prototype/process-defaults.ps1`; no case names the prototype's script. A check that
+  names a program that is not a file fails.
+- **Options:** `-Case <wildcard>` runs only the cases whose name matches. `-SelfCheck` runs each
+  case again with a broken fixture, and a case that still passes is reported `CANNOT-FAIL`.
+- **Cases:** 42, each named by the section of [docs/keeper.md](keeper.md) or
+  [docs/state.md](state.md) that it enforces, which starts every result line
+  (`PASS keeper.md#locks: Lock busy: The pass exits 0`):
+  21 one-pass cases, 20 `-Watch` cases, and the new case that validates the files a run writes
+  against `schemas/state/` ([docs/state.md](state.md#open-questions), Q13).
+- **Output:** One `PASS`, `FAIL` or `SKIPPED` line per check, a summary line, and exit 0 when every
+  check passed, 1 when any failed, and 2 when none failed but any was skipped. A `FAIL` line says
+  what did not hold, and ends with the last lines of `board-holder.log` when the check gives no
+  reason of its own. A skip is for a case whose setup cannot be made (the one case that sets an
+  access control list on a stub), and a run with a skip is incomplete, never passed.
+- **Loads:** Nothing from the prototype. No case reads, dot-sources or calls the keeper's code, and
+  none calls the hidden `-Launch` ([docs/keeper.md](keeper.md#checking-the-keeper)).
+- **Stubs:** `conformance/keeper/ssh-stub.cmd` stands in for `ssh.exe`, a program outside
+  agentspace. The suite copies it into the run's folder and injects it through the keeper's
+  `-SshExe` argument, not through `PATH`. Two more stubs are written into each case's folder. For
+  one case it puts a sentinel in a variable that is the harness's, not a documented one, to prove no
+  secret reaches the log.
+- **Folders and variables:** Each case has its own throwaway folder under `%TEMP%`, with a state
+  folder (`AGENTSPACE_STATE_DIR`) holding a hand-written `leases.json` and `board-holder.json`, and
+  a home folder (`USERPROFILE`). `AGENTSPACE_SSH_DIR` points into the home, and the AWS variables
+  name nothing real. It never uses the real `%USERPROFILE%\.agentspace`, `~/.ssh`, `ssh.exe` or
+  keeper task, and the three installer cases, with the one read of the real task, are not in it.
+- **Processes:** A keeper a case starts is stopped by the PID of the process the case started, and
+  that process's own children, never by a search for a command line. A case that kills a keeper
+  spares its holder, which MUST outlive it ([docs/keeper.md](keeper.md#what-the-keeper-does)). The
+  run's cleanup stops only processes whose command line holds the run's own unique folder, and
+  its last check is that none is left.
 - **Windows-only harness features:** Reading the process tree through CIM, a process access
-  control list set to deny termination, and a held `board-holder.lock`.
-- **Why it cannot move yet:** It cites files and flags that [docs/keeper.md](keeper.md) and
-  [docs/state.md](state.md) document, so it is conformance only once they do. If `-FastFailureSeconds`
-  is a "test-only" flag that `keeper.md` leaves unspecified, the suite cannot run against a rewrite
-  (see [Open questions](#open-questions)).
+  control list set to deny termination, a held `board-holder.lock`, and a watcher that keeps a
+  copy of the launch files, which live only while a holder is started.
+
+**What replaced each fixed sleep (#0066).** Every case waits on what it checks for, with a deadline
+that a loaded laptop can meet, and a wait on a process ends early when that process has exited. The
+three fixed sleeps that reading found are gone:
+
+| The prototype's sleep | The wait that replaces it |
+|---|---|
+| 5 seconds, so that two tries fall inside the hold of a log (case: a log that cannot be written) | A wait, up to 60 seconds, for the stub's count of starts to reach 2: the second try is the proof the loop went on, and the log is released when it is seen |
+| 3 seconds after the first `grace seconds=` line, to show that no second holder starts early (case: the 95-second default) | A wait of up to 3 seconds for a second start, which the case expects not to happen. **This is the one deadline a case expects to reach**: a negative has no other thing to wait on, and a keeper that started a holder early ends the wait at once and fails |
+| 2 seconds after the stop, before the second lease becomes ready (case: the holder after a stop) | A wait, up to 60 seconds, for the keeper's `grace seconds=` line, which it writes when it begins the wait after the stop |
+
+**Two more bounds were tightened for the same reason**: the second keeper in the "exits at once"
+case now runs 60-second intervals and is waited on for up to 90 seconds, so that a keeper that
+took no lock fails by running on, never by a stopwatch under 10 seconds; and the "first holder is
+not delayed" case uses a grace of 3600 seconds and a deadline, instead of a 40-second stopwatch.
+
+**The cases follow [docs/keeper.md](keeper.md) and [docs/state.md](state.md) alone.** Against the
+prototype they found no disagreement with either. The requirement they do not cover is #0068,
+which has no case yet ([The gaps](#the-gaps)).
+
+**Not yet shown:** #0066's done-when, that the cases pass 5 times in a row beside two other
+copies of the suite and a live keeper, was not run by this story. What was run, on 2026-11-18: the
+full suite against the prototype (206 checks passed, 0 failed, 0 skipped, in 7 minutes 2
+seconds); the full suite against a keeper that prints nothing and exits 0 (every one of the 42
+cases failed at least one check, in 7 minutes 19 seconds); and `-SelfCheck` in two groups (every
+case failed on its broken fixture, in about 7 minutes 22 seconds each).
 
 | Cases | Count | Class | Notes |
 |---|---|---|---|
-| Idle; Start; Keep; Stop on release; Stop on expiry; Stop at the expiry second; Stop when the lease is gone; Stop leaves a foreign process alone; Dead PID; Reused PID (ready, released); Command line differs; Foreign process (released, ready); Last expiry; Unreadable lease state (with and without a holder); A holder that cannot be opened is kept; Lock busy; Bad `-Now`; Rotation of `board-holder-ssh.log` | 21 | Conformance in method | They read and write `leases.json`, `board-holder.json`, `board-holder.log`, `board-holder-ssh.log` and `board-holder.lock`. Each MUST be documented in `keeper.md` or `state.md` |
-| Watch: the backoff doubles and is capped; it resets after a long-lived holder; a holder that dies unproven backs off; a log that cannot be written does not end the loop; `-MaxPasses` ends the loop; passes are spaced; a locked pass is skipped; the log holds no secret; the next holder waits the release grace; a first holder is not delayed; a backoff longer than the grace is still waited; the holder after one the keeper stopped waits the grace; the grace is 95 seconds by default; `-ReleaseGraceSeconds <bad>` is a usage error (4 values); a second keeper exits at once; a new keeper starts once the first is killed and adopts its holder; a one-pass run is unaffected by a running keeper | 20 | Conformance in method | They depend on the flags above and on the `grace seconds=` and `another keeper is running pid=<n>` log lines. The kill case ("a new keeper starts once the first is killed") finds the first keeper by a command line that holds the script's path and `-Watch`, and MUST find the process the conformance variable started instead |
-| Installer: `-DryRun` prints the logon task and changes nothing (about 28 checks: task name, two triggers, repetition, run level, battery, restart count, the working directory, the action, the arguments) | 1 case | Prototype code (packaging) | The expected values are the prototype's packaging (a launcher program, the repository root as working directory). It stays in `scripts/`. A rewrite installs its keeper its own way |
+| Idle; Start; Keep; Stop on release; Stop on expiry; Stop at the expiry second; Stop when the lease is gone; Stop leaves a foreign process alone; Dead PID; Reused PID (ready, released); Command line differs; Foreign process (released, ready); Last expiry; Unreadable lease state (with and without a holder); A holder that cannot be opened is kept; Lock busy; Bad `-Now`; Rotation of `board-holder-ssh.log` | 21 | Conformance | They read and write `leases.json`, `board-holder.json`, `board-holder.log`, `board-holder-ssh.log` and `board-holder.lock`, each documented in `keeper.md` or `state.md`. Two of them (Reused PID released, Command line differs) gained a check that the untrusted record is removed and one idle line is logged, because they passed against a keeper that does nothing |
+| Watch: the backoff doubles and is capped; it resets after a long-lived holder; a holder that dies unproven backs off; a log that cannot be written does not end the loop; `-MaxPasses` ends the loop; passes are spaced; a locked pass is skipped; the log holds no secret; the next holder waits the release grace; a first holder is not delayed; a backoff longer than the grace is still waited; the holder after one the keeper stopped waits the grace; the grace is 95 seconds by default; `-ReleaseGraceSeconds <bad>` is a usage error (4 values); a second keeper exits at once; a new keeper starts once the first is killed and adopts its holder; a one-pass run is unaffected by a running keeper | 20 | Conformance | They depend on the flags above and on the `grace seconds=` and `another keeper is running pid=<n>` log lines. The kill case kills the process the suite started, by PID, and spares the holder |
+| The files a keeper run writes match `schemas/state/`: the holder record, the launch request and the launch result against their schemas; the files' bytes; the claim's content; the launch files removed at the pass's end | 1 (new) | Conformance | Answers [docs/state.md](state.md#open-questions)'s Q13. The launch files live only while a holder is started, so a watcher inside the case keeps a copy of each as it appears, and a pass it missed is run again |
+
+#### The three installer cases: prototype code
+
+**These stay in `scripts/test-board-holder.ps1`, whole and untouched, as prototype code.** The
+rewrite MUST NOT read them. They are the three cases that load or test the prototype's packaging:
+
+| Case | Count | Class | Notes |
+|---|---|---|---|
+| Installer: `-DryRun` prints the logon task and changes nothing (about 28 checks: task name, two triggers, repetition, run level, battery, restart count, the working directory, the action, the arguments) | 1 case | Prototype code (packaging) | The expected values are the prototype's packaging (a launcher program, the repository root as working directory). It also reads Terry's real scheduled task, read only, before and after, which no conformance check does. A rewrite installs its keeper its own way |
 | Installer: a running keeper is found by its command line | 1 case, 5 checks | Prototype code | It loads a prototype function from the installer's syntax tree |
 | Installer: `-DryRun` warns from a worktree | 1 case, 2 checks | Prototype code | It tests the prototype's install location, not the keeper |
 
+**The 41 process cases are also still in `scripts/test-board-holder.ps1`**, because a story MUST
+NOT edit that file and the suites left in `scripts/` MUST keep passing until the rewrite replaces
+them. The dev lead decides whether to remove them there once the move is merged, so that each case
+has one home.
+
 ### The schemas check
 
-#### `scripts/test-schemas.ps1` (about 110 lines): neither kind
+#### `conformance/schemas/test-schemas.ps1` (moved from `scripts/test-schemas.ps1` by E0.04-T03-S02): neither kind
 
 - **Does:** Runs `Test-Json` in-process on the JSON schemas and their samples: every sample
   validates, every invalid sample is rejected, the list schema's `$defs` equal the lease schema's,
   the TTL grammar is accepted and refused through the two input schemas, and a sample's host alias
   is `agentspace-<project>-<first 8 hex>`.
 - **Loads:** No product code. It reads `schemas\`, `schemas\samples\` and nothing else.
-- **Class:** Neither. It drives no program, so there is no variable, and it is not prototype code,
-  so the rewrite MAY read it once it is moved to `conformance/`. It moves as it is, with nothing
-  to rewrite. **It checks the package itself, so it cannot be pointed at another build, and the
-  "program that prints nothing" test does not apply to it.**
+- **Class:** Neither, and now conformance in the one sense that it has no program to name: it is in
+  `conformance/`, so the rewrite MAY read it. It drives no program, so there is no variable. **It
+  checks the package itself, so it cannot be pointed at another build, and the "program that prints
+  nothing" test does not apply to it.**
+- **What moving it changed:** The repository root is two folders up, not one. Its output is the
+  suite's result lines and its exit code is the suite's ([The keeper suite](#the-keeper-suite),
+  "Output"). Nothing else changed: it checks the same 289 things as before, and it still scans the
+  top level of `schemas/` only. **The three keeper schemas in `schemas/state/` are checked by the
+  keeper suite's case against the files a run writes, not by this check**
+  ([docs/state.md](state.md#open-questions), Q13).
+- **The copy in `scripts/test-schemas.ps1` is the same check**, left in place because a story MUST
+  NOT edit a `scripts/test-*.ps1`. The dev lead decides whether to remove it once the move is
+  merged, so that the check has one home.
 
 ### The live-box check
 
@@ -563,6 +636,7 @@ land with this page's turn, so a link to one resolves once they merge.
 | `-Alias` refusals, and `ssh-proxy.cmd`'s argument refusals | [docs/operator.md](operator.md): Command line, The ProxyCommand |
 | The keeper's cases (one pass) | [docs/keeper.md](keeper.md): Log lines, Locks, Starting a holder; state.md: The keeper's files |
 | The keeper's `-Watch` cases | keeper.md: Log lines, Locks, Starting a holder |
+| The keeper's files against `schemas/state/` | [docs/state.md](state.md): The keeper's files (the holder record, a holder's launch files), and its Q13; keeper.md: The handshake |
 
 ## The gaps
 
@@ -583,7 +657,13 @@ land with this page's turn, so a link to one resolves once they merge.
 | lease-api.md: The program | Arguments reach the program unchanged from Git Bash, and an argument such as `-:x` (#0083), have no check. **A line feed inside an argument has none either**: the prototype's `bin\agentspace.cmd` cuts the argument at it, so a project value `a<LF>b` is read as `a` and the create succeeds, where the spec requires `invalid_value`. A check of it would fail against the prototype, so the suite leaves it out until the rewrite |
 | lease-api.md: The credential, no CA | `create` MUST fail with `internal` and make no CA when none exists (#0029 point 3). **The prototype's `create` makes one**, so a check of the rule would fail against it, and the suite leaves it out until the rewrite ([docs/state.md](state.md#its-checks)). What is checked: an unsatisfiable `create` with no CA answers and makes none |
 | driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable |
-| keeper.md: The installed task | The installer dry run is the prototype's packaging, and no conformance check covers an installed task |
+| keeper.md: The installed task | The installer dry run is the prototype's packaging, and no conformance check covers an installed task. The three installer cases stay in `scripts/` as prototype code |
+| keeper.md: Release grace, card #0068 | **No case yet.** The rule (a tracked holder that exits between the look and the pass's trust check gets the grace, with no start in that pass) needs a stub holder to exit inside that window, and keeper.md's Q9 only suggests how (hold `board-holder.lock` from the check while it stops the stub). The prototype does not meet the rule, so the case would fail against it, and this story's cases all pass against the prototype |
+| keeper.md: Checking the keeper, card #0066 | The 5 passes in a row beside two other copies of the suite are not shown. The waits are conditions with deadlines, but no run of this story was made under that load |
+| keeper.md: The task's launcher; Stopping and starting the keeper | Nothing runs the launcher, the install, or the End and restart steps: they need the real Task Scheduler |
+| keeper.md: Starting a holder | The refusals of "Before the start" (a state folder or a keeper path holding a `"`, an alias outside the form), the create retries and the 35-second, 60-second and 95-second bounds have no case. The first needs a path that holds a `"`, which Windows refuses, and an alias outside the form, which the lease state's schema refuses; the rest need a launcher that does not answer |
+| keeper.md: Locks | The `board-holder-keeper.lock` error path (any error other than the file being held) and the `board-holder.lock` error that is not "in use" have no case |
+| state.md: The keeper's files | The share modes and the access rules of the keeper's files, and the temporary files of a killed pass, have no case; the new case checks the JSON files' schemas, bytes and the launch files' removal only |
 | The live-box check | `check-forward-release.ps1` is the only check of the box's sshd, and the conformance suite does not run it |
 
 ## The remaining work
@@ -607,10 +687,16 @@ conformance suite adds to them, and does not retire one.
 **What reading the suites and the specs could not settle.** The clean-room review (#0080,
 v0.04-T04) closes them, or names the card that will.
 
-1. **Is `-FastFailureSeconds`, and any other flag the keeper suite uses, specified?** The flag's
-   card calls it a "test-only name". If [docs/keeper.md](keeper.md) does not document it, the
-   keeper suite cannot run against a rewrite, and the suite would need another way to make the
-   backoff observable.
+1. **Closed (E0.04-T03-S02): `-FastFailureSeconds`, and every other flag the keeper suite uses,
+   is specified.** [docs/keeper.md](keeper.md#command-line) lists it in its argument table, with
+   its range (1 to 86400), its default (60) and its meaning, as hidden and for checks only, and
+   its "Checking the keeper" section names it among the arguments a check uses. Its sentence "A
+   conformance check MUST NOT call the hidden `-Launch`" binds the suite as well: no case does.
+   Every other flag the suite passes (`-SshExe`, `-Now`, `-Watch`, `-IntervalSeconds`,
+   `-MaxPasses`, `-BackoffBaseSeconds`, `-BackoffMaxSeconds`, `-ReleaseGraceSeconds`) is in the
+   same table. **A rewrite's keeper MUST therefore accept `-FastFailureSeconds`, though it is not
+   in the usage text.** What stays open is keeper.md's own Q3, the name of the rewrite's entry
+   point, which the variable already hides from the suite.
 2. **Does Windows PowerShell 5.1 pass non-ASCII arguments intact?** The refusal checks for U+212A
    (the Kelvin sign) and U+0130 depend on it, and only a run on Windows shows it.
 3. **Does a throwaway `USERPROFILE` make `create` work?** **Settled by E0.04-T03-S01 (#0084): yes,
@@ -622,9 +708,18 @@ v0.04-T04) closes them, or names the card that will.
    `.instance-id`, which [lease-api.md](lease-api.md#environment) and
    [state.md](state.md#the-alias-file) do not say. That is a requirement the specs leave out, and it
    is open for the clean-room review.
-4. **Does the keeper suite's "second keeper" match belong to the keeper's spec?** Finding the
-   first keeper by its command line is how the suite works today. A rewrite names its own
-   process, so the match has to be replaced, and the suite needs the process its variable started.
+4. **Closed (E0.04-T03-S02): the "second keeper" match is gone, and the spec needs none.** The
+   suite no longer finds a keeper by its command line. It keeps the process that
+   `AGENTSPACE_KEEPER_CMD` started, and stops that process and its own children by PID, so a
+   wrapper program and a rewrite that is one binary are stopped the same way. A holder is found by
+   the stub's command line, which [docs/keeper.md](keeper.md#checking-the-keeper) says is how a
+   check finds it, and the holder's command is
+   [docs/keeper.md](keeper.md#the-holder-command)'s. The "another keeper is running" check accepts
+   the PID of the process the suite started, or one of its descendants, or `-`, and reads
+   `board-holder-keeper.lock` for the same PID ([docs/state.md](state.md#the-keepers-lock-files)).
+   A rewrite that starts its holder as its own child is also stopped correctly: when a case kills
+   a keeper, the suite spares every process whose command line is the holder's, so the holder
+   outlives the kill as [docs/keeper.md](keeper.md#what-the-keeper-does) requires.
 5. **MAY the live-box check become a conformance check?** It loads no prototype code but needs a
    real box and a ready lease. Whether it moves, runs by hand, or is dropped is not settled.
 6. **Where does a check that needs the clock (the expiry second) get one?** The state file's
