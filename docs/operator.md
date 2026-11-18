@@ -463,10 +463,11 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
 4. **Prints `Copying the agentspace SSH CA's public key (<fp>) to the instance...`** and copies
    the CA's public key into the staging folder as `agentspace_ca.pub`. A failure fails with
    `agentspace: Copying the CA's public key to the instance failed.`
-5. **Runs the install as root on the box and then removes the staging folder** (today `sudo bash
-   /tmp/agentspace-system/install.sh && rm -rf /tmp/agentspace-system`), with its output passed
-   through. A non-zero exit fails with `agentspace: Install on the instance failed.` What the
-   install does is in [What sync installs](#what-sync-installs).
+5. **Runs the staged install as root on the box, and removes the staging folder only if the
+   install succeeds**, with its output passed through (on today's box the install is the staged
+   `install.sh`, run through `sudo`). A non-zero exit fails with `agentspace: Install on the
+   instance failed.`, and leaves the staging folder on the box. What the install does is in
+   [What sync installs](#what-sync-installs).
 6. **If `%USERPROFILE%\.claude\CLAUDE.md` exists**, prints `Copying ~/.claude/CLAUDE.md to the
    instance...`, makes sure the login user's `~/.claude` exists on the box (unchecked by the
    prototype; a failure shows as the copy's), and copies the file to
@@ -689,9 +690,11 @@ operator grow [-GiB <n>] [-Quiet]
    ([AWS failures](#aws-failures)), which is what happens for a second change within 6 hours, or
    for an `<n>` of 0 or less.
 3. **When the instance is running**, prints `Growing the filesystem online...`, waits 10 seconds,
-   and over `agentspace` grows the root partition and its filesystem and shows the disk (today's
-   box: `sudo growpart /dev/nvme0n1 1; sudo resize2fs /dev/nvme0n1p1 && df -h /`), with the output
-   passed through. The prototype does not check that command's exit code, so `grow` exits 0 even
+   and over `agentspace`, as root, grows the root partition to fill the volume, then grows its
+   filesystem, and only if that succeeds shows the root filesystem's size and use, with the output
+   passed through. On today's box the root disk is the first NVMe device and the root filesystem
+   is ext4 on its first partition. A failure to grow the partition does not stop the filesystem
+   step. The prototype does not check that command's exit code, so `grow` exits 0 even
    when the filesystem did not grow ([Q23](#open-questions)).
 4. **Otherwise** prints `The filesystem grows on its own at next boot.` and does not start the
    box.
@@ -957,13 +960,15 @@ When the push is due, the laptop:
 
    - `<alias>` is `up`'s `-Alias`, or `agentspace` for `sync`.
    - `BatchMode=yes` makes an alias that needs a prompt, such as an unknown host, fail at once.
-   - **`<remote command>` MUST reach ssh as one argument, its last**: the box's half of the
-     protocol ([Today's remote command](#todays-remote-command)), which ssh hands to the login
-     user's shell on the box. It names the zone when one is sent, and never the token. On Windows,
-     where a program receives one command-line string, the operator MUST quote it so that the C
-     runtime's argument rules give it back to ssh as one argument. The prototype wraps it in one
-     pair of double quotes, which is enough because the command holds no double quote and does not
-     end in a backslash.
+   - **`<remote command>` MUST reach ssh as one argument, its last**: a command that makes the
+     login user's shell on the box carry out the box's half of the protocol
+     ([What the box does](#what-the-box-does)). The operator writes its own command; this page
+     specifies what it MUST do, never its text (D34). It names the zone when one is sent, and
+     MUST NOT carry the token.
+   - **On Windows, where a program receives one command-line string, the operator MUST quote the
+     command so that the C runtime's argument rules give it back to ssh as one argument.** A
+     command that holds no double quote and does not end in a backslash MAY simply be wrapped in
+     one pair of double quotes; any other MUST be quoted to those rules in full.
    - The ssh gets a pipe for its stdin and one for its stdout; its stderr is the operator's
      stderr, so it carries the nested `up`'s messages, `Ready: <id>` among them. Its environment is
      the operator's, as [Environment variables](#environment-variables) sets it.
@@ -993,18 +998,19 @@ shell command run by the login user's shell; on another platform it is that plat
 equivalent.
 
 1. **Read at most two lines from stdin, and stop reading after 30 seconds.** It MUST NOT wait for
-   the end of its input beyond those two lines. The box's 30 seconds are longer than the laptop's
-   20, so in a push the laptop's limit comes first; the box's bounds a read whose laptop end has
-   gone without closing the connection.
-2. **Normalize them:** remove every CR, remove a UTF-8 BOM at the start of the first line, and drop
-   every empty line. The two lines are taken before empty lines are dropped, so a blank line ahead
-   of them leaves one line, and the content is refused. The laptop MUST send nothing ahead of the
-   two lines but, at most, a BOM.
-3. **Write the result to a new temporary file in the credential file's folder**, creating the
-   folder if it does not exist. The temporary file and the credential file MUST be readable by the
-   login user alone from the moment they exist, and so MUST a folder the box creates (today: file
-   mode 0600, and a new folder 0700, made under `umask 077`). A folder that already exists is used
-   as it is, its mode unchanged.
+   the end of its input beyond those two lines. Whatever was read when the limit hit, if anything,
+   goes on to the next steps and is refused at step 4 unless it is complete. The box's 30 seconds
+   are longer than the laptop's 20, so in a push the laptop's limit comes first; the box's bounds a
+   read whose laptop end has gone without closing the connection.
+2. **Normalize them, in this order:** remove every CR, then remove a UTF-8 BOM (the bytes
+   `EF BB BF`) at the start of the first line only, then drop every line left empty. The two lines
+   are taken before empty lines are dropped, so a blank line ahead of them leaves one line, and the
+   content is refused. The laptop MUST send nothing ahead of the two lines but, at most, a BOM.
+3. **Write the result to a new temporary file, with a name no other run uses, in the credential
+   file's folder**, each line ending in LF, creating the folder if it does not exist. The temporary
+   file and the credential file MUST be readable by the login user alone from the moment they
+   exist, and so MUST a folder the box creates (today: file mode 0600, and a new folder 0700). A
+   folder that already exists is used as it is, its mode unchanged.
 4. **Accept it only if it has exactly two lines, one starting `LOCALSWIM_URL=` and one starting
    `LOCALSWIM_TOKEN=`, each followed by at least one character.** Today's box checks the count and
    that each prefix is present, not their order.
@@ -1012,14 +1018,17 @@ equivalent.
    is `~/.config/localswim/bot.env` on today's box.
 6. **Print the SHA-256 of the installed credential file's bytes** on a line of its own: 64
    lowercase hex digits, then whitespace (today `sha256sum`'s `<hash>  -`).
-7. **If a zone was given, and only after step 6:** set the system time zone to it, never
-   prompting, and giving up within about 6 seconds (today `timeout -k 1 5 sudo -n timedatectl
-   set-timezone <zone>`, with its input and output on `/dev/null`). Then print one more line,
-   `zone <zone>` if it succeeded or `zone-failed` if not, and exit 0 whatever the zone did. The
-   zone MUST be the system zone, never an exported `TZ` (D32). Today's box does not check the zone
-   itself; the laptop's check is the only one ([The time zone](#the-time-zone)), and a host MAY
-   check it again.
-8. **Without a zone,** exit 0 once the hash is printed.
+7. **If a zone was given, and only after step 6:** set the system time zone to it, with the
+   privilege that takes but never prompting for a password, with no input, printing nothing of its
+   own, and giving up after 5 seconds (a setter still running 1 second later is killed). Today's
+   box does it with systemd's `timedatectl`, through `sudo` with no password. Then print one more
+   line, `zone <zone>` if it succeeded or `zone-failed` if not, and exit 0 whatever the zone did.
+   The zone MUST be the system zone, never an exported `TZ` (D32). Today's box does not check the
+   zone itself; the laptop's check is the only one ([The time zone](#the-time-zone)), and a host
+   MAY check it again.
+8. **Without a zone,** exit 0 once the hash is printed. Whatever ends the run, the temporary file
+   from step 3 MUST NOT be left behind: the rename in step 5 consumes it, and every other exit
+   removes it.
 
 **On any failure before step 6**, the box MUST remove the temporary file, leave the old credential
 file as it was, and exit non-zero (1 today). If step 6 itself fails, the new credential file stays
@@ -1091,28 +1100,6 @@ skips; from the command line it cannot happen.
 - **A check that stubs ssh MUST point `LOCALAPPDATA` at a fake receipt and credential**, so that a
   stub never receives the real token on its stdin. The operator finds the receipt only through
   `LOCALAPPDATA` ([What the laptop reads](#what-the-laptop-reads); [Q11](#open-questions)).
-
-### Today's remote command
-
-**The remote command the prototype sends**, shown here because it is the box's half as a protocol
-message: it is ssh's last argument, which can be seen in the laptop's process list. With a zone,
-`<then>` is:
-
-```
-then sha256sum < $d/bot.env || exit 1; if timeout -k 1 5 sudo -n timedatectl set-timezone <zone> </dev/null >/dev/null 2>&1; then echo zone <zone>; else echo zone-failed; fi; exit 0; 
-```
-
-and without one, `<then>` is `then sha256sum < $d/bot.env; `, whose exit code is then
-`sha256sum`'s. Each form of `<then>` ends in a space. The whole command, on one line, is:
-
-```
-umask 077; d=$HOME/.config/localswim; mkdir -p $d && t=$(mktemp $d/bot.env.XXXXXX) || exit 1; trap 'rm -f $t' EXIT; timeout 30 head -n 2 | tr -d '\r' | sed '1s/^\xEF\xBB\xBF//; /^$/d' > $t; if test $(wc -l < $t) -eq 2 && grep -q '^LOCALSWIM_URL=.' $t && grep -q '^LOCALSWIM_TOKEN=.' $t && mv -f $t $d/bot.env; <then>else rm -f $t; exit 1; fi
-```
-
-**It holds no double quote**, so it can be wrapped in one pair of double quotes as one argument on
-a Windows command line. It assumes today's box: a POSIX shell, GNU coreutils, `sudo` and
-`timedatectl`. The rewrite MAY send a different command, as long as the box's behavior and answer
-are the ones above.
 
 ## The box as the laptop sees it
 
@@ -1205,9 +1192,10 @@ SSH is what it is getting ready:
 
   On today's box the marker of a finished run is `/run/agentspace/patched`, the patch run is the
   unit `agentspace-patch.service`, enabled when set up, and the question is sent as the document
-  `AWS-RunShellScript`, which runs as root. Today's command is `test -f /run/agentspace/patched && echo patched || (systemctl is-enabled
-  --quiet agentspace-patch.service && echo pending || echo unknown)`. It holds no comma, bracket or
-  equals sign, which the AWS CLI's shorthand syntax would split on.
+  `AWS-RunShellScript`, which runs as root. The command answers `patched` when the marker
+  exists; otherwise `pending` when the unit is enabled, and `unknown` when it is not. The command
+  sent MUST hold no comma, bracket or equals sign, which the AWS CLI's shorthand syntax for
+  `--parameters` would split on, or MUST be passed in a form that is not split.
 - **How the answer is read.** `up` polls the command's invocation once a second, for up to 20
   seconds. While its status is `Pending`, `InProgress` or `Delayed`, or the invocation cannot be
   read yet, it polls again. Any other status ends the poll, and the answer is the invocation's
@@ -1352,7 +1340,7 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q22** | **SHOULD `-GiB` be checked before AWS is asked?** The prototype passes any integer through, and AWS refuses 0 and below. | The architect |
 | **Q23** | **SHOULD `grow` fail when the online filesystem step fails?** The prototype ignores that step's exit code. | The architect |
 | **Q24** | **What exactly does the prototype print when the stack has no `InstanceId` output?** It writes an empty cache, and this page requires otherwise ([Laptop files](#laptop-files)). | A run on the laptop |
-| **Q25** | **What does a failed `rm -rf` of the box's staging folder lead to in `sync`?** The prototype does not check it. A leftover folder would make the recursive copy nest `system` inside it, and the install would then fail; that the failure message then names the install rather than the copy is unverified. | A run on the laptop |
+| **Q25** | **What does a failed removal of the box's staging folder lead to in `sync`?** The prototype does not check it. A leftover folder would make the recursive copy nest `system` inside it, and the install would then fail; that the failure message then names the install rather than the copy is unverified. | A run on the laptop |
 | **Q26** | **Does the sign-in test catch every form of the AWS CLI's expired-login error?** The prototype matches `expired`, `aws login` or `Unable to locate credentials`. The exact text of the CLI's error after an `aws login` session expires was not recorded with #0034. | A run on the laptop with an expired sign-in |
 | **Q27** | **SHOULD the stamp stay an unsalted hash that covers the token?** It is kept on the laptop, and anyone who can read it can test a guessed token against it. A keyed digest would hide that, but the stamp MUST still change whenever the instance, the zone, the URL or the token does. Its storage is docs/state.md's. | The architect; docs/state.md |
 | **Q28** | **Where is the format of localswim's receipt and `bot.xml` specified, so the rewrite can read the token without PowerShell?** This page says what the prototype relies on ([What the laptop reads](#what-the-laptop-reads)), but the formats are localswim's. | localswim's docs; the architect |
