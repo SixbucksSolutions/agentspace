@@ -2225,13 +2225,16 @@ lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D3
   turn's agents launch, a measurer MUST confirm that the session shows as a session row.
 - **A turn is one session, and its `cwd` moves:** a dev lead entering each story's worktree moves
   its row's `cwd` with it. A row is identified by its session id, never by its folder.
-- **The host-versus-sessions check tripped by its letter, and was then measured.** The host ran
-  19.69 CPU-seconds above the session, the sampler and the idle baseline, 210% of the session's
-  tools CPU. Read per process from `/proc`, the observer's own 1-second poll loop took about 6.9
-  and the desktop app's connection (two SSM session workers, its bridge and four `sshd`
-  processes) 6.0 to 6.8, leaving 2.0 to 5.1 with the logins and the kernel. No orphan was seen.
-  The baseline had neither the connection nor the observer in it, which is why the check could
-  not tell them from orphaned work.
+- **The host-versus-sessions check tripped #0082's 10% line by its letter, and was then broken
+  down.** The host ran 19.69 CPU-seconds above the session, the sampler and the idle baseline,
+  210% of the session's tools CPU; the 0.25-core line was not crossed. The observer's own
+  1-second poll loop took about 7.5 (estimated), and the desktop app's connection (two SSM session
+  workers, its bridge and four `sshd` processes) 5.8 to 7.1 (measured from `/proc`). After the
+  measurers' logins and the kernel, 1.1 to 4.7 is left. No orphan was seen. The baseline had
+  neither the connection nor the observer in it, which is why the check could not tell them from
+  orphaned work. **#0082 was not pulled in** (architect, 2026-11-18, in a comment on #0082).
+- **A measurer's own polling is load.** A later observer SHOULD sleep to its next snapshot in one
+  call.
 - **A desktop-app session carries a connection overhead outside its row,** about 0.003 cores and
   up to 161 MiB RSS on this turn. v0.03-T03's table SHOULD give it a line of its own.
 - **CloudWatch's idle backstop (#0043) stopped the box at 5:26am** while it waited 3 hours for the
