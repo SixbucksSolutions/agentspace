@@ -14,8 +14,8 @@
 #   ~/.ssh is read.
 # - Every ready `create` gets AGENTSPACE_PROXY_COMMAND, through the harness's -Environment (the harness
 #   removes every AGENTSPACE_* variable the caller holds), except the one default-transport case, which
-#   removes it with a $null value and so needs the transport's own cache (docs/driver.md, "How it is
-#   reached").
+#   removes it with a $null value. That case seeds no instance-ID cache, and a conforming build needs
+#   none (D21; docs/driver.md, "How it is reached").
 # - Nothing connects anywhere.
 #
 # Run: pwsh -NoProfile -File conformance/lease-cli/test-lease-alias-file.ps1
@@ -271,38 +271,40 @@ try {
       $true
     }
 
-    # The default transport names the alias literally at the end, and never uses ssh's %n. It needs the
-    # transport's own instance-ID cache, which a worktree may lack. THIS IS A GAP, not a feature: the
-    # cache is a file in the program's own checkout, beside no throwaway home, so a check cannot make it
-    # and MUST NOT (driver.md, "How it is reached"; D21 moves it to laptop state, and then a check can
-    # seed it in the home). Until then, when `create` fails with a valid `internal` error under the
-    # default transport, the case reports SKIPPED, with a reason that says "may need", and the run is
-    # incomplete, never passed. Any other failure of that create is a FAIL. What a failed create MUST
-    # leave (no lease folder, no alias file and no record) is checked as PASS or FAIL either way.
+    # The default transport (state.md, "The alias file"; D8). With AGENTSPACE_PROXY_COMMAND removed, the
+    # program forms its own line, which this case checks only as far as D8 makes it visible from
+    # outside: the full path of a program that exists, in double quotes, then one space and the alias
+    # written literally (never ssh's %n), with the system folder's cmd.exe /d /c in front when, and only
+    # when, the program is a .cmd or .bat. Where the program sits is not checked.
+    # The case seeds no instance-ID cache, and a conforming build needs none: `create` MUST NOT depend
+    # on it (D21; driver.md, "How it is reached"). That MUST is asserted by
+    # test-unmet-default-transport-no-cache.ps1, because the prototype misses it in a checkout with no
+    # .instance-id of its own, such as a worktree. So when this create fails with a valid `internal`
+    # error, what it leaves is still checked, and the default line's result is SKIPPED, naming that
+    # file: the run is incomplete, never passed. Any other failure of the create is a FAIL.
     Reset-CcSshDir $lab
     $leasesDirD = Join-Path $lab.UserProfile '.agentspace\leases'
     $snapD = "$((Get-CcFileNames $leasesDirD) -join '|');$((Get-CcFileNames (Join-Path $lab.SshDir 'agentspace.d')) -join '|');$(Get-CcStateCanonical $lab)"
     $dflt = New-CcReadyLease -Lab $lab -Project 'cfg' -EnvVars @{ AGENTSPACE_PROXY_COMMAND = $null }
     $snapAfterD = "$((Get-CcFileNames $leasesDirD) -join '|');$((Get-CcFileNames (Join-Path $lab.SshDir 'agentspace.d')) -join '|');$(Get-CcStateCanonical $lab)"
+    $dName = "$aliasDoc`: The default ProxyCommand is the full path of a program that exists, then the alias written literally, through the system folder's cmd.exe /d /c when and only when the program is a .cmd or .bat"
     if (-not $dflt.Ok -and (Test-CcFailure $dflt.Run 1 'internal')) {
       Test-Cc "lease-api.md#concurrency-and-atomicity: A create that fails under the default transport leaves no lease folder, no alias file and no record" {
         if ($snapAfterD -cne $snapD) { return 'The lease folders, the alias folder or the state file changed.' }
         $true
       }
-      Write-ConformanceResult -Name "$aliasDoc`: The default ProxyCommand ends with the literal alias and has no %n" -Status SKIPPED `
-        -Reason 'Create failed with internal under the default transport, which may need an instance-ID cache this checkout lacks (driver.md, How it is reached).'
+      Write-ConformanceResult -Name $dName -Status SKIPPED `
+        -Reason 'Create failed with internal under the default transport, so there is no default line to read. That create MUST succeed with no instance-ID cache, which test-unmet-default-transport-no-cache.ps1 asserts.'
     }
     else {
       $dAlias = if ($dflt.Doc) { [string]$dflt.Doc['ssh']['host_alias'] } else { '' }
       $dBytes = Get-CcBytes (Get-CcAliasPath $lab $dAlias)
       $dText = if ($dBytes) { $utf8.GetString($dBytes) } else { '' }
-      Test-Cc "$aliasDoc`: The default ProxyCommand ends with the literal alias and has no %n" {
+      Test-Cc $dName {
         if (-not $dflt.Ok) { return "The create gave $(Format-CcRun $dflt.Run)" }
         if (-not $dBytes) { return 'There is no alias file.' }
-        $pc = [regex]::Match($dText, '(?m)^  ProxyCommand (.+)$')
-        if (-not $pc.Success) { return 'There is no ProxyCommand line.' }
-        if (-not $pc.Groups[1].Value.EndsWith(" $dAlias")) { return 'The ProxyCommand does not end with a space and the alias.' }
-        if ($dText.Contains('%n')) { return 'The file holds %n.' }
+        $problems = Get-CcDefaultProxyProblems -AliasText $dText -Alias $dAlias
+        if ($problems.Count -gt 0) { return ($problems -join '; ') + '.' }
         $dg = (Get-CcSshG (Get-CcAliasPath $lab $dAlias) $dAlias) -join "`n"
         if ($dg -cnotmatch "(?m)^proxycommand .+ $([regex]::Escape($dAlias))\s*$") { return 'ssh -G does not show a command ending with the alias.' }
         $true

@@ -309,6 +309,47 @@ function Get-CcKeyEncryption([string]$Path) {
   @{ Cipher = $cipher; Kdf = $kdf }
 }
 
+# The problems with an alias file's default ProxyCommand line, judged only by what docs/state.md,
+# "The alias file", makes checkable from outside (D8). The line is `"<program>" <alias>`, or
+# `<system folder>\cmd.exe /d /c "<program>" <alias>` when, and only when, the program is a .cmd or
+# .bat; <program> is the full path of a file that exists, and <system folder> is %SystemRoot%\System32.
+# It also refuses ssh's %n token, since the alias MUST be written literally. An empty list means
+# none. The program's path comes from the program under test and points outside the home, where
+# Assert-ConformancePath cannot go, so it is only tested for existence, and only after it is shown to
+# be a full path on a local drive (docs/conformance.md, "The program under test is untrusted").
+# Nothing is written, deleted, run or listed there, and no reason quotes the path.
+function Get-CcDefaultProxyProblems {
+  param([string]$AliasText, [string]$Alias)
+  $p = [System.Collections.Generic.List[string]]::new()
+  $m = [regex]::Match([string]$AliasText, '(?m)^  ProxyCommand ([^\r\n]*)$')
+  if (-not $m.Success) { $p.Add('There is no ProxyCommand line'); return , $p }
+  $raw = $m.Groups[1].Value
+  # ssh tokens: %% is a literal percent sign, and %n would be the alias by token, not literally.
+  $line = [System.Text.StringBuilder]::new()
+  for ($i = 0; $i -lt $raw.Length; $i++) {
+    if ($raw[$i] -ne '%') { [void]$line.Append($raw[$i]); continue }
+    if ($i + 1 -lt $raw.Length -and $raw[$i + 1] -eq '%') { [void]$line.Append('%'); $i++; continue }
+    if ($i + 1 -lt $raw.Length -and $raw[$i + 1] -ceq 'n') { $p.Add('The line uses the %n token') }
+    [void]$line.Append('%')
+  }
+  $line = $line.ToString()
+  if (-not $env:SystemRoot) { $p.Add('SystemRoot is not set in the check, so the system folder is unknown'); return , $p }
+  $prefix = (Join-Path $env:SystemRoot 'System32\cmd.exe') + ' /d /c '
+  $wrapped = $line.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+  $rest = if ($wrapped) { $line.Substring($prefix.Length) } else { $line }
+  $pm = [regex]::Match($rest, '\A"([^"]+)" ([^ ]+)\z')
+  if (-not $pm.Success) { $p.Add('The line is not a program path in double quotes, one space and the alias, with or without the system folder''s cmd.exe /d /c before it'); return , $p }
+  $program = $pm.Groups[1].Value
+  if ($pm.Groups[2].Value -cne $Alias) { $p.Add('The line does not end with one space and the alias, written literally') }
+  $local = $program -cmatch '\A[A-Za-z]:\\[^*?<>|:"]+\z' -and $program -notmatch '(\A|\\)\.{1,2}(\\|\z)' -and -not $program.EndsWith('\')
+  if (-not $local) { $p.Add('The program is not a full path on a local drive') }
+  elseif (-not [IO.File]::Exists($program)) { $p.Add('The program is not a file that exists') }
+  $batch = $program -imatch '\.(cmd|bat)\z'
+  if ($batch -and -not $wrapped) { $p.Add('A .cmd or .bat program is not run through the system folder''s cmd.exe /d /c') }
+  if ($wrapped -and -not $batch) { $p.Add('cmd.exe /d /c runs a program that is not a .cmd or .bat') }
+  return , $p
+}
+
 # The lines `ssh -G -F <config file> <alias>` prints: the oracle for what an alias file means.
 function Get-CcSshG([string]$ConfigFile, [string]$Alias) {
   @(& (Get-CcTool 'ssh') -G -F $ConfigFile $Alias 2>&1 | ForEach-Object { [string]$_ })

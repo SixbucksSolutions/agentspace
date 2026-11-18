@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/leases.state.schema.json",
   "title": "Lease state file (laptop, internal)",
-  "description": "The lease CLI's state file, %USERPROFILE%\\.agentspace\\leases.json (D8, D21). Internal: it is not part of the lease contract, and no caller reads it. One record per lease, holding the lease document's fields with its state as stored (pending, ready, released or unsatisfiable; expired is derived when the record is read, never stored), plus the opaque name of the driver that placed it, which never reaches any output. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). See scripts/lease-state.ps1.",
+  "description": "The lease CLI's state file, %USERPROFILE%\\.agentspace\\leases.json (D8, D21). Internal: it is not part of the lease contract, and no caller reads it. One record per lease, holding the lease document's fields with its state as stored (pending, ready, released or unsatisfiable; expired is derived when the record is read, never stored), plus the opaque name of the driver that placed it, which never reaches any output. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). Every member it shares with the lease document has lease.output.schema.json's pattern, except ssh.user, which is narrower. A file in which two records share an id is not valid, though this schema cannot refuse it. See docs/state.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "leases"],
@@ -33,7 +33,14 @@
         "reasons": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/reason" }
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/reason" },
+          "allOf": [
+            { "contains": { "properties": { "code": { "const": "unsupported_platform" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "unsupported_profile" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "unsupported_size" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "no_capacity" } } }, "minContains": 0, "maxContains": 1 }
+          ]
         },
         "driver": {
           "description": "The opaque name of the driver that placed the lease, handed back to it on renew and release.",
@@ -71,7 +78,7 @@
     "platform": {
       "type": "string",
       "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$(?!\\n)",
-      "not": { "pattern": "^[a-z0-9]+/aarch64(/[a-z0-9]+)?$|^[a-z0-9]+/arm64/v8$(?!\\n)" }
+      "not": { "pattern": "^[a-z0-9]+/(aarch64(/[a-z0-9]+)?|arm64/v8)$(?!\\n)" }
     },
     "profile": {
       "type": "string",
@@ -111,7 +118,7 @@
         },
         "message": {
           "type": "string",
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?!\\n)"
+          "pattern": "^[^\\u0000-\\u0020\\u007f][^\\u0000-\\u001f\\u007f]*$(?!\\n)"
         }
       }
     }

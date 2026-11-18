@@ -55,15 +55,23 @@ its requirement, or says why it is declined.
 ### The program
 
 - **The CLI is one program, run as `agentspace`.** How it is installed and put on the caller's
-  `PATH` is outside this contract.
+  `PATH` is outside this contract, and so is its file name, such as `agentspace.exe`.
   - Note on where this came from: the prototype is `scripts/lease-cli.ps1`, started by
     `bin/agentspace.cmd` from cmd and PowerShell, and by `bin/agentspace` from Git Bash and other
     POSIX shells.
+- **Contract v0's caller runs on Windows (D8)**, and runs `agentspace` from cmd, PowerShell or Git
+  Bash. A caller on Linux or macOS is later, and not blocking: it comes with the hosted control
+  plane (#0011).
 - **The program MUST receive its arguments exactly as the caller's shell passed them.** An
   argument MUST NOT be split, joined, dropped, or converted as a path before the rules in
   [Command lines](#command-lines) see it. An empty argument is an argument.
   - From Git Bash, an argument that looks like a path (`/x`) MUST arrive unchanged, never turned
     into a Windows path.
+  - **These bind the command as the caller runs it**, `agentspace` typed in that shell, not only
+    the executable. Git Bash converts such an argument before a native program starts, so a build
+    MAY ship a wrapper that Git Bash and other POSIX shells find as `agentspace`, which turns that
+    conversion off (for example with `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL='*'`) and runs
+    the program with its arguments unchanged. The prototype's `bin/agentspace` is such a wrapper.
   - The prototype breaks this in one known case, an argument such as `-:x`, which its runtime
     refuses before the CLI starts, with exit 1 and no error document. That is a defect, not
     behavior to copy (#0083).
@@ -118,7 +126,12 @@ covers form only:
   form.
 - **"Surrounding whitespace" means whitespace before the first and after the last other
   character**, where whitespace is any character with the Unicode `White_Space` property, line
-  feeds included. It is trimmed before the value is checked.
+  feeds included. It is trimmed before the value is checked. Those characters are U+0009 to
+  U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and
+  U+3000, and no others.
+- **U+FEFF, the byte order mark, is not whitespace, and is never trimmed.** A value that holds one
+  is refused with `invalid_value`, wherever it is, and the input schemas refuse it too
+  ([Schemas](#schemas)).
 - **Every check MUST match the whole value (#0029).** A check that lets a trailing line feed through
   after trimming, as a regular expression's `$` does in several engines, is a defect. Letters and
   digits in a value are ASCII letters and digits only, and "any case" means ASCII case.
@@ -185,7 +198,9 @@ covers form only:
    help.
    - **This holds in a flag's value position too:** `create --ttl --help` and `create --ttl -H`
      print `create`'s help. Only the `=` form makes `--help` a value.
-2. **Otherwise, an unknown command or subcommand is reported** as soon as it is read.
+2. **Otherwise, an unknown command or subcommand is reported** as soon as it is read, even when an
+   unknown option comes before it on the line: `agentspace --project x lease create` reports the
+   unknown command `x`, not the unknown option `--project`.
 3. **Otherwise, the first of the other usage errors in line order is reported**: an unknown option,
    a flag with no value or an empty value, a flag given twice, or an unexpected argument.
 4. **Otherwise, a missing command, subcommand, lease ID or `--project` is reported.**
@@ -208,6 +223,11 @@ covers form only:
   - **A failed `create` MUST leave no lease record, no key, no certificate and no alias behind
     (#0029),** a key whose certificate could not be signed included. A later `create` MUST NOT fail
     because of anything an earlier failed one left.
+    - **What it MAY leave in the OpenSSH client configuration** is the line that pulls aliases in,
+      a dated backup of the configuration from before that line was added, and the folder of alias
+      files. None of them is a lease's, and each stays ([docs/state.md](state.md#creation-in-order)).
+    - **A `create` that was killed is not a failed one**, and can leave a lease's files with no
+      record; what a later `create` does then is [docs/state.md](state.md#the-alias-file)'s.
   - **A failed `renew` MUST leave the lease's `expires_at`, `ttl_seconds` and certificate as they
     were (#0041).** An implementation that puts the new certificate in place before recording it
     MUST put the previous one back before it fails.
@@ -250,11 +270,17 @@ come first.
 `agentspace-swimcoach-3f2a9c1e`. A caller MUST treat it as an opaque name to pass to `ssh` or to any
 client that reads the OpenSSH client configuration, and MUST NOT build it from the ID itself.
 **Two kept leases MUST NOT share a host alias:** `create` MUST choose an ID whose alias no kept
-lease uses, in any state, and MUST generate a new ID when the first one's alias is taken.
+lease uses, in any state, and MUST draw a new ID, as many times as it takes, while the one drawn
+has an alias that a kept lease uses. A build MAY bound the draws at no fewer than 100, and MUST
+then fail with `internal` when none is free; a project would need billions of kept leases for that
+to happen. Only kept leases count: an alias file that no record names makes `create` fail, and is
+never a reason to draw again ([docs/state.md](state.md#the-alias-file)).
 
 **`ssh.user` is the user the lease logs in as.** In v0 every project's leases log in as `ubuntu`
 (D3). A caller MUST read it from the lease and MUST NOT assume it, because later hosts MAY change
-it.
+it. A caller MUST accept any user that the table's rule for `ssh.user` allows. In v0 a lease's user also matches the
+narrower pattern of the lease state file, which is what binds a driver
+([docs/state.md](state.md#the-lease-state-file)).
 
 **Reason codes:**
 
@@ -341,7 +367,7 @@ how they are made and removed, are [docs/state.md](state.md)'s.
 **The key:**
 - **`create` makes a new key pair for each lease.** The private key MUST NOT appear in any output,
   MUST NOT leave the caller's machine, and MUST NOT be readable by another ordinary user of that
-  machine.
+  machine. The access rules that meet this are [docs/state.md](state.md#the-lease-folder)'s.
 - **The private key MUST have no passphrase**, so that `ssh <host_alias>` never prompts (#0029).
 
 **The certificate:**
@@ -690,7 +716,7 @@ met is decided before anything is issued.
 | `usage` | None | An unknown option, or any positional argument. |
 | `invalid_value` | `project`, `platform`, `profile`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. |
 | `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
-| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, or the lease records could not be read, written or locked. Nothing was recorded or left behind. |
+| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, or the lease records could not be read, written or locked. No lease was recorded, and no key, certificate or alias was left behind ([Concurrency and atomicity](#concurrency-and-atomicity) says what the OpenSSH configuration MAY keep). |
 
 **Help:**
 
@@ -1037,8 +1063,10 @@ carry:
   check.
 - **A backend, a location or a machine (D1).**
 
-The original error MAY be kept elsewhere for diagnosis, never in the error document. A message such
-as `agentspace lease create failed: The lease's credential could not be issued. Nothing was
+**The original error is not kept in contract v0.** A build MAY drop it, as the prototype does, and
+MUST NOT put it in the error document, on stdout, or in any file [docs/state.md](state.md) lists. A
+place to keep it for diagnosis, such as a log, is later and not blocking. A message such as
+`agentspace lease create failed: The lease's credential could not be issued. Nothing was
 recorded; try again.` is the shape meant.
 
 ### Messages
@@ -1088,7 +1116,14 @@ them differently where this page does not say MUST.
 | `internal` | Records busy | `The lease records are busy: another agentspace lease command held them for 30 seconds. Try again.` |
 | `internal` | Records unwritable | `The lease records could not be written: <why>. Nothing was changed.`, where `<why>` is, for example, `two records share an ID` or `the change is not valid` |
 | `internal` | No CA (`create`, `renew`) | `agentspace lease <sub> failed: agentspace's certificate authority has not been set up, so no certificate can be issued. Nothing was changed; the operator sets it up.` |
-| `internal` | Alias cannot be set up (`create`) | `agentspace lease create failed: The host alias could not be added to the OpenSSH client configuration: <why>. Nothing was changed.`, where `<why>` says what a person has to fix, as in `its Include line for agentspace is inside a Host block, and has to move to the top of the file` |
+| `internal` | Alias cannot be set up (`create`) | `agentspace lease create failed: The host alias could not be added to the OpenSSH client configuration: <why>. No lease was recorded.`, where `<why>` says what a person has to fix, as in `its Include line for agentspace is inside a Host block, and has to move to the top of the file`. It does not say that nothing was changed, since the line that pulls aliases in MAY have been added ([Concurrency and atomicity](#concurrency-and-atomicity)) |
+| `internal` | CA not usable (`create`, `renew`) | `agentspace lease <sub> failed: agentspace's certificate authority is not usable. Nothing was changed; the operator's ca command says why.` It never carries the check's own output ([docs/state.md](state.md#creation-in-order)) |
+| `internal` | Way to reach the host not found (`create`) | `agentspace lease create failed: The lease's way to reach its host cannot be found: agentspace's ProxyCommand program is not installed beside this program. No lease was recorded.` ([docs/state.md](state.md#the-alias-file)) |
+| `internal` | No home folder | `agentspace lease <sub> failed: The home folder is not set (USERPROFILE is empty), so agentspace cannot find its files. Nothing was changed.` ([docs/state.md](state.md#the-home-folder)) |
+| `internal` | Records cannot be locked | `The lease records could not be locked: <why>. Nothing was changed.`, for a failure to open the lock that is not another command holding it ([docs/state.md](state.md#the-lease-state-lock)) |
+| `internal` | No driver (`create`) | `agentspace lease create failed: No lease driver is available. Nothing was recorded.` |
+| `internal` | Unknown stored driver (`renew`, `release`) | `agentspace lease <sub> failed: The lease was placed by a driver this agentspace does not have. Nothing was changed.` It never names the driver ([docs/driver.md](driver.md#the-drivers-name)) |
+| `internal` | Alias file is not this lease's (`release`) | `agentspace lease release failed: The lease's host alias file belongs to another lease or to no lease, so nothing was deleted. A person has to move that file.` ([docs/state.md](state.md#release-and-what-it-leaves)) |
 | `internal` | Credential or alias not deleted (`release`) | `agentspace lease release failed: The lease's local key, certificate or host alias could not be deleted: <why>. Run release again to finish.` |
 | `internal` | Anything else | `agentspace lease <sub> failed: <what failed>`, where `<what failed>` meets the rules above. Before a subcommand is read, it is `agentspace lease failed: <what failed>`, and a message that would otherwise be empty is `agentspace lease failed.` |
 
@@ -1150,10 +1185,17 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
   be dropped. A range (the TTL limits) cannot be checked by a pattern, so passing the schema does
   not make a TTL acceptable. The contract sets no length limit on a TTL; a hosted API MAY limit a
   request's size.
-- **Input patterns accept trailing whitespace (`\s*`) just before their closing `$`, and still
-  match the whole value.** A `$` that also matches before a final line feed lets nothing through
-  here, because the `\s*` before it already accepts trailing whitespace, a line feed included,
-  which is then trimmed ([Input tolerance](#input-tolerance)).
+- **Input patterns accept whitespace as one character class that lists the `White_Space`
+  characters of [Input tolerance](#input-tolerance) and no others**, written out as
+  `[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]`, never as `\s`. `\s`
+  means a different set in each engine: ECMA-262's lacks U+0085 and has U+FEFF, and PowerShell's
+  `Test-Json` matched only the ASCII ones when it was tried on 2026-11-18. The patterns still
+  match the whole value: a `$` that also matches before a final line feed lets nothing through,
+  because the class before it already accepts trailing whitespace, a line feed included, which is
+  then trimmed. So U+FEFF, which is not trimmed, fails the schema as it fails the CLI.
+- **An input schema MAY accept more than [Values](#values) does, and MUST NOT accept less.**
+  Passing an input schema never makes a value acceptable: a TTL's range, for one, is checked
+  after it is parsed, and [Values](#values) decides.
 - **The v0 CLI takes flags and arguments only, and never reads a JSON request.** An input
   document defines a request: its members are the flags and arguments of the same names, it is
   what a request is validated against, and a hosted API (card #0011) MUST accept it as JSON. In
@@ -1227,22 +1269,25 @@ operator's cards, #0027 and #0034, are [docs/operator.md](operator.md)'s.
 **What reading the prototype and its docs could not settle.** The clean-room review (E0.04-T03-S01)
 closes each one, or names the story that will.
 
-1. **Which operating systems a caller's machine runs.** The prototype runs only on Windows, from
-   cmd, PowerShell and Git Bash. D4 puts Windows lease hosts in scope, but no decision says whether
-   the Rust CLI (v0.05) MUST also run on a Linux or macOS caller, nor what the program's file is
-   called on each.
+1. **Closed by D8 (architect, 2026-11-18): contract v0's caller runs on Windows**, from cmd,
+   PowerShell and Git Bash ([The program](#the-program)); the program's file name is outside the
+   contract. Later, not blocking: a caller on Linux or macOS, which comes with the hosted control
+   plane (#0011).
 2. **How `bin\agentspace.cmd` passes arguments that cmd treats specially**, such as `%`, `^`, `&`,
    `!` and embedded quotes. [The program](#the-program) requires them unchanged; only a run on
    Windows shows whether the prototype meets that.
-3. **Exactly which characters are trimmed as whitespace.** This page says the Unicode
-   `White_Space` characters, and the prototype trims what .NET calls whitespace, which reading
-   suggests is the same set. The input schemas' `\s` (ECMA-262) also counts U+FEFF, which neither
-   does. Only a run settles the prototype's set, and the review decides whether U+FEFF is trimmed.
+3. **Closed (E0.04-T04-S01, 2026-11-18): the Unicode `White_Space` characters, listed in
+   [Input tolerance](#input-tolerance), and U+FEFF is not trimmed.** The input schemas now list the
+   same set, where their `\s` matched a different one in each engine ([Schemas](#schemas)). The
+   prototype trims what .NET's `String.Trim` calls
+   whitespace, which reading suggests is the same set; a run would confirm it, and a difference
+   there is the prototype's, not the contract's.
 4. **How the prototype escapes strings in its JSON output**, for instance whether `'`, `<`, `>`,
    `&` or non-ASCII characters come out as `\u` escapes. This page allows any valid escaping; a
    conformance check that compares bytes would need to know.
-5. **The back-dating of a certificate's valid-after time (#0029):** settled by D24, which sets
-   5 minutes as the SHOULD. Kept here so the numbers of the questions below do not change.
+5. **Closed by D24: the back-dating of a certificate's valid-after time (#0029)**, which D24 sets
+   at 5 minutes, as a SHOULD ([The credential](#the-credential)). Kept here so the numbers of the
+   questions below do not change.
 6. **Whether `agent-linux`'s tools are on the `PATH` of a command run without an interactive login
    shell**, as in `ssh <host_alias> node --version`. Today Node and Codex are put on the `PATH` by
    lines at the end of `ubuntu`'s `~/.bashrc`, after Ubuntu's early return for non-interactive
@@ -1255,16 +1300,18 @@ closes each one, or names the story that will.
    Unix and Windows local user names. A Windows domain user (`DOMAIN\user` or `user@domain`), or a
    name with a space, would not fit, and widening the pattern later would be a new contract
    version ([Versioning](#versioning)).
-9. **Where `AGENTSPACE_STATE_DIR` reaches.** In the prototype it moves the lease records only; the
-   lease's key and certificate, and the CA, stay in the caller's profile folder. Whether a check
-   can isolate those too is [docs/state.md](state.md)'s to settle.
-10. **Where an `internal` error's original detail goes (#0041).** The error document does not carry
-    it, and the prototype keeps no log, so today it is lost.
+9. **Closed by [docs/state.md](state.md#what-moves-which-files): where `AGENTSPACE_STATE_DIR`
+   reaches.** It moves the lease records only; a check that isolates the lease's key and
+   certificate, and the CA, sets `USERPROFILE` to a throwaway folder.
+10. **Closed for contract v0 (E0.04-T04-S01, 2026-11-18): an `internal` error's original detail is
+    not kept** ([Exit codes and errors](#exit-codes-and-errors)), as in the prototype. Later, not
+    blocking: a place to keep it for diagnosis, such as a log.
 11. **How long a `create` holds other changing commands back.** The prototype holds its lock
     through the whole of issuing, which starts a second shell for the CA check and runs
     `ssh-keygen` three times. Only a run shows whether that comes near the 30-second limit after
     which a concurrent `renew` or `release` fails as busy.
-12. **Whether the key is readable by no other ordinary user in practice.** The prototype sets no
-    access rules of its own on the key, and relies on what the profile folder passes down, which
-    on Terry's laptop includes SYSTEM and Administrators (D7, D17). The exact rules are
-    [docs/state.md](state.md)'s.
+12. **Closed by [docs/state.md](state.md#the-lease-folder) (E0.04-T04-S01, 2026-11-18): whether the
+    key is readable by no other ordinary user in practice.** The prototype sets no access rules of
+    its own on the key; Windows' `ssh-keygen` gives it a protected list of its own, which on
+    2026-11-18 met the requirement. state.md gives the rules a build that sets them itself MUST
+    set; whether every Windows build's `ssh-keygen` does the same is state.md's Q6.

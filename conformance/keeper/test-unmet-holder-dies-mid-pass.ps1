@@ -4,7 +4,7 @@
 #
 # CHECKS #0068, AND IS EXPECTED TO FAIL AGAINST THE PROTOTYPE. This file checks a requirement the
 # prototype does not meet yet (docs/keeper.md, "Release grace", "Requirements the prototype does not
-# meet yet"; docs/conformance.md, "Checks of requirements the prototype does not meet yet"). Its
+# meet yet"; docs/conformance.md, "The files that are expected to fail"). Its
 # FAIL lines still say FAIL, and the file exits 1 against the prototype: a runner MUST NOT read that
 # as a regression, and MUST NOT turn it into a pass. Every other check file passes against the
 # prototype in full. The rewrite's keeper MUST pass this file.
