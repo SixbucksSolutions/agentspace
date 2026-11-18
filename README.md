@@ -215,11 +215,17 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    - **A crashed keeper is started again within about a minute** by the task's second trigger,
      which repeats every minute, indefinitely, from registration (E0.02-T04-S02, D30). With
      `MultipleInstances IgnoreNew`, a firing while the keeper runs is ignored. The task's
-     RestartCount and RestartInterval do not cover this: they apply only when the task fails to
-     start, not when its action exits non-zero (E0.02-T03-S01). The crashed keeper's holder keeps
-     running meanwhile, and the new keeper adopts the recorded holder. The task runs only while
-     Terry is logged on. A keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) is
-     started again by the next firing, unless the task is unregistered or disabled.
+     RestartCount did not restart a keeper whose action exited non-zero in E0.02-T03-S01, so the
+     repeating trigger, not RestartCount, is what brings a crashed keeper back (D30). The crashed
+     keeper's holder keeps running meanwhile, and the new keeper adopts the recorded holder. The
+     task runs only while Terry is logged on.
+   - **End in Task Scheduler stops only the launcher** and leaves the keeper's pwsh running, so
+     the next firing of the repeating trigger starts a second keeper beside it (E0.02-T04-S03;
+     card #0067 makes a second keeper exit at once). To stop the keeper, its pwsh MUST be stopped
+     by its checked PID after the task is ended. To keep it stopped, the task MUST also be disabled
+     (`Disable-ScheduledTask`) or removed with `-Uninstall`; `-Uninstall` ends the task the same
+     way, so its keeper's pwsh MUST still be stopped by PID. A re-registration is refused while a
+     keeper runs, for the same reason.
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that

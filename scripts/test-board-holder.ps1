@@ -857,7 +857,17 @@ try {
     Write-Result ($text -imatch 'log\s*on' -and $text -imatch ('(\\|\s|^)' + $user + '\b')) 'Installer: a logon trigger for the current user'
     Write-Result (@($lines | Where-Object { $_ -cmatch '\ATrigger \d+: ' }).Count -eq 2) 'Installer: the task has two triggers'
     Write-Result (@($lines | Where-Object { $_ -cmatch '\ATrigger 1: AtLogOn user=' }).Count -eq 1) 'Installer: trigger 1 is the logon trigger'
-    Write-Result (@($lines | Where-Object { $_ -cmatch '\ATrigger 2: Once' }).Count -eq 1) 'Installer: trigger 2 is a time trigger starting at registration'
+    $t2 = @($lines | Where-Object { $_ -cmatch '\ATrigger 2: Once' })
+    Write-Result ($t2.Count -eq 1) 'Installer: trigger 2 is a time trigger starting at registration'
+    Write-Result ($t2.Count -eq 1 -and $t2[0] -cmatch ' EndBoundary=none\b') 'Installer: trigger 2 has no end boundary'
+    $startOk = $false
+    if ($t2.Count -eq 1 -and $t2[0] -cmatch ' StartBoundary=(\S+) ') {
+        $sb = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse($Matches[1], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$sb)) {
+            $startOk = $sb -le [DateTimeOffset]::Now.AddSeconds(5) -and $sb -ge [DateTimeOffset]::Now.AddMinutes(-5)
+        }
+    }
+    Write-Result $startOk 'Installer: trigger 2 starts at or before the dry run, within a few minutes'
     $interval = if ($script:mut) { 'PT5M' } else { 'PT1M' }
     Write-Result (@($lines | Where-Object { $_ -ceq "Repetition 2: Interval=$interval Duration=indefinite" }).Count -eq 1) "Installer: trigger 2 repeats every minute ($interval), indefinitely"
     Write-Result (@($lines | Where-Object { $_ -cmatch '\ARepetition 1: ' }).Count -eq 0) 'Installer: the logon trigger does not repeat'

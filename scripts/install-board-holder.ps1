@@ -11,12 +11,13 @@ RFC 2119 keywords; the capitals are load-bearing.
 Registering the task is persistent configuration on Terry's laptop, so it MUST only be run with his
 yes (D30; story E0.02-T03-S01). -DryRun changes nothing and builds nothing.
 
-After the watcher's install-autostart.ps1: a logon trigger for the current user, a second trigger that repeats every minute indefinitely
-from registration (a crashed keeper is started again within about a minute, and a firing while it
-runs is ignored), standard rights,
-an interactive logon, no time limit, a second start ignored, a missed start run when available,
-started and kept running on battery, and a process that exits other than 0 restarted up to 3 times,
-a minute apart. The action is a no-window launcher, built from scripts\BoardHolderLauncher.cs by csc
+After the watcher's install-autostart.ps1: a logon trigger for the current user, a second trigger
+that repeats every minute indefinitely from registration (a crashed keeper is started again within
+about a minute, and a firing while it runs is ignored), standard rights, an interactive logon, no
+time limit, a second start ignored, a missed start run when available, and started and kept running
+on battery. RestartCount 3 and RestartInterval a minute are also set, but they did not restart a
+keeper whose action exited non-zero (E0.02-T03-S01); the repeating trigger is what does (D30). The
+action is a no-window launcher, built from scripts\BoardHolderLauncher.cs by csc
 at install time into %USERPROFILE%\.agentspace (never into the repo), that runs
 `pwsh -NoProfile -NonInteractive -File <repo>\scripts\board-holder.ps1 -Watch` in <repo>, and exits
 with pwsh's exit code. A real install starts the task as soon as it is registered.
@@ -29,6 +30,13 @@ registers that object with Register-ScheduledTask -InputObject, and -DryRun prin
 checkout: a git worktree is deleted after its branch merges, which would leave the task pointing at
 nothing. Without -DryRun, an install from a worktree is refused with exit 2; -DryRun prints a
 Warning: line in that case and still exits 0.
+
+A real install is refused with exit 2 while a keeper runs: while the task is Running, or while a
+pwsh runs <repo>\scripts\board-holder.ps1 -Watch. It compiles the launcher over the exe the running
+task uses, which fails while the task runs, and stopping the task ends only the launcher, so the
+registration would start a second keeper beside the old one (D30, card #0067). The install stops
+and kills nothing itself; the refusal names the keeper's PID and how to stop it. The holder keeps
+running, and the keeper the install starts adopts it.
 
 -Uninstall stops and unregisters the task and deletes the launcher it built.
 #>
@@ -79,7 +87,12 @@ function Get-TriggerLines($Triggers) {
         if ($name -ceq 'MSFT_TaskLogonTrigger') {
             "Trigger ${n}: AtLogOn user=$($t.UserId)"
         } elseif ($name -ceq 'MSFT_TaskTimeTrigger') {
-            "Trigger ${n}: Once, from registration"
+            $end = if ($t.EndBoundary) { $t.EndBoundary } else { 'none' }
+            $line = "Trigger ${n}: Once StartBoundary=$($t.StartBoundary) EndBoundary=$end"
+            if ($null -ne $t.Repetition -and $t.Repetition.PSObject.Properties['StopAtDurationEnd']) {
+                $line += " StopAtDurationEnd=$($t.Repetition.StopAtDurationEnd)"
+            }
+            $line
         } else {
             "Trigger ${n}: $name"
         }
@@ -163,6 +176,19 @@ if ($isWorktree) {
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:Launcher) | Out-Null
+# A real install MUST NOT run while a keeper does. The launcher exe cannot be overwritten while the
+# task runs it, and stopping the task here would end only the launcher: the keeper's pwsh would keep
+# running, and the registration below would start a second keeper beside it (D30, card #0067). So
+# the install refuses, and names what to stop. It stops and kills nothing itself.
+$existing = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+$keeperScript = Join-Path $script:Repo 'scripts\board-holder.ps1'
+$keepers = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($keeperScript) -and $_.CommandLine -match '(?i)\s-Watch\b' })
+if (($existing -and $existing.State -eq 'Running') -or $keepers.Count -gt 0) {
+    $pids = if ($keepers.Count -gt 0) { ($keepers | ForEach-Object { $_.ProcessId }) -join ', ' } else { 'none found' }
+    [Console]::Error.WriteLine("install-board-holder.ps1: A keeper is running (task state: $(if ($existing) { $existing.State } else { 'not registered' }); keeper pwsh PID: $pids). Stop it first: End the task in Task Scheduler (Stop-ScheduledTask), then stop each keeper pwsh by its PID after checking its command line runs $keeperScript -Watch. Its holder keeps running, and the keeper this install starts adopts it.")
+    exit 2
+}
 & $script:Csc /nologo /target:winexe "/out:$($script:Launcher)" $script:LauncherSource
 if ($LASTEXITCODE -ne 0) { throw "csc exited $LASTEXITCODE." }
 

@@ -1745,10 +1745,37 @@ setting is as before.
   gives `Interval` PT1M and an empty `Duration`.
 - **`MultipleInstances IgnoreNew` makes a firing while the keeper runs a no-op.** One that finds the
   keeper gone starts it within a minute, and its first pass adopts the recorded holder.
-- **RestartCount 3 and RestartInterval PT1M stay**, since they still cover a task that fails to
-  start. The repeating trigger covers an action that exits non-zero.
+- **RestartCount 3 and RestartInterval PT1M stay.** RestartCount did not restart a keeper whose
+  action exited non-zero in E0.02-T03-S01, so the repeating trigger, not RestartCount, is what
+  brings a crashed keeper back. That RestartCount covers only a task that fails to start is the
+  most likely reading of one observation, since the Operational log was disabled, and not a
+  finding.
+- **The time trigger's start is in UTC.** `New-ScheduledTaskTrigger -Once -At (Get-Date)` writes
+  `StartBoundary` in UTC with a `Z`, so a change of the laptop's time zone does not move the
+  repetition. A reviewer confirmed that a `TimeTrigger` with a past `StartBoundary` and no
+  `Duration` keeps firing across reboot and logon: 22 tasks of that shape are on this laptop,
+  Windows' own among them.
+- **A re-registration MUST NOT run while a keeper does, and the installer refuses one.** The
+  install compiles the launcher to `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`, which
+  fails while the task runs that exe, and stopping the task ends only the launcher (below), so a
+  registration then would start a second keeper beside the old one. A real install therefore exits
+  2 while the task is Running or a pwsh runs `<repo>\scripts\board-holder.ps1 -Watch`, and names
+  the keeper's PID. It stops and kills nothing itself. Before a re-registration the task MUST be
+  ended and the keeper's pwsh stopped by its checked PID; the holder keeps running, and the keeper
+  the install starts adopts it.
+- **End in Task Scheduler stops only the launcher.** Found in E0.02-T04-S03's live check
+  (2026-11-17, about 9:29pm Pacific): `End-ScheduledTask` on the task killed
+  `BoardHolderLauncher.exe` but left the keeper's pwsh running, and the holder survived too. The
+  next firing of the repeating trigger therefore starts a second keeper beside the first. Card
+  #0067 (E0.02-T05-S01, "One keeper at a time") covers that two-keeper risk, and this story does not fix it.
+  To stop the keeper, the task MUST be ended and then the keeper's pwsh stopped by its checked
+  PID; to keep it stopped, the task MUST also be disabled or removed with `-Uninstall`.
+  `-Uninstall` ends the task with `Stop-ScheduledTask` before unregistering it, so it most likely
+  leaves the keeper's pwsh running the same way (not yet observed), and that pwsh MUST still be
+  stopped by its checked PID.
 - **The read-back shows both triggers and the repetition**, in `-DryRun` and after a real
-  registration: `Trigger 1`, `Trigger 2`, and `Repetition 2: Interval=PT1M Duration=indefinite`.
+  registration: `Trigger 1`, `Trigger 2` (with its `StartBoundary` and `EndBoundary`), and
+  `Repetition 2: Interval=PT1M Duration=indefinite`.
 - **Live-run result (E0.02-T04-S02): TO BE FILLED IN BY THE DEV LEAD.** Record here the
   re-registration, the check and kill of the keeper's pwsh by PID, the time Task Scheduler took to
   run the task again, the new keeper's `kept ... pid=<holder>` line, and the count of launchers and
