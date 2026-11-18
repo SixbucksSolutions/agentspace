@@ -182,7 +182,10 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
 3. **Connect** with `ssh <alias>`, or in the Claude desktop app add an SSH environment whose host
    is the alias and open a session in the project's folder on the box (`/home/ubuntu/swimcoach`).
    The first connection after a stop starts the box, and any connection may push the Bot token,
-   over the alias that connection used.
+   over the alias that connection used. **The desktop app's Test connection does not show the
+   proxy's output**, so `Sending the localswim Bot token to the instance...` never appears there
+   (E0.02-T03-S01). A push from the app MUST be confirmed on the box, by `bot.env`'s modification
+   time, or by the laptop's stamp coming back, never from the app's output.
    From cmd or PowerShell, `ssh` is Windows OpenSSH. From Git Bash it MUST be called by its full
    path, `C:\Windows\System32\OpenSSH\ssh.exe`, because MSYS ssh mangles the ProxyCommand.
 4. **A desktop-app session MUST have a holder open on the laptop for as long as it needs the
@@ -207,10 +210,13 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    - **A holder that fails fast is retried with backoff**, from 30 seconds doubling to 5 minutes,
      never in a tight loop. Only a holder seen alive after 60 seconds resets the backoff.
    - **No error ends the keeper.** It logs the error and carries on at its next interval, so only
-     bad arguments or a killed process can stop it. A crashed keeper is restarted up to 3 times, a
-     minute apart, by the task's settings (unverified until E0.02-T03-S01 registers the task). A
-     keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) stays stopped until the
-     next logon.
+     bad arguments or a killed process can stop it.
+   - **A crashed keeper is not restarted until the next logon** (E0.02-T03-S01, D30). The task's
+     RestartCount covers a task that fails to start, not a keeper that exits. Its holder keeps
+     running, unsupervised. After a crash, the task MUST be started by hand with
+     `Start-ScheduledTask -TaskName 'agentspace board holder'`, and the new keeper adopts the
+     recorded holder. A keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) also
+     stays stopped until the next logon.
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that
@@ -226,8 +232,10 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    It deletes the alias file and the lease's key folder and leaves the `Include` line. It does
    not end open sessions or revoke the certificate
    ([D10](docs/decisions.md#d10-releasing-a-lease-does-not-revoke-its-certificate)), so the holder
-   and any session SHOULD be closed first. The desktop app's SSH environment SHOULD then be
-   removed, since its alias no longer exists. The project's checkout stays on the box.
+   and any session SHOULD be closed first. **Archiving a desktop-app session does not close its
+   SSH connections** (E0.02-T03-S01): they stay up, and count as activity on the box, until the
+   app closes them. The desktop app's SSH environment SHOULD then be removed, since its alias no
+   longer exists. The project's checkout stays on the box.
 
    **A closed holder keeps its forwards on the box for about 90 seconds.** The Session Manager
    tunnel does not tell sshd that the client has gone, so the box drops a dead holder's session,
