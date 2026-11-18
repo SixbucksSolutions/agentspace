@@ -28,6 +28,18 @@ class Parser(argparse.ArgumentParser):
         die(message)
 
 
+class Formatter(argparse.HelpFormatter):
+    """Help whose every line starts with a capital: no wrapping, and a capital usage prefix."""
+
+    def __init__(self, prog, **kwargs):
+        kwargs["width"] = 10000
+        kwargs["max_help_position"] = 30
+        super().__init__(prog, **kwargs)
+
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "Usage: ")
+
+
 def parse_time(text):
     """An ISO 8601 time with a UTC offset, or None."""
     if not isinstance(text, str):
@@ -92,7 +104,7 @@ def valid_line(obj):
             parse_time(obj.get("t")) is not None
             and has(obj, "seq", is_int)
             and has(obj, "session", is_str)
-            and has(obj, "cwd", is_str)
+            and (obj.get("cwd") is None or is_str(obj["cwd"]))
             and isinstance(own, dict)
             and has(own, "cpu_s", is_num)
             and has(own, "pss_kib", is_num)
@@ -111,7 +123,7 @@ def valid_line(obj):
 def read_record(path):
     """Return (lines, skipped): the well-formed lines in order, each with its parsed time."""
     try:
-        handle = open(path, "r", encoding="utf-8", errors="replace", newline=None)
+        handle = open(path, "r", encoding="utf-8-sig", errors="replace", newline=None)
     except OSError as err:
         die("cannot read %s: %s" % (path, err.strerror or err))
     lines = []
@@ -121,7 +133,7 @@ def read_record(path):
             for raw in handle:
                 try:
                     obj = json.loads(raw)
-                except ValueError:
+                except (ValueError, RecursionError):
                     skipped += 1
                     continue
                 kind = valid_line(obj)
@@ -196,6 +208,13 @@ def summarize(lines, skipped, window_from, window_to):
     tz = start_time.tzinfo
     limit = GAP_FACTOR * interval
 
+    # A sample's time is its host line's "t". A session line is kept or dropped with its sample;
+    # only one whose seq has no host line is judged by its own "t".
+    sample_time = {}
+    for kind, obj, when in lines:
+        if kind == "host":
+            sample_time.setdefault(obj["seq"], when)
+
     hosts = []
     sessions = {}
     order = []
@@ -203,9 +222,10 @@ def summarize(lines, skipped, window_from, window_to):
     for kind, obj, when in lines:
         if kind not in ("host", "session"):
             continue
-        if window_from is not None and when < window_from:
+        judged = sample_time.get(obj["seq"], when) if kind == "session" else when
+        if window_from is not None and judged < window_from:
             continue
-        if window_to is not None and when > window_to:
+        if window_to is not None and judged > window_to:
             continue
         if kind == "host":
             hosts.append((obj, when))
@@ -260,8 +280,8 @@ def summarize(lines, skipped, window_from, window_to):
             tools_cpu.append(tool / dt)
             tools_cpu_at[cur["seq"]] = tools_cpu_at.get(cur["seq"], 0.0) + tool / dt
         first = rows[0][0]
-        cwd = first["cwd"]
-        folder = cwd.rstrip("/").rsplit("/", 1)[-1] or cwd
+        cwd = first.get("cwd")
+        folder = (cwd.rstrip("/").rsplit("/", 1)[-1] or cwd) if cwd else "?"
         session_rows.append(
             {
                 "label": "%s %s" % (folder, sid[:8]),
@@ -358,9 +378,13 @@ def markdown(result, tz, hosts, times):
         span = "No samples in the window (%s)" % info["utc_offset"]
     out.append("- Span: %s" % span)
     out.append("- Samples: %d" % info["samples"])
-    out.append("- Interval: %g seconds" % info["interval_s"])
+    out.append("- Interval: %g %s" % (info["interval_s"], "second" if info["interval_s"] == 1 else "seconds"))
     out.append("- CPUs: %d" % info["cpus"])
-    out.append("- Sampler overhead: %s cores" % fmt(info["sampler_overhead_cores"]))
+    cores = info["sampler_overhead_cores"]
+    if cores is None:
+        out.append("- Sampler overhead: -")
+    else:
+        out.append("- Sampler overhead: %.4f cores (%.2f%% of one core)" % (cores, cores * 100))
     out.append("")
 
     out.append("## Host")
@@ -382,7 +406,7 @@ def markdown(result, tz, hosts, times):
         head.append("Tools procs peak")
         rows = []
         for row, (t0, t1) in zip(result["sessions"], times):
-            cells = [row["label"], "%s to %s" % (clock(t0, tz), clock(t1, tz)), str(row["samples"])]
+            cells = [row["label"].replace("|", "\\|"), "%s to %s" % (clock(t0, tz), clock(t1, tz)), str(row["samples"])]
             cells += three(row["self"]["cpu_cores"]) + three(row["self"]["pss_mib"])
             cells += three(row["tools"]["cpu_cores"]) + three(row["tools"]["pss_mib"])
             cells.append(fmt(row["tools"]["procs"]["peak"], integer=True))
@@ -420,17 +444,25 @@ def markdown(result, tz, hosts, times):
 
 
 def main(argv):
+    extra = {"color": False} if sys.version_info >= (3, 14) else {}
     parser = Parser(
         prog="agentspace-footprint",
+        usage="%(prog)s <record.jsonl> [--from <ISO 8601>] [--to <ISO 8601>] [--json]",
         description="Summarize an agentspace-sample record: peak, p95 and p50 CPU and memory.",
+        formatter_class=Formatter,
+        add_help=False,
+        **extra,
     )
-    parser.add_argument("record", help="The record, ~/agentspace-samples/<run>.jsonl")
-    parser.add_argument("--from", dest="start", metavar="ISO8601",
-                        help="Keep only samples at or after this time (with a UTC offset)")
-    parser.add_argument("--to", dest="end", metavar="ISO8601",
-                        help="Keep only samples at or before this time (with a UTC offset)")
-    parser.add_argument("--json", action="store_true",
-                        help="Print one JSON object instead of Markdown")
+    arguments = parser.add_argument_group("Arguments")
+    options = parser.add_argument_group("Options")
+    arguments.add_argument("record", help="The record, ~/agentspace-samples/<run>.jsonl")
+    options.add_argument("--from", dest="start", metavar="ISO8601",
+                         help="Keep only samples at or after this time (with a UTC offset)")
+    options.add_argument("--to", dest="end", metavar="ISO8601",
+                         help="Keep only samples at or before this time (with a UTC offset)")
+    options.add_argument("--json", action="store_true",
+                         help="Print one JSON object instead of Markdown")
+    options.add_argument("-h", "--help", action="help", help="Show this help and exit")
     args = parser.parse_args(argv)
 
     window = []

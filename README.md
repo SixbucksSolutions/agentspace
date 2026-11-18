@@ -270,37 +270,64 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-How a project's agent measures the CPU and memory of a turn of work on its lease
+How a project's agent measures the CPU and memory of a turn on its lease
 ([D33](docs/decisions.md#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls)).
-Two tools do it: `agentspace-sample` records every Claude Code session on the box, and
-`agentspace-footprint` summarizes the record. `<alias>` is the lease's `ssh.host_alias` from lease step 1,
-and `<run>` is a name the agent picks, which MUST match `^[a-z0-9][a-z0-9-]{0,63}$`, such as
-`swimcoach-t05`. The steps run while the lease is live, so they come before releasing it (lease
-step 5 above).
+It is written for any project; agentspace is only the first to use it. Two tools do it:
+`agentspace-sample` records every Claude Code session on the box, and `agentspace-footprint`
+summarizes the record.
 
-- **Both tools are installed on the box by `sync`**, which the architect runs. A project's agent
-  MUST NOT run `sync` itself. When `agentspace-sample` or `agentspace-footprint` is not found on
-  the box, the agent MUST ask the architect to run it.
-- **From Git Bash, `ssh` and `scp` MUST be called by their full paths**, as in lease step 3, so the
-  commands below are written that way. From cmd or PowerShell, plain `ssh` and `scp` are the same
-  Windows OpenSSH programs. Every command below passes `-o BatchMode=yes`, so a refused login
-  fails at once and MUST NOT be retried in a loop.
+- **A turn is the work between `start` and `stop`.** It MUST run in Claude Code sessions on the
+  box, over `ssh <alias>` or the desktop app's SSH environment (lease step 3). A session on the
+  laptop is not recorded, so the agent that runs the steps below from the laptop is not part of
+  the measurement.
+- **The record covers every Claude Code session on the box, every project's.** Each session row
+  is labelled with the last folder of its cwd and the first 8 characters of its `session` id,
+  such as `myproject 41872-35`. A session whose working directory cannot be read is recorded
+  with cwd "", and agentspace-footprint labels it `?`. The project's own rows are the ones whose
+  folder is its checkout, and `--json` lists each session's cwd in full.
+- **The host and concurrency figures are box-wide.** They include other projects' sessions, the
+  sampler, and work outside any session. A project MUST read its turn from its own session rows,
+  or make sure no other project's session runs during the turn.
+- **`<alias>` is the lease's `ssh.host_alias`** (lease step 1). **`<run>` is a name the agent
+  picks**, which MUST match `^[a-z0-9][a-z0-9-]{0,63}$` and MUST be new for every measurement,
+  such as `myproject-t05`.
 
-1. **Start the sampler on the box, over the lease**, before the turn starts:
+Before step 1:
+- **The lease MUST be created** (lease step 1), and its `expires_at` MUST leave the turn plus a
+  margin. `--for` MUST end before `expires_at`, and SHOULD be the turn's expected length plus
+  about half again: when the alias goes, the record is stranded on the box, where only a new
+  lease reaches it.
+- **Both tools are installed on the box by agentspace's `sync`, which agentspace's architect
+  runs.** A project's agent MUST NOT run `sync`. When a tool is not found on the box, the agent
+  MUST report it to agentspace's architect.
+- **From Git Bash, `ssh` and `scp` MUST be called by full path**, as in lease step 3.
+  `/c/Windows/System32/OpenSSH/ssh.exe` is Git Bash's spelling of
+  `C:\Windows\System32\OpenSSH\ssh.exe`. From cmd or PowerShell, plain `ssh` and `scp` are the
+  same programs. Every command below passes `-o BatchMode=yes`, so a refused login fails at once
+  and MUST NOT be retried in a loop.
+
+The steps MUST run before lease step 5, because the record has to be fetched first.
+
+1. **Start the sampler** before the turn starts, with a `--for` that fits the turn (here 3 hours):
 
    ```bash
-   /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-sample start <run>"
+   /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-sample start <run> --for 3h"
    ```
 
-   It starts the sampler detached, so the sampler keeps running after this connection closes. It
-   prints the record's path, `~/agentspace-samples/<run>.jsonl`, and the sampler's PID, and
-   exits 0. The defaults are right for a turn: a sample every 2 seconds, a deadline 8 hours away,
-   and the default match for Claude Code's CLI. They MAY be changed with
-   `--interval <seconds>` (0.5 to 60), `--for <duration>` (`30m`, `8h` or `90s` style; above 12h
-   is refused) and `--match <regex>`.
-   - **It refuses with exit 2** when `~/agentspace-samples/<run>.jsonl` already exists, which
-     means a `<run>` MUST be new for every measurement, or when a sampler is already running.
-     One sampler runs on the box at a time.
+   It starts the sampler detached, so it keeps running after this connection closes, prints the
+   record's path (`~/agentspace-samples/<run>.jsonl`) and the sampler's PID, and exits 0. The
+   other defaults suit a turn: a sample every 2 seconds, and the default match. Without `--for`
+   the deadline is 8 hours away. They MAY be changed with `--interval <seconds>` (0.5 to 60),
+   `--for <duration>` (`30m`, `8h` or `90s` style; above 12h is refused) and `--match <regex>`.
+   - **Exit 2** means the record already exists, or a sampler is already running: one runs on
+     the box at a time. For an existing record, the agent MUST pick a new `<run>` and repeat
+     step 1. For a running sampler, it MUST run `agentspace-sample status` the same way, MUST NOT
+     stop a run it did not start, and MUST wait for that run to end or ask agentspace's
+     architect.
+   - **`--match` is a Python regex**, searched in each process's full command line with NUL bytes
+     read as spaces. The default, `^(?:\S*/)?claude(?:\s|$)`, matches a process whose first
+     argument is `claude` or a path ending in `/claude`. A summary with no session rows means
+     the match missed, and the agent MUST NOT read it as a zero footprint.
 2. **Confirm it is running:**
 
    ```bash
@@ -308,69 +335,83 @@ step 5 above).
    ```
 
    It prints the running sampler's run, PID, samples so far and deadline, or
-   `No sampler is running.` The agent SHOULD check that the samples so far grow between two calls
-   before it starts the turn.
+   `No sampler is running.`, and exits 0 either way. The agent MUST wait at least one interval
+   (2 seconds by default) between two calls, and the samples so far MUST rise. When they do not,
+   the agent MUST report it and MUST NOT start a second sampler.
 3. **Run the turn.** The agent SHOULD note the box's time at its start and at its end, which
-   gives the window for `--from` and `--to` in the last step:
+   gives `--from` and `--to` their values in step 6:
 
    ```bash
    /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "date -Iseconds"
    ```
-4. **Stop the sampler** when the turn is over:
+4. **Stop the sampler** as soon as the turn is over:
 
    ```bash
    /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-sample stop <run>"
    ```
 
-   The sampler writes its end line within one interval and exits. `stop` waits up to three
-   intervals, prints the end line's reason, and exits 0, or 1 if the sampler is still running.
-   - **The sampler ends by itself at its deadline** (8 hours by default, at most 12), and writes
-     its end line first. A forgotten sampler keeps the box awake until then, since its own CPU
-     counts as activity to the idle check (D33), so `stop` SHOULD be run as soon as the turn is
-     over, and a `--for` much longer than the turn SHOULD NOT be given.
-5. **Fetch the record to the laptop** with Windows OpenSSH's `scp`, over the lease's alias.
-   `cd` to the folder that is to hold the record first, and give `.` as the destination:
+   The sampler writes its end line within one interval. `stop` waits up to three intervals,
+   prints the end line's reason, and exits 0. It does the same for a run that has already ended,
+   such as at its deadline.
+   - **Exit 1** means the record has no end line: the sampler still runs, or was killed. The
+     agent MUST wait one more interval and run `status`. If the sampler still runs, the agent
+     MUST end it with `kill <PID>`, the PID that `start` printed and `status` shows, which writes
+     the end line with the reason `signal`, and MUST report it. A record with no end line is
+     still summarized, and `agentspace-footprint` says so.
+   - **Exit 2** means no record has that `<run>`.
+   - **The sampler also ends by itself at its deadline**, with its end line. A forgotten one keeps
+     the box awake until then, because its own CPU counts as activity to the idle check (D33),
+     so a `--for` much longer than the turn SHOULD NOT be given.
+5. **Fetch the record to the laptop**, after `stop` and before the lease is released. The agent
+   MUST `cd` to the folder that is to hold the record first, and give `.` as the destination:
 
    ```bash
    /c/Windows/System32/OpenSSH/scp.exe -o BatchMode=yes <alias>:agentspace-samples/<run>.jsonl .
    ```
 
-   The path after the alias is `~/agentspace-samples/<run>.jsonl`, relative to the box's home.
-   The record stays on the box as well.
-6. **Summarize it.** `agentspace-footprint` takes the record and prints Markdown:
+   The path after the alias is relative to the box's home. The record stays on the box too, also
+   after the lease is released.
+6. **Summarize it:**
 
    ```
    agentspace-footprint <record.jsonl> [--from <ISO 8601>] [--to <ISO 8601>] [--json]
    ```
 
-   - **On the laptop**, with its Python 3 on the file in the agentspace checkout's `box\system`
-     folder, from the folder the record was fetched to:
+   - **On the laptop**, from the folder the record was fetched to, the one form that works in
+     cmd, PowerShell and Git Bash is:
 
-     ```bash
-     python3 /c/Projects/agentspace/box/system/agentspace-footprint <run>.jsonl
+     ```
+     py -3 C:/Projects/agentspace/box/system/agentspace-footprint <run>.jsonl
      ```
 
-     In cmd or PowerShell it is
-     `py -3 C:\Projects\agentspace\box\system\agentspace-footprint <run>.jsonl`.
-   - **On the box**, over the lease, which needs no fetch:
+     The script is in agentspace's main checkout, `C:\Projects\agentspace` (lease step 1). A
+     project without that checkout MUST summarize on the box instead, over the lease and before
+     it is released, which needs no fetch:
 
      ```bash
      /c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes <alias> "agentspace-footprint agentspace-samples/<run>.jsonl"
      ```
-   - **`--json`** prints one JSON object holding the same numbers, with the keys `run`, `host`,
-     `sessions`, `concurrency` and `notes`, instead of Markdown.
+   - **`--json`** prints one JSON object instead of Markdown, with the keys `run`, `host`,
+     `sessions`, `concurrency` and `notes`.
    - **`--from` and `--to`** keep only the samples inside that window, both ends included. Each
-     takes an ISO 8601 time with a UTC offset, such as `2026-11-18T01:45:00-08:00`, which is the
-     form `date -Iseconds` prints in the "Run the turn" step. The agent SHOULD use them when the sampler ran
-     longer than the turn.
-   - **Exit 0, or 2 with a message on stderr** for a missing file or bad arguments. A malformed
-     line is skipped and counted in the notes, never fatal. A record with no end line, because
-     the sampler is still running or was killed, is summarized up to its last complete line, and
-     the notes say so.
+     MUST carry a UTC offset, such as `2026-11-18T01:45:00-08:00`, the form `date -Iseconds`
+     prints in step 3. The agent SHOULD use them when the sampler ran longer than the turn.
+   - **Exit 0, or 2 with a message on stderr** for a missing file, a record with no valid start
+     line, or bad arguments, such as a `--from` or `--to` without a UTC offset. A malformed line
+     is skipped and counted in the notes, never fatal. A record with no end line is summarized up
+     to its last complete line, and the notes say so.
 
-   The output gives the host's CPU cores busy and memory used in GiB, one row per session with
-   its own process and its tools apart, how many sessions ran at once, and the notes, each figure
-   as peak, p95 and p50.
+   The output gives:
+   - **A header:** the run's span, its samples, its interval, and the sampler's own overhead.
+   - **The host:** CPU cores busy and memory used in GiB.
+   - **One row per session:** its own process and its tools, apart, each as CPU cores and PSS in
+     MiB, with the most tools processes at once.
+   - **The concurrency:** the most sessions alive at once, and the sum of every session's tools
+     CPU and PSS at each sample.
+   - **The notes:** skipped lines, clamped negative differences, gaps and a missing end line.
+
+   Every CPU and memory figure is given as peak, p95 and p50. The tools processes and the most
+   sessions at once are given as peak only.
 
 ### The localswim board on the box
 

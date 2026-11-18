@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,11 @@ def fx(name):
 
 def run(*args):
     return subprocess.run([sys.executable, SCRIPT] + list(args), capture_output=True, text=True, timeout=60)
+
+
+def run_env(env, *args):
+    return subprocess.run([sys.executable, SCRIPT] + list(args), capture_output=True, text=True, timeout=60,
+                          env=dict(os.environ, **env))
 
 
 def summarize(name, *extra):
@@ -146,6 +152,9 @@ class TwoSessions(Base):
         self.assertIn("two-sessions", md)
         # first and last host lines are 40 s apart, both in the 1:45 minute
         self.assertIn("1:45am to 1:45am (-08:00)", md)
+        # sampler_cpu_s 0.4 over 40 s = 0.01 cores = 1.00% of one core, 4 places and 2 places
+        self.assertIn("Sampler overhead: 0.0100 cores (1.00% of one core)", md)
+        self.assertRegex(md, r"Interval: 2 seconds")
         pos = [md.index(h) for h in ("## Host", "## Sessions", "## Concurrency", "## Notes")]
         self.assertEqual(pos, sorted(pos))
         self.assertEqual(sections(md)["notes"].strip(), "None.")
@@ -282,9 +291,13 @@ class Anomalies(Base):
 
     def test_gap_markdown_note(self):
         notes = sections(markdown("gap"))["notes"]
-        self.assertRegex(notes, r"(?i)gap")
-        self.assertIn("2", notes)
+        # The count is asserted exactly from --json in test_gap (gaps = 2); here the same count must be
+        # on the one note line that names gaps, as a whole word, and no other note appears.
+        lines = [l for l in notes.splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertRegex(lines[0], r"(?i)\b2\b.*\bgaps?\b|\bgaps?\b.*\b2\b")
         self.assertNotIn("No end line", notes)
+        self.assertNotRegex(notes, r"(?i)skipped|clamp")
 
     def test_negative_difference(self):
         # At seq 6 host cpu_busy_s falls 104 -> 102 and the session's tools.cpu_s falls 52.0 -> 51.0.
@@ -295,7 +308,9 @@ class Anomalies(Base):
         self.stat(j["host"]["cpu_cores"], 0.5, 0.5, 0.5)
         # tools: 0.1 0.2 0.3 0.4 | 5-6 clamped to 0 | 6-7 (52.2 - 51.0) / 2 = 0.6, 0.7 0.8 0.9 1.0
         #   sorted 0 .1 .2 .3 .4 .6 .7 .8 .9 1.0 (N = 10): peak 1.0, p95 = 10th = 1.0, p50 = 5th = 0.4
-        #   (dropping the clamped interval instead would give p50 = 0.6; a raw negative would not be 0.4 either)
+        #   (dropping the clamped interval instead would give p50 = 0.6. A raw negative, 5-6 = (51.0 - 52.0) / 2 = -0.5,
+        #   would still sort first and leave the 5th value at 0.4, so this full-record test cannot tell clamping from
+        #   a raw negative: test_negative_difference_in_a_window below can.)
         s = j["sessions"][0]
         self.stat(s["tools"]["cpu_cores"], 1.0, 1.0, 0.4)
         self.stat(s["self"]["cpu_cores"], 0.1, 0.1, 0.1)
@@ -303,6 +318,36 @@ class Anomalies(Base):
         # memory is unaffected
         self.stat(s["tools"]["pss_mib"], 1100.0, 1100.0, 600.0)
         self.stat(j["host"]["mem_used_gib"], 5.5, 5.5, 3.0)
+
+    def test_negative_difference_in_a_window(self):
+        # --from :08 and --to :12 keep seq 5 (:08), 6 (:10) and 7 (:12): two intervals each.
+        # host: 5-6 busy 104 -> 102 is clamped to 0 (cores 0.0); 6-7 busy +1.0 over total +4.0: 2 * 1.0 / 4.0 = 0.5
+        #   values 0.0 0.5 (N = 2): peak 0.5, p95 = ceil(1.9) = 2nd = 0.5, p50 = ceil(1.0) = 1st = 0.0
+        #   (a raw negative, 2 * -2.0 / 4.0 = -1.0, would make the p50 -1.0)
+        # tools: 5-6 52.0 -> 51.0 is clamped to 0; 6-7 (52.2 - 51.0) / 2 = 0.6: values 0.0 0.6: (0.6, 0.6, 0.0)
+        #   (raw: -1.0 / 2 = -0.5, so p50 -0.5)
+        # self: 20.8 -> 21.0 -> 21.2, 0.2 / 2 = 0.1 in both intervals
+        j = summarize("negative", "--from", "2026-11-18T03:00:08-08:00", "--to", "2026-11-18T03:00:12-08:00")
+        self.assertEqual(j["run"]["samples"], 3)
+        self.notes(j, clamped=2)
+        self.stat(j["host"]["cpu_cores"], 0.5, 0.5, 0.0, "host cpu")
+        s = j["sessions"][0]
+        self.stat(s["tools"]["cpu_cores"], 0.6, 0.6, 0.0, "tools cpu")
+        self.stat(s["self"]["cpu_cores"], 0.1, 0.1, 0.1, "self cpu")
+        # concurrency: the samples after the first are seq 6 (0) and seq 7 (0.6)
+        self.stat(j["concurrency"]["tools_cpu_cores"], 0.6, 0.6, 0.0, "concurrency cpu")
+
+    def test_sampler_cpu_falling_is_clamped_and_counted(self):
+        # sampler_cpu_s runs 1.0, 1.1, 1.05, 1.2: the fall at sample 3 is one negative difference, clamped
+        # and counted once. Nothing else is negative: host busy +0.5 over total +2.0 each, 2 cpus: 2 * 0.5 / 2.0 = 0.5.
+        j = summarize("sampler-fall")
+        self.notes(j, clamped=1)
+        self.assertEqual(j["run"]["samples"], 4)
+        self.stat(j["host"]["cpu_cores"], 0.5, 0.5, 0.5, "host cpu")
+        self.assertEqual(j["sessions"], [])
+        self.assertEqual(j["concurrency"]["sessions_peak"], 0)
+        # The overhead is not pinned to one reading when a counter falls, but it MUST NOT be negative.
+        self.assertGreaterEqual(j["run"]["sampler_overhead_cores"], 0.0)
 
     def test_malformed_lines(self):
         # Five junk lines are added to the clean record: not JSON, a JSON array, an unknown kind,
@@ -487,7 +532,8 @@ class Rounding(Base):
         row = session_row(self.md, "rounder 7000-111")
         cells = numeric_cells(row)
         self.assertTrue(has_all(cells, [0.67, 0.33, 4.0, 2.5, 4]), cells)
-        self.assertIn("0.01", self.md)  # sampler overhead in the header
+        # sampler overhead: 0.03 s over 3 s = 0.01 cores = 1.00% of one core
+        self.assertIn("Sampler overhead: 0.0100 cores (1.00% of one core)", self.md)
 
     def test_null_prints_as_dash(self):
         row = session_row(self.md, "single 7001-222")
@@ -587,6 +633,251 @@ class Errors(Base):
         self.assertEqual(run(fx("noend-truncated")).returncode, 0)
 
 
+class Jitter(Base):
+    """6 samples, 2 CPUs, interval_s 2.0, with d(t) of 2.5 s, exactly 6.000 s, 6.001 s, 2.0 s, 2.0 s.
+
+    The gap limit is 3 * 2.0 = 6.0 s: an interval of exactly 6.000 s is kept, and 6.001 s is a gap.
+    d(cpu_total_s) is never cpus * d(t), so a reader that assumed it would get the wrong cores.
+    Session X (8001-500000) is in seq 1 to 4, session Y (8002-600000) in seq 5 and 6: two distinct
+    sessions that never overlap.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.j = summarize("jitter")
+        cls.md = markdown("jitter")
+
+    def test_run(self):
+        r = self.j["run"]
+        self.assertEqual(r["samples"], 6)
+        self.assertEqual(r["start"], "2026-11-18T04:00:00.000-08:00")
+        self.assertEqual(r["end"], "2026-11-18T04:00:18.501-08:00")  # 2.5 + 6.0 + 6.001 + 2.0 + 2.0 = 18.501 s
+        # sampler_cpu_s 0.0 .. 0.25 over 18.501 s
+        self.assertAlmostEqual(r["sampler_overhead_cores"], 0.25 / 18.501, places=6)
+        self.assertAlmostEqual(r["interval_s"], 2.0)
+
+    def test_notes(self):
+        # one gap for the host (seq 3 to 4, 6.001 s) and one for session X (the same two samples)
+        self.notes(self.j, gaps=2)
+
+    def test_host(self):
+        # intervals: 1-2 busy +1.0 total +4.0: 2 * 1.0 / 4.0 = 0.5 (cpus * d(t) would be 5.0)
+        #   2-3 (6.000 s, kept) busy +3.0 total +10.0: 2 * 3.0 / 10.0 = 0.6 (cpus * d(t) would be 12.0)
+        #   3-4 (6.001 s) is a gap: it would be 2 * 50 / 12 = 8.33 if it leaked
+        #   4-5 busy +1.5 total +3.0: 2 * 1.5 / 3.0 = 1.0
+        #   5-6 busy +0.5 total +5.0: 2 * 0.5 / 5.0 = 0.2
+        #   values 0.2 0.5 0.6 1.0 (N = 4): peak 1.0, p95 = ceil(3.8) = 4th = 1.0, p50 = ceil(2) = 2nd = 0.5
+        self.stat(self.j["host"]["cpu_cores"], 1.0, 1.0, 0.5, "host cpu")
+        # mem GiB 1 3 2 5 4 6 (N = 6): peak 6, p95 = ceil(5.7) = 6th = 6, p50 = ceil(3) = 3rd = 3
+        self.stat(self.j["host"]["mem_used_gib"], 6.0, 6.0, 3.0, "host mem")
+
+    def test_two_sessions_listed(self):
+        sx, sy = self.j["sessions"]
+        self.assertEqual((sx["session"], sy["session"]), ("8001-500000", "8002-600000"))
+        self.assertEqual((sx["label"], sy["label"]), ("jitx 8001-500", "jity 8002-600"))
+        self.assertEqual((sx["samples"], sy["samples"]), (4, 2))
+        self.assertEqual(sx["first_seen"], "2026-11-18T04:00:00.000-08:00")
+        self.assertEqual(sx["last_seen"], "2026-11-18T04:00:14.501-08:00")
+        self.assertEqual(sy["first_seen"], "2026-11-18T04:00:16.501-08:00")
+        self.assertEqual(sy["last_seen"], "2026-11-18T04:00:18.501-08:00")
+
+    def test_session_x(self):
+        s = self.j["sessions"][0]
+        # self cpu_s 10.0 10.5 12.0 20.0: 1-2 0.5 / 2.5 = 0.2; 2-3 (6.000 s) 1.5 / 6.0 = 0.25;
+        #   3-4 is a gap (8.0 / 6.001 = 1.33 if it leaked): values 0.2 0.25: peak 0.25, p95 = ceil(1.9) = 2nd = 0.25, p50 = 1st = 0.2
+        self.stat(s["self"]["cpu_cores"], 0.25, 0.25, 0.2, "X self cpu")
+        # tools cpu_s 20.0 21.0 24.0 40.0: 1-2 1.0 / 2.5 = 0.4; 2-3 3.0 / 6.0 = 0.5; 3-4 a gap (16 / 6.001 = 2.67)
+        self.stat(s["tools"]["cpu_cores"], 0.5, 0.5, 0.4, "X tools cpu")
+        # self pss 10 20 30 40 MiB (N = 4): peak 40, p95 = ceil(3.8) = 4th = 40, p50 = 2nd = 20
+        self.stat(s["self"]["pss_mib"], 40.0, 40.0, 20.0, "X self pss")
+        # tools pss 100 50 200 150 MiB: sorted 50 100 150 200: peak 200, p95 = 4th = 200, p50 = 2nd = 100
+        self.stat(s["tools"]["pss_mib"], 200.0, 200.0, 100.0, "X tools pss")
+        self.assertEqual(s["tools"]["procs"], {"peak": 3})  # procs 1 3 2 2
+
+    def test_session_y(self):
+        s = self.j["sessions"][1]
+        # self cpu_s 5.0 -> 5.6 over 2.0 s: 0.6 / 2.0 = 0.3 (one interval); tools 7.0 -> 8.0: 1.0 / 2.0 = 0.5
+        self.stat(s["self"]["cpu_cores"], 0.3, 0.3, 0.3, "Y self cpu")
+        self.stat(s["tools"]["cpu_cores"], 0.5, 0.5, 0.5, "Y tools cpu")
+        # self pss 5 then 7 MiB: peak 7, p95 = ceil(1.9) = 2nd = 7, p50 = 1st = 5; tools pss 20 then 30
+        self.stat(s["self"]["pss_mib"], 7.0, 7.0, 5.0, "Y self pss")
+        self.stat(s["tools"]["pss_mib"], 30.0, 30.0, 20.0, "Y tools pss")
+        self.assertEqual(s["tools"]["procs"], {"peak": 4})  # procs 4 then 1
+
+    def test_concurrency(self):
+        c = self.j["concurrency"]
+        # Two distinct sessions exist, but no sample holds more than one of them.
+        self.assertEqual(c["sessions_peak"], 1)
+        # tools cpu per sample after the first (5 values): seq 2 X 0.4; seq 3 X 0.5; seq 4 X is a gap, adds 0;
+        #   seq 5 Y has its first line only, no interval, adds 0; seq 6 Y 0.5
+        #   sorted 0 0 0.4 0.5 0.5: peak 0.5, p95 = ceil(4.75) = 5th = 0.5, p50 = ceil(2.5) = 3rd = 0.4
+        self.stat(c["tools_cpu_cores"], 0.5, 0.5, 0.4, "concurrency cpu")
+        # tools pss per sample (6): 100 50 200 150 (X) then 20 30 (Y): sorted 20 30 50 100 150 200
+        #   peak 200, p95 = ceil(5.7) = 6th = 200, p50 = ceil(3) = 3rd = 50
+        self.stat(c["tools_pss_mib"], 200.0, 200.0, 50.0, "concurrency pss")
+
+    def test_markdown_header(self):
+        # sampler overhead 0.25 / 18.501 = 0.013513 cores: 4 places 0.0135, as a percentage 1.35% (2 places)
+        self.assertIn("Sampler overhead: 0.0135 cores (1.35% of one core)", self.md)
+        self.assertRegex(self.md, r"Interval: 2 seconds")
+        self.assertIn("4:00am to 4:00am (-08:00)", self.md)
+
+
+class MarkdownColumns(Base):
+    """Figures read from the Markdown by their column header, so a swap of p95 and p50 would fail.
+
+    The two-sessions fixture gives every figure distinct peak, p95 and p50 values.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.md = markdown("two-sessions")
+        cls.sec = sections(cls.md)
+
+    def check(self, row, wants):
+        for pattern, want in wants:
+            self.assertAlmostEqual(figure(row, pattern), want, places=6, msg=pattern)
+
+    def test_host_columns(self):
+        rows = table_dicts(self.sec["host"])
+        self.assertEqual(len(rows), 1)
+        # cpu: peak 2.0, p95 1.9, p50 1.0; memory GiB: peak 10.5, p95 10.0, p50 5.5
+        self.check(rows[0], [
+            (r"cpu.*peak", 2.0), (r"cpu.*p95", 1.9), (r"cpu.*p50", 1.0),
+            (r"(mem|gib).*peak", 10.5), (r"(mem|gib).*p95", 10.0), (r"(mem|gib).*p50", 5.5)])
+
+    def test_session_columns(self):
+        rows = [r for r in table_dicts(self.sec["sessions"]) if "projA 12345-67" in " ".join(r.values())]
+        self.assertEqual(len(rows), 1)
+        # A self cpu 1.0 / 0.95 / 0.5, self pss 210 / 200 / 110; tools cpu 5.0 / 4.75 / 2.5, tools pss 2100 / 2000 / 1100
+        self.check(rows[0], [
+            (r"(self|own).*cpu.*peak", 1.0), (r"(self|own).*cpu.*p95", 0.95), (r"(self|own).*cpu.*p50", 0.5),
+            (r"(self|own).*(pss|mib).*peak", 210.0), (r"(self|own).*(pss|mib).*p95", 200.0),
+            (r"(self|own).*(pss|mib).*p50", 110.0),
+            (r"tools.*cpu.*peak", 5.0), (r"tools.*cpu.*p95", 4.75), (r"tools.*cpu.*p50", 2.5),
+            (r"tools.*(pss|mib).*peak", 2100.0), (r"tools.*(pss|mib).*p95", 2000.0),
+            (r"tools.*(pss|mib).*p50", 1100.0),
+            (r"procs", 9.0)])
+
+    def test_concurrency_columns(self):
+        rows = table_dicts(self.sec["concurrency"])
+        self.assertEqual(len(rows), 1)
+        # sessions peak 2; tools cpu peak 7.5 and p50 3.75 (p95 7.125 is left out: it sits on a rounding tie);
+        # tools pss 3150 / 3000 / 1650
+        self.check(rows[0], [
+            (r"sessions", 2.0),
+            (r"cpu.*peak", 7.5), (r"cpu.*p50", 3.75),
+            (r"(pss|mib).*peak", 3150.0), (r"(pss|mib).*p95", 3000.0), (r"(pss|mib).*p50", 1650.0)])
+
+
+class NewBehaviour(Base):
+    """The review's fixes: help text, a deep line, a null cwd, a BOM, the overhead line, the interval's
+    singular, and a session line a few milliseconds after its host line."""
+
+    def test_help_lines_start_with_a_capital(self):
+        # COLUMNS is wide so argparse does not wrap, which would put description fragments on lines of their own.
+        p = run_env({"COLUMNS": "200"}, "--help")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("Usage:", p.stdout)
+        self.assertIn("Show this help and exit", p.stdout)
+        for line in p.stdout.splitlines():
+            if not line.strip():
+                continue
+            if not line[0].isspace():
+                # a heading or a sentence: it starts with a capital
+                self.assertTrue(line[0].isupper(), "Help line %r" % line)
+            else:
+                # a table row: the label (a flag or a name) may start with anything, each description after it must not
+                parts = re.split(r"\s{2,}", line.strip())
+                for part in parts[1:]:
+                    self.assertTrue(part[0].isupper() or part[0].isdecimal(), "Help line %r, part %r" % (line, part))
+
+    def test_deeply_nested_line_is_skipped(self):
+        with open(fx("clean"), "rb") as f:
+            clean = f.read().split(b"\n")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "deep.jsonl")
+            with open(path, "wb") as f:
+                f.write(b"\n".join(clean[:3] + [b"[" * 200000] + clean[3:]))
+            p = run(path, "--json")
+        self.assertEqual(p.returncode, 0, p.stderr[-500:])
+        self.assertNotIn("Traceback", p.stderr)
+        j = json.loads(p.stdout)
+        self.notes(j, skipped=1)
+        self.assertEqual(without_notes(j), without_notes(summarize("clean")))
+
+    def test_bom_record_reads(self):
+        with open(fx("clean"), "rb") as f:
+            data = f.read()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bom.jsonl")
+            with open(path, "wb") as f:
+                f.write(b"\xef\xbb\xbf" + data)
+            p = run(path, "--json")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout), summarize("clean"))  # the start line is not hidden: nothing skipped
+
+    def test_null_and_empty_cwd(self):
+        # 3 samples 2 s apart, three sessions in each. tools cpu_s: A 10 11 13, B 20 20.4 20.8, C 30 30.2 30.6
+        j = summarize("labels")
+        self.notes(j)  # a null cwd is not malformed: nothing skipped
+        a, b, c = j["sessions"]
+        self.assertEqual(a["label"], "? 9001-700")  # null cwd: the folder is ?
+        self.assertEqual(b["label"], "? 9002-800")  # empty cwd: also ?
+        self.assertEqual(c["label"], "a|b 9003-900")
+        self.assertEqual((a["samples"], b["samples"], c["samples"]), (3, 3, 3))
+        # A: 1.0 / 2 = 0.5 then 2.0 / 2 = 1.0: (1.0, 1.0, 0.5). C: 0.2 / 2 = 0.1 then 0.4 / 2 = 0.2: (0.2, 0.2, 0.1)
+        self.stat(a["tools"]["cpu_cores"], 1.0, 1.0, 0.5, "A tools cpu")
+        self.stat(c["tools"]["cpu_cores"], 0.2, 0.2, 0.1, "C tools cpu")
+        self.assertEqual(j["concurrency"]["sessions_peak"], 3)
+        # concurrency cpu, seq 2: 0.5 + 0.2 + 0.1 = 0.8, seq 3: 1.0 + 0.2 + 0.2 = 1.4: (1.4, 1.4, 0.8)
+        self.stat(j["concurrency"]["tools_cpu_cores"], 1.4, 1.4, 0.8)
+
+    def test_pipe_in_label_is_escaped_in_markdown(self):
+        md = markdown("labels")
+        lines = [l for l in sections(md)["sessions"].splitlines() if l.strip().startswith("|")]
+        header = lines[0]
+        pipe = [l for l in lines if "9003-900" in l]
+        self.assertEqual(len(pipe), 1)
+        self.assertIn("a\\|b 9003-900", pipe[0])
+        for l in lines:
+            self.assertEqual(len(split_unescaped(l)), len(split_unescaped(header)), l)
+        self.assertEqual(len([l for l in lines if "? 9001-700" in l]), 1)
+        self.assertEqual(len([l for l in lines if "? 9002-800" in l]), 1)
+
+    def test_interval_of_one_second_is_singular(self):
+        md = markdown("sampler-fall")  # interval_s 1.0
+        self.assertRegex(md, r"Interval: 1 second(?!s)")
+        self.assertNotIn("1 seconds", md)
+
+    def test_overhead_line_has_four_places_and_a_percentage(self):
+        # two-sessions 0.0100 / 1.00%, jitter 0.0135 / 1.35%: the places differ, so neither is a fixed string
+        self.assertIn("Sampler overhead: 0.0100 cores (1.00% of one core)", markdown("two-sessions"))
+        self.assertIn("Sampler overhead: 0.0135 cores (1.35% of one core)", markdown("jitter"))
+
+    def test_session_line_a_few_ms_after_its_host_line_is_kept_with_its_sample(self):
+        # skew: host lines at :00 :02 :04, each session line 3 ms later. tools cpu_s 10 11 13, 2 cpus.
+        # --to at seq 2's host time (:02.000) keeps seq 1 and 2, session lines included, though a session line's
+        # own t is :02.003: samples 2, session samples 2, tools cpu (11 - 10) / 2.0 = 0.5, one interval.
+        j = summarize("skew", "--to", "2026-11-18T07:00:02.000-08:00")
+        self.assertEqual(j["run"]["samples"], 2)
+        self.assertEqual(j["run"]["end"], "2026-11-18T07:00:02.000-08:00")
+        s = j["sessions"][0]
+        self.assertEqual(s["samples"], 2)
+        self.stat(s["tools"]["cpu_cores"], 0.5, 0.5, 0.5, "tools cpu")
+        self.stat(j["concurrency"]["tools_cpu_cores"], 0.5, 0.5, 0.5, "concurrency cpu")
+        self.assertEqual(j["concurrency"]["sessions_peak"], 1)
+
+    def test_session_line_inside_the_window_is_dropped_with_its_sample(self):
+        # --from :02.001 drops seq 2's host line (:02.000), so its session line (:02.003, inside the window
+        # by its own t) goes with it. Only seq 3 is kept: 1 sample, 1 session line, no interval.
+        j = summarize("skew", "--from", "2026-11-18T07:00:02.001-08:00")
+        self.assertEqual(j["run"]["samples"], 1)
+        s = j["sessions"][0]
+        self.assertEqual(s["samples"], 1)
+        self.stat(s["tools"]["cpu_cores"], None, None, None)
+
+
 # ---- helpers for the Markdown, read loosely: sections by "## " heading, tables by "|" rows
 
 def sections(md):
@@ -655,6 +946,29 @@ def has_all(cells, want):
         else:
             return False
     return True
+
+
+def split_unescaped(line):
+    """The cells of a table row, split on pipes that are not escaped as backslash-pipe."""
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+
+
+def table_dicts(text):
+    """The first table of a section as a list of {column header: cell}, one per data row."""
+    rows = [split_unescaped(l) for l in text.splitlines() if l.strip().startswith("|")]
+    rows = [r for r in rows if not all(re.fullmatch(r":?-{2,}:?", c) for c in r)]
+    return [dict(zip(rows[0], r)) for r in rows[1:]]
+
+
+def figure(row, pattern):
+    """The number in the one cell whose column header matches the pattern."""
+    keys = [k for k in row if re.search(pattern, k, re.I)]
+    if len(keys) != 1:
+        raise AssertionError("Pattern %r matches columns %r among %r" % (pattern, keys, list(row)))
+    m = NUM.search(row[keys[0]].replace(",", ""))
+    if not m:
+        raise AssertionError("No number in %r (column %r)" % (row[keys[0]], keys[0]))
+    return float(m.group(0))
 
 
 def without_notes(j):

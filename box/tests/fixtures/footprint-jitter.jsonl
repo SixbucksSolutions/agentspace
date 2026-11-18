@@ -1,0 +1,14 @@
+{"kind":"start","t":"2026-11-18T04:00:00.000-08:00","run":"jitter","interval_s":2.0,"deadline":"2026-11-18T05:00:00.000-08:00","match":"claude","cpus":2,"mem_total_kib":16777216,"sampler":"agentspace-sample 1"}
+{"kind":"host","t":"2026-11-18T04:00:00.000-08:00","seq":1,"cpu_busy_s":100.0,"cpu_total_s":1000.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":0.0}
+{"kind":"session","t":"2026-11-18T04:00:00.000-08:00","seq":1,"session":"8001-500000","cwd":"/home/ubuntu/jitx","self":{"cpu_s":10.0,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":20.0,"pss_kib":102400,"rss_kib":204800,"procs":1}}
+{"kind":"host","t":"2026-11-18T04:00:02.500-08:00","seq":2,"cpu_busy_s":101.0,"cpu_total_s":1004.0,"mem_used_kib":3145728,"load1":0.5,"sampler_cpu_s":0.05}
+{"kind":"session","t":"2026-11-18T04:00:02.500-08:00","seq":2,"session":"8001-500000","cwd":"/home/ubuntu/jitx","self":{"cpu_s":10.5,"pss_kib":20480,"rss_kib":40960},"tools":{"cpu_s":21.0,"pss_kib":51200,"rss_kib":102400,"procs":3}}
+{"kind":"host","t":"2026-11-18T04:00:08.500-08:00","seq":3,"cpu_busy_s":104.0,"cpu_total_s":1014.0,"mem_used_kib":2097152,"load1":0.5,"sampler_cpu_s":0.1}
+{"kind":"session","t":"2026-11-18T04:00:08.500-08:00","seq":3,"session":"8001-500000","cwd":"/home/ubuntu/jitx","self":{"cpu_s":12.0,"pss_kib":30720,"rss_kib":61440},"tools":{"cpu_s":24.0,"pss_kib":204800,"rss_kib":409600,"procs":2}}
+{"kind":"host","t":"2026-11-18T04:00:14.501-08:00","seq":4,"cpu_busy_s":154.0,"cpu_total_s":1026.0,"mem_used_kib":5242880,"load1":0.5,"sampler_cpu_s":0.15}
+{"kind":"session","t":"2026-11-18T04:00:14.501-08:00","seq":4,"session":"8001-500000","cwd":"/home/ubuntu/jitx","self":{"cpu_s":20.0,"pss_kib":40960,"rss_kib":81920},"tools":{"cpu_s":40.0,"pss_kib":153600,"rss_kib":307200,"procs":2}}
+{"kind":"host","t":"2026-11-18T04:00:16.501-08:00","seq":5,"cpu_busy_s":155.5,"cpu_total_s":1029.0,"mem_used_kib":4194304,"load1":0.5,"sampler_cpu_s":0.2}
+{"kind":"session","t":"2026-11-18T04:00:16.501-08:00","seq":5,"session":"8002-600000","cwd":"/home/ubuntu/jity","self":{"cpu_s":5.0,"pss_kib":5120,"rss_kib":10240},"tools":{"cpu_s":7.0,"pss_kib":20480,"rss_kib":40960,"procs":4}}
+{"kind":"host","t":"2026-11-18T04:00:18.501-08:00","seq":6,"cpu_busy_s":156.0,"cpu_total_s":1034.0,"mem_used_kib":6291456,"load1":0.5,"sampler_cpu_s":0.25}
+{"kind":"session","t":"2026-11-18T04:00:18.501-08:00","seq":6,"session":"8002-600000","cwd":"/home/ubuntu/jity","self":{"cpu_s":5.6,"pss_kib":7168,"rss_kib":14336},"tools":{"cpu_s":8.0,"pss_kib":30720,"rss_kib":61440,"procs":1}}
+{"kind":"end","t":"2026-11-18T04:00:18.551-08:00","reason":"stop-file","samples":6}
