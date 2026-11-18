@@ -129,7 +129,9 @@ try {
 
   $all = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'list')
   $p = [System.Collections.Generic.List[string]]::new()
-  foreach ($item in @($all.Json['leases'])) {
+  $items = if ($all.Json -and $all.Json['leases']) { @($all.Json['leases']) } else { @() }
+  if ($items.Count -lt $seeds.Count) { $p.Add("The list holds $($items.Count) leases, fewer than the $($seeds.Count) seeded") }
+  foreach ($item in $items) {
     $g = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'get', [string]$item['id'])
     if ($null -eq $g.Json -or (ConvertTo-CanonicalText $g.Json) -cne (ConvertTo-CanonicalText $item)) { $p.Add("The entry for $($item['id'].Substring(0, 8)) is not what get prints") }
   }

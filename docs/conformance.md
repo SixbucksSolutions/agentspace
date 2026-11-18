@@ -189,19 +189,23 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
   enforces, as in `lease-api.md#agentspace-lease-get: ...`. The summary is `<n> passed, <n> failed,
   <n> skipped`.
 - **The exit code is 0 when every result was PASS, 1 when any was FAIL, and 2 when none failed but
-  any was SKIPPED.** A run that exits 2 is incomplete, never passed (see
+  any was SKIPPED.** **A run that counted no result at all MUST exit 1**, with a `FAIL` line saying
+  that no check ran. A run that exits 2 is incomplete, never passed (see
   [What a conformance run needs](#what-a-conformance-run-needs)). The checks skip only when the
-  harness could not make a throwaway CA, or, for two checks of `test-create-get.ps1`, when no
-  `ssh-keygen` is on the `PATH`, and the reason says which.
+  harness could not make a throwaway CA, when no `ssh-keygen` is on the `PATH` (two checks of
+  `test-create-get.ps1`), or when the local UTC offset is 0 (one check of `test-create-get.ps1`),
+  and the reason says which.
 - **The program under test is named by `AGENTSPACE_CMD`** ([Naming the program under test](#naming-the-program-under-test)).
   It is run as a separate process with its arguments unchanged, and its stdin is closed. Set it to a
   program that prints nothing and exits 0, and **every check MUST fail**: that proves the variable is
   read and that no check passes vacuously. E0.04-T03-S01 ran that proof for each check.
 - **The CA is made by `AGENTSPACE_OPERATOR_CMD`**, the operator, run as `ca -Quiet`.
-- **Run it on a machine whose time zone is not UTC**, as
-  [lease-api.md](lease-api.md#times) requires of the suite at least once. The harness cannot
-  set a zone for a child process, and `test-create-get.ps1` reads the program's times against its own
-  clock in UTC, so on a machine set to UTC a zone mix-up in the program stays hidden.
+- **The suite MUST run at least once on a machine whose time zone is not UTC**, as
+  [lease-api.md](lease-api.md#times) requires. The harness cannot set a zone for a child process,
+  and `test-create-get.ps1` reads the program's times against its own clock in UTC, so on a machine
+  set to UTC a zone mix-up in the program stays hidden. **`test-create-get.ps1` reports one SKIPPED
+  check, with a reason, when the local UTC offset is 0**, so a run on a UTC machine exits 2: it is
+  incomplete, never passed.
 - **A check takes from about 20 to about 50 seconds against the prototype, and all five about 3
   minutes**, most of it starting programs: about 0.5 seconds for a run that issues no credential,
   and a few seconds for a ready `create`. Against a program that prints nothing, all five take
@@ -217,15 +221,19 @@ the checks share, which start no program of their own, are in `conformance/lease
 | Function | Does |
 |---|---|
 | `New-ConformanceHome` | Makes a folder under `%TEMP%` named `agentspace-conformance-<12 hex>`, holding a fresh `USERPROFILE` (`home`, with `.agentspace` and `.ssh`) and a throwaway CA made by the operator's `ca` under it. Returns `Root`, `UserProfile`, `StateDir` (`.agentspace\state` in the home), `SshDir` (`.ssh` in the home), `CaReady` and `CaReason`. When no CA can be made, `CaReady` is false and `CaReason` says why, and the real CA is never used instead |
-| `Invoke-AgentspaceCli -ConformanceHome <h> -Arguments <string[]> [-InputJson <string>] [-Environment <hashtable>]` | Runs the program `AGENTSPACE_CMD` names as a separate process, inside the home. Returns `ExitCode`, `Stdout`, `Stderr`, `Json` (stdout parsed with every time kept as a string, or null), `ErrorJson` (stderr parsed, or null), `StdoutBytes`, `StderrBytes` and `TimedOut`. `-Environment` adds or removes variables for that one run, and a null value removes one. `-InputJson` is written to stdin |
+| `Invoke-AgentspaceCli -ConformanceHome <h> -Arguments <string[]> [-InputJson <string>] [-Environment <hashtable>]` | Runs the program `AGENTSPACE_CMD` names as a separate process, inside the home. Returns `ExitCode`, `Stdout`, `Stderr`, `Json` (stdout parsed with every time kept as a string, or null), `ErrorJson` (stderr parsed, or null), `StdoutBytes`, `StderrBytes` and `TimedOut`. `-Environment` adds or removes variables for that one run, and a null value removes one. **It refuses an override of `USERPROFILE`, `HOME`, `LOCALAPPDATA` or `APPDATA`, and an override of `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` to a path that is not under the home's `Root`.** A refusal throws, and the check reports it as FAIL. `-InputJson` is written to stdin |
 | `Invoke-ConformanceProgram -Variable <name> ...` | The same for any program a conformance variable names, such as `AGENTSPACE_OPERATOR_CMD` |
 | `Test-ConformanceSchema -Json <string> -Schema <file>` | True when the document validates against a schema under `schemas/` (`state/leases.state.schema.json` is allowed), by PowerShell 7's `Test-Json -SchemaFile`. False when it does not validate or is not JSON |
 | `Write-ConformanceResult -Name <check> -Status PASS\|FAIL\|SKIPPED [-Reason <text>]` | Prints one result line and counts it |
 | `Remove-ConformanceHome -ConformanceHome <h>` | Deletes the home's `Root`, and only it. It refuses a folder that is not an `agentspace-conformance-*` folder directly under `%TEMP%` |
-| `Exit-ConformanceRun` | Prints the summary line and exits with the code above |
+| `Exit-ConformanceRun` | Prints the summary line and exits with the code above. A run that counted no result exits 1, after a `FAIL` line saying that no check ran |
 
 - **Every program the harness starts gets the same environment.**
-  - **Pointed into the home:** `USERPROFILE`, `HOME`, `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR`.
+  - **Pointed into the home:** `USERPROFILE`, `HOME`, `AGENTSPACE_STATE_DIR` and
+    `AGENTSPACE_SSH_DIR`, and also `LOCALAPPDATA` (`home\AppData\Local`) and `APPDATA`
+    (`home\AppData\Roaming`). **The last two matter**: the operator reads the localswim receipt, and
+    so the token, under `LOCALAPPDATA` ([docs/state.md](state.md)), so a child that kept the real value
+    could reach it.
   - **Kept away from AWS and the real token, so that no check can ever call the real account:**
     - `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` name files that do not exist in the home
       (`home\no-aws\config` and `home\no-aws\credentials`).
@@ -237,7 +245,8 @@ the checks share, which start no program of their own, are in `conformance/lease
       a usage error) **MUST first confirm, under the same environment, that
       `aws sts get-caller-identity` fails**, and report every case SKIPPED without running the
       program if it succeeds.
-  - **`AGENTSPACE_PROXY_COMMAND` is set to a command that does nothing**, so that a ready lease
+  - **`AGENTSPACE_PROXY_COMMAND` is set to a command that fails at once** (the command
+    interpreter's `/d /c exit 1`, found through `ComSpec`), so that a ready lease
     needs no real box ([lease-api.md](lease-api.md#environment)). A check MAY override it with
     `-Environment`.
   - **Every other `AGENTSPACE_*` variable the caller holds is removed**, so that a shell's own
@@ -253,7 +262,8 @@ the checks share, which start no program of their own, are in `conformance/lease
 ### What the first run proved
 
 **It answers [open question 3](#open-questions).** On 2026-11-18, on the laptop, with `USERPROFILE`
-set to a new folder under `%TEMP%` and nothing else of the real profile reachable, the operator's
+set to a new folder under `%TEMP%` (the OpenSSH client still finds the real home through the
+account, so the real profile is not unreachable), the operator's
 `ca` made a CA there and exited 0, a second `ca` exited 0 and changed nothing, and a ready
 `lease create` then issued a lease, wrote its alias file and its credential under that home, and
 printed a document that validates.
@@ -578,14 +588,14 @@ land with this page's turn, so a link to one resolves once they merge.
 
 ## The remaining work
 
-**No check is rewritten or moved by this story.** The sorting showed about 5.6 hours of
+**No check was rewritten or moved by E0.04-T02-S04.** The sorting showed about 5.6 hours of
 rewriting against a 3-hour story, so the dev lead cut the story at the sorting and this page. **The
 rest is three stories in v0.04-T03, carded by the architect** (2026-11-18). **The estimates below
 are the sorter's, in agent active minutes, from reading the suites, and not measured.**
 
 | Story | Contents | Estimate |
 |---|---|---|
-| 1. The lease CLI harness, with `create`, `get` and `list` | The shared helper (a program runner reading `AGENTSPACE_CMD`, a throwaway `USERPROFILE` with a throwaway CA made by the operator's `ca`, throwaway state and ssh folders, cleanup): 25 minutes. The process half of `test-lease-cli.ps1` (help, usage and values): 15 minutes. `create` and `get` retargeted, and `list` with `create`-made seeds: 40 minutes | 80 minutes |
+| 1. The lease CLI harness, with `create`, `get` and `list` (done by E0.04-T03-S01, #0084) | The shared helper (a program runner reading `AGENTSPACE_CMD`, a throwaway `USERPROFILE` with a throwaway CA made by the operator's `ca`, throwaway state and ssh folders, cleanup): 25 minutes. The process half of `test-lease-cli.ps1` (help, usage and values): 15 minutes. `create` and `get` retargeted, and `list` with `create`-made seeds: 40 minutes | 80 minutes |
 | 2. The remaining lease CLI checks, against a pinned harness interface | The normalizers as probes (35), the state file through seeded `leases.json` (30), `renew` and `release` with `create`-made seeds (25), the certificate and the renew and release checks (25), the alias and the `Include` line (35), and the driver's unsatisfiable and failed-alias checks (25) | 175 minutes |
 | 3. The operator, keeper and schemas checks, plus the push seam in `operator.md` | The keeper suite parametrized by `AGENTSPACE_KEEPER_CMD` and run twice in full: 60 minutes. The operator's alias refusals and the proxy's argument refusals: 25. The schemas check moved: 10. The push seam is specified in [operator.md](operator.md) by this story: an environment variable naming `ssh` and `aws`, and a way to give the push a time zone (operator.md Q11 and Q12). Until the product has that seam, the push stays prototype code | 95 minutes, without the seam |
 

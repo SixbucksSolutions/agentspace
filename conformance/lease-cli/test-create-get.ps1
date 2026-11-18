@@ -186,6 +186,9 @@ try {
     foreach ($secret in $h.Root, $h.UserProfile, $env:USERNAME) {
       if ($secret -and $f.Stderr.Contains($secret)) { $p.Add('The error message holds an absolute path or the user name') ; break }
     }
+    # No absolute path of any kind: a drive path or a UNC path (lease-api.md#exit-codes-and-errors).
+    $said = if ($f.ErrorJson -and $f.ErrorJson.ContainsKey('message')) { [string]$f.ErrorJson['message'] } else { $f.Stderr }
+    if ($said -match '[A-Za-z]:[\\/]' -or $said.Contains('\\')) { $p.Add('The error message holds an absolute path') }
     Complete-ConformanceCheck -Name 'lease-api.md#exit-codes-and-errors: An internal message holds no absolute path and no user name' -Problems $p
 
     # TTL, and two creates giving different IDs and aliases. It runs after the failed create, which MUST NOT block it.
@@ -223,8 +226,16 @@ try {
     Write-ConformanceResult -Name 'lease-api.md#agentspace-lease-create: Every check of a ready lease (create, get, expiry, a failed write)' -Status SKIPPED -Reason $badSkip
   }
 
+  # --- The time zone (lease-api.md#times) ------------------------------------------------------------
+  # The suite MUST run at least once on a machine whose zone is not UTC. The harness cannot set a zone
+  # for a child, so on a UTC machine a zone mix-up in the program stays hidden: report it, so that the
+  # run is incomplete and never passed.
+  if ([TimeZoneInfo]::Local.GetUtcOffset([DateTime]::UtcNow) -eq [TimeSpan]::Zero) {
+    Write-ConformanceResult -Name 'lease-api.md#times: The run happens in a time zone that is not UTC' -Status SKIPPED -Reason 'The local UTC offset is 0, so a time zone mix-up in the program would stay hidden; run the suite where the zone is not UTC'
+  }
+
   # --- An unsatisfiable lease: no CA is needed, and no credential is issued -------------------------
-  $u = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64', '--size', 'xl')
+  $u =Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64', '--size', 'xl')
   $made++
   $ua = $u.Json
   $p = Get-ConformanceSuccessProblems -Run $u

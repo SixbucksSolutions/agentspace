@@ -132,6 +132,7 @@ function Test-ConformanceHelpRun {
   $r = Invoke-AgentspaceCli -ConformanceHome $ConformanceHome -Arguments $Arguments
   $p = [System.Collections.Generic.List[string]]::new()
   if (-not $Blocks.ContainsKey($Level)) { $p.Add("docs/lease-api.md has no help block for '$Level'") }
+  elseif ([string]::IsNullOrEmpty($Blocks[$Level])) { $p.Add("The help block for '$Level' in docs/lease-api.md is empty, so there is nothing to match") }
   else {
     $want = [Text.UTF8Encoding]::new($false).GetBytes($Blocks[$Level])
     if ($r.ExitCode -ne 0) { $p.Add("Exit $($r.ExitCode), not 0") }

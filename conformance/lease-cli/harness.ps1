@@ -9,8 +9,9 @@
 #   from conformance/prototype/defaults.ps1, and nowhere else: the harness and the checks MUST NOT
 #   name the prototype.
 # - Every program the harness starts runs as a separate process, with USERPROFILE, HOME,
-#   AGENTSPACE_STATE_DIR and AGENTSPACE_SSH_DIR pointed into a throwaway home under $env:TEMP, and
-#   with the AWS variables arranged so that a mistaken run cannot reach AWS or the real token. A
+#   LOCALAPPDATA, APPDATA, AGENTSPACE_STATE_DIR and AGENTSPACE_SSH_DIR pointed into a throwaway home
+#   under $env:TEMP, and with the AWS variables arranged so that a mistaken run cannot reach AWS or
+#   the real token. A
 #   check MUST NOT read or write the real %USERPROFILE%\.agentspace, the real ~/.ssh or the real CA.
 # - Nothing here loads prototype code.
 #
@@ -55,6 +56,10 @@ function Get-ConformanceChildEnvironment {
   foreach ($name in $script:ConformanceAwsRemoved) { $env2[$name] = $null }
   $env2['USERPROFILE'] = $ConformanceHome.UserProfile
   $env2['HOME'] = $ConformanceHome.UserProfile
+  # The operator reads the localswim receipt, and so the token, under LOCALAPPDATA (docs/state.md), so
+  # both of these MUST point into the home too.
+  $env2['LOCALAPPDATA'] = Join-Path $ConformanceHome.UserProfile 'AppData\Local'
+  $env2['APPDATA'] = Join-Path $ConformanceHome.UserProfile 'AppData\Roaming'
   $env2['AGENTSPACE_STATE_DIR'] = $ConformanceHome.StateDir
   $env2['AGENTSPACE_SSH_DIR'] = $ConformanceHome.SshDir
   # Files that do not exist, so the AWS CLI finds no profile even if something starts it.
@@ -63,8 +68,20 @@ function Get-ConformanceChildEnvironment {
   # No instance-metadata credentials either, so no credential source is left.
   $env2['AWS_EC2_METADATA_DISABLED'] = 'true'
   # A harmless way to reach the lease's host, so that a ready lease needs nothing outside the home.
-  $env2['AGENTSPACE_PROXY_COMMAND'] = 'C:\Windows\System32\cmd.exe /d /c exit 1'
-  foreach ($key in $Override.Keys) { $env2[$key] = $Override[$key] }
+  $env2['AGENTSPACE_PROXY_COMMAND'] = "$env:ComSpec /d /c exit 1"
+  # An override MUST NOT lead a child out of the home: it cannot replace the variables that name the
+  # profile, and a state or ssh folder it names MUST be under the home's root. A refusal throws, and
+  # the check that asked reports FAIL.
+  $profileNames = 'USERPROFILE', 'HOME', 'LOCALAPPDATA', 'APPDATA'
+  $root = [IO.Path]::GetFullPath([string]$ConformanceHome.Root).TrimEnd('\') + '\'
+  foreach ($key in $Override.Keys) {
+    if ($profileNames -contains $key) { throw "The override of $key is refused: it would lead a child out of the throwaway home." }
+    if (($key -in 'AGENTSPACE_STATE_DIR', 'AGENTSPACE_SSH_DIR') -and -not [string]::IsNullOrEmpty([string]$Override[$key])) {
+      $full = [IO.Path]::GetFullPath([string]$Override[$key])
+      if (-not ($full + '\').StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw "The override of $key is refused: the path is not under the throwaway home." }
+    }
+    $env2[$key] = $Override[$key]
+  }
   return $env2
 }
 
@@ -185,6 +202,8 @@ function New-ConformanceHome {
   try {
     New-Item -ItemType Directory -Force -Path (Join-Path $userProfile '.agentspace') | Out-Null
     New-Item -ItemType Directory -Force -Path $h.SshDir | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $userProfile 'AppData\Local') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $userProfile 'AppData\Roaming') | Out-Null
     $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD' -ConformanceHome $h -Arguments @('ca', '-Quiet') -TimeoutSeconds 120
   } catch {
     # The caller never gets the object, so it could not remove the folder: this MUST.
@@ -259,9 +278,11 @@ function Write-ConformanceResult {
 }
 
 # Prints the summary line and exits: 0 when every result was PASS, 1 when any was FAIL, 2 when none
-# failed but any was SKIPPED.
+# failed but any was SKIPPED. A run that counted no result at all exits 1, with a FAIL line saying
+# that no check ran, so that a script that never reached its checks cannot pass.
 function Exit-ConformanceRun {
   $c = $global:ConformanceCounts
+  if ($c['PASS'] + $c['FAIL'] + $c['SKIPPED'] -eq 0) { Write-ConformanceResult -Name 'The run counted a result' -Status FAIL -Reason 'No check ran' }
   Write-Host "$($c['PASS']) passed, $($c['FAIL']) failed, $($c['SKIPPED']) skipped"
   if ($c['FAIL'] -gt 0) { exit 1 }
   if ($c['SKIPPED'] -gt 0) { exit 2 }
