@@ -2180,7 +2180,8 @@ about 210 processes. Times are Pacific Standard Time, the box's and the laptop's
   a child `bash -c` that sources `~/.claude/shell-snapshots/`, and a subagent adds no process. No
   helper ran under a `-p` session with no MCP servers (1:45am, 09:45Z); an interactive or MCP
   session is unverified.
-- **The default `--match` is `^(?:\S*/)?claude(?:\s|$)`, anchored on argv[0].** A bare `claude`
+- **The default `--match` is `^(?:\S*/)?claude(?:\s|$)`, anchored on argv[0]** (widened by
+  E0.03-T02-S01's findings below, to take a desktop-app session's `ccd-cli`). A bare `claude`
   matched the tool calls' `bash -c`, the SSH wrapper's shell, `grep claude` and the sampler's own
   `--match`; the anchor keeps all four out. **Known gap:** a launch whose argv[0] is not
   `.../claude`, such as an npm install's `node .../cli.js`, is not matched, and MUST be given its
@@ -2214,6 +2215,31 @@ about 210 processes. Times are Pacific Standard Time, the box's and the laptop's
   cpu_total_s sums /proc/stat's first 8 fields, since guest is already in user. A sample stuck 60 s
   past the deadline is ended by SIGALRM, or by a watchdog thread 15 s later when a /proc read is
   blocked in the kernel.
+
+**Findings from story E0.03-T02-S01 (2026-11-18),** the real turn, v0.04-T01, measured on a
+lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D33 stands.
+- **A desktop-app session is not a `claude` process.** Its argv[0] is
+  `~/.claude/remote/ccd-cli/<version>`, under the app's bridge `~/.claude/remote/srv/<hash>/server`.
+  The default `--match` missed it, which is the known gap above in a new form. **The default is now
+  `^(?:\S*/)?(?:claude|ccd-cli/[^/\s]+)(?:\s|$)`,** which still keeps the bridge out. Before a
+  turn's agents launch, a measurer MUST confirm that the session shows as a session row.
+- **A turn is one session, and its `cwd` moves:** a dev lead entering each story's worktree moves
+  its row's `cwd` with it. A row is identified by its session id, never by its folder.
+- **The host-versus-sessions check tripped #0082's 10% line by its letter, and was then broken
+  down.** The host ran 19.69 CPU-seconds above the session, the sampler and the idle baseline,
+  210% of the session's tools CPU; the 0.25-core line was not crossed. The observer's own
+  1-second poll loop took about 7.5 (estimated), and the desktop app's connection (two SSM session
+  workers, its bridge and four `sshd` processes) 5.8 to 7.1 (measured from `/proc`). After the
+  measurers' logins and the kernel, 1.1 to 4.7 is left. No orphan was seen. The baseline had
+  neither the connection nor the observer in it, which is why the check could not tell them from
+  orphaned work. **#0082 was not pulled in** (architect, 2026-11-18, in a comment on #0082).
+- **A measurer's own polling is load.** A later observer SHOULD sleep to its next snapshot in one
+  call.
+- **A desktop-app session carries a connection overhead outside its row,** about 0.003 cores and
+  up to 161 MiB RSS on this turn. v0.03-T03's table SHOULD give it a line of its own.
+- **CloudWatch's idle backstop (#0043) stopped the box at 5:26am** while it waited 3 hours for the
+  turn to start, and the sampler with it. Until #0043 is fixed, a measurer SHOULD start the
+  sampler close to the turn's start, and MUST run `agentspace-sample status` when the turn starts.
 
 ### D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype
 
