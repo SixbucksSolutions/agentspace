@@ -186,12 +186,22 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    From cmd or PowerShell, `ssh` is Windows OpenSSH. From Git Bash it MUST be called by its full
    path, `C:\Windows\System32\OpenSSH\ssh.exe`, because MSYS ssh mangles the ProxyCommand.
 4. **A desktop-app session MUST have a holder open on the laptop for as long as it needs the
-   board.** The app connects with `ClearAllForwardings=yes`, so the alias's `RemoteForward` lines
-   never apply to its own connection (card #0042). The holder holds them instead:
-
-   ```bat
-   C:\Windows\System32\OpenSSH\ssh.exe -N -o ExitOnForwardFailure=yes <alias>
-   ```
+   board, and the keeper provides it.** The app connects with `ClearAllForwardings=yes`, so the
+   alias's `RemoteForward` lines never apply to its own connection (card #0042). The holder holds
+   them instead, and nobody starts it by hand
+   ([D30](docs/decisions.md#d30-a-keeper-on-the-laptop-holds-the-boards-forwards)):
+   - **The keeper runs at logon as the scheduled task `agentspace board holder`.** It runs
+     `scripts\board-holder.ps1 -Watch` through a no-window launcher. While a lease is ready and no
+     holder runs, it starts `ssh.exe -N -o ExitOnForwardFailure=yes <alias>` through the ready
+     lease that expires last, and it stops a holder whose lease is no longer ready.
+   - **`scripts\install-board-holder.ps1` registers the task.** `-DryRun` prints what it would
+     register and changes nothing, and `-Uninstall` removes the task and its launcher. Registering
+     the task is persistent configuration on Terry's laptop, so it MUST only happen with his yes
+     (E0.02-T03-S01).
+   - **The keeper logs to `%USERPROFILE%\.agentspace\board-holder.log`**, and the holder's own
+     output goes to `board-holder-ssh.log` beside it.
+   - **A holder that fails fast is retried with backoff**, from 30 seconds doubling to 5 minutes,
+     never in a tight loop.
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that
@@ -214,7 +224,7 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    tunnel does not tell sshd that the client has gone, so the box drops a dead holder's session,
    and frees 8811 and 53147, about 90 seconds after the session goes quiet (D12's 0.02.T1.1
    finding, card #0044). A new holder started before then exits under `ExitOnForwardFailure`, so
-   wait and start it again. Only a session still holding them after 2 minutes is cleared by hand:
+   the keeper retries it with backoff. Only a session still holding them after 2 minutes is cleared by hand:
    it MUST be cleared as D12's E3.03 finding says.
 
 ### The localswim board on the box
