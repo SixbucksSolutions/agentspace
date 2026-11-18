@@ -362,21 +362,21 @@ says what today's driver leaves, which is nothing except in the alias row.
 
 | Failure | When | Left behind |
 |---|---|---|
-| The CA is missing or unusable | The CA check fails: no CA, a half-made one, a mismatched or loosened one, or one inside a synced folder ([operator.md](operator.md#ca)). A driver MUST NOT create the CA ([lease-api.md](lease-api.md#the-credential), #0029) | Nothing |
+| The CA is missing or unusable | The CA check fails: no CA, a half-made one, or a mismatched or loosened one, by the five checks of [state.md](state.md#its-checks) and no others. The CA folder's place is `ca`'s to check, not the driver's. A driver MUST NOT create the CA ([lease-api.md](lease-api.md#the-credential), #0029) | Nothing |
 | The credential could not be issued | Making the key, checking that it has no passphrase, or signing fails | Nothing from the credential, and the lease's folder is removed only if this call made it. A key made in a folder that already existed stays, which no CLI call can reach |
 | The lease ID already has a credential | A key or certificate for this ID exists. A driver MUST refuse, and MUST NOT overwrite or remove it | The existing files, untouched |
 | The alias could not be set up | The caller's OpenSSH configuration cannot take it, an alias file for this alias belongs to another lease or to no lease, the transport cannot be found, the transport or a path holds a line break, the alias is not a valid name, or a write fails | The credential is removed, and a foreign file at the alias's place is kept. See below for what the alias step itself can leave |
 | Anything else | A file cannot be written | Nothing |
 
-**Today, an alias failure found after the `Include` line was added leaves more than a failed place
-may.** A foreign or colliding alias file, or a write that fails, comes after the step that makes
+**An alias failure found after the `Include` line was added leaves that line, and it is allowed
+to.** A foreign or colliding alias file, or a write that fails, comes after the step that makes
 sure of the `Include` line, so it leaves that line (or a configuration holding only it, when there
 was none), a dated backup of the configuration when the line was added to an existing one, and the
-alias folder. [state.md](state.md#a-leases-credential) says whether the line is meant to stay, and
-calls the line and the backup harmless. lease-api.md's "change nothing" reads against the backup,
-which is a defect the rewrite MUST NOT repeat unless the decision in [Q18](#open-questions) says
-otherwise. A failure that comes earlier, such as a missing transport, a line break or an invalid
-alias name, leaves none of these.
+alias folder. They stay, and a driver MUST NOT remove them
+([state.md](state.md#creation-in-order), which settles [Q18](#open-questions)): none of them is a
+lease's key, certificate or alias, so they are not what a failed place MUST NOT leave. A failure
+that comes earlier, such as a missing transport, a line break or an invalid alias name, leaves
+none of these.
 
 **The alias failure's message MUST say what a person has to fix** in agentspace's own words, with
 no absolute path ([lease-api.md](lease-api.md#messages) has the wording to follow). The
@@ -570,11 +570,12 @@ CLI and its caller hold no part of it.
 
 **The transport override** is the means by which a check, or a worktree, supplies a transport
 instead of the driver's own. When the CLI hands a driver a non-empty transport override at place,
-the driver MUST use it in the alias in place of its own, and MUST NOT look for or need the thing
-its own transport needs (today's needs an instance-ID cache that a worktree does not have; see
-[The EC2 driver](#the-ec2-driver)). A driver MUST refuse an override that holds a line break. How
-the text is written into the alias, among it how a percent sign is escaped, is
-[state.md](state.md#a-leases-credential)'s ([Q6](#open-questions)).
+the driver MUST use it in the alias in place of its own, and MUST NOT look for or need what its
+own transport needs, such as its program. A driver MUST refuse an override that holds a line
+break. How the text is written into the alias, among it how a percent sign is escaped, is
+[state.md](state.md#the-alias-file)'s ([Q6](#open-questions), closed). The override is not needed
+to create a lease without the default transport's cache: place never reads that cache
+([How it is reached](#how-it-is-reached)).
 
 **What is not the driver's:** the alias's other settings, which are the same for every driver
 today, among them the lease's key and certificate files, the board's forwards (D12, D30) and the
@@ -611,8 +612,8 @@ driver never answers `no_capacity` or `pending`.
 2. **Checks the CA** by running the operator's `ca` ([operator.md](operator.md#ca)) as a separate
    program, and reading only its exit code. On a laptop with no CA, `ca` creates one and exits 0,
    so today's place creates the CA and goes on to sign. That is #0029's third point, and never
-   behavior to copy: a driver MUST check without creating. The prototype starts Windows
-   PowerShell 5.1 for it.
+   behavior to copy: a driver MUST check without creating, by the checks of
+   [state.md](state.md#its-checks) alone. The prototype starts Windows PowerShell 5.1 for it.
 3. **Makes a new key pair for the lease and checks that it has no passphrase,** with `ssh-keygen`
    from Windows OpenSSH, by full path ([operator.md](operator.md#programs-it-starts)). The key's
    type, place and checks, and the refusal of a lease ID that already has a key, are
@@ -624,11 +625,13 @@ driver never answers `no_capacity` or `pending`.
    The valid-after time SHOULD be back-dated there; the prototype's is the issue time itself,
    which is not behavior to copy.
 5. **Writes the lease's alias** into the caller's OpenSSH client configuration, with the
-   transport the next section describes. It first checks that the transport can be found, which
-   for the default transport is the instance-ID cache ([How it is reached](#how-it-is-reached)).
-   That check comes after the key is made and signed, so a missing cache fails place at this step,
-   and the credential is removed as for any alias failure. If the configuration cannot take the
-   alias, place fails.
+   transport the next section describes. If the configuration cannot take the alias, or the
+   default transport's program cannot be found, place fails here, after the key is made and
+   signed, and the credential is removed as for any alias failure. **Place MUST NOT check for the
+   instance-ID cache** ([How it is reached](#how-it-is-reached)).
+   - Note on where this came from: without an override, the prototype first checks that its
+     checkout holds `.instance-id`, and fails place at this step when it does not. That is a
+     difference the spec drops (D21), and never behavior to copy.
 6. **Answers `ready`,** with the alias, the user `ubuntu`, and the certificate's valid-before time.
 
 **If step 3 or 4 fails partway, the lease's folder is removed, but only if this call made it,** so
@@ -665,20 +668,30 @@ certificate's key ID in its SSH log (D7).
 
 ### How it is reached
 
-**The alias's transport is the operator's ProxyCommand, with the alias as its argument:** a command
-that runs `cmd.exe` on the proxy script in the checkout, then the alias's name, written out
-literally. [operator.md](operator.md#the-proxycommand) owns what it does, including that it runs
-the operator's `up` for the alias and then tunnels SSH to the box. Its AWS calls, in order, are the
+**The alias's transport is the operator's ProxyCommand, with the alias as its argument:** the full
+path of agentspace's ProxyCommand program, which the CLI finds in the folder its own executable
+runs from, then the alias's name, written out literally; a `.cmd` or `.bat` program is run through
+Windows' `cmd.exe` (D8). The line, byte for byte, is [state.md](state.md#the-alias-file)'s.
+[operator.md](operator.md#the-proxycommand) owns what the program does, including that it runs the
+operator's `up` for the alias and then tunnels SSH to the box. Its AWS calls, in order, are the
 ProxyCommand row of [operator.md](operator.md#calls-by-command), and the programs it starts are in
-[operator.md](operator.md#programs-it-starts). Place itself starts only Windows PowerShell 5.1,
-for `ca`, and `ssh-keygen`.
+[operator.md](operator.md#programs-it-starts). Place itself starts only `ssh-keygen`, and, in the
+prototype, Windows PowerShell 5.1 for `ca`, which is not behavior to copy
+([How it places a lease](#how-it-places-a-lease)).
 
-**The default transport needs the operator's instance-ID cache,** which is the file `.instance-id`
-at the root of the checkout the proxy script is in
-([operator.md](operator.md#laptop-files)). Without an override, place fails if it cannot find the
-cache, and a git worktree has none. That is why a check run from a worktree passes the override,
-and why the CLI reads it ([lease-api.md](lease-api.md#environment)). The failure's message MUST
-say it in agentspace's own words and carry no absolute path.
+**The default transport reads the operator's instance-ID cache when a connection is made, and
+place never reads it** (D21). The cache is `%USERPROFILE%\.agentspace\instance-id`
+([state.md](state.md#files-in-the-checkout)), and what the ProxyCommand does when it is missing or
+stale is [operator.md](operator.md#laptop-files)'s. **`create` MUST NOT read it, check for it or
+depend on it:** a missing or stale cache fails the connection, never the `create`. So a check, or a
+worktree, needs no cache to create a lease, with or without the override.
+- **If the default transport's program cannot be found, place fails** (step 5 above), with a
+  message in agentspace's own words and no absolute path
+  ([lease-api.md](lease-api.md#messages)).
+- Note on where this came from: the prototype's default line runs
+  `<checkout>\scripts\ssh-proxy.cmd`, beside the CLI's own script, and its place checks for the
+  checkout's `.instance-id`, its copy of the cache, which a git worktree does not have. That check
+  is a difference the spec drops (D21).
 
 **What place cannot know:** whether the box trusts the CA, or is running, or can be reached. The
 operator sets up the CA, and `sync` installs its public half on the box (operator.md,
@@ -751,24 +764,35 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
 
 ## Open questions
 
-**What reading the prototype and its docs could not settle.** The clean-room review
-(E0.04-T03-S01) closes each one, or names the story that will.
+**What reading the prototype and its docs could not settle.** After the clean-room review
+(E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and
+none blocks building a drop-in of contract v0.
 
-1. **Q1: What is the transport between the CLI and a driver in the rewrite?** The prototype calls
+1. **Later, not blocking:** nothing about the boundary is visible from outside the CLI
+   ([The boundary](#the-boundary)), and the contract is written so that any transport carries it,
+   so a drop-in picks its own.
+   **Q1: What is the transport between the CLI and a driver in the rewrite?** The prototype calls
    a driver inside one process. No decision fixes the rewrite's, and the contract is written so
    that any transport carries it. Whether drivers are compiled into the CLI, started as programs,
    or reached over a network is a design call for v0.05 (D28), and decides how a conformance
    check can plug in a stub driver, which the prototype has no way to do.
-2. **Q2: How does the CLI choose a driver, and what does `unsatisfiable` mean with several?** The
+2. **Later, not blocking:** v0 has one driver ([The EC2 driver](#the-ec2-driver)), so there is no
+   choice to make among several.
+   **Q2: How does the CLI choose a driver, and what does `unsatisfiable` mean with several?** The
    prototype asks the first driver it loaded. D5 says a request no backend can meet is
    `unsatisfiable`, but nothing says whether every driver is asked, in what order, whose reasons
    are shown, or how a driver is chosen for a project that D25 gives a host of its own.
-3. **Q3: How does a `pending` lease become `ready` or `unsatisfiable`, and how is one given up?**
+3. **Later, not blocking:** v0's one driver never answers `pending`
+   ([What it supports](#what-it-supports)), so a v0 lease never needs a way out of it.
+   **Q3: How does a `pending` lease become `ready` or `unsatisfiable`, and how is one given up?**
    The states allow it ([lease-api.md](lease-api.md#states): "agentspace, when placement
    finishes"), but the boundary has no operation to ask a driver how a placement stands, to cancel
    one, or to hear that it finished. The prototype's driver never answers `pending`, so none has
    been needed, and its `release` of a `pending` lease asks no driver.
-4. **Q4: How does the boundary let the CLI undo a renew, or record before it takes effect, and
+4. **Later, not blocking:** [lease-api.md](lease-api.md#concurrency-and-atomicity) fixes what a
+   failed renew or release MUST leave, and any of the ways named below meets it, so the mechanism
+   is a drop-in's choice.
+   **Q4: How does the boundary let the CLI undo a renew, or record before it takes effect, and
    how does release avoid leaving a `ready` lease with part of its credential gone?**
    lease-api.md requires a failed renew to leave the previous certificate, and a failed release
    never to leave a `ready` lease without its credential (#0041). The prototype's driver changes
@@ -776,41 +800,60 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
    and a release that removes the alias and then fails on the folder leaves a `ready` lease with
    no alias. Either a two-step operation (prepare, then commit), an undo, or recording first
    would meet it.
-5. **Q5: Should the credential and the alias be the CLI's steps, with the driver supplying only
+5. **Later, not blocking:** a caller sees the same outcome either way, so where the steps live is a
+   drop-in's design choice.
+   **Q5: Should the credential and the alias be the CLI's steps, with the driver supplying only
    the login user, the transport and the host-key rule?** In the prototype the driver calls the
    routines that issue the credential and write the alias, though nothing in them is specific to
    EC2 except the user `ubuntu`, the transport and the host-key settings. If they are the CLI's, a
    second driver is smaller and the CLI's output rules apply to them once. If they stay the
    driver's, every driver repeats them. D9 fixes only that the transport is the driver's.
-6. **Q6: How is a transport override written into the alias?** The prototype refuses a line break,
-   and doubles each percent sign, because `ssh` expands them. Whether that is the contract's, or
-   the alias file's own rule in state.md, is not stated in either, and a check that sets the
-   override would need to know.
-7. **Q7: Is the alias's host-key check the driver's?** Today's alias names the box's known-hosts
+6. **Q6: Closed by [state.md, The alias file](state.md#the-alias-file): how a transport override is
+   written into the alias.** It is the alias file's own rule: a line break is refused, and each
+   percent sign is doubled, because `ssh` expands them.
+7. **Later, not blocking:** v0 has one host, whose rule today's alias carries (D9), so the question
+   arises only with a second host.
+   **Q7: Is the alias's host-key check the driver's?** Today's alias names the box's known-hosts
    entry and demands a match, which is true only of the one box (D9). A second host needs its own
    rule, and no decision says who supplies it.
-8. **Q8: What happens when cleanup fails?** In two cases the prototype lets a cleanup's error
+8. **Later, not blocking:** this page requires the first failure to be the one reported, and
+   [lease-api.md](lease-api.md#concurrency-and-atomicity) what a failed command MUST leave, so what is left open is whether the message also
+   says that files stayed, which is wording that no caller parses.
+   **Q8: What happens when cleanup fails?** In two cases the prototype lets a cleanup's error
    replace the failure that began it, and the error is raw: a failed credential step whose folder
    removal then fails, and a failed alias step whose direct folder removal fails. After a `create`
    that fails in recording, the CLI releases the lease and ignores a failed release. This page
    requires the first failure to be the one reported, but not what is done about files that could
    not be removed, or whether the caller is told that some stayed.
-9. **Q9: Where does the cause of a failure go?** This page requires it be kept, and never in the
-   error document. The prototype keeps it only as the failure's inner exception, which no one
-   reads, so it is lost ([lease-api.md](lease-api.md#open-questions), Q10).
-10. **Q10: What does a lease on a Windows host look like at this boundary?** The result carries a
+9. **Q9: Closed for contract v0 by [lease-api.md](lease-api.md#exit-codes-and-errors)
+   (E0.04-T04-S01, 2026-11-18): where the cause of a failure goes.** Nowhere: the CLI MAY drop it,
+   as the prototype does, and MUST NOT put it in any output, or in any file
+   [state.md](state.md) lists. "Kept" in
+   [Failure](#failure) means kept apart from the message, up to the CLI. Later, not blocking: a
+   place to keep it, such as a log ([lease-api.md](lease-api.md#open-questions), Q10).
+10. **Later, not blocking:** Windows hosts come with v0.13 (#0081), and until then D4's lease model
+    is a Linux user and a certificate.
+    **Q10: What does a lease on a Windows host look like at this boundary?** The result carries a
     login user and an alias, which assume an SSH login. D4 says the lease model assumes a Linux
     user and a certificate until v0.13 (#0081), and the vision's V2 asks whether a certificate
     stays the way in. Whether the three operations survive that unchanged is not known.
-11. **Q11: Where does a driver keep its own per-lease state?** The CLI hands back only the driver's
+11. **Later, not blocking:** today's driver needs nothing more than the driver's name, the lease ID
+    and the project, and no v0 driver has a per-lease backend.
+    **Q11: Where does a driver keep its own per-lease state?** The CLI hands back only the driver's
     name, the lease ID and the project. Today's driver needs nothing more. A per-lease backend (a
     container, D6) would need an identity to find the compute again, and no file is assigned to it
     in state.md.
-12. **Q12: How long does place take, in the prototype?** It starts a second program for the CA check
+12. **Later, not blocking:** the 30-second wait is fixed by
+    [lease-api.md](lease-api.md#concurrency-and-atomicity), so how long the prototype takes is a
+    run's observation, not behavior a drop-in copies.
+    **Q12: How long does place take, in the prototype?** It starts a second program for the CA check
     and runs `ssh-keygen` three times, inside the CLI's lock. Only a run shows whether it comes
     near the 30-second wait that a concurrent `renew` or `release` has
     ([lease-api.md](lease-api.md#open-questions), Q11).
-13. **Q13: What does a foreign file at a lease's alias place do to its release?** Release refuses
+13. **Later, not blocking:** [state.md](state.md#release-and-what-it-leaves) states the behavior to
+    build, that release fails until a person moves or deletes the file, so another outcome would be
+    a later change.
+    **Q13: What does a foreign file at a lease's alias place do to its release?** Release refuses
     to delete it and fails, so the lease can never be released until a person removes the file.
     Whether that is the right outcome, or a `released` lease with the file left, is for the
     architect.
@@ -818,19 +861,29 @@ backend (D1). The prototype does not meet it, and v0.06 (#0055) does.
     2026-11-18: D1 holds at connect time too, so the transport MUST keep the backend out of what it
     prints. It is now a requirement in [Reachability](#reachability), carried by card #0087. The
     number is kept so that the questions after it keep theirs.
-15. **Q15: Does D1 reach files on the caller's machine?** A client cannot tell the backend from the
+15. **Later, not blocking:** this page's SHOULD for a driver's name stands either way
+    ([The driver's name](#the-drivers-name)), and whether D1 reaches files on the caller's machine
+    is policy, not behavior to build.
+    **Q15: Does D1 reach files on the caller's machine?** A client cannot tell the backend from the
     CLI's output, but the lease state file stores the driver's name, and the alias file's
-    transport line names the proxy script and the checkout's path, which `ssh -G <alias>` prints.
+    transport line names the ProxyCommand program's full path, which `ssh -G <alias>` prints.
     D1 says a client MUST NOT be able to tell the backend, and does not say whether a client that
     reads those files counts. This page says only that a driver's name SHOULD NOT name its backend.
-16. **Q16: Which limits bind `ssh.user`?** lease-api.md allows 1 to 64 letters, digits, `.`, `_`
-    and `-`, not starting with `.` or `-`. The state schema allows a lowercase letter or `_`, then
-    up to 31 lowercase letters, digits, `_` or `-`. A user that output allows and the record
-    refuses fails the `create`. This page makes the narrower one bind a driver's result, and the
-    architect decides whether the two are made to agree.
-17. **Q17: Does `ssh-keygen`'s error text reach the CLI's standard error in the prototype?** Making
+16. **Q16: Closed (E0.04-T04-S01, 2026-11-18): which limits bind `ssh.user`.** Both stay as
+    written ([state.md](state.md#the-lease-state-file)). lease-api.md's wider rule (1 to 64
+    letters, digits, `.`, `_` and `-`, not starting with `.` or `-`) is what a caller MUST accept,
+    so a later host needs no new contract version. The state schema's narrower one (a lowercase
+    letter or `_`, then up to 31 lowercase letters, digits, `_` or `-`) binds a v0 driver's result,
+    and a user it refuses fails the `create`. Widening the state schema later is internal, and
+    changes no contract.
+17. **Later, not blocking:** [The boundary](#the-boundary) states the rule to build, that a started
+    program's output is captured for the failure's cause and never shown, so only whether the
+    prototype meets it is open.
+    **Q17: Does `ssh-keygen`'s error text reach the CLI's standard error in the prototype?** Making
     the key and checking its passphrase capture nothing, so reading says it most likely does. Only
     a run with a failing `ssh-keygen` settles it.
-18. **Q18: May a failed `create` leave the `Include` line, a configuration backup and the alias
-    folder?** state.md calls them harmless and says the line is meant to stay; lease-api.md says a
-    failed `create` changes nothing. Whether the backup and the folder count is for the architect.
+18. **Q18: Closed by [state.md](state.md#creation-in-order) (E0.04-T04-S01, 2026-11-18): a failed
+    `create` leaves the `Include` line, a configuration backup and the alias folder it made, and
+    MUST NOT remove them.** None is a lease, a key, a certificate or an alias, which is what
+    [lease-api.md](lease-api.md#concurrency-and-atomicity) forbids a failed `create` to leave, and
+    its message says that no lease was recorded, never that nothing was changed.

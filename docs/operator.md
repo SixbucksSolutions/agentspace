@@ -10,9 +10,10 @@ as the laptop sees it, and the AWS calls each command makes. The reasoning behin
 [decisions.md](decisions.md), cited as `D<n>`.
 
 **What it does not own:**
-- **The lease CLI** (`agentspace lease ...`) is [lease-api.md](lease-api.md)'s. The lease CLI
-  calls two things this page owns: `ca`, as its CA check ([ca](#ca)), and the ProxyCommand, which
-  every lease alias runs ([The ProxyCommand](#the-proxycommand)).
+- **The lease CLI** (`agentspace lease ...`) is [lease-api.md](lease-api.md)'s. It reaches one
+  thing this page owns, the ProxyCommand, which every lease alias runs
+  ([The ProxyCommand](#the-proxycommand)). It checks the CA itself, by
+  [state.md's checks](state.md#its-checks), and never runs `ca` ([ca](#ca)).
 - **Every file the operator reads or writes on the laptop is [docs/state.md](state.md)'s**: its
   location, format and access rules. This page names each file, says when it is read or written,
   and cites that doc for the rest ([Laptop files](#laptop-files)). docs/state.md is written in
@@ -621,9 +622,13 @@ operator ca [-Quiet]
 nothing (D7, D17, D21).** The CA's files, their location and their access rules are docs/state.md's;
 this section gives what `ca` does and says. `ca` makes no AWS call and touches no box.
 
-**The lease CLI runs `ca` as its CA check before it signs a lease's key**, and reads only its exit
-code: 0 means the CA is usable (prototype source: `scripts/lease-credential.ps1`). So `ca` on an
-existing, sound CA MUST exit 0 and change nothing.
+**The lease CLI does not run `ca`.** Its `create` and `renew` check the CA themselves, by the
+checks of [state.md](state.md#its-checks), and MUST NOT create one
+([state.md](state.md#its-checks)). `ca` on an existing, sound CA MUST still exit 0 and change
+nothing.
+- Note on where this came from: the prototype's lease CLI runs `ca` as its CA check, and reads
+  only its exit code (`scripts/lease-credential.ps1`), so on a laptop with no CA its `create`
+  makes one. state.md lists that as a requirement the prototype does not meet.
 
 **In order, it:**
 1. **Fails if `ssh-keygen.exe` is missing:** `agentspace: <path> is missing; install the Windows
@@ -1466,7 +1471,7 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q5** | **Does #0034's mechanism also hit `ssm get-command-invocation` and `ec2 wait`?** The poll discards the CLI's stderr while every error is terminating; under Windows PowerShell 5.1 a stderr line from it (such as an invocation not yet registered) may throw and fail `up` with a raw error instead of polling again. | A run on the laptop |
 | **Q6** | **Is an empty or unexpected answer to the patch check meant to count as ready?** The prototype ends the wait on anything but `pending`, so a check that fails lets `up` print `Ready` before the patch run has finished, against the README's rule. | The architect |
 | **Q7** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace` ([Laptop files](#laptop-files)); the prototype keeps it in the checkout, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. The localswim CLI's build output (`.build\`) is not state, and MAY stay in the checkout. | Closed |
-| **Q8** | **Does docs/state.md own the files the operator reads but agentspace never writes?** Those are localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry, and `infra\local.parameters`. D34 gives it "every file and folder agentspace writes". | docs/state.md (E0.04-T02-S01) |
+| **Q8** | **Closed by [docs/state.md](state.md#files-agentspace-reads-and-never-writes) (E0.04-T02-S01).** state.md lists the files the operator reads and agentspace never writes (localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry), and `infra\local.parameters` in [Files in the checkout](state.md#files-in-the-checkout); it owns none of their formats. | Closed |
 | **Q9** | **What characters can a localswim URL and Bot token contain, and what form MUST the URL have?** The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either would break or change it, and it finds the board's address by taking the URL as `http://<host>:<port>...`. The push refuses an empty value and a CR, LF or NUL, and checks nothing else. | localswim's docs; the architect |
 | **Q10** | **What are the rewrite's entry points called, and does it keep PowerShell-style parameters (`-GiB`, `-Alias`, `-Quiet`)?** Lease alias files on the laptop name `<checkout>\scripts\ssh-proxy.cmd` in their ProxyCommand line, and the lease CLI runs `scripts\agentspace.ps1 ca`, so a renamed entry point changes those too. | v0.06 (#0055) |
 | **Q11** | **Closed by [The test seam](#the-test-seam).** `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD` name the programs a check stands in for, and a stand-in gets the token only as the real `ssh` does. | Closed |

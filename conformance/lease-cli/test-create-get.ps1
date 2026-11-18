@@ -32,6 +32,36 @@ function Get-AliasFile {
   return (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Join-Path $SshDir "agentspace.d\$Alias"))
 }
 
+# A canonical text of a parsed JSON value: sorted keys, so two documents compare by content and never
+# by member order or by how a string is escaped (lease-api.md, "Output": a caller MUST compare parsed
+# values, never bytes).
+function ConvertTo-CanonicalJson {
+  param($Value)
+  if ($null -eq $Value) { return 'null' }
+  if ($Value -is [System.Collections.IDictionary]) {
+    $keys = @($Value.Keys | ForEach-Object { [string]$_ })
+    [array]::Sort($keys, [StringComparer]::Ordinal)
+    $parts = foreach ($k in $keys) { (ConvertTo-Json -InputObject $k -Compress) + ':' + (ConvertTo-CanonicalJson $Value[$k]) }
+    return '{' + (@($parts) -join ',') + '}'
+  }
+  if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+    $items = foreach ($i in $Value) { ConvertTo-CanonicalJson $i }
+    return '[' + (@($items) -join ',') + ']'
+  }
+  return (ConvertTo-Json -InputObject $Value -Compress)
+}
+
+# True when two stdouts hold the same JSON document, compared as parsed values, every time kept as a string.
+function Test-SameDocument {
+  param([string]$A, [string]$B)
+  try {
+    $da = $A | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+    $db = $B | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+  } catch { return $false }
+  if ($null -eq $da -or $null -eq $db) { return $false }
+  return ((ConvertTo-CanonicalJson $da) -ceq (ConvertTo-CanonicalJson $db))
+}
+
 # Runs a ready create and the checks every ready lease MUST meet; returns the run and the clock window.
 function Test-ReadyCreate {
   param($ConformanceHome, [string[]]$Arguments, [string]$Label, [int]$Ttl, [string]$ExpectProject)
@@ -154,11 +184,11 @@ try {
     $stateBefore = Get-ConformanceStateHash -ConformanceHome $h
     $g = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'get', $id.ToUpperInvariant())
     $p = Get-ConformanceSuccessProblems -Run $g
-    if ($g.Stdout -cne $ready.Run.Stdout) { $p.Add('get does not print the lease as create printed it') }
+    if (-not (Test-SameDocument $g.Stdout $ready.Run.Stdout)) { $p.Add('get does not print the lease as create printed it, compared as parsed values') }
     Complete-ConformanceCheck -Name 'lease-api.md#agentspace-lease-get: get with the ID in uppercase prints the lease as create printed it, and validates' -Problems $p
     $g2 = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'get', "  $id ")
     $p = Get-ConformanceSuccessProblems -Run $g2
-    if ($g2.Stdout -cne $ready.Run.Stdout) { $p.Add('get does not print the same lease') }
+    if (-not (Test-SameDocument $g2.Stdout $ready.Run.Stdout)) { $p.Add('get does not print the same lease, compared as parsed values') }
     Complete-ConformanceCheck -Name 'lease-api.md#lease-id: get takes an ID with surrounding whitespace, normalized' -Problems $p
     $p = [System.Collections.Generic.List[string]]::new()
     if ($stateBefore -ceq 'absent') { $p.Add('There was no state file to compare, so create recorded nothing') }
@@ -260,7 +290,7 @@ try {
   Complete-ConformanceCheck -Name 'lease-api.md#agentspace-lease-create: An unsatisfiable lease leaves no lease folder and no alias file' -Problems $p
   $ug = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'get', $(if ($ua) { [string]$ua['id'] } else { '' }))
   $p = Get-ConformanceSuccessProblems -Run $ug
-  if ($ug.Stdout -cne $u.Stdout) { $p.Add('get does not print the lease as create printed it') }
+  if (-not (Test-SameDocument $ug.Stdout $u.Stdout)) { $p.Add('get does not print the lease as create printed it, compared as parsed values') }
   Complete-ConformanceCheck -Name 'lease-api.md#agentspace-lease-get: get returns the unsatisfiable lease as create printed it' -Problems $p
 
   # Each reason alone, and all three; a request is never met with a substitute (lease-api.md#agentspace-lease-create).

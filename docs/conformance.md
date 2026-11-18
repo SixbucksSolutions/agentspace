@@ -89,7 +89,21 @@ each names a program in `conformance/prototype/`, except the first, which names 
 **Why four and not one.** The story card asked for `AGENTSPACE_CMD` for the lease CLI and the
 operator. The prototype has them as two programs under two runtimes (the lease CLI under
 PowerShell 7, the operator under Windows PowerShell 5.1), and the keeper and the ProxyCommand are
-two more, so each needs a name. A rewrite that ships one binary sets all four to it.
+two more, so each needs a name.
+
+**Each variable names a program that runs its role with the command line its spec gives**
+(architect, 2026-11-18): `AGENTSPACE_CMD` with [lease-api.md](lease-api.md#command-lines)'s,
+`AGENTSPACE_OPERATOR_CMD` with [operator.md](operator.md#command-line)'s, `AGENTSPACE_KEEPER_CMD`
+with [keeper.md](keeper.md#command-line)'s, and `AGENTSPACE_SSH_PROXY_CMD` with
+[operator.md](operator.md#the-proxycommand)'s. A check starts the program a variable names with
+exactly those arguments, and adds none of its own. The variable holds a program's path and no
+arguments.
+- **A rewrite that ships one binary sets each variable to a program that selects the role**, such
+  as a small wrapper per role that runs the binary with an argument naming the role and then the
+  check's arguments unchanged. It MUST NOT set two variables to one program that cannot tell them
+  apart, because the four command lines collide: with no argument the lease CLI MUST fail with a
+  usage error, the keeper MUST run one pass, and the ProxyCommand MUST run `up` and its tunnel; and
+  one word is an unknown command to the lease CLI and an alias to the ProxyCommand.
 
 - **The names MUST NOT be `AGENTSPACE_PROXY_COMMAND`.** That variable already means something
   else: it is the command string that `create` writes into a lease's alias
@@ -121,8 +135,8 @@ two more, so each needs a name. A rewrite that ships one binary sets all four to
   instead:
   - **The state and ssh folders** are named through `AGENTSPACE_STATE_DIR` and
     `AGENTSPACE_SSH_DIR` ([docs/lease-api.md](lease-api.md#environment)).
-  - **The lease's key, certificate and the CA** have no folder override today
-    ([docs/lease-api.md](lease-api.md#open-questions), question 9), so a check that places a
+  - **The lease's key, certificate and the CA** have no folder override
+    ([docs/state.md](state.md#what-moves-which-files)), so a check that places a
     ready lease sets `USERPROFILE` to a throwaway folder and makes a throwaway CA there with the
     operator's `ca` command ([docs/operator.md](operator.md#ca)). `USERPROFILE` is a documented,
     read variable ([docs/operator.md](operator.md#environment-variables)). **The harness does this
@@ -240,7 +254,7 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 | `test-list.ps1` | `list`: its order, filters and empty list, with leases made by `create` and given the times and states the state file can hold ([lease-api.md](lease-api.md#agentspace-lease-list)) | For a ready lease |
 | `test-lease-cmd-renew-release.ps1` | `renew` and `release`: the new certificate and its window, the record, the refusals by state and by value, a failed renew leaving the lease as it was (no key pair, no folder, a record that cannot be written), and what `release` deletes and leaves ([renew](lease-api.md#agentspace-lease-renew), [release](lease-api.md#agentspace-lease-release), [state.md](state.md#renewal)) | Yes. One SKIPPED result, and nothing else is run, when no CA could be made |
 | `test-lease-certificate.ps1` | The certificate, the key and the times a ready `create` leaves ([lease-api.md](lease-api.md#the-credential), [Times](lease-api.md#times), [state.md](state.md#the-certificate)), read with `ssh-keygen` | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when the machine's zone is UTC (see below) |
-| `test-lease-alias-file.ps1` | The alias file, read with `ssh -G`, and the `Include` line on each shape of config; a ProxyCommand with a CR or LF refused ([state.md](state.md#the-alias-file), [The `Include` line](state.md#the-include-line), [lease-api.md](lease-api.md#environment)) | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when `create` fails under the default transport (see below) |
+| `test-lease-alias-file.ps1` | The alias file, read with `ssh -G`, and the `Include` line on each shape of config; a ProxyCommand with a CR or LF refused; the default ProxyCommand line as D8 makes it checkable ([state.md](state.md#the-alias-file), [The `Include` line](state.md#the-include-line), [lease-api.md](lease-api.md#environment)) | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when `create` fails under the default transport (see below) |
 | `test-lease-driver-outcomes.ps1` | The driver as a caller sees it: unsatisfiable requests, no driver name in any output, a failed alias step ([driver.md](driver.md#unsatisfiable-requests), [lease-api.md](lease-api.md#concurrency-and-atomicity)) | Only for the ready half. The unsatisfiable half runs without one |
 | `test-lease-concurrency.ps1` | Concurrent `create`s, `renew`s and `release`s, readers that never wait, the lease state lock and its 30 seconds ([lease-api.md](lease-api.md#concurrency-and-atomicity), [state.md](state.md#the-lease-state-lock)) | Yes. SKIPPED when no CA could be made |
 
@@ -263,9 +277,12 @@ E0.04-T03-S03's.
     `test-lease-certificate.ps1`).
   - **A `create` under the default transport fails with a valid `internal` error** (one check of
     `test-lease-alias-file.ps1`). That check leaves `AGENTSPACE_PROXY_COMMAND` unset, so the program
-    forms its own transport, which may need an instance-ID cache that a checkout lacks. **The reason
-    says "may need", because the check cannot tell that cause from another.** In a checkout with
-    no cache the run exits 2. What the failed `create` leaves (no lease folder, no alias file, no
+    forms its own line, and seeds no instance-ID cache, which a conforming build never needs (D21).
+    Its default line can be checked only when that `create` succeeds. The MUST that it succeed
+    with no cache is `test-unmet-default-transport-no-cache.ps1`'s
+    ([The files that are expected to fail](#the-files-that-are-expected-to-fail)), and the
+    prototype misses it in a checkout that holds no `.instance-id` of its own, such as a worktree,
+    where this run exits 2. What the failed `create` leaves (no lease folder, no alias file, no
     record) is checked as PASS or FAIL either way, and any other failure of that `create` is a
     FAIL, not a SKIPPED ([The gaps](#the-gaps)).
 - **The program under test is named by `AGENTSPACE_CMD`** ([Naming the program under test](#naming-the-program-under-test)).
@@ -349,6 +366,14 @@ the checks share, which start no program of their own, are in `conformance/lease
   `New-Item`, `Copy-Item` and `Move-Item`. The checks of S01 on `main` are included. A path that is
   outside the throwaway home makes the check throw, and the check reports FAIL.
 - **A time the program printed is untrusted too.** A check MUST NOT wait for one, without a limit.
+- **One path from the program's output is read outside the home: the default ProxyCommand's
+  program** ([state.md, The alias file](state.md#the-alias-file)), which D8 puts beside the CLI's
+  own executable, not in the home, so `Assert-ConformancePath` would refuse it. A check MAY only
+  test that it is an existing file, and MUST first refuse it unless it is a full path on a local
+  drive (`X:\...`) with no `.` or `..` step, no `\\?\` or other device prefix, no share, and no
+  wildcard. It MUST NOT write, delete, run or list anything there, and MUST NOT quote the path in a
+  failure reason. `Get-CcDefaultProxyProblems` in `lease-check-support.ps1` does this, and is the
+  only code that does.
 - **Shown by a run:** a program that prints a ready lease whose `id` and `host_alias` are
   `..\..\..\..\<folder>` and `..\..\..\..\<folder>\id_ed25519`, where the folder is a sibling of
   the home under `%TEMP%`, makes every check FAIL or refuse, and leaves the file in that folder
@@ -458,8 +483,9 @@ or `schemas\` at most, which are spec artifacts and allowed.
 #### `scripts/test-lease-cmd-renew-release-list.ps1` (about 330 lines): prototype code as it stands
 
 - **Drives:** `lease renew`, `release` and `list` as separate processes.
-- **Loads:** `scripts\lease-driver.ps1`, by dot-source, and calls `Invoke-LeaseDriverPlace` to
-  make each ready lease. It then writes the other records into `leases.json` by hand.
+- **Loads:** `scripts\lease-driver.ps1`, by dot-source, and calls the driver's place operation
+  inside its own process to make each ready lease: the credential and the alias, with no record.
+  It then writes the records into `leases.json` by hand.
 - **Folders:** A throwaway state folder and ssh folder, plus the real CA (signs with it) and the real
   `leases` folder (written, removed). It hashes the real `~/.ssh`.
 - **About 65 checks, all conformance in method but for that one setup helper:** `list` (filters,
@@ -472,8 +498,10 @@ or `schemas\` at most, which are spec artifacts and allowed.
 
 #### `scripts/test-lease-credential.ps1`, `test-lease-renew-release.ps1`: prototype code
 
-- **Load:** `scripts\lease-credential.ps1`, and through it `lease-alias.ps1`, by dot-source. They
-  call `New-LeaseCredential`, `Update-LeaseCredential` and `Remove-LeaseCredential` directly.
+- **Load:** `scripts\lease-credential.ps1`, and through it `scripts\lease-alias.ps1`, by
+  dot-source. They call the credential steps of `scripts\lease-credential.ps1` inside their own
+  process, with no CLI and no record: issue a lease's key and certificate for an ID they choose,
+  sign a new certificate for it, and delete its folder.
 - **Folders:** The real CA (signs with it), and a lease folder under the real `leases` folder (removed
   at the end).
 
@@ -487,9 +515,10 @@ or `schemas\` at most, which are spec artifacts and allowed.
 
 #### `scripts/test-lease-alias.ps1` (about 190 lines): prototype code
 
-- **Loads:** `scripts\lease-alias.ps1`, by dot-source, and calls `Get-LeaseAliasName`,
-  `Test-LeaseAliasName`, `Install-LeaseAliasInclude`, `Set-LeaseAlias` and `Remove-LeaseAlias`. It
-  sets a variable of the prototype to a fake repo.
+- **Loads:** `scripts\lease-alias.ps1`, by dot-source, and calls five of its steps inside its own
+  process: one that forms an alias from a project and an ID, one that tests an alias's form, one
+  that makes sure of the `Include` line, one that writes an alias file, and one that removes it.
+  It sets a variable of the prototype's to a fake repo, so that the default ProxyCommand names it.
 - **Stubs:** None. `ssh.exe -G -F <alias file> <alias>` is the oracle, a program outside agentspace.
 - **Folders:** A throwaway folder directly under the real `%USERPROFILE%\.agentspace`, removed in a
   `finally`. It never reads or writes the real `~/.ssh`.
@@ -500,7 +529,7 @@ or `schemas\` at most, which are spec artifacts and allowed.
 | The alias-name test accepts 3 values and refuses 8 | 11 | The refusals through the operator's `up -Alias <bad>` (see [the operator](#the-operator-and-the-token-push)). The three acceptances cannot be shown without reaching AWS |
 | The `Include` line on LF, CRLF and BOM configs; a missing config; a second run changes nothing; the backup equals the original; a misplaced `Include` is refused | 9 | Prepare `AGENTSPACE_SSH_DIR` with each config shape, run a ready `create`, compare the config bytes |
 | The alias file's bytes (no BOM, LF only, a comment line, no `ClearAllForwardings`, the folder holds only the file) and what `ssh -G` shows (user, identity, certificate, `identitiesonly`, `hostkeyalias agentspace`, strict host key checking, the proxy command, both remote forwards) | About 17 | From the alias file a ready `create` writes. "Set again changes nothing" has no CLI equivalent and is dropped; the comment line's naming of the prototype's script is replaced by "starts with a comment naming the lease ID" |
-| The default ProxyCommand ends with the literal alias and has no `%n`; its path is `<repo>\scripts\ssh-proxy.cmd` | 3 | The first two, by leaving `AGENTSPACE_PROXY_COMMAND` unset. The path is the prototype's layout and is dropped |
+| The default ProxyCommand ends with the literal alias and has no `%n`; its path is `<repo>\scripts\ssh-proxy.cmd` | 3 | Done in `test-lease-alias-file.ps1`, by leaving `AGENTSPACE_PROXY_COMMAND` unset. The path is the prototype's layout, and is checked instead as D8 makes it checkable: the full path of a program that exists, run through `cmd.exe /d /c` when it is a `.cmd` or `.bat` ([state.md](state.md#the-alias-file)) |
 | A short-ID collision is refused; the existing alias file survives; removing the colliding lease is refused | 4 | Not movable: it needs two leases with the same first 8 hex digits, which a caller cannot force |
 | Set with a missing certificate is refused; remove leaves the config and the lease folder alone | 2 | Not movable: an internal call, and unlike `release`, which removes the folder |
 | Remove deletes the alias file; remove again reports false | 2 | Covered by `release` twice |
@@ -857,12 +886,19 @@ MUST that the prototype does not meet yet (E0.04-T03-S03, #0086; the pins of v0.
 so in its header, with the requirement and its card.
 
 - **Every other check file passes against the prototype in full, with one exception.**
-  `conformance/lease-cli/test-lease-alias-file.ps1` exits 2 in a checkout with no instance-ID cache,
-  because its one SKIPPED result is not a failure ([The gaps](#the-gaps)). A run of any other that
-  does not pass is a regression of the prototype, or a defect in the check.
-- **Every `test-unmet-*` file FAILs against the prototype, and a rewrite MUST pass it.** Its result
-  lines still say `FAIL`, and nothing turns a `FAIL` into a `PASS`. Some of its lines PASS against
-  the prototype, since each file also checks what the failing line assumes.
+  `conformance/lease-cli/test-lease-alias-file.ps1` exits 2 in a checkout with no `.instance-id` of
+  its own, such as a worktree: the prototype's `create` then fails under the default transport, so
+  the default line cannot be read, and that one result is SKIPPED, which is not a failure
+  ([The gaps](#the-gaps)). The failure itself is `test-unmet-default-transport-no-cache.ps1`'s. A
+  run of any other that does not pass is a regression of the prototype, or a defect in the check.
+- **Every `test-unmet-*` file FAILs against the prototype, and a rewrite MUST pass it, with one
+  exception.** `test-unmet-default-transport-no-cache.ps1` FAILs against the prototype only from a
+  checkout with no `.instance-id`; from the main checkout on the laptop, which holds one, the
+  prototype passes it, because the prototype reads its own checkout's `.instance-id`, which a check
+  cannot hide and MUST NOT touch. Its result lines still say `FAIL`, and nothing turns a `FAIL`
+  into a `PASS`. **The exception goes away with v0.05, whose lease CLI has no checkout.** Some
+  of a file's lines PASS against the prototype, since each file also checks what the failing line
+  assumes.
 - **A runner MUST NOT count the FAIL of a `test-unmet-*` file as a regression of the prototype.**
   It MUST count a `PASS` of one against a rewrite, and a `FAIL` of one against a rewrite, as the
   rewrite's result. A runner finds these files by the `test-unmet-` prefix.
@@ -887,6 +923,7 @@ so in its header, with the requirement and its card.
 | `conformance/lease-cli/test-unmet-record-no-driver.ps1` | A stored `ready` record with no `driver` member MUST be read as `ec2`, so `renew` and `release` MUST succeed on it, and neither MUST add the member ([state.md, The lease state file](state.md#the-lease-state-file); [lease-api.md, `renew`](lease-api.md#agentspace-lease-renew) and [`release`](lease-api.md#agentspace-lease-release)) | #0041, point 2 | Both fail with `internal`. The record stays as it was, so the lines that check the member is not added pass |
 | `conformance/lease-cli/test-unmet-include-message.ps1` | When the `Include` line is below a `Host` line, `create` MUST fail, change nothing, and say that a person has to move the line to the top of the file ([state.md, The `Include` line](state.md#the-include-line)). Only the move and the top are checked, never the template's wording ([lease-api.md, Messages](lease-api.md#messages)) | #0086 | `create` fails with `internal` and changes nothing, as it MUST, but the message says nothing of moving the line or of the top of the file |
 | `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1` | A failed `renew` MUST leave the previous certificate byte for byte, as well as `expires_at` and `ttl_seconds` ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity); [state.md, Renewal](state.md#renewal)). The write of the record is made to fail by holding `leases.json` open with `FileShare.Read` | #0041, point 3 | `renew` fails with `internal` after about 13 seconds, and leaves the new certificate in place |
+| `conformance/lease-cli/test-unmet-default-transport-no-cache.ps1` | With `AGENTSPACE_PROXY_COMMAND` unset and no instance-ID cache in the home, a ready `create` MUST succeed: `create` MUST NOT read, check for or depend on the cache ([state.md, The alias file](state.md#the-alias-file); [driver.md, How it is reached](driver.md#how-it-is-reached)) | D21 (architect ruling, #0080) | From a checkout with no `.instance-id`, such as a worktree, `create` fails with `internal`: the prototype refuses to write the alias without its checkout's copy of the cache. From the main checkout it passes ([the exception above](#the-files-that-are-expected-to-fail)) |
 | `conformance/lease-cli/test-unmet-release-partial.ps1` | A `release` that fails part way MUST NOT leave a `ready` record with its alias, key or certificate gone, and a retried `release` MUST finish it ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity); [state.md, Release, and what it leaves](state.md#release-and-what-it-leaves)). The failure is made by holding the lease's `id_ed25519` open with `FileShare.None` | #0041, point 3 | `release` fails with `internal` after deleting the alias file, and leaves a `ready` record with no alias file. The retry then succeeds |
 
 - **The D1 file's stand-ins are its own.** It writes two `.cmd` files into its throwaway home, one
@@ -921,7 +958,7 @@ and no file checks it.
 | lease-api.md: `release`, States | **Not checked, because the prototype does not meet it:** a `release` that fails part way MUST NOT leave a lease `ready` with its alias, key or certificate gone (#0041 point 3). Holding the lease's key file open without delete sharing makes the prototype's `release` fail with `internal` after it has deleted the alias file, which leaves a `ready` record with no alias. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-release-partial.ps1` |
 | state.md: The lease state file, #0041 point 2 | **Not checked, because the prototype does not meet it:** a stored `ready` record with no `driver` MUST be renewed and released by the v0 default driver, and `renew` and `release` MUST NOT add the member. The prototype fails both with `internal`. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-record-no-driver.ps1` |
 | state.md: The `Include` line | **Not checked, because the prototype does not meet it:** when the line is below a `Host` line, `create` MUST say that a person has to move it to the top of the file. The prototype fails `create` with `internal` and leaves everything as it was, as it MUST, but its message names neither the line nor the move. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-include-message.ps1`, which checks the move and the top only |
-| driver.md: How it is reached; state.md: The alias file | **The default ProxyCommand has no check that can always run.** `test-lease-alias-file.ps1` leaves `AGENTSPACE_PROXY_COMMAND` unset, and the prototype's `create` then may need an instance-ID cache that is a file in its own checkout, which a check cannot make and MUST NOT. When that `create` fails with a valid `internal` error, the check reports SKIPPED ("may need the instance-ID cache"), so a run in such a checkout exits 2. The check of what the failed `create` leaves still runs. D21 moves the cache to laptop state, and a check can then seed it in the home |
+| driver.md: How it is reached; state.md: The alias file | **The default ProxyCommand is checked only as far as D8 makes it visible**, by `test-lease-alias-file.ps1`: one of the two forms, the full path of a program that exists, `cmd.exe /d /c` from the system folder when and only when it is a `.cmd` or `.bat`, and the alias last. That the program is the one beside the CLI's executable is not checked, since the prototype's entry point (`bin\agentspace.cmd`) is not its CLI's code. Neither check seeds an instance-ID cache, because `create` MUST NOT need one (D21); the prototype's need of its checkout's copy is `test-unmet-default-transport-no-cache.ps1`'s ([The files that are expected to fail](#the-files-that-are-expected-to-fail)), and in a checkout without it the alias-file check's one default-line result is SKIPPED |
 | lease-api.md: Times | No check sets the caller's time zone, as the spec requires ([What the specs require of the suite](#what-the-specs-require-of-the-suite)). Windows has no environment variable for it, so a run uses the laptop's zone ([Running the suite](#running-the-suite)) |
 | lease-api.md: Concurrency and atomicity | **Covered by `conformance/lease-cli/test-lease-concurrency.ps1`**: concurrent creates, renews and a release as separate processes, readers that never wait, and the 30-second limit for each of the three commands. It is evidence and not proof ([What the specs require of the suite](#what-the-specs-require-of-the-suite)). Left: a failed `release` leaving the lease as it was (the `release` row above), and a command killed in the middle |
 | lease-api.md: The program | Arguments reach the program unchanged from Git Bash, and an argument such as `-:x` (#0083), have no check. **A line feed inside an argument is checked, and fails against the prototype**: its `bin\agentspace.cmd` cuts the argument at it, so a project value `a<LF>b` is read as `a` and the create succeeds, where the spec requires `invalid_value`. The check is `conformance/lease-cli/test-unmet-argument-line-feed.ps1`, which fails against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)) |
@@ -977,11 +1014,13 @@ v0.04-T04) closes them, or names the card that will.
    on the laptop, with two conditions the harness meets** ([Running the suite](#running-the-suite)).
    `ca` made a CA under a new folder in `%TEMP%` and exited 0, and a ready `create` then worked in
    that home. **The conditions:** the operator needs `PSModulePath` removed when it is started from a
-   PowerShell 7 session, and `create` needs `AGENTSPACE_PROXY_COMMAND` set. Without it, the
-   prototype's default ProxyCommand fails `create` with `internal` in a checkout that holds no
-   `.instance-id`, which [lease-api.md](lease-api.md#environment) and
-   [state.md](state.md#the-alias-file) do not say. That is a requirement the specs leave out, and it
-   is open for the clean-room review.
+   PowerShell 7 session, and the prototype's `create` needs `AGENTSPACE_PROXY_COMMAND` set. Without
+   it, the prototype's default ProxyCommand fails `create` with `internal` in a checkout that holds
+   no `.instance-id`. **That need is closed by D21's ruling (architect, 2026-11-18, #0080): `create`
+   MUST NOT depend on the instance-ID cache**, which the ProxyCommand reads at connect time
+   ([state.md](state.md#the-alias-file), [driver.md](driver.md#how-it-is-reached)). So it is not a
+   requirement the specs left out, but a difference of the prototype's that the spec drops, and
+   `conformance/lease-cli/test-unmet-default-transport-no-cache.ps1` asserts it.
 4. **Closed (E0.04-T03-S02): the "second keeper" match is gone, and the spec needs none.** The
    suite no longer finds a keeper by its command line. It keeps the process that
    `AGENTSPACE_KEEPER_CMD` started, and stops that process and its own children by PID, so a

@@ -51,10 +51,10 @@ lists every requirement here that the prototype misses.
 
 ### The home folder
 
-- **The caller's machine is Windows today**, and every path on this page is a Windows path unless
-  it says otherwise. Whether the rewrite also runs on another operating system is
-  [lease-api.md Q1](lease-api.md#open-questions); a lease's host MAY be Windows or Linux (D4), and
-  nothing on this page depends on the host's platform except where it says "today's box".
+- **Contract v0's caller runs on Windows (D8)**, and every path on this page is a Windows path
+  unless it says otherwise. A caller on Linux or macOS is later, and not blocking: it comes with the
+  hosted control plane (#0011). A lease's host MAY be Windows or Linux (D4), and nothing on this
+  page depends on the host's platform except where it says "today's box".
 - **The home folder is the value of the `USERPROFILE` environment variable when the program
   starts**, and `~` on this page means it. **agentspace MUST read it from that variable**, and
   MUST NOT ask the operating system for the profile's location some other way, so that a check
@@ -149,7 +149,7 @@ does not already grant, with two exceptions:** `config`, which keeps the rules t
 and MAY be readable by everyone, as Windows' `ssh-keygen` makes it
 ([The lease folder](#the-lease-folder), [The CA](#its-access-rules)).
 
-**On a caller that is not Windows** ([lease-api.md Q1](lease-api.md#open-questions)), owner-only
+**A caller that is not Windows is later, and not blocking (D8).** When one comes, owner-only
 SHOULD mean owned by the user with mode `0700` for a folder and `0600` for a file, and
 OpenSSH-safe what that system's OpenSSH accepts. The prototype runs on Windows alone, so nothing
 has been observed there.
@@ -176,9 +176,13 @@ never blocks the rename, and so sees the old file or the new one, never part of 
 of any other file replaced this way SHOULD share the same**; the keeper's readers of its own JSON
 files share read only, and the writer's retry below covers them
 ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
-A writer whose rename fails because another process holds the file without sharing delete MAY
-retry for a bounded time: the prototype retries every 20 milliseconds for 10 seconds (the lease
-state file) or every 50 milliseconds for 5 seconds (the keeper's JSON files), then fails.
+**A writer whose rename fails because another process holds the file without sharing delete MAY
+retry, and MUST stop retrying within 10 seconds for the lease state file and 5 seconds for the
+keeper's JSON files**, then fail. A retry of the lease state file runs under
+[the lease state lock](#the-lease-state-lock), so its time is part of the time the command holds
+the lock, and of the 30 seconds another changing command waits for it; it adds no wait of its own
+to that limit. The prototype retries every 20 milliseconds for 10 seconds (the lease state file)
+or every 50 milliseconds for 5 seconds (the keeper's JSON files).
 
 **Every other write on this page is one attempt, with no retry:** `config`'s replace, its backup
 and a new `config`, the alias file's move, the key pair, signing, the certificate's move, and every
@@ -217,7 +221,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `%USERPROFILE%\.agentspace\ca\` | [The CA](#the-ca)'s folder | `ca`, once | `ca`, `sync`, `create`, `renew` | Never |
 | `...\ca\agentspace_ca`, `agentspace_ca.pub` | The CA's key pair | `ca`, once | The same | Never |
 | `%USERPROFILE%\.agentspace\localswim-pushed.sha256` | [The push stamp](#the-push-stamp) | `up`, `sync` | `up` | Never |
-| `%USERPROFILE%\.agentspace\instance-id` | [The instance-ID cache](#files-in-the-checkout), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand; the lease CLI's default alias | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\instance-id` | [The instance-ID cache](#files-in-the-checkout), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. Never the lease CLI (D21) | By `deploy`, which writes it again |
 | `<state folder>\board-holder.json` | [The holder record](#the-holder-record) | The keeper | The keeper | The keeper |
 | `<state folder>\board-holder.json.<hex>.tmp` | The holder record's temporary file | The keeper | None | At once |
 | `<state folder>\board-holder.log` | [The keeper's log](#the-keepers-logs) | The keeper | People | Never |
@@ -247,6 +251,13 @@ be fixed together.
 - **`version`** is the integer `0`. A reader MUST refuse any other value as an invalid file.
 - **`leases`** is an array of records, one per lease, in the order they were created. Two records
   MUST NOT share an `id`.
+- **A file that validates against the schema but holds two records with one `id` is not valid**,
+  though the schema cannot refuse it. IDs are compared as the normalized lowercase strings they
+  are stored as. A reader MUST treat such a file as one that does not validate (below): every lease
+  command fails with `internal`, "could not be read", and changes nothing. The prototype reads
+  such a file for `get` and `list`, and refuses it only when a changing command writes, after the
+  driver has already acted; that is not behavior to copy
+  ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
 
 **A record** holds the lease document's fields ([lease-api.md](lease-api.md#fields)), with these
 differences:
@@ -261,8 +272,13 @@ differences:
 - **`ssh.user` in a record MUST match the state schema's pattern**, a lowercase letter or `_`, then
   up to 31 lowercase letters, digits, `_` or `-`. That is narrower than lease-api.md's `ssh.user`
   ([lease-api.md](lease-api.md#fields)), and the record's pattern is the one that binds, because
-  every record is checked against the schema before it is written. Whether the two are made to
-  agree is [driver.md Q16](driver.md#open-questions). `ubuntu` matches both.
+  every record is checked against the schema before it is written. The two stay as they are
+  ([driver.md Q16](driver.md#open-questions), closed): the output's wider pattern is what a caller
+  MUST accept, so that a later host needs no new contract version, and the record's narrower one is
+  what a v0 driver's user MUST match. `ubuntu` matches both.
+- **Every other member a record shares with the lease document has the output schema's pattern**
+  ([`lease.output.schema.json`](../schemas/lease.output.schema.json)): a reason's message does not
+  start with a space, and `reasons` holds each code at most once.
 - **Every time is a string in the contract's form, `YYYY-MM-DDTHH:MM:SSZ`**
   ([lease-api.md](lease-api.md#times)), and a reader MUST keep it as that string, not reparse and
   rewrite it.
@@ -334,9 +350,10 @@ point (2026-11-18):
   `leases.json.<hex>.tmp` in the same folder, written through to the disk and flushed before the
   rename. A command that changes it MUST hold [the lease state lock](#the-lease-state-lock) from
   before it reads the file until after the rename.
-- **Checked against the schema on every read and before every write.** A file that does not
-  validate makes every lease command fail with `internal` and change nothing, and a change that
-  would not validate is not written ([lease-api.md](lease-api.md#exit-codes-and-errors)).
+- **Checked against the schema, and for IDs that repeat, on every read and before every write.** A
+  file that does not validate makes every lease command fail with `internal` and change nothing,
+  and a change that would not validate is not written
+  ([lease-api.md](lease-api.md#exit-codes-and-errors)).
 
 **A missing file means no leases.** The first command that changes leases creates the state
 folder, if needed, and the file. No command deletes the file, and no command forgets a lease in v0
@@ -370,12 +387,24 @@ the normalized lease ID (D21). It holds:
   by a killed `renew` included.
 - **`AGENTSPACE_STATE_DIR` does not move it** ([What moves which files](#what-moves-which-files)).
 - **Access rules:** the folder's are inherited from `%USERPROFILE%\.agentspace`. The three files'
-  are whatever the key tool gives them, and agentspace sets none.
+  are whatever the key tool gives them, unless a writer sets the private key's itself (below); the
+  prototype sets none.
 - **The private key MUST be OpenSSH-safe ([Access rules](#access-rules)), and MUST NOT be readable
   by any principal but the user, `SYSTEM` and `Administrators`** (lease-api.md: no other ordinary
-  user of the machine can read it; [lease-api.md Q12](lease-api.md#open-questions)). How a writer meets that is
-  its choice: it MAY set the key's rules itself, or rely on rules its key tool sets, and either
-  way it SHOULD check the result before it signs.
+  user of the machine can read it). How a writer meets that is its choice: it MAY rely on the rules
+  its key tool gives the file, or set them itself.
+- **A writer that sets the private key's rules itself MUST set exactly these, before it signs:**
+  1. **Owner:** the user's SID, the user SID of the process's token.
+  2. **Protected:** the DACL is protected from inheritance (`SE_DACL_PROTECTED`), so nothing is
+     inherited from the lease folder.
+  3. **Three allow entries, and no other entry:** `SYSTEM` (`S-1-5-18`) with full control,
+     `Administrators` (`S-1-5-32-544`) with full control, and the user with at least read and write
+     (modify, as Windows' `ssh-keygen` gives it, or full control).
+  These are the rules `ssh-keygen` was seen to give the file (below), with the owner stated.
+- **A writer SHOULD check the private key's rules before it signs**, whichever way it set them. If
+  it cannot set them, or its check finds a principal other than those three that can read the key,
+  `create` MUST fail with `internal` and leave nothing, as for any failed credential step
+  ([Creation, in order](#creation-in-order)).
 - **The public key and the certificate are not secret, and MAY be readable by everyone.**
 - **What the prototype leaves, seen on 2026-11-18 with Windows' own `ssh-keygen`
   (OpenSSH_for_Windows 9.5p2, Windows 11 build 26300):** the prototype sets and checks no rules of
@@ -482,20 +511,55 @@ Host <alias>
 | `<id>` | The normalized lease ID |
 | `<comment>` | Any text without a line break. It SHOULD say that agentspace wrote the file and that it MUST NOT be edited |
 | `<user>` | The lease's `ssh.user`; `ubuntu` on today's box |
-| `<key path>` | The private key's full path, with every `\` written as `/` and every `%` as `%%`, and nothing else changed: the drive letter and its `:` stay, as in `C:/Users/<user name>/.agentspace/leases/<id>/id_ed25519` |
+| `<key path>` | The private key's full path, with every `\` written as `/` and every `%` as `%%`, and nothing else changed: the drive letter and its `:` stay, as in `C:/Users/<user name>/.agentspace/leases/<id>/id_ed25519`. The path is the home folder as [The home folder](#the-home-folder) gives it, made full if it is relative, joined as text with `.agentspace\leases\<id>\id_ed25519`. A writer MUST NOT otherwise change it: it MUST NOT expand a short (8.3) name, resolve a link, change case or add a `\\?\` prefix |
 | `<certificate path>` | The certificate's full path, written the same way |
 | `<proxy command>` | The ProxyCommand, with every `%` written as `%%` and nothing else changed: its `\` stay as they are |
 
 - **Both paths are always in double quotes**, so a path with a space needs nothing more. A Windows
   path cannot hold a `"`, so none is ever escaped.
 - **The ProxyCommand is the driver's** ([driver.md](driver.md#reachability)), and what it runs is
-  [operator.md](operator.md#the-proxycommand)'s. This page owns only how it is written into the
-  file. By default it is
+  [operator.md](operator.md#the-proxycommand)'s. This page owns how it is written into the file,
+  and the default line.
+- **By default it is the full path of agentspace's ProxyCommand program, in double quotes, then one
+  space and the alias** (D8):
+
+  ```
+  "<program>" <alias>
+  ```
+
+  **When the program is a `.cmd` or `.bat` file**, which Windows runs only through its command
+  interpreter, that interpreter comes first (D8):
+
+  ```
+  <system folder>\cmd.exe /d /c "<program>" <alias>
+  ```
+
+  | Placeholder | Value |
+  |---|---|
+  | `<program>` | The full path of agentspace's ProxyCommand program, with backslashes. **The lease CLI finds the program in the folder its own executable runs from** (D8), so a CLI that is one compiled program needs no checkout. The program's file name is the operator's ([operator.md Q10](operator.md#open-questions)). Its extension is compared without regard to case |
+  | `<system folder>` | Windows' `System32` folder as a full path: `%SystemRoot%\System32`, with the value of `SystemRoot` written out, which is `C:\Windows\System32` on every machine seen. The text `%SystemRoot%` itself MUST NOT be written: ssh reads `%` as its own token, and Windows expands no variable in a ProxyCommand |
+  | `<alias>` | The lease's alias, written literally |
+
+- **If the program is not in that folder, `create` MUST fail with `internal`**, as for any alias
+  step that fails ([Creation, in order](#creation-in-order)), and say in agentspace's own words that
+  the lease's way to reach its host cannot be found ([lease-api.md](lease-api.md#messages)).
+- **`AGENTSPACE_PROXY_COMMAND`, when set and not empty, replaces the whole line**, and the program
+  is then not looked for ([lease-api.md](lease-api.md#environment)).
+- **`create` MUST NOT read, check for or need the instance-ID cache**, with or without the
+  override: the ProxyCommand reads it when a connection is made (D21;
+  [driver.md](driver.md#how-it-is-reached)).
+- **What a check can see of the default line, and so all that conformance asserts of it:** it has
+  one of the two forms above; `<program>` is the full path of a file that exists; the interpreter
+  form is used when, and only when, that file's extension is `.cmd` or `.bat`; and the line ends
+  with one space and the alias.
+- Note on where this came from: the prototype writes
   `C:\Windows\System32\cmd.exe /d /c "<checkout>\scripts\ssh-proxy.cmd" <alias>`, where
-  `<checkout>` is the full path, with backslashes, of the agentspace checkout whose code runs the
-  `create`: the folder that holds that code's `scripts\ssh-proxy.cmd`. `AGENTSPACE_PROXY_COMMAND`,
-  when set and not empty, replaces it whole ([lease-api.md](lease-api.md#environment)). This
-  settles [driver.md Q6](driver.md#open-questions) for the escaping: it is this file's rule.
+  `<checkout>` is the checkout whose `scripts\lease-cli.ps1` runs the `create`. Its `ssh-proxy.cmd`
+  sits beside that script, which is the CLI's code, so it meets the rule above. It writes the
+  Windows folder as the fixed text `C:\Windows`, which is `%SystemRoot%` on every machine seen.
+- **This page's rule for writing the line also settles [driver.md Q6](driver.md#open-questions)**,
+  how an override is escaped: like any ProxyCommand, by the `<proxy command>` row above and the
+  line-break rule below.
 - Note on where this came from: the prototype's `<comment>` is `written by
   scripts/lease-alias.ps1. Do not edit.`
 - **The first line is the owner mark.** It MUST be written exactly as shown: `# agentspace lease `,
@@ -527,8 +591,10 @@ Host <alias>
 - **It names another lease, or it has no owner mark:** the writer MUST fail and change nothing.
   Two kept leases never share an alias ([lease-api.md](lease-api.md#fields)), so this means a
   foreign file, a lease recorded in another state folder, or one a killed `create` left with no
-  record ([Creation, in order](#creation-in-order)). `create` then fails with `internal`; it does
-  not draw another ID ([Q9](#open-questions)).
+  record ([Creation, in order](#creation-in-order)). **`create` then fails with `internal`, and
+  MUST NOT draw another ID:** the file may be a person's, and an ID is drawn again only for the
+  alias of a record ([lease-api.md](lease-api.md#fields)). This settles the second half of
+  [Q9](#open-questions); the prototype does the same.
 - **Something at that path that is not a file**, such as a folder, makes the write fail, and
   `create` fails with `internal`.
 
@@ -581,8 +647,18 @@ tabs and CRs from both ends of each line, and looks at the lines in order:
 - **If there is no config at all,** it is created holding exactly the line and one LF, with
   inherited access rules, and `<ssh folder>` and `agentspace.d` are created as needed. No backup is
   made.
-- **A config that is a link, a reparse point or read-only** is not settled ([Q12](#open-questions)).
-  The prototype reads through a link, and its replace's outcome on each is unobserved.
+- **A config that is a symbolic link, another reparse point, or read-only** (this settles
+  [Q12](#open-questions)):
+  - **When the line is found,** the config is only read, through the link if it is one, and nothing
+    is written to it, as for any config.
+  - **When the line has to be added, `create` MUST fail with `internal` before it backs the config
+    up**, and MUST NOT write through the link, replace the link with a file, or change the file's
+    attributes. `agentspace.d` MAY have been created by then, and stays. The message's `<why>`
+    ([lease-api.md](lease-api.md#messages)) says that the configuration is a link or read-only, so
+    that a person has to add the line to the top of the file.
+  - Note on where this came from: the prototype reads through a link, and its replace's outcome on
+    each of the three is unobserved. On a read-only file, `ReplaceFile` most likely fails after the
+    backup was made, which leaves that backup; a run settles whether the prototype meets the rule.
 - **Access rules of the backup and the temporary file:** inherited from `<ssh folder>`; agentspace
   sets none.
 
@@ -606,8 +682,8 @@ a lease alias is refused. A host whose key changes needs that entry replaced by 
 
 **For a lease that is to be `ready`, the v0 driver does these, in this order, inside `create` and
 under [the lease state lock](#the-lease-state-lock):**
-1. **Checks the CA** ([The CA](#the-ca), [checks](#its-checks)), and fails if it is not usable.
-   `create` MUST NOT create a CA ([lease-api.md](lease-api.md#the-credential)).
+1. **Checks the CA** by the five checks of [Its checks](#its-checks), and no others, and fails if it
+   is not usable. `create` MUST NOT create a CA ([lease-api.md](lease-api.md#the-credential)).
 2. **Refuses an existing key** ([The key](#the-key)), and creates the lease folder.
 3. **Makes the key pair**, and checks that it loads with an empty passphrase.
 4. **Signs the certificate** ([The certificate](#the-certificate)).
@@ -631,14 +707,19 @@ never the check's own output. The same holds for `renew`.
   and, at release, removed first.
 - **A failure at any step MUST leave no lease folder, no alias file and no record behind**
   (#0029; [lease-api.md](lease-api.md#concurrency-and-atomicity)). The lease folder is deleted only
-  if this `create` made it, and the alias file only if its owner mark names this lease. A config
-  backup, `agentspace.d` and an `Include` line already added stay, since the line is meant to stay
-  and the other two hold nothing of the lease; whether lease-api.md's "change nothing" allows that
-  is [driver.md Q18](driver.md#open-questions).
+  if this `create` made it, and the alias file only if its owner mark names this lease.
+- **An `Include` line, a config backup and `agentspace.d` that the failed `create` made stay, and
+  `create` MUST NOT remove them** (this settles [driver.md Q18](driver.md#open-questions)). The line
+  is meant to stay, and removing it would be a second edit of the user's config that could fail
+  too; the backup is a person's record of the config before the line; and the folder holds nothing
+  of the lease. None of them is a lease, a key, a certificate or an alias, so lease-api.md's rule
+  for a failed `create` holds. Its message SHOULD then say that no lease was recorded, never that
+  nothing was changed ([lease-api.md](lease-api.md#messages)). The prototype leaves them too.
 - **A `create` killed after it wrote the alias file and before it wrote the record leaves a lease
   folder and an alias file that no record names.** No command can release them, since `release`
   needs a record, and a later `create` fails only if its new ID's alias happens to be that one,
-  because `create` avoids the aliases of records, not of files ([Q9](#open-questions)).
+  because `create` draws again for the aliases of records, never of files
+  ([The alias file](#the-alias-file); [Q9](#open-questions)).
 - **Elevation:** `create` and `renew` do not refuse to run elevated, unlike the operator's `ca`
   ([The CA](#its-access-rules)). The files an elevated `create` makes MAY then be owned by
   `Administrators`, which OpenSSH-safe allows; this is unobserved.
@@ -793,7 +874,9 @@ their access rules, and what a usable CA is. Signing leaves the laptop with card
   does ([What moves which files](#what-moves-which-files)).
 - **The folder MUST NOT be inside a folder that OneDrive syncs** (the `OneDrive`,
   `OneDriveConsumer` and `OneDriveCommercial` environment variables), **nor inside the checkout**,
-  compared as paths without regard to case (D17).
+  compared as paths without regard to case (D17). The operator's `ca`, which creates the CA,
+  enforces this ([operator.md](operator.md#ca)); it is not one of the checks that make a CA usable
+  ([Its checks](#its-checks)), so the lease CLI does not make it.
 - **Both files MUST NOT be committed**, and the private key MUST NOT be copied anywhere else (D7,
   D17). The public key reaches hosts only through the operator's `sync`
   ([operator.md](operator.md#sync)), never through the repo.
@@ -839,6 +922,11 @@ check:
 - **Who checks it:** `ca` after every run, `sync` before it sends the public key to a host, and
   `create` and `renew` before they sign (D17; [operator.md](operator.md#ca)). `release` never
   checks it.
+- **`create` and `renew` make these five checks and no others.** The folder's place, outside
+  OneDrive and the checkout ([Its files](#its-files)), is `ca`'s to check; a compiled lease CLI has
+  no checkout to compare with (D8). The prototype's `create` and `renew`, which run `ca`, also refuse
+  a CA in such a folder. That is a difference the spec drops, with the running of `ca` itself
+  (#0029, point 3).
 - **`create` and `renew` MUST only check, and MUST NOT create a missing CA** (#0029, point 3;
   [lease-api.md](lease-api.md#the-credential)). The prototype checks by running the operator's
   `ca` and reading only its exit code, 0 meaning usable; on a laptop with no CA, that run creates
@@ -1076,7 +1164,7 @@ lists that. The build output is not state, and MAY stay in the checkout.
 
 | Path | Format | Written by | Read by | Removed |
 |---|---|---|---|---|
-| `%USERPROFILE%\.agentspace\instance-id`, which is `<checkout>\.instance-id` in the prototype | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand; the lease CLI's default alias, which requires it ([driver.md](driver.md#how-it-is-reached)) | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\instance-id`, which is `<checkout>\.instance-id` in the prototype | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. The lease CLI MUST NOT read or need it ([driver.md](driver.md#how-it-is-reached), D21) | By `deploy`, which writes it again |
 | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box | `sync` | `sync` | Never; replaced by each build |
 | `<checkout>\infra\local.parameters` | Text lines; see below | A person | `deploy` | Never |
 
@@ -1126,10 +1214,16 @@ folder, the `Include` line and the alias file all happens under it. Each first c
 - **The file is never deleted, and its content is empty and meaningless.** The operating system
   releases the lock when the handle closes, however the process ends, so a crashed command never
   leaves the lock held.
-- **A command that cannot open it MUST keep trying until 30 seconds have passed, and MUST NOT wait
-  longer** (architect ruling, 2026-11-18). The prototype tries again about every 50 milliseconds,
-  and a rewrite MAY pick its own interval. What a command does when the time runs out is
-  [lease-api.md's](lease-api.md#concurrency-and-atomicity) to say.
+- **A command that cannot open it because another process holds it MUST keep trying until 30
+  seconds have passed, and MUST NOT wait longer** (architect ruling, 2026-11-18). The prototype
+  tries again about every 50 milliseconds, and a rewrite MAY pick its own interval. What a command
+  does when the time runs out is [lease-api.md's](lease-api.md#concurrency-and-atomicity) to say.
+- **Only a failure because the file is held is tried again** (on Windows, a sharing or lock
+  violation). **Any other failure to open it, such as access denied, or a folder at its path, MUST
+  fail the command at once with `internal`**, in agentspace's own words that the lease records
+  could not be locked, and change nothing; it is never reported as busy. The prototype also fails
+  at once on access denied and on a folder at the path, with its runtime's own text, which is not
+  behavior to copy (#0041, point 1).
 - **`create` holds it through the whole of issuing**, the CA check and signing included, which
   makes a concurrent `renew` or `release` wait ([lease-api.md Q11](lease-api.md#open-questions)).
 - **`get` and `list` MUST NOT take it, and the keeper MUST NOT take it either.**
@@ -1176,27 +1270,30 @@ this table.**
 | Every path written into a file is a full path | Writes a relative `USERPROFILE`, `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` into the alias file and a launch request as given | [The home folder](#the-home-folder) |
 | Readers of the keeper's JSON files share read, write and delete (SHOULD) | They share read only; the writer's 5-second retry covers it | [The keeper's files](#the-keepers-files) |
 | The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) |
+| `create` never reads or needs the instance-ID cache, with or without `AGENTSPACE_PROXY_COMMAND` | Without the override, refuses to write the alias, and so fails `create`, when its checkout holds no `.instance-id` | D21 ([The alias file](#the-alias-file); [driver.md](driver.md#how-it-is-reached)) |
+| A state file in which two records share an `id` is read as not valid by every lease command | `get` and `list` read it; a changing command refuses it only when it writes, after the driver has acted | [The lease state file](#the-lease-state-file) |
 | The push stamp is replaced atomically (SHOULD) | Overwrites it in place | [The push stamp](#the-push-stamp) |
 | The push stamp is readable by the user alone (SHOULD) | It inherits `SYSTEM` and `Administrators` as well | [The push stamp](#the-push-stamp); [operator.md Q27](operator.md#open-questions) |
 
 ## Open questions
 
-**What reading the code and the docs could not settle.** The clean-room review (E0.04-T03-S01)
-closes each one, or names the story that will.
+**What reading the code and the docs could not settle.** After the clean-room review
+(E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and
+none blocks building a drop-in of contract v0.
 
 | | Question | Settled by |
 |---|---|---|
 | **Q1** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace`, and the prototype's copy in the checkout is a requirement it does not meet ([Files in the checkout](#files-in-the-checkout)). A rewrite needs no migration, since the cache is rebuilt from the stack's output. The localswim CLI's build output is not state, and MAY stay in the checkout ([operator.md Q7](operator.md#open-questions)). | Closed |
-| **Q2** | **Does every part of agentspace find the home folder through `USERPROFILE`?** The lease CLI and the operator's state paths do. The operator's `deploy` and `sync` use the shell's home variable, and the task launcher uses the profile folder the operating system reports; whether those follow a changed `USERPROFILE` is unverified, so a check that moves `USERPROFILE` can still reach the real `id_ed25519.pub`, `CLAUDE.md` or launcher error log. | A run on the laptop |
-| **Q3** | **SHOULD `create` check that `known_hosts` holds the box's key under `agentspace`?** Without it every login through the alias is refused, and the lease is still `ready`. Today a person's first `ssh agentspace` makes the entry. | The architect; [driver.md](driver.md#open-questions) (its Q7) |
-| **Q4** | **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | The architect; [keeper.md](keeper.md#open-questions) for the launch files |
-| **Q5** | **SHOULD inserting the `Include` line re-check the config just before it replaces it?** A person's save between the backup and the replace is lost today. The window is short and the insertion happens once per config. | The architect |
-| **Q6** | **Which access rules does `ssh-keygen` give the files it writes, on every Windows build?** On 2026-11-18 (OpenSSH_for_Windows 9.5p2, Windows 11 build 26300), a run on throwaway files saw a protected list on each: a private key with `SYSTEM` and `Administrators` full control and the user modify, and a public key or certificate with the same and `Everyone` read, whatever the folder passed down. That covers a lease's `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, and the CA's `agentspace_ca.pub`, which agentspace never re-locks. Whether another build or OpenSSH version differs, and whether the rewrite SHOULD set the lease key's rules itself, is open ([lease-api.md Q12](lease-api.md#open-questions)). | A run on each supported build; the architect |
-| **Q7** | **What does the prototype's alias test leave if it is killed?** It works in `%USERPROFILE%\.agentspace\tmp-test-lease-alias-<time>` and removes it at its end; a killed run leaves the folder. It is tooling, but it is the only test that writes into the real `.agentspace` outside `leases`. | The conformance suite (E0.04-T02-S04) |
-| **Q8** | **SHOULD `swimcoach-last.json` and the watchdog's files have schemas or move out of `.agentspace`?** They are project tooling, not the product, so D20's schema rule was not applied to them. | The architect |
-| **Q9** | **What clears a lease that a killed `create` placed but never recorded, and SHOULD a later `create` draw a new ID when its alias file already exists?** The lease folder and alias file stay, and the certificate works until it expires. A later `create` whose new ID has that alias fails, against lease-api.md's rule that no failed `create` blocks a later one; the chance is about one in 2^32 for each such leftover, per `create` of that project. The prototype writes the record last, so the window is the time between the alias write and the state file's rename. Recording a `pending` record first would close it, at the cost of a second write under the lock. | The architect; [driver.md](driver.md#open-questions) |
-| **Q10** | **SHOULD the `Include` line be recognized only on line 1, as D9 and the README say it is written, or anywhere above the first block, as the prototype accepts it?** This page follows the prototype: any position above the first `Host` or `Match` line, in any ASCII case. Two more points: the prototype also counts other characters as whitespace when it trims a line, between the two words, and after `Host` or `Match` (vertical tab, form feed, and the bytes `0x85` and `0xA0`), which ssh does not; and a line with anything after the pattern, such as a comment, is not recognized, so a second line is inserted and ssh includes each alias file twice, which no run has shown to be harmless. | The architect; a run on the laptop |
-| **Q11** | **What SHOULD a `renew` killed between moving the new certificate into place and writing the record leave?** The certificate then outlives or falls short of the recorded `expires_at` until the next `renew` or `release`. Writing the record first moves the window rather than closing it. lease-api.md's atomicity covers a failed command, and says nothing of a killed one. | The architect |
-| **Q12** | **What does inserting the `Include` line do to a `config` that is a symbolic link, another reparse point, or read-only?** The prototype reads through a link; whether its replace follows the link, replaces the link with a file, or fails, and what it does to a read-only file, is unobserved. | A run on the laptop |
+| **Q2** | **Later, not blocking:** **Does every part of agentspace find the home folder through `USERPROFILE`?** The lease CLI and the operator's state paths do. The operator's `deploy` and `sync` use the shell's home variable, and the task launcher uses the profile folder the operating system reports; whether those follow a changed `USERPROFILE` is unverified, so a check that moves `USERPROFILE` can still reach the real `id_ed25519.pub`, `CLAUDE.md` or launcher error log. | [The home folder](#the-home-folder) states the rule to build, that agentspace MUST read the home folder from `USERPROFILE`, so only what the prototype's operator and launcher do is open. Later: a run on the laptop |
+| **Q3** | **Later, not blocking:** **SHOULD `create` check that `known_hosts` holds the box's key under `agentspace`?** Without it every login through the alias is refused, and the lease is still `ready`. Today a person's first `ssh agentspace` makes the entry. | [Creation, in order](#creation-in-order) has no such check and [The host key](#the-host-key) says agentspace never writes the key, so a drop-in builds today's behavior, and a check would be an addition. Later: the architect; [driver.md](driver.md#open-questions) (its Q7) |
+| **Q4** | **Later, not blocking:** **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | Nothing reads the leftovers again, so a cleanup of them is an addition that no other behavior waits on. Later: the architect; [keeper.md](keeper.md#open-questions) for the launch files |
+| **Q5** | **Later, not blocking:** **SHOULD inserting the `Include` line re-check the config just before it replaces it?** A person's save between the backup and the replace is lost today. The window is short and the insertion happens once per config. | [The `Include` line](#the-include-line) states today's steps, and the window they leave is short and comes once per config. Later: the architect |
+| **Q6** | **Later, not blocking:** **Which access rules does `ssh-keygen` give the files it writes, on every Windows build?** On 2026-11-18 (OpenSSH_for_Windows 9.5p2, Windows 11 build 26300), a run on throwaway files saw a protected list on each: a private key with `SYSTEM` and `Administrators` full control and the user modify, and a public key or certificate with the same and `Everyone` read, whatever the folder passed down. That covers a lease's `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, and the CA's `agentspace_ca.pub`, which agentspace never re-locks. Whether another build or OpenSSH version differs is open. **What a rewrite that sets the lease key's rules itself MUST set is settled** (E0.04-T04-S01, 2026-11-18) in [The lease folder](#the-lease-folder), which closes [lease-api.md Q12](lease-api.md#open-questions). | What a build that sets the lease key's rules itself MUST set is stated in [The lease folder](#the-lease-folder), so what each build's `ssh-keygen` does is an observation, not a rule to build. Later: a run on each supported build |
+| **Q7** | **Later, not blocking:** **What does the prototype's alias test leave if it is killed?** It works in `%USERPROFILE%\.agentspace\tmp-test-lease-alias-<time>` and removes it at its end; a killed run leaves the folder. It is tooling, but it is the only test that writes into the real `.agentspace` outside `leases`. | The test is project tooling, not the product ([Project tooling](#project-tooling)), so a drop-in has nothing to build for it. Later: the conformance suite (E0.04-T02-S04) |
+| **Q8** | **Later, not blocking:** **SHOULD `swimcoach-last.json` and the watchdog's files have schemas or move out of `.agentspace`?** They are project tooling, not the product, so D20's schema rule was not applied to them. | These files are project tooling, not the product ([Project tooling](#project-tooling)), so a drop-in has nothing to build for them. Later: the architect |
+| **Q9** | **Later, not blocking:** **What clears a lease that a killed `create` placed but never recorded?** The lease folder and alias file stay, and the certificate works until it expires. The prototype writes the record last, so the window is the time between the alias write and the state file's rename. Recording a `pending` record first would close it, at the cost of a second write under the lock. **The second half, whether a later `create` draws a new ID when its alias file already exists, is settled (E0.04-T04-S01, 2026-11-18): it does not** ([The alias file](#the-alias-file)). It fails with `internal`, as the prototype does, since the file may be a person's; the chance is about one in 2^32 for each such leftover, per `create` of that project, and a killed `create` is not a failed one, so lease-api.md's rule for a failed `create` is kept. | Its first half only: a killed `create` is not a failed one ([lease-api.md](lease-api.md#concurrency-and-atomicity)), so no rule a drop-in has to meet clears what it left, and its certificate stops working when it expires; the second half is settled. Later: the architect; [driver.md](driver.md#open-questions) |
+| **Q10** | **Later, not blocking:** **SHOULD the `Include` line be recognized only on line 1, as D9 and the README say it is written, or anywhere above the first block, as the prototype accepts it?** This page follows the prototype: any position above the first `Host` or `Match` line, in any ASCII case. Two more points: the prototype also counts other characters as whitespace when it trims a line, between the two words, and after `Host` or `Match` (vertical tab, form feed, and the bytes `0x85` and `0xA0`), which ssh does not; and a line with anything after the pattern, such as a comment, is not recognized, so a second line is inserted and ssh includes each alias file twice, which no run has shown to be harmless. | [The `Include` line](#the-include-line) states the rule to build, the prototype's, so narrowing it to line 1 would be a later choice. Later: the architect; a run on the laptop |
+| **Q11** | **Later, not blocking:** **What SHOULD a `renew` killed between moving the new certificate into place and writing the record leave?** The certificate then outlives or falls short of the recorded `expires_at` until the next `renew` or `release`. Writing the record first moves the window rather than closing it. lease-api.md's atomicity covers a failed command, and says nothing of a killed one. | lease-api.md's atomicity covers a failed command and not a killed one, and the next `renew` or `release` puts the certificate and the record back in step, so a drop-in can be built without the answer. Later: the architect |
+| **Q12** | **Closed (E0.04-T04-S01, 2026-11-18): when the line has to be added to a `config` that is a symbolic link, another reparse point, or read-only, `create` fails with `internal` before it backs the config up, and writes nothing through the link** ([The `Include` line](#the-include-line)). Whether the prototype meets that is unobserved; a run on the laptop shows it. | Closed |
 | **Q13** | **Closed (E0.04-T03-S02, 2026-11-18): the keeper suite checks the keeper's JSON files against their schemas.** The case "The files a keeper run writes match the state schemas" (`conformance/keeper/test-keeper.ps1`) is described in [docs/conformance.md](conformance.md#the-keeper-suite), which owns what it checks. The prototype's schemas check (`scripts/test-schemas.ps1`, moved to `conformance/schemas/test-schemas.ps1`) still scans only the top level of `schemas/`, and no longer needs to look in `schemas/state/`. | Closed |
-| **Q14** | **Is `instance-id` the right name for the cache under `%USERPROFILE%\.agentspace`, and SHOULD `AGENTSPACE_STATE_DIR` move it?** D21 names the folder and no file. This page keeps the prototype's name without its dot, and leaves the cache where the stamp and the CA are, out of the state folder's reach, since the ProxyCommand and every lease alias's default ProxyCommand read it without any agentspace variable. | The architect |
+| **Q14** | **Later, not blocking:** **Is `instance-id` the right name for the cache under `%USERPROFILE%\.agentspace`, and SHOULD `AGENTSPACE_STATE_DIR` move it?** D21 names the folder and no file. This page keeps the prototype's name without its dot, and leaves the cache where the stamp and the CA are, out of the state folder's reach, since the ProxyCommand and every lease alias's default ProxyCommand read it without any agentspace variable. | This page picks the name and leaves the cache out of `AGENTSPACE_STATE_DIR`'s reach ([What moves which files](#what-moves-which-files)), so a drop-in builds that. Later: the architect |
