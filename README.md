@@ -226,11 +226,16 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      repeating trigger, not RestartCount, is what brings a crashed keeper back (D30). The crashed
      keeper's holder keeps running meanwhile, and the new keeper adopts the recorded holder. The
      task runs only while Terry is logged on.
-   - **End in Task Scheduler stops only the launcher** and leaves the keeper's pwsh running, so
-     the next firing of the repeating trigger starts a second keeper beside it (E0.02-T04-S03;
-     card #0067 makes a second keeper exit at once). To stop the keeper, its pwsh MUST be stopped
-     by its checked PID after the task is ended. To keep it stopped, the task MUST also be disabled
-     (`Disable-ScheduledTask`) or removed with `-Uninstall`; `-Uninstall` ends the task the same
+   - **One keeper runs at a time** (E0.02-T05-S01, D30). `-Watch` holds
+     `board-holder-keeper.lock`, in the state folder, for its whole life. A second keeper, such as
+     one the task's next firing starts, logs `<time> another keeper is running pid=<n>` and exits 0
+     at once, without a pass. The lock is released when the keeper's process ends for any reason,
+     a kill included. A one-pass run does not use it.
+   - **End in Task Scheduler stops only the launcher** and leaves the keeper's pwsh running; the
+     next firing's keeper then exits on the lock and does not loop beside it (E0.02-T04-S03,
+     E0.02-T05-S01). The first keeper keeps the board held meanwhile. To stop the keeper, its pwsh
+     MUST be stopped by its checked PID after the task is ended. To keep it stopped, the task MUST
+     also be disabled (`Disable-ScheduledTask`) or removed with `-Uninstall`; `-Uninstall` ends the task the same
      way, so its keeper's pwsh MUST still be stopped by PID. A re-registration is refused while a
      keeper runs, for the same reason.
 

@@ -40,6 +40,11 @@
 # while; a holder that dies after the interval but before the fast-failure threshold, unproven,
 # still backs off; board-holder-ssh.log is rotated past 1 MB; the dry run prints the whole task
 # definition, and warns when the repo is a git worktree.
+# Story E0.02-T05-S01 adds the single keeper (D30), checked from the story's pinned interface: a second
+# -Watch exits 0 at once while the first runs, logs "another keeper is running pid=<n>" with the first
+# keeper's PID, and runs no pass; a -Watch starts normally once the first keeper is killed, and adopts
+# the holder the dead keeper left (kept, no new holder), which also shows the holder did not inherit
+# the lock; a one-pass run without -Watch is unaffected by a running keeper.
 #
 # Every case MUST be shown able to fail. -SelfCheck does it: each case is run again with a
 # deliberately broken fixture (for example the lease is released where the case expects it ready,
@@ -335,9 +340,10 @@ function Get-StartCount {
 # Story E0.02-T04-S03 added the release grace, 95 seconds by default, which would stretch every case
 # that restarts a holder. Unless the case names -ReleaseGraceSeconds itself, or asks for the default
 # with -DefaultGrace, the run gets a grace of 1 second, shorter than every backoff these cases use.
-function Start-Watch([string[]]$Extra, [string]$Ssh, [switch]$DefaultGrace) {
-  $out = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.out'
-  $err = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.err'
+# -Tag names the output files, so that two keepers started in one case do not share them.
+function Start-Watch([string[]]$Extra, [string]$Ssh, [switch]$DefaultGrace, [string]$Tag = 'watch') {
+  $out = Join-Path $env:AGENTSPACE_STATE_DIR "$Tag.out"
+  $err = Join-Path $env:AGENTSPACE_STATE_DIR "$Tag.err"
   if (-not $DefaultGrace -and -not ($Extra -contains '-ReleaseGraceSeconds')) { $Extra = @($Extra) + @('-ReleaseGraceSeconds', '1') }
   $a = @('-NoProfile', '-File', $Keeper, '-SshExe', $Ssh, '-Watch') + $Extra
   $p = Start-Process -FilePath $pwsh -ArgumentList $a -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
@@ -372,6 +378,31 @@ function Get-LogTime([string]$Line) {
 
 function Get-BackoffSeconds($Log) {
   @($Log | ForEach-Object { if ($_ -cmatch '\bbackoff seconds=(\d+)(\s|\z)') { [int]$Matches[1] } })
+}
+
+# Kills the keeper process alone, never its descendants, so that the holder it started lives on, as
+# it does when the keeper is killed for real. The process object holds a handle, which pins the PID;
+# the process is killed only when its command line names the keeper script with -Watch and its start
+# time matches the one Windows reports for it. Returns true when it was killed.
+function Stop-KeeperProcessOnly($Process) {
+  try {
+    $null = $Process.Handle
+    $c = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($Process.Id)" -ErrorAction SilentlyContinue
+    if (-not $c -or -not ([string]$c.CommandLine).Contains($Keeper) -or ([string]$c.CommandLine) -notmatch '-Watch\b') { return $false }
+    if ([Math]::Abs(($Process.StartTime.ToUniversalTime() - $c.CreationDate.ToUniversalTime()).TotalMilliseconds) -ge 1) { return $false }
+    $Process.Kill()
+    return $true
+  } catch { return $false }
+}
+
+# The "another keeper is running" lines of a log.
+function Get-OtherKeeperLines($Log) {
+  @($Log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ another keeper is running pid=(\d+|-)\z' })
+}
+
+# True when the line's PID field is the first keeper's PID, or - for a PID that could not be read.
+function Test-OtherKeeperPid([string]$Line, [int]$FirstPid) {
+  $Line -cmatch 'pid=(\d+|-)\z' -and ($Matches[1] -ceq '-' -or $Matches[1] -ceq [string]$FirstPid)
 }
 
 $farFuture = '2099-01-01T00:00:00Z'
@@ -979,6 +1010,85 @@ try {
       $errText = if (Test-Path -LiteralPath $errPath) { Get-Content -LiteralPath $errPath -Raw } else { '' }
       Write-Result ([bool]($errText -match 'ReleaseGraceSeconds')) "Watch bad grace ${label}: the usage error names -ReleaseGraceSeconds"
     }
+  }
+
+  # Story E0.02-T05-S01: one keeper at a time. The keeper holds a lock for its whole life. The first
+  # keeper here sleeps 60 seconds between passes, so after its first pass it logs nothing more while
+  # the case runs, and every other line in the log is the second run's.
+  Invoke-Case 'Watch: a second keeper exits at once while the first runs' {
+    Write-Leases @((New-ReleasedRecord 'a' $farFuture))
+    $p1 = $null; $p2 = $null
+    try {
+      $firstPid = 0
+      if (-not $script:mut) {
+        $p1 = Start-Watch @('-IntervalSeconds', '60', '-MaxPasses', '5') $stub -Tag 'first'
+        $firstPid = $p1.Id
+        $ran = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'idle').Count -ge 1 } 60
+        Write-Result $ran 'Watch single: the first keeper logged its first pass'
+      }
+      $clock = [Diagnostics.Stopwatch]::StartNew()
+      $p2 = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '3') $stub -Tag 'second'
+      $ended = $p2.WaitForExit(20000)
+      $clock.Stop()
+      if (-not $ended) { Stop-OwnTree $p2.Id }
+      Write-Result ($ended -and $p2.ExitCode -eq 0) "Watch single: the second keeper exits 0 (ended $ended, code $(if ($ended) { $p2.ExitCode } else { 'none' }))"
+      Write-Result ($ended -and $clock.Elapsed.TotalSeconds -lt 10) "Watch single: the second keeper ends within a few seconds, not after its passes (took $([int]$clock.Elapsed.TotalSeconds) s)"
+      $log = Read-LogLines
+      $other = @(Get-OtherKeeperLines $log)
+      Write-Result ($other.Count -eq 1) "Watch single: one ""another keeper is running"" line is logged (got $($other.Count))"
+      Write-Result ($other.Count -eq 1 -and (Test-OtherKeeperPid $other[0] $firstPid)) "Watch single: that line names the first keeper's PID $firstPid, or - (got $($other -join ' | '))"
+      $passLines = @($log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ (started|kept|idle|skipped|stopped)(\s|\z)' })
+      Write-Result ($passLines.Count -eq 1) "Watch single: the second keeper ran no pass, so only the first keeper's one pass line is there (got $($passLines.Count))"
+      Write-Result ($null -ne $p1 -and -not $p1.HasExited) 'Watch single: the first keeper is still running'
+    } finally { if ($p1) { Stop-Watch $p1 }; if ($p2) { Stop-Watch $p2 } }
+  }
+
+  # The lock goes when the keeper process is killed, and the holder it started does not carry it on.
+  Invoke-Case 'Watch: a new keeper starts once the first is killed' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $p1 = Start-Watch @('-IntervalSeconds', '60', '-MaxPasses', '5') $stub -Tag 'first'
+    $p2 = $null
+    try {
+      $started = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 1 } 60
+      Write-Result $started 'Watch kill: the first keeper started a holder'
+      $rec = Read-Record
+      $holderPid = if ($rec) { [int]$rec['pid'] } else { -1 }
+      if (-not $script:mut) {
+        $killed = Stop-KeeperProcessOnly $p1
+        Write-Result $killed 'Watch kill: the first keeper was killed by its checked PID'
+        Write-Result ($p1.WaitForExit(10000)) 'Watch kill: the first keeper has ended'
+      }
+      Write-Result ($holderPid -gt 0 -and (Test-Alive $holderPid)) 'Watch kill: the holder is still running after its keeper was killed'
+      $p2 = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '1') $stub -Tag 'second'
+      $code = Wait-Watch $p2 90
+      Write-Result ($code -eq 0) "Watch kill: the new keeper runs its pass and exits 0 (got $code)"
+      $log = Read-LogLines
+      Write-Result (@(Get-OtherKeeperLines $log).Count -eq 0) 'Watch kill: the new keeper does not log "another keeper is running"'
+      $kept = @($log | Where-Object { Test-LogLine $_ 'kept' (Get-Id 'a') (Get-Alias 'a') $holderPid })
+      Write-Result ($kept.Count -eq 1) "Watch kill: the new keeper's pass logs kept for the holder the dead keeper left (got $($kept.Count))"
+      Write-Result (@(Get-ActionTimes $log 'started').Count -eq 1) 'Watch kill: no second holder is started'
+      $rec2 = Read-Record
+      Write-Result ($rec2 -and [int]$rec2['pid'] -eq $holderPid) 'Watch kill: the record still names the same holder'
+    } finally { Stop-Watch $p1; if ($p2) { Stop-Watch $p2 } }
+  }
+
+  # A pass without -Watch keeps its own per-pass lock and is not affected by a running keeper.
+  Invoke-Case 'Watch: a one-pass run is unaffected by a running keeper' {
+    Write-Leases @((New-ReleasedRecord 'a' $farFuture))
+    $p1 = $null
+    try {
+      if (-not $script:mut) {
+        $p1 = Start-Watch @('-IntervalSeconds', '60', '-MaxPasses', '5') $stub -Tag 'first'
+        $ran = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'idle').Count -ge 1 } 60
+        Write-Result $ran 'Watch one-pass: the keeper logged its first pass'
+        Write-Result (-not $p1.HasExited) 'Watch one-pass: the keeper is running'
+      }
+      $code = Invoke-Keeper $now
+      Write-Result ($code -eq 0) "Watch one-pass: the run without -Watch exits 0 (got $code)"
+      $log = Read-LogLines
+      Write-Result (@(Get-OtherKeeperLines $log).Count -eq 0) 'Watch one-pass: it does not log "another keeper is running"'
+      Write-Result (@(Get-ActionTimes $log 'idle').Count -eq 2) "Watch one-pass: its pass line is logged beside the keeper's (got $(@(Get-ActionTimes $log 'idle').Count) idle lines, want 2)"
+    } finally { if ($p1) { Stop-Watch $p1 } }
   }
 
   # The installer's dry run prints the logon task and changes nothing. The installer is run with

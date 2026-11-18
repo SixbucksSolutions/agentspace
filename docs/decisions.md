@@ -1841,6 +1841,25 @@ flight.
   - **End in Task Scheduler left the keeper's pwsh running** (it stopped only the launcher), so
     that keeper was stopped by its checked PID. Card #0067 (E0.02-T05-S01) fixes it.
 
+**Findings from story E0.02-T05-S01 (2026-11-17).** D30 stands, with the two-keeper gap closed.
+`scripts/board-holder.ps1 -Watch` holds `board-holder-keeper.lock` in the state folder for its
+whole life, so one keeper runs at a time.
+- **The rule.** A second `-Watch` that finds the lock held tries once, logs `<time> another keeper
+  is running pid=<n>` (`pid=-` when the file cannot be read), and exits 0 without a pass or a
+  wait. An error other than a sharing violation when taking the lock logs a `failed` line and exits
+  1, so a keeper never loops without the lock and the task's repeating trigger tries again in a
+  minute. A one-pass run does not use this lock and keeps `board-holder.lock` as before.
+- **The lock is the OS's.** It is a `FileStream` opened with `FileShare.Read` and kept open until
+  the process ends, so a keeper that is killed releases it. The PID written in the file is for the
+  log line only; the share mode is the lock. The holder does not inherit it: the handle is not
+  inheritable, and the holder is started through `Win32_Process.Create`, outside the keeper's
+  handle table and job.
+- **Left out: the card's optional item.** `BoardHolderLauncher.exe` does not put pwsh in a
+  kill-on-close job, so End in Task Scheduler still leaves the keeper running. Rebuilding the
+  launcher exe needs a re-install of the task, and the lifetime lock already closes the gap that
+  mattered: two loops, each with its own backoff, halved D14's spacing between tries. An orphaned
+  keeper after End now keeps the board held, which is the safe side.
+
 ### D31. Each story's card names every subagent, run in parallel where reasonable
 
 **Decided, Terry, 2026-11-17:** "Identify as much parallel subagent work as reasonable per story.
