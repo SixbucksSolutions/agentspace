@@ -422,6 +422,15 @@ local file. There is no server to run.
 **Why:** today's callers are all projects on the laptop, which already call `localswim` the same
 way.
 
+**Contract v0's caller runs on Windows** (architect, 2026-11-18, from the clean-room review,
+#0080). The CLI, its state and its defaults are specified for the Windows laptop. A caller on
+Linux or macOS is later and not blocking, and comes with the hosted control plane (#0011). Hosts
+are a separate matter: they MAY be any platform (D4).
+- **The default ProxyCommand is the full path of agentspace's ProxyCommand program, then the
+  alias.** The CLI finds that program in the folder its own executable runs from, so a compiled
+  CLI needs no checkout. A `.cmd` or `.bat` program is run through
+  `%SystemRoot%\System32\cmd.exe /d /c`. `AGENTSPACE_PROXY_COMMAND` still overrides it whole. The
+  prototype's `<checkout>\scripts\ssh-proxy.cmd` is where this came from, not the contract.
 **Replaced by card #0011**, a hosted API, once a caller that is not on the laptop needs a lease. The
 CLI then becomes a client of it, and its JSON stays the same.
 
@@ -1480,6 +1489,10 @@ moves it.
   lists as a requirement the prototype does not meet. It is only a cache, rebuilt from the stack's
   output when missing, so a rewrite needs no migration from the checkout's copy. Build output
   (`.build\`) is not state, and MAY stay in the checkout.
+- **`lease create` MUST NOT depend on the cache** (architect, 2026-11-18, from the clean-room
+  review, #0080). The cache is the ProxyCommand's to read at connect time (D9), so a missing or
+  stale cache fails the connection, never the create. The prototype's check at create is a
+  difference the spec drops.
 
 **Why:**
 - **The Claude desktop app is MSIX-packaged, and Windows redirects every write that a packaged
