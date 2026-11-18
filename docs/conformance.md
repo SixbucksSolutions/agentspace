@@ -18,6 +18,7 @@ folders alone were then run, to show the header lines broke nothing, and all pas
 - [Naming the program under test](#naming-the-program-under-test)
 - [What a conformance run needs](#what-a-conformance-run-needs)
 - [What the specs require of the suite](#what-the-specs-require-of-the-suite)
+- [Running the suite](#running-the-suite)
 - [The sorting](#the-sorting): [the summary](#the-summary), then
   [the lease CLI](#the-lease-cli-suites), [the operator and the token push](#the-operator-and-the-token-push),
   [the keeper](#the-keeper-suite), [the schemas](#the-schemas-check) and
@@ -51,8 +52,10 @@ read it (D20).
 code as it stands, so the rewrite MUST NOT read it; what it checks could be rewritten as a
 conformance check, by running the program under test instead.**
 
-**No check has been moved by this story, and `conformance/` does not exist yet.** Until a check
-is moved, it is in `scripts/`, and the rewrite MUST NOT read it, whatever its class: the rewrite's
+**E0.04-T02-S04 moved no check. E0.04-T03-S01 (#0084) moved the first: `conformance/lease-cli/`
+holds the harness and the checks of the lease CLI's help, usage errors, values, `create`, `get` and
+`list` ([Running the suite](#running-the-suite)).** Until a check is moved, it is in `scripts/`, and
+the rewrite MUST NOT read it, whatever its class: the rewrite's
 reviewers work from an export of `docs/`, `schemas/` and `conformance/` only (D34). **The export
 MUST leave out every "Findings from ..." block in `docs/decisions.md`, `docs/runs/`, the handoffs
 and `docs/how-it-was-built.md`** (the architect, 2026-11-18; D34). A guess is a gap to report, never
@@ -63,14 +66,16 @@ code that loads the prototype.
 
 **A conformance check names the program it tests through one environment variable per program,
 so the same check runs against the prototype and against the rewrite (D34).** The variables
-below are **pinned** (the architect, 2026-11-18); the defaults are proposed for the v0.04-T03
-stories that build the suite ([The remaining work](#the-remaining-work)). Nothing in the
-repository reads them yet.
+below are **pinned** (the architect, 2026-11-18). The harness reads the first two
+(E0.04-T03-S01, #0084); the other two are proposed for the v0.04-T03 story that builds the keeper
+and proxy checks ([The remaining work](#the-remaining-work)). **A variable that is unset or empty
+takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**; a variable
+that is set always wins.
 
 | Variable | Names | Default (proposed) |
 |---|---|---|
-| `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | The prototype's `bin\agentspace.cmd` |
-| `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | A shim in `conformance/prototype/` that starts the prototype's operator |
+| `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | The prototype's `bin\agentspace.cmd`, named in `conformance/prototype/defaults.ps1` |
+| `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | `conformance/prototype/operator.cmd`, a shim that starts the prototype's operator under Windows PowerShell 5.1 |
 | `AGENTSPACE_KEEPER_CMD` | The keeper | A shim in `conformance/prototype/` that starts the prototype's keeper |
 | `AGENTSPACE_SSH_PROXY_CMD` | The ProxyCommand program | The prototype's `scripts\ssh-proxy.cmd` |
 
@@ -86,8 +91,9 @@ two more, so each needs a name. A rewrite that ships one binary sets all four to
 - **The conformance variables are read by checks, never by a program under test.** So
   [docs/lease-api.md](lease-api.md#environment)'s rule, that no other environment variable
   changes the contract's behavior, is unaffected.
-- **The only files in `conformance/` that name the prototype are its default shims.** A check
-  never does.
+- **The only files in `conformance/` that name the prototype are its default shims and
+  `conformance/prototype/defaults.ps1`**, which are all in `conformance/prototype/`. A check and the
+  harness never do.
 - **The token push has no program of its own,** because it is a part of the operator's `up` and
   `sync`, so it has no variable. [The gaps](#the-gaps) say what it needs instead.
 
@@ -112,7 +118,9 @@ two more, so each needs a name. A rewrite that ships one binary sets all four to
     ([docs/lease-api.md](lease-api.md#open-questions), question 9), so a check that places a
     ready lease sets `USERPROFILE` to a throwaway folder and makes a throwaway CA there with the
     operator's `ca` command ([docs/operator.md](operator.md#ca)). `USERPROFILE` is a documented,
-    read variable ([docs/operator.md](operator.md#environment-variables)).
+    read variable ([docs/operator.md](operator.md#environment-variables)). **The harness does this
+    for every lease CLI check, and the throwaway CA works** ([Running the suite](#running-the-suite),
+    [open question 3](#open-questions)).
   - **`ca` MUST NOT be run elevated** (D17; [docs/operator.md](operator.md#ca)).
 - **A check of the keeper MUST wait on what it checks and never on a fixed sleep (#0066).** It
   polls the log line, the file or the process it expects, with a deadline. Reading found three
@@ -141,15 +149,114 @@ any of them today.**
   least once with the caller's time zone set to one other than UTC. A grep of the lease suites
   finds none that sets a zone. The driver suite compares against its own clock within a window
   of 15 seconds, and the renew suite against its own start time.
+  - **Met in part by E0.04-T03-S01 (#0084):** `conformance/lease-cli/test-create-get.ps1` checks a
+    ready `create`'s `created_at`, its `expires_at` minus the TTL, and the certificate's
+    valid-before against the check's own clock and against each other. **It cannot set a zone for
+    the program**: Windows has no environment variable for it, so the run uses the laptop's zone,
+    and a run on a machine set to UTC does not meet the second half ([Running the suite](#running-the-suite)).
 - **The `usage` error's `field`** ([docs/lease-api.md](lease-api.md#schemas)). The error schema
   cannot say which `usage` errors carry `field`, so a conformance check MUST test that rule. The
   first half of `scripts\test-lease-cli.ps1` compares the code and `field` of each error run, so
-  most of it is in place. Whether it covers all five cases the spec names is for the card that
-  moves it ([The remaining work](#the-remaining-work)).
+  most of it is in place.
+  - **Met by E0.04-T03-S01 (#0084):** `conformance/lease-cli/test-usage-errors.ps1` runs each of the
+    five cases the spec names, in every command that has one, and about 30 usage errors that MUST
+    carry no `field`.
 - **Concurrent processes** ([docs/lease-api.md](lease-api.md#concurrency-and-atomicity)). The spec
   requires commands to be safe under concurrent processes
   ([docs/state.md](state.md#concurrency)), so a race check through the CLI is a conformance check,
   and the suite MUST contain one. The prototype's one race check is in-process, so it is not.
+
+## Running the suite
+
+**RFC 2119 keywords again.** This section is for a person or an agent who runs a conformance check
+against a build, the prototype or a rewrite. It was written by E0.04-T03-S01 (#0084), and it holds
+for every check in `conformance/lease-cli/`.
+
+**To run one check:** `pwsh -NoProfile -File conformance/lease-cli/test-<name>.ps1`, from any
+folder. It needs PowerShell 7 on a Windows laptop, and MUST NOT run elevated, because the
+operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca)).
+
+| Check | What it enforces | Needs a CA |
+|---|---|---|
+| `test-help.ps1` | The help block at every level and in odd positions ([lease-api.md](lease-api.md#commands), [Command lines](lease-api.md#command-lines)) | No |
+| `test-usage-errors.ps1` | Usage errors, their exit code and `field`, and the order they are reported in ([Command lines](lease-api.md#command-lines), [Exit codes and errors](lease-api.md#exit-codes-and-errors)) | No |
+| `test-values.ps1` | `invalid_value` and `out_of_range`, their `field`, and the error schema's refusal of a line feed ([Values](lease-api.md#values), [Schemas](lease-api.md#schemas)) | No |
+| `test-create-get.ps1` | `create` and `get`: a ready lease, its credential files, TTL, uppercase ID, unsatisfiable, a tolerant command line, a failed write, `not_found`, expiry, the state file ([lease-api.md](lease-api.md#agentspace-lease-create), [state.md](state.md#a-leases-credential)) | For a ready lease |
+| `test-list.ps1` | `list`: its order, filters and empty list, with leases made by `create` and given the times and states the state file can hold ([lease-api.md](lease-api.md#agentspace-lease-list)) | For a ready lease |
+
+- **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
+  `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
+  enforces, as in `lease-api.md#agentspace-lease-get: ...`. The summary is `<n> passed, <n> failed,
+  <n> skipped`.
+- **The exit code is 0 when every result was PASS, 1 when any was FAIL, and 2 when none failed but
+  any was SKIPPED.** A run that exits 2 is incomplete, never passed (see
+  [What a conformance run needs](#what-a-conformance-run-needs)). The checks skip only when the
+  harness could not make a throwaway CA, or, for two checks of `test-create-get.ps1`, when no
+  `ssh-keygen` is on the `PATH`, and the reason says which.
+- **The program under test is named by `AGENTSPACE_CMD`** ([Naming the program under test](#naming-the-program-under-test)).
+  It is run as a separate process with its arguments unchanged, and its stdin is closed. Set it to a
+  program that prints nothing and exits 0, and **every check MUST fail**: that proves the variable is
+  read and that no check passes vacuously. E0.04-T03-S01 ran that proof for each check.
+- **The CA is made by `AGENTSPACE_OPERATOR_CMD`**, the operator, run as `ca -Quiet`.
+- **Run it on a machine whose time zone is not UTC**, as
+  [lease-api.md](lease-api.md#times) requires of the suite at least once. The harness cannot
+  set a zone for a child process, and `test-create-get.ps1` reads the program's times against its own
+  clock in UTC, so on a machine set to UTC a zone mix-up in the program stays hidden.
+- **A check takes from about 20 to about 50 seconds against the prototype, and all five about 3
+  minutes**, most of it starting programs: about 0.5 seconds for a run that issues no credential,
+  and a few seconds for a ready `create`. Against a program that prints nothing, all five take
+  about 15 seconds.
+
+### The harness
+
+**`conformance/lease-cli/harness.ps1` is dot-sourced by every lease CLI check, and it is the only
+code that starts the program under test.** A check makes each home it needs with
+`New-ConformanceHome`, removes it in a `finally`, and ends with `Exit-ConformanceRun`. The helpers
+the checks share, which start no program of their own, are in `conformance/lease-cli/lease-cli-common.ps1`.
+
+| Function | Does |
+|---|---|
+| `New-ConformanceHome` | Makes a folder under `%TEMP%` named `agentspace-conformance-<12 hex>`, holding a fresh `USERPROFILE` (`home`, with `.agentspace` and `.ssh`) and a throwaway CA made by the operator's `ca` under it. Returns `Root`, `UserProfile`, `StateDir` (`.agentspace\state` in the home), `SshDir` (`.ssh` in the home), `CaReady` and `CaReason`. When no CA can be made, `CaReady` is false and `CaReason` says why, and the real CA is never used instead |
+| `Invoke-AgentspaceCli -ConformanceHome <h> -Arguments <string[]> [-InputJson <string>] [-Environment <hashtable>]` | Runs the program `AGENTSPACE_CMD` names as a separate process, inside the home. Returns `ExitCode`, `Stdout`, `Stderr`, `Json` (stdout parsed with every time kept as a string, or null), `ErrorJson` (stderr parsed, or null), `StdoutBytes`, `StderrBytes` and `TimedOut`. `-Environment` adds or removes variables for that one run, and a null value removes one. `-InputJson` is written to stdin |
+| `Invoke-ConformanceProgram -Variable <name> ...` | The same for any program a conformance variable names, such as `AGENTSPACE_OPERATOR_CMD` |
+| `Test-ConformanceSchema -Json <string> -Schema <file>` | True when the document validates against a schema under `schemas/` (`state/leases.state.schema.json` is allowed), by PowerShell 7's `Test-Json -SchemaFile`. False when it does not validate or is not JSON |
+| `Write-ConformanceResult -Name <check> -Status PASS\|FAIL\|SKIPPED [-Reason <text>]` | Prints one result line and counts it |
+| `Remove-ConformanceHome -ConformanceHome <h>` | Deletes the home's `Root`, and only it. It refuses a folder that is not an `agentspace-conformance-*` folder directly under `%TEMP%` |
+| `Exit-ConformanceRun` | Prints the summary line and exits with the code above |
+
+- **Every program the harness starts gets the same environment.**
+  - **Pointed into the home:** `USERPROFILE`, `HOME`, `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR`.
+  - **Kept away from AWS and the real token, so that no check can ever call the real account:**
+    - `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` name files that do not exist in the home
+      (`home\no-aws\config` and `home\no-aws\credentials`).
+    - `AWS_EC2_METADATA_DISABLED` is `true`, so no instance-metadata credentials are looked for.
+    - `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+      `AWS_SESSION_TOKEN`, `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+      `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` are removed.
+    - **A check that runs a program that can call `aws`** (the operator or the ProxyCommand beyond
+      a usage error) **MUST first confirm, under the same environment, that
+      `aws sts get-caller-identity` fails**, and report every case SKIPPED without running the
+      program if it succeeds.
+  - **`AGENTSPACE_PROXY_COMMAND` is set to a command that does nothing**, so that a ready lease
+    needs no real box ([lease-api.md](lease-api.md#environment)). A check MAY override it with
+    `-Environment`.
+  - **Every other `AGENTSPACE_*` variable the caller holds is removed**, so that a shell's own
+    settings never reach the program.
+  - **`PSModulePath` is removed.** A PowerShell 7 session's value carries PowerShell 7's own module
+    folders, and Windows PowerShell 5.1, which runs the prototype's operator, then cannot load its
+    security module, so its `ca` fails.
+- **A check MUST NOT read, write, list or hash the real `%USERPROFILE%\.agentspace`, the real
+  `~/.ssh` or the real CA**, and the harness never gives one a path to them. Only a person or a
+  verifier proving a run touched nothing lists them, before and after.
+- **A check MUST NOT load prototype code** (D34). It reaches the program only through the harness.
+
+### What the first run proved
+
+**It answers [open question 3](#open-questions).** On 2026-11-18, on the laptop, with `USERPROFILE`
+set to a new folder under `%TEMP%` and nothing else of the real profile reachable, the operator's
+`ca` made a CA there and exited 0, a second `ca` exited 0 and changed nothing, and a ready
+`lease create` then issued a lease, wrote its alias file and its credential under that home, and
+printed a document that validates.
 
 ## The sorting
 
@@ -162,8 +269,8 @@ already keeps each case's state in a throwaway folder.
 
 | File | Class | The reason, in one line | Real folders it touches today |
 |---|---|---|---|
-| `test-lease-cli.ps1` | Mixed: the process half is conformance in method, the in-process half is prototype code | The second half dot-sources the state script | None |
-| `test-lease-cmd-create-get.ps1` | Conformance in method, not yet movable | The credential step has no root override, so it uses the real CA and real lease folders | The real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed) |
+| `test-lease-cli.ps1` | Mixed: the process half is conformance in method, the in-process half is prototype code | The second half dot-sources the state script. **Its process half is moved** to `conformance/lease-cli/` (#0084): `test-help.ps1`, `test-usage-errors.ps1` and `test-values.ps1` | None |
+| `test-lease-cmd-create-get.ps1` | Conformance in method, **moved** to `conformance/lease-cli/test-create-get.ps1` (#0084) | The credential step had no root override. The moved check runs in a throwaway `USERPROFILE` with a throwaway CA, and the script in `scripts/` stays until the rewrite replaces it | The script in `scripts/` still: the real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed). The moved check: none |
 | `test-lease-cmd-renew-release-list.ps1` | Prototype code as it stands; its checks are conformance in method | It dot-sources the driver to make each ready lease | The same as the line above |
 | `test-lease-credential.ps1` | Prototype code | It dot-sources the credential script and calls its function | The real CA (signs with it), the real `leases` folder (written, removed) |
 | `test-lease-renew-release.ps1` | Prototype code | It dot-sources the credential and alias scripts | The same as the line above |
@@ -189,6 +296,16 @@ or `schemas\` at most, which are spec artifacts and allowed.
 
 #### `scripts/test-lease-cli.ps1` (about 450 lines): mixed
 
+- **Moved by E0.04-T03-S01 (#0084): the process half.** The first three groups in the table below
+  are `conformance/lease-cli/test-help.ps1` (30 checks), `test-usage-errors.ps1` (71) and
+  `test-values.ps1` (59, with the error schema's refusal of a line feed, which now also needs the
+  program's own error to validate, so that it fails against a program that prints nothing). They
+  keep one entry point, the program under test, and drop the `pwsh -File` one. The script in
+  `scripts/` is unchanged and keeps passing ([The remaining work](#the-remaining-work)).
+  - **One check was not moved, because the prototype does not meet it:** a project value with a line
+    feed in it, passed through `bin\agentspace.cmd`, reaches the CLI cut at the line feed, since `cmd`
+    ends an argument there. The check that exists in the old script runs the CLI directly instead
+    ([lease-api.md](lease-api.md#the-program), #0083; [The gaps](#the-gaps)).
 - **Drives:** In its first half, the lease CLI as a separate process, through `bin\agentspace.cmd`
   and through `pwsh -NoProfile -File scripts\lease-cli.ps1`, capturing stdout, stderr and the
   exit code as bytes.
@@ -211,20 +328,26 @@ or `schemas\` at most, which are spec artifacts and allowed.
 | A ready lease is `expired` at its `expires_at` second and `ready` one second before | 1 | Prototype code | Not movable: it needs a clock the check controls |
 | Three writers of 5 records and one reader, in parallel | 2 | Prototype code (child processes dot-source the state script) | Three parallel loops of unsatisfiable `create` and a loop of `list`. A conformance check: [lease-api.md](lease-api.md#concurrency-and-atomicity) requires commands to be safe under concurrent processes ([state.md](state.md#concurrency)) |
 
-#### `scripts/test-lease-cmd-create-get.ps1` (about 200 lines): conformance in method, not yet movable
+#### `scripts/test-lease-cmd-create-get.ps1` (about 200 lines): conformance in method, moved
 
+- **Moved by E0.04-T03-S01 (#0084)** to `conformance/lease-cli/test-create-get.ps1` (39 checks),
+  with `list` made from `create`-made seeds in `test-list.ps1` (32). They run in a throwaway
+  `USERPROFILE` with a throwaway CA ([Running the suite](#running-the-suite)), read the program from
+  `AGENTSPACE_CMD`, and hash nothing of the real `~/.ssh`. The script in `scripts/` below is
+  unchanged. The moved check runs the failed write with a separate state folder and ssh folder for
+  that one run, both inside the home.
 - **Drives:** `lease create` and `lease get`, each as a separate process through
   `pwsh -NoProfile -File scripts\lease-cli.ps1`. It dot-sources nothing.
 - **Reads:** Files the specs name: the state file, the alias file, `id_ed25519`,
   `id_ed25519-cert.pub`, and `ssh-keygen -L` on the certificate.
-- **Why it cannot move yet:** The credential step has no root override. It signs with the real CA and
+- **Why it could not move before:** The credential step has no root override. It signs with the real CA and
   writes each lease's folder under the real `%USERPROFILE%\.agentspace\leases`, removed in a
   `finally`. It also hashes Terry's real `~/.ssh` before and after. It names `ssh-keygen` by a
   full path, which is allowed, because that program is outside agentspace.
 - **About 30 checks:** A ready lease, TTL, an uppercase ID, unsatisfiable, a tolerant command
   line, a failed write after the credential is placed, `not_found`, expiry reading as `expired`,
   and the state file.
-- **What moving it takes:** A throwaway `USERPROFILE` with a throwaway CA, the program read from
+- **What moving it took:** A throwaway `USERPROFILE` with a throwaway CA, the program read from
   `AGENTSPACE_CMD`, and no hashing of the real `~/.ssh`.
 
 #### `scripts/test-lease-cmd-renew-release-list.ps1` (about 330 lines): prototype code as it stands
@@ -445,9 +568,10 @@ land with this page's turn, so a link to one resolves once they merge.
 | lease-api.md: States | The expiry boundary (`expired` exactly at `expires_at`, `ready` one second before) needs a clock the check controls |
 | lease-api.md: The credential | A short-ID collision, and a caller-chosen lease ID refused by the credential step, cannot be reached through the CLI |
 | lease-api.md: `renew`, States | Renew of a `ready` lease with no folder: the sorter found no statement of what happens, and the suite's check of it cannot be moved |
-| lease-api.md: Times | No check sets the caller's time zone, as the spec requires ([What the specs require of the suite](#what-the-specs-require-of-the-suite)) |
+| lease-api.md: Times | No check sets the caller's time zone, as the spec requires ([What the specs require of the suite](#what-the-specs-require-of-the-suite)). Windows has no environment variable for it, so a run uses the laptop's zone ([Running the suite](#running-the-suite)) |
 | lease-api.md: Concurrency and atomicity | The 30-second wait, and a failed `renew` or `release` leaving the lease as it was (#0041), have no check. The race check, one group, covers only three writers and a reader |
-| lease-api.md: The program | Arguments reach the program unchanged from Git Bash, and an argument such as `-:x` (#0083), have no check |
+| lease-api.md: The program | Arguments reach the program unchanged from Git Bash, and an argument such as `-:x` (#0083), have no check. **A line feed inside an argument has none either**: the prototype's `bin\agentspace.cmd` cuts the argument at it, so a project value `a<LF>b` is read as `a` and the create succeeds, where the spec requires `invalid_value`. A check of it would fail against the prototype, so the suite leaves it out until the rewrite |
+| lease-api.md: The credential, no CA | `create` MUST fail with `internal` and make no CA when none exists (#0029 point 3). **The prototype's `create` makes one**, so a check of the rule would fail against it, and the suite leaves it out until the rewrite ([docs/state.md](state.md#its-checks)). What is checked: an unsatisfiable `create` with no CA answers and makes none |
 | driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable |
 | keeper.md: The installed task | The installer dry run is the prototype's packaging, and no conformance check covers an installed task |
 | The live-box check | `check-forward-release.ps1` is the only check of the box's sshd, and the conformance suite does not run it |
@@ -479,10 +603,15 @@ v0.04-T04) closes them, or names the card that will.
    backoff observable.
 2. **Does Windows PowerShell 5.1 pass non-ASCII arguments intact?** The refusal checks for U+212A
    (the Kelvin sign) and U+0130 depend on it, and only a run on Windows shows it.
-3. **Does a throwaway `USERPROFILE` make `create` work?** `create` runs the operator's `ca` as a
-   check, and `ca` needs an owner-only folder and refuses a OneDrive path. `%TEMP%` is not under
-   OneDrive, but the throwaway folder needs `ca`'s own steps to succeed. This is the first risk
-   to prove in the lease CLI harness story, before anything is written.
+3. **Does a throwaway `USERPROFILE` make `create` work?** **Settled by E0.04-T03-S01 (#0084): yes,
+   on the laptop, with two conditions the harness meets** ([Running the suite](#running-the-suite)).
+   `ca` made a CA under a new folder in `%TEMP%` and exited 0, and a ready `create` then worked in
+   that home. **The conditions:** the operator needs `PSModulePath` removed when it is started from a
+   PowerShell 7 session, and `create` needs `AGENTSPACE_PROXY_COMMAND` set. Without it, the
+   prototype's default ProxyCommand fails `create` with `internal` in a checkout that holds no
+   `.instance-id`, which [lease-api.md](lease-api.md#environment) and
+   [state.md](state.md#the-alias-file) do not say. That is a requirement the specs leave out, and it
+   is open for the clean-room review.
 4. **Does the keeper suite's "second keeper" match belong to the keeper's spec?** Finding the
    first keeper by its command line is how the suite works today. A rewrite names its own
    process, so the match has to be replaced, and the suite needs the process its variable started.
