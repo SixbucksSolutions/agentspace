@@ -79,6 +79,7 @@ when Terry says so (D14).
 - #0029 and #0041 (the lease CLI's) are carried into v0.04's specs and met by v0.05.
 - #0027 and #0034 (the operator's) are carried into v0.04's specs and met by v0.06.
 - #0043 (the CloudWatch backstop) is replaced by v0.08's lease-based stop.
+- #0064 (a release leaves the lease's open connections up, found in E0.02-T03-S01) is met by v0.08.
 
 ## After 1.0
 
