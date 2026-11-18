@@ -1,0 +1,949 @@
+#!/usr/bin/env python3
+"""Divide each session's tool calls among its working agents: an agentspace-sample record joined to transcripts.
+
+Usage: agentspace-agents <record.jsonl> <transcripts folder> [--from <ISO 8601>] [--to <ISO 8601>] [--json]
+
+It reads the record that agentspace-sample writes (its format is pinned on card #0069) the way
+agentspace-footprint does, joins each recorded session to its Claude Code transcript, and reads
+from the transcript when each of the session's subagents ran. A session's tool calls are then
+divided by its working agents: its subagents running at that moment plus its main agent. It
+prints Markdown, or with --json one JSON object holding the same numbers. Decision D33. Python 3,
+standard library only, so it runs on the box and on the laptop alike. Exit 0, or 2 with a message
+on stderr for a missing file or folder, a record with no valid start line, or bad arguments.
+"""
+
+import argparse
+import json
+import math
+import os
+import re
+import sys
+from datetime import datetime
+from decimal import ROUND_HALF_UP, Context, Decimal
+
+GAP_FACTOR = 3
+PROG = "agentspace-agents"
+DIVISOR = ("the session's tool calls divided by its working agents: "
+           "its subagents running at that moment plus its main agent")
+
+
+def die(message):
+    sys.stderr.write("%s: %s\n" % (PROG, message))
+    sys.exit(2)
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        die(message)
+
+
+class Formatter(argparse.HelpFormatter):
+    """Help whose every line starts with a capital: no wrapping, and a capital usage prefix."""
+
+    def __init__(self, prog, **kwargs):
+        kwargs["width"] = 10000
+        kwargs["max_help_position"] = 30
+        super().__init__(prog, **kwargs)
+
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "Usage: ")
+
+
+def parse_time(text):
+    """An ISO 8601 time with a UTC offset, or None."""
+    if not isinstance(text, str):
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value
+
+
+def is_num(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def is_str(value):
+    return isinstance(value, str)
+
+
+def has(obj, key, check):
+    return key in obj and check(obj[key])
+
+
+# ---------------------------------------------------------------------------------------------
+# The record: read exactly as agentspace-footprint reads it.
+# ---------------------------------------------------------------------------------------------
+
+def valid_line(obj):
+    """The line's kind when it is well formed, else None. Unknown keys are ignored."""
+    if not isinstance(obj, dict):
+        return None
+    kind = obj.get("kind")
+    if kind == "start":
+        ok = (
+            parse_time(obj.get("t")) is not None
+            and has(obj, "run", is_str)
+            and has(obj, "interval_s", is_num)
+            and obj["interval_s"] > 0
+            and has(obj, "cpus", is_int)
+        )
+    elif kind == "host":
+        ok = (
+            parse_time(obj.get("t")) is not None
+            and has(obj, "seq", is_int)
+            and has(obj, "cpu_busy_s", is_num)
+            and has(obj, "cpu_total_s", is_num)
+            and has(obj, "mem_used_kib", is_num)
+            and has(obj, "sampler_cpu_s", is_num)
+        )
+    elif kind == "session":
+        own = obj.get("self")
+        tools = obj.get("tools")
+        ok = (
+            parse_time(obj.get("t")) is not None
+            and has(obj, "seq", is_int)
+            and has(obj, "session", is_str)
+            and (obj.get("cwd") is None or is_str(obj["cwd"]))
+            and isinstance(own, dict)
+            and has(own, "cpu_s", is_num)
+            and has(own, "pss_kib", is_num)
+            and isinstance(tools, dict)
+            and has(tools, "cpu_s", is_num)
+            and has(tools, "pss_kib", is_num)
+            and has(tools, "procs", is_num)
+        )
+    elif kind == "end":
+        ok = parse_time(obj.get("t")) is not None and has(obj, "reason", is_str)
+    else:
+        ok = False
+    return kind if ok else None
+
+
+def read_record(path):
+    """Return (lines, skipped): the well-formed lines in order, each with its parsed time."""
+    try:
+        handle = open(path, "r", encoding="utf-8-sig", errors="replace", newline=None)
+    except OSError as err:
+        die("cannot read %s: %s" % (path, err.strerror or err))
+    lines = []
+    skipped = 0
+    with handle:
+        try:
+            for raw in handle:
+                try:
+                    obj = json.loads(raw)
+                except (ValueError, RecursionError):
+                    skipped += 1
+                    continue
+                kind = valid_line(obj)
+                if kind is None:
+                    skipped += 1
+                    continue
+                lines.append((kind, obj, parse_time(obj["t"])))
+        except OSError as err:
+            die("cannot read %s: %s" % (path, err.strerror or err))
+    return lines, skipped
+
+
+# ---------------------------------------------------------------------------------------------
+# The transcripts: read as the researcher's spec for v0.03-T03 says (the files are the authority).
+#
+# A main transcript is any *.jsonl under the folder, at any depth, that is not inside a
+# "subagents" folder. A subagent's transcript is <main stem>/subagents/agent-<agentId>.jsonl. A
+# subagent runs from the smallest to the largest "timestamp" on its own file's lines, never its
+# first and last line, which are not always in order. A span is never split.
+# ---------------------------------------------------------------------------------------------
+
+SUBAGENTS = "subagents"
+WORKTREES = "/.claude/worktrees/"
+TASK_ID = re.compile(r"<task-id>\s*([^<\s]+)\s*</task-id>")
+COMPLETED = re.compile(r"<status>\s*completed\s*</status>")
+
+
+def _completed_task(obj):
+    """The task id of a completion task-notification line, else None."""
+    attachment = obj.get("attachment")
+    if not isinstance(attachment, dict) or attachment.get("commandMode") != "task-notification":
+        return None
+    prompt = attachment.get("prompt")
+    if not is_str(prompt) or not COMPLETED.search(prompt):
+        return None
+    found = TASK_ID.search(prompt)
+    return found.group(1) if found else None
+
+
+def _scan(path, tally):
+    """Read one transcript. OSError escapes.
+
+    Returns {"first", "last": the smallest and largest timestamp (aware datetimes, None when no
+    line has one), "cwds": every cwd, "session_id": the first sessionId, "completed": {task id:
+    completion task-notifications}}. A line that is not a JSON object is counted in
+    tally["malformed"], and one with no parseable timestamp in tally["untimed"].
+    """
+    scan = {"first": None, "last": None, "cwds": set(), "session_id": None, "completed": {}}
+    with open(path, "r", encoding="utf-8-sig", errors="replace", newline=None) as handle:
+        for raw in handle:
+            try:
+                obj = json.loads(raw)
+            except (ValueError, RecursionError):
+                obj = None
+            if not isinstance(obj, dict):
+                tally["malformed"] += 1
+                continue
+            if is_str(obj.get("cwd")) and obj["cwd"]:
+                scan["cwds"].add(obj["cwd"])
+            if scan["session_id"] is None and is_str(obj.get("sessionId")) and obj["sessionId"]:
+                scan["session_id"] = obj["sessionId"]
+            task = _completed_task(obj)
+            if task is not None:
+                scan["completed"][task] = scan["completed"].get(task, 0) + 1
+            when = parse_time(obj.get("timestamp"))
+            if when is None:
+                tally["untimed"] += 1
+                continue
+            if scan["first"] is None or when < scan["first"]:
+                scan["first"] = when
+            if scan["last"] is None or when > scan["last"]:
+                scan["last"] = when
+    return scan
+
+
+def _try_scan(path, tally):
+    try:
+        return _scan(path, tally)
+    except OSError:
+        return None
+
+
+def read_spans(folder):
+    """Read every main transcript under folder, and its subagents' running spans.
+
+    Contract: returns (transcripts, read_notes), where
+      transcripts = {main transcript name: {
+          "cwd_set": set of every "cwd" its lines carry,
+          "first": aware datetime, "last": aware datetime (its smallest and largest timestamp),
+          "subagents": [(agent_id, start, end), ...] (aware datetimes, start <= end),
+          "missing": False, or True when the main file is missing or unreadable: the entry then
+              stands for its subagents alone, and its cwd_set, first and last are theirs,
+      }, ...}
+      read_notes = {
+          "transcripts": [name, ...]: main files that could not be read or carried no timestamp,
+              left out of transcripts,
+          "subagents": ["<name>/<file>", ...]: subagent files likewise, left out,
+          "parent_missing": ["<name>/<file>", ...]: subagents read without their main file,
+          "resumed": ["<name>/<file>", ...]: subagents with more than one completion
+              task-notification in their main transcript,
+          "malformed": int, "untimed": int: transcript lines that were not a JSON object, and
+              lines with no parseable timestamp, across every file read,
+      }
+    A name is the main file's name, or its path under folder when two share a file name. The
+    entry for a missing main file is named "<sessionId>.jsonl" after its subagents' lines (the
+    folder above "subagents" when they carry none).
+    """
+    mains = []  # (relative path, absolute path, stem)
+    subs = []  # (absolute path, agent id, stem, absolute path of the folder named for the stem)
+    for directory, subdirs, files in os.walk(folder):
+        subdirs.sort()
+        rel_dir = os.path.relpath(directory, folder)
+        parts = [] if rel_dir == os.curdir else rel_dir.replace(os.sep, "/").split("/")
+        for file_name in sorted(files):
+            if not file_name.endswith(".jsonl"):
+                continue
+            path = os.path.join(directory, file_name)
+            if SUBAGENTS not in parts:
+                rel = os.path.relpath(path, folder).replace(os.sep, "/")
+                mains.append((rel, path, file_name[: -len(".jsonl")]))
+            elif (parts[-1] == SUBAGENTS and file_name.startswith("agent-")
+                  and len(file_name) > len("agent-.jsonl")):
+                stem_dir = os.path.dirname(os.path.abspath(directory))
+                subs.append((path, file_name[len("agent-"): -len(".jsonl")],
+                             os.path.basename(stem_dir), stem_dir))
+
+    counts = {}
+    for rel, _p, _s in mains:
+        base = rel.rsplit("/", 1)[-1]
+        counts[base] = counts.get(base, 0) + 1
+
+    tally = {"malformed": 0, "untimed": 0}
+    transcripts = {}
+    read_notes = {"transcripts": [], "subagents": [], "parent_missing": [], "resumed": []}
+    by_path = {}
+    by_stem = {}
+    completed = {}
+    for rel, path, stem in mains:
+        base = rel.rsplit("/", 1)[-1]
+        name = base if counts[base] == 1 else rel
+        scan = _try_scan(path, tally)
+        if scan is None or scan["first"] is None:
+            read_notes["transcripts"].append(name)
+            continue
+        transcripts[name] = {
+            "cwd_set": scan["cwds"],
+            "first": scan["first"],
+            "last": scan["last"],
+            "subagents": [],
+            "missing": False,
+        }
+        by_path[os.path.normcase(os.path.abspath(path))] = name
+        by_stem.setdefault(stem, []).append(name)
+        completed[name] = scan["completed"]
+
+    def by_stem_once(stem):
+        names = by_stem.get(stem, [])
+        return names[0] if len(names) == 1 else None
+
+    orphans = {}  # virtual name: [(agent id, start, end, cwds)]
+    for path, agent_id, stem, stem_dir in subs:
+        file_name = os.path.basename(path)
+        scan = _try_scan(path, tally)
+        parent = by_path.get(os.path.normcase(stem_dir + ".jsonl")) or by_stem_once(stem)
+        if parent is None and scan is not None and scan["session_id"]:
+            parent = by_stem_once(scan["session_id"])
+        if parent is None:
+            key = scan["session_id"] if scan is not None and scan["session_id"] else stem
+            label = "%s.jsonl/%s" % (key, file_name)
+            read_notes["parent_missing"].append(label)
+            if scan is None or scan["first"] is None:
+                read_notes["subagents"].append(label)
+                continue
+            orphans.setdefault(key + ".jsonl", []).append(
+                (agent_id, scan["first"], scan["last"], scan["cwds"]))
+            continue
+        label = "%s/%s" % (parent, file_name)
+        if scan is None or scan["first"] is None:
+            read_notes["subagents"].append(label)
+            continue
+        transcripts[parent]["subagents"].append((agent_id, scan["first"], scan["last"]))
+        if completed[parent].get(agent_id, 0) > 1:
+            read_notes["resumed"].append(label)
+
+    for name in sorted(orphans):
+        group = orphans[name]
+        cwds = set()
+        for _a, _s, _e, own in group:
+            cwds |= own
+        transcripts[name] = {
+            "cwd_set": cwds,
+            "first": min(start for _a, start, _e, _c in group),
+            "last": max(end for _a, _s, end, _c in group),
+            "subagents": [(agent, start, end) for agent, start, end, _c in group],
+            "missing": True,
+        }
+
+    read_notes["malformed"] = tally["malformed"]
+    read_notes["untimed"] = tally["untimed"]
+    return transcripts, read_notes
+
+
+def _checkout(cwd):
+    """A cwd's checkout root: the path cut at /.claude/worktrees/, else the path itself."""
+    cwd = cwd.rstrip("/") or cwd
+    if WORKTREES in cwd + "/":
+        return (cwd + "/").split(WORKTREES, 1)[0] or "/"
+    return cwd
+
+
+def join(record_sessions, transcripts):
+    """Pick each record session's main transcript.
+
+    Contract: record_sessions is a list of {"session": id, "cwd": its first cwd (str or None),
+    "cwds": the set of its cwds, "first": aware datetime, "last": aware datetime} (its first and
+    last kept sample); transcripts is read_spans()'s first value. Returns (joined, ties):
+    joined = {session id: transcript name or None}, and ties = [{"session", "transcript",
+    "tied_with": [names], "decided_by": "roots", "overlap" or "name"}, ...], one for each session
+    whose pick a tie within 1 second decided. A transcript MAY be joined to more than one session.
+
+    A transcript is a candidate when its [first, last] overlaps the session's by at least 1
+    second, and some checkout root of the session's cwds equals one of the transcript's; a
+    transcript with no cwd at all stays a candidate. The most overlap seconds wins. Candidates
+    within 1 second of the most go to more matching roots, then the greater overlap, then the
+    smaller name. No candidate leaves the session unjoined; it is never guessed from time alone.
+    """
+    joined = {}
+    ties = []
+    for session in record_sessions:
+        roots = {_checkout(c) for c in session["cwds"] if is_str(c) and c}
+        candidates = []
+        for name in sorted(transcripts):
+            info = transcripts[name]
+            overlap = (min(info["last"], session["last"])
+                       - max(info["first"], session["first"])).total_seconds()
+            if overlap < 1:
+                continue
+            theirs = {_checkout(c) for c in info["cwd_set"]}
+            matching = len(roots & theirs)
+            if theirs and not matching:
+                continue
+            candidates.append((name, overlap, matching))
+        if not candidates:
+            joined[session["session"]] = None
+            continue
+        most = max(overlap for _n, overlap, _m in candidates)
+        tied = [c for c in candidates if most - c[1] <= 1]
+        tied.sort(key=lambda c: (-c[2], -c[1], c[0]))
+        pick = tied[0]
+        joined[session["session"]] = pick[0]
+        if len(tied) > 1:
+            runner = tied[1]
+            if pick[2] != runner[2]:
+                by = "roots"
+            elif pick[1] != runner[1]:
+                by = "overlap"
+            else:
+                by = "name"
+            ties.append({
+                "session": session["session"],
+                "transcript": pick[0],
+                "tied_with": [c[0] for c in tied[1:]],
+                "decided_by": by,
+            })
+    return joined, ties
+
+
+# ---------------------------------------------------------------------------------------------
+# The figures.
+# ---------------------------------------------------------------------------------------------
+
+def rank(sorted_values, p):
+    """Nearest rank: value[ceil(p/100 * N) - 1], in integer arithmetic."""
+    n = len(sorted_values)
+    index = -((-p * n) // 100) - 1
+    return sorted_values[max(index, 0)]
+
+
+def stats(values):
+    if not values:
+        return {"peak": None, "p95": None, "p50": None}
+    ordered = sorted(values)
+    return {"peak": ordered[-1], "p95": rank(ordered, 95), "p50": rank(ordered, 50)}
+
+
+def clock(value, tz):
+    """h:mm plus am or pm, in the record's own UTC offset (D32)."""
+    local = value.astimezone(tz)
+    hour = local.hour % 12 or 12
+    return "%d:%02d%s" % (hour, local.minute, "am" if local.hour < 12 else "pm")
+
+
+def offset_text(value):
+    seconds = int(value.utcoffset().total_seconds())
+    sign = "-" if seconds < 0 else "+"
+    seconds = abs(seconds)
+    return "%s%02d:%02d" % (sign, seconds // 3600, seconds % 3600 // 60)
+
+
+class Notes:
+    def __init__(self):
+        self.skipped = 0
+        self.clamped = 0
+        self.gaps = 0
+        self.missing_end = False
+
+    def diff(self, new, old):
+        """A counter's difference, clamped to 0 and counted when negative."""
+        value = new - old
+        if value < 0:
+            self.clamped += 1
+            return 0.0
+        return value
+
+
+def running_at(spans, when):
+    """How many spans run at an instant: start <= when <= end."""
+    return sum(1 for _a, start, end in spans if start <= when <= end)
+
+
+def running_over(spans, t0, t1):
+    """How many spans overlap the interval (t0, t1]: start <= t1 and end > t0."""
+    return sum(1 for _a, start, end in spans if start <= t1 and end > t0)
+
+
+def summarize(lines, skipped, window_from, window_to, transcripts, read_notes):
+    notes = Notes()
+    notes.skipped = skipped
+    start = None
+    for kind, obj, _when in lines:
+        if kind == "start" and start is None:
+            start = obj
+    if start is None:
+        die("the record has no valid start line")
+    # The end line belongs to the record, not to the window.
+    notes.missing_end = not any(kind == "end" for kind, _o, _w in lines)
+    run = start["run"]
+    interval = float(start["interval_s"])
+    cpus = start["cpus"]
+    start_time = parse_time(start["t"])
+    tz = start_time.tzinfo
+    limit = GAP_FACTOR * interval
+
+    # A sample's time is its host line's "t". A session line is kept or dropped with its sample;
+    # only one whose seq has no host line is judged by its own "t".
+    sample_time = {}
+    for kind, obj, when in lines:
+        if kind == "host":
+            sample_time.setdefault(obj["seq"], when)
+
+    hosts = []
+    sessions = {}
+    order = []
+    by_seq = {}
+    for kind, obj, when in lines:
+        if kind not in ("host", "session"):
+            continue
+        judged = sample_time.get(obj["seq"], when) if kind == "session" else when
+        if window_from is not None and judged < window_from:
+            continue
+        if window_to is not None and judged > window_to:
+            continue
+        if kind == "host":
+            hosts.append((obj, when))
+        else:
+            sid = obj["session"]
+            if sid not in sessions:
+                sessions[sid] = []
+                order.append(sid)
+            sessions[sid].append((obj, judged))
+            by_seq.setdefault(obj["seq"], []).append(sid)
+
+    # The host: CPU over intervals, memory over samples.
+    host_cpu = []
+    for (prev, t0), (cur, t1) in zip(hosts, hosts[1:]):
+        dt = (t1 - t0).total_seconds()
+        if dt <= 0:
+            continue
+        if dt > limit:
+            notes.gaps += 1
+            continue
+        notes.diff(cur["sampler_cpu_s"], prev["sampler_cpu_s"])
+        busy = notes.diff(cur["cpu_busy_s"], prev["cpu_busy_s"])
+        total = notes.diff(cur["cpu_total_s"], prev["cpu_total_s"])
+        if total > 0:
+            host_cpu.append(cpus * busy / total)
+    host_mem = [obj["mem_used_kib"] / 1048576 for obj, _w in hosts]
+
+    sampler_cores = None
+    if len(hosts) >= 2:
+        span = (hosts[-1][1] - hosts[0][1]).total_seconds()
+        if span > 0:
+            used = hosts[-1][0]["sampler_cpu_s"] - hosts[0][0]["sampler_cpu_s"]
+            sampler_cores = max(used, 0.0) / span
+
+    # Join each session to its transcript.
+    record_sessions = []
+    for sid in order:
+        rows = sessions[sid]
+        record_sessions.append({
+            "session": sid,
+            "cwd": rows[0][0].get("cwd"),
+            "cwds": {o["cwd"] for o, _w in rows if is_str(o.get("cwd")) and o["cwd"]},
+            "first": rows[0][1],
+            "last": rows[-1][1],
+        })
+    joined, ties = join(record_sessions, transcripts)
+    spans_of = {}
+    joined_names = set()
+    subagents_outside = 0
+    for info in record_sessions:
+        sid = info["session"]
+        name = joined.get(sid)
+        if name is None or name not in transcripts:
+            continue
+        joined_names.add(name)
+        every = transcripts[name]["subagents"]
+        inside = [s for s in every if s[1] <= info["last"] and s[2] >= info["first"]]
+        subagents_outside += len(every) - len(inside)
+        spans_of[sid] = inside
+
+    # Sessions: each one from its own lines only.
+    session_rows = []
+    for sid, info in zip(order, record_sessions):
+        rows = sessions[sid]
+        spans = spans_of.get(sid)
+        self_cpu = []
+        agent_cpu = []
+        alone_cpu = []
+        with_subagents = 0
+        main_alone = 0
+        for (prev, t0), (cur, t1) in zip(rows, rows[1:]):
+            dt = (t1 - t0).total_seconds()
+            if dt <= 0:
+                continue
+            if dt > limit:
+                notes.gaps += 1
+                continue
+            own = notes.diff(cur["self"]["cpu_s"], prev["self"]["cpu_s"])
+            tool = notes.diff(cur["tools"]["cpu_s"], prev["tools"]["cpu_s"])
+            self_cpu.append(own / dt)
+            if spans is not None:
+                n_cpu = 1 + running_over(spans, t0, t1)
+                agent_cpu.append(tool / dt / n_cpu)
+                if n_cpu == 1:
+                    alone_cpu.append(tool / dt)
+                    main_alone += 1
+                else:
+                    with_subagents += 1
+        agent_pss = []
+        alone_pss = []
+        running = []
+        if spans is not None:
+            for obj, when in rows:
+                count = running_at(spans, when)
+                running.append(count)
+                pss = obj["tools"]["pss_kib"] / 1024
+                agent_pss.append(pss / (1 + count))
+                if count == 0:
+                    alone_pss.append(pss)
+        cwd = info["cwd"]
+        folder = (cwd.rstrip("/").rsplit("/", 1)[-1] or cwd) if cwd else "?"
+        row = {
+            "session": sid,
+            "cwd": cwd,
+            "transcript": joined.get(sid) if spans is not None else None,
+            "subagents": len(spans) if spans is not None else None,
+            "subagents_peak": max(running) if spans is not None else None,
+            "self": {
+                "cpu_cores": stats(self_cpu),
+                "pss_mib": stats([o["self"]["pss_kib"] / 1024 for o, _w in rows]),
+            },
+            "per_agent": None,
+            "main_alone": None,
+            "intervals": None,
+        }
+        if spans is not None:
+            row["per_agent"] = {"cpu_cores": stats(agent_cpu), "pss_mib": stats(agent_pss)}
+            row["main_alone"] = {"cpu_cores": stats(alone_cpu), "pss_mib": stats(alone_pss)}
+            row["intervals"] = {"with_subagents": with_subagents, "main_alone": main_alone}
+        session_rows.append((row, "%s %s" % (folder, sid[:8]), (rows[0][1], rows[-1][1])))
+
+    # Subagents across every joined session, at each kept host sample.
+    subagents_peak = None
+    subagents_peak_at = None
+    peak_when = None
+    if spans_of:
+        subagents_peak = 0
+        for obj, when in hosts:
+            count = sum(running_at(spans_of[sid], when)
+                        for sid in by_seq.get(obj["seq"], []) if sid in spans_of)
+            if count > subagents_peak:
+                subagents_peak, subagents_peak_at, peak_when = count, obj["t"], when
+    sessions_peak = max((len(group) for group in by_seq.values()), default=0)
+
+    result = {
+        "run": {
+            "run": run,
+            "from": hosts[0][0]["t"] if hosts else None,
+            "to": hosts[-1][0]["t"] if hosts else None,
+            "samples": len(hosts),
+            "interval_s": interval,
+            "cpus": cpus,
+            "sampler_cores": sampler_cores,
+        },
+        "host": {
+            "cpu_cores": stats(host_cpu),
+            "mem_gib": stats(host_mem),
+            "sessions_peak": sessions_peak,
+            "subagents_peak": subagents_peak,
+            "subagents_peak_at": subagents_peak_at,
+        },
+        "sessions": [row for row, _l, _t in session_rows],
+        "notes": {
+            "skipped_lines": notes.skipped,
+            "clamped": notes.clamped,
+            "gaps": notes.gaps,
+            "missing_end": notes.missing_end,
+            "sessions_unjoined": [row["session"] for row, _l, _t in session_rows
+                                  if row["transcript"] is None],
+            "join_ties": ties,
+            "transcripts_unread": list(read_notes["transcripts"]),
+            "transcripts_unjoined": sorted(n for n in transcripts if n not in joined_names),
+            "transcript_lines_malformed": read_notes["malformed"],
+            "transcript_lines_untimed": read_notes["untimed"],
+            "subagents_unread": list(read_notes["subagents"]),
+            "subagents_parent_missing": list(read_notes["parent_missing"]),
+            "subagents_resumed": list(read_notes["resumed"]),
+            "subagents_outside": subagents_outside,
+        },
+    }
+    view = {
+        "tz": tz,
+        "offset": offset_text(start_time),
+        "hosts": hosts,
+        "labels": [label for _r, label, _t in session_rows],
+        "times": [times for _r, _l, times in session_rows],
+        "peak_when": peak_when,
+        "transcripts": sum(1 for info in transcripts.values() if not info["missing"]),
+        "missing": {name for name, info in transcripts.items() if info["missing"]},
+    }
+    return result, view
+
+
+# ---------------------------------------------------------------------------------------------
+# Markdown.
+# ---------------------------------------------------------------------------------------------
+
+def half_up(value, places):
+    """A float to places decimals, a tie rounding up (away from zero), as text.
+
+    The tie is judged on the decimal the arithmetic meant, not on the float's binary form: 21/200 is
+    stored as 0.10499999999999993, which "%.2f" prints as 0.10. Rounding to 9 places first restores
+    0.105, which then rounds up to 0.11.
+    """
+    exact = Decimal(repr(round(value, 9)))
+    return str(exact.quantize(Decimal(10) ** -places, rounding=ROUND_HALF_UP, context=Context(prec=400)))
+
+
+def fmt(value, integer=False):
+    if value is None:
+        return "-"
+    if integer:
+        return str(int(value))
+    return half_up(value, 2)
+
+
+def plural(count, word):
+    return "%d %s%s" % (count, word, "" if count == 1 else "s")
+
+
+def table(headers, rows):
+    out = ["| " + " | ".join(headers) + " |", "|" + "|".join(" --- " for _ in headers) + "|"]
+    for row in rows:
+        out.append("| " + " | ".join(row) + " |")
+    return out
+
+
+def three(group):
+    if group is None:
+        return ["-", "-", "-"]
+    return [fmt(group["peak"]), fmt(group["p95"]), fmt(group["p50"])]
+
+
+def cell(text):
+    return text.replace("|", "\\|")
+
+
+def figure_table(result, view, key):
+    head = ["Session"]
+    for what, unit in (("CPU", "cores"), ("PSS", "MiB")):
+        for stat in ("peak", "p95", "p50"):
+            head.append("%s %s %s" % (what, unit, stat))
+    rows = []
+    for row, label in zip(result["sessions"], view["labels"]):
+        group = row[key]
+        cells = [cell(label)]
+        cells += three(group["cpu_cores"] if group else None)
+        cells += three(group["pss_mib"] if group else None)
+        rows.append(cells)
+    return table(head, rows)
+
+
+def markdown(result, view):
+    info = result["run"]
+    tz = view["tz"]
+    hosts = view["hosts"]
+    out = ["# Agents of run %s" % info["run"], ""]
+    if hosts:
+        span = "%s to %s (%s)" % (clock(hosts[0][1], tz), clock(hosts[-1][1], tz), view["offset"])
+    else:
+        span = "No samples in the window (%s)" % view["offset"]
+    out.append("- Span: %s" % span)
+    out.append("- Samples: %d" % info["samples"])
+    out.append("- Interval: %g %s" % (info["interval_s"], "second" if info["interval_s"] == 1 else "seconds"))
+    out.append("- CPUs: %d" % info["cpus"])
+    cores = info["sampler_cores"]
+    if cores is None:
+        out.append("- Sampler overhead: -")
+    else:
+        out.append("- Sampler overhead: %s cores (%s%% of one core)"
+                   % (half_up(cores, 4), half_up(cores * 100, 2)))
+    out.append("- Transcripts read: %d" % view["transcripts"])
+    out.append("")
+
+    out.append("## Host")
+    out.append("")
+    host = result["host"]
+    head = ["CPU cores peak", "CPU cores p95", "CPU cores p50",
+            "Memory GiB peak", "Memory GiB p95", "Memory GiB p50",
+            "Sessions peak", "Subagents peak", "Subagents peak at"]
+    peak_at = clock(view["peak_when"], tz) if view["peak_when"] is not None else "-"
+    out += table(head, [three(host["cpu_cores"]) + three(host["mem_gib"])
+                        + [str(host["sessions_peak"]), fmt(host["subagents_peak"], integer=True), peak_at]])
+    out.append("")
+
+    out.append("## Sessions")
+    out.append("")
+    if not result["sessions"]:
+        out.append("No sessions.")
+        out.append("")
+    else:
+        head = ["Session", "Seen", "Transcript", "Subagents", "Subagents peak",
+                "Intervals with subagents", "Intervals main alone"]
+        rows = []
+        for row, label, (t0, t1) in zip(result["sessions"], view["labels"], view["times"]):
+            counts = row["intervals"]
+            name = row["transcript"]
+            if name is None:
+                shown = "Not joined"
+            elif name in view["missing"]:
+                shown = cell(name) + " (missing; its subagents only)"
+            else:
+                shown = cell(name)
+            rows.append([
+                cell(label),
+                "%s to %s" % (clock(t0, tz), clock(t1, tz)),
+                shown,
+                fmt(row["subagents"], integer=True),
+                fmt(row["subagents_peak"], integer=True),
+                fmt(counts["with_subagents"] if counts else None, integer=True),
+                fmt(counts["main_alone"] if counts else None, integer=True),
+            ])
+        out += table(head, rows)
+        out.append("")
+
+        out.append("### Self")
+        out.append("")
+        out.append("The session's own process.")
+        out.append("")
+        out += figure_table(result, view, "self")
+        out.append("")
+
+        out.append("### Per working agent")
+        out.append("")
+        out.append("Each figure is %s." % DIVISOR)
+        out.append("")
+        out += figure_table(result, view, "per_agent")
+        out.append("")
+
+        out.append("### Main agent alone")
+        out.append("")
+        out.append("The session's tool calls, undivided, over the intervals and at the samples when "
+                   "none of its subagents was running.")
+        out.append("")
+        out += figure_table(result, view, "main_alone")
+        out.append("")
+
+    out.append("## Notes")
+    out.append("")
+    notes = result["notes"]
+    lines = []
+    if notes["skipped_lines"]:
+        lines.append("Skipped %s." % plural(notes["skipped_lines"], "malformed line"))
+    if notes["clamped"]:
+        lines.append("Clamped %s to 0." % plural(notes["clamped"], "negative difference"))
+    if notes["gaps"]:
+        lines.append("Left out %s of more than three times the interval from the CPU figures."
+                     % plural(notes["gaps"], "gap"))
+    if notes["missing_end"]:
+        lines.append("No end line: the record was summarized up to its last complete line.")
+    if notes["sessions_unjoined"]:
+        lines.append("Joined to no transcript, so given self figures only: %s."
+                     % ", ".join(notes["sessions_unjoined"]))
+    reasons = {"roots": "more matching checkout roots", "overlap": "more overlap",
+               "name": "the smaller file name"}
+    for tie in notes["join_ties"]:
+        lines.append("A tie within 1 second decided session %s: joined to %s over %s, by %s."
+                     % (tie["session"], tie["transcript"], ", ".join(tie["tied_with"]),
+                        reasons[tie["decided_by"]]))
+    if notes["transcripts_unread"]:
+        lines.append("Could not read, or found no time in, %s: %s."
+                     % (plural(len(notes["transcripts_unread"]), "transcript"),
+                        ", ".join(notes["transcripts_unread"])))
+    if notes["transcripts_unjoined"]:
+        lines.append("Joined to no session: %s: %s."
+                     % (plural(len(notes["transcripts_unjoined"]), "transcript"),
+                        ", ".join(notes["transcripts_unjoined"])))
+    if notes["subagents_unread"]:
+        lines.append("Could not read, or found no time in, %s: %s."
+                     % (plural(len(notes["subagents_unread"]), "subagent transcript"),
+                        ", ".join(notes["subagents_unread"])))
+    if notes["subagents_parent_missing"]:
+        lines.append("Main transcript missing or unreadable, so read alone and joined by their own "
+                     "lines' sessionId and cwd: %s: %s."
+                     % (plural(len(notes["subagents_parent_missing"]), "subagent transcript"),
+                        ", ".join(notes["subagents_parent_missing"])))
+    if notes["subagents_resumed"]:
+        lines.append("Resumed, with more than one completion notice in the main transcript, so "
+                     "the span may include idle time: %s: %s."
+                     % (plural(len(notes["subagents_resumed"]), "subagent"),
+                        ", ".join(notes["subagents_resumed"])))
+    if notes["transcript_lines_malformed"]:
+        lines.append("Skipped %s in the transcripts."
+                     % plural(notes["transcript_lines_malformed"], "malformed line"))
+    if notes["transcript_lines_untimed"]:
+        lines.append("Passed over %s with no timestamp in the transcripts, for time only."
+                     % plural(notes["transcript_lines_untimed"], "line"))
+    if notes["subagents_outside"]:
+        lines.append("Left out %s of a joined transcript that ran outside its session's samples."
+                     % plural(notes["subagents_outside"], "subagent"))
+    out += ["- " + text for text in lines] if lines else ["None."]
+    return "\n".join(out) + "\n"
+
+
+def main(argv):
+    extra = {"color": False} if sys.version_info >= (3, 14) else {}
+    parser = Parser(
+        prog=PROG,
+        usage="%(prog)s <record.jsonl> <transcripts folder> [--from <ISO 8601>] [--to <ISO 8601>] [--json]",
+        description="Divide each session's tool calls among its working agents, from an "
+                    "agentspace-sample record and the sessions' transcripts.",
+        formatter_class=Formatter,
+        add_help=False,
+        **extra,
+    )
+    arguments = parser.add_argument_group("Arguments")
+    options = parser.add_argument_group("Options")
+    arguments.add_argument("record", help="The record, ~/agentspace-samples/<run>.jsonl")
+    arguments.add_argument("transcripts", help="The folder holding the sessions' transcripts, such as ~/.claude/projects")
+    options.add_argument("--from", dest="start", metavar="ISO8601",
+                         help="Keep only samples at or after this time (with a UTC offset)")
+    options.add_argument("--to", dest="end", metavar="ISO8601",
+                         help="Keep only samples at or before this time (with a UTC offset)")
+    options.add_argument("--json", action="store_true",
+                         help="Print one JSON object instead of Markdown")
+    options.add_argument("-h", "--help", action="help", help="Show this help and exit")
+    args = parser.parse_args(argv)
+
+    window = []
+    for flag, text in (("--from", args.start), ("--to", args.end)):
+        if text is None:
+            window.append(None)
+            continue
+        value = parse_time(text)
+        if value is None:
+            die("%s needs an ISO 8601 time with a UTC offset, such as 2026-11-18T01:45:00-08:00; got %r"
+                % (flag, text))
+        window.append(value)
+    if window[0] is not None and window[1] is not None and window[0] > window[1]:
+        die("--from is after --to")
+    if not os.path.isdir(args.transcripts):
+        die("cannot read %s: not a folder" % args.transcripts)
+
+    lines, skipped = read_record(args.record)
+    transcripts, read_notes = read_spans(args.transcripts)
+    result, view = summarize(lines, skipped, window[0], window[1], transcripts, read_notes)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    except (AttributeError, ValueError):
+        pass
+    if args.json:
+        sys.stdout.write(json.dumps(result, indent=2) + "\n")
+    else:
+        sys.stdout.write(markdown(result, view))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import ROUND_HALF_UP, Decimal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.environ.get("AGENTSPACE_FOOTPRINT") or os.path.join(HERE, "..", "system", "agentspace-footprint")
@@ -540,6 +541,40 @@ class Rounding(Base):
         self.assertIn("-", [c.strip() for c in row])
 
 
+class Tie(Base):
+    """A decimal tie rounds up in the Markdown, judged on the decimal and not the float's binary form.
+
+    footprint-tie: 4 CPUs, interval 2 s, two samples, one session, 8000-1 in /work/tie.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.j = summarize("tie")
+        cls.row = table_dicts(sections(markdown("tie"))["sessions"])[0]
+
+    def test_a_tie_stored_just_below_rounds_up(self):
+        # Self cpu: (100.21 - 100.0) / 2 s = 0.105 cores, an exact tie at 2 places. The float holds
+        # 0.10499999999999687, just below it, so "%.2f" prints 0.10. Half up on the decimal is 0.11.
+        value = self.j["sessions"][0]["self"]["cpu_cores"]["peak"]
+        self.assertAlmostEqual(value, 0.105, places=9)
+        self.assertLess(value, 0.105)
+        self.assertEqual("%.2f" % value, "0.10")
+        for stat in ("peak", "p95", "p50"):
+            self.assertEqual(self.row["Self CPU cores %s" % stat], "0.11", stat)
+
+    def test_an_exact_binary_tie_rounds_up_not_to_even(self):
+        # Tools pss: 1152 KiB / 1024 = 1.125 MiB, which a float holds exactly; "%.2f" rounds that tie to
+        # even, 1.12. Half up is 1.13.
+        value = self.j["sessions"][0]["tools"]["pss_mib"]["peak"]
+        self.assertEqual(value, 1.125)
+        self.assertEqual("%.2f" % value, "1.12")
+        for stat in ("peak", "p95", "p50"):
+            self.assertEqual(self.row["Tools PSS MiB %s" % stat], "1.13", stat)
+
+    def test_json_keeps_the_raw_float(self):
+        self.assertEqual(self.j["sessions"][0]["self"]["cpu_cores"]["peak"], (100.21 - 100.0) / 2)
+
+
 class JsonMatchesMarkdown(Base):
     def check(self, name):
         j = summarize(name)
@@ -762,11 +797,11 @@ class MarkdownColumns(Base):
     def test_concurrency_columns(self):
         rows = table_dicts(self.sec["concurrency"])
         self.assertEqual(len(rows), 1)
-        # sessions peak 2; tools cpu peak 7.5 and p50 3.75 (p95 7.125 is left out: it sits on a rounding tie);
-        # tools pss 3150 / 3000 / 1650
+        # sessions peak 2; tools cpu peak 7.5, p95 7.125 and p50 3.75; tools pss 3150 / 3000 / 1650.
+        # 7.125 is an exact tie, and it rounds up to 7.13 ("%.2f" would print 7.12, to even).
         self.check(rows[0], [
             (r"sessions", 2.0),
-            (r"cpu.*peak", 7.5), (r"cpu.*p50", 3.75),
+            (r"cpu.*peak", 7.5), (r"cpu.*p95", 7.13), (r"cpu.*p50", 3.75),
             (r"(pss|mib).*peak", 3150.0), (r"(pss|mib).*p95", 3000.0), (r"(pss|mib).*p50", 1650.0)])
 
 
@@ -935,10 +970,10 @@ def all_numeric(text):
 
 
 def has_all(cells, want):
-    """Every wanted figure, rounded to 2 places, is among the cells (each cell used once)."""
+    """Every wanted figure, rounded half up to 2 places, is among the cells (each cell used once)."""
     pool = list(cells)
     for w in want:
-        target = round(w, 2)
+        target = half_up(w)
         for i, c in enumerate(pool):
             if abs(c - target) < 1e-9:
                 del pool[i]
@@ -946,6 +981,12 @@ def has_all(cells, want):
         else:
             return False
     return True
+
+
+def half_up(value):
+    """A figure as the Markdown prints it: 2 places, a decimal tie rounding up (not Python's round)."""
+    exact = Decimal(repr(round(value, 9)))
+    return float(exact.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def split_unescaped(line):

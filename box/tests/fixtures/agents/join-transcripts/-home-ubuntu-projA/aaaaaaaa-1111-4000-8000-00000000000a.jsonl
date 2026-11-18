@@ -1,0 +1,2 @@
+{"type":"user","isSidechain":false,"sessionId":"aaaaaaaa-1111-4000-8000-00000000000a","timestamp":"2026-11-18T09:00:00.000Z","cwd":"/home/ubuntu/projA","message":{"role":"user","content":"Made-up text."}}
+{"type":"user","isSidechain":false,"sessionId":"aaaaaaaa-1111-4000-8000-00000000000a","timestamp":"2026-11-18T09:00:30.000Z","cwd":"/home/ubuntu/projA","message":{"role":"user","content":"Made-up text."}}

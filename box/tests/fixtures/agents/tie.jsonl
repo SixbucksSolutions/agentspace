@@ -1,0 +1,6 @@
+{"kind":"start","t":"2026-11-18T01:00:00.000-08:00","run":"tie","interval_s":2,"deadline":"2026-11-18T02:00:00.000-08:00","match":"claude","cpus":4,"mem_total_kib":16777216,"sampler":"agentspace-sample 1"}
+{"kind":"host","t":"2026-11-18T01:00:00.000-08:00","seq":1,"cpu_busy_s":1000.0,"cpu_total_s":5000.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":0.0}
+{"kind":"session","t":"2026-11-18T01:00:00.000-08:00","seq":1,"session":"3000-1","cwd":"/home/ubuntu/tie","self":{"cpu_s":5.0,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":10.0,"pss_kib":1152,"rss_kib":2304,"procs":1}}
+{"kind":"host","t":"2026-11-18T01:00:02.000-08:00","seq":2,"cpu_busy_s":1001.0,"cpu_total_s":5008.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":0.02}
+{"kind":"session","t":"2026-11-18T01:00:02.000-08:00","seq":2,"session":"3000-1","cwd":"/home/ubuntu/tie","self":{"cpu_s":5.2,"pss_kib":10240,"rss_kib":20480},"tools":{"cpu_s":10.84,"pss_kib":1152,"rss_kib":2304,"procs":1}}
+{"kind":"end","t":"2026-11-18T01:00:02.500-08:00","reason":"stopped"}
