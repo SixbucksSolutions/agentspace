@@ -125,10 +125,8 @@ what an agent uses", which is in Ready For Work.
 - **#0068 and #0066, the keeper's two small open cards, are not in v0.03** unless Terry pulls them
   in (below).
 
-**One question to Terry was still open at cutover** (he settled the other, v1.0 keeping its name,
-in D26):
-- Should v0.04 (#0030) move from Backlog to Ready For Work, like the other releases? Bot cannot
-  move a card out of Backlog, so this is his click (D29).
+**Both questions open at cutover are settled:** v1.0 keeps its name (D26), and Terry moved v0.04
+(#0030) into Ready For Work on 2026-11-18, so every release epic up to 1.0 is there now.
 
 ## What v0.02 added
 
