@@ -18,7 +18,7 @@ using System.Text;
 // - pwsh runs in the launcher's own working directory, which the task sets to the repo root. The
 //   task definition is the one place that chooses it.
 // - The launcher exits with pwsh's own exit code, so a keeper that ends with an error is a failed
-//   run of the task, which the task's restart settings act on. It exits 1 when pwsh could not be
+//   run of the task, and the task's repeating trigger starts the keeper again (D30). It exits 1 when pwsh could not be
 //   started, and 2 for refused arguments.
 //
 // Launcher errors go to board-holder-launcher-errors.log in the state folder:

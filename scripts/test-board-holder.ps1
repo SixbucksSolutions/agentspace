@@ -834,9 +834,12 @@ try {
   Invoke-Case 'Installer: -DryRun prints the logon task and changes nothing' {
     $installer = Join-Path $repo 'scripts\install-board-holder.ps1'
     $taskName = 'agentspace board holder'
-    $getTask = { try { Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { $null } }
+    # The task's whole definition as XML, or '' when there is none. The real task is registered on
+    # Terry's laptop since E0.02-T03-S01, so the dry run is checked to leave it exactly as it was,
+    # whether or not it exists.
+    $getTask = { try { $t = Export-ScheduledTask -TaskName $taskName -ErrorAction Stop; if ($null -eq $t) { '' } else { [string]$t } } catch { '' } }
     Write-Result (Test-Path -LiteralPath $installer) 'Installer: scripts\install-board-holder.ps1 exists'
-    Write-Result ($null -eq (& $getTask)) 'Installer: no task named "agentspace board holder" exists before the dry run'
+    $taskBefore = & $getTask
     if (-not (Test-Path -LiteralPath $installer)) { return }
     $out = Join-Path $env:AGENTSPACE_STATE_DIR 'install.out'
     $err = Join-Path $env:AGENTSPACE_STATE_DIR 'install.err'
@@ -852,6 +855,22 @@ try {
     $user = [regex]::Escape($env:USERNAME)
     Write-Result ($text -imatch 'agentspace board holder') 'Installer: the task is named "agentspace board holder"'
     Write-Result ($text -imatch 'log\s*on' -and $text -imatch ('(\\|\s|^)' + $user + '\b')) 'Installer: a logon trigger for the current user'
+    Write-Result (@($lines | Where-Object { $_ -cmatch '\ATrigger \d+: ' }).Count -eq 2) 'Installer: the task has two triggers'
+    Write-Result (@($lines | Where-Object { $_ -cmatch '\ATrigger 1: AtLogOn user=' }).Count -eq 1) 'Installer: trigger 1 is the logon trigger'
+    $t2 = @($lines | Where-Object { $_ -cmatch '\ATrigger 2: Once' })
+    Write-Result ($t2.Count -eq 1) 'Installer: trigger 2 is a time trigger starting at registration'
+    Write-Result ($t2.Count -eq 1 -and $t2[0] -cmatch ' EndBoundary=none\b') 'Installer: trigger 2 has no end boundary'
+    $startOk = $false
+    if ($t2.Count -eq 1 -and $t2[0] -cmatch ' StartBoundary=(\S+) ') {
+        $sb = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse($Matches[1], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$sb)) {
+            $startOk = $sb -le [DateTimeOffset]::Now.AddSeconds(5) -and $sb -ge [DateTimeOffset]::Now.AddMinutes(-5)
+        }
+    }
+    Write-Result $startOk 'Installer: trigger 2 starts at or before the dry run, within a few minutes'
+    $interval = if ($script:mut) { 'PT5M' } else { 'PT1M' }
+    Write-Result (@($lines | Where-Object { $_ -ceq "Repetition 2: Interval=$interval Duration=indefinite" }).Count -eq 1) "Installer: trigger 2 repeats every minute ($interval), indefinitely"
+    Write-Result (@($lines | Where-Object { $_ -cmatch '\ARepetition 1: ' }).Count -eq 0) 'Installer: the logon trigger does not repeat'
     Write-Result ($text -imatch "\b$limited\b") "Installer: run level $limited"
     Write-Result ($text -imatch '(no\s+(execution\s+)?time\s*limit|time\s*limit\W+(none|no|off|unlimited|disabled|0)|\bPT0S\b|unlimited)') 'Installer: no execution time limit'
     Write-Result ($text -imatch "\b$ignore\b") "Installer: a second start is handled as $ignore"
@@ -874,7 +893,28 @@ try {
     Write-Result ($argsLine -and $argsLine.Contains('"' + (Join-Path $repo 'scripts\board-holder.ps1') + '" -Watch')) 'Installer: Arguments name pwsh, the keeper and -Watch'
     Write-Result (@($lines | Where-Object { $_ -imatch '\Astart: .*starts the task immediately' }).Count -eq 1) 'Installer: it says a real install starts the task immediately'
     Write-Result (@($lines | Where-Object { $_ -cmatch '\AMode: dry run' }).Count -eq 1) 'Installer: it says this was a dry run'
-    Write-Result ($null -eq (& $getTask)) 'Installer: still no task named "agentspace board holder" after the dry run'
+    Write-Result ((& $getTask) -ceq $taskBefore) 'Installer: the task named "agentspace board holder" is as it was before the dry run, or still absent'
+  }
+
+  # A real install is refused while a keeper runs, and finds the keeper by its command line. The
+  # launcher quotes each argument, so the match is checked on that quoted form as well as the plain
+  # one. Test-KeeperCommandLine is loaded from the installer's syntax tree, so nothing is run.
+  Invoke-Case 'Installer: a running keeper is found by its command line' {
+    $installer = Join-Path $repo 'scripts\install-board-holder.ps1'
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($installer, [ref]$null, [ref]$null)
+    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-KeeperCommandLine' }, $true)
+    Write-Result ($null -ne $fn) 'Installer: Test-KeeperCommandLine is defined'
+    if ($null -eq $fn) { return }
+    . ([scriptblock]::Create($fn.Extent.Text))
+    $ks = 'C:\agentspace\scripts\board-holder.ps1'
+    $quoted = '"C:\Program Files\PowerShell\7\pwsh.exe" "-NoProfile" "-NonInteractive" "-File" "' + $ks + '" "-Watch"'
+    $plain = 'pwsh.exe -NoProfile -NonInteractive -File ' + $ks + ' -Watch'
+    $found = if ($script:mut) { -not (Test-KeeperCommandLine $quoted $ks) } else { Test-KeeperCommandLine $quoted $ks }
+    Write-Result $found 'Installer: the launcher''s quoted command line ("-Watch") is a keeper'
+    Write-Result (Test-KeeperCommandLine $plain $ks) 'Installer: a plain command line with -Watch is a keeper'
+    Write-Result (-not (Test-KeeperCommandLine ('pwsh.exe -File ' + $ks + ' -MaxPasses 1') $ks)) 'Installer: the keeper script without -Watch is not a keeper'
+    Write-Result (-not (Test-KeeperCommandLine ('pwsh.exe -File C:\other\board-holder.ps1 -Watch') $ks)) 'Installer: another checkout''s keeper is not this one'
+    Write-Result (-not (Test-KeeperCommandLine '' $ks)) 'Installer: an empty command line is not a keeper'
   }
 
   # The installer's dry run warns when the repo is a git worktree rather than the main checkout, and
