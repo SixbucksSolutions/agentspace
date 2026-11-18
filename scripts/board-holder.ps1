@@ -22,6 +22,8 @@
 # Exit codes (architect's ruling, 2026-11-17):
 # - 0: the pass ran, whatever its action, failed included, or it was skipped because another pass
 #   held the lock. A skipped pass logs "skipped lease=- alias=- pid=- reason=locked", never idle.
+#   -Watch also exits 0 when another keeper holds board-holder-keeper.lock, and 1 when it cannot
+#   take that lock for any other reason.
 # - 1: the lease state could not be read, or the pass met an error it does not handle. A failed
 #   line is logged, and the holder is left as it is.
 # - 2: a usage error: an unknown, repeated or empty argument, a -Now that is not a time in the
@@ -50,6 +52,13 @@
 # - board-holder.lock, held with FileShare.None for the whole pass, so that two passes never both
 #   start a holder (one holder per host, D30). A pass that cannot take it in 10 seconds logs
 #   skipped with reason=locked, and exits 0.
+# - board-holder-keeper.lock, taken by -Watch only, for the keeper's whole life (E0.02-T05-S01), so
+#   that one keeper runs at a time. A one-pass run never touches it. It is held by the OS, with
+#   FileShare.Read, and so is released when the process ends for any reason; it holds the keeper's
+#   PID as text, for the log line of a second keeper, and the contents are not the lock. A -Watch
+#   that finds it held logs "<time> another keeper is running pid=<n>" (pid=- when unreadable) and
+#   exits 0 at once, without a pass or a wait. A -Watch that cannot take it for another reason logs
+#   "failed lease=- alias=- pid=- reason=..." and exits 1.
 #
 # Lease state is read with Read-LeaseState, which takes no lock and never blocks a writer. A lease
 # is ready when its stored state is ready and its expires_at is after -Now (default: the current
@@ -151,7 +160,9 @@
 # A usage error exits 2. -FastFailureSeconds (default 60) is hidden, for tests only. A rotation of
 # board-holder-ssh.log (past 1 MB, to board-holder-ssh.log.1) logs "rotated lease=- alias=- pid=-".
 # Backoff waits log "<YYYY-MM-DDTHH:MM:SSZ> backoff seconds=<n>" to board-holder.log, and release grace
-# waits log "<YYYY-MM-DDTHH:MM:SSZ> grace seconds=<n>" (D30; described above the Watch section).
+# waits log "<YYYY-MM-DDTHH:MM:SSZ> grace seconds=<n>" (D30; described above the Watch section). A
+# -Watch that finds another keeper running logs "<YYYY-MM-DDTHH:MM:SSZ> another keeper is running
+# pid=<n>" and exits 0 (board-holder-keeper.lock, under Files above).
 #
 # The arguments are parsed by this script, not by PowerShell's binder, so that every usage error
 # exits 2: names are matched exactly, case ignored, and each takes one value.
@@ -1335,11 +1346,12 @@ if (-not $Watch) {
 # The task's RestartCount does not restart an action that exits with a code other than 0
 # (E0.02-T03-S01), so a crashed keeper is started again by the task's trigger that repeats every
 # minute (E0.02-T04-S02, D30): Task Scheduler starts it within about a minute while Terry is
-# logged on, and an instance that is still running is left alone. End in Task Scheduler stops only
-# the launcher and leaves the keeper's pwsh running (E0.02-T04-S03's live check), so the repeating
-# trigger's next firing starts a second keeper beside it, until card #0067 (E0.02-T05-S01, "One
-# keeper at a time") lands. To stop the keeper, its pwsh is stopped by its checked PID after the
-# task is ended.
+# logged on, and an instance that is still running is left alone. End in Task Scheduler still stops
+# only the launcher and leaves the keeper's pwsh running (E0.02-T04-S03's live check), so the
+# repeating trigger's next firing starts another keeper. That keeper MUST NOT loop beside the first
+# (E0.02-T05-S01, "One keeper at a time", card #0067): it finds board-holder-keeper.lock held, logs
+# "another keeper is running pid=<n>", and exits 0 (Open-KeeperLock, below). To stop the keeper,
+# its pwsh is stopped by its checked PID after the task is ended.
 #
 # Fast failures. The keeper learns of one in two ways, and both count:
 # - A pass that tried to start a holder and did not get a live one (the holder exited at once, or
@@ -1423,6 +1435,58 @@ function Wait-Release([int]$Failures) {
   try { Write-WatchLine "$label seconds=$seconds" }
   finally { Start-Sleep -Seconds $seconds }
 }
+
+# Takes board-holder-keeper.lock for the life of this process (E0.02-T05-S01, D30), so that one
+# keeper runs at a time. The lock is the OS's, not the file's contents: a FileStream opened with
+# FileShare.Read, so that no second writer can open the file, and kept open in $script:KeeperLock
+# until the process ends. Windows closes the handle when the process ends for any reason, a kill
+# included, so the lock cannot outlive its keeper. The handle is not inheritable (the .NET default),
+# the -Launch launcher is created through Win32_Process.Create, outside this process's handle table
+# and job, and it passes the holder only its two log handles, so the holder never carries it. The
+# PID written to the file is for the log line of a second keeper only; the share mode is the lock.
+# - Taken: the keeper goes on.
+# - Held by another keeper (a sharing violation): logs "<time> another keeper is running pid=<n>",
+#   pid=- when the file cannot be read, and exits 0 without a pass. It tries once and never waits.
+# - Any other error (the state folder cannot be written, say): logs "<time> failed lease=- alias=-
+#   pid=- reason=...", when the log can be written, and exits 1. A keeper MUST NOT loop without the
+#   lock, and the task's repeating trigger tries again in a minute, so this is no tight loop.
+function Open-KeeperLock {
+  $path = Join-Path $script:StateDir 'board-holder-keeper.lock'
+  try {
+    $stream = [System.IO.FileStream]::new($path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite,
+      [System.IO.FileShare]::Read)
+    try {
+      $stream.SetLength(0)
+      $bytes = $script:Utf8.GetBytes([string]$PID)
+      $stream.Write($bytes, 0, $bytes.Length)
+      $stream.Flush()
+    } catch { $stream.Dispose(); throw }
+    $script:KeeperLock = $stream
+    return
+  } catch {
+    $e = $_.Exception
+    while ($e.InnerException) { $e = $e.InnerException }
+    $shared = $e -is [System.IO.IOException] -and (($e.HResult -band 0xFFFF) -eq 32 -or ($e.HResult -band 0xFFFF) -eq 33)
+    if (-not $shared) {
+      $text = ("The keeper lock could not be taken: $($e.Message)" -replace '[\x00-\x1f\x7f]+', ' ').Trim()
+      try { Write-WatchLine "failed lease=- alias=- pid=- reason=$text" } catch { }
+      exit 1
+    }
+  }
+  $other = '-'
+  try {
+    $reader = [System.IO.FileStream]::new($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      $buffer = [byte[]]::new(32)
+      $count = $reader.Read($buffer, 0, $buffer.Length)
+      $text = $script:Utf8.GetString($buffer, 0, $count).Trim()
+      if ($text -cmatch '\A[0-9]{1,10}\z') { $other = $text }
+    } finally { $reader.Dispose() }
+  } catch { }
+  try { Write-WatchLine "another keeper is running pid=$other" } catch { }
+  exit 0
+}
+Open-KeeperLock
 
 $failures = 0
 $tracked = $null
