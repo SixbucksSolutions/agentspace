@@ -2012,6 +2012,39 @@ laptop on Pacific time. Times are the laptop's, Pacific Standard Time, with UTC 
   `PATH`.** A script that runs `claude -p` over a lease MUST call it by that path, or set `PATH`
   first.
 
+### D33. v0.03 measures each agent session's process tree, split into the session and its tool calls
+
+**Decided, architect, 2026-11-18, when Terry had v0.03 (#0046) broken into stories.** It says how
+D27's per-agent footprint is measured.
+- **The unit sampled is a Claude Code session on the box: its `claude` process and every process
+  under it.** A session's subagents run inside that one process, so their tool calls are all its
+  descendants, and nothing on the box tells one subagent's tool call from another's.
+- **Each sample MUST record the session's own process apart from its descendants.** The session's
+  own process is paid once per session, whatever it is doing. Its descendants, the tool calls, are
+  what grows with the number of subagents working at once (D27). The footprint table (v0.03-T03)
+  gives a figure per working subagent by dividing the descendants' load by the number of the
+  session's subagents running at that moment, read from the session's transcript on the box.
+- **CPU MUST be counted from cumulative CPU time, reaped children included,** never from an
+  instantaneous percentage. A build that starts and ends between two samples is then still
+  counted, at the next sample.
+- **Memory MUST be recorded as PSS, with RSS beside it.** PSS splits shared pages among the
+  processes that share them, so Node's shared libraries are not counted once per process. RSS
+  shows the worst case if nothing were shared.
+- **Each sample MUST also record the host's totals and the sampler's own CPU**, so the sessions'
+  sums can be checked against the host, and the sampler's cost is known.
+- **The sampler MUST end by itself**, at a deadline or when a stop file appears, and MUST outlive
+  the SSH connection that started it. Its own CPU counts as activity to the idle check, so a
+  forgotten sampler would keep the box running.
+- **The sampler and its summarizer are Python 3, standard library only, run on the box.** They are
+  measurement tools, not product code, like the architect's process tools under D28, so D28's
+  Rust rule does not reach them. The box ships `python3`, and `/proc` is what they read. If a
+  later release makes sampling part of the product, it is specified then and built in Rust.
+- **Their record format is pinned on E0.03-T01-S01's card**, so the sampler and the summarizer
+  are built at the same time (D31).
+
+**Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
+or counts a shared library four times, sizes every host wrong.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
