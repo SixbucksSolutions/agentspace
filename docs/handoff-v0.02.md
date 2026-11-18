@@ -293,9 +293,8 @@ XML, so they pass with the real task registered.**
 | #0043 | The CloudWatch backstop stops a quiet box | Replaced by v0.08 |
 
 **Cards to tidy, which need Terry's hand because Bot cannot move a card out of Backlog:**
-- **#0042, #0044 and #0028 are the gaps v0.02 fixed, and still sit in Backlog.** They SHOULD be
-  closed now that v0.02 is merged, as Completed or archived as OBE, with a note naming the story
-  that met each: #0042 by 0.02.T2.2 and E0.02-T03-S01, #0044 by 0.02.T1.1, #0028 by 0.02.T2.1.
+- **#0042, #0044 and #0028, the gaps v0.02 fixed, are closed.** Terry moved them to Completed at
+  cutover (board revision 378), and each carries a note naming the stories that met it.
 - **#0065 is superseded by #0067** and was meant to be archived when #0067 was created; it is still
   in Backlog, unarchived.
 
