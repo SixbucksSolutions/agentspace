@@ -208,6 +208,60 @@ function Start-Box([string]$Id) {
   Say "Ready: $Id"
 }
 
+# The IANA name for a Windows time zone ID, such as America/Los_Angeles for Pacific Standard Time,
+# or $null when it cannot be worked out (D32). PowerShell 7 converts with
+# TimeZoneInfo.TryConvertWindowsIdToIanaId. Windows PowerShell 5.1 runs on .NET Framework, which
+# has no such method, so it asks the ICU that Windows ships (icu.dll) through
+# ucal_getTimeZoneIDForWindowsID, the call .NET itself makes for it on Windows. Either way the
+# name then goes through ConvertTo-CurrentZone. The caller MUST still validate what comes back.
+function Get-LaptopZone([string]$WindowsId) {
+  $iana = $null
+  if ([TimeZoneInfo].GetMethod('TryConvertWindowsIdToIanaId', [type[]]@([string], [string].MakeByRefType()))) {
+    if (-not [TimeZoneInfo]::TryConvertWindowsIdToIanaId($WindowsId, [ref]$iana)) { $iana = $null }
+  } else {
+    if (-not ('AgentspaceZone' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class AgentspaceZone {
+  [DllImport("icu.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+  static extern int ucal_getTimeZoneIDForWindowsID(string winid, int len, IntPtr region, StringBuilder id, int idCapacity, ref int status);
+  // Null when ICU fails or has no IANA name for the Windows ID. A null region asks for the
+  // zone's default mapping (territory 001), as .NET does.
+  public static string FromWindowsId(string winid) {
+    StringBuilder id = new StringBuilder(128);
+    int status = 0;
+    int n = ucal_getTimeZoneIDForWindowsID(winid, winid.Length, IntPtr.Zero, id, id.Capacity, ref status);
+    if (status > 0 || n <= 0 || n >= id.Capacity) return null;
+    return id.ToString(0, n);
+  }
+}
+'@
+    }
+    $iana = [AgentspaceZone]::FromWindowsId($WindowsId)
+  }
+  if (-not $iana) { return $null }
+  ConvertTo-CurrentZone $iana
+}
+
+# Both conversions give CLDR's names, and for some Windows zones CLDR's name is a legacy one that
+# the box's tzdata does not carry without tzdata-legacy, so timedatectl would refuse it. These
+# are the ones, out of every name this laptop's Windows zones convert to, that the box lacked on
+# 2026-11-17 (D32). Each MUST map to its current IANA name; any other name is returned unchanged.
+function ConvertTo-CurrentZone([string]$Zone) {
+  switch -CaseSensitive ($Zone) {
+    'Asia/Calcutta'        { return 'Asia/Kolkata' }
+    'Asia/Katmandu'        { return 'Asia/Kathmandu' }
+    'Asia/Rangoon'         { return 'Asia/Yangon' }
+    'Europe/Kiev'          { return 'Europe/Kyiv' }
+    'America/Buenos_Aires' { return 'America/Argentina/Buenos_Aires' }
+    'America/Godthab'      { return 'America/Nuuk' }
+    'America/Indianapolis' { return 'America/Indiana/Indianapolis' }
+  }
+  $Zone
+}
+
 # Writes the laptop localswim service's URL and current Bot token to ~/.config/localswim/bot.env
 # on the box (mode 0600), for the box's localswim wrapper. The service makes a new token at
 # every cold start, so this runs at each connection but sends only when the instance or the
@@ -241,53 +295,20 @@ function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspac
   } finally {
     $token = $null
   }
-  # The laptop's time zone as an IANA name, such as America/Los_Angeles (D32). PowerShell 7
-  # converts with TimeZoneInfo.TryConvertWindowsIdToIanaId. Windows PowerShell 5.1 runs on .NET
-  # Framework, which has no such method, so it asks the ICU that Windows ships (icu.dll) through
-  # ucal_getTimeZoneIDForWindowsID, the call .NET itself makes for it on Windows. Any failure
-  # leaves no zone.
+  # The laptop's time zone as an IANA name, such as America/Los_Angeles (D32). -TimeZone is sent
+  # as given, with no legacy-name mapping, since it is for tests.
   $zone = $TimeZone
   if (-not $PSBoundParameters.ContainsKey('TimeZone')) {
     $zone = $null
-    try {
-      $windowsId = (Get-TimeZone).Id
-      if ([TimeZoneInfo].GetMethod('TryConvertWindowsIdToIanaId', [type[]]@([string], [string].MakeByRefType()))) {
-        $iana = $null
-        if ([TimeZoneInfo]::TryConvertWindowsIdToIanaId($windowsId, [ref]$iana)) { $zone = $iana }
-      } else {
-        if (-not ('AgentspaceZone' -as [type])) {
-          Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public static class AgentspaceZone {
-  [DllImport("icu.dll", CharSet = CharSet.Unicode)]
-  static extern int ucal_getTimeZoneIDForWindowsID(string winid, int len, IntPtr region, StringBuilder id, int idCapacity, ref int status);
-  // Null when ICU fails or has no IANA name for the Windows ID. A null region asks for the
-  // zone's default mapping (territory 001), as .NET does.
-  public static string FromWindowsId(string winid) {
-    StringBuilder id = new StringBuilder(128);
-    int status = 0;
-    int n = ucal_getTimeZoneIDForWindowsID(winid, winid.Length, IntPtr.Zero, id, id.Capacity, ref status);
-    if (status > 0 || n <= 0 || n >= id.Capacity) return null;
-    return id.ToString(0, n);
-  }
-}
-'@
-        }
-        $zone = [AgentspaceZone]::FromWindowsId($windowsId)
-      }
-    } catch {
-      $zone = $null
-    }
+    try { $zone = Get-LaptopZone (Get-TimeZone).Id } catch { $zone = $null }
   }
   # The zone is checked here, before anything is built from it, and only a zone that passes ever
   # reaches the box's command line: letters, digits, '_', '+' and '-' in segments joined by '/',
-  # not starting with '-', which timedatectl would read as an option. -cmatch keeps [A-Za-z] from
-  # matching the Kelvin sign, and \z, unlike $, never matches before a trailing newline. Any other
-  # zone is not sent, and the stamp then carries an empty one.
+  # with a first character that is not '-', which timedatectl would read as an option (-H <host>).
+  # -cmatch keeps [A-Za-z] from matching the Kelvin sign, and \z, unlike $, never matches before a
+  # trailing newline. Any other zone is not sent, and the stamp then carries an empty one.
   $zone = "$zone"
-  $zoneUnknown = -not ($zone -cmatch '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*\z' -and -not $zone.StartsWith('-'))
+  $zoneUnknown = -not ($zone -cmatch '^[A-Za-z0-9_+][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*\z')
   if ($zoneUnknown) { $zone = '' }
   try {
     $sha = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id`n$zone`n$content"))
@@ -305,10 +326,11 @@ public static class AgentspaceZone {
     # With a zone, and only once bot.env is in place and its SHA-256 printed, the box sets its time
     # zone and prints one more line, "zone <zone>" or "zone-failed". The exit code then stays 0,
     # whatever timedatectl does, so the token's confirmation never depends on the zone. timeout
-    # keeps a slow timedatectl well inside the push's own time limit; sudo -n never prompts.
+    # keeps a slow timedatectl well inside the push's own time limit, and -k 1 kills it a second
+    # after the 5 if it ignores SIGTERM; sudo -n never prompts.
     $then = if ($zone) {
       'then sha256sum < $d/bot.env || exit 1; ' +
-      "if timeout 5 sudo -n timedatectl set-timezone $zone </dev/null >/dev/null 2>&1; " +
+      "if timeout -k 1 5 sudo -n timedatectl set-timezone $zone </dev/null >/dev/null 2>&1; " +
       "then echo zone $zone; else echo zone-failed; fi; exit 0; "
     } else {
       'then sha256sum < $d/bot.env; '

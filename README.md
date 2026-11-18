@@ -292,7 +292,8 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
 - **The same push sets the box's time zone to the laptop's**
   ([D32](docs/decisions.md#d32-a-leases-box-runs-in-the-laptops-time-zone)), so `date` on the box
   gives Terry's local time and UTC offset. `up` works out the laptop's zone as an IANA name, such
-  as `America/Los_Angeles`. Once `bot.env` is in place and its SHA-256 sent back, the box runs
+  as `America/Los_Angeles`, and maps the seven legacy names that Windows gives and the box lacks,
+  such as `Asia/Calcutta`, to their current ones, such as `Asia/Kolkata`. Once `bot.env` is in place and its SHA-256 sent back, the box runs
   `sudo -n timedatectl set-timezone <zone>` and answers with one more line, `zone <zone>` or
   `zone-failed`.
   - **The zone is part of the stamp**, so a laptop that has changed zone pushes again at its next

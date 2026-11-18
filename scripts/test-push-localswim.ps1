@@ -1,8 +1,8 @@
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for Push-Localswim in scripts\agentspace.ps1 (card #0026) and for the alias it
-# sends over (card #0057). It loads Push-Localswim, Get-BotEnvHash and Test-AliasName from the
-# script's syntax tree, points them at a throwaway receipt, a dummy token and a stand-in for ssh,
+# sends over (card #0057). It loads Push-Localswim, Get-BotEnvHash, Test-AliasName, Get-LaptopZone
+# and ConvertTo-CurrentZone from the script's syntax tree, points them at a throwaway receipt, a dummy token and a stand-in for ssh,
 # and checks that a send goes to the right alias and is recorded only when the stand-in confirms
 # the file it wrote. It then runs a copy of agentspace.ps1 with bad aliases, to check that a bad
 # alias stops it before anything else runs, and copies of ssh-proxy.cmd with a stand-in tunnel, to
@@ -18,7 +18,7 @@ function Check([string]$Name, [bool]$Ok, [string]$Detail = '') {
 }
 
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'agentspace.ps1'), [ref]$null, [ref]$null)
-foreach ($name in 'Push-Localswim', 'Get-BotEnvHash', 'Test-AliasName') {
+foreach ($name in 'Push-Localswim', 'Get-BotEnvHash', 'Test-AliasName', 'Get-LaptopZone', 'ConvertTo-CurrentZone') {
   $f = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
   if (-not $f) { throw "agentspace.ps1 has no function $name." }
   . ([scriptblock]::Create($f.Extent.Text))
@@ -236,8 +236,12 @@ public static class FakeSsh {
   Push-Localswim $id -TimeZone $zone
   Check 'Changing the zone back makes the push due again' ($null -ne (Get-SshArgs) -and (Get-Content $PushedFile -Raw) -ceq (Get-Stamp $zone))
 
-  foreach ($bad in 'Not a zone', 'America/New_York;reboot', 'a$(id)', '../etc', 'A//B', '/America/New_York', 'America/New_York/', "America/New_York`n", 'a"b', "a'b", 'a`b') {
-    $shown = "'$($bad -replace "`n", '\n')'"
+  # A leading '-' would reach timedatectl as an option (-H <host>), and the Kelvin sign (U+212A)
+  # matches [A-Za-z] in a case-insensitive match.
+  $kelvinZone = 'Europe/' + [char]0x212A + 'yiv'
+  foreach ($bad in 'Not a zone', 'America/New_York;reboot', 'a$(id)', '../etc', 'A//B', '/America/New_York', 'America/New_York/', "America/New_York`n", 'a"b', "a'b", 'a`b',
+    '-H', '-Hhost', '--help', $kelvinZone) {
+    $shown = if ($bad -ceq $kelvinZone) { "'Europe/Kyiv' with its K as U+212A, the Kelvin sign," } else { "'$($bad -replace "`n", '\n')'" }
     Reset-Stamp
     Push-Localswim $id -TimeZone $bad
     $a = Get-SshArgs
@@ -307,6 +311,39 @@ public static class FakeSsh {
   Reset-Stamp
   Push-Localswim $id -Force -TimeZone $zone
   Check 'A forced push sends the zone and records the stamp' ((Test-ZoneSent $zone) -and (Get-Content $PushedFile -Raw) -ceq (Get-Stamp $zone))
+
+  # Legacy names (D32). The map is checked through ConvertTo-CurrentZone and Get-LaptopZone, which
+  # take the name or Windows ID as an argument, so nothing here depends on the laptop's own zone.
+  $legacy = [ordered]@{
+    'Asia/Calcutta' = 'Asia/Kolkata'; 'Asia/Katmandu' = 'Asia/Kathmandu'; 'Asia/Rangoon' = 'Asia/Yangon'
+    'Europe/Kiev' = 'Europe/Kyiv'; 'America/Buenos_Aires' = 'America/Argentina/Buenos_Aires'
+    'America/Godthab' = 'America/Nuuk'; 'America/Indianapolis' = 'America/Indiana/Indianapolis'
+  }
+  foreach ($old in $legacy.Keys) {
+    $got = ConvertTo-CurrentZone $old
+    Check "The legacy zone $old maps to $($legacy[$old])" ($got -ceq $legacy[$old]) $got
+  }
+  foreach ($current in 'America/Los_Angeles', 'Asia/Kolkata', 'Etc/UTC', 'America/Indiana/Indianapolis') {
+    $got = ConvertTo-CurrentZone $current
+    Check "The current zone $current passes through unchanged" ($got -ceq $current) $got
+  }
+  # Windows IDs whose CLDR name is legacy, converted by this runtime's path and then mapped.
+  $windowsIds = [ordered]@{
+    'Pacific Standard Time' = 'America/Los_Angeles'; 'India Standard Time' = 'Asia/Kolkata'
+    'Nepal Standard Time' = 'Asia/Kathmandu'; 'Myanmar Standard Time' = 'Asia/Yangon'
+    'FLE Standard Time' = 'Europe/Kyiv'; 'Argentina Standard Time' = 'America/Argentina/Buenos_Aires'
+    'Greenland Standard Time' = 'America/Nuuk'; 'US Eastern Standard Time' = 'America/Indiana/Indianapolis'
+  }
+  foreach ($w in $windowsIds.Keys) {
+    $got = Get-LaptopZone $w
+    Check "Get-LaptopZone '$w' gives $($windowsIds[$w])" ($got -ceq $windowsIds[$w]) $got
+  }
+  $got = Get-LaptopZone 'No Such Standard Time'
+  Check 'Get-LaptopZone gives nothing for an unknown Windows ID' (-not $got) $got
+  # -TimeZone is for tests, and is sent as given, legacy or not.
+  Reset-Stamp
+  Push-Localswim $id -TimeZone 'Asia/Calcutta'
+  Check 'A legacy zone given with -TimeZone is sent as given' (Test-ZoneSent 'Asia/Calcutta') ((Get-SshArgs) -join ' | ')
 
   # With no -TimeZone the laptop's own zone is read, and the test never changes it.
   $laptopBefore = (Get-TimeZone).Id
