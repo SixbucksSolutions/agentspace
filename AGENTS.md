@@ -36,6 +36,12 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
   rollback stays a one-liner.
 - **This repo is public:** account IDs, account-specific parameters and tokens MUST NOT be
   committed (README, "Rules").
+- **An agent committing from a lease MUST set git's identity first** (found in v0.04-T01,
+  2026-11-18). A box has none, so git falls back to `ubuntu@<the host's name>`, which puts the
+  instance's internal host name into the commit's author and committer, and so into public
+  history. Set `user.name` and `user.email` in the checkout to the identity `main`'s commits carry,
+  and check `git log --format='%an %ae %cn %ce' -1` before the first push. The first commit from
+  the box was caught and re-authored before any push.
 
 ## Roles and pull requests
 
