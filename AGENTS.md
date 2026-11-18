@@ -161,7 +161,9 @@ Docs cite its cards as `#0001`.
   after approving a story whose PR was still open). The dev lead moves it to In Progress when work
   starts and leaves it there while its PR is open. The architect moves it to Ready For Review
   when it merges the PR. So everything in Ready For Review is merged and safe for Terry to
-  approve.
+  approve. Terry, the same day: "rfr means architect claims fully good and in main. I delegate
+  to you so I review once we're in main." Moving a card there is the architect's claim, and
+  MUST NOT be made for work it has not reviewed and merged.
 - **Epics with a dependency run in serial** (Terry, 2026-11-18: "let's work epics with
   dependencies in serial"). An epic that another epic `blocks` MUST NOT be broken into stories or
   started until the blocking epic is done: its stories merged and Terry's word that it is
