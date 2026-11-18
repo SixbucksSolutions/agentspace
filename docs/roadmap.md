@@ -77,7 +77,7 @@ when Terry says so (D14).
 
 **Hardening that rides with a release:**
 - #0029 and #0041 (the lease CLI's) are carried into v0.04's specs and met by v0.05.
-- #0027, #0034 and #0065 (the operator's) are carried into v0.04's specs and met by v0.06.
+- #0027, #0034, #0065 and #0066 (the operator's) are carried into v0.04's specs and met by v0.06.
 - #0043 (the CloudWatch backstop) is replaced by v0.08's lease-based stop.
 - #0064 (a release leaves the lease's open connections up, found in E0.02-T03-S01) is met by v0.08.
 
