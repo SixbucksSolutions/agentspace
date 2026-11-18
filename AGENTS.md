@@ -169,6 +169,10 @@ Docs cite its cards as `#0001`.
 - **localswim calls run as Bot.** Until this repo has its own wrapper, load the credential the way
   the watcher's `lib\env.ps1` does, for one run only (`Set-LocalswimEnv`, then
   `Clear-LocalswimEnv`). The token MUST NOT be printed or written anywhere.
+  - **On the laptop, call `C:\Projects\localswim\localswim.exe` by its full path.** The
+    `localswim` that `PATH` finds first, in `%USERPROFILE%\.local\bin`, is a stale install whose
+    source folder is gone (found in v0.04-T02, 2026-11-18). `card get` takes a bare ticket number
+    (`76`), not `#0076`. On the box, `localswim` is agentspace's own wrapper and is fine.
   - **A secret MUST NOT be passed as a command argument.** Pipe it on stdin or read it inside
     the command, because an error can echo its arguments. In v0.02-T04, 2026-11-17, a binding
     error echoed a `LOCALSWIM_TOKEN=` line into a subagent's tool output, which put the token in
