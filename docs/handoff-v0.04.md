@@ -28,10 +28,12 @@ duties" below).
 - **v0.03 (#0046, "Measure what an agent uses") is done:** four stories in three turns, all
   merged and approved, and the epic is in Completed (Terry, 2026-11-18). Its table is
   [footprint.md](footprint.md), its measured run [runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md).
-- **v0.04 (#0030, "Clean-room spec package") is in its last turn.** T01 to T03 are merged and
-  their ten stories approved. T04 (#0080), the clean-room review and the release's done-when, was
-  started at 2:37pm. **At finalize:** state its outcome, its PR, and whether it spawned v0.04-T05
-  stories.
+- **v0.04 (#0030, "Clean-room spec package") is in its last turns.** T01 to T03 are merged and
+  their ten stories approved. T04 (#0080) ran the first clean-room pass at 2:43pm: both readers
+  said NO (A: 32 gaps, B: 54), so T04 closes the lease CLI's gaps and records every gap's
+  disposition in docs/runs/e0.04-t04-s01.md. Terry approved T05 (#0088 to #0092, five fix stories
+  by owning doc), and the final verdict, #0030's done-when, is T06 (#0093). **At finalize:** state
+  T05's and T06's outcomes and PRs.
 - **The repo:** `main` only, no worktrees, no open PR besides T04's. **At finalize:** confirm.
 - **No lease is live.** `bin\agentspace.cmd lease list` shows 14 leases, all `released`.
 - **The keeper runs on the laptop, idle,** as pwsh 24588 (started 1:06am on 2026-11-18), logging
@@ -227,7 +229,9 @@ broken into stories until every v0.04 card is in Completed, and then only on Ter
 | v0.04-T03 | E0.04-T03-S01 | #0084 | #38 | `conformance/lease-cli/`'s harness, and create, get and list |
 | v0.04-T03 | E0.04-T03-S02 | #0085 | #39 | Keeper, schemas and operator conformance, and the test seam in operator.md |
 | v0.04-T03 | E0.04-T03-S03 | #0086 | #40 | The rest of the lease CLI's conformance, and the unmet checks |
-| v0.04-T04 | E0.04-T04-S01 | #0080 | **At finalize** | The clean-room review |
+| v0.04-T04 | E0.04-T04-S01 | #0080 | **At finalize** | The first clean-room pass, and the lease CLI's gaps closed |
+| v0.04-T05 | E0.04-T05-S01 to S05 | #0088 to #0092 | **At finalize** | The operator's, keeper's, conformance and vision gaps, by owning doc |
+| v0.04-T06 | E0.04-T06-S01 | #0093 | **At finalize** | The final clean-room pass: v0.04's done-when |
 
 **What a measured turn showed (v0.04-T01, spec writing, footprint.md):** the session's own
 process was about half a GiB whatever it did, each working agent's tool calls were small (0.11
@@ -287,6 +291,14 @@ copying the main checkout's (untracked, never committed) runs it.
 - **The clean-room export leaves out findings, run records, handoffs and how-it-was-built.md**
   (D34): a reader that falls back on them is reading the prototype's history, not the spec.
 - **A cheap Haiku reader of the finished doc alone** finds gaps well before the final review.
+- **The first full clean-room pass still said NO** (86 gaps between two readers), mostly where a
+  spec leaned on the prototype's layout (the checkout, a script path) or left a question open.
+  Open questions are now split: blocking ones are answered, and later ones say "Later, not
+  blocking: <reason>" in the doc. The final verdict runs alone, after the fixes, on what the
+  rewrite will actually read.
+- **Decisions the review forced** are in D8 (contract v0's caller is Windows; the default
+  ProxyCommand sits beside the CLI) and D21 (`lease create` does not depend on the instance-ID
+  cache).
 
 **Safety and secrets:**
 - **A box has no git identity**, so its first commit named the instance's host (AGENTS.md: set it
