@@ -1,0 +1,495 @@
+#!/usr/bin/env python3
+"""Summarize an agentspace-sample record: peak, p95 and p50 CPU and memory.
+
+Usage: agentspace-footprint <record.jsonl> [--from <ISO 8601>] [--to <ISO 8601>] [--json]
+
+It reads the record that agentspace-sample writes (its format is pinned on card #0069) and prints
+Markdown, or with --json one JSON object holding the same numbers. Decision D33. Python 3,
+standard library only, so it runs on the box and on the laptop alike. Exit 0, or 2 with a message
+on stderr for a missing file or bad arguments.
+"""
+
+import argparse
+import json
+import math
+import sys
+from datetime import datetime
+
+GAP_FACTOR = 3
+
+
+def die(message):
+    sys.stderr.write("agentspace-footprint: %s\n" % message)
+    sys.exit(2)
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        die(message)
+
+
+class Formatter(argparse.HelpFormatter):
+    """Help whose every line starts with a capital: no wrapping, and a capital usage prefix."""
+
+    def __init__(self, prog, **kwargs):
+        kwargs["width"] = 10000
+        kwargs["max_help_position"] = 30
+        super().__init__(prog, **kwargs)
+
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "Usage: ")
+
+
+def parse_time(text):
+    """An ISO 8601 time with a UTC offset, or None."""
+    if not isinstance(text, str):
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value
+
+
+def is_num(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def is_str(value):
+    return isinstance(value, str)
+
+
+def has(obj, key, check):
+    return key in obj and check(obj[key])
+
+
+def valid_line(obj):
+    """The line's kind when it is well formed, else None. Unknown keys are ignored."""
+    if not isinstance(obj, dict):
+        return None
+    kind = obj.get("kind")
+    if kind == "start":
+        ok = (
+            parse_time(obj.get("t")) is not None
+            and has(obj, "run", is_str)
+            and has(obj, "interval_s", is_num)
+            and obj["interval_s"] > 0
+            and has(obj, "cpus", is_int)
+        )
+    elif kind == "host":
+        ok = (
+            parse_time(obj.get("t")) is not None
+            and has(obj, "seq", is_int)
+            and has(obj, "cpu_busy_s", is_num)
+            and has(obj, "cpu_total_s", is_num)
+            and has(obj, "mem_used_kib", is_num)
+            and has(obj, "sampler_cpu_s", is_num)
+        )
+    elif kind == "session":
+        own = obj.get("self")
+        tools = obj.get("tools")
+        ok = (
+            parse_time(obj.get("t")) is not None
+            and has(obj, "seq", is_int)
+            and has(obj, "session", is_str)
+            and (obj.get("cwd") is None or is_str(obj["cwd"]))
+            and isinstance(own, dict)
+            and has(own, "cpu_s", is_num)
+            and has(own, "pss_kib", is_num)
+            and isinstance(tools, dict)
+            and has(tools, "cpu_s", is_num)
+            and has(tools, "pss_kib", is_num)
+            and has(tools, "procs", is_num)
+        )
+    elif kind == "end":
+        ok = parse_time(obj.get("t")) is not None and has(obj, "reason", is_str)
+    else:
+        ok = False
+    return kind if ok else None
+
+
+def read_record(path):
+    """Return (lines, skipped): the well-formed lines in order, each with its parsed time."""
+    try:
+        handle = open(path, "r", encoding="utf-8-sig", errors="replace", newline=None)
+    except OSError as err:
+        die("cannot read %s: %s" % (path, err.strerror or err))
+    lines = []
+    skipped = 0
+    with handle:
+        try:
+            for raw in handle:
+                try:
+                    obj = json.loads(raw)
+                except (ValueError, RecursionError):
+                    skipped += 1
+                    continue
+                kind = valid_line(obj)
+                if kind is None:
+                    skipped += 1
+                    continue
+                lines.append((kind, obj, parse_time(obj["t"])))
+        except OSError as err:
+            die("cannot read %s: %s" % (path, err.strerror or err))
+    return lines, skipped
+
+
+def rank(sorted_values, p):
+    """Nearest rank: value[ceil(p/100 * N) - 1], in integer arithmetic."""
+    n = len(sorted_values)
+    index = -((-p * n) // 100) - 1
+    return sorted_values[max(index, 0)]
+
+
+def stats(values):
+    if not values:
+        return {"peak": None, "p95": None, "p50": None}
+    ordered = sorted(values)
+    return {"peak": ordered[-1], "p95": rank(ordered, 95), "p50": rank(ordered, 50)}
+
+
+def clock(value, tz):
+    """h:mm plus am or pm, in the record's own UTC offset (D32)."""
+    local = value.astimezone(tz)
+    hour = local.hour % 12 or 12
+    return "%d:%02d%s" % (hour, local.minute, "am" if local.hour < 12 else "pm")
+
+
+def offset_text(value):
+    seconds = int(value.utcoffset().total_seconds())
+    sign = "-" if seconds < 0 else "+"
+    seconds = abs(seconds)
+    return "%s%02d:%02d" % (sign, seconds // 3600, seconds % 3600 // 60)
+
+
+class Notes:
+    def __init__(self):
+        self.skipped = 0
+        self.clamped = 0
+        self.gaps = 0
+        self.missing_end = False
+
+    def diff(self, new, old):
+        """A counter's difference, clamped to 0 and counted when negative."""
+        value = new - old
+        if value < 0:
+            self.clamped += 1
+            return 0.0
+        return value
+
+
+def summarize(lines, skipped, window_from, window_to):
+    notes = Notes()
+    notes.skipped = skipped
+    start = None
+    for kind, obj, _when in lines:
+        if kind == "start" and start is None:
+            start = obj
+    if start is None:
+        die("the record has no valid start line")
+    # The end line belongs to the record, not to the window.
+    notes.missing_end = not any(kind == "end" for kind, _o, _w in lines)
+    run = start["run"]
+    interval = float(start["interval_s"])
+    cpus = start["cpus"]
+    start_time = parse_time(start["t"])
+    tz = start_time.tzinfo
+    limit = GAP_FACTOR * interval
+
+    # A sample's time is its host line's "t". A session line is kept or dropped with its sample;
+    # only one whose seq has no host line is judged by its own "t".
+    sample_time = {}
+    for kind, obj, when in lines:
+        if kind == "host":
+            sample_time.setdefault(obj["seq"], when)
+
+    hosts = []
+    sessions = {}
+    order = []
+    by_seq = {}
+    for kind, obj, when in lines:
+        if kind not in ("host", "session"):
+            continue
+        judged = sample_time.get(obj["seq"], when) if kind == "session" else when
+        if window_from is not None and judged < window_from:
+            continue
+        if window_to is not None and judged > window_to:
+            continue
+        if kind == "host":
+            hosts.append((obj, when))
+        else:
+            sid = obj["session"]
+            if sid not in sessions:
+                sessions[sid] = []
+                order.append(sid)
+            sessions[sid].append((obj, when))
+            by_seq.setdefault(obj["seq"], []).append(obj)
+
+    # The host: CPU over intervals, memory over samples.
+    host_cpu = []
+    for (prev, t0), (cur, t1) in zip(hosts, hosts[1:]):
+        dt = (t1 - t0).total_seconds()
+        if dt <= 0:
+            continue
+        if dt > limit:
+            notes.gaps += 1
+            continue
+        notes.diff(cur["sampler_cpu_s"], prev["sampler_cpu_s"])
+        busy = notes.diff(cur["cpu_busy_s"], prev["cpu_busy_s"])
+        total = notes.diff(cur["cpu_total_s"], prev["cpu_total_s"])
+        if total > 0:
+            host_cpu.append(cpus * busy / total)
+    host_mem = [obj["mem_used_kib"] / 1048576 for obj, _w in hosts]
+
+    overhead = None
+    if len(hosts) >= 2:
+        span = (hosts[-1][1] - hosts[0][1]).total_seconds()
+        if span > 0:
+            used = hosts[-1][0]["sampler_cpu_s"] - hosts[0][0]["sampler_cpu_s"]
+            overhead = max(used, 0.0) / span
+
+    # Sessions: each one from its own lines only.
+    tools_cpu_at = {}  # seq -> sum of the sessions' tools CPU over their intervals ending there
+    session_rows = []
+    for sid in order:
+        rows = sessions[sid]
+        self_cpu = []
+        tools_cpu = []
+        for (prev, t0), (cur, t1) in zip(rows, rows[1:]):
+            dt = (t1 - t0).total_seconds()
+            if dt <= 0:
+                continue
+            if dt > limit:
+                notes.gaps += 1
+                continue
+            own = notes.diff(cur["self"]["cpu_s"], prev["self"]["cpu_s"])
+            tool = notes.diff(cur["tools"]["cpu_s"], prev["tools"]["cpu_s"])
+            self_cpu.append(own / dt)
+            tools_cpu.append(tool / dt)
+            tools_cpu_at[cur["seq"]] = tools_cpu_at.get(cur["seq"], 0.0) + tool / dt
+        first = rows[0][0]
+        cwd = first.get("cwd")
+        folder = (cwd.rstrip("/").rsplit("/", 1)[-1] or cwd) if cwd else "?"
+        session_rows.append(
+            {
+                "label": "%s %s" % (folder, sid[:8]),
+                "session": sid,
+                "cwd": cwd,
+                "first_seen": first["t"],
+                "last_seen": rows[-1][0]["t"],
+                "samples": len(rows),
+                "self": {
+                    "cpu_cores": stats(self_cpu),
+                    "pss_mib": stats([o["self"]["pss_kib"] / 1024 for o, _w in rows]),
+                },
+                "tools": {
+                    "cpu_cores": stats(tools_cpu),
+                    "pss_mib": stats([o["tools"]["pss_kib"] / 1024 for o, _w in rows]),
+                    "procs": {"peak": max(int(o["tools"]["procs"]) for o, _w in rows)},
+                },
+                "_times": (rows[0][1], rows[-1][1]),
+            }
+        )
+
+    # Concurrency: per kept host sample.
+    conc_cpu = [tools_cpu_at.get(obj["seq"], 0.0) for obj, _w in hosts[1:]]
+    conc_pss = [
+        sum(o["tools"]["pss_kib"] for o in by_seq.get(obj["seq"], [])) / 1024
+        for obj, _w in hosts
+    ]
+    sessions_peak = max((len(group) for group in by_seq.values()), default=0)
+
+    result = {
+        "run": {
+            "run": run,
+            "start": hosts[0][0]["t"] if hosts else None,
+            "end": hosts[-1][0]["t"] if hosts else None,
+            "utc_offset": offset_text(start_time),
+            "samples": len(hosts),
+            "interval_s": interval,
+            "cpus": cpus,
+            "sampler_overhead_cores": overhead,
+        },
+        "host": {
+            "cpu_cores": stats(host_cpu),
+            "mem_used_gib": stats(host_mem),
+        },
+        "sessions": [],
+        "concurrency": {
+            "sessions_peak": sessions_peak,
+            "tools_cpu_cores": stats(conc_cpu),
+            "tools_pss_mib": stats(conc_pss),
+        },
+        "notes": {
+            "skipped_lines": notes.skipped,
+            "clamped": notes.clamped,
+            "gaps": notes.gaps,
+            "missing_end": notes.missing_end,
+        },
+    }
+    times = []
+    for row in session_rows:
+        times.append(row.pop("_times"))
+        result["sessions"].append(row)
+    return result, tz, hosts, times
+
+
+def fmt(value, integer=False):
+    if value is None:
+        return "-"
+    if integer:
+        return str(int(value))
+    return "%.2f" % value
+
+
+def plural(count, word):
+    return "%d %s%s" % (count, word, "" if count == 1 else "s")
+
+
+def table(headers, rows):
+    out = ["| " + " | ".join(headers) + " |", "|" + "|".join(" --- " for _ in headers) + "|"]
+    for row in rows:
+        out.append("| " + " | ".join(row) + " |")
+    return out
+
+
+def three(group):
+    return [fmt(group["peak"]), fmt(group["p95"]), fmt(group["p50"])]
+
+
+def markdown(result, tz, hosts, times):
+    info = result["run"]
+    out = ["# Footprint of run %s" % info["run"], ""]
+    if hosts:
+        span = "%s to %s (%s)" % (clock(hosts[0][1], tz), clock(hosts[-1][1], tz), info["utc_offset"])
+    else:
+        span = "No samples in the window (%s)" % info["utc_offset"]
+    out.append("- Span: %s" % span)
+    out.append("- Samples: %d" % info["samples"])
+    out.append("- Interval: %g %s" % (info["interval_s"], "second" if info["interval_s"] == 1 else "seconds"))
+    out.append("- CPUs: %d" % info["cpus"])
+    cores = info["sampler_overhead_cores"]
+    if cores is None:
+        out.append("- Sampler overhead: -")
+    else:
+        out.append("- Sampler overhead: %.4f cores (%.2f%% of one core)" % (cores, cores * 100))
+    out.append("")
+
+    out.append("## Host")
+    out.append("")
+    head = ["CPU cores peak", "CPU cores p95", "CPU cores p50",
+            "Memory GiB peak", "Memory GiB p95", "Memory GiB p50"]
+    host = result["host"]
+    out += table(head, [three(host["cpu_cores"]) + three(host["mem_used_gib"])])
+    out.append("")
+
+    out.append("## Sessions")
+    out.append("")
+    if result["sessions"]:
+        head = ["Session", "Seen", "Samples"]
+        for who, what, unit in (("Self", "CPU", "cores"), ("Self", "PSS", "MiB"),
+                                ("Tools", "CPU", "cores"), ("Tools", "PSS", "MiB")):
+            for stat in ("peak", "p95", "p50"):
+                head.append("%s %s %s %s" % (who, what, unit, stat))
+        head.append("Tools procs peak")
+        rows = []
+        for row, (t0, t1) in zip(result["sessions"], times):
+            cells = [row["label"].replace("|", "\\|"), "%s to %s" % (clock(t0, tz), clock(t1, tz)), str(row["samples"])]
+            cells += three(row["self"]["cpu_cores"]) + three(row["self"]["pss_mib"])
+            cells += three(row["tools"]["cpu_cores"]) + three(row["tools"]["pss_mib"])
+            cells.append(fmt(row["tools"]["procs"]["peak"], integer=True))
+            rows.append(cells)
+        out += table(head, rows)
+    else:
+        out.append("No sessions.")
+    out.append("")
+
+    out.append("## Concurrency")
+    out.append("")
+    conc = result["concurrency"]
+    head = ["Sessions peak",
+            "Tools CPU cores peak", "Tools CPU cores p95", "Tools CPU cores p50",
+            "Tools PSS MiB peak", "Tools PSS MiB p95", "Tools PSS MiB p50"]
+    out += table(head, [[str(conc["sessions_peak"])] + three(conc["tools_cpu_cores"])
+                        + three(conc["tools_pss_mib"])])
+    out.append("")
+
+    out.append("## Notes")
+    out.append("")
+    notes = result["notes"]
+    lines = []
+    if notes["skipped_lines"]:
+        lines.append("Skipped %s." % plural(notes["skipped_lines"], "malformed line"))
+    if notes["clamped"]:
+        lines.append("Clamped %s to 0." % plural(notes["clamped"], "negative difference"))
+    if notes["gaps"]:
+        lines.append("Left out %s of more than three times the interval from the CPU figures."
+                     % plural(notes["gaps"], "gap"))
+    if notes["missing_end"]:
+        lines.append("No end line: the record was summarized up to its last complete line.")
+    out += ["- " + text for text in lines] if lines else ["None."]
+    return "\n".join(out) + "\n"
+
+
+def main(argv):
+    extra = {"color": False} if sys.version_info >= (3, 14) else {}
+    parser = Parser(
+        prog="agentspace-footprint",
+        usage="%(prog)s <record.jsonl> [--from <ISO 8601>] [--to <ISO 8601>] [--json]",
+        description="Summarize an agentspace-sample record: peak, p95 and p50 CPU and memory.",
+        formatter_class=Formatter,
+        add_help=False,
+        **extra,
+    )
+    arguments = parser.add_argument_group("Arguments")
+    options = parser.add_argument_group("Options")
+    arguments.add_argument("record", help="The record, ~/agentspace-samples/<run>.jsonl")
+    options.add_argument("--from", dest="start", metavar="ISO8601",
+                         help="Keep only samples at or after this time (with a UTC offset)")
+    options.add_argument("--to", dest="end", metavar="ISO8601",
+                         help="Keep only samples at or before this time (with a UTC offset)")
+    options.add_argument("--json", action="store_true",
+                         help="Print one JSON object instead of Markdown")
+    options.add_argument("-h", "--help", action="help", help="Show this help and exit")
+    args = parser.parse_args(argv)
+
+    window = []
+    for flag, text in (("--from", args.start), ("--to", args.end)):
+        if text is None:
+            window.append(None)
+            continue
+        value = parse_time(text)
+        if value is None:
+            die("%s needs an ISO 8601 time with a UTC offset, such as 2026-11-18T01:45:00-08:00; got %r"
+                % (flag, text))
+        window.append(value)
+    if window[0] is not None and window[1] is not None and window[0] > window[1]:
+        die("--from is after --to")
+
+    lines, skipped = read_record(args.record)
+    result, tz, hosts, times = summarize(lines, skipped, window[0], window[1])
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    except (AttributeError, ValueError):
+        pass
+    if args.json:
+        sys.stdout.write(json.dumps(result, indent=2) + "\n")
+    else:
+        sys.stdout.write(markdown(result, tz, hosts, times))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

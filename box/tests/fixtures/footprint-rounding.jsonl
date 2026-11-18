@@ -1,0 +1,7 @@
+{"kind":"start","t":"2026-11-18T09:00:00.000-08:00","run":"rounding","interval_s":3,"deadline":"2026-11-18T10:00:00.000-08:00","match":"claude","cpus":3,"mem_total_kib":16777216,"sampler":"agentspace-sample 1"}
+{"kind":"host","t":"2026-11-18T09:00:00.000-08:00","seq":1,"cpu_busy_s":10.0,"cpu_total_s":100.0,"mem_used_kib":1572864,"load1":0.5,"sampler_cpu_s":5.0}
+{"kind":"session","t":"2026-11-18T09:00:00.000-08:00","seq":1,"session":"7000-111111","cwd":"/work/rounder","self":{"cpu_s":50.0,"pss_kib":3072,"rss_kib":6144},"tools":{"cpu_s":70.0,"pss_kib":1536,"rss_kib":3072,"procs":2}}
+{"kind":"host","t":"2026-11-18T09:00:03.000-08:00","seq":2,"cpu_busy_s":11.0,"cpu_total_s":109.0,"mem_used_kib":2621440,"load1":0.5,"sampler_cpu_s":5.03}
+{"kind":"session","t":"2026-11-18T09:00:03.000-08:00","seq":2,"session":"7000-111111","cwd":"/work/rounder","self":{"cpu_s":52.0,"pss_kib":4096,"rss_kib":8192},"tools":{"cpu_s":71.0,"pss_kib":2560,"rss_kib":5120,"procs":4}}
+{"kind":"session","t":"2026-11-18T09:00:03.000-08:00","seq":2,"session":"7001-222222","cwd":"/work/single","self":{"cpu_s":10.0,"pss_kib":1024,"rss_kib":2048},"tools":{"cpu_s":0.0,"pss_kib":512,"rss_kib":1024,"procs":1}}
+{"kind":"end","t":"2026-11-18T09:00:03.050-08:00","reason":"stop-file","samples":2}

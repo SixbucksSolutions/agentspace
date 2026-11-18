@@ -1,0 +1,4 @@
+{"kind":"start","t":"2026-11-18T01:45:00.000-08:00","run":"span-am","interval_s":3000,"deadline":"2026-11-19T01:45:00.000-08:00","match":"claude","cpus":1,"mem_total_kib":16777216,"sampler":"agentspace-sample 1"}
+{"kind":"host","t":"2026-11-18T01:45:00.000-08:00","seq":1,"cpu_busy_s":10.0,"cpu_total_s":100.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":0.0}
+{"kind":"host","t":"2026-11-18T03:10:00.000-08:00","seq":2,"cpu_busy_s":20.0,"cpu_total_s":200.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":0.01}
+{"kind":"end","t":"2026-11-18T03:10:00.050-08:00","reason":"stop-file","samples":2}

@@ -1,0 +1,6 @@
+{"kind":"start","t":"2026-11-18T05:30:00.000-08:00","run":"sampler-fall","interval_s":1.0,"deadline":"2026-11-18T06:30:00.000-08:00","match":"claude","cpus":2,"mem_total_kib":16777216,"sampler":"agentspace-sample 1"}
+{"kind":"host","t":"2026-11-18T05:30:00.000-08:00","seq":1,"cpu_busy_s":200.0,"cpu_total_s":2000.0,"mem_used_kib":1048576,"load1":0.5,"sampler_cpu_s":1.0}
+{"kind":"host","t":"2026-11-18T05:30:01.000-08:00","seq":2,"cpu_busy_s":200.5,"cpu_total_s":2002.0,"mem_used_kib":2097152,"load1":0.5,"sampler_cpu_s":1.1}
+{"kind":"host","t":"2026-11-18T05:30:02.000-08:00","seq":3,"cpu_busy_s":201.0,"cpu_total_s":2004.0,"mem_used_kib":3145728,"load1":0.5,"sampler_cpu_s":1.05}
+{"kind":"host","t":"2026-11-18T05:30:03.000-08:00","seq":4,"cpu_busy_s":201.5,"cpu_total_s":2006.0,"mem_used_kib":4194304,"load1":0.5,"sampler_cpu_s":1.2}
+{"kind":"end","t":"2026-11-18T05:30:03.050-08:00","reason":"stop-file","samples":4}
