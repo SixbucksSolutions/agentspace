@@ -22,9 +22,17 @@
         "released_at": { "$ref": "#/$defs/time" },
         "ssh": { "$ref": "#/$defs/ssh" },
         "reasons": {
+          "description": "Every reason that applies, each code at most once, in the order unsupported_platform, unsupported_profile, unsupported_size, no_capacity. The order is not checked here.",
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/reason" }
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/reason" },
+          "allOf": [
+            { "contains": { "properties": { "code": { "const": "unsupported_platform" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "unsupported_profile" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "unsupported_size" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "no_capacity" } } }, "minContains": 0, "maxContains": 1 }
+          ]
         }
       },
       "allOf": [
@@ -122,9 +130,9 @@
           "enum": ["unsupported_platform", "unsupported_profile", "unsupported_size", "no_capacity"]
         },
         "message": {
-          "description": "One sentence for a person, with no control characters.",
+          "description": "One sentence for a person, with no control characters, not starting with a space.",
           "type": "string",
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?!\\n)"
+          "pattern": "^[^\\u0000-\\u0020\\u007f][^\\u0000-\\u001f\\u007f]*$(?!\\n)"
         }
       }
     }

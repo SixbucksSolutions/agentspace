@@ -3,8 +3,8 @@
 RFC 2119 keywords; the capitals are load-bearing.
 
 **The reference for `agentspace lease`, written so that it can be built and used without reading any
-of agentspace's code (decision D20).** It names every command, flag, output field, state and exit
-code, and gives the `--help` text at every level word for word. The JSON schemas under
+of agentspace's code (decision D20).** It names every command, flag, output field, state, error and
+exit code, and gives the `--help` text at every level word for word. The JSON schemas under
 [`schemas/`](../schemas) are part of this contract, and where this page and a schema disagree, both
 are wrong and MUST be fixed together.
 
@@ -16,20 +16,61 @@ each rule is in [decisions.md](decisions.md), cited as `D<n>`.
 backend, a machine type, a location or a particular machine (D1). A lease looks the same whatever
 serves it, and a reason or message that would need such a name MUST be written without it.
 
+**What it does not hold (D34).** Each of these facts has its own reference, and this page cites it
+rather than restating it:
+- **The files agentspace writes on the caller's machine**, among them the lease's key, certificate
+  and alias from creation to removal, and the `Include` line: [docs/state.md](state.md).
+- **The boundary between this CLI and a backend:** [docs/driver.md](driver.md).
+- **The operator's commands**, among them setting up agentspace's certificate authority (CA):
+  [docs/operator.md](operator.md).
+- **The keeper, which holds the board's forwards:** [docs/keeper.md](keeper.md).
+
+**Hardening carried in.** Two hardening cards against the prototype, #0029 and #0041, are carried
+into this contract as requirements on behavior (D28, D34). Each requirement names its card where
+it is stated, and [Hardening carried in](#hardening-carried-in) maps every point of both cards to
+its requirement, or says why it is declined.
+
 ## Contents
 
-- [Conventions](#conventions)
-- [The lease](#the-lease)
+- [Conventions](#conventions): [the program](#the-program), [output](#output),
+  [times](#times), [input tolerance](#input-tolerance), [command lines](#command-lines),
+  [concurrency and atomicity](#concurrency-and-atomicity)
+- [The lease](#the-lease): [fields](#fields), [states](#states),
+  [the credential](#the-credential)
 - [Values](#values)
+- [Profiles](#profiles)
 - [Commands](#commands): [`agentspace`](#agentspace), [`agentspace lease`](#agentspace-lease),
   [`create`](#agentspace-lease-create), [`get`](#agentspace-lease-get),
   [`renew`](#agentspace-lease-renew), [`release`](#agentspace-lease-release),
   [`list`](#agentspace-lease-list)
 - [Exit codes and errors](#exit-codes-and-errors)
+- [Environment](#environment)
 - [Schemas](#schemas)
 - [Versioning](#versioning)
+- [Hardening carried in](#hardening-carried-in)
+- [Open questions](#open-questions)
 
 ## Conventions
+
+### The program
+
+- **The CLI is one program, run as `agentspace`.** How it is installed and put on the caller's
+  `PATH` is outside this contract.
+  - Note on where this came from: the prototype is `scripts/lease-cli.ps1`, started by
+    `bin/agentspace.cmd` from cmd and PowerShell, and by `bin/agentspace` from Git Bash and other
+    POSIX shells.
+- **The program MUST receive its arguments exactly as the caller's shell passed them.** No
+  argument MAY be split, joined, dropped, or converted as a path before the rules in
+  [Command lines](#command-lines) see it. An empty argument is an argument.
+  - From Git Bash, an argument that looks like a path (`/x`) MUST arrive unchanged, never turned
+    into a Windows path.
+  - The prototype breaks this in one known case, an argument such as `-:x`, which its runtime
+    refuses before the CLI starts, with exit 1 and no error document. That is a defect, not
+    behavior to copy.
+- **Every run that fails MUST still end with one error document and an exit code from
+  [the table](#exit-codes-and-errors)**, whatever stage it failed at.
+- **No command reads standard input, and no command prompts.** Every command MUST run unattended,
+  with no terminal.
 
 ### Output
 
@@ -37,8 +78,11 @@ serves it, and a reason or message that would need such a name MUST be written w
   line feed, and nothing to stderr. `--help` is the one exception: it writes text (below).
 - **On failure (any other exit code), a command MUST write nothing to stdout, and exactly one error
   document to stderr**, followed by one line feed ([Exit codes and errors](#exit-codes-and-errors)).
-- **Output JSON MUST be compact:** no whitespace outside strings, UTF-8 with no byte order mark.
-  Members appear in the order this page lists them, but a caller MUST NOT depend on the order.
+- **Output JSON MUST be compact:** no whitespace outside strings, UTF-8 with no byte order mark,
+  and a line feed (never a carriage return) after the document.
+- **Members appear in the order this page lists them**, but a caller MUST NOT depend on the order.
+- **A string MAY use any escape that JSON allows**, and MUST escape what JSON requires. A caller
+  MUST compare parsed values, never bytes.
 - **A field that does not apply MUST be left out, never written as `null`**, an empty string or an
   empty object. Which fields apply in which state is in [Fields](#fields).
 - **Every output document MUST validate against its schema** (D20). An implementation's own checks
@@ -48,12 +92,17 @@ serves it, and a reason or message that would need such a name MUST be written w
 
 - **Every time in output MUST be UTC, to the whole second, written `YYYY-MM-DDTHH:MM:SSZ`**, for
   example `2026-11-17T18:04:05Z`. No other form is emitted: no fraction, no offset, no lowercase
-  `t` or `z`.
-- **A time is truncated to the whole second, never rounded.** A certificate's validity is
-  therefore issued from a whole second, so that `expires_at` MUST equal the current certificate's
-  valid-before time exactly.
+  `t` or `z`. The caller's time zone MUST NOT change any time in output.
+- **A time is truncated to the whole second, never rounded.**
 - **"Now" is the clock of the machine that answers the command.** In v0 that is the caller's
   machine.
+- **A lease's certificate is issued at a whole second, its issue time, during the command that
+  issues it** (`create` or `renew`). `expires_at` MUST equal the issue time plus the TTL exactly,
+  which is also the certificate's valid-before time ([The credential](#the-credential)).
+- **The conformance suite (E0.04-T02-S04) MUST check these against its own clock, and MUST run at
+  least once with the caller's time zone set to one other than UTC (#0029).** A check of the start
+  of a certificate's validity against the suite's own clock, and a run in another zone, are the
+  only ways to see a UTC and local-time mix-up on a machine that is set to UTC.
 
 ### Input tolerance
 
@@ -66,36 +115,93 @@ covers form only:
   separator in it.
 - **A value is normalized before it is used or stored**, so every output carries the normalized
   form.
+- **"Surrounding whitespace" means whitespace before the first and after the last other
+  character**, where whitespace is any character with the Unicode `White_Space` property, line
+  feeds included. It is trimmed before the value is checked.
+- **Every check MUST match the whole value (#0029).** A check that lets a trailing line feed through
+  after trimming, as a regular expression's `$` does in several engines, is a defect. Letters and
+  digits in a value are ASCII letters and digits only, and "any case" means ASCII case.
 
 ### Command lines
 
-- **Commands, subcommands and flag names are matched without regard to case**: `agentspace Lease
-  CREATE --Project x` is the same as `agentspace lease create --project x`. Help and output always
-  spell them in lowercase.
-- **A flag's value MAY follow it as the next argument (`--ttl 8h`) or after an equals sign
-  (`--ttl=8h`).** A value MAY contain spaces when the shell passes it as one argument (`--ttl "1h
-  30m"`).
-- **A flag that takes a value and is given without one is a usage error.** So is an empty value
-  (`--ttl=`).
-- **A flag given twice is a usage error**, because the two values could disagree. `list --state` is
-  the one flag that MAY be repeated.
-- **An unknown command, subcommand or flag, or an extra positional argument, is a usage error.**
-- **`-h` and `--help` print the help of the level they appear at and exit 0, wherever they appear
-  on the line.** Nothing else on the line is checked or done; `agentspace lease create --help
-  --ttl 99d` prints help and creates nothing.
-- **This holds in a flag's value position too:** `create --ttl --help` prints `create`'s help. After
-  an unknown command or subcommand there is no level to print, so `agentspace lease frob --help` is
-  a usage error (exit 2).
-- **`agentspace` with no command, and `agentspace lease` with no subcommand, are usage errors**
-  (exit 2), so that a script never mistakes help text for JSON.
+**Tokens.** A command line is read from left to right, one argument at a time:
+- **The first argument names the command, and the second the subcommand.** Each MUST be ASCII
+  letters only, matched without regard to case: `agentspace Lease CREATE` is the same as
+  `agentspace lease create`. Help and output always spell them in lowercase.
+- **An argument that starts with `-` is an option.** It is a flag of the subcommand when it is `--`
+  followed by the flag's name in ASCII letters, in any case, and optionally `=` and a value:
+  `--ttl`, `--TTL=8h`. Anything else that starts with `-` is an unknown option, among them `-ttl`,
+  `-p`, a bare `-`, a bare `--` (which does not end the options) and `--help=yes`.
+- **`-h` and `--help`, in any case, ask for help.**
+- **Any other argument is positional.** The subcommands `get`, `renew` and `release` take one, the
+  lease ID, anywhere on the line among their flags. An empty argument is a positional argument.
+
+**A flag's value:**
+- **It MAY follow the flag after an equals sign (`--ttl=8h`).** Everything after the first `=` is
+  the value, even when it starts with `-` or is `--help`: `--ttl=--help` is the value `--help`,
+  not a request for help.
+- **It MAY be the next argument (`--ttl 8h`),** unless that argument starts with `--`. An argument
+  that starts with a single `-` is taken as the value, so `--ttl -5m` gives the value `-5m`. A value
+  MAY contain spaces when the shell passes it as one argument (`--ttl "1h 30m"`).
+- **To give a value that starts with `--`, use the `=` form.**
+- **The two forms MUST give the same result for the same value**, a value that contains a line
+  feed included. The prototype treats `--project=<a value with a line feed>` as an unknown option
+  instead, which is a defect, not behavior to copy.
+
+**Usage errors** (`usage`, exit 2):
+- **An unknown command or subcommand.** Reading stops there, so nothing after it is checked, a
+  `--help` included: `agentspace lease frob --help` is a usage error, because there is no level
+  to print.
+- **An unknown option**, at any level, including a flag that another subcommand has (`get --ttl
+  8h`).
+- **A flag with no value:** the flag is last on the line, or the next argument starts with `--`.
+  `create --ttl --size m` is this error for `ttl`.
+- **A flag with an empty value:** `--ttl=` or `--ttl ""`. A value of only whitespace is not empty
+  here: it reaches the value's own check, which refuses it with `invalid_value`.
+- **A flag given twice**, because the two values could disagree, whatever case each is spelled in.
+  `list --state` is the one flag that MAY be repeated.
+- **An unexpected positional argument:** a second ID, or any positional argument to `create` or
+  `list`.
+- **`agentspace` with no command, and `agentspace lease` with no subcommand**, so that a script
+  never mistakes help text for JSON.
+- **A missing lease ID** for `get`, `renew` or `release`, and a missing `--project` for `create`.
+
+**Which error is reported:**
+1. **`-h` or `--help` anywhere on the line, before any unknown command or subcommand, prints the
+   help of the level reached so far and exits 0**, whatever else is on the line, an earlier usage
+   error included. Nothing else on the line is checked or done: `agentspace lease create --help
+   --ttl 99d` prints help and creates nothing, and `agentspace --help lease` prints the top level's
+   help.
+   - **This holds in a flag's value position too:** `create --ttl --help` and `create --ttl -H`
+     print `create`'s help. Only the `=` form makes `--help` a value.
+2. **Otherwise, an unknown command or subcommand is reported** as soon as it is read.
+3. **Otherwise, the first of the other usage errors in line order is reported**: an unknown option,
+   a flag with no value or an empty value, a flag given twice, or an unexpected argument.
+4. **Otherwise, a missing command, subcommand, lease ID or `--project` is reported.**
+5. **Only when the line has no usage error are the values checked**, in the order of
+   [Exit codes and errors](#exit-codes-and-errors).
 
 ### Concurrency and atomicity
 
 - **Commands MUST be safe to run at the same time from several processes.** Each command's effect
   on a lease MUST be atomic: another command sees the lease either before it or after it, never
   half changed.
-- **A command that fails MUST leave the lease as it was before the command.** A failed `create`
-  MUST leave no lease record and no credential behind.
+- **`get` and `list` MUST NOT wait for a command that changes leases.** They see the leases as they
+  were before that command or as they are after it.
+- **`create`, `renew` and `release` MAY wait for one another, for at most 30 seconds.** One that
+  cannot start within 30 seconds MUST fail with `internal`, change nothing, and say to try again.
+  `release` of a lease that needs no change MAY wait too.
+- **A command that fails MUST leave every lease as it was before the command.**
+  - **A failed `create` MUST leave no lease record, no key, no certificate and no alias behind
+    (#0029),** a key whose certificate could not be signed included. A later `create` MUST NOT fail
+    because of anything an earlier failed one left.
+  - **A failed `renew` MUST leave the lease's `expires_at` and `ttl_seconds` unchanged, and the
+    previous certificate in place (#0041).** If the new certificate was put in place before the
+    failure, it MUST be taken back out, or its expiry and TTL MUST be recorded: what `get` shows
+    MUST always describe the certificate in place.
+  - **A failed `release` MUST NOT leave a lease `ready` or `expired` with its key, certificate or
+    alias gone (#0041).** It leaves the lease as it was, or released with all three gone, and a
+    retried `release` MUST finish the job.
 
 ## The lease
 
@@ -113,25 +219,29 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 | `profile` | String, [profile](#profile) | Always | The software profile asked for, normalized. |
 | `size` | String, [size](#size) | Always | The size asked for, normalized. |
 | `ttl_seconds` | Integer, 60 to 86400 | Always | The TTL of the current certificate, or of the one asked for if none was issued. |
-| `created_at` | String, [time](#times) | Always | When `create` recorded the lease. |
-| `expires_at` | String, [time](#times) | `ready` and `expired`; `released` if it was ever ready | When the current certificate stops being accepted for new connections. An older certificate MAY outlive it; see [What expiry and release do not do](#states). |
+| `created_at` | String, [time](#times) | Always | When `create` recorded the lease: a whole second during the `create` command. |
+| `expires_at` | String, [time](#times) | `ready` and `expired`; `released` if it was ever ready | When the current certificate stops being accepted for new connections: its issue time plus `ttl_seconds`. An older certificate MAY outlive it; see "What expiry and release do not do" under [States](#states). |
 | `released_at` | String, [time](#times) | `released` only | When `release` released the lease. |
 | `ssh` | Object | `ready` only | How to connect; see below. |
 | `ssh.host_alias` | String | Inside `ssh` | The name to give `ssh`: `ssh <host_alias>`. |
 | `ssh.user` | String, Unix user name | Inside `ssh` | The user the alias logs in as. |
-| `reasons` | Array of objects, at least one | `unsatisfiable` only | Why the request cannot be met; see below. |
+| `reasons` | Array of objects, 1 to 4 | `unsatisfiable` only | Why the request cannot be met; see below. |
 | `reasons[].code` | String | Inside each reason | One of the reason codes below. |
 | `reasons[].message` | String | Inside each reason | One sentence for a person, naming the value that cannot be met. |
+
+**`expires_at` is the issue time plus the TTL, not `created_at` plus the TTL.** The certificate is
+issued during `create`, so the two differ by no more than the time `create` took, and either MAY
+come first.
 
 **`ssh.host_alias` is `agentspace-<project>-<first 8 hex digits of id>`**, for example
 `agentspace-swimcoach-3f2a9c1e`. A caller MUST treat it as an opaque name to pass to `ssh` or to any
 client that reads the OpenSSH client configuration, and MUST NOT build it from the ID itself.
 **No two kept leases MAY share a host alias:** `create` MUST choose an ID whose alias no kept lease
-uses, and MUST generate a new ID when the first one's alias is taken.
+uses, in any state, and MUST generate a new ID when the first one's alias is taken.
 
 **`ssh.user` is the user the lease logs in as.** In v0 every project's leases log in as `ubuntu`
-(D3). A caller MUST read it from the lease and MUST NOT assume it, because per-project users will
-change it.
+(D3). A caller MUST read it from the lease and MUST NOT assume it, because later hosts MAY change
+it.
 
 **Reason codes:**
 
@@ -142,10 +252,18 @@ change it.
 | `unsupported_size` | No backend can provide the size asked for. |
 | `no_capacity` | The request is supported, but no capacity can be found for it. |
 
-**Every reason that applies MUST be listed**, in the order of the table, so a request with an
-unsupported platform and an unsupported size gets two reasons. In v0 only `linux/arm64`,
-`agent-linux` and size `m` are supported (D5); `no_capacity` is in the contract for later backends,
-and v0 never reports it.
+**Every reason that applies MUST be listed, each code once,** in the order of the table, so a
+request with an unsupported platform and an unsupported size gets two reasons. In v0 only
+`linux/arm64`, `agent-linux` and size `m` are supported (D5); `no_capacity` is in the contract for
+later backends, and v0 never reports it.
+
+**Each reason's message quotes the normalized value**, and SHOULD read as v0's do:
+- `Platform '<platform>' is not supported; v0 supports linux/arm64 only.`
+- `Profile '<profile>' is not supported; v0 supports agent-linux with no version only.`
+- `Size '<size>' is not supported; v0 supports size m only.`
+
+**Which backend placed a lease MUST NOT appear in any output** (D1), although agentspace keeps it
+to renew and release the lease.
 
 ### States
 
@@ -181,9 +299,9 @@ caller SHOULD allow for that in its SSH timeouts.
 place a lease, and `create` will then answer `pending`.
 
 **How `expired` is decided:** a lease that was `ready` is `expired` when the command reading it
-runs at or after its `expires_at`. Nothing has to run at that moment: `get`, `list`, `renew` and
-`release` each decide it when they read the lease, so the same lease can be `ready` in one call and
-`expired` in the next with nothing in between.
+runs at or after its `expires_at`, to the second. Nothing has to run at that moment: `get`, `list`,
+`renew` and `release` each decide it when they read the lease, so the same lease can be `ready` in
+one call and `expired` in the next with nothing in between. An `expired` lease has no `ssh`.
 
 **What expiry and release do not do:**
 - **A connection that is already open MUST NOT be closed by expiry or release.** The expiry is
@@ -198,15 +316,55 @@ by `get` and `list` for at least 24 hours after it reached that state. After tha
 forgotten, and `get` then answers `not_found`. In v0 no lease is forgotten.
 
 **Where leases are kept:** in v0, on the caller's machine, so `get` and `list` see the leases
-created there and no others.
+created there and no others. The files are [docs/state.md](state.md)'s, and
+[`AGENTSPACE_STATE_DIR`](#environment) moves them.
 
 ### The credential
 
-- **`create` makes a key pair for the lease on the caller's machine, readable by the calling user
-  alone, and has it certified for `ttl_seconds`.** The private key MUST NOT appear in any output
-  and MUST NOT leave the caller's machine.
-- **The alias is written into the calling user's OpenSSH client configuration**, so that `ssh
-  <host_alias>` works with no other options. Nothing else in that configuration is changed.
+**A ready lease's credential is an SSH key pair on the caller's machine and a certificate for it,
+signed by agentspace's CA (D7).** What the caller sees of it is below; the files that hold it, and
+how they are made and removed, are [docs/state.md](state.md)'s.
+
+**The key:**
+- **`create` makes a new key pair for each lease.** The private key MUST NOT appear in any output,
+  MUST NOT leave the caller's machine, and MUST NOT be readable by another ordinary user of that
+  machine.
+- **The private key MUST have no passphrase**, so that `ssh <host_alias>` never prompts (#0029).
+
+**The certificate:**
+- **Its principal is `ssh.user`, and its key ID is the lease's `id`**, so a host's SSH log names
+  the lease behind every connection (D7).
+- **Its valid-before time is `expires_at`:** the issue time plus the TTL, exactly ([Times](#times)).
+- **Its valid-after time MUST NOT be later than the issue time, and SHOULD be 5 minutes before it
+  (#0029),** so that a host whose clock is a little behind the caller's still accepts a new
+  certificate. The back-dating does not count toward the TTL, and never moves `expires_at`.
+- **It permits a terminal (PTY) and port forwarding, and nothing else:** no agent forwarding, no
+  X11 forwarding and no user rc file (D7). Port forwarding MUST stay permitted, because agentspace's
+  board reaches a lease host through it (D12, D30).
+- **Its serial is not part of this contract,** and a caller MUST NOT rely on it. v0 issues serial 0
+  on every certificate; whether serials are needed is decided with revocation, card #0010 (#0029).
+
+**The certificate authority:**
+- **`create` and `renew` MUST NOT create agentspace's CA (#0029).** A CA made by issuing would be
+  trusted by no host until the operator installs it there, so the lease would be `ready` and
+  refuse every connection.
+- **If there is no CA, `create` and `renew` MUST fail with `internal`**, change nothing, and say
+  that agentspace's CA has not been set up. Setting it up is the operator's
+  ([docs/operator.md](operator.md)).
+
+**The alias:**
+- **`create` makes `ssh.host_alias` usable from the calling user's OpenSSH client configuration**,
+  so that `ssh <host_alias>` works with no other options. What it adds to that configuration, and
+  how, is [docs/state.md](state.md)'s, and nothing else in it is changed.
+- **If the calling user's OpenSSH configuration cannot take the alias as it stands, `create` MUST
+  fail with `internal`**, change nothing, and say what a person has to fix.
+- **A connection through the alias reaches the lease's host as `ssh.user`**, and how it gets there
+  is the driver's ([docs/driver.md](driver.md), D9).
+- **In v0 the alias also forwards the agentspace board's ports to the lease host** (D12, D30), so
+  a second session through any alias on the same host warns that its remote port forwarding
+  failed, and still logs in. A caller MUST NOT rely on these forwards.
+
+**What `renew` and `release` do to it:**
 - **`renew` replaces only the certificate.** The key, the alias and the user stay the same, so a
   client that saved the alias keeps working.
 - **`release` deletes the key, the certificate and the alias.** It leaves the rest of the OpenSSH
@@ -216,7 +374,8 @@ created there and no others.
 
 **Each value below is accepted in the forms listed and normalized to one form before use.** A
 value outside its accepted forms is refused with `invalid_value` (exit 2), and a well-formed value
-outside its allowed range with `out_of_range` (exit 2).
+outside its allowed range with `out_of_range` (exit 2). Each error's message is in
+[Messages](#messages).
 
 ### Lease ID
 
@@ -224,8 +383,13 @@ outside its allowed range with `out_of_range` (exit 2).
   `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`, where each `x` is a hex digit and `y` is one of `8`, `9`,
   `a` or `b`.
 - **Normalized to:** lowercase, whitespace trimmed.
-- **Refused:** any other UUID version, braces, a `urn:uuid:` prefix, and anything else. A
-  well-formed ID that names no lease is `not_found` (exit 3), not `invalid_value`.
+- **Refused:** any other UUID version, braces, a `urn:uuid:` prefix, an empty value, and anything
+  else. A well-formed ID that names no lease is `not_found` (exit 3), not `invalid_value`.
+- **Everything agentspace derives from a lease ID MUST be derived from its normalized form**: the
+  host alias, the certificate's key ID, and any file or folder name (#0029). A normalized ID never
+  ends in a dot and never holds a path separator, so a name made from it is never changed by the
+  file system.
+- **IDs are chosen by `create`, at random**, and never reused.
 
 ### Project
 
@@ -236,23 +400,27 @@ outside its allowed range with `out_of_range` (exit 2).
 
 ### Platform
 
-**An `os/arch` pair in the OCI form, with an optional variant (D4).**
-- **Accepted:** `os/arch` or `os/arch/variant`, each part letters and digits, in any case, with
-  surrounding whitespace. The architecture MAY also be spelled `aarch64` (for `arm64`), or `x86_64`
-  or `x86-64` (for `amd64`).
+**An `os/arch` pair in the OCI form, with an optional variant (D4).** The platform never says which
+libc a host has; the [profile](#profiles) does.
+- **Accepted:** `os/arch` or `os/arch/variant`, each part one or more letters and digits, in any
+  case, with surrounding whitespace. The architecture MAY also be spelled `aarch64` (for `arm64`),
+  or `x86_64` or `x86-64` (for `amd64`).
 - **Normalized to:** lowercase, whitespace trimmed, `aarch64` written `arm64`, `x86_64` and
   `x86-64` written `amd64`, and the variant `v8` of `arm64` dropped, so `linux/aarch64/v8` becomes
-  `linux/arm64`.
+  `linux/arm64`. Every other variant is kept: `linux/arm64/v9` and `linux/amd64/v3` stay as they
+  are.
 - **Default:** `linux/arm64` (D13).
 - **Supported in v0:** `linux/arm64` only. Any other well-formed platform is accepted, and the
-  lease is `unsatisfiable` with `unsupported_platform` (D5).
+  lease is `unsatisfiable` with `unsupported_platform` (D5). That includes `windows/amd64`: Windows
+  hosts are in scope (D4), and unsatisfiable until a driver supports them.
 
 ### Profile
 
-**A named software contract, optionally pinned to a version (D4): `name` or `name@version`.**
+**A named software contract, optionally pinned to a version (D4): `name` or `name@version`.** What
+each supported profile promises is in [Profiles](#profiles).
 - **Accepted:** a name of 1 to 64 letters, digits and `-`, starting and ending with a letter or
   digit, in any case, optionally followed by `@` and a version number of 1 or more, with surrounding
-  whitespace. Leading zeros in the version are accepted.
+  whitespace. Leading zeros in the version are accepted; a version of only zeros is refused.
 - **Normalized to:** lowercase, whitespace trimmed, leading zeros dropped from the version
   (`Agent-Linux@03` becomes `agent-linux@3`). A profile with no version stays without one, and
   means the profile's current version.
@@ -276,9 +444,9 @@ never a clock time.
 - **Default:** 8 hours for `create`. For `renew`, the lease's current `ttl_seconds`.
 - **Range:** at least 1 minute and at most 24 hours, both inclusive. A TTL outside it MUST be
   refused with `out_of_range`, and MUST NOT be clamped to the nearest limit.
-- **Accepted, short form:** one or more parts, each a whole number and a unit, largest unit first,
-  each unit at most once, with optional whitespace between and around them. Examples: `8h`, `90m`,
-  `1h30m`, `1h 30m`, `2 hours`, `45 min`, `1d`.
+- **Accepted, short form:** one or more parts, each a whole number of decimal digits (leading zeros
+  allowed) and a unit, largest unit first, each unit at most once, with optional whitespace between
+  and around them. Examples: `8h`, `90m`, `1h30m`, `1h 30m`, `2 hours`, `45 min`, `1d`, `23h59m60s`.
 
   | Unit | Spellings, in any case unless noted |
   |---|---|
@@ -287,33 +455,92 @@ never a clock time.
   | Minutes | `m` in lowercase only; `min`, `mins`, `minute`, `minutes` in any case |
   | Seconds | `s`, `sec`, `secs`, `second`, `seconds` |
 
-- **Accepted, ISO 8601 form:** `P[nD][T[nH][nM][nS]]` in any case, with at least one part, and with
-  at least one part after a `T` if there is a `T`. Examples: `PT8H`, `pt90m`, `P1D`, `P1DT2H`.
+- **Accepted, ISO 8601 form:** `P[nD][T[nH][nM][nS]]` in any case, with at least one part, with at
+  least one part after a `T` if there is a `T`, and no whitespace inside. Examples: `PT8H`, `pt90m`,
+  `P1D`, `P1DT2H`. In this form `M` in either case is minutes, because it comes after the `T`.
 - **Normalized to:** a whole number of seconds, which output carries as `ttl_seconds`.
 - **Refused as `invalid_value`, because each is ambiguous or not a duration:**
   - A bare number, such as `8` or `28800`, whose unit is unknown.
   - An uppercase `M` in the short form, which could mean months or minutes.
   - Weeks, months and years, in either form.
   - A fraction, such as `1.5h`, which would have to be rounded; `1h30m` says it exactly.
-  - A sign, a negative number, a unit given twice, units out of order, or anything else.
+  - A sign, a negative number, a unit given twice, units out of order, an empty or all-whitespace
+    value, or anything else.
 - **Refused as `out_of_range`:** a well-formed TTL below 60 seconds or above 86400 seconds,
   including zero. The limits are checked after normalization, so `1440m` and `P1D` are both
   allowed and `24h1s` is not. A well-formed TTL too large to compute, such as
-  `99999999999999999999h`, is also `out_of_range`, and MUST NOT be `internal`.
+  `99999999999999999999h`, is also `out_of_range`, and MUST NOT be `internal`. A TTL has no length
+  limit of its own.
 
 ### State filter
 
 **Used by `list --state`.**
 - **Accepted:** one of the five [state names](#states), in any case, with surrounding whitespace.
   On the command line, `--state` MAY be repeated and each value MAY be a comma-separated list, as in
-  `--state ready,pending`. In a request document, `state` is one state name or an array of them.
+  `--state ready,pending`; whitespace around each name is trimmed. In a request document, `state`
+  is one state name or a non-empty array of them, never a comma-separated list.
+- **Refused as `invalid_value`:** any other name, and an empty name, as in `ready,`,
+  `ready,,pending` or `--state " "`.
 - **Normalized to:** the set of lowercase state names, with duplicates dropped.
+
+## Profiles
+
+**A profile is the software a lease's host promises, by name (D4).** The [platform](#platform) says
+the operating system and architecture; the profile says everything an agent's tools depend on
+beyond that, its libc first.
+
+**Every profile MUST state its libc family, which is one of `glibc`, `musl` or `none`** (D4).
+- **`glibc` and `musl` carry a minimum version:** the oldest that every host serving the profile
+  MUST have. A host MAY have a newer one.
+- **`none` is a host or image with no libc at all,** such as a `scratch` container that runs a
+  CGO-disabled Go binary, and carries no version. It promises nothing that needs a libc.
+- **The platform alone never says the libc.** An agent that ships a Rust `-gnu` binary, Node's
+  `linux-arm64` build or a `manylinux` wheel learns from the profile whether it will run.
+- **A musl host, such as Alpine, or a `none` host would be a profile of its own**, unsatisfiable
+  until a driver supports it (D5). No v0 profile has either.
+
+### agent-linux
+
+**The one profile v0 supports, with no version.** Every host that serves a lease with profile
+`agent-linux` MUST meet this promise:
+
+| Promise | agent-linux |
+|---|---|
+| Libc family | `glibc` |
+| Libc minimum version | 2.43 |
+| Distro | Ubuntu 26.04 LTS, patched to the latest packages of that release each time the host starts |
+| Node | The newest Node.js LTS release as of the host's last start, as the default; `fnm` is installed, and switches to a project's `.node-version` |
+| uv | The latest release as of the host's last start |
+| Claude Code | The native install, which updates itself |
+| Codex | The latest release as of the host's last start |
+| gh | The GitHub CLI, from GitHub's own package repository, patched with the distro |
+
+- **Why 2.43:** Ubuntu 26.04 LTS ships glibc 2.43 and keeps its upstream version fixed for the
+  release's whole life, so the start-time patch changes only the Ubuntu revision; a host with an
+  older glibc would be a new profile version, never `agent-linux`.
+- **The tools are promised on the `PATH` of an interactive login shell of `ssh.user`.** Whether a
+  command run without one, as in `ssh <host_alias> node --version`, finds them is an
+  [open question](#open-questions).
+- **Nothing else is promised.** Anything else a host has, such as another language runtime, MAY
+  change or go without a new contract version.
+- **A versioned profile, `agent-linux@<n>`, will state its own promise** in this section when one
+  exists, and MAY differ from this one in any line.
+
+Note on where this came from: the box's own setup, `box/bootstrap.sh` and the start-time patch in
+`box/system/`. On 2026-11-18 the box reported `ldd (Ubuntu GLIBC 2.43-2ubuntu2.7) 2.43`, Ubuntu
+26.04.1 LTS on `aarch64`, Node v26.13.1, uv 0.13.9, Claude Code 2.1.326, codex-cli 0.170.0 and gh
+2.105.0. Those versions are an observation, not the promise.
 
 ## Commands
 
 **The commands, from the top level down.** Each section's help block is exactly what `--help`
 prints at that level, to stdout with exit 0. An implementation MUST print it byte for byte, with a
 line feed after every line, and a change to either MUST change both.
+
+**Each command's errors are listed with it.** Every command can also fail with `usage` for the
+reasons in [Command lines](#command-lines), and with `internal` when its lease records cannot be
+read, or, for `create`, `renew` and `release`, cannot be written or are busy for 30 seconds
+([Messages](#messages)).
 
 ### agentspace
 
@@ -403,8 +630,8 @@ agentspace lease create --project <name> [--platform <os/arch>] [--profile <name
 
 **Requests a lease for one agent of a project, and prints it.** The lease's state is `ready`,
 `pending` or `unsatisfiable`, and a caller MUST check it before connecting:
-- **`ready`:** `ssh.host_alias` is in the caller's OpenSSH configuration, and `expires_at` is now
-  plus the TTL.
+- **`ready`:** `ssh.host_alias` is usable from the caller's OpenSSH configuration, and
+  `expires_at` is the issue time plus the TTL ([The credential](#the-credential)).
 - **`pending`:** call `get` until it is `ready` or `unsatisfiable`.
 - **`unsatisfiable`:** `reasons` says which values cannot be met. Nothing was issued, and the lease
   needs no `release`.
@@ -414,7 +641,8 @@ agentspace lease create --project <name> [--platform <os/arch>] [--profile <name
 be checked.
 
 **A platform, profile or size that cannot be met is never swapped for another (D5).** If any one of
-them cannot be met, the lease is `unsatisfiable`, whatever the others are.
+them cannot be met, the lease is `unsatisfiable`, whatever the others are. Whether a request can be
+met is decided before anything is issued.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -430,6 +658,17 @@ them cannot be met, the lease is `unsatisfiable`, whatever the others are.
 `project`, `platform`, `profile`, `size` and `ttl`.
 
 **Output:** the lease document. **Exit codes:** 0, 1 and 2.
+
+**Errors:**
+
+| Code | Field | When |
+|---|---|---|
+| `usage` | `project` | No `--project`, or `--project` with no value, an empty value, or given twice. |
+| `usage` | The flag | Any other flag with no value, an empty value, or given twice. |
+| `usage` | None | An unknown option, or any positional argument. |
+| `invalid_value` | `project`, `platform`, `profile`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. |
+| `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
+| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, or the lease records could not be read, written or locked. Nothing was recorded or left behind. |
 
 **Help:**
 
@@ -476,6 +715,16 @@ passed is printed as `expired`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2 and 3.
 
+**Errors:**
+
+| Code | Field or member | When |
+|---|---|---|
+| `usage` | `id` | No lease ID. |
+| `usage` | None | A second positional argument, or any option other than help. |
+| `invalid_value` | `id` | The ID is not a [lease ID](#lease-id). |
+| `not_found` | `lease_id` | No kept lease has that ID. |
+| `internal` | None | The lease records could not be read. |
+
 **Help:**
 
 ```
@@ -500,14 +749,15 @@ agentspace lease renew <id> [--ttl <duration>]
 ```
 
 **Issues a `ready` lease a new certificate, valid from now for the TTL, and prints the lease.**
-- **`expires_at` becomes now plus the TTL**, whether that is later or earlier than before.
+- **`expires_at` becomes the new certificate's issue time plus the TTL**, whether that is later or
+  earlier than before.
 - **The previous certificate is not revoked (D10), and stays valid until its own expiry.** When
   `renew` shortens a lease, that expiry is later than the new `expires_at`, so a leaked copy of the
   previous certificate outlives it.
 - **`ttl_seconds` becomes the TTL used.** Without `--ttl`, the lease's current `ttl_seconds` is
   used again.
-- **The key, the alias, the user and the ID do not change**, so clients that saved the alias need
-  nothing new.
+- **The key, the alias, the user, the ID and `created_at` do not change**, so clients that saved
+  the alias need nothing new.
 - **A retry is safe:** each call sets a new expiry from its own time, and changes nothing else.
 - **There is no limit on how many times a lease is renewed.** Each certificate is limited by the
   maximum TTL, and that is what bounds a leaked one (D24).
@@ -520,6 +770,10 @@ nothing:
 - **`released` and `unsatisfiable`:** both are terminal.
 - **`pending`:** it has no credential yet. Wait for `ready`.
 
+**A lease that is `ready` MUST be renewable, and one that has ever been `ready` MUST be releasable,
+for as long as it is kept (#0041).** Whatever agentspace needs to renew or release it MUST be kept
+with the lease from the moment it becomes `ready`; how is [docs/state.md](state.md)'s.
+
 | Argument or flag | Type | Default | Notes |
 |---|---|---|---|
 | `<id>` | [Lease ID](#lease-id) | None; required | |
@@ -531,6 +785,19 @@ nothing:
 `ttl`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2, 3 and 4.
+
+**Errors:**
+
+| Code | Field or members | When |
+|---|---|---|
+| `usage` | `id` | No lease ID. |
+| `usage` | `ttl` | `--ttl` with no value, an empty value, or given twice. |
+| `usage` | None | A second positional argument, or an unknown option. |
+| `invalid_value` | `id`, then `ttl` | The ID is not a [lease ID](#lease-id), or else the TTL is not a [TTL](#ttl). |
+| `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
+| `not_found` | `lease_id` | No kept lease has that ID. |
+| `invalid_state` | `lease_id` and `state` | The lease is not `ready`; `state` is the state it is in. |
+| `internal` | None | The certificate could not be issued, agentspace's CA is not set up, or the lease records could not be read, written or locked. The lease is unchanged. |
 
 **Help:**
 
@@ -565,9 +832,9 @@ agentspace lease release <id>
 
 | State before | What `release` does | State after |
 |---|---|---|
-| `ready` | Deletes the key, certificate and alias, and sets `released_at` | `released` |
+| `ready` | Deletes the key, certificate and alias, drops `ssh`, keeps `expires_at`, and sets `released_at` | `released` |
 | `expired` | The same | `released` |
-| `pending` | Gives up the request, and sets `released_at` | `released` |
+| `pending` | Gives up the request, and sets `released_at`; the lease has no `expires_at` | `released` |
 | `released` | Nothing; prints the lease unchanged, with its first `released_at` | `released` |
 | `unsatisfiable` | Nothing; prints the lease unchanged | `unsatisfiable` |
 
@@ -577,10 +844,13 @@ agentspace lease release <id>
   until `expires_at`, which a released lease still shows when it had one. A leaked copy of an older
   certificate works until its own expiry, which MAY be later if a `renew` shortened the lease.
   Connections already open are not closed.
+- **Release needs no CA,** and works on a machine whose CA is missing.
 - **An ID that names no lease is `not_found` (exit 3)**, not a success: there is no lease document
   to print, and success would hide a mistyped ID.
 - **A caller retrying `release` MAY treat exit 3 as nothing left to release.** A lease is kept for at
   least 24 hours after it is released, so a real retry finds it and stays idempotent.
+- **A release that fails part way MUST NOT leave the lease `ready` or `expired` without its
+  credential (#0041);** see [Concurrency and atomicity](#concurrency-and-atomicity).
 
 | Argument or flag | Type | Notes |
 |---|---|---|
@@ -592,6 +862,16 @@ agentspace lease release <id>
 `id`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2 and 3.
+
+**Errors:**
+
+| Code | Field or member | When |
+|---|---|---|
+| `usage` | `id` | No lease ID. |
+| `usage` | None | A second positional argument, or any option other than help. |
+| `invalid_value` | `id` | The ID is not a [lease ID](#lease-id). |
+| `not_found` | `lease_id` | No kept lease has that ID. |
+| `internal` | None | The credential or alias could not be deleted, or the lease records could not be read, written or locked. |
 
 **Help:**
 
@@ -621,12 +901,13 @@ agentspace lease list [--project <name>] [--state <state>[,<state>...]]...
 ```
 
 **Prints the leases that match every filter given, oldest first.** It changes nothing.
-- **Order:** by `created_at`, then by `id`, both ascending.
+- **Order:** by `created_at`, then by `id`, both ascending, comparing the strings character by
+  character, so the order never depends on a locale.
 - **No filter means every lease that is kept** (see "How long a lease is kept" under
   [States](#states)).
 - **No match is not an error:** the output is `{"leases":[]}`, exit 0.
-- **States are decided as `get` decides them**, so `--state ready` leaves out a lease whose
-  `expires_at` has passed, and `--state expired` includes it.
+- **States are decided as `get` decides them, at one instant for the whole list**, so `--state
+  ready` leaves out a lease whose `expires_at` has passed, and `--state expired` includes it.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -645,6 +926,15 @@ and `state`.
 | `leases` | Array of lease documents | Always | The matching leases, in the order above. |
 
 **Exit codes:** 0, 1 and 2.
+
+**Errors:**
+
+| Code | Field | When |
+|---|---|---|
+| `usage` | `project` or `state` | `--project` with no value, an empty value, or given twice; `--state` with no value or an empty value. |
+| `usage` | None | An unknown option, or any positional argument. |
+| `invalid_value` | `project`, then `state` | A project outside its accepted forms, or else a state name that is not one of the five. |
+| `internal` | None | The lease records could not be read. |
 
 **Help:**
 
@@ -665,26 +955,27 @@ Options:
 
 | Exit | Error code | When |
 |---|---|---|
-| 0 | None | The command did what was asked. Stdout holds its document. |
+| 0 | None | The command did what was asked, or printed help. Stdout holds its document or help. |
 | 1 | `internal` | Anything that is not the caller's fault, such as a credential that could not be issued or lease records that could not be read. |
-| 2 | `usage` | An unknown or missing command, subcommand, flag or argument, a flag given twice, or a flag with no value. |
+| 2 | `usage` | An unknown or missing command, subcommand, flag or argument, a flag given twice, or a flag with no value or an empty value ([Command lines](#command-lines)). |
 | 2 | `invalid_value` | A value outside its [accepted forms](#values). |
 | 2 | `out_of_range` | A well-formed value outside its allowed range; in v0, only the TTL. |
-| 3 | `not_found` | No lease has the ID given. |
+| 3 | `not_found` | No kept lease has the ID given. |
 | 4 | `invalid_state` | The lease's state does not allow the subcommand; in v0, only `renew`. |
 
 **No other exit code MAY be used.** Each non-zero exit code MUST come with one of the error codes
 beside it, and every failure that fits none of the others is `internal`.
 
 **When several errors apply, the first in this order MUST be reported, and only that one:**
-1. **`usage`**, for anything wrong with the command line itself.
+1. **`usage`**, for anything wrong with the command line itself, chosen as
+   [Command lines](#command-lines) says.
 2. **`invalid_value` or `out_of_range`**, for the first bad value in the order of the command's
    argument and flag table, so `field` names the first bad one.
 3. **`not_found`**, from looking the lease up.
 4. **`invalid_state`**, from the lease's state.
 
-So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2), and
-`renew <unknown id> --ttl 8` is `invalid_value` for `ttl`.
+So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2),
+`renew <unknown id> --ttl 8` is `invalid_value` for `ttl`, and `get <bad id> --ttl 8h` is `usage`.
 
 **The error document** goes to stderr, compact, on one line. Its schema is
 [`error.output.schema.json`](../schemas/error.output.schema.json).
@@ -692,18 +983,96 @@ So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2), and
 | Field | Type | Present | Meaning |
 |---|---|---|---|
 | `code` | String | Always | One of the error codes above. |
-| `message` | String | Always | One or more sentences for a person: what was wrong, and what to do. |
-| `field` | String | `invalid_value` and `out_of_range`; MAY be given for `usage` | The flag or request member at fault, without dashes: `id`, `project`, `platform`, `profile`, `size`, `ttl` or `state`. |
+| `message` | String | Always | One or more sentences for a person: what was wrong, and what to do. Never empty. |
+| `field` | String | `invalid_value` and `out_of_range`; `usage` in the five cases below | The flag or request member at fault, without dashes: `id`, `project`, `platform`, `profile`, `size`, `ttl` or `state`. |
 | `lease_id` | String, lowercase UUIDv4 | `not_found` and `invalid_state` | The normalized ID asked for. |
 | `state` | String, [state](#states) | `invalid_state` | The state the lease is in. |
+
+**A `usage` error MUST carry `field` in exactly these five cases, and MUST NOT otherwise:** a flag
+with no value, a flag with an empty value, a flag given twice (each naming that flag), a missing
+lease ID (`id`) and a missing `--project` (`project`).
 
 **A message MUST NOT echo a secret, and MUST NOT name a backend, a location or a machine (D1).** A
 message SHOULD quote the value that was refused, and SHOULD say how to fix it, as in `TTL '8' has
 no unit. Give one, as in '8h'.`
 
-**A message MUST NOT contain a control character** (U+0000 to U+001F, or U+007F), and the schema
-refuses one. A quoted value that contains one MUST have each written as `\u` and four hex digits,
-as in `\u000a`, or MUST be left out of the message.
+**A message MUST NOT contain a control character** (U+0000 to U+001F, or U+007F), MUST NOT be empty,
+and MUST NOT start with a space; the schema refuses each. A quoted value that contains a control
+character MUST have each written as `\u` and four lowercase hex digits, as in `\u000a`, or MUST be
+left out of the message. In the JSON document that backslash is itself escaped, as `\\u000a`.
+
+**An `internal` message MUST say what failed in agentspace's own words (#0041).** It MUST NOT
+carry:
+- **An absolute path on the caller's machine, or the caller's user name.** A file a person has to
+  fix MAY be named in its home-relative form, such as `~/.ssh/config`.
+- **The output or error text of another program**, such as `ssh-keygen` or the operator's CA
+  check.
+- **A backend, a location or a machine (D1).**
+
+The original error MAY be kept elsewhere for diagnosis, never in the error document. A message such
+as `The lease's credential could not be issued. Nothing was recorded; try again.` is the shape
+meant.
+
+### Messages
+
+**Messages are for people.** A caller MUST NOT parse a message; the code, `field`, `lease_id` and
+`state` are what a program reads. An implementation SHOULD word its messages as below, and MAY word
+them differently where this page does not say MUST.
+
+**In each template**, `'<value>'` is the value as given, untrimmed, in single quotes, with control
+characters escaped as above; `<flag>` is the flag's name in lowercase; `<sub>` is the subcommand;
+`<id>` is the normalized lease ID.
+
+| Code | When | Message |
+|---|---|---|
+| `usage` | Unknown option, top level | `Unknown option '<value>'. Run 'agentspace --help' for its options.` |
+| `usage` | Unknown option, `lease` level | `Unknown option '<value>'. Run 'agentspace lease --help' for its options.` |
+| `usage` | Unknown option, a subcommand | `Unknown option '<value>' for agentspace lease <sub>. Run 'agentspace lease <sub> --help'.` |
+| `usage` | Unknown command | `Unknown command '<value>'. Run 'agentspace --help' for the commands.` |
+| `usage` | Unknown subcommand | `Unknown subcommand '<value>'. Run 'agentspace lease --help' for the subcommands.` |
+| `usage` | No command | `No command given. Run 'agentspace --help' for the commands.` |
+| `usage` | No subcommand | `No subcommand given. Run 'agentspace lease --help' for the subcommands.` |
+| `usage` | No value | `Option --<flag> needs a value. Run 'agentspace lease <sub> --help'.` |
+| `usage` | Empty value | `Option --<flag> has an empty value. Run 'agentspace lease <sub> --help'.` |
+| `usage` | Given twice | `Option --<flag> is given twice. Give it once.` |
+| `usage` | Unexpected argument | `Unexpected argument '<value>' for agentspace lease <sub>. Run 'agentspace lease <sub> --help'.` |
+| `usage` | No lease ID | `No lease ID given. Run 'agentspace lease <sub> --help'.` |
+| `usage` | No `--project` | `Option --project is required. Run 'agentspace lease create --help'.` |
+| `invalid_value` | `id` | `Lease ID '<value>' is not a UUIDv4. Give the id that create printed.` |
+| `invalid_value` | `project` | `Project '<value>' is not a project name. Use 1 to 32 letters, digits and '-', starting and ending with a letter or digit.` |
+| `invalid_value` | `platform` | `Platform '<value>' is not an os/arch pair. Give one as in 'linux/arm64'.` |
+| `invalid_value` | `profile` | `Profile '<value>' is not a profile name. Give name or name@version, as in 'agent-linux'; a version is 1 or more.` |
+| `invalid_value` | `size` | `Size '<value>' is not a size. Use 1 to 8 letters and digits, as in 'm'.` |
+| `invalid_value` | `ttl`, all digits once trimmed | `TTL '<value>' has no unit. Give one, as in '8h'.` |
+| `invalid_value` | `ttl`, a digit and then an uppercase `M` that ends the value or is followed by a character that is not a letter | `TTL '<value>' uses 'M', which could mean months or minutes. Write minutes as 'm' or 'min'.` |
+| `invalid_value` | `ttl`, anything else | `TTL '<value>' is not a duration. Give one as in '8h', '90m', '1h30m', '2 hours' or 'PT8H'.` |
+| `invalid_value` | `state` | `State '<name>' is not a state. Use pending, ready, expired, released or unsatisfiable.`, where `<name>` is the one name refused, trimmed |
+| `out_of_range` | `ttl` | `TTL '<value>' is outside the allowed range. Give from 1m to 24h; it is never clamped.` |
+| `not_found` | Any subcommand | `No lease has ID '<id>'.` |
+| `invalid_state` | `renew` | `Lease '<id>' is <state>, and only a ready lease can be renewed. <advice>`, where `<advice>` is `Create a new lease.` for `expired`, `Wait for it to be ready.` for `pending`, and `The <state> state is final.` for `released` and `unsatisfiable` |
+| `internal` | Records unreadable | `The lease records could not be read: the state file is not valid. Nothing was changed.` |
+| `internal` | Records busy | `The lease records are busy: another agentspace lease command held them for 30 seconds. Try again.` |
+| `internal` | Records unwritable | `The lease records could not be written: <why>. Nothing was changed.` |
+| `internal` | Anything else | `agentspace lease <sub> failed: <what failed>`, where `<what failed>` meets the rules above |
+
+## Environment
+
+**These environment variables change where the CLI reads and writes.** Each is read when a command
+starts, and one that is unset or empty means the default.
+
+| Variable | When set and not empty |
+|---|---|
+| `AGENTSPACE_STATE_DIR` | Every command keeps its lease records in this folder instead of the default ([docs/state.md](state.md)). |
+| `AGENTSPACE_SSH_DIR` | `create` makes the lease's alias usable from the OpenSSH client folder named here, instead of the calling user's own, and `release` removes it from there ([docs/state.md](state.md)). |
+| `AGENTSPACE_PROXY_COMMAND` | `create` gives the alias this command as its way to reach the lease's host, instead of agentspace's own ([docs/driver.md](driver.md)). |
+
+- **They exist so that a check, or a worktree, can run the CLI without touching the caller's real
+  leases or OpenSSH configuration.** A caller in normal use MUST NOT set them.
+- **A check that sets `AGENTSPACE_SSH_DIR` MUST keep the same value from `create` to `release`**,
+  since `release` removes the alias from the folder named when it runs. `renew` does not touch the
+  alias, and reads neither `AGENTSPACE_SSH_DIR` nor `AGENTSPACE_PROXY_COMMAND`.
+- **No other environment variable changes the contract's behavior.** Variables that the caller's
+  own system uses to name a home folder are [docs/state.md](state.md)'s.
 
 ## Schemas
 
@@ -722,32 +1091,40 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 | `lease-list.input.schema.json` | A `list` request | The flags of `list` |
 
 - **Output schemas are strict:** `additionalProperties` is false everywhere, every field that is
-  always present is required, each state requires and forbids its own fields, and IDs and times
-  have patterns. `format` is given as well, but only as an annotation, since validators need not
-  enforce it.
-- **Every anchored output pattern ends with `$(?!\n)`, not a bare `$`.** In .NET's regular
-  expressions, which `Test-Json` uses, `$` also matches before a final line feed, so a bare `$`
-  would accept `"swimcoach\n"`. `(?!\n)` means the same in ECMA-262 and .NET, and costs nothing
-  where `$` is already strict.
+  always present is required, each state and each error code requires and forbids its own fields,
+  and IDs and times have patterns. `format` is given as well, but only as an annotation, since
+  validators need not enforce it.
+  - **A message, in an error or in a reason, MUST NOT be empty or start with a space**, and holds
+    no control character.
+  - **A lease's `reasons` holds each code at most once**, and so at most four. Their order is in
+    [Fields](#fields); a schema cannot check it.
+- **Every anchored output pattern ends with `$(?!\n)`, not a bare `$`.** In .NET's and Python's
+  regular expressions, `$` also matches before a final line feed, so a bare `$` would accept
+  `"swimcoach\n"`. `(?!\n)` means the same in ECMA-262, .NET and Python, and costs nothing where
+  `$` is already strict.
 - **Input schemas are tolerant in form and strict in meaning.** They accept the spellings in
   [Values](#values), allow `null` for an optional member to mean "not given", and refuse unknown
   members, because an unknown member is most likely a misspelled one whose value would otherwise
   be dropped. A range (the TTL limits) cannot be checked by a pattern, so passing the schema does
-  not make a TTL acceptable.
+  not make a TTL acceptable, and an input schema MUST NOT refuse a TTL for its length.
 - **The v0 CLI takes flags and arguments only, and never reads a JSON request.** An input
   document defines a request: its members are the flags and arguments of the same names, it is
   what a request is validated against, and a hosted API (card #0011) MUST accept it as JSON. In
   JSON, insignificant whitespace is allowed anywhere.
 - **Each schema is self-contained**, with shared parts copied into its own `$defs`, because
   PowerShell's `Test-Json -SchemaFile` does not resolve a `$ref` to another file. The lease
-  definition in the list schema's `$defs` MUST stay identical to the lease schema, which
-  `scripts/test-schemas.ps1` checks.
+  definition in the list schema's `$defs` MUST stay identical to the lease schema's.
 - **Each schema has samples in [`schemas/samples/`](../schemas/samples)**, named
   `<schema name>.<case>.json`, which MUST validate. Documents that MUST NOT validate are in
-  `schemas/samples/invalid/` under the same naming, at least one per output schema.
-  `scripts/test-schemas.ps1` checks both and exits non-zero on any failure.
+  `schemas/samples/invalid/` under the same naming, at least one per output schema. A check MUST
+  validate both with a real draft 2020-12 validator and fail on any mismatch.
+  - Note on where this came from: the prototype's check is `scripts/test-schemas.ps1`, which uses
+    PowerShell's `Test-Json`; on 2026-11-18 the samples were also checked with Python's
+    `jsonschema` 4.19.
 - **A schema's `$id` names it and is not a download address.** Each `$id` carries the contract
   version, `v0`.
+- **The lease state file's schema, `schemas/state/leases.state.schema.json`, is not part of this
+  contract.** It is [docs/state.md](state.md)'s.
 
 ## Versioning
 
@@ -758,3 +1135,74 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 - **Accepting an input that v0 refused is not a new version.** Refusing one that v0 accepted is.
 - **Supporting a platform, profile or size that v0 answered `unsatisfiable` is not a new version.**
   The fields have been in the contract from v0 so that it is not (D5).
+- **Changing a message's wording is not a new version**, since no caller parses one.
+
+## Hardening carried in
+
+**Every point of the two lease CLI hardening cards, and where this contract meets it (D28).** Each
+card is OBE once the Rust CLI (v0.05, #0054) meets every requirement below. The operator's cards,
+#0027 and #0034, are [docs/operator.md](operator.md)'s.
+
+**#0029, harden lease credential issuing:**
+
+| Point | Carried in as |
+|---|---|
+| 1. Clock skew: validity starts at the caller's now | The certificate's valid-after SHOULD be 5 minutes before its issue time, and `expires_at` stays the issue time plus the TTL ([The credential](#the-credential)). |
+| 2. The lease ID check lets a trailing line feed and a trailing dot through | Every check matches the whole value ([Input tolerance](#input-tolerance)), and everything derived from a lease ID comes from its normalized form, which never ends in a dot ([Lease ID](#lease-id)). |
+| 3. The first lease on a fresh laptop creates a CA no host trusts | `create` and `renew` MUST NOT create the CA, and fail with `internal` when there is none ([The credential](#the-credential)). #0041 dropped its own copy of this point under D18, which was MVP only and is replaced by D28. |
+| 4. A failed signing leaves the key behind | A failed `create` leaves no key, certificate, alias or record, and never blocks a later `create` ([Concurrency and atomicity](#concurrency-and-atomicity)). |
+| 5. PowerShell 7.0 to 7.2 drop an empty argument | Declined as a requirement on a runtime: the rewrite is Rust (D28), and the prototype's real minimum is PowerShell 7.5 anyway (D8). What it protects is required instead: the lease's key has no passphrase ([The credential](#the-credential)), and an empty argument reaches the parser as one ([The program](#the-program)). |
+| 6. Every certificate has serial 0 | Declined for v0: a serial is not part of this contract, and is decided with revocation, card #0010 ([The credential](#the-credential)). |
+| 7. Test gaps: the start time is not checked against the test's clock, and a UTC and local mix-up is unseen on a UTC machine | The conformance suite MUST check against its own clock, and run once in a zone other than UTC ([Times](#times)). |
+
+**#0041, wrap credential errors, require driver, order writes:**
+
+| Point | Carried in as |
+|---|---|
+| 1. Credential errors reach `internal` unwrapped, with laptop paths, the user name and CA-check output | An `internal` message carries no absolute path, user name or other program's output ([Exit codes and errors](#exit-codes-and-errors)). |
+| 2. A `ready` record without its driver can be neither renewed nor released | A `ready` lease MUST be renewable, and one ever `ready` releasable, for as long as it is kept ([`renew`](#agentspace-lease-renew)). How the record keeps what that needs is [docs/state.md](state.md)'s, so its schema is left to that story (E0.04-T02-S01). |
+| 3. Release deletes files before writing the record, and renew re-signs before writing | A failed `renew` leaves `get` describing the certificate in place, and a failed `release` never leaves a `ready` or `expired` lease without its credential ([Concurrency and atomicity](#concurrency-and-atomicity)). |
+
+## Open questions
+
+**What reading the prototype and its docs could not settle.** The clean-room review (E0.04-T03-S01)
+closes each one, or names the story that will.
+
+1. **Which operating systems a caller's machine runs.** The prototype runs only on Windows, from
+   cmd, PowerShell and Git Bash. D4 puts Windows lease hosts in scope, but no decision says whether
+   the Rust CLI (v0.05) MUST also run on a Linux or macOS caller, nor what the program's file is
+   called on each.
+2. **How `bin\agentspace.cmd` passes arguments that cmd treats specially**, such as `%`, `^`, `&`,
+   `!` and embedded quotes. [The program](#the-program) requires them unchanged; only a run on
+   Windows shows whether the prototype meets that.
+3. **Exactly which characters are trimmed as whitespace.** This page says the Unicode
+   `White_Space` characters, and the prototype trims what .NET calls whitespace, which reading
+   suggests is the same set. The input schemas' `\s` (ECMA-262) also counts U+FEFF, which neither
+   does. Only a run settles the prototype's set, and the review decides whether U+FEFF is trimmed.
+4. **How the prototype escapes strings in its JSON output**, for instance whether `'`, `<`, `>`,
+   `&` or non-ASCII characters come out as `\u` escapes. This page allows any valid escaping; a
+   conformance check that compares bytes would need to know.
+5. **The back-dating of a certificate's valid-after time (#0029):** this page chose 5 minutes as
+   the SHOULD. The architect or the clean-room review confirms the number.
+6. **Whether `agent-linux`'s tools are on the `PATH` of a command run without an interactive login
+   shell**, as in `ssh <host_alias> node --version`. Today Node and Codex are put on the `PATH` by
+   lines at the end of `ubuntu`'s `~/.bashrc`, after Ubuntu's early return for non-interactive
+   shells. Only a run through an alias settles what such a command finds.
+7. **Whether the board's forwards belong in the lease's alias at all** (D12, D30, card #0008), or
+   should move to the keeper's own connection. Today a caller's second session on a host warns
+   that its remote port forwarding failed.
+8. **Whether `ssh.user`'s pattern, a Unix user name, fits a Windows host** (D4, v0.13, #0081). If
+   it does not, supporting Windows hosts is a new contract version.
+9. **Where `AGENTSPACE_STATE_DIR` reaches.** In the prototype it moves the lease records only; the
+   lease's key and certificate, and the CA, stay in the caller's profile folder. Whether a check
+   can isolate those too is [docs/state.md](state.md)'s to settle.
+10. **Where an `internal` error's original detail goes (#0041).** The error document may not carry
+    it, and the prototype keeps no log, so today it is lost.
+11. **How long a `create` holds other changing commands back.** The prototype holds its lock
+    through the whole of issuing, which starts a second shell for the CA check and runs
+    `ssh-keygen` three times. Only a run shows whether that comes near the 30-second limit after
+    which a concurrent `renew` or `release` fails as busy.
+12. **Whether the key is readable by no other ordinary user in practice.** The prototype sets no
+    access rules of its own on the key, and relies on what the profile folder passes down, which
+    on Terry's laptop includes SYSTEM and Administrators (D7, D17). The exact rules are
+    [docs/state.md](state.md)'s.

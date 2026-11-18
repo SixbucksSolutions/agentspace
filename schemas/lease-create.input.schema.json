@@ -36,7 +36,6 @@
     "ttl": {
       "description": "Short form (8h, 90m, 1h30m, '2 hours'; units d, h, m in lowercase only, s, and their words, largest first, each once) or ISO 8601 P[nD][T[nH][nM][nS]] in any case. A bare number, an uppercase M in the short form, weeks, months, years and fractions are refused.",
       "type": ["string", "null"],
-      "maxLength": 64,
       "pattern": "^\\s*(?:(?=[0-9])(?:[0-9]+\\s*(?:[dD](?:[aA][yY][sS]?)?)\\s*)?(?:[0-9]+\\s*(?:[hH](?:[oO][uU][rR][sS]?|[rR][sS]?)?)\\s*)?(?:[0-9]+\\s*(?:m|[mM][iI][nN](?:[sS]|[uU][tT][eE][sS]?)?)\\s*)?(?:[0-9]+\\s*(?:[sS](?:[eE][cC](?:[sS]|[oO][nN][dD][sS]?)?)?)\\s*)?|[pP](?=[0-9tT])(?:[0-9]+[dD])?(?:[tT](?=[0-9])(?:[0-9]+[hH])?(?:[0-9]+[mM])?(?:[0-9]+[sS])?)?\\s*)$"
     }
   }

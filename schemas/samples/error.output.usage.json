@@ -1,1 +1,1 @@
-{"code":"usage","message":"Unknown flag '--tll'. Run 'agentspace lease create --help' for the flags."}
+{"code":"usage","message":"Unknown option '--tll' for agentspace lease create. Run 'agentspace lease create --help'."}
