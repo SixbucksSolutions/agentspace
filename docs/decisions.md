@@ -708,6 +708,58 @@ stopped box. The README's "Use a lease from a project" is the how-to that came o
   transcript. The app keeps a session's transcript on the laptop, so the box's `~/.claude/projects`
   is not evidence either way.
 
+**Findings from 0.02.T2.1's live run (2026-11-17).** D9 stands. With Terry's `agentspace` entry
+removed from `~/.ssh/config`, a new lease's alias connected and pushed the Bot token over itself
+(card #0057). This ends, for a lease alias, the dependency on Terry's entry that E2.01 and E3.03
+found (#0028). Times are Pacific, the laptop's zone.
+- **The lease.** `.instance-id` was copied into the story's worktree, so the default ProxyCommand
+  named the worktree's new `ssh-proxy.cmd`. `bin\agentspace.cmd lease create --project t2verify
+  --ttl 1h`, run from the worktree, exited 0 with state `ready` and the alias
+  `agentspace-t2verify-1940a085`. The config already had `Include agentspace.d/*` on line 1, so
+  `create` left it unchanged (same SHA-256). `ssh -G` on the alias showed `proxycommand
+  C:\Windows\System32\cmd.exe /d /c "<worktree>\scripts\ssh-proxy.cmd" agentspace-t2verify-1940a085`.
+- **Terry's entry was removed for the test, and nothing else.** The config was copied aside and
+  hashed first. Then the `Host agentspace` line and its 11 indented lines were removed, leaving
+  the `Include` and the two comment lines above the block. `ssh -G agentspace` then resolved to a
+  bare host named `agentspace` with ssh's default keys and no ProxyCommand.
+- **The push rode the lease's certificate.** The push stamp was set aside as the last step, and
+  `ssh <alias>` ran a check command from a non-interactive PowerShell 7. The box was already
+  running. The connection started at 5:08:33pm and exited 0 at 5:08:42pm.
+  - `up`'s stderr printed `Sending the localswim Bot token to the instance...`, and the nested
+    `up` printed `Ready` and did not push again.
+  - sshd logged the push's nested login at 5:08:40pm as `ED25519-CERT ... ID 1940a085-... (serial
+    0) CA ED25519 ...`, the lease's certificate, not Terry's key. Its session opened and closed in
+    that second, and the outer login followed at 5:08:41pm with the same certificate.
+- **How the push was proven, without the token.**
+  - `bot.env` had 96 bytes, mode 600 and two lines, and its modification time was 5:08:40.413pm,
+    7 seconds after the connection started, so it was this connection's write.
+  - Its `sha256sum` equalled the hash the laptop would push. That hash was computed by
+    `agentspace.ps1`'s own `Get-BotEnvHash`, loaded from the script's syntax tree, over content
+    built as `Push-Localswim` builds it; only the hash was printed.
+  - The stamp came back equal to the one set aside.
+- **The board answered on the box.** The connection's `RemoteForward` lines bound 127.0.0.1:8811
+  and :53147, and `localswim board list` returned the `agentspace` board.
+- **The config was restored byte for byte** by a `Copy-Item` of the copy, in a `finally` step. Its
+  SHA-256 matched the one taken before any change (752 bytes) right after the restore, and again
+  after the lease was released.
+- **The no-argument path still pushes over `agentspace`.** With the config restored and the stamp
+  set aside again, `ssh -o ProxyCommand=<worktree's ssh-proxy.cmd, no argument> agentspace` exited 0
+  at 5:09:06pm. sshd logged the push's login at 5:09:04pm as `ED25519 SHA256:...` with no `ID`
+  (Terry's key), `bot.env` had the same size, mode and SHA-256 with a modification time of
+  5:09:04.382pm, and the stamp came back equal. Plain `ssh agentspace`, through the main
+  checkout's unchanged proxy, also connected and exited 0, with no push due.
+- **`ssh-proxy.cmd`'s argument check refused a bad alias through ssh.** With `-bad` after the
+  script in the ProxyCommand, it printed its `takes at most one argument` message and started
+  nothing, and ssh exited 255 with `Connection closed by UNKNOWN port 65535`. It was run once, not
+  retried (D14). No `agentspace-proxy-*` folder was left in `%TEMP%` after any of the runs.
+- **The lease was released** (`lease release` exited 0). Its alias file and key folder were gone,
+  `agentspace.d` was empty, the `Include` stayed, and the copied `.instance-id` was deleted.
+- **`up` prints `Ready: <instance ID>` to the caller's stderr.** A check that captures a
+  ProxyCommand's stderr therefore captures the instance ID, and it MUST withhold those lines from
+  anything committed or reported.
+- **Not tried:** a connection from a stopped box through the new path, and the desktop app through
+  it.
+
 ## What the MVP leaves alone
 
 ### D10. Releasing a lease does not revoke its certificate
