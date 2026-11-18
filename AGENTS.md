@@ -100,7 +100,7 @@ on it:
   it fires.
 - **When the timer fires, the architect checks whether the dev lead is busy:** mid-turn, or with
   its subagents still running.
-  - **If it is busy,** the architect does nothing else, and restarts the timer.
+  - **If it is busy,** the architect does nothing else, and restarts the timer with `-Reset` first. The timer counts from the last reset, so a restart without one fires at once.
   - **If it is not busy,** the architect nudges it: finish the work in one turn, or reply
     `BLOCKED:` with what it waits on. Waiting on its own subagents is not blocked.
 - **If two nudges within 30 minutes are both answered `BLOCKED`,** the architect removes the
