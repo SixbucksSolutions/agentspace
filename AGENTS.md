@@ -157,6 +157,11 @@ Docs cite its cards as `#0001`.
   starts on any of its stories, and follows its last story to Ready For Review as soon as that
   story arrives there (Terry, 2026-11-17). The architect moves it both times. Its description
   carries the execution plan by turn (decision D14). Only Terry moves a card to Completed.
+- **Epics with a dependency run in serial** (Terry, 2026-11-18: "let's work epics with
+  dependencies in serial"). An epic that another epic `blocks` MUST NOT be broken into stories or
+  started until the blocking epic is done: its stories merged and Terry's word that it is
+  complete. Epics with no `blocks` between them MAY run at the same time, as v0.03 and v0.04 did.
+  Within an epic, a turn starts only when every PR of the turn before is merged.
 - **Dependencies MUST be board relationships, not only text** (Terry, 2026-11-18). Each story is a
   child of its epic. Each "Depends on" a card states is a `blocks` relationship from the card
   depended on to the one that waits, between stories and between release epics alike. A defect
