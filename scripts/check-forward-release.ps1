@@ -6,6 +6,9 @@
 #
 #   pwsh -NoProfile -File scripts/check-forward-release.ps1 -Alias <alias> [-BoundSeconds <n>]
 #
+# A real run SHOULD use the default -BoundSeconds 120, the card's 2 minutes. sshd's own bound is 90 s,
+# and a run with -BoundSeconds 90 passed only on the 5 s of sample slack (0.02.T1.1, run 1: 89.9 s).
+#
 # The caller creates the lease and passes its alias, which MUST be ready. Nothing here creates,
 # renews or releases a lease, and nothing here edits ~/.ssh.
 #
@@ -28,13 +31,18 @@
 # Telling sessions apart: the first sample, taken before anything else starts, lists the watcher's own
 # sshd-session processes and any others (a desktop-app connection, say). The holder is the pid that
 # `ss` names as holding the ports, plus its parent. The idle session is the set of pids that appear
-# after it starts and were not in the sample taken just before.
+# after it starts and were not in the sample taken just before. Since all of this rests on the
+# session lines, the check MUST fail when the first sample shows no sshd-session at all (the watcher's
+# own is always there), and when a pid that holds the ports is not among that sample's sessions.
 #
 # A refused or dropped login fails the check once, and stops. It is never retried (D12, D14).
 #
 # This script MUST kill only the processes it started: each ssh.exe it launches and that process's
-# descendants, found by walking ParentProcessId (and checked against start times, so a reused pid is
-# never taken). It MUST clean them all up in the finally block, on failure and on Ctrl+C too.
+# descendants, found by walking ParentProcessId. A child is adopted only while its parent is still the
+# recorded process (present, with the recorded start time), so a reused pid's children are never
+# taken. The tree is walked only until the handle is first stopped; a later stop re-kills only the
+# recorded pids whose start time still matches. It MUST clean them all up in the finally block, on
+# failure and on Ctrl+C too.
 #
 # Output: one line per observation, starting with a UTC time (ISO 8601, Z). Exit 0 when both phases
 # pass, 1 otherwise. It MUST NOT print an instance ID, account ID or token; ssh's stderr is
@@ -84,8 +92,8 @@ function New-SshHandle([string]$Name, [string[]]$SshArgs) {
   $psi.RedirectStandardError = $true
   $p = [Diagnostics.Process]::Start($psi)
   $h = [pscustomobject]@{
-    Name = $Name; Proc = $p; OutTask = $p.StandardOutput.ReadLineAsync(); ErrTask = $p.StandardError.ReadLineAsync()
-    ErrLines = [Collections.Generic.List[string]]::new(); Tree = @{}
+    Name = $Name; Proc = $p; Started = $p.StartTime; OutTask = $p.StandardOutput.ReadLineAsync(); ErrTask = $p.StandardError.ReadLineAsync()
+    ErrLines = [Collections.Generic.List[string]]::new(); Tree = @{}; Stopped = $false
   }
   $script:Handles.Add($h)
   $h
@@ -182,11 +190,16 @@ function Wait-Snapshot([scriptblock]$Cond, [int]$TimeoutSec, [string]$What) {
 }
 
 function Update-Tree($H) {
-  # Adds the descendants of everything already tracked for this handle (and of its root) to its tree.
+  # Adds the live descendants of everything already tracked for this handle (and of its root) to its
+  # tree. A child is adopted only while its parent is still the recorded process: present in the
+  # current list with the recorded creation date. A recorded pid that has died and been reused by
+  # another process therefore never brings that process's children in.
   $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
   $created = @{}
   foreach ($p in $all) { $created[[int]$p.ProcessId] = $p.CreationDate }
-  if ($created.ContainsKey($H.Proc.Id) -and -not $H.Tree.ContainsKey($H.Proc.Id)) { $H.Tree[$H.Proc.Id] = $created[$H.Proc.Id] }
+  $root = $H.Proc.Id
+  if (-not $H.Tree.ContainsKey($root) -and $created.ContainsKey($root) -and
+    [Math]::Abs(($created[$root] - $H.Started).TotalSeconds) -lt 2) { $H.Tree[$root] = $created[$root] }
   $grew = $true
   while ($grew) {
     $grew = $false
@@ -194,6 +207,8 @@ function Update-Tree($H) {
       $id = [int]$p.ProcessId
       $parent = [int]$p.ParentProcessId
       if ($H.Tree.ContainsKey($id) -or -not $H.Tree.ContainsKey($parent)) { continue }
+      # The parent's pid now belongs to another process, or the parent is gone.
+      if (-not $created.ContainsKey($parent) -or $created[$parent] -ne $H.Tree[$parent]) { continue }
       # A child is never older than its parent; an older one means the parent's pid was reused.
       if ($p.CreationDate -lt $H.Tree[$parent]) { continue }
       if ($id -eq $PID) { continue }
@@ -204,7 +219,9 @@ function Update-Tree($H) {
 }
 
 function Stop-Handle($H) {
-  try { Update-Tree $H } catch { }
+  # The tree is walked only before the first stop. After it, its pids are dead and MAY be reused, so a
+  # second stop re-kills only the recorded pids whose start time still matches.
+  if (-not $H.Stopped) { try { Update-Tree $H } catch { } }
   foreach ($id in @($H.Tree.Keys)) {
     if ($id -eq $PID) { continue }
     try {
@@ -215,6 +232,7 @@ function Stop-Handle($H) {
     catch { }
   }
   try { if (-not $H.Proc.HasExited) { $H.Proc.Kill() } } catch { }
+  $H.Stopped = $true
 }
 
 function New-BoxLoop([int]$MaxSeconds) {
@@ -239,6 +257,7 @@ done
 }
 
 $code = 1
+$boxLoopStarted = $false
 try {
   $bound = $BoundSeconds
   $limit = $bound + $ExtraWatchSeconds
@@ -250,7 +269,11 @@ try {
     '-o', 'ServerAliveInterval=15', $Alias, (New-BoxLoop $maxBox))
   $script:MustLive.Add('watcher')
   $first = Wait-Snapshot { param($s) $true } $script:ConnectWait 'the watcher connection to send its first sample'
+  $boxLoopStarted = $true
   if ($first.Held.Count) { throw "The ports were already held before the check started ($(@($first.Held.Keys) -join ', ')); free them first." }
+  if (-not $first.Sessions.Count) {
+    throw 'The first box sample showed no sshd-session, not even the watcher''s own, so the check cannot tell sessions apart.'
+  }
   $baseline = @($first.Sessions | ForEach-Object { $_.Pid })
   Write-Log "Watcher connected; it and other logins show sshd-session pids: $($baseline -join ' ')."
 
@@ -259,8 +282,15 @@ try {
   $holder = New-SshHandle 'holder' @('-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30', $Alias)
   $script:MustLive.Add('holder')
   $held = Wait-Snapshot { param($s) $s.Held.ContainsKey('8811') -and $s.Held.ContainsKey('53147') } $script:ConnectWait 'the holder to hold both ports on the box'
+  # A holder that lost its forwards exits under ExitOnForwardFailure; fail with its stderr.
+  Assert-Alive
   $holderPids = [Collections.Generic.HashSet[int]]::new()
   foreach ($k in $held.Held.Keys) { foreach ($i in $held.Held[$k]) { [void]$holderPids.Add($i) } }
+  $samplePids = @($held.Sessions | ForEach-Object { $_.Pid } | Sort-Object)
+  $unseen = @($holderPids | Where-Object { $_ -notin $samplePids } | Sort-Object)
+  if (-not $holderPids.Count -or $unseen.Count) {
+    throw "The pids holding the ports ($(($holderPids | Sort-Object) -join ' ')) are not all among that sample's sshd-session pids ($($samplePids -join ' ')), so the check cannot tell the holder's session apart."
+  }
   # The privileged parent of the process that holds the ports belongs to the holder too.
   foreach ($s in @($held.Sessions)) { if ($holderPids.Contains($s.Pid)) { [void]$holderPids.Add($s.Ppid) } }
   Write-Log "Holder holds 127.0.0.1:8811 and :53147 on the box (sshd-session pids: $(($holderPids | Sort-Object) -join ' '))."
@@ -320,6 +350,10 @@ finally {
     try { Stop-Handle $h } catch { }
     try { $h.Proc.StandardInput.Close() } catch { }
   }
-  Write-Log "Cleanup done: $($script:Handles.Count) ssh process trees stopped. The box loop runs until its deadline ($maxBox s after it started), and sshd drops the watcher's session after that."
+  $line = "Cleanup done: $($script:Handles.Count) ssh process trees stopped."
+  if ($boxLoopStarted) {
+    $line += " The box loop runs until its deadline ($maxBox s after it started), and sshd drops the watcher's session after that."
+  }
+  Write-Log $line
 }
 exit $code

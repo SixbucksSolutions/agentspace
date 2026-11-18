@@ -78,4 +78,4 @@ if [ "$effective" != "clientalivecountmax 5 clientaliveinterval 15 logingracetim
 fi
 echo "Installed: SSH trusts the agentspace CA ($(ssh-keygen -l -f "$ca_pub" | cut -d' ' -f2)), root login closed"
 echo "Installed: 127.0.0.1 exempt from sshd penalties, login grace time 30 seconds"
-echo "Installed: a session whose client has gone is dropped within 90 seconds (probe every 15 seconds, 5 unanswered)"
+echo "Installed: a session whose client has gone is dropped about 90 seconds after it goes quiet (probe every 15 seconds, 5 unanswered)"

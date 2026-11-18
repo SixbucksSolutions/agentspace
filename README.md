@@ -76,9 +76,11 @@ powershell -File scripts\agentspace.ps1 ca
   - The sshd drop-in `/etc/ssh/sshd_config.d/51-agentspace-logins.conf`, from
     `box/system/51-agentspace-logins.conf`: `PerSourcePenaltyExemptList 127.0.0.1`, so refused
     logins, which all arrive from 127.0.0.1 through Session Manager, no longer earn a penalty
-    that locks every login out,
-    and `LoginGraceTime 30`, so a refused login's connection is dropped after 30 seconds rather
-    than 120 (D7, E3.01 finding). It shares the CA drop-in's `sshd -t` gate and rollback.
+    that locks every login out; `LoginGraceTime 30`, so a refused login's connection is dropped
+    after 30 seconds rather than 120 (D7, E3.01 finding); and `ClientAliveInterval 15` with
+    `ClientAliveCountMax 5`, so a logged-in session whose client has gone, which the Session
+    Manager tunnel never reports, is dropped with its forwards about 90 seconds after it goes quiet
+    (D12, 0.02.T1.1 finding). It shares the CA drop-in's `sshd -t` gate and rollback.
 
   It also copies the laptop's `~/.claude/CLAUDE.md` (Terry's global instructions for Claude
   Code) there, builds and installs the localswim CLI, and sends the current localswim Bot token.
@@ -197,11 +199,12 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    and any session SHOULD be closed first. The desktop app's SSH environment SHOULD then be
    removed, since its alias no longer exists. The project's checkout stays on the box.
 
-   **A closed holder can leave its forwards held on the box.** The Session Manager tunnel does not
-   tell sshd that the client has gone, and in E3.03 the dead holder's session still held 8811 and
-   53147 after more than 10 minutes, until it was killed by hand (D12's E3.03 finding, card
-   #0044). Until it is gone, a new holder would exit under `ExitOnForwardFailure`, and no session
-   on the box reaches the board. Clear it as D12's finding says.
+   **A closed holder keeps its forwards on the box for about 90 seconds.** The Session Manager
+   tunnel does not tell sshd that the client has gone, so the box drops a dead holder's session,
+   and frees 8811 and 53147, about 90 seconds after the session goes quiet (D12's 0.02.T1.1
+   finding, card #0044). A new holder started before then exits under `ExitOnForwardFailure`, so
+   wait and start it again. Only a session still holding them after 2 minutes is cleared by hand:
+   it MUST be cleared as D12's E3.03 finding says.
 
 ### The localswim board on the box
 
