@@ -45,7 +45,7 @@
 # Run as: pwsh -NoProfile -File conformance/operator/test-unmet-proxy-connect-time.ps1
 . (Join-Path $PSScriptRoot 'helpers.ps1')
 
-$section = 'operator.md#what-a-caller-sees'
+$section = 'operator.md#what-a-caller-sees-d1-card-0087'
 $seamSection = 'operator.md#the-test-seam'
 # A made-up instance ID, built here so that no ID is written into this file.
 $fakeId = 'i-' + ('0' * 17)
@@ -113,11 +113,19 @@ try {
       'exit /b 254'
     )
 
+    # A stand-in for ssh and scp, which operator.md does not call on this path (AGENTSPACE_NESTED is
+    # set, and the ProxyCommand runs the AWS CLI's tunnel only). It logs and exits 1, so that a build
+    # that starts either one, instead of the real ssh.exe, is caught and never reaches the real home.
+    $sshStub = Join-Path $dir 'ssh-stub.cmd'
+    $sshLog = Join-Path $dir 'ssh-stub-calls.log'
+    Set-Content -LiteralPath $sshStub -Encoding ascii -Value @('@echo off', 'echo called >>"%~dp0ssh-stub-calls.log"', 'exit /b 1')
+    $sshEnv = @{ AGENTSPACE_SSH_CMD = $sshStub; AGENTSPACE_SCP_CMD = $sshStub }
+
     foreach ($p in 'success', 'failure') {
       $standin = if ($p -eq 'success') { $awsOk } else { $awsFail }
       $log = if ($p -eq 'success') { $logOk } else { $logFail }
       $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_SSH_PROXY_CMD' -ConformanceHome $h -TimeoutSeconds 120 `
-        -Environment @{ AGENTSPACE_AWS_CMD = $standin; AGENTSPACE_NESTED = '1' }
+        -Environment ($sshEnv + @{ AGENTSPACE_AWS_CMD = $standin; AGENTSPACE_NESTED = '1' })
       $label = $nameOf[$p]
 
       $name = "${seamSection}: the ProxyCommand runs AGENTSPACE_AWS_CMD ($label)"
@@ -131,6 +139,9 @@ try {
         Write-ConformanceResult -Name "${section}: $label ends instead of hanging" -Status FAIL -Reason 'It did not end within 120 seconds'
         continue
       }
+      $name = "${seamSection}: the ProxyCommand starts neither ssh nor scp on this path ($label)"
+      if ((Get-CallCount -Log $sshLog) -eq 0) { Write-ConformanceResult -Name $name -Status PASS }
+      else { Write-ConformanceResult -Name $name -Status FAIL -Reason 'AGENTSPACE_SSH_CMD or AGENTSPACE_SCP_CMD was called, and operator.md gives this path no ssh or scp' }
       $lines = @($r.Stderr -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
 
       if ($p -eq 'success') {
@@ -158,7 +169,7 @@ try {
 
         # The diagnostic setting MAY add backend text, and MUST change nothing else.
         $d = Invoke-ConformanceProgram -Variable 'AGENTSPACE_SSH_PROXY_CMD' -ConformanceHome $h -TimeoutSeconds 120 `
-          -Environment @{ AGENTSPACE_AWS_CMD = $standin; AGENTSPACE_NESTED = '1'; AGENTSPACE_DIAGNOSTIC = '1' }
+          -Environment ($sshEnv + @{ AGENTSPACE_AWS_CMD = $standin; AGENTSPACE_NESTED = '1'; AGENTSPACE_DIAGNOSTIC = '1' })
         $name = "${section}: AGENTSPACE_DIAGNOSTIC changes neither the exit code nor stdout"
         if (-not $d.TimedOut -and $d.ExitCode -eq $r.ExitCode -and $d.Stdout.Length -eq 0) { Write-ConformanceResult -Name $name -Status PASS }
         else { Write-ConformanceResult -Name $name -Status FAIL -Reason "Exit code $($d.ExitCode) against $($r.ExitCode), $($d.Stdout.Length) bytes on stdout" }

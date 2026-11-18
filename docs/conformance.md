@@ -470,8 +470,9 @@ or `schemas\` at most, which are spec artifacts and allowed.
 [docs/operator.md](operator.md#the-test-seam) specifies** (E0.04-T03-S02): the environment
 variables that name the `aws` and `ssh` programs the operator runs, which a check needs to stand in
 for them. Until a build meets it, no stub can sit in front of the push, and **every group of
-`test-push-localswim.ps1` below stays prototype code, except the three that need no stub: the
-refusals of `-Alias` and of the ProxyCommand's arguments, which moved to `conformance/operator/`.**
+`test-push-localswim.ps1` below stays prototype code, except the four groups that need no stub, which
+moved to `conformance/operator/` in two kinds: the refusals of `-Alias` (two groups) and the
+refusals of the ProxyCommand's arguments (two groups).**
 
 #### `conformance/operator/`: conformance
 
@@ -577,7 +578,7 @@ code ([below](#the-three-installer-cases-prototype-code)).
   secret reaches the log.
 - **Folders and variables:** Each case has its own throwaway folder under `%TEMP%`, with a state
   folder (`AGENTSPACE_STATE_DIR`) holding a hand-written `leases.json` and `board-holder.json`, and
-  a home folder (`USERPROFILE`). **Every process a case starts, the keeper, its holders and the
+  a home folder (`USERPROFILE`). **Every process a case starts, the keeper and the
   stand-ins included, gets the harness's environment for that home** (`Get-ConformanceChildEnvironment`,
   [Running the suite](#running-the-suite)): `USERPROFILE`, `HOME`, `LOCALAPPDATA`
   (`<home>\AppData\Local`), `APPDATA` (`<home>\AppData\Roaming`), `AGENTSPACE_STATE_DIR` and
@@ -585,7 +586,11 @@ code ([below](#the-three-installer-cases-prototype-code)).
   naming files that do not exist; `AWS_EC2_METADATA_DISABLED=true`; the AWS profile, key, session
   and both container-credential variables removed; and every `AGENTSPACE_*` variable and
   `PSModulePath` the caller's shell held removed. The suite sets them on its own process, which
-  every child inherits, and puts every one back in a `finally`. It never uses the real
+  every child inherits, and puts every one back in a `finally`. **The keeper's holders are the
+  exception:** the keeper starts them, and the prototype's launcher, through WMI, so they get the
+  user's logon environment ([docs/keeper.md](keeper.md#streams-and-environment)). That is safe only
+  because the holder is the ssh stub, which touches nothing outside the run's folder; a holder that
+  was the real ssh would find the real home through the account. It never uses the real
   `%USERPROFILE%\.agentspace`, `~/.ssh`, `ssh.exe` or keeper task, and the three installer cases,
   with the one read of the real task, are not in it.
 - **Processes:** A keeper a case starts is stopped by the PID of the process the case started, and
@@ -660,8 +665,10 @@ Its header says so, its `FAIL` lines still say `FAIL`, and a rewrite's keeper MU
   event:** the keeper logs nothing when its look finds a holder alive and its pass then waits for the
   lock, so no event marks the window. The check waits on the keeper's own `skipped` line, which a
   pass writes when its 10-second lock wait runs out, and stops the holder 6 seconds after it: the
-  keeper's 1-second interval, then its look, then a new 10-second wait, so the stop lands about 5
-  seconds inside the window on either side. **The log then says which path the keeper took, and an
+  keeper's 1-second interval, then its look, then a new 10-second wait, so the stop lands in the
+  middle of that window, nominally 5 seconds from each edge. **That margin is smaller in practice:**
+  the look takes time, and the check lets the lock go right after the kill, so under load each
+  margin is nearer 3 seconds, and a missed window is why an attempt is run again. **The log then says which path the keeper took, and an
   attempt that missed the window is not a result.** A `grace` or `backoff` line before the pass's
   own is the look's, a `skipped` line is a pass that gave up, and a `kept` line is a pass that was not
   waiting; each is run again, up to 3 times, and a check that never reached the window is `SKIPPED`,

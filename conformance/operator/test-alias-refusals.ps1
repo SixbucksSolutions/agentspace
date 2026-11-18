@@ -73,7 +73,6 @@ try {
             Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason "Windows PowerShell 5.1 did not pass the argument intact (code points received: $got). See docs/conformance.md, open question 2"
           }
         }
-        'never' { Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason $case.Reason }
       }
     }
     $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD' -ConformanceHome $h -Arguments @('status', '-Alias', 'x') -TimeoutSeconds 60

@@ -14,14 +14,18 @@
 # - Every case has its own throwaway folder under the run's folder, which is
 #   $env:TEMP\agentspace-conformance-keeper-<guid>: a state folder, named by AGENTSPACE_STATE_DIR, with
 #   a hand-written leases.json, and a home folder, named by USERPROFILE.
-# - Every process a case starts, the keeper, its holders and the stand-ins included, gets the
+# - Every process a case starts, the keeper and the stand-ins included, gets the
 #   environment that the harness's Get-ConformanceChildEnvironment builds for the case's home
 #   (conformance/lease-cli/harness.ps1): USERPROFILE, HOME, LOCALAPPDATA, APPDATA, AGENTSPACE_STATE_DIR
 #   and AGENTSPACE_SSH_DIR inside the case's folder, AWS_CONFIG_FILE and AWS_SHARED_CREDENTIALS_FILE
 #   naming files that do not exist, AWS_EC2_METADATA_DISABLED=true, no AWS profile, key, session or
 #   container-credential variable, and no AGENTSPACE_* or PSModulePath variable the caller's shell
 #   held. Set-CaseEnvironment applies it to this process, which every child inherits, and
-#   Restore-CaseEnvironment puts every variable back, in the caller's finally.
+#   Restore-CaseEnvironment puts every variable back, in the caller's finally. The keeper's holders
+#   are the exception (keeper.md, "Streams and environment"): the keeper starts them, and the
+#   prototype's launcher, through WMI, so they get the user's logon environment and not this one.
+#   That is safe only because the holder is the ssh stub, which touches nothing outside the run's
+#   folder; a holder that was the real ssh would find the real home through the account.
 # - The stand-in for ssh.exe is conformance\keeper\ssh-stub.cmd, copied into the run's folder so that
 #   its command line is unique to this run. It prints a line, then waits about 20 minutes, and carries
 #   its arguments on its own command line; the ping it runs is its child, which makes a tree.

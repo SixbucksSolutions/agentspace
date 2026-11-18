@@ -28,7 +28,8 @@
 #    the lock once; the keeper logs nothing when its look finds the holder alive and the pass then
 #    waits, so no event marks the window itself, and the window is entered by one bounded wait from
 #    that line: 1 second of interval, then the look, then a 10-second lock wait, and the check stops
-#    the holder 6 seconds after the line, 5 seconds inside the window on either side. The log then
+#    the holder 6 seconds after the line, in the middle of a window that is nominally 5 seconds from each
+#    edge and nearer 3 under load (the look takes time), and lets the lock go right after the kill. The log then
 #    says which path the keeper took, and an attempt that missed the window (a grace or backoff line
 #    before the pass's line is the look's own, a skipped or kept line is a pass that was not waiting)
 #    is not a result: it is run again, up to 3 times, and a check that never reached the window is
@@ -51,7 +52,7 @@
 #
 # Output: PASS <check name>, FAIL <check name>: <reason>, SKIPPED <check name>: <reason>, then one
 # summary line; exit 0 when every check passed, 1 when any failed, 2 when none failed but any was
-# skipped. Against the prototype it takes about 1 minute, and the rewrite's about 2.
+# skipped. Against the prototype it takes about 42 seconds, and the rewrite's about 2.
 # Run:  pwsh -NoProfile -File conformance\keeper\test-unmet-holder-dies-mid-pass.ps1
 $ErrorActionPreference = 'Stop'
 
@@ -129,13 +130,14 @@ function Lock-PassLock($Process) {
 
 # Stops the holder that the keeper's record names, and what is below it: only a process whose command
 # line is this run's stub with the holder's arguments, and whose start time is the record's.
-function Stop-RecordedHolder($Record) {
+function Stop-RecordedHolder($Record, [scriptblock]$AfterKill = {}) {
   $holderPid = [int]$Record['pid']
   if (-not (Test-HolderLine (Get-CommandLine $holderPid))) { return $false }
   $p = [Diagnostics.Process]::GetProcessById($holderPid)
   $null = $p.Handle
   if ((Format-Utc $p.StartTime) -cne $Record['process_started_at']) { return $false }
   Stop-OwnTree $holderPid
+  & $AfterKill
   Wait-Until { -not (Test-Alive $holderPid) } 30
 }
 
@@ -182,9 +184,11 @@ try {
       try {
         $started = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 1 } 60 $p
         if (-not $started) { Add-Check $false 'The keeper starts a holder for the ready lease' "No started line appeared, because the keeper ended or 60 seconds passed. The log ends: $((Read-LogLines | Select-Object -Last 3) -join ' | ')"; $concluded = $true; continue }
-        $rec = Read-Record
+        # The record is read only once the check holds the lock, which is after the pass has let it go:
+        # a keeper MAY log "started" before it writes the record (keeper.md, Q5).
         $held = Lock-PassLock $p
         if (-not $held) { $missed = 'The check could not take board-holder.lock.'; continue }
+        $rec = Read-Record
         # The pass that waits for the lock gives up after 10 seconds and says so. That line is the
         # event: the look before it found the holder alive, and the keeper is now in its 1-second
         # interval. The next look comes about a second after it, and the pass after that look waits
@@ -194,9 +198,12 @@ try {
         $index = Get-FirstIndex (Read-LogLines) ' skipped lease=- alias=- pid=- reason=locked\z'
         $watch = [Diagnostics.Stopwatch]::StartNew()
         [void](Wait-Until { $watch.Elapsed.TotalSeconds -ge 6 } 30 $p)
-        $stopped = $rec -and (Stop-RecordedHolder $rec)
-        $held.Dispose(); $held = $null
-        $released = [DateTime]::UtcNow
+        # The lock goes right after the kill, before the wait for the exit, so that the pass is not
+        # held longer than the kill needs.
+        $box = @{ Released = $null }
+        $stopped = $rec -and (Stop-RecordedHolder $rec { $held.Dispose(); $box.Released = [DateTime]::UtcNow })
+        $held = $null
+        $released = if ($box.Released) { $box.Released } else { [DateTime]::UtcNow }
         if (-not $stopped) { $missed = 'The check could not stop the holder the record names.'; continue }
         $after = Get-Outcome $p $index
         if (Test-WindowMissed $after) { $missed = "The pass was not the one that waited for the lock: the first line after the skipped one is '$(if ($after.Count) { $after[0] } else { 'nothing' })'."; continue }
@@ -223,12 +230,13 @@ try {
         $started = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 1 } 60 $p
         if (-not $started) { Add-Check $false 'The keeper starts a holder for the ready lease' "No started line appeared, because the keeper ended or 60 seconds passed. The log ends: $((Read-LogLines | Select-Object -Last 3) -join ' | ')"; $concluded = $true; continue }
         $index = Get-FirstIndex (Read-LogLines) ' started '
-        $rec = Read-Record
-        $holderPid = if ($rec) { [int]$rec['pid'] } else { -1 }
         # The keeper's next look is 5 seconds after its pass, and reads the process only. The record
-        # goes while the lock is held, so that no pass is running, and the holder keeps running.
+        # goes while the lock is held, so that no pass is running, and the holder keeps running. It is
+        # read only once the lock is held, after the pass has let it go.
         $held = Lock-PassLock $p
         if (-not $held) { $missed = 'The check could not take board-holder.lock.'; continue }
+        $rec = Read-Record
+        $holderPid = if ($rec) { [int]$rec['pid'] } else { -1 }
         Remove-Item -LiteralPath (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json')
         $held.Dispose(); $held = $null
         $released = [DateTime]::UtcNow
