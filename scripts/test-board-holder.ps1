@@ -332,9 +332,13 @@ function Get-StartCount {
 }
 
 # Starts the keeper with -Watch and returns the process. Output goes to files, never to a pipe.
-function Start-Watch([string[]]$Extra, [string]$Ssh) {
+# Story E0.02-T04-S03 added the release grace, 95 seconds by default, which would stretch every case
+# that restarts a holder. Unless the case names -ReleaseGraceSeconds itself, or asks for the default
+# with -DefaultGrace, the run gets a grace of 1 second, shorter than every backoff these cases use.
+function Start-Watch([string[]]$Extra, [string]$Ssh, [switch]$DefaultGrace) {
   $out = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.out'
   $err = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.err'
+  if (-not $DefaultGrace -and -not ($Extra -contains '-ReleaseGraceSeconds')) { $Extra = @($Extra) + @('-ReleaseGraceSeconds', '1') }
   $a = @('-NoProfile', '-File', $Keeper, '-SshExe', $Ssh, '-Watch') + $Extra
   $p = Start-Process -FilePath $pwsh -ArgumentList $a -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
   $null = $p.Handle
@@ -346,6 +350,19 @@ function Wait-Watch($Process, [int]$Seconds = 240) {
   if (-not $Process.WaitForExit($Seconds * 1000)) { Stop-OwnTree $Process.Id; return -999 }
   $Process.ExitCode
 }
+
+# The times of the log lines whose action is the given one, in order.
+function Get-ActionTimes($Log, [string]$Action) {
+  @($Log | Where-Object { $_ -cmatch ('\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ' + $Action + '(\s|\z)') } | ForEach-Object { Get-LogTime $_ })
+}
+
+# The n of every "grace seconds=<n>" line, in order.
+function Get-GraceSeconds($Log) {
+  @($Log | ForEach-Object { if ($_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ grace seconds=(\d+)\z') { [int]$Matches[1] } })
+}
+
+# Stops a keeper the test started, once the case has seen what it needs.
+function Stop-Watch($Process) { if (-not $Process.HasExited) { Stop-OwnTree $Process.Id } }
 
 function Get-LogTime([string]$Line) {
   if ($Line -cmatch '\A(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) ') {
@@ -827,6 +844,141 @@ try {
     Write-Result ($text -inotmatch '\.(pem|key|crt|cer|pfx|p12)\b|id_(rsa|ed25519|ecdsa)|[\\/]\.ssh[\\/]') 'Watch secrets: no key or certificate path'
     Write-Result ($text -cnotmatch '[A-Za-z0-9+/]{32,}') 'Watch secrets: no token-like run of 32 or more characters'
     Write-Result ($text -inotmatch '(token|secret|password|passwd|bearer)\s*[=:]\s*\S{8,}') 'Watch secrets: no token=, secret= or password= value'
+  }
+
+  # -ReleaseGraceSeconds (story E0.02-T04-S03, D30). The stand-in lives 2 seconds, then exits 1, so
+  # each holder dies unproven and the backoff applies as well. Log times are whole seconds, which
+  # blurs a gap by up to a second either way, so the bounds below leave that room.
+  #
+  # The grace: after a holder is seen to exit, the next one starts no sooner than the grace. Grace 10
+  # and backoff 4: the longer, 10, is waited. A true gap is then at least 2 + 10 = 12 seconds, and at
+  # most about 14. The sum, 14, would give a true gap of at least 16.
+  Invoke-Case 'Watch: the next holder waits out the release grace, the longer of grace and backoff' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $fail = New-FailStub $false 2
+    $grace = if ($script:mut) { '1' } else { '10' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '60', '-BackoffBaseSeconds', '4', '-BackoffMaxSeconds', '4', '-ReleaseGraceSeconds', $grace) $fail
+    try { $two = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 2 } 120 } finally { Stop-Watch $p }
+    Write-Result $two 'Watch grace: a second holder is started after the first one exits'
+    $log = Read-LogLines
+    $st = @(Get-ActionTimes $log 'started')
+    $gap = if ($st.Count -ge 2) { ($st[1] - $st[0]).TotalSeconds } else { -1 }
+    Write-Result ($gap -ge 11) "Watch grace: the second holder starts at least the grace after the first one exited, 12 seconds less rounding (gap $gap)"
+    # Not added: exactly one wait line sits between the two starts, and it is the grace, with no
+    # backoff line. The log says it without a timing bound that load could break.
+    $between = @(); $seenStarts = 0
+    foreach ($l in $log) {
+      if ($l -cmatch ' started ') { $seenStarts++; continue }
+      if ($seenStarts -eq 1 -and $l -cmatch ' (grace|backoff) seconds=') { $between += $l }
+    }
+    Write-Result ($between.Count -eq 1 -and $between[0] -cmatch ' grace seconds=10$') "Watch grace: grace and backoff are not added, the one wait between the starts is ""grace seconds=10"" (got $($between -join ' | '))"
+    Write-Result (-not ($log -cmatch ' backoff seconds=')) 'Watch grace: no backoff line is logged'
+    $g = @(Get-GraceSeconds $log)
+    Write-Result ($g.Count -ge 1 -and $g[0] -ge 8 -and $g[0] -le 10) "Watch grace: a ""grace seconds=<n>"" line is logged for the wait, with n about the grace, 10 (got $($g -join ','))"
+    $firstStarted = -1; $firstGrace = -1; $secondStarted = -1; $seen = 0
+    for ($i = 0; $i -lt $log.Count; $i++) {
+      if ($log[$i] -cmatch ' started ') { $seen++; if ($seen -eq 1) { $firstStarted = $i } elseif ($seen -eq 2) { $secondStarted = $i } }
+      if ($firstGrace -lt 0 -and $log[$i] -cmatch ' grace seconds=') { $firstGrace = $i }
+    }
+    Write-Result ($firstStarted -ge 0 -and ($firstGrace -lt 0 -or $firstGrace -gt $firstStarted)) 'Watch grace: no grace line comes before the first holder, which starts at once'
+    Write-Result ($firstGrace -gt $firstStarted -and $secondStarted -gt $firstGrace) 'Watch grace: the grace line comes after the first start and before the second'
+  }
+
+  # The backoff stays: backoff 12 against grace 3, the longer, 12, is waited. A true gap is at least
+  # 2 + 12 = 14 seconds. With the grace alone it would be about 6 to 8.
+  Invoke-Case 'Watch: a backoff longer than the grace is still waited' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $fail = New-FailStub $false 2
+    $base = if ($script:mut) { '1' } else { '12' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '60', '-BackoffBaseSeconds', $base, '-BackoffMaxSeconds', $base, '-ReleaseGraceSeconds', '3') $fail
+    try { $two = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 2 } 120 } finally { Stop-Watch $p }
+    Write-Result $two 'Watch backoff beats grace: a second holder is started'
+    $st = @(Get-ActionTimes (Read-LogLines) 'started')
+    $gap = if ($st.Count -ge 2) { ($st[1] - $st[0]).TotalSeconds } else { -1 }
+    Write-Result ($gap -ge 13) "Watch backoff beats grace: the second holder starts at least the backoff after the first one exited, 14 seconds less rounding (gap $gap)"
+  }
+
+  # The default is 95 seconds. A keeper with no -ReleaseGraceSeconds waits for the grace after its
+  # holder exits; the case reads the line and stops the keeper, so it never waits the 95.
+  Invoke-Case 'Watch: the release grace is 95 seconds by default' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $fail = New-FailStub $false 1
+    if ($script:mut) { $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '60', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '1', '-ReleaseGraceSeconds', '3') $fail }
+    else { $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '60', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '1') $fail -DefaultGrace }
+    try { $seen = Wait-Until { @(Get-GraceSeconds (Read-LogLines)).Count -ge 1 } 60; Start-Sleep -Seconds 3 } finally { Stop-Watch $p }
+    Write-Result $seen 'Watch default grace: a grace line is logged when the holder has exited'
+    $log = Read-LogLines
+    $g = @(Get-GraceSeconds $log)
+    Write-Result ($g.Count -ge 1 -and $g[0] -ge 93 -and $g[0] -le 95) "Watch default grace: the first grace line says seconds=95, less rounding (got $($g -join ','))"
+    Write-Result (@(Get-ActionTimes $log 'started').Count -eq 1) 'Watch default grace: no second holder is started within the first seconds of the wait'
+  }
+
+  # A first holder is not delayed: no holder recorded, a ready lease, a grace of 60 seconds. The
+  # keeper starts one in its first pass, which -MaxPasses 1 ends.
+  Invoke-Case 'Watch: a first holder is not delayed by the grace' {
+    $r = New-ReadyRecord 'a' $farFuture
+    if ($script:mut) { $r = New-ReleasedRecord 'a' $farFuture }
+    Write-Leases @($r)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '1', '-ReleaseGraceSeconds', '60') $stub
+    $code = Wait-Watch $p 90
+    $sw.Stop()
+    Write-Result ($code -eq 0) "Watch first holder: the keeper ends its one pass with exit 0 (got $code)"
+    Write-Result ($sw.Elapsed.TotalSeconds -lt 40) "Watch first holder: the pass is not held for the grace (took $([Math]::Round($sw.Elapsed.TotalSeconds, 1)) seconds)"
+    $log = Read-LogLines
+    Write-Result (@(Get-ActionTimes $log 'started').Count -eq 1) 'Watch first holder: one started line is logged'
+    Write-Result (-not ($log -cmatch ' grace ')) 'Watch first holder: no grace line is logged'
+    $rec = Read-Record
+    Write-Result ($rec -and (Test-Alive ([int]$rec['pid']))) 'Watch first holder: the recorded holder is running'
+  }
+
+  # A lease that becomes ready after the keeper stopped a holder for the last one: its holder waits
+  # the release grace from the stop (architect's ruling, 2026-11-17), because the stop leaves the
+  # box's session holding the forwards (D12). Lease a is ready with a holder running, then
+  # released; lease b becomes ready after the stop. The grace is 10 seconds.
+  Invoke-Case 'Watch: the holder after one the keeper stopped waits the release grace' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $h = Start-TrustedHolder 'a'
+    $grace = if ($script:mut) { '1' } else { '10' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '40', '-ReleaseGraceSeconds', $grace) $stub
+    $started = $false
+    try {
+      $kept = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'kept').Count -ge 1 } 60
+      Write-Leases @((New-ReleasedRecord 'a' $farFuture))
+      $stopped = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'stopped').Count -ge 1 } 60
+      Start-Sleep -Seconds 2
+      Write-Leases @((New-ReleasedRecord 'a' $farFuture), (New-ReadyRecord 'b' $farFuture))
+      $started = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 1 } 60
+    } finally { Stop-Watch $p }
+    Write-Result ($kept -and $stopped) 'Watch new lease: the first lease''s holder was kept, then stopped at release'
+    Write-Result $started 'Watch new lease: the holder for the new lease is started'
+    $log = Read-LogLines
+    $g = @(Get-GraceSeconds $log)
+    Write-Result ($g.Count -ge 1 -and $g[0] -ge 8 -and $g[0] -le 10) "Watch new lease: a ""grace seconds=<n>"" line is logged after the stop, n about 10 (got $($g -join ','))"
+    $stopT = @(Get-ActionTimes $log 'stopped'); $startT = @(Get-ActionTimes $log 'started')
+    $gap = if ($stopT.Count -ge 1 -and $startT.Count -ge 1) { ($startT[0] - $stopT[0]).TotalSeconds } else { -1 }
+    Write-Result ($gap -ge 9) "Watch new lease: the new holder starts no sooner than the grace after the stop, 10 seconds less rounding (gap $gap)"
+    $rec = Read-Record
+    Write-Result ($rec -and $rec['lease_id'] -ceq (Get-Id 'b')) 'Watch new lease: the record names the new lease'
+  }
+
+  # A -ReleaseGraceSeconds that is not a whole number from 1 to 86400 is a usage error like the other
+  # numeric arguments: exit 2, no holder started, though a lease is ready.
+  foreach ($bad in @('abc', '-5', '1.5', '86401')) {
+    $label = $bad
+    $badValue = $bad
+    Invoke-Case "Watch: -ReleaseGraceSeconds $label is a usage error" {
+      Write-Leases @((New-ReadyRecord 'a' $farFuture))
+      $value = if ($script:mut) { '3' } else { $badValue }
+      $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '1', '-ReleaseGraceSeconds', $value) $stub
+      $code = Wait-Watch $p 90
+      Write-Result ($code -eq 2) "Watch bad grace ${label}: the keeper exits 2 (got $code)"
+      Write-Result ((Get-StubProcesses).Count -eq 0) "Watch bad grace ${label}: no holder is started"
+      Write-Result ($null -eq (Read-Record)) "Watch bad grace ${label}: no record is written"
+      $errPath = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.err'
+      $errText = if (Test-Path -LiteralPath $errPath) { Get-Content -LiteralPath $errPath -Raw } else { '' }
+      Write-Result ([bool]($errText -match 'ReleaseGraceSeconds')) "Watch bad grace ${label}: the usage error names -ReleaseGraceSeconds"
+    }
   }
 
   # The installer's dry run prints the logon task and changes nothing. The installer is run with
