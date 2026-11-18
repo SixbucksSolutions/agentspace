@@ -2052,6 +2052,48 @@ D27's per-agent footprint is measured.
 **Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
 or counts a shared library four times, sizes every host wrong.
 
+### D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype
+
+**Decided, architect, 2026-11-18, when Terry had v0.04 (#0030) broken into stories.** It settles
+#0030's design call and says how the package is built and checked.
+- **Each interface gets one reference doc, which owns it:**
+  - The lease CLI: `docs/lease-api.md` and `schemas/`.
+  - The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`, the ProxyCommand and the
+    token push, with the box as the laptop sees it): `docs/operator.md`.
+  - The laptop's state (every file and folder agentspace writes, the lease's key, certificate and
+    alias from creation to removal, and the `Include` line): `docs/state.md`.
+  - The driver boundary between the CLI and a backend: `docs/driver.md`.
+  - The keeper: `docs/keeper.md`.
+  - The vision: `docs/vision.md`. The decisions keep their place here, each MVP-only one marked.
+  - Another doc that needs a fact owned elsewhere MUST cite that doc's section rather than restate
+    it, so a fact has one home.
+- **A spec MUST be understood without the code (D20).** It defines behavior by what can be seen
+  from outside: commands, flags, output, files, exit codes, environment variables. It MUST NOT
+  define behavior by a function name or a line of the prototype. It MAY name a prototype file in
+  a note on where a requirement came from.
+- **A defect or hardening card against the prototype is carried in as a requirement on the
+  behavior,** and the doc names the card it closes (D28). The prototype's defect is never
+  specified as behavior to copy.
+- **A check the rewrite MAY read and run is a conformance check.** It MUST drive the product only
+  as a separate process, through what the specs document, with stubs only for programs outside
+  agentspace (`ssh`, `aws`). It names the program under test through one environment variable,
+  so the same check runs against the prototype and the rewrite.
+- **A check that loads the prototype's code** (dot-sourcing a script, calling its functions, or
+  reading its internal files) **is prototype code, and the rewrite MUST NOT read it.** E0.04-T02-S04
+  sorts the suites. A check moves across only by being rewritten as the first kind.
+- **The package is checked by reviewers who cannot see the code.** They work from an export
+  holding only `docs/`, `schemas/` and the conformance checks, never from a checkout. Each writes
+  how it would build a drop-in, and lists every point where it had to guess. A guess is a gap in
+  the package.
+- **v0.04's first turn runs on the box, where v0.03 measures it (D33).** The prototype runs only
+  on Windows, so a writer there reads the code and the docs and never runs the prototype. A
+  question only a run on the laptop could settle goes in its doc's open questions, for the
+  clean-room review to close.
+
+**Why:** the rewrite is a drop-in built from documents alone (D19, D20). A fact stated in two
+docs drifts into two answers, and a test that loads the prototype's functions teaches the
+rewrite the prototype's structure, which D20 exists to keep out.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
