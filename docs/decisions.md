@@ -1776,10 +1776,26 @@ setting is as before.
 - **The read-back shows both triggers and the repetition**, in `-DryRun` and after a real
   registration: `Trigger 1`, `Trigger 2` (with its `StartBoundary` and `EndBoundary`), and
   `Repetition 2: Interval=PT1M Duration=indefinite`.
-- **Live-run result (E0.02-T04-S02): TO BE FILLED IN BY THE DEV LEAD.** Record here the
-  re-registration, the check and kill of the keeper's pwsh by PID, the time Task Scheduler took to
-  run the task again, the new keeper's `kept ... pid=<holder>` line, and the count of launchers and
-  keeper pwsh processes across at least 3 trigger firings.
+- **Live run (E0.02-T04-S02, 2026-11-17, Pacific time): passed**, with a holder running for a
+  throwaway lease. The installer ran from an untracked copy in the main checkout, so the task
+  points there as it will after the merge, and the copy was deleted at once.
+  - **Refusal:** at 9:44pm an install while the keeper ran exited 2 and left the task's exported
+    XML unchanged. It named no keeper PID, because the launcher quotes each argument
+    (`board-holder.ps1" "-Watch"`) and the match then required whitespace before `-Watch`; it
+    refused only because the task was Running. With the task ended and an orphaned keeper alive,
+    it would not have refused. `Test-KeeperCommandLine` now matches after a quote too, and a test
+    checks the quoted form.
+  - **Re-registration:** the task was ended, which killed only the launcher, and the keeper's pwsh
+    was stopped by its checked PID; the holder survived. The install at 9:44:48pm exited 0 and read
+    back `Trigger 1: AtLogOn`, `Trigger 2: Once ... EndBoundary=none` and
+    `Repetition 2: Interval=PT1M Duration=indefinite`. The new keeper's first pass logged
+    `kept ... pid=<holder>`.
+  - **Crash:** the keeper's pwsh was killed by its checked PID at 9:45:13pm. Task Scheduler ran the
+    task again at 9:45:50pm, 37 seconds later, and the new keeper's first pass logged
+    `kept ... pid=<holder>`: no new holder, and no new login on the box.
+  - **One keeper:** 22 samples 10 seconds apart over 224 seconds, about 4 firings, each showed
+    exactly one launcher and one keeper pwsh, with the same PIDs throughout. An ignored firing
+    sets LastTaskResult to 0x800710E0, which is IgnoreNew at work and not a failure.
 
 ### D31. Each story's card names every subagent, run in parallel where reasonable
 

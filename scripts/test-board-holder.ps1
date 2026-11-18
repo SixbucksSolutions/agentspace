@@ -896,6 +896,27 @@ try {
     Write-Result ((& $getTask) -ceq $taskBefore) 'Installer: the task named "agentspace board holder" is as it was before the dry run, or still absent'
   }
 
+  # A real install is refused while a keeper runs, and finds the keeper by its command line. The
+  # launcher quotes each argument, so the match is checked on that quoted form as well as the plain
+  # one. Test-KeeperCommandLine is loaded from the installer's syntax tree, so nothing is run.
+  Invoke-Case 'Installer: a running keeper is found by its command line' {
+    $installer = Join-Path $repo 'scripts\install-board-holder.ps1'
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($installer, [ref]$null, [ref]$null)
+    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-KeeperCommandLine' }, $true)
+    Write-Result ($null -ne $fn) 'Installer: Test-KeeperCommandLine is defined'
+    if ($null -eq $fn) { return }
+    . ([scriptblock]::Create($fn.Extent.Text))
+    $ks = 'C:\agentspace\scripts\board-holder.ps1'
+    $quoted = '"C:\Program Files\PowerShell\7\pwsh.exe" "-NoProfile" "-NonInteractive" "-File" "' + $ks + '" "-Watch"'
+    $plain = 'pwsh.exe -NoProfile -NonInteractive -File ' + $ks + ' -Watch'
+    $found = if ($script:mut) { -not (Test-KeeperCommandLine $quoted $ks) } else { Test-KeeperCommandLine $quoted $ks }
+    Write-Result $found 'Installer: the launcher''s quoted command line ("-Watch") is a keeper'
+    Write-Result (Test-KeeperCommandLine $plain $ks) 'Installer: a plain command line with -Watch is a keeper'
+    Write-Result (-not (Test-KeeperCommandLine ('pwsh.exe -File ' + $ks + ' -MaxPasses 1') $ks)) 'Installer: the keeper script without -Watch is not a keeper'
+    Write-Result (-not (Test-KeeperCommandLine ('pwsh.exe -File C:\other\board-holder.ps1 -Watch') $ks)) 'Installer: another checkout''s keeper is not this one'
+    Write-Result (-not (Test-KeeperCommandLine '' $ks)) 'Installer: an empty command line is not a keeper'
+  }
+
   # The installer's dry run warns when the repo is a git worktree rather than the main checkout, and
   # still exits 0. The expectation is worked out here the same way: a git dir that differs from the
   # common git dir, or a path under .claude\worktrees. Run from a worktree, the warning MUST appear.

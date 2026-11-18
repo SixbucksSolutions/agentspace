@@ -104,6 +104,14 @@ function Get-TriggerLines($Triggers) {
     }
 }
 
+# True when a process command line runs the given keeper script with -Watch. The launcher quotes
+# each argument, so a real keeper's command line ends `board-holder.ps1" "-Watch"`; -Watch MUST be
+# matched after a quote as well as after whitespace (E0.02-T04-S02's live check).
+function Test-KeeperCommandLine([string]$CommandLine, [string]$KeeperScript) {
+    if (-not $CommandLine -or -not $CommandLine.Contains($KeeperScript)) { return $false }
+    return $CommandLine -match '(?i)[\s"]-Watch\b'
+}
+
 # True when the repo folder is a git worktree rather than the main checkout: its git dir differs
 # from its common git dir, or its path is under .claude\worktrees.
 function Test-RepoIsWorktree([string]$Repo) {
@@ -183,7 +191,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:Launcher) 
 $existing = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
 $keeperScript = Join-Path $script:Repo 'scripts\board-holder.ps1'
 $keepers = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($keeperScript) -and $_.CommandLine -match '(?i)\s-Watch\b' })
+    Where-Object { Test-KeeperCommandLine $_.CommandLine $keeperScript })
 if (($existing -and $existing.State -eq 'Running') -or $keepers.Count -gt 0) {
     $pids = if ($keepers.Count -gt 0) { ($keepers | ForEach-Object { $_.ProcessId }) -join ', ' } else { 'none found' }
     [Console]::Error.WriteLine("install-board-holder.ps1: A keeper is running (task state: $(if ($existing) { $existing.State } else { 'not registered' }); keeper pwsh PID: $pids). Stop it first: End the task in Task Scheduler (Stop-ScheduledTask), then stop each keeper pwsh by its PID after checking its command line runs $keeperScript -Watch. Its holder keeps running, and the keeper this install starts adopts it.")
