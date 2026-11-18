@@ -1,12 +1,6 @@
 {
   "milestones": [
     {
-      "name": "v0.03",
-      "start": "2026-11-18T09:38:41Z",
-      "cap_hours": 9,
-      "tickets": [69, 70, 71, 72]
-    },
-    {
       "name": "v0.04",
       "start": "2026-11-18T09:50:05Z",
       "cap_hours": 11,
