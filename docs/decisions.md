@@ -2215,6 +2215,24 @@ about 210 processes. Times are Pacific Standard Time, the box's and the laptop's
   past the deadline is ended by SIGALRM, or by a watchdog thread 15 s later when a /proc read is
   blocked in the kernel.
 
+**Findings from story E0.03-T02-S01 (2026-11-18),** the real turn, v0.04-T01, measured on a
+lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D33 stands.
+- **A desktop-app session is not a `claude` process.** Its argv[0] is
+  `~/.claude/remote/ccd-cli/<version>`, under the app's bridge `~/.claude/remote/srv/<hash>/server`.
+  The default `--match` missed it, which is the known gap above in a new form. **The default is now
+  `^(?:\S*/)?(?:claude|ccd-cli/[^/\s]+)(?:\s|$)`,** which still keeps the bridge out. Before a
+  turn's agents launch, a measurer MUST confirm that the session shows as a session row.
+- **A turn is one session, and its `cwd` moves:** a dev lead entering each story's worktree moves
+  its row's `cwd` with it. A row is identified by its session id, never by its folder.
+- **The host-versus-sessions check did not trip #0082 on this turn.** The host ran 19.69
+  CPU-seconds (0.009 cores, 26% of a light host) above the session, the sampler and the idle
+  baseline. It was steady and grew with the session's activity, and the observer saw no orphan,
+  which points to the desktop app's transport rather than orphaned work. The turn ran few builds,
+  so the check is weak here.
+- **CloudWatch's idle backstop (#0043) stopped the box at 5:26am** while it waited 3 hours for the
+  turn to start, and the sampler with it. Until #0043 is fixed, a measurer SHOULD start the
+  sampler close to the turn's start, and MUST run `agentspace-sample status` when the turn starts.
+
 ### D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype
 
 **Decided, architect, 2026-11-18, when Terry had v0.04 (#0030) broken into stories.** It settles
