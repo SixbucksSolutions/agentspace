@@ -1090,15 +1090,18 @@ Times are UTC.
 - **An agent in the app session worked a card on swimcoach's board.** Through
   `scripts/localswim.sh` it listed the board's seven lanes, created swimcoach card #0058,
   "agentspace T03 lease check (throwaway)", in Backlog, commented on it with the box's host name
-  and the time (04:26Z), and archived it. The read-back showed `archived: true` with
+  and the time (04:26Z), and archived it. The dev lead read the card back from the board: created
+  04:26:00Z, one comment at 04:26:05Z, `archived: true`. The agent's own read-back showed
   `archived_at` null; that is localswim's response as observed, not chased here.
 - **0.02.T1.1's bound held for both kinds of stop.** A killed holder's session timed out 79.5
   seconds after the kill, and a holder the keeper stopped at release timed out 86 seconds after the
   stop. Both ports were free in the next 15-second sample each time.
-- **Archiving an app session does not close its connections.** After Terry archived the session,
-  the app's two `ssh.exe` processes and their sessions on the box were still up, and release ended
-  neither (D10). They carry no forwards, so they did not hold the board, but they count as
-  activity on the box.
+- **Archiving a desktop-app SSH session does not close its connections.** After Terry archived
+  the session, the app's two `ssh.exe` processes (parent `claude.exe`, both started 04:24Z) and
+  their sessions on the box were still up 3 minutes later, and release ended neither (D10). They
+  carry no forwards, so they did not hold the board, but they keep the box's idle check from
+  stopping it, and they keep a released lease's login open. The architect killed both by PID at
+  04:45Z with Terry's approval. The fix is carded separately, outside this story.
 
 ## Defaults
 
@@ -1695,8 +1698,8 @@ against a throwaway state folder and a stub for `ssh.exe`
   - Each pass compiles its C# type, which takes about 1 to 3 seconds.
 
 **Findings from story E0.02-T03-S01 (2026-11-18).** D30 stands, with two gaps. The architect
-cards their fixes as v0.02-T04 stories, and this story changes neither the keeper nor its task. The evidence is in
-[docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md). Times are UTC.
+cards their fixes as v0.02-T04 stories, and this story changes neither the keeper nor its task.
+The evidence is in [docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md). Times are UTC.
 - **The logon task was registered with Terry's yes**, from the main checkout, at 02:22:25Z. Every
   setting read back equals `install-board-holder.ps1 -DryRun`. It stays registered.
 - **Unattended, the keeper started a holder for each ready lease, kept it, and stopped it at
@@ -1709,7 +1712,8 @@ cards their fixes as v0.02-T04 stories, and this story changes neither the keepe
   each exited under `ExitOnForwardFailure`.
   - **Each failed holder left a session on the box that also waited out the 90-second bound**,
     timing out at 04:31:08Z and 04:32:09Z.
-  - The second attempt came one second before the dead session timed out at 04:30:40Z. The backoff
+  - The second attempt's login, at 04:30:39Z, came one second before the dead session timed out at
+    04:30:40Z. The backoff
     then put the third attempt at 04:32:02Z, and it took the ports at 04:32:10Z. **The board was
     gone for 2 minutes 49 seconds, against a bound of about 90 seconds.**
   - **The fix to weigh:** after it loses a holder, the keeper SHOULD wait out the bound, or watch
@@ -1718,9 +1722,10 @@ cards their fixes as v0.02-T04 stories, and this story changes neither the keepe
   PID at 04:32:59Z. The launcher exited within 3 seconds with `LastTaskResult` 0xFFFFFFFF, and
   the task went to Ready. Three minutes later it was still Ready, though RestartCount 3 and
   RestartInterval PT1M read back as registered.
-  - **Task Scheduler's restart-on-failure covers a task that fails to start, not an action that
-    exits non-zero.** So a crashed keeper stays down until the next logon. The laptop's
-    TaskScheduler/Operational log is disabled, so it holds no events.
+  - **In this run Task Scheduler did not restart an action that exited non-zero.** Its
+    restart-on-failure most likely covers only a task that fails to start, so a crashed keeper
+    SHOULD be taken to stay down until the next logon. This was seen once, and the laptop's
+    TaskScheduler/Operational log is disabled, so it holds no events to say more.
   - **The holder outlived its keeper**, since it was started through `Win32_Process.Create`. It
     kept the ports, unsupervised.
   - **The task was started by hand** (`Start-ScheduledTask`, definition unchanged) at 04:36:13Z,

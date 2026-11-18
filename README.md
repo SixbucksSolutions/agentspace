@@ -211,8 +211,9 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      never in a tight loop. Only a holder seen alive after 60 seconds resets the backoff.
    - **No error ends the keeper.** It logs the error and carries on at its next interval, so only
      bad arguments or a killed process can stop it.
-   - **A crashed keeper is not restarted until the next logon** (E0.02-T03-S01, D30). The task's
-     RestartCount covers a task that fails to start, not a keeper that exits. Its holder keeps
+   - **A crashed keeper is not restarted until the next logon** (E0.02-T03-S01, D30). In that run
+     the task's RestartCount did not restart a keeper that was killed; it most likely covers only a
+     task that fails to start. Its holder keeps
      running, unsupervised. After a crash, the task MUST be started by hand with
      `Start-ScheduledTask -TaskName 'agentspace board holder'`, and the new keeper adopts the
      recorded holder. A keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) also
