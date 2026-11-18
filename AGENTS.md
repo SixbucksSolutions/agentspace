@@ -11,8 +11,10 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where it stands:** [docs/handoff-mvp.md](docs/handoff-mvp.md), the architect's handoff after
-  the MVP shipped (2026-11-17). An agent picking agentspace up SHOULD read it first.
+- **Where it stands:** [docs/handoff-v0.02.md](docs/handoff-v0.02.md), the architect's handoff
+  after v0.02's last turn (2026-11-18), for the architect starting v0.03-T01. An agent picking
+  agentspace up SHOULD read it first. The MVP's handoff,
+  [docs/handoff-mvp.md](docs/handoff-mvp.md), stays for its pieces and lessons.
 - **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.01, and releases v0.02 to v1.0
   are one Backlog epic each (D26). It goes from there to someday-maybe ideas. The Backlog MUST
   match the roadmap at all times (Terry, 2026-11-17).
