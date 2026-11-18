@@ -184,10 +184,12 @@ Docs cite its cards as `#0001`.
 - At least one every 10 minutes while work goes on.
 - Lanes counted for that milestone's cards only.
 - `stop` only when Terry says the milestone is complete.
-  - **A turn's milestone is complete once every pull request of the turn is merged to `main`**
-    (Terry, 2026-11-18: "stop reporting the stats for completed turns"). The architect removes it
-    and sends `stop` then, without waiting for Terry to move the stories to Completed. A release's
-    milestone still ends only on his word.
+  - **A turn's milestone lives as long as its dev lead** (Terry, 2026-11-18: "start reporting
+    turns when their dev lead is created, remove turns when dev lead is archived"). The architect
+    adds it when it starts the turn's dev lead, and removes it and sends `stop` when it archives
+    that dev lead, which is once every pull request of the turn is merged to `main`. It does not
+    wait for Terry to move the stories to Completed. A release's milestone still ends only on his
+    word.
 
 - **`scripts/report-milestones.ps1` does the reporting**, and the architect runs it with `-Watch`.
   It counts lanes from the board for each milestone in `scripts/milestones.json`, and keeps its
