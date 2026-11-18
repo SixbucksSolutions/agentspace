@@ -46,6 +46,9 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
     `gh pr merge <n> --squash --match-head-commit <sha>`. Without it, a commit the dev lead
     pushes during the review is merged unread. In v0.03-T01, 2026-11-18, PR #28 merged a README
     commit pushed after the review's fetch; it was read after the merge and was sound.
+  - **The architect MUST archive a dev lead's session once every one of its pull requests is
+    merged to `main`** (Terry, 2026-11-18), and then remove any worktree folder it left. An open
+    session can hold its last worktree folder locked, so the folder goes after the archive.
 - **A dev lead** is one Opus/high session per turn. It runs the subagents each story's
   staffing names (D15 in the MVP; in a release, the plan on the story's card, with parallel
   subagents, D31), reviews each story itself, and opens **one pull
