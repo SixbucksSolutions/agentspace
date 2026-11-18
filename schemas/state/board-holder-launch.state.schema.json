@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/board-holder-launch.state.schema.json",
+  "title": "Holder launch request (laptop, internal)",
+  "description": "A keeper pass's request to its launcher to start a holder, <state folder>\\board-holder-launch.<hex>.json (D30). Internal: written and read by the keeper alone, and removed by the pass that wrote it. Every path is full, so the launcher never reads the state folder from its environment. Anchored patterns end with $(?!\\n). See docs/state.md, \"A holder's launch files\".",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["application", "command_line", "log", "directory", "not_after", "result"],
+  "properties": {
+    "application": {
+      "description": "The full path of the program the holder runs.",
+      "$ref": "#/$defs/full_path"
+    },
+    "command_line": {
+      "description": "The holder's whole command line.",
+      "$ref": "#/$defs/text"
+    },
+    "log": {
+      "description": "The full path of board-holder-ssh.log, which the holder's stdout and stderr are appended to.",
+      "$ref": "#/$defs/full_path"
+    },
+    "directory": {
+      "description": "The holder's working folder: the home folder.",
+      "$ref": "#/$defs/full_path"
+    },
+    "not_after": {
+      "description": "The launcher's deadline, UTC, with seven fraction digits.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{7}Z$(?!\\n)"
+    },
+    "result": {
+      "description": "The full path of the launch result file.",
+      "$ref": "#/$defs/full_path"
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?!\\n)"
+    },
+    "full_path": {
+      "description": "A full Windows path: a drive letter, a colon and a backslash, or two backslashes (a UNC or \\\\?\\ path), with no control character.",
+      "type": "string",
+      "pattern": "^([A-Za-z]:\\\\|\\\\\\\\)[^\\u0000-\\u001f\\u007f]*$(?!\\n)"
+    }
+  }
+}
