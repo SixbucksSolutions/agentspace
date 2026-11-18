@@ -1794,6 +1794,32 @@ and on the box the system is UTC, so the rule was followed and still gave him th
 - **Carded as E0.02-T04-S01, v0.02's fourth turn**, which starts after T3 merges, because it changes
   the push that T3 is exercising live.
 
+**How it is built (E0.02-T04-S01, 2026-11-17).** `Push-Localswim` in `scripts/agentspace.ps1`
+carries the zone with the token:
+- **Windows PowerShell 5.1 has no `TryConvertWindowsIdToIanaId`.** The method is .NET 6's, and 5.1
+  runs on .NET Framework 4.8, which lacks it, while `up` runs in 5.1 under the ProxyCommand. So
+  the push MUST use the method when the runtime has it, as PowerShell 7 does, and otherwise MUST
+  ask the ICU that Windows ships (`icu.dll`) through `ucal_getTimeZoneIDForWindowsID`, with no
+  region. That is the call .NET itself makes on Windows for the conversion, and both gave the same
+  IANA name for every zone tried on the laptop. Any failure in either path sends no zone.
+- **A zone MUST match `^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$`, case-sensitively and to the very end
+  of the string, and MUST NOT start with `-`.** It is checked before the remote command is built,
+  and only a zone that passes is ever put in it. A leading `-` is refused because `timedatectl`
+  would read it as an option, such as `-H <host>`, just as `Test-AliasName` refuses one for ssh;
+  no IANA name starts with `-`. `-TimeZone` overrides the laptop's zone, for tests only.
+- **The zone travels on the box's command line, and the token MUST stay on stdin.** A checked zone
+  holds no character that the shell treats as syntax, and no quote, so it cannot break the remote
+  command's quoting on Windows either.
+- **The box sets the zone only after `bot.env` is in place and its SHA-256 printed**, as
+  `timeout 5 sudo -n timedatectl set-timezone <zone>`, with stdin, stdout and stderr on
+  `/dev/null`. It then prints `zone <zone>` or `zone-failed` and exits 0, so the zone never changes
+  the exit code or the hash line that confirm the token. `timeout 5` keeps a slow `timedatectl`
+  well inside the push's 20-second limit, and `sudo -n` never prompts.
+- **The stamp is the SHA-256 of the instance ID, the zone and `bot.env`'s content, joined by LFs**,
+  with an empty zone when none is sent. It is written only when the token is confirmed and, if a
+  zone was sent, the box's `zone <zone>` line matches it exactly. `zone-failed`, or no zone line at
+  all, warns and writes no stamp, so the next connection asks again.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase

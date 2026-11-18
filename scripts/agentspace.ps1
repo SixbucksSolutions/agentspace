@@ -5,14 +5,16 @@
 .DESCRIPTION
   deploy  Creates or updates the CloudFormation stack, then runs sync.
   up      Starts the instance if needed, waits until it has finished patching, and sends
-          the localswim Bot token if it changed. The token goes over -Alias, the SSH host
-          alias the caller connected with (default agentspace), so a lease never depends on
-          Terry's own entry (D9). ssh-proxy.cmd passes it.
+          the localswim Bot token, with the laptop's time zone (D32), if either changed. The
+          token goes over -Alias, the SSH host alias the caller connected with (default
+          agentspace), so a lease never depends on Terry's own entry (D9). ssh-proxy.cmd
+          passes it.
   sync    Checks the agentspace SSH CA, then installs box/system (idle check, patch at boot,
           localswim wrapper, the sshd drop-ins that trust the CA, close root login, exempt
           127.0.0.1 from login penalties and shorten the login grace time) on the
           instance with the CA's public key, copies ~/.claude/CLAUDE.md there, builds and
-          installs the localswim CLI, and sends the current localswim Bot token.
+          installs the localswim CLI, and sends the current localswim Bot token with the
+          laptop's time zone.
   down    Stops the instance.
   status  Shows state, type, disk size and Session Manager reachability.
   grow    Grows the root volume by -GiB (default 2) and the filesystem with it.
@@ -215,7 +217,11 @@ function Start-Box([string]$Id) {
 # as sent (card #0026). A failure warns and never blocks the connection. The ssh goes to $Alias,
 # the SSH host alias the caller connected with, never to another entry (D9). sync passes no
 # alias, so its push goes over agentspace, Terry's own entry, as intended.
-function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspace') {
+# The same push sets the box's time zone to the laptop's (D32). The zone is part of the stamp, so
+# a laptop that has changed zone pushes again. A zone that cannot be worked out, or that the box
+# refuses, warns and leaves the box's zone as it was, and never stops the token's push or its
+# confirmation. -TimeZone overrides the laptop's zone, and is for tests only.
+function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspace', [string]$TimeZone) {
   # The script checks -Alias before anything runs; this check keeps any other caller from putting
   # a bad alias on ssh's command line.
   if (-not (Test-AliasName $Alias)) {
@@ -235,21 +241,83 @@ function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspac
   } finally {
     $token = $null
   }
+  # The laptop's time zone as an IANA name, such as America/Los_Angeles (D32). PowerShell 7
+  # converts with TimeZoneInfo.TryConvertWindowsIdToIanaId. Windows PowerShell 5.1 runs on .NET
+  # Framework, which has no such method, so it asks the ICU that Windows ships (icu.dll) through
+  # ucal_getTimeZoneIDForWindowsID, the call .NET itself makes for it on Windows. Any failure
+  # leaves no zone.
+  $zone = $TimeZone
+  if (-not $PSBoundParameters.ContainsKey('TimeZone')) {
+    $zone = $null
+    try {
+      $windowsId = (Get-TimeZone).Id
+      if ([TimeZoneInfo].GetMethod('TryConvertWindowsIdToIanaId', [type[]]@([string], [string].MakeByRefType()))) {
+        $iana = $null
+        if ([TimeZoneInfo]::TryConvertWindowsIdToIanaId($windowsId, [ref]$iana)) { $zone = $iana }
+      } else {
+        if (-not ('AgentspaceZone' -as [type])) {
+          Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class AgentspaceZone {
+  [DllImport("icu.dll", CharSet = CharSet.Unicode)]
+  static extern int ucal_getTimeZoneIDForWindowsID(string winid, int len, IntPtr region, StringBuilder id, int idCapacity, ref int status);
+  // Null when ICU fails or has no IANA name for the Windows ID. A null region asks for the
+  // zone's default mapping (territory 001), as .NET does.
+  public static string FromWindowsId(string winid) {
+    StringBuilder id = new StringBuilder(128);
+    int status = 0;
+    int n = ucal_getTimeZoneIDForWindowsID(winid, winid.Length, IntPtr.Zero, id, id.Capacity, ref status);
+    if (status > 0 || n <= 0 || n >= id.Capacity) return null;
+    return id.ToString(0, n);
+  }
+}
+'@
+        }
+        $zone = [AgentspaceZone]::FromWindowsId($windowsId)
+      }
+    } catch {
+      $zone = $null
+    }
+  }
+  # The zone is checked here, before anything is built from it, and only a zone that passes ever
+  # reaches the box's command line: letters, digits, '_', '+' and '-' in segments joined by '/',
+  # not starting with '-', which timedatectl would read as an option. -cmatch keeps [A-Za-z] from
+  # matching the Kelvin sign, and \z, unlike $, never matches before a trailing newline. Any other
+  # zone is not sent, and the stamp then carries an empty one.
+  $zone = "$zone"
+  $zoneUnknown = -not ($zone -cmatch '^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*\z' -and -not $zone.StartsWith('-'))
+  if ($zoneUnknown) { $zone = '' }
   try {
-    $sha = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id`n$content"))
+    $sha = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id`n$zone`n$content"))
     $sha = [BitConverter]::ToString($sha).Replace('-', '')
     if (-not $Force -and (Test-Path $PushedFile) -and (Get-Content $PushedFile -Raw).Trim() -eq $sha) { return }
     Say 'Sending the localswim Bot token to the instance...'
+    if ($zoneUnknown) {
+      Say "agentspace: Could not work out the laptop's time zone; times on the box stay in its own zone."
+    }
     # The box reads exactly two lines, so it never waits for the end of its input. It writes them
     # to a temporary file beside bot.env (0600 under umask 077), checks that it holds the URL and
     # the token, renames it into place and prints its SHA-256. On any failure it removes the
     # temporary file, so bot.env is never left empty or partial. tr and sed strip CRs, blank lines
     # and a UTF-8 BOM, which .NET can write ahead of the text it pipes to a process.
+    # With a zone, and only once bot.env is in place and its SHA-256 printed, the box sets its time
+    # zone and prints one more line, "zone <zone>" or "zone-failed". The exit code then stays 0,
+    # whatever timedatectl does, so the token's confirmation never depends on the zone. timeout
+    # keeps a slow timedatectl well inside the push's own time limit; sudo -n never prompts.
+    $then = if ($zone) {
+      'then sha256sum < $d/bot.env || exit 1; ' +
+      "if timeout 5 sudo -n timedatectl set-timezone $zone </dev/null >/dev/null 2>&1; " +
+      "then echo zone $zone; else echo zone-failed; fi; exit 0; "
+    } else {
+      'then sha256sum < $d/bot.env; '
+    }
     $remote = 'umask 077; d=$HOME/.config/localswim; mkdir -p $d && t=$(mktemp $d/bot.env.XXXXXX) || exit 1; ' +
       'trap ''rm -f $t'' EXIT; ' +
       'timeout 30 head -n 2 | tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//; /^$/d'' > $t; ' +
       'if test $(wc -l < $t) -eq 2 && grep -q ''^LOCALSWIM_URL=.'' $t && grep -q ''^LOCALSWIM_TOKEN=.'' $t && mv -f $t $d/bot.env; ' +
-      'then sha256sum < $d/bot.env; else rm -f $t; exit 1; fi'
+      $then + 'else rm -f $t; exit 1; fi'
     $psi = New-Object Diagnostics.ProcessStartInfo $Ssh
     # Windows PowerShell 5.1's ProcessStartInfo takes one argument string. The remote command
     # holds no double quote, so a pair of them around it keeps it one argument. BatchMode makes an
@@ -279,6 +347,12 @@ function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspac
     $got = if ("$out" -match '(?m)^([0-9a-f]{64})\s') { $Matches[1] } else { $null }
     if ($code -ne 0 -or $got -ne (Get-BotEnvHash $content)) {
       Say 'agentspace: The instance did not confirm the localswim token; the board will not work on the box this session.'
+      return
+    }
+    # The token is in place. A zone that the box did not confirm, by "zone-failed" or by no zone
+    # line at all, records nothing, so the next connection asks again.
+    if ($zone -and -not (@("$out" -split "`r?`n") -ccontains "zone $zone")) {
+      Say "agentspace: The instance did not take the time zone $zone; times on the box stay in its own zone."
       return
     }
     New-Item -ItemType Directory -Force (Split-Path $PushedFile) | Out-Null
