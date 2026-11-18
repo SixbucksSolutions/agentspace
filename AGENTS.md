@@ -58,11 +58,17 @@ requirements are met, with its milestone, reporter and watchdog as for T1. The C
 still lets a session start another only on a turn its user began, so where the app refuses, the
 architect puts the dev lead up as a card instead, and Terry starts it with one click.
 
-**A dev lead SHOULD enter a story's worktree (`EnterWorktree`) before it launches that story's
-subagents** (found in T5, 2026-11-17). A worktree guard pins a subagent to its parent session's
-current worktree, so an implementer launched from elsewhere cannot write the story's files and
-has to hand back a patch for the dev lead to apply. With two or more stories in a turn, the dev
-lead enters each story's worktree in turn to launch its subagents.
+**A dev lead MUST enter a story's worktree (`EnterWorktree`) itself before it launches that
+story's subagents** (found in T5, 2026-11-17; made MUST in v0.03-T01, 2026-11-18). A worktree
+guard pins a subagent to its parent session's current worktree, so an implementer launched from
+elsewhere cannot write the story's files and has to hand back a patch for the dev lead to apply.
+With two or more stories in a turn, the dev lead enters each story's worktree in turn to launch
+its subagents.
+- **A subagent cannot move itself to another worktree** (found in v0.03-T01, 2026-11-18). Its
+  `EnterWorktree` is refused, because its writes are limited to the folder it was pinned to. Two
+  S02 follow-ups launched from S01's worktree, each told to enter S02's first, both stopped with
+  no writes. A tasking that says "enter the story's worktree first" does not work; only the dev
+  lead's own `EnterWorktree` does.
 - **A freshly launched subagent keeps the worktree it was launched in, whatever the dev lead does
   afterwards. A subagent resumed with `SendMessage` follows the dev lead's current worktree for as
   long as it runs** (found in T7, 2026-11-17, in two cases: E1.04's implementer, resumed while the
