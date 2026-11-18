@@ -36,6 +36,7 @@ and the operator is not such a client.
   - [Programs it starts](#programs-it-starts) (card #0027)
   - [AWS failures](#aws-failures) (card #0034)
   - [Environment variables](#environment-variables)
+  - [The test seam](#the-test-seam) (card #0085)
   - [Laptop files](#laptop-files)
   - [The `agentspace` SSH entry](#the-agentspace-ssh-entry)
   - [Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)
@@ -188,6 +189,10 @@ exception text in place of that message.** The prototype does in some cases
 | `go` | On `PATH` | `sync`, to build the localswim CLI |
 | `powershell.exe` (Windows PowerShell 5.1) | On `PATH` | The prototype's ProxyCommand, to run `up` |
 
+**A test MAY name the AWS CLI, `ssh` and `scp` that the operator runs in place of the ones above**,
+through three environment variables, and nothing else MAY ([The test seam](#the-test-seam)). The
+table is what runs when none is set, and the full-path rule above binds that default alone.
+
 **What MUST NOT appear among any program's arguments is in [Secrecy](#secrecy).**
 
 ### AWS failures
@@ -236,9 +241,95 @@ reads also passes `--output json`.** The region is today's, and not configurable
 | `USERPROFILE`, `LOCALAPPDATA`, `SystemRoot` | Read | Where the laptop files and Windows programs are. `LOCALAPPDATA` is the only way the operator finds localswim's receipt ([Secrecy](#secrecy)). |
 | `OneDrive`, `OneDriveConsumer`, `OneDriveCommercial` | Read by `ca` | Folders the CA MUST NOT be inside (D17). |
 | `USERNAME`, `COMPUTERNAME` | Read by `ca` and `sync` | The user named in the CA's messages, and the computer named in a new CA's key comment (docs/state.md). |
+| `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`, `AGENTSPACE_TIMEZONE` | Read, each time the operator needs what it names | Name the programs the operator starts in place of the AWS CLI, `ssh` and `scp`, and the zone the token push sends in place of the laptop's. For tests only ([The test seam](#the-test-seam)). |
+| `AGENTSPACE_DIAGNOSTIC` | Read by the ProxyCommand | When it is set to a non-empty value, the ProxyCommand MAY print backend detail to stderr that it otherwise withholds ([What a caller sees](#what-a-caller-sees-d1-card-0087)). |
 | `PATH` | Read; the ProxyCommand prepends two folders | Finding `go`, the AWS CLI's fallback, and the Session Manager plugin. |
 
 **The token MUST NOT be in any environment variable the operator sets ([Secrecy](#secrecy)).**
+
+### The test seam
+
+**Card #0085 is carried in here, and closes [Q11](#open-questions) and [Q12](#open-questions).**
+**Four environment variables let a test stand in for the programs the operator starts and for the
+laptop's time zone**, so that a check can run `up`, `sync` and the ProxyCommand against a box that
+is a script (D34). Without them the operator starts the AWS CLI and `ssh` by fixed paths that
+exist on the laptop ([Programs it starts](#programs-it-starts)), and the push can be reached only
+by a real box.
+
+| Variable | When set and not empty, it names | Which the operator runs, or uses, in its place |
+|---|---|---|
+| `AGENTSPACE_AWS_CMD` | A program | The AWS CLI: every AWS call of every command, and the ProxyCommand's tunnel ([Calls by command](#calls-by-command)) |
+| `AGENTSPACE_SSH_CMD` | A program | `ssh`: every ssh the operator starts, the token push's included |
+| `AGENTSPACE_SCP_CMD` | A program | `scp`: every scp the operator starts, `sync`'s copies |
+| `AGENTSPACE_TIMEZONE` | An IANA zone name, such as `America/New_York` | The laptop's zone, in the token push ([The time zone](#the-time-zone)) |
+
+**What each one does:**
+- **A program variable's value is one path, taken whole.** Spaces in it are part of the path: the
+  operator MUST NOT split it into a program and arguments, and MUST NOT look the name up on `PATH`.
+  A relative path is resolved against the operator's working folder. On Windows the path MAY be an
+  executable or a `.cmd` file.
+- **The operator starts that program exactly as it would the real one:** the same arguments, in
+  the same order, the same standard input, output and error wiring, the same environment, and the
+  same limits (the push's 20 seconds, for one). It reads the program's exit code and streams as it
+  would the real one's, so the operator cannot tell a stand-in from the real program except by
+  what it does. Everything else on this page, including every message and exit code, is
+  unchanged.
+- **The variable is read from the process's environment each time the operator is about to start
+  the program**, and not before. A variable that no command reaches is never read: `ca`, help, a
+  usage error and the `-Alias` refusals start no such program ([Command line](#command-line)). A
+  child of the operator, the ProxyCommand among them, reads it from its own environment, which is
+  the operator's.
+- **Unset, empty, or only whitespace means the default**, the program of
+  [Programs it starts](#programs-it-starts), as if the seam did not exist.
+- **A value that names nothing runnable MUST NOT fall back to the default.** A file that does not
+  exist, a folder, or a file the system cannot start, fails the command with `agentspace:
+  <variable> names <value>, which cannot be run.` and exit 1, as the program is first needed. The
+  one exception is the token push, which never fails a command: a push whose `ssh` cannot be
+  started warns as [any other failure](#what-the-laptop-checks) does. A mistyped variable
+  therefore never reaches the real AWS or a real box.
+- **`AGENTSPACE_TIMEZONE`'s value is read as the push works out its zone**, and replaces the
+  laptop's zone as [The time zone](#the-time-zone) says: the legacy names are mapped, and the
+  check of step 3 applies. **A value that fails that check gives the empty zone**, so a test
+  reaches the push's no-zone path with a value such as `not a zone`. The value is not secret, and
+  nothing else reads the variable.
+
+**The seam MUST NOT weaken secrecy ([Secrecy](#secrecy)).**
+- **A stand-in gets the token only as the real `ssh` would: on the push's stdin, and nowhere
+  else.** The operator MUST NOT add a flag, an argument, an environment variable, a file or a log
+  that a stand-in could read the token, or the content, from, and MUST NOT make the seam's
+  variables carry any part of either. A program started through the seam gets no more than the
+  real one.
+- **No other source MAY set the variables.** The operator reads them from the environment alone,
+  never from a file. A person in normal use MUST NOT set them, as with the lease CLI's own test
+  variables ([lease-api.md](lease-api.md#environment)); the lease CLI does not read them.
+- **A check that stands in for `ssh` is bound by [Secrecy](#secrecy)'s last rule**, about the
+  receipt and the credential that `LOCALAPPDATA` points at.
+
+**How a test uses it, from outside:**
+1. **It builds a throwaway home** and runs the operator with `USERPROFILE` (and the state and ssh
+   folders, [docs/state.md](state.md#what-moves-which-files)) set to it, `LOCALAPPDATA` set to a
+   throwaway folder holding a fake localswim receipt and a fake credential written for the same
+   Windows user ([What the laptop reads](#what-the-laptop-reads)), and no real AWS sign-in
+   reachable.
+2. **It writes the instance-ID cache** into the throwaway home, with a made-up ID
+   ([The instance-ID cache](#laptop-files)).
+3. **It writes a stand-in `aws`** that answers the calls `up` makes
+   ([Calls by command](#calls-by-command)), as the real CLI would in JSON: an instance that is
+   `running`, launched more than 20 minutes ago, so that `up` does not wait
+   ([Starting the box](#starting-the-box-and-waiting-for-it)). It exits 0 for each.
+4. **It writes a stand-in `ssh`** that records its arguments and its stdin to a file in the
+   throwaway home, prints the hash line the box would ([What the box does](#what-the-box-does)),
+   and exits 0.
+5. **It sets the three variables to those programs and `AGENTSPACE_TIMEZONE` to a zone**, runs
+   `operator up`, and checks what it can see: the recorded arguments
+   (`-o ClearAllForwardings=yes -o BatchMode=yes <alias> <remote command>`, the last one
+   argument), the recorded stdin (the two lines, and no more), the stamp file in the throwaway
+   home, the messages on stderr, the exit code, and that stdout is empty.
+6. **It runs `sync` or the ProxyCommand the same way**, adding a stand-in `scp`, or one whose
+   tunnel exits at once.
+
+**Not covered:** `go`, `ssh-keygen`, `icacls` and `taskkill` have no variable
+([Q30](#open-questions)).
 
 ### Laptop files
 
@@ -247,7 +338,7 @@ This table says only which command reads or writes it.
 
 | File (as today's prototype has it) | Read by | Written by | What it is |
 |---|---|---|---|
-| `<checkout>\.instance-id` | Every command but `ca`; the ProxyCommand | `deploy`; any command that finds it missing | The instance ID, cached from the stack's output ([Q7](#open-questions)) |
+| `<checkout>\.instance-id` today; `%USERPROFILE%\.agentspace\instance-id` as D21 requires | Every command but `ca`; the ProxyCommand | `deploy`; any command that finds it missing | The instance ID, cached from the stack's output ([The instance-ID cache](#laptop-files) below) |
 | `%USERPROFILE%\.agentspace\localswim-pushed.sha256` | `up` | `up`, `sync` | The push stamp ([The stamp](#the-stamp)) |
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca` | `ca`, `sync` | `ca`, once | The CA's private key (D17) |
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` | `ca`, `sync` | `ca`, once | The CA's public key, which `sync` sends to the box |
@@ -263,7 +354,13 @@ This table says only which command reads or writes it.
 
 **The token is never in any of the operator's own files** ([Secrecy](#secrecy)).
 
-**The instance-ID cache.** A cache that is empty, or holds only whitespace, MUST be treated as
+**The instance-ID cache.** **It MUST live under `%USERPROFILE%\.agentspace`**, as the file
+`instance-id`, and never in the checkout (D21, which settles [Q7](#open-questions); the file's
+format and rules are docs/state.md's, at [Files in the checkout](state.md#files-in-the-checkout)).
+It is only a cache, rebuilt from the stack's output when it is missing, so a rewrite needs no
+migration from the checkout's copy. The prototype keeps `.instance-id` in the checkout
+([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
+A cache that is empty, or holds only whitespace, MUST be treated as
 missing. A cache that cannot be read fails with an `agentspace: ` message naming it. A stack with
 no `InstanceId` output MUST fail with `agentspace: Stack 'agentbox' has no InstanceId output.`, and
 write no cache. The prototype writes an empty cache then, and every later command fails with a
@@ -558,23 +655,22 @@ existing, sound CA MUST exit 0 and change nothing.
      could not lock the new <key> to <user>: <tool output>. Delete <key> and <pub>, and run ca
      again.`, and a key still open to others with `agentspace: The new <key> MUST be <user>'s
      alone, but it <problems>. Treat it as exposed: delete <key> and <pub>, and run ca again.`
-5. **Checks the CA** (the same checks `sync` makes):
-   - **Both files exist**, or it fails with `agentspace: <key> does not exist; run ca.` or
-     `agentspace: <pub> does not exist; run ca.`
-   - **The folder, then the private key, are the current user's alone**: owned by the user, not
-     inheriting access rules, and with exactly one rule, which allows the user full control. The
-     first that is not fails with:
+5. **Checks the CA**, by the checks that [docs/state.md, The CA](state.md#its-checks) owns (the
+   same checks `sync` makes), in its order, the first failure ending `ca`. Each failure's message
+   is `ca`'s own, and the check it belongs to is the number in front of it:
+   1. **Both files exist:** `agentspace: <key> does not exist; run ca.` or `agentspace: <pub> does
+      not exist; run ca.`
+   2. **The folder, then the private key, are owner-only:**
 
-     ```
-     agentspace: <path> MUST be <user>'s alone, but it <problems>. ca does not change access rules on an existing CA. If anyone else may have read the key, replace the CA (D17). Otherwise lock it by hand: icacls "<ca folder>" /inheritance:r /grant:r "<user>:(OI)(CI)F", then icacls "<key>" /reset, then icacls "<key>" /inheritance:d, then remove any other rule icacls still lists, and run ca again.
-     ```
-   - **The private key reads with an empty passphrase**, or it fails with `agentspace: ssh-keygen
-     could not read <key> without a passphrase; the lease CLI signs unattended (D17).`
-   - **The public key is `ssh-ed25519` and is the private key's own**, or it fails with
-     `agentspace: <pub> is not the ed25519 public key of <key>. ca does not repair a mismatched
-     pair.`
-   - **The public key's fingerprint can be read**, or it fails with `agentspace: ssh-keygen could
-     not read <pub>: <tool output>`.
+      ```
+      agentspace: <path> MUST be <user>'s alone, but it <problems>. ca does not change access rules on an existing CA. If anyone else may have read the key, replace the CA (D17). Otherwise lock it by hand: icacls "<ca folder>" /inheritance:r /grant:r "<user>:(OI)(CI)F", then icacls "<key>" /reset, then icacls "<key>" /inheritance:d, then remove any other rule icacls still lists, and run ca again.
+      ```
+   3. **The private key loads with an empty passphrase:** `agentspace: ssh-keygen could not read
+      <key> without a passphrase; the lease CLI signs unattended (D17).`
+   4. **The public key is the private key's own, and `ssh-ed25519`:** `agentspace: <pub> is not
+      the ed25519 public key of <key>. ca does not repair a mismatched pair.`
+   5. **The public key's fingerprint can be read:** `agentspace: ssh-keygen could not read <pub>:
+      <tool output>`
 6. **Prints the result**, four lines, the first of which says whether it created the CA:
 
    ```
@@ -785,7 +881,8 @@ The Claude desktop app runs the same line through its own proxy program (D12's E
    "C:\Program Files\Amazon\AWSCLIV2\aws.exe" ssm start-session --region us-west-2 --target <id> --document-name AWS-StartSSHSession --parameters portNumber=22
    ```
 
-   and exits with the tunnel's exit code.
+   and exits with the tunnel's exit code. When `AGENTSPACE_AWS_CMD` is set, the program it names is
+   run in place of `aws.exe` ([The test seam](#the-test-seam)).
 
 **Exit codes:** 1 for a second argument or a failed `up`; otherwise the tunnel's. ssh ends the
 ProxyCommand when the connection closes, so a caller of ssh rarely sees it: ssh exits 255 with
@@ -800,6 +897,7 @@ not show it, so a push from the app MUST be confirmed on the box or by the stamp
 app's output (D9's E0.02-T03-S01 finding).
 
 **What it MUST NOT do:**
+- **Name the backend to the caller** (D1; [What a caller sees](#what-a-caller-sees-d1-card-0087)).
 - **Read its stdin before the tunnel starts.** Those bytes are the SSH client's, for the server.
 - **Leave the console broken.** When the ProxyCommand's stderr is a Windows console, the
   console's output mode MUST, when the ProxyCommand's own work ends and before the tunnel starts,
@@ -818,6 +916,45 @@ app's output (D9's E0.02-T03-S01 finding).
 Whoever can write a ProxyCommand line already runs commands, since `cmd.exe` parses the whole line
 before the proxy runs, so the proxy does not defend against a hostile line. **`up`'s exact check
 ([Command line](#command-line)) MUST be the gate before any ssh.**
+
+### What a caller sees (D1, card #0087)
+
+**Card #0087 (D1 at connect time) is carried in here as a requirement.** What the ProxyCommand
+writes to stderr reaches the caller's ssh client, and so the caller, whose lease MUST NOT reveal its
+backend ([D1](decisions.md#d1-clients-never-know-the-backend)). The operator's own commands are not
+such a client (the intro of this page); this section binds
+the ProxyCommand alone, and everything it runs, the `up` and the tunnel included. How the
+ProxyCommand makes its `up` print differently from a person's own `up` is not specified. Wherever
+this page gives a message of `up` that names the instance (`Starting <id>...`, `Ready: <id>`, and
+the waiting messages of [Starting the box](#starting-the-box-and-waiting-for-it)), it is what a
+person's `up` prints, and the ProxyCommand prints the lines below instead. That includes the
+nested `up` of every ssh the operator starts
+([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)).
+
+- **Backend text is** an instance, volume or host ID; a region name; a machine type; a cloud
+  instance's state name (`pending`, `running`, `stopping`, `stopped`, `shutting-down` or
+  `terminated`) given as that state; the words EC2, AWS, SSM, Session Manager and CloudFormation;
+  the stack's name; the host's operating system or patch tool; and any text of the AWS CLI, of
+  Session Manager's plugin or of a runtime's error record.
+- **On success the ProxyCommand MUST NOT print backend text.** It MAY print progress lines in
+  agentspace's own words that say the lease's host is starting, being waited for or ready, such
+  as `Starting the host...`; it MUST NOT print more than a progress line per phase. It prints
+  nothing to stdout but the tunnel ([above](#the-proxycommand)).
+- **On failure the ProxyCommand MUST print agentspace's own message and no backend text:** one
+  line that starts `agentspace: ` ([Exit codes](#exit-codes)), which MAY say what the caller can
+  do, and exits as [above](#the-proxycommand). **The one exception is #0034's sign-in message**,
+  exactly as [AWS failures](#aws-failures) gives it, which names AWS ([Q29](#open-questions)).
+- **The backend's detail MAY be printed only when the caller asks for it:** when the
+  environment variable `AGENTSPACE_DIAGNOSTIC` is set to a non-empty value, read as the
+  ProxyCommand starts, the ProxyCommand MAY print backend text to stderr, such as the failed
+  call's error text, after agentspace's own message. Unset or empty, it MUST NOT. The variable
+  changes nothing else: not the exit code, not stdout, not what a person's own `up` prints. It
+  carries the same secrecy rule as everything else ([Secrecy](#secrecy)): detail MUST NOT include
+  the token or any text of the credential file.
+- **Source:** the prototype's `up` prints the instance ID, EC2 states and Session Manager and
+  patch messages into the ProxyCommand's stderr, and the AWS CLI's text on a failure
+  ([Requirements the prototype does not meet
+  yet](#requirements-the-prototype-does-not-meet-yet)).
 
 ## The token push
 
@@ -880,7 +1017,10 @@ LOCALSWIM_TOKEN=<token>
 ### The time zone
 
 **The push carries the laptop's time zone as an IANA name, so that `date` on the box gives the
-laptop's local time and offset (D32).** It is worked out each time `up` or `sync` considers a push:
+laptop's local time and offset (D32).** It is worked out each time `up` or `sync` considers a push.
+**When `AGENTSPACE_TIMEZONE` is set and not empty, its value takes the place of step 1's result**,
+and the laptop's own zone is not read ([The test seam](#the-test-seam)); steps 2 and 3 apply to it
+as to any converted name.
 
 1. **The Windows ID of the zone the laptop is set to at that moment is converted to an IANA name**
    with CLDR's mapping for territory `001`, the zone's default, for example `Pacific Standard
@@ -1099,7 +1239,7 @@ skips; from the command line it cannot happen.
   could carry part of the receipt or the credential. Each warning is a fixed text.
 - **A check that stubs ssh MUST point `LOCALAPPDATA` at a fake receipt and credential**, so that a
   stub never receives the real token on its stdin. The operator finds the receipt only through
-  `LOCALAPPDATA` ([What the laptop reads](#what-the-laptop-reads); [Q11](#open-questions)).
+  `LOCALAPPDATA` ([What the laptop reads](#what-the-laptop-reads); [The test seam](#the-test-seam)).
 
 ## The box as the laptop sees it
 
@@ -1305,6 +1445,9 @@ behavior in this table.**
 | An empty or missing URL or token, or one with a CR, LF or NUL, warns "Could not read" and sends nothing | Sends it. The box refuses an empty value, so the laptop warns "did not confirm"; with an LF the box installs the first two lines, a cut token, and the laptop warns "did not confirm"; a CR is removed by the box and the push is confirmed | [What the laptop reads](#what-the-laptop-reads) |
 | An empty or unreadable stamp makes the push due | Warns "Could not send" and pushes nothing, at every `up` until a `sync` | [The stamp](#the-stamp) |
 | The push's 20 seconds cover the write to ssh's stdin | Starts the clock after the write; the content fits in a pipe's buffer, so a blocked write has not been seen | [What the laptop sends](#what-the-laptop-sends) |
+| The AWS CLI, `ssh` and `scp` can be named by `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`, and the push's zone by `AGENTSPACE_TIMEZONE`; a name that cannot be run fails, and never falls back | Reads none of them. It runs the AWS CLI and `ssh` by fixed paths, and its zone override can be reached only by loading its code | [The test seam](#the-test-seam); Q11 and Q12, closed |
+| The ProxyCommand names no backend on success, and on failure prints agentspace's own message; backend detail only with `AGENTSPACE_DIAGNOSTIC` | Prints the instance ID (`Starting <id>...`, `Ready: <id>`), EC2 states, Session Manager and patch messages, and the AWS CLI's text | #0087; D1 ([What a caller sees](#what-a-caller-sees-d1-card-0087)) |
+| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; Q7, closed ([Laptop files](#laptop-files)) |
 | A missing command is a usage error, never a prompt | The shell prompts for it | [Q1](#open-questions) |
 | Help at every level | None of its own | [Q2](#open-questions) |
 
@@ -1322,12 +1465,12 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q4** | **Does `deploy -Quiet` quiet its `sync` step?** The prototype does not pass `-Quiet` on, so `sync`'s messages most likely print. Intended or not is unrecorded. | The architect |
 | **Q5** | **Does #0034's mechanism also hit `ssm get-command-invocation` and `ec2 wait`?** The poll discards the CLI's stderr while every error is terminating; under Windows PowerShell 5.1 a stderr line from it (such as an invocation not yet registered) may throw and fail `up` with a raw error instead of polling again. | A run on the laptop |
 | **Q6** | **Is an empty or unexpected answer to the patch check meant to count as ready?** The prototype ends the wait on anything but `pending`, so a check that fails lets `up` print `Ready` before the patch run has finished, against the README's rule. | The architect |
-| **Q7** | **Where do the instance-ID cache and the localswim CLI's build output live?** The prototype keeps them in the checkout (`.instance-id`, `.build\`), while D21 says everything agentspace keeps on the laptop lives under `%USERPROFILE%\.agentspace`. The ProxyCommand and the lease CLI's default ProxyCommand both depend on the cache's place today. | docs/state.md (E0.04-T02-S01) |
+| **Q7** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace` ([Laptop files](#laptop-files)); the prototype keeps it in the checkout, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. The localswim CLI's build output (`.build\`) is not state, and MAY stay in the checkout. | Closed |
 | **Q8** | **Does docs/state.md own the files the operator reads but agentspace never writes?** Those are localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry, and `infra\local.parameters`. D34 gives it "every file and folder agentspace writes". | docs/state.md (E0.04-T02-S01) |
 | **Q9** | **What characters can a localswim URL and Bot token contain, and what form MUST the URL have?** The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either would break or change it, and it finds the board's address by taking the URL as `http://<host>:<port>...`. The push refuses an empty value and a CR, LF or NUL, and checks nothing else. | localswim's docs; the architect |
 | **Q10** | **What are the rewrite's entry points called, and does it keep PowerShell-style parameters (`-GiB`, `-Alias`, `-Quiet`)?** Lease alias files on the laptop name `<checkout>\scripts\ssh-proxy.cmd` in their ProxyCommand line, and the lease CLI runs `scripts\agentspace.ps1 ca`, so a renamed entry point changes those too. | v0.06 (#0055) |
-| **Q11** | **How does a conformance check stub ssh and aws?** D34 allows stubs for them, but #0027 requires ssh and scp by full path, and the AWS CLI is called by full path when it is installed. The rewrite needs a documented override, such as an environment variable, that a check can set and that nothing else uses. A stub ssh MUST NOT receive the real token ([Secrecy](#secrecy)). | E0.04-T02-S04 |
-| **Q12** | **How does a conformance check give the push a time zone?** The prototype's override is reachable only by loading its code; from outside, only the laptop's own zone works. | E0.04-T02-S04 |
+| **Q11** | **Closed by [The test seam](#the-test-seam).** `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD` name the programs a check stands in for, and a stand-in gets the token only as the real `ssh` does. | Closed |
+| **Q12** | **Closed by [The test seam](#the-test-seam).** `AGENTSPACE_TIMEZONE` gives the push a zone. | Closed |
 | **Q13** | **What does `deploy` do when `id_ed25519.pub` has changed?** The key is in the instance's user data, which runs at first boot only, so the new key is never installed; and CloudFormation may stop and start the instance to change user data. | A deploy on the laptop, or AWS's documentation |
 | **Q14** | **Does the box require IMDSv2?** docs/how-it-was-built.md says the template requires it and that an IMDSv1 request was refused, but the template sets no metadata options, so it most likely comes from the image's defaults. | A look at the instance's metadata options |
 | **Q15** | **SHOULD the region and the stack name be configurable?** Both are fixed in the prototype, in two places each (the operator and the ProxyCommand). | The architect; v0.06 |
@@ -1344,3 +1487,5 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q26** | **Does the sign-in test catch every form of the AWS CLI's expired-login error?** The prototype matches `expired`, `aws login` or `Unable to locate credentials`. The exact text of the CLI's error after an `aws login` session expires was not recorded with #0034. | A run on the laptop with an expired sign-in |
 | **Q27** | **SHOULD the stamp stay an unsalted hash that covers the token?** It is kept on the laptop, and anyone who can read it can test a guessed token against it. A keyed digest would hide that, but the stamp MUST still change whenever the instance, the zone, the URL or the token does. Its storage is docs/state.md's. | The architect; docs/state.md |
 | **Q28** | **Where is the format of localswim's receipt and `bot.xml` specified, so the rewrite can read the token without PowerShell?** This page says what the prototype relies on ([What the laptop reads](#what-the-laptop-reads)), but the formats are localswim's. | localswim's docs; the architect |
+| **Q29** | **Does D1 at connect time cover #0034's sign-in message?** The message names AWS and its login command ([AWS failures](#aws-failures)), and a lease's caller who sees it through the ProxyCommand learns the backend ([What a caller sees](#what-a-caller-sees-d1-card-0087)). This page keeps it as the one exception, since the person who can act on it is the laptop's owner. Whether it MUST be reworded inside the ProxyCommand, with the AWS text behind `AGENTSPACE_DIAGNOSTIC`, is the architect's call. | The architect |
+| **Q30** | **SHOULD the seam also cover `go`, `ssh-keygen`, `icacls` and `taskkill`?** Without it, a check cannot run `sync`'s build step or `ca`'s lockdown against a stand-in; `sync` runs its build when `go` and the localswim checkout are present, and skips it otherwise. | The architect |

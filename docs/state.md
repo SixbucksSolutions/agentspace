@@ -64,7 +64,8 @@ lists every requirement here that the prototype misses.
   the laptop MUST live under it, never under `%LOCALAPPDATA%` or `%APPDATA%`: the Claude desktop
   app redirects writes there into its package cache, where no process outside the app sees them
   (D21). The exceptions are the files in `~\.ssh` that the OpenSSH client reads, and the files in
-  the checkout ([Files in the checkout](#files-in-the-checkout); [Q1](#open-questions)).
+  the checkout that are not state ([Files in the checkout](#files-in-the-checkout)). The
+  instance-ID cache is state, so D21 puts it here too.
 - **`<state folder>`** is the folder that `AGENTSPACE_STATE_DIR` names when it is set and not
   empty, and `%USERPROFILE%\.agentspace` otherwise.
 - **`<ssh folder>`** is the folder that `AGENTSPACE_SSH_DIR` names when it is set and not empty,
@@ -93,7 +94,7 @@ starts; unset or empty means the default. What each means to the lease CLI is
 | Variable | Moves | Does not move |
 |---|---|---|
 | `USERPROFILE` | Everything on this page under `%USERPROFILE%`: `.agentspace` and all in it, and `.ssh`; and `.aws`, which the AWS CLI reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | The checkout, and `%LOCALAPPDATA%` |
-| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but `BoardHolderLauncher.exe` | The lease folders, the CA, the push stamp, `BoardHolderLauncher.exe` and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
+| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but `BoardHolderLauncher.exe` | The lease folders, the CA, the push stamp, the instance-ID cache, `BoardHolderLauncher.exe` and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
 | `AGENTSPACE_SSH_DIR` | `config`, its backups, `agentspace.d` and the alias files, for `create` and `release` | `known_hosts`, and the user's own key; ssh itself reads neither variable |
 | `LOCALAPPDATA` | The localswim receipt, which the operator reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | Anything agentspace writes |
 
@@ -216,6 +217,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `%USERPROFILE%\.agentspace\ca\` | [The CA](#the-ca)'s folder | `ca`, once | `ca`, `sync`, `create`, `renew` | Never |
 | `...\ca\agentspace_ca`, `agentspace_ca.pub` | The CA's key pair | `ca`, once | The same | Never |
 | `%USERPROFILE%\.agentspace\localswim-pushed.sha256` | [The push stamp](#the-push-stamp) | `up`, `sync` | `up` | Never |
+| `%USERPROFILE%\.agentspace\instance-id` | [The instance-ID cache](#files-in-the-checkout), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand; the lease CLI's default alias | By `deploy`, which writes it again |
 | `<state folder>\board-holder.json` | [The holder record](#the-holder-record) | The keeper | The keeper | The keeper |
 | `<state folder>\board-holder.json.<hex>.tmp` | The holder record's temporary file | The keeper | None | At once |
 | `<state folder>\board-holder.log` | [The keeper's log](#the-keepers-logs) | The keeper | People | Never |
@@ -1066,16 +1068,21 @@ only by a process outside the Claude app's package redirection (D21).
 ## Files in the checkout
 
 **The operator keeps three files in the checkout of agentspace that it runs from, not under the
-home folder** ([operator.md](operator.md#laptop-files)). None is committed. They stay there in v0,
-although D21 puts everything agentspace keeps on the laptop under `%USERPROFILE%\.agentspace`
-([Q1](#open-questions)).
+home folder** ([operator.md](operator.md#laptop-files)). None is committed. **Only the
+instance-ID cache is state, and D21 requires it under `%USERPROFILE%\.agentspace`** (architect,
+2026-11-18, which settles [Q1](#open-questions)); the prototype keeps it in the checkout, and
+[Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
+lists that. The build output is not state, and MAY stay in the checkout.
 
 | Path | Format | Written by | Read by | Removed |
 |---|---|---|---|---|
-| `<checkout>\.instance-id` | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand; the lease CLI's default alias, which requires it ([driver.md](driver.md#how-it-is-reached)) | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\instance-id`, which is `<checkout>\.instance-id` in the prototype | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand; the lease CLI's default alias, which requires it ([driver.md](driver.md#how-it-is-reached)) | By `deploy`, which writes it again |
 | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box | `sync` | `sync` | Never; replaced by each build |
 | `<checkout>\infra\local.parameters` | Text lines; see below | A person | `deploy` | Never |
 
+- **The cache's file name, `instance-id`, is this page's choice** ([Q14](#open-questions)): D21
+  says only that it lives under `%USERPROFILE%\.agentspace`. It is moved by `USERPROFILE` and by no
+  other variable ([What moves which files](#what-moves-which-files)).
 - **The instance-ID cache is read trimmed of surrounding whitespace**, and the ProxyCommand reads
   its first line. What an empty cache means is [operator.md](operator.md#laptop-files)'s.
 - **`infra\local.parameters`** holds the account's stack parameters, so it MUST NOT be committed.
@@ -1166,6 +1173,7 @@ this table.**
 | Every part of agentspace finds the home folder through `USERPROFILE` | The task launcher uses the operating system's profile folder; `deploy` and `sync` use the shell's home variable | [Q2](#open-questions) |
 | Every path written into a file is a full path | Writes a relative `USERPROFILE`, `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` into the alias file and a launch request as given | [The home folder](#the-home-folder) |
 | Readers of the keeper's JSON files share read, write and delete (SHOULD) | They share read only; the writer's 5-second retry covers it | [The keeper's files](#the-keepers-files) |
+| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) |
 | The push stamp is replaced atomically (SHOULD) | Overwrites it in place | [The push stamp](#the-push-stamp) |
 | The push stamp is readable by the user alone (SHOULD) | It inherits `SYSTEM` and `Administrators` as well | [The push stamp](#the-push-stamp); [operator.md Q27](operator.md#open-questions) |
 
@@ -1176,7 +1184,7 @@ closes each one, or names the story that will.
 
 | | Question | Settled by |
 |---|---|---|
-| **Q1** | **Where do the instance-ID cache and the localswim build output live?** The prototype keeps them in the checkout, against D21's "everything agentspace keeps on the laptop". The ProxyCommand and the lease CLI's default alias read the cache there, so moving it changes every alias file's ProxyCommand. This page records where they are, and leaves the move to a decision ([operator.md Q7](operator.md#open-questions)). | The architect |
+| **Q1** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace`, and the prototype's copy in the checkout is a requirement it does not meet ([Files in the checkout](#files-in-the-checkout)). A rewrite needs no migration, since the cache is rebuilt from the stack's output. The localswim CLI's build output is not state, and MAY stay in the checkout ([operator.md Q7](operator.md#open-questions)). | Closed |
 | **Q2** | **Does every part of agentspace find the home folder through `USERPROFILE`?** The lease CLI and the operator's state paths do. The operator's `deploy` and `sync` use the shell's home variable, and the task launcher uses the profile folder the operating system reports; whether those follow a changed `USERPROFILE` is unverified, so a check that moves `USERPROFILE` can still reach the real `id_ed25519.pub`, `CLAUDE.md` or launcher error log. | A run on the laptop |
 | **Q3** | **SHOULD `create` check that `known_hosts` holds the box's key under `agentspace`?** Without it every login through the alias is refused, and the lease is still `ready`. Today a person's first `ssh agentspace` makes the entry. | The architect; [driver.md](driver.md#open-questions) (its Q7) |
 | **Q4** | **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | The architect; [keeper.md](keeper.md#open-questions) for the launch files |
@@ -1188,4 +1196,5 @@ closes each one, or names the story that will.
 | **Q10** | **SHOULD the `Include` line be recognized only on line 1, as D9 and the README say it is written, or anywhere above the first block, as the prototype accepts it?** This page follows the prototype: any position above the first `Host` or `Match` line, in any ASCII case. Two more points: the prototype also counts other characters as whitespace when it trims a line, between the two words, and after `Host` or `Match` (vertical tab, form feed, and the bytes `0x85` and `0xA0`), which ssh does not; and a line with anything after the pattern, such as a comment, is not recognized, so a second line is inserted and ssh includes each alias file twice, which no run has shown to be harmless. | The architect; a run on the laptop |
 | **Q11** | **What SHOULD a `renew` killed between moving the new certificate into place and writing the record leave?** The certificate then outlives or falls short of the recorded `expires_at` until the next `renew` or `release`. Writing the record first moves the window rather than closing it. lease-api.md's atomicity covers a failed command, and says nothing of a killed one. | The architect |
 | **Q12** | **What does inserting the `Include` line do to a `config` that is a symbolic link, another reparse point, or read-only?** The prototype reads through a link; whether its replace follows the link, replaces the link with a file, or fails, and what it does to a read-only file, is unobserved. | A run on the laptop |
-| **Q13** | **What checks the keeper's JSON files against their schemas?** No check validates `board-holder.json`, a launch request or a launch result against the schemas in `schemas/state/` (D20), and the prototype's schema check scans only the top level of `schemas/`. The conformance stories carded for v0.04-T03 (the keeper and schemas story) are where such a check belongs. | The conformance suite (v0.04-T03) |
+| **Q13** | **Closed (E0.04-T03-S02, 2026-11-18): the keeper suite checks the keeper's JSON files against their schemas.** The case "The files a keeper run writes match the state schemas" (`conformance/keeper/test-keeper.ps1`) is described in [docs/conformance.md](conformance.md#the-keeper-suite), which owns what it checks. The prototype's schemas check (`scripts/test-schemas.ps1`, moved to `conformance/schemas/test-schemas.ps1`) still scans only the top level of `schemas/`, and no longer needs to look in `schemas/state/`. | Closed |
+| **Q14** | **Is `instance-id` the right name for the cache under `%USERPROFILE%\.agentspace`, and SHOULD `AGENTSPACE_STATE_DIR` move it?** D21 names the folder and no file. This page keeps the prototype's name without its dot, and leaves the cache where the stamp and the CA are, out of the state folder's reach, since the ProxyCommand and every lease alias's default ProxyCommand read it without any agentspace variable. | The architect |
