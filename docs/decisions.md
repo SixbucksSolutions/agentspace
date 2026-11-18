@@ -793,6 +793,13 @@ with state `released` and `released_at` 2026-11-17T22:24:45Z.
   box at release, so no agent turn was cut off. An open session is ended by closing it, never by
   release.
 
+**Findings from story 0.02.T1.1 (2026-11-17).** D10 stands. Release still ends no open session,
+but a session whose client has gone no longer lingers: since 0.02.T1.1, sshd drops it about 90
+seconds after the box's side of it goes quiet (D12's 0.02.T1.1 findings, which give the
+exception). The E2.08 mechanism is confirmed: the Session Manager tunnel never passed a killed
+client's close on to sshd, and every dead session that had ended did so by `Timeout, client not
+responding`, never by a disconnect. A live session open at release keeps running, as before.
+
 ### D11. Today's idle stop stays
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
@@ -869,6 +876,70 @@ only while some other connection holds it.
   `51-agentspace-logins.conf` against E3.01's grace-time reasoning. Until then a stale forward
   MUST be cleared by hand: find the `sshd-session` that holds the port with `sudo ss -ltnp`, check
   it is the one whose client has gone, and kill only that one.
+
+**Findings from story 0.02.T1.1 (2026-11-17).** D12 stands, and the gap above is closed for a
+dead client: sshd now drops its session, and the forwards with it, about 90 seconds after the
+box's side of the session goes quiet. That is not a bound that holds whatever the box does: sshd
+probes a client only after a whole interval with nothing to do on the session's sockets, so
+steady activity on the box's side, such as calls to the board through a dead forward every few
+seconds, puts the probe off (the watcher's finding below). The E3.03 rule to clear a stale forward
+by hand is replaced by this, except in two cases:
+- **A session that still holds the forwards 2 minutes after its client went MUST be cleared by
+  hand as E3.03 says**, killing only the session whose client has gone.
+- **A holder whose client is alive MUST be closed on the laptop, never killed on the box.**
+
+The box runs OpenSSH 10.2p1 (`OpenSSH_10.2p1 Ubuntu-2ubuntu3.8`).
+- **The values: `ClientAliveInterval 15` and `ClientAliveCountMax 5`**, in
+  `box/system/51-agentspace-logins.conf`, with the reasoning in its comments. sshd drops a client
+  that stays silent for (5 + 1) x 15 = 90 seconds while the box's side is quiet too, under the
+  card's 2 minutes. `install.sh`'s `sshd -T` gate now checks all four keywords of that file.
+  `agentspace.ps1 sync` installed it, and the drops below show both values in effect. The sync's
+  own output was not kept with the run's evidence.
+- **The check is `scripts/check-forward-release.ps1`**, run against a throwaway lease (project
+  `agentspace-check`, created 23:32:40Z, released 23:51:42Z, both from the lease's entry in the
+  laptop's `%USERPROFILE%\.agentspace\leases.json`) from its alias, twice.
+- **A killed holder's session was gone, and both ports free, 86 to 90 seconds after the kill.**
+  - Run 1 (`-BoundSeconds 90`, 23:32:46Z): the holder logged in at 23:32:53Z and held
+    127.0.0.1:8811 and :53147, and was killed on the laptop at 23:32:57Z. sshd logged `Timeout,
+    client not responding from user ubuntu 127.0.0.1 port ...` at 23:34:23.6Z. The box's 5-second
+    sample at 23:34:24Z showed both ports free, and the check printed `Phase 1 passed: both ports
+    free and the holder's sshd-session gone 89.9 s after the kill (bound 90 s)`.
+  - Run 2 (`-BoundSeconds 120`, 23:43:24Z): the holder logged in at 23:43:30Z, was killed at
+    23:43:34Z, and timed out at 23:45:00.4Z. Both ports were free, and its `sshd-session` pids
+    gone, in the sample at 23:45:01Z. The check printed the same 89.9 s, against a bound of 120 s.
+  - **sshd timed each drop from the last packet it had from the client**, not from the kill: the
+    holders timed out 90.1 s after login, since each was killed 4 s after it, before its first
+    probe. The check's 89.9 s also counts the kill itself and the 5-second sample, which is why
+    run 2 used the card's 2 minutes as its bound rather than the 90 seconds itself.
+- **An idle live session survived twice the bound.** Run 2's phase 2 opened `ssh -N -o
+  ClearAllForwardings=yes <alias>` at 23:45:05Z and printed `Phase 2 passed: after 240.5 s the
+  idle session is still connected and its sshd-session (pid ...) is still on the box`, then
+  `Result: Pass.`, exit 0. It answered every 15-second probe. Once the check killed it, at
+  23:49:16Z, sshd dropped it at 23:50:36.8Z, most likely 90 seconds after its last answer, which
+  is 75 to 90 seconds after a kill. Run 1's idle session did the same: killed at 23:35:57Z,
+  dropped at 23:37:14.0Z.
+- **No desktop-app connection was open during either run.** Run 2's baseline line listed only
+  the check's two watchers' `sshd-session` pids, and a `ps` at 23:36:25Z showed only the check's
+  sessions and the session of the login that captured it. So the desktop app's
+  ServerAliveInterval of 15 was weighed in the drop-in's comments, not tested live.
+- **The watcher's own session outlived its client for 9 minutes.** The check's watcher runs a
+  loop on the box that writes a sample every 5 seconds until a deadline. Run 1's watcher was
+  killed at 23:35:57Z, but its `sshd-session` lived on until `Timeout, client not responding` at
+  23:44:51.3Z, about 90 seconds after the loop's deadline. Run 2's watcher, killed at 23:49:16Z,
+  was still on the box at 23:51:18Z, with its loop's deadline about 23:55:26Z. This shows the
+  mechanism the drop-in's comments state: sshd probes only after a whole interval with nothing to
+  do on the session's sockets, so steady output on the box's side puts the drop off. The tunnel
+  takes those writes without error, so the loop does not notice its client has gone. The
+  watcher clears every forward, so it never held the board's ports.
+- **The journal line needs `_COMM=sshd-session`, not `-u ssh`.** `journalctl -u ssh` showed the
+  `Accepted publickey` lines but none of the timeouts or `session closed` lines, most likely
+  because pam_systemd moves a session into its own scope once it opens. `sudo journalctl
+  _COMM=sshd-session --since ... | grep 'Timeout, client not responding'` finds them.
+- **Run 1's phase 2 failed on a parser bug in the check, not on the box.** `ps -eo
+  pid=,ppid=,args=` pads its columns, and the pattern `'^S (\d+) (\d+) (.*)'` allowed one space,
+  so the check never saw an `sshd-session` pid, and phase 2 timed out waiting for the idle
+  session's. Run 1's phase 1 result rests on the ports alone, and stands. The pattern is now
+  `'^S\s*(\d+)\s+(\d+)\s+(.*)'`, and run 2 checked the holder's pids as well.
 
 ## Defaults
 

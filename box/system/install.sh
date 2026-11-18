@@ -43,9 +43,10 @@ systemctl enable agentspace-patch.service
 echo "Installed: idle check (timer $(systemctl is-active agentspace-idle.timer)), patch at boot ($(systemctl is-enabled agentspace-patch.service))"
 
 # Trust the agentspace SSH CA and close root login (decision D7), and keep refused logins from
-# locking everyone out (E3.01): one transaction for the CA key and both drop-ins. The new files
-# stay only if sshd -t accepts them; otherwise every file this run changed is put back, so a later
-# restart or reboot never meets a bad config. Other drop-ins in sshd_config.d are left alone.
+# locking everyone out (E3.01) and a dead client's session from holding the board's forwards
+# (0.02.T1.1): one transaction for the CA key and both drop-ins. The new files stay only if
+# sshd -t accepts them; otherwise every file this run changed is put back, so a later restart or
+# reboot never meets a bad config. Other drop-ins in sshd_config.d are left alone.
 ca_pub=/etc/ssh/agentspace_ca.pub
 ca_dropin=/etc/ssh/sshd_config.d/50-agentspace-ca.conf
 logins_dropin=/etc/ssh/sshd_config.d/51-agentspace-logins.conf
@@ -70,10 +71,11 @@ if [ "$effective" != "permitrootlogin no trustedusercakeys $ca_pub " ]; then
   echo "install.sh: sshd reports '$effective'; another setting overrides 50-agentspace-ca.conf" >&2
   exit 1
 fi
-effective=$(sshd -T | grep -Ei '^(logingracetime|persourcepenaltyexemptlist) ' | sort | tr '\n' ' ')
-if [ "$effective" != "logingracetime 30 persourcepenaltyexemptlist 127.0.0.1 " ]; then
+effective=$(sshd -T | grep -Ei '^(clientalivecountmax|clientaliveinterval|logingracetime|persourcepenaltyexemptlist) ' | sort | tr '\n' ' ')
+if [ "$effective" != "clientalivecountmax 5 clientaliveinterval 15 logingracetime 30 persourcepenaltyexemptlist 127.0.0.1 " ]; then
   echo "install.sh: sshd reports '$effective'; another setting overrides 51-agentspace-logins.conf" >&2
   exit 1
 fi
 echo "Installed: SSH trusts the agentspace CA ($(ssh-keygen -l -f "$ca_pub" | cut -d' ' -f2)), root login closed"
 echo "Installed: 127.0.0.1 exempt from sshd penalties, login grace time 30 seconds"
+echo "Installed: a session whose client has gone is dropped about 90 seconds after it goes quiet (probe every 15 seconds, 5 unanswered)"
