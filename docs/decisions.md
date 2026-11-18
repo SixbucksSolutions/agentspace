@@ -1531,6 +1531,11 @@ settles Q5's TTL half.** The contract is [lease-api.md](lease-api.md), "TTL".
   time of the call, so it MAY shorten a lease as well as extend it. Neither `renew` nor `release`
   revokes the previous certificate (D10), which stays valid until its own expiry, so after a
   shortening `renew` it outlives the lease's `expires_at`.
+- **A certificate's valid-after SHOULD be back-dated by 5 minutes, for clock skew** (#0029;
+  architect, 2026-11-18, for E0.04-T01-S02). A host whose clock runs behind the laptop's then
+  accepts a new certificate at once. Its valid-before, and so the lease's `expires_at`, MUST stay
+  its issue time plus the TTL, so the back-dating never lets a certificate log in after the TTL.
+  The prototype does not back-date, so #0029's point is met in v0.05 (#0054).
 - **A lease MAY be renewed any number of times.** There is no cap on a lease's total life; the
   maximum bounds each certificate, not the lease.
 
