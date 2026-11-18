@@ -1,0 +1,866 @@
+#!/usr/bin/env python3
+"""Samples every Claude Code session on the box, for D27's per-agent footprint (D33).
+
+Usage:
+  agentspace-sample start <run> [--interval <seconds>] [--for <duration>] [--match <regex>]
+  agentspace-sample stop <run>
+  agentspace-sample status
+
+The record is ~/agentspace-samples/<run>.jsonl, in the format pinned on story E0.03-T01-S01's
+card: a start line, then for each sample one host line and one line per live session, then an
+end line. Python 3, standard library only (D33).
+"""
+
+import datetime
+import fcntl
+import json
+import math
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import traceback
+
+VERSION = "agentspace-sample 1"
+
+# The default --match, from E0.03-T01-S01's spike (D33's findings): a Claude Code session on the
+# box is one native `claude` process, whose argv[0] is the path it was called by, such as
+# /home/ubuntu/.local/bin/claude. Anchoring on argv[0] keeps out its tool calls' `bash -c` lines
+# (which name ~/.claude/shell-snapshots), a wrapper shell, `grep claude`, and this sampler.
+DEFAULT_MATCH = r"^(?:\S*/)?claude(?:\s|$)"
+
+RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+FOR_RE = re.compile(r"([0-9]+)([smh])")
+DEFAULT_INTERVAL_S = 2.0
+MIN_INTERVAL_S = 0.5
+MAX_INTERVAL_S = 60.0
+DEFAULT_FOR_S = 8 * 3600
+MAX_FOR_S = 12 * 3600
+
+# How long start waits for the detached sampler's start line.
+START_WAIT_S = 5.0
+# The longest the sampler sleeps between looks at its stop file, its deadline and its signal flag.
+SLICE_S = 0.5
+
+# The sampler's state, all under ~/agentspace-samples/: <run>.jsonl, <run>.stop, the running
+# marker (JSON: pid, start ticks, run, interval, deadline) and the lock the sampler holds while
+# it runs, which keeps a second sampler from starting.
+MARKER_NAME = "sampler.json"
+LOCK_NAME = "sampler.lock"
+
+# Passes the sampler's settings to the detached process, so the --match text never appears on
+# the sampler's own command line.
+CONFIG_ENV = "AGENTSPACE_SAMPLE_CONFIG"
+INTERNAL_COMMAND = "_sample"
+
+# Exit codes of the detached sampler, which start turns into its own refusal.
+CHILD_RUNNING = 3
+CHILD_RECORD_EXISTS = 4
+
+SCRIPT_PATH = os.path.abspath(__file__)
+SCRIPT_NAME = os.path.basename(SCRIPT_PATH)
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+
+USAGE = """\
+Usage: agentspace-sample start <run> [--interval <seconds>] [--for <duration>] [--match <regex>]
+       agentspace-sample stop <run>
+       agentspace-sample status
+       agentspace-sample --help | --version
+
+Samples every Claude Code session on the box into ~/agentspace-samples/<run>.jsonl.
+
+Commands:
+  start <run>   Starts a detached sampler for <run>, which matches ^[a-z0-9][a-z0-9-]{0,63}$.
+                --interval  Seconds between samples, 0.5 to 60. Defaults to 2.
+                --for       How long it runs, as 90s, 30m or 8h. Defaults to 8h; at most 12h.
+                --match     Regex for a session's full command line. Defaults to Claude Code's CLI.
+  stop <run>    Asks the sampler to write its end line and exit, and waits for it.
+  status        Shows the running sampler, or says none is running.
+"""
+
+
+class UsageError(Exception):
+    """An argument the command refuses, which exits 2."""
+
+
+# ---------------------------------------------------------------------------------------------
+# Times and paths
+
+
+def now_local():
+    return datetime.datetime.now().astimezone()
+
+
+def iso(dt):
+    """ISO 8601 with milliseconds and the box's UTC offset, as the record pins."""
+    return dt.isoformat(timespec="milliseconds")
+
+
+def clock(dt):
+    """A time for a human: h:mm plus am or pm, in the box's zone (D32)."""
+    dt = dt.astimezone()
+    hour = dt.hour % 12 or 12
+    text = "%d:%02d%s" % (hour, dt.minute, "am" if dt.hour < 12 else "pm")
+    today = now_local().date()
+    if dt.date() == today + datetime.timedelta(days=1):
+        text += " tomorrow"
+    elif dt.date() != today:
+        text += " on " + dt.date().isoformat()
+    return text
+
+
+def samples_dir():
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return os.path.join(home, "agentspace-samples")
+
+
+def record_path(folder, run):
+    return os.path.join(folder, run + ".jsonl")
+
+
+def stop_path(folder, run):
+    return os.path.join(folder, run + ".stop")
+
+
+def error_path(folder, run):
+    return os.path.join(folder, run + ".error")
+
+
+def dumps(obj):
+    return json.dumps(obj, separators=(",", ":"))
+
+
+# ---------------------------------------------------------------------------------------------
+# /proc readers. Each one raises OSError (or ValueError) when the process has gone.
+
+
+def read_stat(pid):
+    """Returns (ppid, utime, stime, cutime, cstime, starttime, state) from /proc/<pid>/stat."""
+    with open("/proc/%d/stat" % pid, "rb") as f:
+        data = f.read()
+    # comm is in parentheses and can itself hold spaces and parentheses, so split after the last.
+    rest = data[data.rindex(b")") + 2:].split()
+    return (
+        int(rest[1]),
+        int(rest[11]),
+        int(rest[12]),
+        int(rest[13]),
+        int(rest[14]),
+        int(rest[19]),
+        rest[0],
+    )
+
+
+def read_cmdline(pid):
+    """The full command line with NUL bytes read as spaces; the final terminator is dropped."""
+    with open("/proc/%d/cmdline" % pid, "rb") as f:
+        data = f.read()
+    return data.rstrip(b"\0").replace(b"\0", b" ").decode("utf-8", "replace")
+
+
+def read_kib(path, key):
+    """The value of a 'Key:   123 kB' line, or 0 when the file has no such line."""
+    with open(path, "rb") as f:
+        for line in f:
+            if line.startswith(key):
+                return int(line.split()[1])
+    return 0
+
+
+def read_mem(pid):
+    """(pss_kib, rss_kib) for one process. Each one that cannot be read counts 0."""
+    try:
+        pss = read_kib("/proc/%d/smaps_rollup" % pid, b"Pss:")
+    except (OSError, ValueError, IndexError):
+        pss = 0
+    try:
+        rss = read_kib("/proc/%d/status" % pid, b"VmRSS:")
+    except (OSError, ValueError, IndexError):
+        rss = 0
+    return pss, rss
+
+
+def read_meminfo():
+    out = {}
+    with open("/proc/meminfo", "rb") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 2:
+                out[parts[0].rstrip(b":")] = int(parts[1])
+    return out
+
+
+def read_host_cpu():
+    """(busy_s, total_s) summed over every CPU, from /proc/stat's first line."""
+    with open("/proc/stat", "rb") as f:
+        fields = [int(x) for x in f.readline().split()[1:]]
+    # user nice system idle iowait irq softirq steal; guest and guest_nice are already counted
+    # in user and nice, so they are left out.
+    fields = (fields + [0] * 8)[:8]
+    total = sum(fields)
+    busy = total - fields[3] - fields[4]
+    return busy / CLK_TCK, total / CLK_TCK
+
+
+def read_load1():
+    with open("/proc/loadavg", "rb") as f:
+        return float(f.read().split()[0])
+
+
+def proc_alive(pid, start_ticks):
+    """True when <pid> is running and is the same process that started at <start_ticks>."""
+    try:
+        st = read_stat(pid)
+    except (OSError, ValueError, IndexError):
+        return False
+    return st[5] == start_ticks and st[6] != b"Z"
+
+
+# ---------------------------------------------------------------------------------------------
+# Record and marker readers, for start, stop and status
+
+
+def read_marker(folder):
+    """The running sampler's marker, or None when no sampler is running.
+
+    A marker left by a sampler that was killed is stale: its PID is gone, or belongs to another
+    process, and it reads as no sampler running.
+    """
+    try:
+        with open(os.path.join(folder, MARKER_NAME), "r", encoding="utf-8") as f:
+            marker = json.load(f)
+        pid = int(marker["pid"])
+        ticks = int(marker["start_ticks"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return marker if proc_alive(pid, ticks) else None
+
+
+def tail_lines(path, limit=65536):
+    """The record's last complete lines, parsed, newest first."""
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(max(0, size - limit))
+        data = f.read()
+    lines = data.split(b"\n")
+    if size > limit:
+        lines = lines[1:]  # The first may be cut.
+    out = []
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def end_line(path):
+    for obj in tail_lines(path, 4096):
+        if obj.get("kind") == "end":
+            return obj
+    return None
+
+
+def samples_so_far(path):
+    for obj in tail_lines(path):
+        if "seq" in obj:
+            return int(obj["seq"])
+        if obj.get("kind") == "end":
+            return int(obj.get("samples", 0))
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Argument parsing. argparse is not used: its messages start in lower case.
+
+
+def parse_run(value):
+    if value is None or RUN_RE.fullmatch(value) is None:
+        raise UsageError(
+            "The run name %r is refused: it must match ^[a-z0-9][a-z0-9-]{0,63}$." % (value,)
+        )
+    return value
+
+
+def parse_interval(value):
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise UsageError("The --interval %r is not a number of seconds." % (value,))
+    if not math.isfinite(seconds) or seconds < MIN_INTERVAL_S or seconds > MAX_INTERVAL_S:
+        raise UsageError(
+            "The --interval %r is refused: it must be from %g to %g seconds."
+            % (value, MIN_INTERVAL_S, MAX_INTERVAL_S)
+        )
+    return seconds
+
+
+def parse_for(value):
+    m = FOR_RE.fullmatch(value)
+    if m is None:
+        raise UsageError(
+            "The --for %r is refused: give a whole number followed by s, m or h, such as 30m."
+            % (value,)
+        )
+    seconds = int(m.group(1)) * {"s": 1, "m": 60, "h": 3600}[m.group(2)]
+    if seconds == 0:
+        raise UsageError("The --for %r is refused: it must be longer than 0." % (value,))
+    if seconds > MAX_FOR_S:
+        raise UsageError("The --for %r is refused: it must be 12h or less." % (value,))
+    return seconds
+
+
+def parse_match(value):
+    if value == "":
+        raise UsageError("The --match regex is refused: it is empty, and would match everything.")
+    try:
+        re.compile(value)
+    except re.error as e:
+        raise UsageError("The --match regex %r does not compile: %s." % (value, e))
+    return value
+
+
+def parse_start(args):
+    opts = {"interval": DEFAULT_INTERVAL_S, "for": DEFAULT_FOR_S, "match": DEFAULT_MATCH}
+    run = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        name, value = arg, None
+        if arg.startswith("--") and "=" in arg:
+            name, value = arg.split("=", 1)
+        if name in ("--interval", "--for", "--match"):
+            if value is None:
+                i += 1
+                if i >= len(args):
+                    raise UsageError("The option %s needs a value." % name)
+                value = args[i]
+            if name == "--interval":
+                opts["interval"] = parse_interval(value)
+            elif name == "--for":
+                opts["for"] = parse_for(value)
+            else:
+                opts["match"] = parse_match(value)
+        elif arg.startswith("-") and arg != "-":
+            raise UsageError("Unknown option for start: %s" % arg)
+        elif run is None:
+            run = arg
+        else:
+            raise UsageError("Start takes one run name; got a second: %s" % arg)
+        i += 1
+    if run is None:
+        raise UsageError("Start needs a run name.")
+    opts["run"] = parse_run(run)
+    return opts
+
+
+def parse_one_run(command, args):
+    if len(args) != 1 or args[0].startswith("-"):
+        raise UsageError("%s takes exactly one run name." % command.capitalize())
+    return parse_run(args[0])
+
+
+# ---------------------------------------------------------------------------------------------
+# start
+
+
+def cmd_start(args):
+    opts = parse_start(args)
+    folder = samples_dir()
+    os.makedirs(folder, exist_ok=True)
+    record = record_path(folder, opts["run"])
+
+    running = read_marker(folder)
+    if running is not None:
+        print(
+            "A sampler is already running: run %s, PID %s. One sampler runs at a time."
+            % (running.get("run"), running.get("pid")),
+            file=sys.stderr,
+        )
+        return 2
+    if os.path.lexists(record):
+        print("The record %s already exists; choose another run name." % record, file=sys.stderr)
+        return 2
+
+    st = read_stat(os.getpid())
+    config = {
+        "run": opts["run"],
+        "interval_s": opts["interval"],
+        "for_s": opts["for"],
+        "match": opts["match"],
+        "folder": folder,
+        "starter_pid": os.getpid(),
+        "starter_ticks": st[5],
+    }
+    env = dict(os.environ)
+    env[CONFIG_ENV] = dumps(config)
+    # A new session with no terminal and stdio on /dev/null: closing the SSH connection that ran
+    # start sends the sampler no SIGHUP, and it keeps running once start exits.
+    devnull = subprocess.DEVNULL
+    child = subprocess.Popen(
+        [sys.executable, SCRIPT_PATH, INTERNAL_COMMAND],
+        stdin=devnull,
+        stdout=devnull,
+        stderr=devnull,
+        env=env,
+        cwd="/",
+        start_new_session=True,
+        close_fds=True,
+    )
+
+    waited_until = time.monotonic() + START_WAIT_S
+    while True:
+        start = first_line(record)
+        if start is not None and start.get("kind") == "start":
+            break
+        code = child.poll()
+        if code is not None:
+            if code == CHILD_RUNNING:
+                running = read_marker(folder)
+                print(
+                    "A sampler is already running%s. One sampler runs at a time."
+                    % (": run %s, PID %s" % (running.get("run"), running.get("pid"))
+                       if running else ""),
+                    file=sys.stderr,
+                )
+                return 2
+            if code == CHILD_RECORD_EXISTS:
+                print(
+                    "The record %s already exists; choose another run name." % record,
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                "The sampler exited with status %d before it wrote its start line%s."
+                % (code, see_error(folder, opts["run"])),
+                file=sys.stderr,
+            )
+            return 1
+        if time.monotonic() >= waited_until:
+            child.terminate()
+            print(
+                "The sampler wrote no start line within %g seconds; it was sent SIGTERM."
+                % START_WAIT_S,
+                file=sys.stderr,
+            )
+            return 1
+        time.sleep(0.05)
+
+    deadline = datetime.datetime.fromisoformat(start["deadline"])
+    print("Started sampler PID %d for run %s." % (child.pid, opts["run"]))
+    print("Record: %s" % record)
+    print("Samples every %g second%s. Runs until %s."
+          % (opts["interval"], "" if opts["interval"] == 1 else "s", clock(deadline)))
+    return 0
+
+
+def first_line(path):
+    try:
+        with open(path, "rb") as f:
+            line = f.readline()
+    except OSError:
+        return None
+    if not line.endswith(b"\n"):
+        return None
+    try:
+        return json.loads(line)
+    except ValueError:
+        return None
+
+
+def see_error(folder, run):
+    path = error_path(folder, run)
+    return "; see %s" % path if os.path.exists(path) else ""
+
+
+# ---------------------------------------------------------------------------------------------
+# stop and status
+
+
+def cmd_stop(args):
+    run = parse_one_run("stop", args)
+    folder = samples_dir()
+    record = record_path(folder, run)
+    marker = read_marker(folder)
+
+    if marker is None or marker.get("run") != run:
+        if not os.path.exists(record):
+            print("There is no record for run %s, and no sampler is running it." % run,
+                  file=sys.stderr)
+            return 2
+        end = end_line(record)
+        if end is not None:
+            print("The sampler for run %s had already ended: %s, after %s samples."
+                  % (run, end.get("reason"), end.get("samples")))
+            return 0
+        print("The sampler for run %s is not running, and its record has no end line%s."
+              % (run, see_error(folder, run)), file=sys.stderr)
+        return 1
+
+    with open(stop_path(folder, run), "a"):
+        pass
+    pid = int(marker["pid"])
+    ticks = int(marker["start_ticks"])
+    wait_s = 3 * float(marker.get("interval_s", DEFAULT_INTERVAL_S))
+    until = time.monotonic() + wait_s
+    while True:
+        end = end_line(record)
+        alive = proc_alive(pid, ticks)
+        if end is not None and not alive:
+            print("The sampler for run %s ended: %s, after %s samples."
+                  % (run, end.get("reason"), end.get("samples")))
+            return 0
+        if time.monotonic() >= until:
+            break
+        time.sleep(0.1)
+    if alive:
+        print("The sampler for run %s (PID %d) is still running after %g seconds."
+              % (run, pid, wait_s), file=sys.stderr)
+    else:
+        print("The sampler for run %s exited without writing its end line%s."
+              % (run, see_error(folder, run)), file=sys.stderr)
+    return 1
+
+
+def cmd_status(args):
+    if args:
+        raise UsageError("Status takes no arguments.")
+    folder = samples_dir()
+    marker = read_marker(folder)
+    if marker is None:
+        print("No sampler is running.")
+        return 0
+    record = record_path(folder, marker["run"])
+    try:
+        count = samples_so_far(record)
+    except OSError:
+        count = 0
+    deadline = datetime.datetime.fromisoformat(marker["deadline"])
+    print("Run: %s" % marker["run"])
+    print("PID: %d" % int(marker["pid"]))
+    print("Samples so far: %d" % count)
+    print("Runs until %s." % clock(deadline))
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------
+# The detached sampler
+
+
+class Sampler:
+    def __init__(self, config):
+        self.run = config["run"]
+        self.interval = float(config["interval_s"])
+        self.for_s = int(config["for_s"])
+        self.match_text = config["match"]
+        self.match = re.compile(self.match_text)
+        self.folder = config["folder"]
+        self.pid = os.getpid()
+        self.starter = (int(config["starter_pid"]), int(config["starter_ticks"]))
+        self.record = record_path(self.folder, self.run)
+        self.stop_file = stop_path(self.folder, self.run)
+        self.marker = os.path.join(self.folder, MARKER_NAME)
+        self.signalled = False
+        self.out = None
+        self.lock_fd = None
+
+    def on_signal(self, signum, frame):
+        self.signalled = True
+
+    def write(self, obj):
+        self.out.write(dumps(obj) + "\n")
+        self.out.flush()
+
+    def excluded(self, pid, start_ticks, argv):
+        """True for the sampler's own processes, which MUST NOT be a session or counted in one.
+
+        That is this process, the start that launched it, and any process running this script
+        (stop, status, a refused second start), or a wrapper whose command line names this script
+        and carries the --match text, which a careless sampler would match as a session.
+        """
+        if pid == self.pid or (pid, start_ticks) == self.starter:
+            return True
+        if SCRIPT_NAME not in argv:
+            return False
+        parts = argv.split(" ")[:3]
+        if any(os.path.basename(p) == SCRIPT_NAME for p in parts):
+            return True
+        return self.match_text in argv
+
+    def setup(self):
+        """Takes the lock, creates the record and writes the marker. Returns an exit code or None."""
+        os.makedirs(self.folder, exist_ok=True)
+        self.lock_fd = os.open(os.path.join(self.folder, LOCK_NAME),
+                               os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        try:
+            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return CHILD_RUNNING
+        try:
+            self.out = open(self.record, "x", encoding="utf-8")
+        except FileExistsError:
+            return CHILD_RECORD_EXISTS
+        try:
+            os.unlink(self.stop_file)  # A stop file left from an earlier run of this name.
+        except FileNotFoundError:
+            pass
+        return None
+
+    def write_marker(self, deadline):
+        marker = {
+            "pid": self.pid,
+            "start_ticks": read_stat(self.pid)[5],
+            "run": self.run,
+            "interval_s": self.interval,
+            "deadline": iso(deadline),
+            "record": self.record,
+        }
+        tmp = self.marker + ".%d.tmp" % self.pid
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(dumps(marker) + "\n")
+        os.replace(tmp, self.marker)
+
+    def cleanup(self):
+        try:
+            os.unlink(self.stop_file)
+        except OSError:
+            pass
+        try:
+            with open(self.marker, "r", encoding="utf-8") as f:
+                mine = int(json.load(f).get("pid", -1)) == self.pid
+            if mine:
+                os.unlink(self.marker)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def scan(self):
+        """One pass over /proc: {pid: stat tuple}, children by parent, and the matching PIDs."""
+        procs = {}
+        children = {}
+        matching = set()
+        for name in os.listdir("/proc"):
+            if not name.isdigit():
+                continue
+            pid = int(name)
+            try:
+                st = read_stat(pid)
+            except (OSError, ValueError, IndexError):
+                continue  # Gone before it could be read: skipped for this sample.
+            ppid = st[0]
+            # Kernel threads (children of kthreadd, PID 2) have no command line to match.
+            if pid != 2 and ppid != 2 and st[6] != b"Z":
+                try:
+                    argv = read_cmdline(pid)
+                except OSError:
+                    argv = ""
+                if argv:
+                    if self.excluded(pid, st[5], argv):
+                        continue  # The sampler's own: never a session, never counted in one.
+                    if self.match.search(argv):
+                        matching.add(pid)
+            procs[pid] = st
+            children.setdefault(ppid, []).append(pid)
+        return procs, children, matching
+
+    def sessions(self, procs, matching):
+        """The outermost matching processes: a match with no matching ancestor."""
+        out = []
+        for pid in matching:
+            ancestor = procs[pid][0]
+            seen = 0
+            outermost = True
+            while ancestor > 1 and ancestor in procs and seen < 4096:
+                if ancestor in matching:
+                    outermost = False
+                    break
+                ancestor = procs[ancestor][0]
+                seen += 1
+            if outermost:
+                out.append(pid)
+        return sorted(out)
+
+    def sample(self, seq):
+        t = iso(now_local())
+        busy, total = read_host_cpu()
+        mem = read_meminfo()
+        mem_used = mem.get(b"MemTotal", 0) - mem.get(b"MemAvailable", 0)
+        load1 = read_load1()
+        procs, children, matching = self.scan()
+        sessions = self.sessions(procs, matching)
+        own = os.times()
+        self.write({
+            "kind": "host",
+            "t": t,
+            "seq": seq,
+            "cpu_busy_s": round(busy, 2),
+            "cpu_total_s": round(total, 2),
+            "mem_used_kib": mem_used,
+            "load1": load1,
+            "sampler_cpu_s": round(own.user + own.system, 2),
+        })
+        for pid in sessions:
+            line = self.session_line(t, seq, pid, procs, children)
+            if line is not None:
+                self.write(line)
+
+    def session_line(self, t, seq, pid, procs, children):
+        _, utime, stime, cutime, cstime, start_ticks, _ = procs[pid]
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            if not os.path.exists("/proc/%d" % pid):
+                return None  # The session ended mid-read: skipped for this sample.
+            cwd = None
+        self_pss, self_rss = read_mem(pid)
+
+        # Every live descendant, from this sample's parent tree. A descendant whose stat was read
+        # counts in procs and its CPU counts, even if it ends before its memory is read; memory
+        # that cannot be read counts 0. Its CPU then moves into its parent's cutime and cstime,
+        # so tools.cpu_s does not drop at the next sample.
+        tools_ticks = cutime + cstime
+        tools_pss = tools_rss = tools_procs = 0
+        stack = list(children.get(pid, ()))
+        while stack:
+            child = stack.pop()
+            c = procs[child]
+            tools_ticks += c[1] + c[2] + c[3] + c[4]
+            pss, rss = read_mem(child)
+            tools_pss += pss
+            tools_rss += rss
+            tools_procs += 1
+            stack.extend(children.get(child, ()))
+
+        return {
+            "kind": "session",
+            "t": t,
+            "seq": seq,
+            "session": "%d-%d" % (pid, start_ticks),
+            "cwd": cwd,
+            "self": {
+                "cpu_s": round((utime + stime) / CLK_TCK, 2),
+                "pss_kib": self_pss,
+                "rss_kib": self_rss,
+            },
+            "tools": {
+                "cpu_s": round(tools_ticks / CLK_TCK, 2),
+                "pss_kib": tools_pss,
+                "rss_kib": tools_rss,
+                "procs": tools_procs,
+            },
+        }
+
+    def main(self):
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, self.on_signal)
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+        code = self.setup()
+        if code is not None:
+            return code
+        try:
+            started = now_local()
+            mono0 = time.monotonic()
+            deadline = started + datetime.timedelta(seconds=self.for_s)
+            deadline_mono = mono0 + self.for_s
+            self.write_marker(deadline)
+            mem = read_meminfo()
+            self.write({
+                "kind": "start",
+                "t": iso(started),
+                "run": self.run,
+                "interval_s": self.interval,
+                "deadline": iso(deadline),
+                "match": self.match_text,
+                "cpus": os.cpu_count(),
+                "mem_total_kib": mem.get(b"MemTotal", 0),
+                "sampler": VERSION,
+            })
+
+            seq = 0
+            next_sample = mono0
+            while True:
+                if self.signalled:
+                    reason = "signal"
+                    break
+                if os.path.exists(self.stop_file):
+                    reason = "stop-file"
+                    break
+                now = time.monotonic()
+                if now >= deadline_mono:
+                    reason = "deadline"
+                    break
+                if now >= next_sample:
+                    seq += 1
+                    self.sample(seq)
+                    next_sample += self.interval
+                    if next_sample <= time.monotonic():
+                        # A sample that ran past the next slot: start counting again from now
+                        # rather than sampling in a burst.
+                        next_sample = time.monotonic() + self.interval
+                    continue
+                # Both differences are positive here. The slice bounds how late a stop file or a
+                # signal is seen, since a signal handler does not cut a sleep short.
+                time.sleep(min(next_sample - now, deadline_mono - now, SLICE_S))
+
+            self.write({"kind": "end", "t": iso(now_local()), "reason": reason, "samples": seq})
+            self.out.close()
+            return 0
+        except BaseException:
+            # The record gets no end line; the traceback goes beside it, since stderr is /dev/null.
+            try:
+                with open(error_path(self.folder, self.run), "w", encoding="utf-8") as f:
+                    traceback.print_exc(file=f)
+            except OSError:
+                pass
+            return 1
+        finally:
+            self.cleanup()
+
+
+def cmd_internal():
+    raw = os.environ.pop(CONFIG_ENV, None)
+    if raw is None:
+        print("The %s command is internal; use start." % INTERNAL_COMMAND, file=sys.stderr)
+        return 2
+    return Sampler(json.loads(raw)).main()
+
+
+# ---------------------------------------------------------------------------------------------
+
+
+def main(argv):
+    if not argv:
+        sys.stderr.write(USAGE)
+        return 2
+    command, args = argv[0], argv[1:]
+    try:
+        if command in ("-h", "--help", "help"):
+            sys.stdout.write(USAGE)
+            return 0
+        if command == "--version":
+            print(VERSION)
+            return 0
+        if command == "start":
+            if "-h" in args or "--help" in args:
+                sys.stdout.write(USAGE)
+                return 0
+            return cmd_start(args)
+        if command == "stop":
+            return cmd_stop(args)
+        if command == "status":
+            return cmd_status(args)
+        if command == INTERNAL_COMMAND:
+            return cmd_internal()
+        raise UsageError("Unknown command: %s. Run agentspace-sample --help." % command)
+    except UsageError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
