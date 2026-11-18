@@ -1,4 +1,5 @@
 #Requires -Version 7
+# A conformance check in method under D34, not yet moved to conformance/, except its three installer cases, which are prototype code: the rewrite MAY read its keeper cases only once they are moved. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for the board holder keeper's one pass (story 0.02.T1.2, D30), run through the real

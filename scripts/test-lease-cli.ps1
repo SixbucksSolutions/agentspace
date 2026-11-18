@@ -1,4 +1,5 @@
 #Requires -Version 7
+# Mixed under D34: its process checks are conformance in method and its in-process checks are prototype code; the rewrite MUST NOT read this suite. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for the lease CLI's skeleton (story E1.02): scripts\lease-cli.ps1 and its shims,

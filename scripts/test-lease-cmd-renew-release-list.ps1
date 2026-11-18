@@ -1,4 +1,5 @@
 #Requires -Version 7
+# Prototype code under D34: the rewrite MUST NOT read this suite. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for story E1.05: agentspace lease renew, release and list (scripts\lease-cmd-*.ps1).

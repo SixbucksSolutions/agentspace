@@ -1,3 +1,4 @@
+# Prototype code under D34: the rewrite MUST NOT read this suite. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for Push-Localswim in scripts\agentspace.ps1 (card #0026) and for the alias it

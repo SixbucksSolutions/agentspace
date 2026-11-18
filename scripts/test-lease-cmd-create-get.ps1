@@ -1,4 +1,5 @@
 #Requires -Version 7
+# A conformance check in method under D34, not yet moved to conformance/: the rewrite MAY read it only once it is moved. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for `agentspace lease create` and `agentspace lease get` (story E1.04), run through
