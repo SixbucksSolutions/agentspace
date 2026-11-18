@@ -88,6 +88,10 @@ its own, unsatisfiable until a driver supports it (D5). E0.04-T01-S02 (#0074) st
   whether a libc is there or not. `any` is never a profile's value, since a host cannot have
   "any" libc. Today a request names a profile, never a libc, so no request carries a need. It is
   deferred until after 1.0, in the roadmap's "Someday, maybe".
+- **A need that no profile meets fails early, and that is fine** (Terry, 2026-11-18): "That isn't
+  a problem, it's just staying focused on common cases for 1.0." The request is `unsatisfiable`
+  (D5), never placed on a near match. 1.0 supports and tests the common cases, and the rest wait
+  for a real need.
 
 **Windows hosts are in scope (Terry, 2026-11-18):** "if we need a windows EC2 instance as part of
 the agentspace fleet, that's in scope. Whole point is to be a multi-platform agent
