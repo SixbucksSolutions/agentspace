@@ -78,6 +78,10 @@ and never which libc, so an agent's binaries (a Rust `-gnu` target, Node's `linu
 `manylinux` wheel) learn it from the profile. A musl host, such as Alpine, would be a profile of
 its own, unsatisfiable until a driver supports it (D5). E0.04-T01-S02 (#0074) states
 `agent-linux`'s.
+- **The family MAY be `none`** (Terry, 2026-11-18): a host or image with no libc at all, such as a
+  `scratch` container that runs a CGO-disabled Go binary. A `none` profile has no libc version,
+  and promises nothing that needs one. So the family is one of `glibc`, `musl` or `none`, and only
+  the first two carry a minimum version.
 
 **Windows hosts are in scope (Terry, 2026-11-18):** "if we need a windows EC2 instance as part of
 the agentspace fleet, that's in scope. Whole point is to be a multi-platform agent
