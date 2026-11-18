@@ -84,6 +84,20 @@ in a request or a response MAY name a backend, an instance type, a region or a h
 **Why:** hosting changes as Terry's needs and cost tolerance change, and that MUST NOT ripple into
 every project that uses agentspace.
 
+**D1 holds at connect time too** (architect, 2026-11-18, for E0.04-T02-S02, #0077). What the
+ProxyCommand prints while a lease connects reaches the caller's ssh client, and so the caller.
+- **On success it MUST NOT name the backend:** no instance or host ID, region, machine type, cloud
+  state name, or cloud tool's text. A progress line MAY say that the lease's host is starting or
+  ready, in agentspace's own words.
+- **On failure it prints agentspace's own message**, which MAY name the lease and what the caller
+  can do, never the backend.
+- **The backend's own detail MAY be printed only when the caller asks for it**, through a setting
+  docs/operator.md names, for diagnosis.
+- **The prototype does not meet this:** `up` prints the instance ID (`Ready: <id>`,
+  `Starting <id>...`), EC2 states, Session Manager and patch messages, and the AWS CLI's text.
+  It is carried into docs/operator.md and docs/driver.md as a requirement, and met by v0.06
+  (#0055). The card is #0087.
+
 ### D2. The unit is a lease
 
 **Decided.** A project asks for a lease: compute for one agent, for a bounded time. A lease
@@ -2278,6 +2292,11 @@ lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D3
   holding only `docs/`, `schemas/` and the conformance checks, never from a checkout. Each writes
   how it would build a drop-in, and lists every point where it had to guess. A guess is a gap in
   the package.
+  - **The export MUST leave out what describes the prototype rather than specifies it**
+    (architect, 2026-11-18, from E0.04-T02-S02's clean-room reader): every "Findings from ..."
+    block in `decisions.md`, `docs/runs/`, the handoffs and `how-it-was-built.md`. A reader who
+    falls back on the prototype's history is not reading the spec alone, and the question it
+    needed answered is a gap in the spec.
 - **v0.04's first turn runs on the box, where v0.03 measures it (D33).** The prototype runs only
   on Windows, so a writer there reads the code and the docs and never runs the prototype. A
   question only a run on the laptop could settle goes in its doc's open questions, for the
