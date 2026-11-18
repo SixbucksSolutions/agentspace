@@ -72,6 +72,13 @@ libc and the toolchain: Alpine was ruled out for this box because workerd and Pl
 on musl, not because it was Alpine. A distro field would also invite arch × distro × version
 combinations that nobody tests.
 
+**A profile MUST state its libc, family and minimum version** (Terry, 2026-11-18: "I don't think
+linux is specific enough, agent may care about libc available to it"). The platform says `linux`
+and never which libc, so an agent's binaries (a Rust `-gnu` target, Node's `linux-x64`, a
+`manylinux` wheel) learn it from the profile. A musl host, such as Alpine, would be a profile of
+its own, unsatisfiable until a driver supports it (D5). E0.04-T01-S02 (#0074) states
+`agent-linux`'s.
+
 **Windows hosts are in scope (Terry, 2026-11-18):** "if we need a windows EC2 instance as part of
 the agentspace fleet, that's in scope. Whole point is to be a multi-platform agent
 compute-on-demand service."
