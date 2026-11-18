@@ -40,6 +40,21 @@ try {
   Check 'A non-UUID is refused' (Refused { Get-LeaseAliasName -Project 'x' -LeaseId 'not-a-uuid' })
   Check 'A UUIDv1 is refused' (Refused { Get-LeaseAliasName -Project 'x' -LeaseId '3f2a9c1e-7b4d-1e6a-8c2f-0a1b2c3d4e5f' })
   Check 'A project like ..\x is refused' (Refused { Get-LeaseAliasName -Project '..\x' -LeaseId $idA })
+  # Letters that a case-insensitive match folds to ASCII: U+0130 stays itself when lowercased, and
+  # U+212A, the Kelvin sign, becomes k. Both MUST be refused.
+  foreach ($bad in ([string][char]0x130 + 'wim'), ([string][char]0x212A + 'wim')) {
+    $shown = ($bad.ToCharArray() | ForEach-Object { if ([int]$_ -lt 0x21 -or [int]$_ -gt 0x7E) { 'U+{0:X4}' -f [int]$_ } else { $_ } }) -join ''
+    Check "A project $shown is refused" (Refused { Get-LeaseAliasName -Project $bad -LeaseId $idA })
+  }
+  # Test-LeaseAliasName is the check Set-LeaseAlias applies to the alias; it MUST equal
+  # agentspace.ps1's Test-AliasName.
+  foreach ($good in 'agentspace', 'agentspace-swimcoach-3f2a9c1e', 'A.b_c-9') {
+    Check "Test-LeaseAliasName accepts '$good'" (Test-LeaseAliasName $good)
+  }
+  foreach ($bad in '-Fx', 'a;b', 'a b', '', "a`n", ('agentspace-' + [char]0x212A), ('agentspace-' + [char]0x130)) {
+    $shown = ($bad.ToCharArray() | ForEach-Object { if ([int]$_ -lt 0x21 -or [int]$_ -gt 0x7E) { 'U+{0:X4}' -f [int]$_ } else { $_ } }) -join ''
+    Check "Test-LeaseAliasName refuses '$shown'" (-not (Test-LeaseAliasName $bad))
+  }
 
   # Include on an LF config
   $ssh1 = Fresh 'ssh1'
@@ -128,6 +143,21 @@ try {
   # ssh -G prints each forward's host in brackets.
   Check 'ssh -G: both remoteforward lines' (($G -match '(?m)^remoteforward \[127\.0\.0\.1\]:8811 \[127\.0\.0\.1\]:8811\s*$') -and
     ($G -match '(?m)^remoteforward \[127\.0\.0\.1\]:53147 \[127\.0\.0\.1\]:53147\s*$'))
+
+  # The default ProxyCommand names the alias literally at the end, and never uses %n.
+  # The repo root is pointed at a throwaway folder that has an .instance-id, so no real checkout is read.
+  $fakeRepo = Fresh 'fakerepo'
+  Set-Content -LiteralPath (Join-Path $fakeRepo '.instance-id') -Value 'i-fake'
+  $script:LeaseAliasRepo = $fakeRepo
+  $ssh6 = Fresh 'ssh6'
+  $r6 = Set-LeaseAlias -Project 'SwimCoach' -LeaseId $idA -SshDir $ssh6 -LeaseRoot $leases
+  $txt6 = [IO.File]::ReadAllText($r6.Path)
+  $expectPc = 'ProxyCommand C:\Windows\System32\cmd.exe /d /c "' + (Join-Path $script:LeaseAliasRepo 'scripts\ssh-proxy.cmd') + '" agentspace-swimcoach-3f2a9c1e'
+  Check 'Default ProxyCommand line ends with the literal alias' ($txt6.Contains("`n  $expectPc`n")) $txt6
+  Check 'Default ProxyCommand has no %n' ($txt6 -notmatch '%n')
+  $G6 = (& $ssh -G -F $r6.Path $r6.Alias) -join "`n"
+  Check 'ssh -G: default proxycommand ends with the alias' ($G6 -match '(?m)^proxycommand .*ssh-proxy\.cmd" agentspace-swimcoach-3f2a9c1e\s*$') $G6
+  Check 'A custom -ProxyCommand is written unchanged' ($txt -match '(?m)^  ProxyCommand C:\\Windows\\System32\\cmd\.exe /d /c "echo proxy"$')
 
   # Set again
   $t0 = (Get-Item -LiteralPath $file).LastWriteTimeUtc

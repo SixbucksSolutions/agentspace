@@ -5,7 +5,9 @@
 .DESCRIPTION
   deploy  Creates or updates the CloudFormation stack, then runs sync.
   up      Starts the instance if needed, waits until it has finished patching, and sends
-          the localswim Bot token if it changed.
+          the localswim Bot token if it changed. The token goes over -Alias, the SSH host
+          alias the caller connected with (default agentspace), so a lease never depends on
+          Terry's own entry (D9). ssh-proxy.cmd passes it.
   sync    Checks the agentspace SSH CA, then installs box/system (idle check, patch at boot,
           localswim wrapper, the sshd drop-ins that trust the CA, close root login, exempt
           127.0.0.1 from login penalties and shorten the login grace time) on the
@@ -26,7 +28,8 @@ param(
   [ValidateSet('deploy', 'up', 'sync', 'down', 'status', 'grow', 'ca')]
   [string]$Command,
   [int]$GiB = 2,
-  [switch]$Quiet
+  [switch]$Quiet,
+  [string]$Alias = 'agentspace'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -106,6 +109,13 @@ function Write-Message([string]$Text) {
 
 function Say([string]$Text) { if (-not $Quiet) { Write-Message $Text } }
 function Fail([string]$Text) { Write-Message "agentspace: $Text"; exit 1 }
+
+# Whether $Name may be used as the SSH host alias of the token push. It lands on ssh's command
+# line, so it MUST be letters, digits, '.', '_' and '-' alone, and MUST NOT start with '-', which
+# ssh would read as an option. \z, unlike $, never matches before a trailing newline.
+function Test-AliasName([string]$Name) {
+  $Name -cmatch '^[A-Za-z0-9._-]+\z' -and -not $Name.StartsWith('-')
+}
 
 function Invoke-Aws {
   $out = & $Aws @args --region $Region --output json 2>&1
@@ -202,8 +212,16 @@ function Start-Box([string]$Id) {
 # token has changed since the last send. The token goes over SSH on stdin: never on a command
 # line, never printed, never stored on the laptop outside localswim's own DPAPI file. The box
 # confirms the write by sending back the file's SHA-256, and only a confirmed send is recorded
-# as sent (card #0026). A failure warns and never blocks the connection.
-function Push-Localswim([string]$Id, [switch]$Force) {
+# as sent (card #0026). A failure warns and never blocks the connection. The ssh goes to $Alias,
+# the SSH host alias the caller connected with, never to another entry (D9). sync passes no
+# alias, so its push goes over agentspace, Terry's own entry, as intended.
+function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspace') {
+  # The script checks -Alias before anything runs; this check keeps any other caller from putting
+  # a bad alias on ssh's command line.
+  if (-not (Test-AliasName $Alias)) {
+    Say 'agentspace: The SSH host alias for the localswim token is not valid; the board will not work on the box this session.'
+    return
+  }
   if (-not (Test-Path $LocalswimReceipt)) { return }
   $token = $null
   $content = $null
@@ -234,8 +252,9 @@ function Push-Localswim([string]$Id, [switch]$Force) {
       'then sha256sum < $d/bot.env; else rm -f $t; exit 1; fi'
     $psi = New-Object Diagnostics.ProcessStartInfo $Ssh
     # Windows PowerShell 5.1's ProcessStartInfo takes one argument string. The remote command
-    # holds no double quote, so a pair of them around it keeps it one argument.
-    $psi.Arguments = (@($NoForward) + 'agentspace' + "`"$remote`"") -join ' '
+    # holds no double quote, so a pair of them around it keeps it one argument. BatchMode makes an
+    # alias that resolves to an unknown host fail at once rather than wait on a prompt.
+    $psi.Arguments = (@($NoForward) + '-o' + 'BatchMode=yes' + $Alias + "`"$remote`"") -join ' '
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
@@ -362,6 +381,12 @@ function Assert-Ca {
   ($r.Out -split '\s+')[1]
 }
 
+# -Alias reaches ssh's command line, so it is checked before anything runs.
+if ($PSBoundParameters.ContainsKey('Alias') -and $Command -ne 'up') { Fail '-Alias applies to up alone.' }
+if (-not (Test-AliasName $Alias)) {
+  Fail "-Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'."
+}
+
 switch ($Command) {
   'ca' {
     if (-not (Test-Path -LiteralPath $SshKeygen)) { Fail "$SshKeygen is missing; install the Windows OpenSSH client." }
@@ -468,7 +493,7 @@ switch ($Command) {
   'up' {
     $id = Get-InstanceId
     Start-Box $id
-    if (-not $Nested) { Push-Localswim $id }
+    if (-not $Nested) { Push-Localswim $id -Alias $Alias }
   }
 
   'down' {

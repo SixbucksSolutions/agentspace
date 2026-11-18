@@ -140,9 +140,18 @@ Include agentspace.d/*
   and its line endings and permissions stay as they were.
 - **Removing an alias leaves the `Include` in place**, and leaves the lease's key folder alone.
 - **`C:\Windows\System32\OpenSSH\ssh.exe -G <alias>`** prints the settings an alias gives.
-- **Today the alias's ProxyCommand is `scripts\ssh-proxy.cmd`**, whose `up` still pushes the
-  localswim token over Terry's own `agentspace` entry (#0028). The default
-  ProxyCommand needs the checkout that has `.instance-id`; elsewhere, pass `-ProxyCommand`.
+- **The alias's ProxyCommand names the alias itself** (card #0057), written out literally at the
+  end: `C:\Windows\System32\cmd.exe /d /c "<repo>\scripts\ssh-proxy.cmd" <alias>`. It MUST NOT
+  use ssh's `%n` token, because the Claude desktop app runs the ProxyCommand line through its own
+  proxy (D12) and nothing shows that it expands tokens. `ssh-proxy.cmd` passes the alias to
+  `agentspace.ps1 up -Alias <alias>`, so the token push rides the lease's own key and
+  certificate, not Terry's `agentspace` entry. An alias MUST match `^[A-Za-z0-9._-]+\z`, case
+  sensitive, and MUST NOT start with `-`, since it is on a command line; the alias names
+  `Set-LeaseAlias` generates always do, and it refuses one that does not. A project name MUST be
+  ASCII. That check is the gate: `ssh-proxy.cmd` passes its argument on as it is, because whoever
+  writes a ProxyCommand line already runs commands, and `up` checks the alias again before any
+  ssh. The default ProxyCommand needs the checkout that has `.instance-id`; elsewhere, pass
+  `-ProxyCommand`, which is written as given and SHOULD end with the alias.
 
 ### Use a lease from a project
 
@@ -162,8 +171,9 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
 
    The default ProxyCommand needs that checkout's `.instance-id`. Run from anywhere else,
    `AGENTSPACE_PROXY_COMMAND` MUST name a ProxyCommand that runs the main checkout's
-   `scripts\ssh-proxy.cmd`. The JSON gives the lease's `id`, its `expires_at` (8 hours from now
-   unless `--ttl` says otherwise) and `ssh.host_alias`, such as `agentspace-swimcoach-a62cb513`.
+   `scripts\ssh-proxy.cmd` with the lease's alias after it. The JSON gives the lease's `id`, its
+   `expires_at` (8 hours from now unless `--ttl` says otherwise) and `ssh.host_alias`, such as
+   `agentspace-swimcoach-a62cb513`.
 2. **Put the project's repo on the box.** Nothing clones it for you. The repo MUST be in the
    folder the agents will open, for example `ssh <alias> "git clone <url> ~/swimcoach"`. Every
    lease is `ubuntu` in the MVP
@@ -171,7 +181,8 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    in a home that every lease shares, and it outlives the lease.
 3. **Connect** with `ssh <alias>`, or in the Claude desktop app add an SSH environment whose host
    is the alias and open a session in the project's folder on the box (`/home/ubuntu/swimcoach`).
-   The first connection after a stop starts the box, and any connection may push the Bot token.
+   The first connection after a stop starts the box, and any connection may push the Bot token,
+   over the alias that connection used.
    From cmd or PowerShell, `ssh` is Windows OpenSSH. From Git Bash it MUST be called by its full
    path, `C:\Windows\System32\OpenSSH\ssh.exe`, because MSYS ssh mangles the ProxyCommand.
 4. **A desktop-app session MUST have a holder open on the laptop for as long as it needs the
@@ -232,11 +243,17 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   `CGO_ENABLED=0`, linux/arm64, statically linked), so it speaks the same API as the service it
   talks to. After the service is updated to a newer localswim, `sync` MUST be run again.
 - **The Bot token reaches the box when Terry connects.** localswim makes a new token at every
-  cold start, so `up` (run by every `ssh agentspace`) reads the current one from localswim's DPAPI
-  file and, when the instance or the token has changed since the last send, writes it with the
-  URL to `~/.config/localswim/bot.env` (mode 0600). The token travels over SSH on stdin: it MUST
-  NOT be put on a command line, printed, or stored anywhere else. Nothing about it is kept on
-  the laptop except a SHA-256 of what was last sent, in `%USERPROFILE%\.agentspace`.
+  cold start, so `up` (run by the ProxyCommand of every connection) reads the current one from
+  localswim's DPAPI file and, when the instance or the token has changed since the last send,
+  writes it with the URL to `~/.config/localswim/bot.env` (mode 0600). The token travels over SSH
+  on stdin: it MUST NOT be put on a command line, printed, or stored anywhere else. Nothing about
+  it is kept on the laptop except a SHA-256 of what was last sent, in `%USERPROFILE%\.agentspace`.
+- **The push rides the alias the caller connected with** (card #0057). A lease alias's
+  ProxyCommand runs `ssh-proxy.cmd <alias>`, which runs `up -Alias <alias>`, so the push uses
+  that lease's key and certificate. Terry's `agentspace` entry has no argument and still works:
+  `ssh-proxy.cmd` runs `up` and the push goes over `agentspace`, as before. `sync` still pushes
+  over `agentspace`, as intended. The push's ssh runs with `BatchMode=yes`, so an alias that
+  resolves to an unknown host fails at once rather than waiting on a prompt.
 - **A send is recorded only once the box confirms it.** The box reads two lines, writes them to
   a temporary file, renames it over `bot.env` and sends back the file's SHA-256, which `up`
   compares with what it meant to write. A failed, unconfirmed or interrupted send leaves the old
