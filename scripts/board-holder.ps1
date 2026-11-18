@@ -144,13 +144,14 @@
 # between passes belongs to -Watch (0.02.T2.2; D14, D30), described above the Watch section below:
 #
 #   pwsh -NoProfile -File scripts\board-holder.ps1 -Watch [-SshExe <path>] [-IntervalSeconds <n>]
-#     [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>]
+#     [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>] [-ReleaseGraceSeconds <n>]
 #
 # Each is a whole number from 1 to 86400. Defaults: interval 30, base 30, max 300, no limit on
-# passes; max MUST NOT be less than base, and -Now MUST NOT be given with -Watch. A usage error
-# exits 2. -FastFailureSeconds (default 60) is hidden, for tests only. A rotation of
+# passes, release grace 95; max MUST NOT be less than base, and -Now MUST NOT be given with -Watch.
+# A usage error exits 2. -FastFailureSeconds (default 60) is hidden, for tests only. A rotation of
 # board-holder-ssh.log (past 1 MB, to board-holder-ssh.log.1) logs "rotated lease=- alias=- pid=-".
-# Backoff waits log "<YYYY-MM-DDTHH:MM:SSZ> backoff seconds=<n>" to board-holder.log.
+# Backoff waits log "<YYYY-MM-DDTHH:MM:SSZ> backoff seconds=<n>" to board-holder.log, and release grace
+# waits log "<YYYY-MM-DDTHH:MM:SSZ> grace seconds=<n>" (D30; described above the Watch section).
 #
 # The arguments are parsed by this script, not by PowerShell's binder, so that every usage error
 # exits 2: names are matched exactly, case ignored, and each takes one value.
@@ -161,7 +162,7 @@ $ErrorActionPreference = 'Stop'
 function Exit-Usage([string]$Message) {
   [Console]::Error.WriteLine("board-holder.ps1: $Message")
   [Console]::Error.WriteLine('Usage: board-holder.ps1 [-SshExe <full path>] [-Now <YYYY-MM-DDTHH:MM:SSZ>]')
-  [Console]::Error.WriteLine('       board-holder.ps1 -Watch [-SshExe <full path>] [-IntervalSeconds <n>] [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>]')
+  [Console]::Error.WriteLine('       board-holder.ps1 -Watch [-SshExe <full path>] [-IntervalSeconds <n>] [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>] [-ReleaseGraceSeconds <n>]')
   exit 2
 }
 
@@ -173,6 +174,7 @@ $IntervalSeconds = 30
 $MaxPasses = 0
 $BackoffBaseSeconds = 30
 $BackoffMaxSeconds = 300
+$ReleaseGraceSeconds = 95
 $FastFailureSeconds = 60
 $given = @{}
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -186,6 +188,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
     '-maxpasses' { 'MaxPasses' }
     '-backoffbaseseconds' { 'BackoffBaseSeconds' }
     '-backoffmaxseconds' { 'BackoffMaxSeconds' }
+    '-releasegraceseconds' { 'ReleaseGraceSeconds' }
     '-fastfailureseconds' { 'FastFailureSeconds' }
     default { $null }
   }
@@ -201,7 +204,7 @@ if ($given.ContainsKey('SshExe')) { $SshExe = $given['SshExe'] }
 if ($given.ContainsKey('Now')) { $Now = $given['Now'] }
 if ($given.ContainsKey('Launch')) { $Launch = $given['Launch'] }
 if ($given.ContainsKey('Watch')) { $Watch = $true }
-foreach ($n in 'IntervalSeconds', 'MaxPasses', 'BackoffBaseSeconds', 'BackoffMaxSeconds', 'FastFailureSeconds') {
+foreach ($n in 'IntervalSeconds', 'MaxPasses', 'BackoffBaseSeconds', 'BackoffMaxSeconds', 'ReleaseGraceSeconds', 'FastFailureSeconds') {
   if (-not $given.ContainsKey($n)) { continue }
   if (-not $Watch) { Exit-Usage "-$n is for -Watch." }
   $parsed = 0
@@ -1154,6 +1157,10 @@ function Invoke-HolderPass {
   if ($holder) {
     $lease = $ready | Where-Object { $_['id'] -ceq $record.lease_id } | Select-Object -First 1
     if ($lease -and $lease['ssh']['host_alias'] -ceq $record.alias) {
+      # -Watch adopts a holder it did not start, so it can wait out that holder's release too.
+      $script:PassEvent = 'kept'
+      $script:PassHolder = $holder
+      $script:PassAlias = $record.alias
       Write-HolderLog -Action kept -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid
       return 0
     }
@@ -1321,14 +1328,18 @@ if (-not $Watch) {
 # the tracked holder with its backoff, the pass, and the wait) runs in its own try, and an error
 # that escapes one is logged as "failed lease=- alias=- pid=- reason=<text>", when the log can be
 # written, and the loop goes on. Every iteration MUST sleep at least IntervalSeconds, or the backoff
-# when that is longer, on every path, the error paths included, so no failure can make a tight loop
+# or the release grace when either is longer, on every path, the error paths included, so no failure can make a tight loop
 # (D14).
 #
 # What happens to a keeper that stops anyway. After the rule above, only a killed process stops it.
-# The logon task's settings restart a keeper whose process ended with an exit code other than 0 up
-# to 3 times, a minute apart; that is unverified until E0.02-T03-S01 registers the task. A keeper
-# stopped on purpose (-Uninstall, or End in Task Scheduler) is not restarted, and stays stopped
-# until the next logon, as does one whose restarts are used up.
+# The task's RestartCount does not restart an action that exits with a code other than 0
+# (E0.02-T03-S01), so a crashed keeper is started again by the task's trigger that repeats every
+# minute (E0.02-T04-S02, D30): Task Scheduler starts it within about a minute while Terry is
+# logged on, and an instance that is still running is left alone. End in Task Scheduler stops only
+# the launcher and leaves the keeper's pwsh running (E0.02-T04-S03's live check), so the repeating
+# trigger's next firing starts a second keeper beside it, until card #0067 (E0.02-T05-S01, "One
+# keeper at a time") lands. To stop the keeper, its pwsh is stopped by its checked PID after the
+# task is ended.
 #
 # Fast failures. The keeper learns of one in two ways, and both count:
 # - A pass that tried to start a holder and did not get a live one (the holder exited at once, or
@@ -1349,6 +1360,29 @@ if (-not $Watch) {
 # longer, and each wait logs "<time> backoff seconds=<n>" with the seconds actually waited. The
 # wait happens even when that line cannot be logged. A start that failed waits after its pass; a
 # holder found dead waits before the next pass, which would start one.
+#
+# Release grace (E0.02-T04-S03, D30). A holder that dies leaves its session on the box, which keeps
+# the forwards until sshd drops it, up to ClientAliveInterval 15 times ClientAliveCountMax 5 plus the
+# probe in flight (0.02.T1.1). A holder started meanwhile fails on ExitOnForwardFailure and leaves
+# another such session. So when a look finds a tracked holder dead, the keeper waits
+# ReleaseGraceSeconds (95 by default) before the pass that would start the next one. The tracked
+# holder is one this process started, or one it adopted when a pass logged kept for a holder it had
+# not started; an adopted holder counts as proven, so its exit is not a fast failure. The first
+# holder after a lease becomes ready, and the first after the keeper starts with no holder recorded,
+# start at once: the grace is only a wait after a seen exit, and no state outlives it. A holder the
+# keeper stopped because its lease ended gets the grace as well (architect's ruling, 2026-11-17):
+# the stop is TerminateProcess, which leaves the box's session holding the forwards (D12), so the
+# next holder, for the next lease, waits the grace from the stop. Only a keeper that has had no
+# holder starts one at once. A holder stopped because its record could not be written gets none:
+# it is stopped milliseconds after launch, before ssh can have bound the forwards.
+# - With a fast failure the wait is the longer of the grace and the backoff, never their sum, and
+#   it logs one line: "backoff seconds=<n>" when the backoff is at least the grace, else
+#   "grace seconds=<n>". So the backoff's own bound, BackoffMaxSeconds, is not stacked on; the
+#   grace is a floor under it, and no wait is longer than the greater of the grace, BackoffMax
+#   and IntervalSeconds.
+# - The grace cannot keep the board down for good: one exit gives one bounded sleep, and the pass
+#   that follows starts a holder whatever the wait found. A holder that exits again at once is a
+#   new exit and gets a new wait, the same as the backoff.
 
 function Write-WatchLine([string]$Text) {
   $line = '{0} {1}' -f (ConvertTo-LeaseTime (Get-LeaseNow)), $Text
@@ -1374,6 +1408,22 @@ function Wait-Backoff([int]$Failures) {
   finally { Start-Sleep -Seconds $seconds }
 }
 
+# Sleeps once after a tracked holder is seen to exit, so the box has released its forwards before the
+# next holder starts (D30). Failures is the count of fast failures in a row, 0 when the holder had
+# been proven. The wait is the longer of the release grace and the backoff, never their sum, and at
+# least IntervalSeconds. It logs the one line for the longer of the two: "backoff seconds=<n>" when
+# the backoff is at least the grace, else "grace seconds=<n>", with the seconds actually waited. The
+# sleep runs in a finally, so a log line that cannot be written never shortens the wait. Each exit
+# gets this one bounded wait: no state outlives it, so it cannot delay a later start.
+function Wait-Release([int]$Failures) {
+  $backoff = 0.0
+  if ($Failures -gt 0) { $backoff = [Math]::Min([double]$BackoffMaxSeconds, [double]$BackoffBaseSeconds * [Math]::Pow(2, $Failures - 1)) }
+  $label = if ($Failures -gt 0 -and $backoff -ge [double]$ReleaseGraceSeconds) { 'backoff' } else { 'grace' }
+  $seconds = [int][Math]::Max([Math]::Max($backoff, [double]$ReleaseGraceSeconds), [double]$IntervalSeconds)
+  try { Write-WatchLine "$label seconds=$seconds" }
+  finally { Start-Sleep -Seconds $seconds }
+}
+
 $failures = 0
 $tracked = $null
 $passes = 0
@@ -1389,10 +1439,9 @@ while ($true) {
       } else {
         $proven = $tracked.Proven
         $tracked = $null
-        if (-not $proven) {
-          $failures++
-          Wait-Backoff $failures
-        }
+        # The holder is seen to exit: wait out its release before the pass can start another.
+        if (-not $proven) { $failures++ }
+        Wait-Release $(if ($proven) { 0 } else { $failures })
       }
     }
   } catch { Write-WatchFailure 'The look at the holder' $_ }
@@ -1407,18 +1456,28 @@ while ($true) {
   $passes++
 
   $failedStart = $false
+  $stoppedHolder = $false
   switch ($script:PassEvent) {
     'started' {
       $tracked = @{ Pid = $script:PassHolder.Pid; StartedAt = $script:PassHolder.StartedAt; Alias = $script:PassAlias; Clock = [DateTime]::UtcNow; Proven = $false }
     }
+    'kept' {
+      # An adopted holder has an unknown age, so it counts as proven: its exit waits out the
+      # release grace but is not a fast failure. A holder already tracked stays as it is.
+      if (-not $tracked -or $tracked.Pid -ne $script:PassHolder.Pid -or $tracked.StartedAt -ne $script:PassHolder.StartedAt) {
+        $tracked = @{ Pid = $script:PassHolder.Pid; StartedAt = $script:PassHolder.StartedAt; Alias = $script:PassAlias; Clock = [DateTime]::UtcNow; Proven = $true }
+      }
+    }
     'start-failed' { $tracked = $null; $failures++; $failedStart = $true }
-    'stopping' { $tracked = $null; $failures = 0 }
+    'stopping' { $tracked = $null; $failures = 0; $stoppedHolder = $true }
   }
   if ($MaxPasses -gt 0 -and $passes -ge $MaxPasses) { break }
 
   # The wait. On an error it still sleeps IntervalSeconds, so no path makes a tight loop.
   try {
-    if ($failedStart) { Wait-Backoff $failures } else { Start-Sleep -Seconds $IntervalSeconds }
+    if ($failedStart) { Wait-Backoff $failures }
+    elseif ($stoppedHolder) { Wait-Release 0 }
+    else { Start-Sleep -Seconds $IntervalSeconds }
   } catch {
     Write-WatchFailure 'The wait' $_
     Start-Sleep -Seconds $IntervalSeconds

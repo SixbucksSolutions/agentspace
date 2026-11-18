@@ -1797,6 +1797,50 @@ setting is as before.
     exactly one launcher and one keeper pwsh, with the same PIDs throughout. An ignored firing
     sets LastTaskResult to 0x800710E0, which is IgnoreNew at work and not a failure.
 
+**Findings from story E0.02-T04-S03 (2026-11-17).** D30 stands, with the first gap closed: the
+keeper waits out a dead holder's release. `scripts/board-holder.ps1 -Watch` takes
+`-ReleaseGraceSeconds <n>`, a whole number from 1 to 86400, 95 by default: 0.02.T1.1's
+`ClientAliveInterval` 15 times `ClientAliveCountMax` 5, plus 20 seconds for the probe already in
+flight.
+- **The evidence was E0.02-T03-S01's.** The holder was killed at 8:29:21pm Pacific. The keeper
+  started new holders at 8:29:30pm and 8:30:31pm while sshd still held the old forwards, and sshd
+  released them at 8:30:40pm, 79.5 seconds after the kill. The third holder took the ports at
+  8:32:10pm, 2 minutes 49 seconds with no board, where about 90 seconds would do. Each failed
+  holder had also left a session of its own for sshd to time out.
+- **The rule.** A tracked holder is one the keeper started, or adopted when a pass logged `kept`
+  for a holder it had not started. When a look finds it dead, the keeper MUST NOT start a holder
+  until `-ReleaseGraceSeconds` has passed, counted from that look. Each wait logs `<time> grace
+  seconds=<n>`, with the seconds actually waited.
+- **When the grace does not apply.** A keeper that has had no holder, such as one that starts with
+  no holder recorded, starts its first holder at once. **The card was ambiguous about a
+  holder the keeper stopped because its lease ended, and the architect ruled it on 2026-11-17:**
+  every holder that follows a holder the keeper started or adopted waits the release grace from
+  that holder's end, whether it died or the keeper stopped it. The stop is `TerminateProcess`,
+  which leaves the box's session holding the shared forwards (D12), so a holder started at once
+  for the next lease would fail on ExitOnForwardFailure. "Starts at once" covers only a keeper
+  that has had no holder. After a stop the next wait is the grace, logged `grace seconds=<n>`,
+  with the `-IntervalSeconds` floor; if nothing else is ready, the only cost is a later idle pass.
+  **A holder the keeper stops because its record could not be written gets no grace:** the stop
+  runs milliseconds after launch, before ssh can have connected and bound the forwards, so
+  nothing is held on the box. The grace keeps no state after its wait.
+- **With the backoff.** The backoff for fast failures is unchanged. When both apply, the keeper
+  waits the longer of the two, never their sum, and logs one line: `backoff seconds=<n>` when the
+  backoff is at least the grace, else `grace seconds=<n>`. An adopted holder counts as proven,
+  because its age is unknown, so its exit gets the grace and is not a fast failure.
+- **Bounds.** Every wait is at least `-IntervalSeconds`, as before (D14). One exit gives one
+  bounded sleep, and the pass after it starts a holder, so the grace cannot keep the board down
+  for good. No wait is longer than the greatest of the grace, `-BackoffMaxSeconds` and
+  `-IntervalSeconds`: the grace is a floor under the backoff, not an addition to it. A grace set
+  above `-BackoffMaxSeconds` therefore waits the grace.
+- **Live run (E0.02-T04-S03), passed.** A keeper adopted the running holder, and the holder was
+  killed by its PID after the PID was checked against its record, at 9:29:59pm Pacific. The keeper
+  logged `grace seconds=95` at 9:30:14pm. The box's old session timed out at 9:31:22pm, 83 seconds
+  after the kill. The new holder started at 9:31:49pm, 110 seconds after the kill, and took both
+  ports on its first attempt (`sudo ss -ltnp` at 9:32:21pm), with no failed holder between. The
+  board was down 1 minute 56 seconds, against 2 minutes 49 seconds before the grace.
+  - **End in Task Scheduler left the keeper's pwsh running** (it stopped only the launcher), so
+    that keeper was stopped by its checked PID. Card #0067 (E0.02-T05-S01) fixes it.
+
 ### D31. Each story's card names every subagent, run in parallel where reasonable
 
 **Decided, Terry, 2026-11-17:** "Identify as much parallel subagent work as reasonable per story.

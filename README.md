@@ -210,6 +210,13 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      past 1 MB.
    - **A holder that fails fast is retried with backoff**, from 30 seconds doubling to 5 minutes,
      never in a tight loop. Only a holder seen alive after 60 seconds resets the backoff.
+   - **The keeper waits out a dead holder's release before it starts the next one**
+     (E0.02-T04-S03, D30). A holder it started, or adopted, that is seen to exit leaves a session on
+     the box that holds the forwards until sshd drops it, up to about 90 seconds. So the keeper
+     waits `-ReleaseGraceSeconds` (95 by default) first, and logs `grace seconds=<n>`. When a fast
+     failure's backoff also applies, it waits the longer of the two, never their sum. This covers
+     a holder the keeper stopped because its lease ended too. Only a keeper that has had no holder
+     starts one at once.
    - **No error ends the keeper.** It logs the error and carries on at its next interval, so only
      bad arguments or a killed process can stop it.
    - **A crashed keeper is started again within about a minute** by the task's second trigger,
