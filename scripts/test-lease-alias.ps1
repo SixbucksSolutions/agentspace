@@ -129,6 +129,21 @@ try {
   Check 'ssh -G: both remoteforward lines' (($G -match '(?m)^remoteforward \[127\.0\.0\.1\]:8811 \[127\.0\.0\.1\]:8811\s*$') -and
     ($G -match '(?m)^remoteforward \[127\.0\.0\.1\]:53147 \[127\.0\.0\.1\]:53147\s*$'))
 
+  # The default ProxyCommand names the alias literally at the end, and never uses %n.
+  # The repo root is pointed at a throwaway folder that has an .instance-id, so no real checkout is read.
+  $fakeRepo = Fresh 'fakerepo'
+  Set-Content -LiteralPath (Join-Path $fakeRepo '.instance-id') -Value 'i-fake'
+  $script:LeaseAliasRepo = $fakeRepo
+  $ssh6 = Fresh 'ssh6'
+  $r6 = Set-LeaseAlias -Project 'SwimCoach' -LeaseId $idA -SshDir $ssh6 -LeaseRoot $leases
+  $txt6 = [IO.File]::ReadAllText($r6.Path)
+  $expectPc = 'ProxyCommand C:\Windows\System32\cmd.exe /d /c "' + (Join-Path $script:LeaseAliasRepo 'scripts\ssh-proxy.cmd') + '" agentspace-swimcoach-3f2a9c1e'
+  Check 'Default ProxyCommand line ends with the literal alias' ($txt6.Contains("`n  $expectPc`n")) $txt6
+  Check 'Default ProxyCommand has no %n' ($txt6 -notmatch '%n')
+  $G6 = (& $ssh -G -F $r6.Path $r6.Alias) -join "`n"
+  Check 'ssh -G: default proxycommand ends with the alias' ($G6 -match '(?m)^proxycommand .*ssh-proxy\.cmd" agentspace-swimcoach-3f2a9c1e\s*$') $G6
+  Check 'A custom -ProxyCommand is written unchanged' ($txt -match '(?m)^  ProxyCommand C:\\Windows\\System32\\cmd\.exe /d /c "echo proxy"$')
+
   # Set again
   $t0 = (Get-Item -LiteralPath $file).LastWriteTimeUtc
   Start-Sleep -Milliseconds 1100

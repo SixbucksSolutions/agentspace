@@ -145,8 +145,14 @@ function Set-LeaseAlias {
     if (-not (Test-Path -LiteralPath (Join-Path $script:LeaseAliasRepo '.instance-id'))) {
       throw "$($script:LeaseAliasRepo) has no .instance-id, so its ssh-proxy.cmd cannot reach the box. Run from the main checkout or pass -ProxyCommand."
     }
-    $ProxyCommand = 'C:\Windows\System32\cmd.exe /d /c "' + (Join-Path $script:LeaseAliasRepo 'scripts\ssh-proxy.cmd') + '"'
+    # The alias is written out literally, never as ssh's %n: the Claude desktop app runs this line through
+    # its own proxy (D12), and nothing shows that it expands tokens. ssh-proxy.cmd passes it to `up -Alias`,
+    # so the token push rides this lease's own key and certificate.
+    $ProxyCommand = 'C:\Windows\System32\cmd.exe /d /c "' + (Join-Path $script:LeaseAliasRepo 'scripts\ssh-proxy.cmd') + '" ' + $alias
   }
+
+  # The alias is on a command line, so it MUST stay within what `up -Alias` accepts.
+  if ($alias -notmatch '^[A-Za-z0-9._-]+$') { throw "Alias '$alias' MUST match ^[A-Za-z0-9._-]+`$." }
 
   # A line break would add directives to the alias; ssh expands % tokens, so a literal % is %%.
   foreach ($v in $key, $ProxyCommand) {
