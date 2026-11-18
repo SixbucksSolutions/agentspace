@@ -1734,6 +1734,26 @@ The evidence is in [docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md). Times ar
   - **The fix to weigh:** a restart that does not rely on the action failing to start, such as a
     launcher that restarts the keeper, or a repeating trigger with `MultipleInstances IgnoreNew`.
 
+**Change from story E0.02-T04-S02: the task gets a second trigger that repeats every minute.**
+D30 stands. `scripts/install-board-holder.ps1` builds the task with two triggers, and every other
+setting is as before.
+- **The AtLogOn trigger is kept**, and the principal stays Interactive, current user, Limited. A
+  crashed keeper is therefore started again only while Terry is logged on.
+- **The second trigger is a `Once` trigger from registration with a repetition interval of PT1M and
+  no duration.** A repetition with no duration is indefinite in Task Scheduler. Built on the
+  laptop's PowerShell 7 ScheduledTasks module, `New-ScheduledTaskTrigger -Once -RepetitionInterval`
+  gives `Interval` PT1M and an empty `Duration`.
+- **`MultipleInstances IgnoreNew` makes a firing while the keeper runs a no-op.** One that finds the
+  keeper gone starts it within a minute, and its first pass adopts the recorded holder.
+- **RestartCount 3 and RestartInterval PT1M stay**, since they still cover a task that fails to
+  start. The repeating trigger covers an action that exits non-zero.
+- **The read-back shows both triggers and the repetition**, in `-DryRun` and after a real
+  registration: `Trigger 1`, `Trigger 2`, and `Repetition 2: Interval=PT1M Duration=indefinite`.
+- **Live-run result (E0.02-T04-S02): TO BE FILLED IN BY THE DEV LEAD.** Record here the
+  re-registration, the check and kill of the keeper's pwsh by PID, the time Task Scheduler took to
+  run the task again, the new keeper's `kept ... pid=<holder>` line, and the count of launchers and
+  keeper pwsh processes across at least 3 trigger firings.
+
 ### D31. Each story's card names every subagent, run in parallel where reasonable
 
 **Decided, Terry, 2026-11-17:** "Identify as much parallel subagent work as reasonable per story.

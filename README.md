@@ -212,13 +212,14 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      never in a tight loop. Only a holder seen alive after 60 seconds resets the backoff.
    - **No error ends the keeper.** It logs the error and carries on at its next interval, so only
      bad arguments or a killed process can stop it.
-   - **A crashed keeper is not restarted until the next logon** (E0.02-T03-S01, D30). In that run
-     the task's RestartCount did not restart a keeper that was killed; it most likely covers only a
-     task that fails to start. Its holder keeps
-     running, unsupervised. After a crash, the task MUST be started by hand with
-     `Start-ScheduledTask -TaskName 'agentspace board holder'`, and the new keeper adopts the
-     recorded holder. A keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) also
-     stays stopped until the next logon.
+   - **A crashed keeper is started again within about a minute** by the task's second trigger,
+     which repeats every minute, indefinitely, from registration (E0.02-T04-S02, D30). With
+     `MultipleInstances IgnoreNew`, a firing while the keeper runs is ignored. The task's
+     RestartCount and RestartInterval do not cover this: they apply only when the task fails to
+     start, not when its action exits non-zero (E0.02-T03-S01). The crashed keeper's holder keeps
+     running meanwhile, and the new keeper adopts the recorded holder. The task runs only while
+     Terry is logged on. A keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) is
+     started again by the next firing, unless the task is unregistered or disabled.
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that

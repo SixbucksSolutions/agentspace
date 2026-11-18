@@ -11,7 +11,9 @@ RFC 2119 keywords; the capitals are load-bearing.
 Registering the task is persistent configuration on Terry's laptop, so it MUST only be run with his
 yes (D30; story E0.02-T03-S01). -DryRun changes nothing and builds nothing.
 
-After the watcher's install-autostart.ps1: a logon trigger for the current user, standard rights,
+After the watcher's install-autostart.ps1: a logon trigger for the current user, a second trigger that repeats every minute indefinitely
+from registration (a crashed keeper is started again within about a minute, and a firing while it
+runs is ignored), standard rights,
 an interactive logon, no time limit, a second start ignored, a missed start run when available,
 started and kept running on battery, and a process that exits other than 0 restarted up to 3 times,
 a minute apart. The action is a no-window launcher, built from scripts\BoardHolderLauncher.cs by csc
@@ -53,13 +55,40 @@ function New-BoardHolderTask {
     $pwsh = (Get-Command pwsh).Source
     $action = New-ScheduledTaskAction -Execute $script:Launcher -Argument "`"$pwsh`" `"$($script:HolderScript)`" -Watch" `
         -WorkingDirectory $script:Repo
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User $user
+    # The second trigger repeats every minute, indefinitely: with no duration set, Task Scheduler
+    # repeats without end. With MultipleInstances IgnoreNew a firing while the keeper runs is
+    # ignored, and one while it is not starts it again (D30).
+    $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $trigger = @($logon, $repeat)
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
         -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
     New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
         -Description 'Keeps the agentspace board holder running while a lease is ready (D30).'
+}
+
+# The read-back of a task's triggers, one `Label: value` line each, for -DryRun and for the line
+# printed after a real registration. A repetition with no duration repeats indefinitely.
+function Get-TriggerLines($Triggers) {
+    $n = 0
+    foreach ($t in @($Triggers)) {
+        $n++
+        $name = $t.CimClass.CimClassName
+        if ($name -ceq 'MSFT_TaskLogonTrigger') {
+            "Trigger ${n}: AtLogOn user=$($t.UserId)"
+        } elseif ($name -ceq 'MSFT_TaskTimeTrigger') {
+            "Trigger ${n}: Once, from registration"
+        } else {
+            "Trigger ${n}: $name"
+        }
+        $r = $t.Repetition
+        if ($r -and $r.Interval) {
+            $duration = if ($r.Duration) { $r.Duration } else { 'indefinite' }
+            "Repetition ${n}: Interval=$($r.Interval) Duration=$duration"
+        }
+    }
 }
 
 # True when the repo folder is a git worktree rather than the main checkout: its git dir differs
@@ -99,16 +128,14 @@ $isWorktree = Test-RepoIsWorktree $script:Repo
 
 if ($DryRun) {
     $s = $task.Settings
-    $t = @($task.Triggers)[0]
     $a = @($task.Actions)[0]
-    $kind = if ($t.CimClass.CimClassName -ceq 'MSFT_TaskLogonTrigger') { 'AtLogOn' } else { $t.CimClass.CimClassName }
     $limit = if ($s.ExecutionTimeLimit -ceq 'PT0S') { 'PT0S (none)' } else { $s.ExecutionTimeLimit }
     if ($isWorktree) {
         Write-Output "Warning: $($script:Repo) is a git worktree, not the main checkout. A real install from here is refused, because the folder is deleted after its branch merges."
     }
     Write-Output "Name: $($script:TaskName)"
     Write-Output "Description: $($task.Description)"
-    Write-Output "Trigger: $kind user=$($t.UserId)"
+    Get-TriggerLines $task.Triggers | Write-Output
     Write-Output "Principal user: $($task.Principal.UserId)"
     Write-Output "RunLevel: $($task.Principal.RunLevel)"
     Write-Output "LogonType: $($task.Principal.LogonType)"
@@ -141,4 +168,5 @@ if ($LASTEXITCODE -ne 0) { throw "csc exited $LASTEXITCODE." }
 
 Register-ScheduledTask -TaskName $script:TaskName -InputObject $task -Force | Out-Null
 Start-ScheduledTask -TaskName $script:TaskName
+Get-TriggerLines (Get-ScheduledTask -TaskName $script:TaskName).Triggers | Write-Output
 Write-Output "Registered and started '$($script:TaskName)'. Log: $(Join-Path $env:USERPROFILE '.agentspace\board-holder.log')"
