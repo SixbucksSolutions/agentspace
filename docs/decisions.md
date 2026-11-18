@@ -1689,6 +1689,32 @@ the blast radius stands.
 **v0.02's plans** (#0056 to #0060) peak at 3, 2, 3, 2 and 2 subagents. With two stories per turn,
 T1 and T2 peak at 6 and 5 subagents at once, plus the dev lead.
 
+### D32. A lease's box runs in the laptop's time zone
+
+**Decided, Terry, 2026-11-17:** agents on the box are to report times as he reads them, and "as
+long as they know I like H:MM[am/pm] like 1:34am or 12:56pm and the current time is 3:52pm -0700,
+they can compute deltas from there." **Found in E0.02-T03-S01:** an agent in a desktop-app session
+on the box wrote a board comment's time in UTC. Terry's global rule reads the zone from the system,
+and on the box the system is UTC, so the rule was followed and still gave him the wrong zone.
+- **The token push MUST also set the box's time zone to the laptop's.** The laptop converts its
+  Windows zone to an IANA name (`TimeZoneInfo.TryConvertWindowsIdToIanaId`, for example Pacific
+  Standard Time to `America/Los_Angeles`), and the box sets it with `timedatectl set-timezone`.
+  `date` on the box then gives Terry's local time and UTC offset, and his global rule holds there
+  unchanged. The box's copy of his `CLAUDE.md` MUST NOT be edited for it (README, "Rules").
+- **The zone MUST be part of the push stamp**, so a laptop that has changed zone pushes again on
+  its next connection. Terry travels, and the laptop's zone travels with him.
+- **The zone MUST NOT put the token at risk.** A zone the laptop cannot convert, or that the box
+  refuses, leaves the box's zone as it was and says so, and the token's push and its confirmation
+  go ahead as before.
+- **The system zone, not an exported `TZ`.** Ubuntu's `.bashrc` returns early in a non-interactive
+  shell, so a session the desktop app starts might never read a `TZ` set there.
+- **What it does not change.** Machine-readable timestamps keep their own form. journald stores UTC
+  and only shows it in the system zone. The idle timer counts from its last run
+  (`OnUnitActiveSec`), so a zone change never moves it. Evidence recorded in this file before D32
+  stays in the UTC it was recorded in.
+- **Carded as E0.02-T04-S01, v0.02's fourth turn**, which starts after T3 merges, because it changes
+  the push that T3 is exercising live.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase

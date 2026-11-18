@@ -51,7 +51,7 @@ when Terry says so (D14).
 
 | Release | Epic | What | Done when |
 |---|---|---|---|
-| **v0.02** | #0045 | **Unattended leases.** The gaps E3.03 found: #0042 (the desktop app clears the board forwards), #0044 (a dead client keeps them), #0028 (the token push rides Terry's own SSH entry) | A desktop-app session on a lease reaches the board with nothing started by hand |
+| **v0.02** | #0045 | **Unattended leases.** The gaps E3.03 found: #0042 (the desktop app clears the board forwards), #0044 (a dead client keeps them), #0028 (the token push rides Terry's own SSH entry). Then the box runs in the laptop's time zone (D32) | A desktop-app session on a lease reaches the board with nothing started by hand, and reports times in Terry's zone |
 | **v0.03** | #0046 | **Measure what an agent uses.** CPU and memory per agent, and everything under it, while real stories run | A per-agent footprint table, measured on a real turn |
 | **v0.04** | #0030 | **Clean-room spec package.** A vision doc and specs for every interface, so the rewrite never reads the prototype's code (D20) | A reviewer who cannot read the code agrees a drop-in could be built from them |
 | **v0.05** | #0054 | **The lease CLI in Rust** (D28), contract v0 unchanged | The Rust CLI meets lease-api.md and replaces the PowerShell one |
