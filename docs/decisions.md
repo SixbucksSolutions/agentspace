@@ -1101,7 +1101,7 @@ Times are UTC.
   their sessions on the box were still up 3 minutes later, and release ended neither (D10). They
   carry no forwards, so they did not hold the board, but they keep the box's idle check from
   stopping it, and they keep a released lease's login open. The architect killed both by PID at
-  04:45Z with Terry's approval. The fix is carded separately, outside this story.
+  04:45Z with Terry's approval. Card #0064 tracks the fix, outside this story.
 
 ## Defaults
 
@@ -1698,7 +1698,7 @@ against a throwaway state folder and a stub for `ssh.exe`
   - Each pass compiles its C# type, which takes about 1 to 3 seconds.
 
 **Findings from story E0.02-T03-S01 (2026-11-18).** D30 stands, with two gaps. The architect
-cards their fixes as v0.02-T04 stories, and this story changes neither the keeper nor its task.
+carded their fixes as v0.02-T04 stories, and this story changes neither the keeper nor its task.
 The evidence is in [docs/runs/e0.02-t03-s01.md](runs/e0.02-t03-s01.md). Times are UTC.
 - **The logon task was registered with Terry's yes**, from the main checkout, at 02:22:25Z. Every
   setting read back equals `install-board-holder.ps1 -DryRun`. It stays registered.
