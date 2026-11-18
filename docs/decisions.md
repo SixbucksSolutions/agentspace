@@ -9,8 +9,65 @@ these decisions serve is in [roadmap.md](roadmap.md).
 **Statuses:**
 - **Decided** holds for the MVP and after it.
 - **MVP only** holds for the MVP and names what replaces it later.
+- **Replaced** is a decision that a later decision has replaced. It names the decision that
+  replaced it, and it no longer binds; its text stays as history.
 - **Direction** is where things are headed, binding on design now, and built later.
 - **Open** questions are listed at the end, each with the card that settles it.
+
+**MVP only and Replaced differ in what has taken the place.**
+- **A decision is MVP only while its replacement is still to be built:** a card or a release,
+  such as #0011 or v0.08. It still describes today's prototype until that lands.
+- **A decision is Replaced once a later decision has taken its place.** D18 began as MVP only,
+  and became Replaced when D28 replaced it, so its opening still reads "MVP only. Replaced by
+  D28" and its status is Replaced.
+- **A decision replaced only in part keeps the status of the part that stands**, and its status
+  says in a few words what the later decision replaced, naming it (D14, for one).
+
+**Every decision MUST have exactly one status**, in the first bold text of its header block,
+directly under its heading. Where its opening does not state one plainly, a line
+`**Status: ...**` at the top of the block does, and that line governs. The index below MUST match
+the headers exactly: the status word for a decision with no such line, and the whole line for one
+with it.
+
+## Index
+
+**One line per decision, in numeric order:** number, title and status. D17 sits under
+"Keys" at the end of the file, and is listed here in its numeric place.
+
+- [D1. Clients never know the backend](#d1-clients-never-know-the-backend): Decided
+- [D2. The unit is a lease](#d2-the-unit-is-a-lease): Decided
+- [D3. SSH credential per agent, isolation per project](#d3-ssh-credential-per-agent-isolation-per-project): Direction; its isolation half was replaced by D25
+- [D4. Platform as `os/arch`; software as a named profile; no distro field](#d4-platform-as-osarch-software-as-a-named-profile-no-distro-field): Direction
+- [D5. An unmet request is unsatisfiable, never quietly downgraded](#d5-an-unmet-request-is-unsatisfiable-never-quietly-downgraded): Decided
+- [D6. Drivers place leases, not hosts](#d6-drivers-place-leases-not-hosts): Direction; narrowed by D25 to one project per host
+- [D7. SSH access through short-lived certificates from an agentspace CA](#d7-ssh-access-through-short-lived-certificates-from-an-agentspace-ca): Decided
+- [D8. The MVP control plane is a CLI on the laptop](#d8-the-mvp-control-plane-is-a-cli-on-the-laptop): MVP only
+- [D9. Reachability belongs to the driver](#d9-reachability-belongs-to-the-driver): Decided
+- [D10. Releasing a lease does not revoke its certificate](#d10-releasing-a-lease-does-not-revoke-its-certificate): MVP only
+- [D11. Today's idle stop stays](#d11-todays-idle-stop-stays): MVP only
+- [D12. Board access is unchanged](#d12-board-access-is-unchanged): MVP only; replaced by card #0008, and its hand-run holder by D30
+- [D13. arm64 is the default platform](#d13-arm64-is-the-default-platform): Decided
+- [D14. Roadmap horizons, epics before stories](#d14-roadmap-horizons-epics-before-stories): Decided; its horizons were replaced by D26, and its story names for releases by D29
+- [D15. Staffing: one implementer and one reviewer per story, models by blast radius](#d15-staffing-one-implementer-and-one-reviewer-per-story-models-by-blast-radius): Decided; for release stories its one implementer and one reviewer were replaced by D31
+- [D16. Roles: architect, dev lead per turn, subagents per story](#d16-roles-architect-dev-lead-per-turn-subagents-per-story): Decided
+- [D17. The CA key lives on the laptop, owner-only and without a passphrase](#d17-the-ca-key-lives-on-the-laptop-owner-only-and-without-a-passphrase): MVP only; replaced by card #0011, and its location by D21
+- [D18. The lease CLI is PowerShell 7](#d18-the-lease-cli-is-powershell-7): Replaced by D28
+- [D19. The MVP's bar is the happy path](#d19-the-mvps-bar-is-the-happy-path): Decided
+- [D20. The clean-room team gets specs and vision, never the prototype's code](#d20-the-clean-room-team-gets-specs-and-vision-never-the-prototypes-code): Decided
+- [D21. Laptop state lives in %USERPROFILE%\.agentspace, never in AppData](#d21-laptop-state-lives-in-userprofileagentspace-never-in-appdata): Decided
+- [D22. The architect keeps a 10-minute watchdog on each dev lead](#d22-the-architect-keeps-a-10-minute-watchdog-on-each-dev-lead): Decided
+- [D23. The architect is Terry's proxy](#d23-the-architect-is-terrys-proxy): Decided
+- [D24. A lease's TTL is 8 hours by default, at least 1 minute and at most 24 hours](#d24-a-leases-ttl-is-8-hours-by-default-at-least-1-minute-and-at-most-24-hours): Decided; its maximum is MVP only, and card #0010 revisits it
+- [D25. One host per project](#d25-one-host-per-project): Direction
+- [D26. Releases from v0.01 to v1.0, one epic each](#d26-releases-from-v001-to-v10-one-epic-each): Decided
+- [D27. A host is sized by concurrency, never by model or effort](#d27-a-host-is-sized-by-concurrency-never-by-model-or-effort): Direction
+- [D28. agentspace is Rust by v0.06; PowerShell was the prototype's](#d28-agentspace-is-rust-by-v006-powershell-was-the-prototypes): Decided
+- [D29. A release's stories are `EX.YY-Tnn-Smm`, named for their turn](#d29-a-releases-stories-are-exyy-tnn-smm-named-for-their-turn): Decided
+- [D30. A keeper on the laptop holds the board's forwards](#d30-a-keeper-on-the-laptop-holds-the-boards-forwards): Direction
+- [D31. Each story's card names every subagent, run in parallel where reasonable](#d31-each-storys-card-names-every-subagent-run-in-parallel-where-reasonable): Decided
+- [D32. A lease's box runs in the laptop's time zone](#d32-a-leases-box-runs-in-the-laptops-time-zone): Decided
+- [D33. v0.03 measures each agent session's process tree, split into the session and its tool calls](#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls): Decided
+- [D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype](#d34-v004s-spec-package-one-reference-per-interface-and-a-conformance-suite-kept-apart-from-the-prototype): Decided
 
 ## The interface
 
@@ -33,6 +90,8 @@ is agentspace's business alone.
 container of its own.
 
 ### D3. SSH credential per agent, isolation per project
+
+**Status: Direction; its isolation half was replaced by D25.**
 
 **Direction; MVP only for the isolation half.** Each lease gets its own SSH key and certificate,
 so each agent's access can be told apart, expired and audited on its own. The isolation boundary
@@ -111,6 +170,8 @@ MUST NOT hand back a different platform, profile or size than was asked for.
 fields are in the contract from day one, so adding values later changes no client.
 
 ### D6. Drivers place leases, not hosts
+
+**Status: Direction; narrowed by D25 to one project per host.**
 
 **Direction.** A backend is a driver with one contract: place this lease, return its SSH
 endpoint, tear it down. Drivers come in two kinds:
@@ -990,6 +1051,8 @@ not count sessions.
 
 ### D12. Board access is unchanged
 
+**Status: MVP only; replaced by card #0008, and its hand-run holder by D30.**
+
 **MVP only.** The first `ssh` connection still binds the localswim board's reverse forward for the
 whole box, and every lease uses it, because every lease is `ubuntu`. **Replaced by card #0008.**
 Per-project users (#0004), which it once had to land with, are OBE under D25: each project's host
@@ -1145,6 +1208,8 @@ in card #0013), not a fallback.
 
 ### D14. Roadmap horizons, epics before stories
 
+**Status: Decided; its horizons were replaced by D26, and its story names for releases by D29.**
+
 **Decided, Terry, 2026-11-16.** The roadmap runs from the MVP through Next and Later to Someday.
 **Its horizons were replaced by D26 (2026-11-17):** releases v0.02 to v1.0, one epic each, then
 After 1.0 and Someday. The rules on epics and stories below stand, except that a release's
@@ -1211,6 +1276,8 @@ within 30 seconds would fill `MaxStartups`.
 
 ### D15. Staffing: one implementer and one reviewer per story, models by blast radius
 
+**Status: Decided; for release stories its one implementer and one reviewer were replaced by D31.**
+
 **Decided, Terry, 2026-11-16.** Models are named `Model/effort`, with no version, meaning the
 latest.
 
@@ -1275,6 +1342,8 @@ Fable/high reviews it. E3.02 handles the Bot token. E3.03 is a live run whose ou
   run this way, one after another, across all three MVP epics (D14).
 
 ### D18. The lease CLI is PowerShell 7
+
+**Status: Replaced by D28.**
 
 **MVP only. Replaced by D28 (Terry, 2026-11-17):** agentspace is Rust by v0.06, and PowerShell was
 the lean prototype's alone. Originally **decided, architect, 2026-11-16; settles Q5's language
@@ -1437,6 +1506,8 @@ idle until someone happens to look.
 answerable from what the architect already knows.
 
 ### D24. A lease's TTL is 8 hours by default, at least 1 minute and at most 24 hours
+
+**Status: Decided; its maximum is MVP only, and card #0010 revisits it.**
 
 **Decided for the default and the minimum; MVP only for the maximum. Story E1.01, 2026-11-17;
 settles Q5's TTL half.** The contract is [lease-api.md](lease-api.md), "TTL".
@@ -2170,6 +2241,8 @@ rewrite the prototype's structure, which D20 exists to keep out.
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
+
+**Status: MVP only; replaced by card #0011, and its location by D21.**
 
 **MVP only, 2026-11-16 (story E2.03).** **Replaced by card #0011**, which settles Q1 when the API
 is hosted and signing leaves the laptop. **Its location was replaced by D21:** story E2.09 moved
