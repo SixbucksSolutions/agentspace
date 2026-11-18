@@ -212,8 +212,13 @@ D16, D22, D23, D29 and D31.
 
 ## Checking that it still works
 
-Run from the main checkout. Every check uses throwaway folders and stubs, never Terry's real
-`~/.ssh`, leases or keeper.
+Run from the main checkout. Every check uses throwaway folders and stubs for `~/.ssh` and the
+lease state, and never touches the real keeper. **Correction (2026-11-18):** five lease suites
+(create-get, renew-release-list, credential, renew-release and driver) still make temporary key
+folders under the real `%USERPROFILE%\.agentspace\leases` and sign with the real CA, deleting the
+folders in a `finally`, and the alias suite makes a temporary folder inside the real
+`.agentspace`. E0.04-T02-S04 (#0079) found it, and v0.04-T03 (#0084, #0086) moves those checks to a
+throwaway home. Until then they SHOULD NOT be run while a real lease is being made or released.
 
 | Check | Run with | Passed at cutover, 0 failed |
 |---|---|---|
