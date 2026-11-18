@@ -14,6 +14,7 @@ import json
 import math
 import sys
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Context, Decimal
 
 GAP_FACTOR = 3
 
@@ -346,12 +347,23 @@ def summarize(lines, skipped, window_from, window_to):
     return result, tz, hosts, times
 
 
+def half_up(value, places):
+    """A float to places decimals, a tie rounding up (away from zero), as text.
+
+    The tie is judged on the decimal the arithmetic meant, not on the float's binary form: 21/200 is
+    stored as 0.10499999999999993, which "%.2f" prints as 0.10. Rounding to 9 places first restores
+    0.105, which then rounds up to 0.11.
+    """
+    exact = Decimal(repr(round(value, 9)))
+    return str(exact.quantize(Decimal(10) ** -places, rounding=ROUND_HALF_UP, context=Context(prec=400)))
+
+
 def fmt(value, integer=False):
     if value is None:
         return "-"
     if integer:
         return str(int(value))
-    return "%.2f" % value
+    return half_up(value, 2)
 
 
 def plural(count, word):
@@ -384,7 +396,8 @@ def markdown(result, tz, hosts, times):
     if cores is None:
         out.append("- Sampler overhead: -")
     else:
-        out.append("- Sampler overhead: %.4f cores (%.2f%% of one core)" % (cores, cores * 100))
+        out.append("- Sampler overhead: %s cores (%s%% of one core)"
+                   % (half_up(cores, 4), half_up(cores * 100, 2)))
     out.append("")
 
     out.append("## Host")

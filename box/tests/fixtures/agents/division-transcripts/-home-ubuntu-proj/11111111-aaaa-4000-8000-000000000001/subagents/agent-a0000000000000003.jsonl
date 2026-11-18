@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":true,"agentId":"a0000000000000003","sessionId":"11111111-aaaa-4000-8000-000000000001","timestamp":"2026-11-18T09:00:13.000Z","message":{"role":"assistant","content":"x"},"cwd":"/home/ubuntu/proj"}
+{"type":"assistant","isSidechain":true,"agentId":"a0000000000000003","sessionId":"11111111-aaaa-4000-8000-000000000001","timestamp":"2026-11-18T09:00:15.000Z","message":{"role":"assistant","content":"x"},"cwd":"/home/ubuntu/proj"}

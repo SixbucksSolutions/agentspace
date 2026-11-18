@@ -35,6 +35,7 @@ install -D -m 0755 agentspace-patch           /usr/local/sbin/agentspace-patch
 install -D -m 0755 agentspace-tools           /usr/local/bin/agentspace-tools
 install -D -m 0755 localswim                  /usr/local/bin/localswim
 install -D -m 0755 agentspace-footprint       /usr/local/bin/agentspace-footprint
+install -D -m 0755 agentspace-agents          /usr/local/bin/agentspace-agents
 install -D -m 0755 agentspace-sample          /usr/local/bin/agentspace-sample
 install -D -m 0644 agentspace-idle.service    /etc/systemd/system/agentspace-idle.service
 install -D -m 0644 agentspace-idle.timer      /etc/systemd/system/agentspace-idle.timer

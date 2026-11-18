@@ -1,0 +1,5 @@
+{"type":"assistant","isSidechain":true,"agentId":"a0000000000000001","sessionId":"11111111-aaaa-4000-8000-000000000001","timestamp":"2026-11-18T09:00:05.000Z","message":{"role":"assistant","content":"x"},"cwd":"/home/ubuntu/proj/.claude/worktrees/w1"}
+{"type":"assistant","isSidechain":true,"agentId":"a0000000000000001","sessionId":"11111111-aaaa-4000-8000-000000000001","timestamp":"2026-11-18T09:00:03.000Z","message":{"role":"assistant","content":"x"},"cwd":"/home/ubuntu/proj/.claude/worktrees/w1"}
+{"type":"agent-name","agentName":"x"}
+{"type":"assistant","isSidechain":true,"agentId":"a0000000000000001","sessionId":"11111111-aaaa-4000-8000-000000000001","timestamp":"2026-11-18T09:00:08.000Z","message":{"role":"assistant","content":"x"}}
+{"type":"assistant","isSidechain":true,"agentId":"a0000000000000001","sessionId":"11111111-aaaa-4000-8000-000000000001","timestamp":"2026-11-18T09:00:06.000Z","message":{"role":"assistant","content":"x"}}

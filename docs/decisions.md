@@ -1642,9 +1642,29 @@ the releases are taken in order.
 - **The footprint MUST come from measurement** (v0.03), never from an estimate.
 
 **Why:** the model runs at Anthropic, not on the host. What loads the host is the agents' tool
-calls: builds, test suites and browsers, run by subagents working at the same time. Under D15 a
-story's implementer and reviewer run one after the other, so a turn's peak is about its number of
-stories plus its dev lead.
+calls: builds, test suites and browsers, run by subagents working at the same time. **A turn's
+peak concurrency is the sum of its stories' staffing-plan peaks (D31), plus 1 for its dev lead.**
+v0.10 sizes a host from those plan peaks (D27, D31).
+- **Replaced, architect, 2026-11-18, in v0.03-T03:** this said that under D15 a story's
+  implementer and reviewer run one after the other, so a turn's peak is about its number of
+  stories plus its dev lead. D31 runs a story's subagents in parallel, and the measured turn
+  peaked at 8 working agents against that estimate's 4.
+
+**Measured in v0.03 (E0.03-T03-S01, 2026-11-18).** D27 stands. One turn, agentspace's own
+v0.04-T01: 1 session, up to 7 subagents at once, on a 4-CPU box. Figures are peak, p95 and p50, and
+the whole table is [docs/footprint.md](footprint.md).
+- **The session's own process, paid once per session:** 0.14, 0.06 and 0.01 CPU cores, and 538.41,
+  484.48 and 436.82 MiB PSS.
+- **One working agent's tool calls,** the session's tool calls divided by its working agents (its
+  subagents running plus its main agent): 0.11, 0.01 and 0.00 CPU cores, and 46.17, 0.00 and 0.00
+  MiB PSS. The PSS figures are a floor, since a call that lives between two samples adds none.
+- **The main agent alone,** its tool calls with no subagent running, undivided: 0.08, 0.03 and 0.00
+  CPU cores, and 46.17, 0.00 and 0.00 MiB PSS.
+- **The peak was 8 agents working at once,** 7 subagents plus the dev lead, which is D27's count.
+  It is the sum of the three stories' plan peaks (2, 2 and 3) plus the dev lead, as the "Why"
+  above now says. The estimate it replaced gave 4.
+- **The turn was spec writing, which is light.** Its host peaked at 0.51 cores and 1.09 GiB.
+  **v0.09 MUST measure a v0.05 turn again before it sets a size** (D33, #0049).
 
 ### D28. agentspace is Rust by v0.06; PowerShell was the prototype's
 
@@ -2143,8 +2163,11 @@ D27's per-agent footprint is measured.
 - **Each sample MUST record the session's own process apart from its descendants.** The session's
   own process is paid once per session, whatever it is doing. Its descendants, the tool calls, are
   what grows with the number of subagents working at once (D27). The footprint table (v0.03-T03)
-  gives a figure per working subagent by dividing the descendants' load by the number of the
-  session's subagents running at that moment, read from the session's transcript on the box.
+  gives a figure per working agent by dividing the descendants' load by the number of the
+  session's working agents at that moment: its subagents running, read from the session's
+  transcripts, plus its main agent. **Changed by the architect, 2026-11-18, in v0.03-T03:** the
+  divisor was the subagents running alone, and gained the main agent because D27's peak
+  concurrency counts the dev lead too ([docs/footprint.md](footprint.md)).
 - **CPU MUST be counted from cumulative CPU time, reaped children included,** never from an
   instantaneous percentage. A build that starts and ends between two samples is then still
   counted, at the next sample.
