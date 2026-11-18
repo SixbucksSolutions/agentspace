@@ -78,9 +78,8 @@ compute-on-demand service."
 - **A spec or design MUST NOT assume a host is Linux,** except where it describes today's EC2 box
   as it is. The platform stays a parameter of the contract, and `windows/amd64` (and later
   `windows/arm64`) are platforms like any other: unsatisfiable until a driver supports them (D5).
-- **Where a Windows host lands on the roadmap is Terry's call.** Until he places it, it stays the
-  roadmap's "Someday, maybe" entry, which already names the work: a lease model that assumes a
-  Linux user and an SSH certificate, and a host agent of its own.
+- **Windows hosts come before 1.0, as v0.13 (#0081)** (Terry, 2026-11-18). The work is a lease
+  model that today assumes a Linux user and an SSH certificate, and a host agent of its own.
 
 ### D5. An unmet request is unsatisfiable, never quietly downgraded
 
@@ -1495,7 +1494,7 @@ the releases are taken in order.
 - **The minor number has two digits** (Terry, 2026-11-17, by retitling the epics): `v0.02`, not
   `v0.2`. So the releases sort in order, and v0.10 follows v0.09 everywhere.
 - **1.0 keeps one digit: `v1.0`, not `v1.00`** (Terry, 2026-11-18). Two digits were needed only
-  below 1.0, because the releases run to v0.12 before it. Epic #0053 keeps its title.
+  below 1.0, because the releases run to v0.12 before it (v0.13 since 2026-11-18). Epic #0053 keeps its title.
 - **The plan was first written with one digit** (v0.2 to v0.12). Docs and cards were rewritten to
   two digits the same day, except the swimcoach milestones `v0.2` and `v0.2-T1`, which keep the
   names they were first reported under (D29).
@@ -1513,6 +1512,7 @@ the releases are taken in order.
 | v0.10 | #0050 | Plan-sized leases; contract v1 (D27) |
 | v0.11 | #0051 | `linux/amd64` platform |
 | v0.12 | #0052 | Plan from the board |
+| v0.13 | #0081 | `windows/amd64` platform (D4; added by Terry, 2026-11-18) |
 | v1.0 | #0053 | A real project runs an epic on a plan-sized host |
 
 - **A release number is not the contract version.** The lease contract stays v0 until a release

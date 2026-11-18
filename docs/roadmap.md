@@ -46,7 +46,8 @@ a lease. Where it stands is [handoff-mvp.md](handoff-mvp.md), and the contract i
 ## The road to 1.0
 
 **Many small releases, one epic each, taken in order (D26).** Terry moved them into Ready For Work on
-2026-11-17, and v0.04 (#0030) on 2026-11-18. Each is broken into stories only
+2026-11-17, and v0.04 (#0030) on 2026-11-18. v0.13 (#0081) was created there the same day, when
+Terry placed Windows hosts before 1.0. Each is broken into stories only
 when Terry says so (D14).
 
 | Release | Epic | What | Done when |
@@ -62,6 +63,7 @@ when Terry says so (D14).
 | **v0.10** | #0050 | **Plan-sized leases; contract v1.** Peak concurrency times footprint picks the size (D27) | Two plans of different peak concurrency get different sizes |
 | **v0.11** | #0051 | **`linux/amd64`** as a second platform (D13) | `--platform linux/amd64` gives a ready lease |
 | **v0.12** | #0052 | **Plan from the board.** The plan is read from the project's localswim epic | Naming an epic is enough to get a sized lease |
+| **v0.13** | #0081 | **`windows/amd64`** as a platform: a Windows host, its lease identity and its host agent (D4) | `--platform windows/amd64` gives a ready lease where an agent works a card |
 | **v1.0** | #0053 | **A real project runs an epic on a plan-sized host** | A real project other than agentspace works a multi-turn epic through it |
 
 **Why this order:**
@@ -72,6 +74,9 @@ when Terry says so (D14).
   rewrites the driver, and doing that in PowerShell first would mean writing it twice (D28).
 - **A host per project comes before sizes and plans,** because a size means nothing until a project
   has a host of its own to size.
+- **Windows comes after `linux/amd64`,** because v0.11 makes the driver serve more than one
+  platform, and a Windows host is a third. Terry placed it before 1.0 on 2026-11-18: agentspace is
+  a multi-platform service (D4). It is v0.13 so that no release before it is renumbered.
 
 **Two version numbers, kept apart (D26):** the release (v0.02 and on) and the lease contract
 (lease-api.md). Contract v0 stands until v0.10, the first release that changes an output.
@@ -104,8 +109,6 @@ when Terry says so (D14).
 **Fuzzy, uncarded, and allowed to stay that way.** An idea moves to a card when a real need shows
 up.
 
-- **`windows/amd64` leases.** The lease model assumes a Linux user and an SSH certificate; Windows
-  would need its own host agent.
 - **GPU sizes**, for when an agent needs to run a model rather than call one.
 - **Board-driven leases.** v0.12 reads a plan from the board; this goes further: moving an epic to
   In Progress asks for its lease, and closing it releases the lease.
