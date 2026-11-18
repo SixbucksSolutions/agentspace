@@ -149,10 +149,9 @@ Docs cite its cards as `#0001`.
   Backlog. **On 2026-11-17 Terry moved the release epics on the path to 1.0 into Ready For Work**,
   so Backlog now holds what comes after 1.0, defects and hardening. An epic MUST NOT be broken
   into stories until Terry says so.
-- **Turns are laid out one at a time** (Terry, 2026-11-18; D29). Breaking an epic into stories
-  makes cards for its first turn only, and an outline of the later turns in the epic's execution
-  plan. The architect makes each later turn's cards once every PR of the turn before is merged,
-  from what that turn found, and then starts its dev lead.
+- **Every turn of an epic is laid out up front**, each with its execution and staffing plans, and
+  re-planned when a turn hits unknowns (Terry, 2026-11-18; D29). A one-turn-at-a-time layout was
+  tried and walked back the same day.
 - **Stories** are children of their epic, and MUST each be under 3 hours of active work to reach
   Ready For Review; one that cannot be goes to Terry first. They are titled `EN.nn: title` in the
   MVP, and `EX.YY-Tnn-Smm: title` in a release (D29): `nn` is the earliest turn whose entry
