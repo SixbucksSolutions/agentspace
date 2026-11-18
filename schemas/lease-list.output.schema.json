@@ -85,7 +85,7 @@
       "description": "An OCI os/arch[/variant], lowercase, with aarch64 written arm64 and the arm64 variant v8 dropped.",
       "type": "string",
       "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$(?!\\n)",
-      "not": { "pattern": "^[a-z0-9]+/aarch64(/[a-z0-9]+)?$|^[a-z0-9]+/arm64/v8$(?!\\n)" }
+      "not": { "pattern": "^[a-z0-9]+/(aarch64(/[a-z0-9]+)?|arm64/v8)$(?!\\n)" }
     },
     "profile": {
       "description": "A profile name, lowercase, with an optional @version that has no leading zeros.",
@@ -121,9 +121,9 @@
           "pattern": "^agentspace-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{8}$(?!\\n)"
         },
         "user": {
-          "description": "The Unix user the alias logs in as.",
+          "description": "The user the alias logs in as: 1 to 64 letters, digits, '.', '_' and '-', not starting with '.' or '-'. Not limited to Unix user names, so that a Windows host needs no new contract version.",
           "type": "string",
-          "pattern": "^[a-z_][a-z0-9_-]{0,31}$(?!\\n)"
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$(?!\\n)"
         }
       }
     },
