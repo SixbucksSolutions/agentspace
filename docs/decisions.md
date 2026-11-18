@@ -1484,6 +1484,8 @@ where we are and 1.0." The MVP is v0.01. Each later release is one epic, titled 
 the releases are taken in order.
 - **The minor number has two digits** (Terry, 2026-11-17, by retitling the epics): `v0.02`, not
   `v0.2`. So the releases sort in order, and v0.10 follows v0.09 everywhere.
+- **1.0 keeps one digit: `v1.0`, not `v1.00`** (Terry, 2026-11-18). Two digits were needed only
+  below 1.0, because the releases run to v0.12 before it. Epic #0053 keeps its title.
 - **The plan was first written with one digit** (v0.2 to v0.12). Docs and cards were rewritten to
   two digits the same day, except the swimcoach milestones `v0.2` and `v0.2-T1`, which keep the
   names they were first reported under (D29).

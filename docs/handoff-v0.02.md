@@ -125,8 +125,8 @@ what an agent uses", which is in Ready For Work.
 - **#0068 and #0066, the keeper's two small open cards, are not in v0.03** unless Terry pulls them
   in (below).
 
-**Two questions to Terry were still open at cutover:**
-- Should v1.0 (#0053) be retitled v1.00, to match D26's two-digit minor number?
+**One question to Terry was still open at cutover** (he settled the other, v1.0 keeping its name,
+in D26):
 - Should v0.04 (#0030) move from Backlog to Ready For Work, like the other releases? Bot cannot
   move a card out of Backlog, so this is his click (D29).
 
