@@ -78,22 +78,33 @@
 # Trust: this pass MUST NOT stop any process it did not start, even one whose command line names an
 # alias. A recorded PID is trusted only when all of these hold:
 # - A process with that PID is running and can be queried.
-# - Its creation time, as UTC truncated to the millisecond, equals process_started_at as a string.
-# - Its command line equals, exactly and case included, the holder command this script builds for
-#   the recorded alias. CreateProcess keeps a command line exactly as given, so the comparison has
-#   no slack. So a pass MUST be run with the same -SshExe as the pass that started the holder; with
-#   another, the old holder is untrusted and left alone.
+# - Its creation time (GetProcessTimes), as UTC truncated to the millisecond, equals
+#   process_started_at as a string. The PID and the start time together are the identity, and are
+#   what defeats PID reuse.
+# - Its command line is the holder command for the recorded alias, read structurally
+#   (Agentspace.BoardHolder.HolderCommand.Matches), not compared byte for byte:
+#   - The line is split into tokens by CommandLineToArgvW's rules, so quoting and spacing do not
+#     matter.
+#   - The program is -SshExe, both full paths compared as Windows compares them: separators and
+#     dots normalized, case ignored. For a .cmd or .bat, the program MAY instead be
+#     <System32>\cmd.exe with /c, or /d /c, whose command (cmd's own quote stripping applied) has
+#     -SshExe as its program.
+#   - The arguments after the program MUST be exactly -N -o ExitOnForwardFailure=yes <alias>, the
+#     alias compared exactly, case included.
+#   So a pass MUST be run with the same -SshExe as the pass that started the holder; with another,
+#   the old holder is untrusted and left alone. The matcher checks itself (HolderCommand.Check) at
+#   the start of every pass, and a pass whose matcher fails stops with an error, trusting nothing.
 # A recorded PID that is not trusted is treated as no holder: its record is removed, the process
 # is left alone, and a holder is started afresh if a lease is ready.
 #
 # How a trusted holder is stopped (Agentspace.BoardHolder.Native.StopTree):
 # - The holder is opened by PID, and its creation time and command line are checked again on that
-#   same handle. While the handle is open Windows cannot reuse the PID, so the process checked is
-#   the process stopped.
+#   same handle, by the same matcher. While the handle is open Windows cannot reuse the PID, so the
+#   process checked is the process stopped.
 # - Its descendants are found by walking parent PIDs, and each one is checked from its own handle:
 #   its parent PID is its parent's and it was created no earlier than its parent. A process whose
 #   parent died before the walk cannot be traced by any means and is left alone; nothing is ever
-#   matched by command line alone.
+#   matched by command line alone, and nothing is stopped by taskkill or by a sweep of command lines.
 # - Every handle is held until the end, so no PID in the tree is reused while it is being stopped.
 #   The tree is stopped leaves first, the holder last, then walked again for any child made
 #   meanwhile.
@@ -116,6 +127,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -141,6 +153,228 @@ namespace Agentspace.BoardHolder
         public bool RootStopped;
         public int[] Stopped;
         public int[] Survivors;
+    }
+
+    // One token of a command line: its value as the program receives it, and where its raw text
+    // starts and ends in the line.
+    public sealed class Token
+    {
+        public string Value;
+        public int Start;
+        public int End;
+    }
+
+    // The holder command, <SshExe> -N -o ExitOnForwardFailure=yes <alias>: how the keeper builds
+    // it, and how a process's command line is recognized as one. Both the pass's trust check and
+    // StopTree's re-check use Matches, so there is one rule.
+    public static class HolderCommand
+    {
+        static readonly string[] Options = { "-N", "-o", "ExitOnForwardFailure=yes" };
+        const string CmdSpecial = "&<>()@^|";
+
+        public static string CmdPath { get { return Path.Combine(Environment.SystemDirectory, "cmd.exe"); } }
+
+        public static bool IsBatch(string exe)
+        {
+            string ext = Path.GetExtension(exe ?? string.Empty);
+            return string.Equals(ext, ".cmd", StringComparison.OrdinalIgnoreCase) || string.Equals(ext, ".bat", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // What CreateProcess runs for the holder: SshExe itself, or cmd.exe for a batch.
+        public static string Application(string sshExe)
+        {
+            return IsBatch(sshExe) ? CmdPath : sshExe;
+        }
+
+        // The command line the keeper gives CreateProcess. A batch runs through cmd, in cmd's own
+        // process: "<cmd>" /d /c ""<SshExe>" -N -o ExitOnForwardFailure=yes <alias>". /d skips
+        // cmd's AutoRun.
+        public static string Build(string sshExe, string alias)
+        {
+            string holder = "\"" + sshExe + "\" " + string.Join(" ", Options) + " " + alias;
+            return IsBatch(sshExe) ? "\"" + CmdPath + "\" /d /c \"" + holder + "\"" : holder;
+        }
+
+        static bool IsBlank(char c) { return c == ' ' || c == '\t'; }
+
+        // Splits a command line as CommandLineToArgvW does. The first token, the program, runs to
+        // the next quote when it starts with one, and to the next blank otherwise, with no escapes.
+        // Every later token follows the argument rules: blanks outside quotes end it; 2n
+        // backslashes before a quote give n backslashes and the quote opens or closes quoting;
+        // 2n+1 give n backslashes and a literal quote; backslashes before anything else are
+        // literal; and in a run of quotes every third one is literal.
+        public static List<Token> Split(string line)
+        {
+            var tokens = new List<Token>();
+            if (line == null) return tokens;
+            int n = line.Length, i = 0;
+            if (n > 0 && line[0] == '"')
+            {
+                int close = line.IndexOf('"', 1);
+                if (close < 0) { tokens.Add(new Token { Value = line.Substring(1), Start = 0, End = n }); i = n; }
+                else { tokens.Add(new Token { Value = line.Substring(1, close - 1), Start = 0, End = close + 1 }); i = close + 1; }
+            }
+            else
+            {
+                while (i < n && !IsBlank(line[i])) i++;
+                tokens.Add(new Token { Value = line.Substring(0, i), Start = 0, End = i });
+            }
+            while (i < n && IsBlank(line[i])) i++;
+            while (i < n)
+            {
+                int start = i, quotes = 0, slashes = 0;
+                var value = new StringBuilder();
+                while (i < n)
+                {
+                    char c = line[i];
+                    if (IsBlank(c) && quotes == 0) break;
+                    if (c == '\\') { value.Append(c); slashes++; i++; continue; }
+                    if (c != '"') { value.Append(c); slashes = 0; i++; continue; }
+                    if (slashes % 2 == 0) { value.Length -= slashes / 2; quotes++; }
+                    else { value.Length -= slashes / 2 + 1; value.Append('"'); }
+                    slashes = 0;
+                    i++;
+                    while (i < n && line[i] == '"')
+                    {
+                        if (++quotes == 3) { value.Append('"'); quotes = 0; }
+                        i++;
+                    }
+                    if (quotes == 2) quotes = 0;
+                }
+                tokens.Add(new Token { Value = value.ToString(), Start = start, End = i });
+                while (i < n && IsBlank(line[i])) i++;
+            }
+            return tokens;
+        }
+
+        // The command cmd runs for /c: the text after the switch, less its leading blanks. When it
+        // starts with a quote, cmd removes that quote and the last quote in the text, unless the
+        // text holds exactly two quotes, with a blank and none of &<>()@^| between them; cmd then
+        // keeps both when the quoted text names a program, and this always keeps them. So a line
+        // cmd would read the other way is never matched, and is left alone.
+        public static string CmdCommand(string rest)
+        {
+            rest = rest.TrimStart(' ', '\t');
+            if (rest.Length == 0 || rest[0] != '"') return rest;
+            int count = 0;
+            foreach (char c in rest) if (c == '"') count++;
+            if (count == 2)
+            {
+                string inner = rest.Substring(1, rest.IndexOf('"', 1) - 1);
+                if (inner.IndexOfAny(new[] { ' ', '\t' }) >= 0 && inner.IndexOfAny(CmdSpecial.ToCharArray()) < 0) return rest;
+            }
+            int last = rest.LastIndexOf('"');
+            if (last == 0) return rest.Substring(1);
+            return rest.Substring(1, last - 1) + rest.Substring(last + 1);
+        }
+
+        // Two full paths that name the same file as Windows compares them: separators and dots
+        // normalized, case ignored. A path that is not fully qualified names nothing.
+        public static bool SamePath(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            if (!Path.IsPathFullyQualified(a) || !Path.IsPathFullyQualified(b)) return false;
+            try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase); }
+            catch (Exception) { return false; }
+        }
+
+        static bool IsHolder(List<Token> t, string sshExe, string alias)
+        {
+            if (t.Count != Options.Length + 2 || !SamePath(t[0].Value, sshExe)) return false;
+            for (int k = 0; k < Options.Length; k++)
+                if (!string.Equals(t[k + 1].Value, Options[k], StringComparison.Ordinal)) return false;
+            return string.Equals(t[Options.Length + 1].Value, alias, StringComparison.Ordinal);
+        }
+
+        static bool IsSwitch(string line, Token t, string name)
+        {
+            return string.Equals(line.Substring(t.Start, t.End - t.Start), name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // True when commandLine is the holder command for this SshExe and alias, read structurally:
+        // the program is SshExe, compared as a Windows path, or for a .cmd or .bat it is
+        // <System32>\cmd.exe [/d] /c running SshExe; and the arguments after the program are exactly
+        // -N -o ExitOnForwardFailure=yes <alias>, the alias compared exactly.
+        public static bool Matches(string commandLine, string sshExe, string alias)
+        {
+            if (string.IsNullOrEmpty(commandLine) || string.IsNullOrEmpty(sshExe) || string.IsNullOrEmpty(alias)) return false;
+            List<Token> t = Split(commandLine);
+            if (IsHolder(t, sshExe, alias)) return true;
+            if (!IsBatch(sshExe) || !SamePath(t[0].Value, CmdPath)) return false;
+            int k = 1;
+            if (k < t.Count && IsSwitch(commandLine, t[k], "/d")) k++;
+            if (k >= t.Count || !IsSwitch(commandLine, t[k], "/c")) return false;
+            return IsHolder(Split(CmdCommand(commandLine.Substring(t[k].End))), sshExe, alias);
+        }
+
+        // The matcher's own checks, run at the start of every pass. Returns what failed, or an
+        // empty array.
+        public static string[] Check()
+        {
+            var failed = new List<string>();
+            string ssh = @"C:\Windows\System32\OpenSSH\ssh.exe";
+            string spaced = @"C:\Program Files\OpenSSH\ssh.exe";
+            string stub = @"C:\agentspace-check\ssh-stub.cmd";
+            string spacedStub = @"C:\agentspace check\ssh-stub.cmd";
+            string alias = "agentspace-check-0000000a";
+            string args = " -N -o ExitOnForwardFailure=yes ";
+            string cmd = CmdPath;
+
+            Action<string, string[]> split = (line, expected) =>
+            {
+                List<Token> t = Split(line);
+                var got = new List<string>();
+                foreach (Token x in t) got.Add(x.Value);
+                bool same = got.Count == expected.Length;
+                for (int k = 0; same && k < got.Count; k++) same = string.Equals(got[k], expected[k], StringComparison.Ordinal);
+                if (!same) failed.Add("Split(" + line + ") gave [" + string.Join("|", got) + "]");
+            };
+            split(@"p ""a b"" c\\d e\""f g\\""h i""", new[] { "p", "a b", @"c\\d", "e\"f", @"g\h i" });
+            split(@"p """"""a""""""", new[] { "p", "\"a\"" });
+            split(@"""C:\x\""y  z ", new[] { @"C:\x\", "y", "z" });
+
+            Action<string, string, string, bool, string> match = (name, line, exe, expected, a) =>
+            {
+                if (Matches(line, exe, a ?? alias) != expected) failed.Add(name + ": " + line);
+            };
+            // The keeper's own launcher form.
+            match("Own form, exe", Build(ssh, alias), ssh, true, null);
+            match("Own form, batch", Build(stub, alias), stub, true, null);
+            match("Own form, batch with spaces", Build(spacedStub, alias), spacedStub, true, null);
+            // Start-Process of an exe, and the same line spelled differently.
+            match("Start-Process, exe", "\"" + ssh + "\"" + args + alias, ssh, true, null);
+            match("Exe, unquoted, other case, extra blanks", ssh.ToLowerInvariant() + "  -N\t-o  ExitOnForwardFailure=yes   " + alias + " ", ssh, true, null);
+            match("Exe, forward slashes", ssh.Replace('\\', '/') + args + alias, ssh, true, null);
+            // Start-Process of a .cmd.
+            match("Start-Process, batch", cmd + " /c \"\"" + stub + "\"" + args + alias + "\"", stub, true, null);
+            match("Batch, cmd in capitals, /D /C", cmd.ToUpperInvariant() + " /D /C \"\"" + stub + "\"" + args + alias + "\"", stub, true, null);
+            match("Batch, two quotes kept", cmd + " /c \"" + spacedStub + "\"" + args + alias, spacedStub, true, null);
+            // An exe path with spaces.
+            match("Exe with spaces, quoted", "\"" + spaced + "\"" + args + alias, spaced, true, null);
+            match("Exe with spaces, unquoted", spaced + args + alias, spaced, false, null);
+            match("Batch with spaces, Start-Process", cmd + " /c \"\"" + spacedStub + "\"" + args + alias + "\"", spacedStub, true, null);
+            // Near misses.
+            match("Other alias", "\"" + ssh + "\"" + args + "agentspace-check-0000000b", ssh, false, null);
+            match("Longer alias", "\"" + ssh + "\"" + args + alias + "b", ssh, false, null);
+            match("Alias in other case", "\"" + ssh + "\"" + args + alias.ToUpperInvariant(), ssh, false, null);
+            match("Quoted alias with more", "\"" + ssh + "\"" + args + "\"" + alias + " x\"", ssh, false, null);
+            match("Extra argument after", "\"" + ssh + "\"" + args + alias + " -v", ssh, false, null);
+            match("Extra argument before", "\"" + ssh + "\" -v" + args + alias, ssh, false, null);
+            match("Option in other case", "\"" + ssh + "\" -n -o ExitOnForwardFailure=yes " + alias, ssh, false, null);
+            match("Option missing", "\"" + ssh + "\" -N -o " + alias, ssh, false, null);
+            match("Other program, same arguments", @"""C:\Windows\System32\notepad.exe""" + args + alias, ssh, false, null);
+            match("Exe under cmd", cmd + " /c \"\"" + ssh + "\"" + args + alias + "\"", ssh, false, null);
+            match("Batch, another cmd.exe", "\"C:\\agentspace-check\\cmd.exe\" /c \"\"" + stub + "\"" + args + alias + "\"", stub, false, null);
+            match("Batch, /k", cmd + " /k \"\"" + stub + "\"" + args + alias + "\"", stub, false, null);
+            match("Batch, /s /c", cmd + " /s /c \"\"" + stub + "\"" + args + alias + "\"", stub, false, null);
+            match("Batch, other alias", cmd + " /c \"\"" + stub + "\"" + args + "agentspace-check-0000000b\"", stub, false, null);
+            match("Batch, extra argument inside", cmd + " /c \"\"" + stub + "\"" + args + alias + " x\"", stub, false, null);
+            match("Batch, command after", cmd + " /c \"\"" + stub + "\"" + args + alias + "\" & calc", stub, false, null);
+            match("Batch run directly", "\"" + stub + "\"" + args + alias, stub, true, null);
+            match("Empty", "", ssh, false, null);
+            match("Relative SshExe", "ssh.exe" + args + alias, "ssh.exe", false, null);
+            return failed.ToArray();
+        }
     }
 
     public static class Native
@@ -270,11 +504,6 @@ namespace Agentspace.BoardHolder
         public static string FormatStartedAt(long fileTime)
         {
             return DateTime.FromFileTimeUtc(fileTime).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
-        }
-
-        static bool SameCommandLine(string actual, string expected)
-        {
-            return actual != null && expected != null && string.Equals(actual, expected, StringComparison.Ordinal);
         }
 
         static SafeProcessHandle Open(int pid, uint access)
@@ -456,9 +685,10 @@ namespace Agentspace.BoardHolder
         }
 
         // Stops the process with this PID and every descendant that can be proved to be its, but
-        // only when the process is still running, was created at startedAt and has the command line
-        // given. Otherwise nothing is stopped and Matched is false.
-        public static StopResult StopTree(int pid, string startedAt, string commandLine)
+        // only when the process is still running, was created at startedAt, and carries the holder
+        // command for sshExe and alias (HolderCommand.Matches). Otherwise nothing is stopped and
+        // Matched is false.
+        public static StopResult StopTree(int pid, string startedAt, string sshExe, string alias)
         {
             const uint access = PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE;
             var result = new StopResult { Matched = false, RootStopped = false, Stopped = new int[0], Survivors = new int[0] };
@@ -471,7 +701,7 @@ namespace Agentspace.BoardHolder
                 members.Add(root);
                 if (!IsRunning(rootHandle)) return result;
                 ProcessIdentity id = Identify(rootHandle, pid);
-                if (id == null || !string.Equals(id.StartedAt, startedAt, StringComparison.Ordinal) || !SameCommandLine(id.CommandLine, commandLine)) return result;
+                if (id == null || !string.Equals(id.StartedAt, startedAt, StringComparison.Ordinal) || !HolderCommand.Matches(id.CommandLine, sshExe, alias)) return result;
                 root.Creation = id.CreationFileTime;
                 result.Matched = true;
 
@@ -515,6 +745,7 @@ namespace Agentspace.BoardHolder
 }
 
 $script:Native = [Agentspace.BoardHolder.Native]
+$script:HolderCommand = [Agentspace.BoardHolder.HolderCommand]
 $script:Utf8 = [System.Text.UTF8Encoding]::new($false)
 $script:AliasPattern = '\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z'
 
@@ -572,14 +803,9 @@ function Remove-HolderRecord {
 # --- The holder command ---------------------------------------------------------------------------
 
 # The holder for Alias: Application is what CreateProcess runs, and CommandLine is the command line
-# the holder carries, which trust compares exactly. A batch runs through cmd, in cmd's own process.
+# the keeper gives it (HolderCommand.Build). A batch runs through cmd, in cmd's own process.
 function Get-HolderCommand([string]$Exe, [string]$Alias) {
-  $holder = "`"$Exe`" -N -o ExitOnForwardFailure=yes $Alias"
-  if ([System.IO.Path]::GetExtension($Exe) -in '.cmd', '.bat') {
-    $cmd = Join-Path ([Environment]::SystemDirectory) 'cmd.exe'
-    return [pscustomobject]@{ Application = $cmd; CommandLine = "`"$cmd`" /d /c `"$holder`"" }
-  }
-  [pscustomobject]@{ Application = $Exe; CommandLine = $holder }
+  [pscustomobject]@{ Application = $script:HolderCommand::Application($Exe); CommandLine = $script:HolderCommand::Build($Exe, $Alias) }
 }
 
 # Why a holder cannot be started with these paths, or $null when it can. A quote would end a quoted
@@ -595,10 +821,11 @@ function Test-HolderPaths([string]$Exe, [string]$Alias) {
   $null
 }
 
-# True when the process is the one expected: running, created at StartedAt, and carrying exactly
-# CommandLine.
-function Test-Identity($Identity, [string]$StartedAt, [string]$CommandLine) {
-  $null -ne $Identity -and $Identity.StartedAt -ceq $StartedAt -and $Identity.CommandLine -ceq $CommandLine
+# True when the process is the one expected: running, created at StartedAt to the millisecond, and
+# carrying the holder command for Exe and Alias, read structurally (HolderCommand.Matches, the same
+# rule StopTree applies on its own handle).
+function Test-Identity($Identity, [string]$StartedAt, [string]$Exe, [string]$Alias) {
+  $null -ne $Identity -and $Identity.StartedAt -ceq $StartedAt -and $script:HolderCommand::Matches($Identity.CommandLine, $Exe, $Alias)
 }
 
 # Writes a JSON document through a temporary file in the same folder, moved over the old file, so a
@@ -681,7 +908,7 @@ function Start-Holder([string]$Exe, [string]$Alias) {
     $answer = [System.IO.File]::ReadAllText($resultPath) | ConvertFrom-Json -AsHashtable -DateKind String
     if ($answer.Contains('error')) { throw $answer['error'] }
     $holder = $script:Native::Probe([int]$answer['pid'])
-    if (-not (Test-Identity $holder $answer['process_started_at'] $command.CommandLine)) {
+    if (-not (Test-Identity $holder $answer['process_started_at'] $Exe $Alias)) {
       throw 'The holder exited at once; see board-holder-ssh.log.'
     }
     $holder
@@ -695,6 +922,10 @@ function Start-Holder([string]$Exe, [string]$Alias) {
 # --- One pass -----------------------------------------------------------------------------------
 
 function Invoke-HolderPass {
+  # The matcher that decides trust checks itself first; a pass never trusts by a broken rule.
+  $broken = $script:HolderCommand::Check()
+  if ($broken.Count -gt 0) { throw "The holder command matcher failed its own checks: $($broken -join '; ')" }
+
   try {
     $leases = Read-LeaseState
   } catch {
@@ -709,11 +940,9 @@ function Invoke-HolderPass {
   # The holder, when the record names a process that is still the one it started.
   $record = Read-HolderRecord
   $holder = $null
-  $command = $null
   if ($record) {
-    $command = Get-HolderCommand $SshExe $record.alias
     $probe = $script:Native::Probe($record.pid)
-    if (Test-Identity $probe $record.process_started_at $command.CommandLine) { $holder = $probe }
+    if (Test-Identity $probe $record.process_started_at $SshExe $record.alias) { $holder = $probe }
   }
   if (-not $holder) {
     # A record that names no trusted holder is dropped. Its process, if any, is left alone.
@@ -726,7 +955,7 @@ function Invoke-HolderPass {
       Write-HolderLog -Action kept -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid
       return 0
     }
-    try { $result = $script:Native::StopTree($holder.Pid, $holder.StartedAt, $command.CommandLine) }
+    try { $result = $script:Native::StopTree($holder.Pid, $holder.StartedAt, $SshExe, $record.alias) }
     catch {
       Write-HolderLog -Action failed -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid -Reason "The holder could not be stopped: $($_.Exception.Message)"
       return 0
@@ -773,7 +1002,7 @@ function Invoke-HolderPass {
   } catch {
     # An unrecorded holder could never be stopped, so it is stopped now, while it is known.
     $reason = $_.Exception.Message
-    try { [void]$script:Native::StopTree($started.Pid, $started.StartedAt, $started.CommandLine) } catch { }
+    try { [void]$script:Native::StopTree($started.Pid, $started.StartedAt, $SshExe, $alias) } catch { }
     Write-HolderLog -Action failed -LeaseId $leaseId -Alias $alias -ProcessId $started.Pid -Reason "The record could not be written, so the holder was stopped: $reason"
     return 0
   }
