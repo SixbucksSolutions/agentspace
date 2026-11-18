@@ -1,50 +1,46 @@
-# Usage-error conformance for the ProxyCommand's argument handling (docs/operator.md, "The ProxyCommand").
-# Runs the program named by AGENTSPACE_SSH_PROXY_CMD. With the variable unset, the default is
-# conformance/prototype/ssh-proxy.cmd when that file exists; otherwise every case is SKIPPED.
-$ErrorActionPreference = 'Stop'
+#Requires -Version 7
+# RFC 2119 keywords in these comments; the capitals are load-bearing.
+#
+# Usage-error conformance for the ProxyCommand's argument handling (docs/operator.md, "The
+# ProxyCommand"). The program under test is the one AGENTSPACE_SSH_PROXY_CMD names; unset, it takes
+# its default from conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program
+# under test"). Every case ends before a tunnel starts, with exit 1 and stdout empty.
+#
+# Run as: pwsh -NoProfile -File conformance/operator/test-proxy-arguments.ps1
 . (Join-Path $PSScriptRoot 'helpers.ps1')
-
-$proxy = $env:AGENTSPACE_SSH_PROXY_CMD
-if (-not $proxy) {
-    $default = Join-Path $PSScriptRoot '..\prototype\ssh-proxy.cmd'
-    if (Test-Path -LiteralPath $default) { $proxy = [IO.Path]::GetFullPath($default) }
-}
 
 $secondText = 'agentspace: ssh-proxy.cmd takes at most one argument, the SSH host alias.'
 $aliasText = 'agentspace: -Alias MUST be an SSH host alias'
+$section = 'operator.md#the-proxycommand'
 
-# Arguments are written as cmd.exe receives them. An unquoted a;b is split by cmd into two
-# arguments, which is the second-argument case the prototype's test also uses.
+# Each Arguments array is the argument list as the program receives it. `a;b` is one element that
+# cmd.exe splits at the semicolon, which makes it two arguments, the second-argument case.
 $cases = @(
-    [pscustomobject]@{ Name = 'operator.md#the-proxycommand: ssh-proxy.cmd a/b extra refused before up'; Arguments = 'a/b extra'; Text = $secondText }
-    [pscustomobject]@{ Name = 'operator.md#the-proxycommand: ssh-proxy.cmd a;b (two arguments) refused before up'; Arguments = 'a;b'; Text = $secondText }
-    [pscustomobject]@{ Name = 'operator.md#the-proxycommand: ssh-proxy.cmd -Fx fails in up on the alias, starting no tunnel'; Arguments = '-Fx'; Text = $aliasText }
-    [pscustomobject]@{ Name = 'operator.md#the-proxycommand: ssh-proxy.cmd "" fails in up on the alias, starting no tunnel'; Arguments = '""'; Text = $aliasText }
-    [pscustomobject]@{ Name = 'operator.md#the-proxycommand: ssh-proxy.cmd "a b" fails in up on the alias, starting no tunnel'; Arguments = '"a b"'; Text = $aliasText }
-    [pscustomobject]@{ Name = 'operator.md#the-proxycommand: ssh-proxy.cmd a/b fails in up on the alias, starting no tunnel'; Arguments = 'a/b'; Text = $aliasText }
+  [pscustomobject]@{ Name = "${section}: ssh-proxy.cmd a/b extra refused before up"; Arguments = @('a/b', 'extra'); Text = $secondText }
+  [pscustomobject]@{ Name = "${section}: ssh-proxy.cmd a;b (two arguments) refused before up"; Arguments = @('a;b'); Text = $secondText }
+  [pscustomobject]@{ Name = "${section}: ssh-proxy.cmd -Fx fails in up on the alias, starting no tunnel"; Arguments = @('-Fx'); Text = $aliasText }
+  [pscustomobject]@{ Name = "${section}: ssh-proxy.cmd `"`" fails in up on the alias, starting no tunnel"; Arguments = @(''); Text = $aliasText }
+  [pscustomobject]@{ Name = "${section}: ssh-proxy.cmd `"a b`" fails in up on the alias, starting no tunnel"; Arguments = @('a b'); Text = $aliasText }
+  [pscustomobject]@{ Name = "${section}: ssh-proxy.cmd a/b fails in up on the alias, starting no tunnel"; Arguments = @('a/b'); Text = $aliasText }
 )
 
-$iso = New-IsolatedHome
+$h = New-ConformanceHome
 try {
-    if (-not $proxy) {
-        foreach ($case in $cases) {
-            Write-CheckResult -Status SKIPPED -Name $case.Name -Reason 'AGENTSPACE_SSH_PROXY_CMD is not set, and conformance/prototype/ssh-proxy.cmd does not exist'
-        }
+  $program = Get-ConformanceProgram -Variable 'AGENTSPACE_SSH_PROXY_CMD'
+  $gate = Test-AwsUnreachable -ConformanceHome $h
+  if (-not $gate.Unreachable) {
+    foreach ($case in $cases) { Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason $gate.Reason }
+  } elseif (-not $program) {
+    foreach ($case in $cases) { Write-ConformanceResult -Name $case.Name -Status FAIL -Reason 'Neither AGENTSPACE_SSH_PROXY_CMD nor its default names a program' }
+  } else {
+    foreach ($case in $cases) {
+      # Exit 1 for both groups: the second-argument refusal, and a failed up, which ends the
+      # ProxyCommand before its tunnel step (operator.md, step 4).
+      $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_SSH_PROXY_CMD' -ConformanceHome $h -Arguments $case.Arguments -TimeoutSeconds 60
+      Write-RefusalResult -Result $r -ExpectCode 1 -ExpectText $case.Text -Name $case.Name
     }
-    elseif (-not (Test-AwsRefused -Iso $iso)) {
-        foreach ($case in $cases) {
-            Write-CheckResult -Status SKIPPED -Name $case.Name -Reason 'aws sts get-caller-identity succeeded under the isolated environment, so nothing was run'
-        }
-    }
-    else {
-        foreach ($case in $cases) {
-            # Exit 1 for both groups: the second-argument refusal, and a failed up, which ends
-            # the ProxyCommand before its tunnel step (operator.md, step 4).
-            Invoke-RefusalCase -Iso $iso -Program $proxy -Arguments $case.Arguments -ExpectCode 1 -ExpectText $case.Text -Name $case.Name
-        }
-    }
+  }
+} finally {
+  Remove-ConformanceHome -ConformanceHome $h
 }
-finally {
-    Remove-IsolatedHome -Iso $iso
-}
-Exit-CheckRun
+Exit-ConformanceRun

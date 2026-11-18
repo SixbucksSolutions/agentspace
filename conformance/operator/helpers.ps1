@@ -1,198 +1,120 @@
-# Shared code for the operator and ProxyCommand usage-error checks (conformance/operator/).
-# This file holds code only. It loads no prototype code. It runs the program under test only
-# through the environment variable that names that program, and every run gets a throwaway
-# folder and the AWS variables described in docs/operator.md (Environment variables).
+#Requires -Version 7
+# RFC 2119 keywords in these comments; the capitals are load-bearing.
+#
+# Shared code for the operator and ProxyCommand checks in conformance/operator/. It dot-sources the
+# harness (conformance/lease-cli/harness.ps1), which starts every program and makes every home, so
+# every default comes from conformance/prototype/defaults.ps1 and every child gets the harness's
+# isolation set. This file loads no prototype code, and no check names a shim path.
+#
+# Three things the harness does not cover are here: the AWS gate, a runner for a value that cmd.exe
+# needs quoted, and the code points a value arrives with.
 
-$script:Passed = 0
-$script:Failed = 0
-$script:Skipped = 0
+. (Join-Path $PSScriptRoot '..\lease-cli\harness.ps1')
 
-function Write-CheckResult {
-    param(
-        [Parameter(Mandatory)][ValidateSet('PASS', 'FAIL', 'SKIPPED')][string]$Status,
-        [Parameter(Mandatory)][string]$Name,
-        [string]$Reason = ''
-    )
-    switch ($Status) {
-        'PASS' { $script:Passed++; Write-Output "PASS $Name" }
-        'FAIL' { $script:Failed++; Write-Output "FAIL ${Name}: $Reason" }
-        'SKIPPED' { $script:Skipped++; Write-Output "SKIPPED ${Name}: $Reason" }
-    }
+# The AWS CLI programs the operator can run: the fixed path of docs/operator.md ("Programs it
+# starts"), and the `aws` that PATH finds, which the operator falls back to when the fixed file is
+# missing. Returns every one that exists, so the gate probes every program a mistaken run could reach.
+function Get-OperatorAwsPrograms {
+  $found = [System.Collections.Generic.List[string]]::new()
+  $fixed = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
+  if (Test-Path -LiteralPath $fixed -PathType Leaf) { $found.Add($fixed) }
+  $onPath = Get-Command aws -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($onPath -and -not ($found | Where-Object { $_ -ieq $onPath.Source })) { $found.Add($onPath.Source) }
+  return , $found.ToArray()
 }
 
-function Exit-CheckRun {
-    Write-Output ('{0} passed, {1} failed, {2} skipped' -f $script:Passed, $script:Failed, $script:Skipped)
-    if ($script:Failed -gt 0) { exit 1 }
-    if ($script:Skipped -gt 0) { exit 2 }
-    exit 0
+# The gate every check that can reach `aws` MUST pass first (docs/conformance.md, "The harness").
+# Under the harness's environment for the home, `aws sts get-caller-identity` MUST fail for every
+# AWS CLI the operator can run. Returns Unreachable (true only then) and a Reason. A missing CLI is
+# reported as not confirmed, never as refused, so the check is SKIPPED.
+function Test-AwsUnreachable {
+  param([Parameter(Mandatory)]$ConformanceHome, [string[]]$Program = (Get-OperatorAwsPrograms))
+  if (-not $Program -or $Program.Count -eq 0) {
+    return [pscustomobject]@{ Unreachable = $false; Reason = 'The AWS CLI was not found, so the check cannot confirm that no sign-in is reachable' }
+  }
+  $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $ConformanceHome
+  foreach ($p in $Program) {
+    $r = Start-ConformanceProcess -FilePath $p -Arguments @('sts', 'get-caller-identity', '--region', 'us-west-2', '--output', 'json') -ChildEnvironment $childEnv -TimeoutSeconds 60
+    if ($r.TimedOut -or $r.ExitCode -le 0) {
+      return [pscustomobject]@{ Unreachable = $false; Reason = 'aws sts get-caller-identity succeeded, timed out or could not be run under the isolated environment, so nothing was run' }
+    }
+  }
+  return [pscustomobject]@{ Unreachable = $true; Reason = '' }
 }
 
-function New-IsolatedHome {
-    $root = Join-Path $env:TEMP ('agentspace-operator-conf-' + [guid]::NewGuid().ToString('N'))
-    $iso = @{
-        Root    = $root
-        Profile = (Join-Path $root 'profile')
-        State   = (Join-Path $root 'state')
-        Ssh     = (Join-Path $root 'ssh')
-    }
-    foreach ($dir in @($iso.Profile, $iso.State, $iso.Ssh)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
-    return $iso
+# Reports one refusal: the exit code, an empty stdout, the expected text on stderr and no runtime
+# error record. $Result is what Start-ConformanceProcess or Invoke-ConformanceProgram returned.
+function Write-RefusalResult {
+  param(
+    [Parameter(Mandatory)]$Result,
+    [Parameter(Mandatory)][int]$ExpectCode,
+    [Parameter(Mandatory)][string]$ExpectText,
+    [Parameter(Mandatory)][string]$Name
+  )
+  $problems = [System.Collections.Generic.List[string]]::new()
+  if ($Result.TimedOut) { $problems.Add('timed out') }
+  elseif ($Result.ExitCode -ne $ExpectCode) { $problems.Add("exit $($Result.ExitCode), expected $ExpectCode") }
+  $outLength = $Result.Stdout.Trim().Length
+  if ($outLength -gt 0) { $problems.Add("stdout had $outLength characters, expected none") }
+  if (-not $Result.Stderr.Contains($ExpectText)) { $problems.Add("stderr lacks '$ExpectText'") }
+  if ($Result.Stderr -match 'CategoryInfo|At line:|Exception') { $problems.Add('stderr shows a runtime error record') }
+  if ($problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($problems -join '; ') }
 }
 
-function Remove-IsolatedHome {
-    param([Parameter(Mandatory)][hashtable]$Iso)
-    $leaf = Split-Path -Leaf $Iso.Root
-    if ($leaf.StartsWith('agentspace-operator-conf-') -and $Iso.Root.StartsWith($env:TEMP, [StringComparison]::OrdinalIgnoreCase)) {
-        Remove-Item -LiteralPath $Iso.Root -Recurse -Force -ErrorAction SilentlyContinue
-    }
+# Writes a .cmd under the home that runs $Program with $Lead and then one quoted argument, taken
+# from the variable CONFORMANCE_CASE_ARG. The harness passes arguments by .NET's rules, which leave
+# `&` and `|` bare, and cmd.exe would read them as operators. A caller that quotes (as an ssh
+# ProxyCommand line does) keeps each value whole, and so does this wrapper. Returns the file's path.
+function New-QuotedWrapper {
+  param(
+    [Parameter(Mandatory)]$ConformanceHome,
+    [Parameter(Mandatory)][string]$Program,
+    [string]$Lead = '',
+    [string]$Name = 'quoted-case'
+  )
+  $dir = Join-Path $ConformanceHome.Root 'wrappers'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $path = Join-Path $dir "$Name.cmd"
+  $line = ('"{0}" {1} "%CONFORMANCE_CASE_ARG%"' -f $Program, $Lead)
+  Set-Content -LiteralPath $path -Encoding ascii -Value @('@echo off', $line, 'exit /b %ERRORLEVEL%')
+  return $path
 }
 
-function Get-IsolatedEnvironment {
-    param([Parameter(Mandatory)][hashtable]$Iso)
-    return @{
-        USERPROFILE                            = $Iso.Profile
-        LOCALAPPDATA                           = $Iso.Profile
-        AGENTSPACE_STATE_DIR                   = $Iso.State
-        AGENTSPACE_SSH_DIR                     = $Iso.Ssh
-        AGENTSPACE_NESTED                      = $null
-        AWS_CONFIG_FILE                        = (Join-Path $Iso.Root 'no-aws-config')
-        AWS_SHARED_CREDENTIALS_FILE            = (Join-Path $Iso.Root 'no-aws-credentials')
-        AWS_EC2_METADATA_DISABLED              = 'true'
-        AWS_PROFILE                            = $null
-        AWS_DEFAULT_PROFILE                    = $null
-        AWS_ACCESS_KEY_ID                      = $null
-        AWS_SECRET_ACCESS_KEY                  = $null
-        AWS_SESSION_TOKEN                      = $null
-        AWS_CONTAINER_CREDENTIALS_FULL_URI     = $null
-        AWS_CONTAINER_CREDENTIALS_RELATIVE_URI = $null
-    }
+# Runs a wrapper from New-QuotedWrapper with $Value as its one quoted argument, under the harness's
+# environment. An embedded double quote is escaped with a backslash, as a caller's quoting would.
+function Invoke-QuotedCase {
+  param(
+    [Parameter(Mandatory)]$ConformanceHome,
+    [Parameter(Mandatory)][string]$Wrapper,
+    [Parameter(Mandatory)][AllowEmptyString()][string]$Value,
+    [hashtable]$Environment = @{},
+    [int]$TimeoutSeconds = 60
+  )
+  $override = $Environment.Clone()
+  $override['CONFORMANCE_CASE_ARG'] = ($Value -replace '"', '\"')
+  $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $ConformanceHome -Override $override
+  Start-ConformanceProcess -FilePath $Wrapper -ChildEnvironment $childEnv -TimeoutSeconds $TimeoutSeconds
 }
 
-function Invoke-Captured {
-    param(
-        [Parameter(Mandatory)][string]$FileName,
-        [Parameter(Mandatory)][string]$Arguments,
-        [Parameter(Mandatory)][hashtable]$Iso,
-        [hashtable]$Extra = @{},
-        [int]$TimeoutMs = 60000
-    )
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $FileName
-    $psi.Arguments = $Arguments
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-    $psi.WorkingDirectory = $Iso.Root
-
-    $vars = Get-IsolatedEnvironment -Iso $Iso
-    foreach ($key in $Extra.Keys) { $vars[$key] = $Extra[$key] }
-    foreach ($key in $vars.Keys) {
-        foreach ($existing in @($psi.Environment.Keys)) {
-            if ($existing -ieq $key) { [void]$psi.Environment.Remove($existing) }
-        }
-        if ($null -ne $vars[$key]) { $psi.Environment[$key] = [string]$vars[$key] }
-    }
-
-    $proc = [System.Diagnostics.Process]::new()
-    $proc.StartInfo = $psi
-    [void]$proc.Start()
-    # The child MUST NOT read this process's stdin, so it gets a closed pipe.
-    $proc.StandardInput.Close()
-    $outTask = $proc.StandardOutput.ReadToEndAsync()
-    $errTask = $proc.StandardError.ReadToEndAsync()
-    $timedOut = -not $proc.WaitForExit($TimeoutMs)
-    if ($timedOut) {
-        try { $proc.Kill() } catch { }
-        $proc.WaitForExit()
-    }
-    $result = [pscustomobject]@{
-        Code     = $(if ($timedOut) { -1 } else { $proc.ExitCode })
-        Out      = $outTask.Result
-        Err      = $errTask.Result
-        TimedOut = $timedOut
-    }
-    $proc.Dispose()
-    return $result
-}
-
-function Test-AwsRefused {
-    # Every program-running check calls this first, under the isolated environment. If AWS
-    # answers, nothing may run.
-    param([Parameter(Mandatory)][hashtable]$Iso)
-    try {
-        $cmdExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
-        $r = Invoke-Captured -FileName $cmdExe -Arguments '/d /s /c "aws sts get-caller-identity"' -Iso $Iso
-    }
-    catch {
-        return $false
-    }
-    return ((-not $r.TimedOut) -and ($r.Code -ne 0))
-}
-
-function ConvertTo-CmdArgument {
-    # Wraps one argument in double quotes for PowerShell's command-line parser, escaping any
-    # embedded double quote with a backslash.
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
-    return '"' + ($Value -replace '"', '\"') + '"'
-}
-
-function Invoke-RefusalCase {
-    # Runs a .cmd program through cmd.exe, as the operator and the ProxyCommand are run, and
-    # checks the exit code, that stdout is empty, and that stderr carries the expected message
-    # without a runtime's error record.
-    param(
-        [Parameter(Mandatory)][hashtable]$Iso,
-        [Parameter(Mandatory)][string]$Program,
-        [Parameter(Mandatory)][string]$Arguments,
-        [Parameter(Mandatory)][int]$ExpectCode,
-        [Parameter(Mandatory)][string]$ExpectText,
-        [Parameter(Mandatory)][string]$Name
-    )
-    $cmdExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
-    $r = Invoke-Captured -FileName $cmdExe -Arguments ('/d /s /c ""' + $Program + '" ' + $Arguments + '"') -Iso $Iso
-    $problems = New-Object System.Collections.Generic.List[string]
-    if ($r.TimedOut) { $problems.Add('timed out') }
-    elseif ($r.Code -ne $ExpectCode) { $problems.Add("exit $($r.Code), expected $ExpectCode") }
-    $outLength = $r.Out.Trim().Length
-    if ($outLength -gt 0) { $problems.Add("stdout had $outLength characters, expected none") }
-    if (-not $r.Err.Contains($ExpectText)) { $problems.Add("stderr lacks '$ExpectText'") }
-    if ($r.Err -match 'CategoryInfo|At line:|Exception') { $problems.Add('stderr shows a runtime error record') }
-    if ($problems.Count -eq 0) {
-        Write-CheckResult -Status PASS -Name $Name
-    }
-    else {
-        Write-CheckResult -Status FAIL -Name $Name -Reason ($problems -join '; ')
-    }
-}
-
-function Get-ArgumentCodePoints {
-    # Passes values through the same cmd.exe, .cmd and powershell.exe -File path that the
-    # operator uses, and returns the code points each one arrives as. This answers
-    # docs/conformance.md open question 2 for this machine.
-    param(
-        [Parameter(Mandatory)][hashtable]$Iso,
-        [Parameter(Mandatory)][string[]]$Values
-    )
-    $probePs1 = Join-Path $Iso.Root 'probe-args.ps1'
-    $probeCmd = Join-Path $Iso.Root 'probe-args.cmd'
-    $probeOut = Join-Path $Iso.Root 'probe-args.txt'
-    Set-Content -LiteralPath $probePs1 -Encoding ASCII -Value @(
-        '$codes = @()',
-        'foreach ($a in $args) { $codes += (($a.ToCharArray() | ForEach-Object { [int]$_ }) -join ",") }',
-        '[IO.File]::WriteAllLines($env:AGENTSPACE_PROBE_OUT, [string[]]$codes)'
-    )
-    Set-Content -LiteralPath $probeCmd -Encoding ASCII -Value @(
-        '@echo off',
-        ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $probePs1 + '" %*'),
-        'exit /b %ERRORLEVEL%'
-    )
-    $argText = (($Values | ForEach-Object { ConvertTo-CmdArgument -Value $_ }) -join ' ')
-    $cmdExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
-    $r = Invoke-Captured -FileName $cmdExe -Arguments ('/d /s /c ""' + $probeCmd + '" ' + $argText + '"') -Iso $Iso -Extra @{ AGENTSPACE_PROBE_OUT = $probeOut }
-    if ($r.TimedOut -or -not (Test-Path -LiteralPath $probeOut)) { return @() }
-    return @(Get-Content -LiteralPath $probeOut)
+# Passes $Value through the same cmd.exe, .cmd and powershell.exe -File path that the operator is
+# run through, and returns the code points it arrives as, joined by commas (or $null when the probe
+# did not run). This answers docs/conformance.md, open question 2, for this machine.
+function Get-ArgumentCodePoint {
+  param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][string]$Value)
+  $dir = Join-Path $ConformanceHome.Root 'probe'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $probePs1 = Join-Path $dir 'probe-args.ps1'
+  $probeCmd = Join-Path $dir 'probe-args.cmd'
+  $probeOut = Join-Path $dir 'probe-args.txt'
+  Set-Content -LiteralPath $probePs1 -Encoding ascii -Value '[IO.File]::WriteAllText($env:CONFORMANCE_PROBE_OUT, (($args[0].ToCharArray() | ForEach-Object { [int]$_ }) -join ","))'
+  Set-Content -LiteralPath $probeCmd -Encoding ascii -Value @(
+    '@echo off',
+    ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $probePs1 + '" %*'),
+    'exit /b %ERRORLEVEL%'
+  )
+  $wrapper = New-QuotedWrapper -ConformanceHome $ConformanceHome -Program $probeCmd -Name 'probe'
+  $r = Invoke-QuotedCase -ConformanceHome $ConformanceHome -Wrapper $wrapper -Value $Value -Environment @{ CONFORMANCE_PROBE_OUT = $probeOut }
+  if ($r.TimedOut -or -not (Test-Path -LiteralPath $probeOut)) { return $null }
+  return (Get-Content -LiteralPath $probeOut -Raw).Trim()
 }

@@ -9,12 +9,15 @@
 # <program> -Watch [-SshExe <full path>] [-IntervalSeconds <n>] ... (keeper.md, "Command line").
 # A check MUST NOT name the keeper's program, script or entry point in any other way.
 #
-# What it touches:
+# What it touches (the shared helpers, conformance/keeper/keeper-common.ps1, say it in full):
 # - Every case has its own throwaway folder under $env:TEMP: a state folder, named by
 #   AGENTSPACE_STATE_DIR, with a hand-written leases.json, and a home folder, named by USERPROFILE.
-#   AGENTSPACE_SSH_DIR points into the home, the AWS variables name files that do not exist or are
-#   removed, and every folder is removed in a finally. The real %USERPROFILE%\.agentspace, ~/.ssh, the
-#   real ssh.exe, the real keeper task and the box are never read, written, listed or hashed.
+#   Every process a case starts gets the harness's child environment for that home: USERPROFILE, HOME,
+#   LOCALAPPDATA, APPDATA, AGENTSPACE_STATE_DIR and AGENTSPACE_SSH_DIR inside the case's folder, the AWS
+#   variables naming files that do not exist or removed, AWS_EC2_METADATA_DISABLED=true, and no
+#   inherited AGENTSPACE_* or PSModulePath. Every variable is put back in a finally, and every folder is
+#   removed. The real %USERPROFILE%\.agentspace, ~/.ssh, the real ssh.exe, the real keeper task and the
+#   box are never read, written, listed or hashed.
 # - The stand-in for ssh.exe is conformance\keeper\ssh-stub.cmd, copied into the run's folder so that
 #   its command line is unique to this run. It prints a line, then waits about 20 minutes, and carries
 #   its arguments on its own command line; the ping it runs is its child, which makes a tree.
@@ -26,7 +29,8 @@
 #   "What the keeper does"). Each process is pinned by a handle and its start time checked first, so
 #   a reused PID is never stopped. taskkill /T, which follows parent PIDs alone, is never used.
 # - One case denies PROCESS_TERMINATE on a stub of its own, through the stub's DACL, so that the
-#   keeper cannot open it to stop it. Cleanup gives that right back before it stops the stub.
+#   keeper cannot open it to stop it. Cleanup gives that right back to that stub alone, through the
+#   handle the case kept, after checking its start time.
 #
 # Every wait is on what a case checks for, with a deadline, never a fixed sleep (docs/keeper.md,
 # "Checking the keeper", card #0066): the log line, the file or the process. Where a case must show
@@ -53,7 +57,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$ci = [Globalization.CultureInfo]::InvariantCulture
 $script:passes = 0
 $script:failures = 0
 $script:skips = 0
@@ -108,15 +111,15 @@ if (-not $IsWindows) {
   exit 2
 }
 
-# The program under test: its variable first, and only then the default that conformance/prototype/ names.
-$keeperCmd = $env:AGENTSPACE_KEEPER_CMD
-if ([string]::IsNullOrWhiteSpace($keeperCmd)) {
-  . (Join-Path $PSScriptRoot '..\prototype\process-defaults.ps1')
-  $keeperCmd = Get-PrototypeProcessDefault 'AGENTSPACE_KEEPER_CMD'
-}
-$keeperCmd = [IO.Path]::GetFullPath($keeperCmd)
-if (-not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
-  Write-Output "FAIL keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists: $keeperCmd is not a file."
+# The helpers the keeper's checks share, and the harness they build on (the program under test, and
+# the environment every child gets). Compiled before any environment variable is changed.
+. (Join-Path $PSScriptRoot 'keeper-common.ps1')
+
+# The program under test: its variable first, and only then the default that conformance/prototype/
+# names, both through the harness. Resolved before the first case, which strips AGENTSPACE_* from the environment.
+$keeperCmd = Resolve-KeeperProgram
+if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
+  Write-Output "FAIL keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists: $(if ($keeperCmd) { "$keeperCmd is not a file" } else { 'neither the variable nor its default names a program' })."
   Write-Output '0 passed, 1 failed, 0 skipped'
   exit 1
 }
@@ -124,311 +127,14 @@ if (-not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
 # The state schemas the new case checks the keeper's files against (state.md, "The keeper's files").
 $schemaDir = Join-Path $repo 'schemas\state'
 
-# Sets a process's DACL, so that one case can deny PROCESS_TERMINATE on a stub of its own; and a
-# watcher that keeps a copy of the short-lived launch files a pass writes and removes. Compiled
-# before any environment variable is changed.
-if (-not ('AgentspaceTest.ProcessAcl' -as [type])) {
-  Add-Type -TypeDefinition @'
-using System;
-using System.Collections.Concurrent;
-using System.ComponentModel;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Security.AccessControl;
-using System.Threading;
-namespace AgentspaceTest
-{
-    public static class ProcessAcl
-    {
-        [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
-        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-        [DllImport("advapi32.dll", SetLastError = true)] static extern bool SetKernelObjectSecurity(IntPtr h, uint information, byte[] descriptor);
-        const uint WRITE_DAC = 0x00040000;
-        const uint DACL_SECURITY_INFORMATION = 0x4;
-        public static void Set(int pid, string sddl)
-        {
-            var sd = new RawSecurityDescriptor(sddl);
-            byte[] bytes = new byte[sd.BinaryLength];
-            sd.GetBinaryForm(bytes, 0);
-            IntPtr h = OpenProcess(WRITE_DAC, false, pid);
-            if (h == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
-            try { if (!SetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION, bytes)) throw new Win32Exception(Marshal.GetLastWin32Error()); }
-            finally { CloseHandle(h); }
-        }
-    }
+Initialize-KeeperRun
 
-    // Keeps the first complete copy of every board-holder-launch.* file that appears in a folder
-    // (never a temporary file), however briefly it lives. A file is complete when it ends in a line feed.
-    public sealed class FileCapture
-    {
-        readonly string dir;
-        Thread thread;
-        volatile bool stop;
-        readonly ConcurrentDictionary<string, byte[]> files = new ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        public FileCapture(string dir) { this.dir = dir; }
-        public void Start() { thread = new Thread(Run); thread.IsBackground = true; thread.Start(); }
-        public ConcurrentDictionary<string, byte[]> Stop() { stop = true; thread.Join(); return files; }
-        void Run()
-        {
-            while (!stop)
-            {
-                try
-                {
-                    foreach (string path in Directory.EnumerateFiles(dir, "board-holder-launch.*"))
-                    {
-                        string name = Path.GetFileName(path);
-                        if (name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) || files.ContainsKey(name)) continue;
-                        try
-                        {
-                            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                            using (var ms = new MemoryStream())
-                            {
-                                fs.CopyTo(ms);
-                                byte[] b = ms.ToArray();
-                                if (b.Length > 0 && b[b.Length - 1] == 10) files[name] = b;
-                            }
-                        }
-                        catch (IOException) { }
-                        catch (UnauthorizedAccessException) { }
-                    }
-                }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
-                Thread.Sleep(1);
-            }
-        }
-    }
-}
-'@
-}
-$userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-# Every right for the user and SYSTEM; Lock adds a deny of PROCESS_TERMINATE (0x1) for everyone first.
-$openAcl = "D:(A;;0x1FFFFF;;;$userSid)(A;;0x1FFFFF;;;SY)"
-$lockedAcl = "D:(D;;0x1;;;WD)(A;;0x1FFFFF;;;$userSid)(A;;0x1FFFFF;;;SY)"
-function Lock-Process([int]$ProcessId) { [AgentspaceTest.ProcessAcl]::Set($ProcessId, $lockedAcl) }
-function Unlock-Process([int]$ProcessId) { try { [AgentspaceTest.ProcessAcl]::Set($ProcessId, $openAcl) } catch { } }
-
-# The run's own folder, and a copy of the stub whose command line is unique to this run.
-$temp = Join-Path $env:TEMP "agentspace-conformance-keeper-$([guid]::NewGuid().ToString('N'))"
-New-Item -ItemType Directory -Force -Path $temp | Out-Null
-$stub = Join-Path $temp 'ssh-stub.cmd'
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ssh-stub.cmd') -Destination $stub
-
-# Every environment variable a case changes, saved here and put back in the finally at the end.
-$envNames = @('AGENTSPACE_STATE_DIR', 'AGENTSPACE_SSH_DIR', 'USERPROFILE', 'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE',
-  'AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN')
-$savedEnv = @{}
-foreach ($n in $envNames) { $savedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
-
-# The lease fixtures: fixed times, so no case depends on the clock.
-$now = '2026-11-17T12:00:00Z'
-$created = '2026-11-17T08:00:00Z'
-function Get-TestId([string]$Letter) { "0000000$Letter-0000-4000-8000-000000000000" }
-function Get-TestAlias([string]$Letter) { "agentspace-test-bh-0000000$Letter" }
-
-function New-ReadyRecord([string]$Letter, [string]$Expires) {
-  [ordered]@{
-    id = Get-TestId $Letter; project = 'test-bh'; state = 'ready'; platform = 'linux/arm64'; profile = 'agent-linux'
-    size = 'm'; ttl_seconds = 28800; created_at = $created; expires_at = $Expires
-    ssh = [ordered]@{ host_alias = Get-TestAlias $Letter; user = 'ubuntu' }
-  }
-}
-
-function New-ReleasedRecord([string]$Letter, [string]$Expires) {
-  $r = [ordered]@{
-    id = Get-TestId $Letter; project = 'test-bh'; state = 'released'; platform = 'linux/arm64'; profile = 'agent-linux'
-    size = 'm'; ttl_seconds = 28800; created_at = $created
-  }
-  if ($Expires) { $r['expires_at'] = $Expires }
-  $r['released_at'] = '2026-11-17T09:00:00Z'
-  $r
-}
-
-function Write-Leases($Records) {
-  $text = ([ordered]@{ version = 0; leases = @($Records) } | ConvertTo-Json -Compress -Depth 10) + "`n"
-  [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json'), $text)
-}
-
-function Format-Utc([DateTime]$Time) { $Time.ToUniversalTime().ToString("yyyy-MM-dd\THH:mm:ss.fff\Z", $ci) }
-
-function Write-Record([int]$ProcessId, [string]$StartedAt, [string]$LeaseId, [string]$Alias) {
-  $text = [ordered]@{ pid = $ProcessId; process_started_at = $StartedAt; lease_id = $LeaseId; alias = $Alias } | ConvertTo-Json -Compress
-  [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'), $text + "`n")
-}
-
-function Read-Record {
-  $p = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'
-  if (-not (Test-Path -LiteralPath $p)) { return $null }
-  try { Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable -DateKind String } catch { $null }
-}
-
-function Read-LogLines {
-  $p = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log'
-  if (-not (Test-Path -LiteralPath $p)) { return , @() }
-  try {
-    # Shared the way a reader SHOULD share it (state.md, "The keeper's logs"), so a keeper that is writing is never blocked.
-    $fs = [IO.File]::Open($p, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-    try { $text = [IO.StreamReader]::new($fs, [Text.UTF8Encoding]::new($false)).ReadToEnd() } finally { $fs.Dispose() }
-    , @($text -split "`r?`n" | Where-Object { $_ -ne '' })
-  } catch { , @() }
-}
-
-function Test-Alive([int]$ProcessId) { [bool](Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) }
-
-function Get-CommandLine([int]$ProcessId) {
-  $c = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
-  if ($c) { [string]$c.CommandLine } else { '' }
-}
-
-function Get-ChildPids([int]$ProcessId) {
-  @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.ProcessId })
-}
-
-# Every descendant of a process the check started, found by parent PID with the creation-time check.
-function Get-DescendantPids([int]$ProcessId) {
-  $all = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
-  $found = [System.Collections.Generic.List[object]]::new()
-  $root = $all | Where-Object { $_.ProcessId -eq $ProcessId } | Select-Object -First 1
-  if (-not $root) { return @() }
-  $found.Add($root)
-  for ($i = 0; $i -lt $found.Count; $i++) {
-    $up = $found[$i]
-    foreach ($c in $all) {
-      if ($c.ParentProcessId -eq $up.ProcessId -and $c.ProcessId -ne $up.ProcessId -and $c.CreationDate -ge $up.CreationDate -and
-        -not ($found | Where-Object { $_.ProcessId -eq $c.ProcessId })) { $found.Add($c) }
-    }
-  }
-  @($found | Select-Object -Skip 1 | ForEach-Object { [int]$_.ProcessId })
-}
-
-# Waits until the condition holds, or the deadline passes. A process the check started, when given,
-# ends the wait early once it has exited and the condition still does not hold.
-function Wait-Until([scriptblock]$Condition, [int]$Seconds = 30, $Process = $null) {
-  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
-  while ([DateTime]::UtcNow -lt $deadline) {
-    if (& $Condition) { return $true }
-    if ($null -ne $Process -and $Process.HasExited) { return [bool](& $Condition) }
-    Start-Sleep -Milliseconds 100
-  }
-  [bool](& $Condition)
-}
-
-# A holder is a process whose command line is this run's stub with the holder's arguments (keeper.md,
-# "The holder command"); the keeper's own command line holds the stub's path but not those arguments.
-function Test-HolderLine([string]$CommandLine) {
-  [bool]($CommandLine -and $CommandLine.Contains($temp) -and $CommandLine.Contains('ExitOnForwardFailure=yes'))
-}
-
-function Get-HolderProcesses {
-  @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.ProcessId -ne $PID -and (Test-HolderLine $_.CommandLine) })
-}
-
-# Stops processes the check started, and their descendants: each child's parent is still the process
-# above it, and it was created no earlier than that process. Every process is pinned by a handle and
-# its start time checked against the snapshot before it is stopped, so a reused PID is never stopped.
-# Leaves go first. A process whose DACL a case locked gets its rights back first. -SparingHolders
-# leaves every holder, and what is below it, running: a keeper that is killed MUST leave its holder.
-function Stop-OwnTree([int[]]$ProcessIds, [switch]$SparingHolders) {
-  $all = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
-  $tree = [System.Collections.Generic.List[object]]::new()
-  $seen = [System.Collections.Generic.HashSet[int]]::new()
-  foreach ($id in $ProcessIds) {
-    $root = $all | Where-Object { $_.ProcessId -eq $id } | Select-Object -First 1
-    if ($root -and $seen.Add([int]$root.ProcessId)) { $tree.Add($root) }
-  }
-  for ($i = 0; $i -lt $tree.Count; $i++) {
-    $up = $tree[$i]
-    foreach ($c in $all) {
-      if ($c.ParentProcessId -eq $up.ProcessId -and $c.ProcessId -ne $up.ProcessId -and $c.CreationDate -ge $up.CreationDate -and
-        -not $seen.Contains([int]$c.ProcessId)) {
-        if ($SparingHolders -and (Test-HolderLine ([string]$c.CommandLine))) { continue }
-        $null = $seen.Add([int]$c.ProcessId)
-        $tree.Add($c)
-      }
-    }
-  }
-  for ($i = $tree.Count - 1; $i -ge 0; $i--) {
-    $m = $tree[$i]
-    Unlock-Process $m.ProcessId
-    try {
-      $p = [Diagnostics.Process]::GetProcessById([int]$m.ProcessId)
-      $null = $p.Handle
-      if ([Math]::Abs(($p.StartTime.ToUniversalTime() - $m.CreationDate.ToUniversalTime()).TotalMilliseconds) -lt 1) { $p.Kill() }
-    } catch { }
-  }
-}
-
-# The run's own cleanup: every process whose command line holds this run's unique folder, and its
-# children. Only the keepers and holders this run started can have that path.
-function Get-RunProcesses {
-  @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains($temp) })
-}
-
-function Stop-RunProcesses {
-  $ids = @(Get-RunProcesses | ForEach-Object { [int]$_.ProcessId })
-  if ($ids.Count -gt 0) { Stop-OwnTree $ids }
-  Wait-Until { (Get-RunProcesses).Count -eq 0 } 30 | Out-Null
-}
-
-# A stand-in process started by the check itself: it is foreign to the keeper. Returns its PID, its
-# start time as the record writes it, and its children, the ping among them.
-function Start-Stub([string]$Alias) {
-  $p = Start-Process -FilePath $stub -ArgumentList @('-N', '-o', 'ExitOnForwardFailure=yes', $Alias) -PassThru -WindowStyle Hidden
-  $null = $p.Handle
-  Wait-Until {
-    @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$($p.Id) AND Name='PING.EXE'" -ErrorAction SilentlyContinue).Count -gt 0
-  } 30 | Out-Null
-  $kids = @(Get-ChildPids $p.Id)
-  [pscustomobject]@{ Pid = $p.Id; Started = (Format-Utc $p.StartTime); Children = $kids }
-}
-
-# True when the process and every child recorded for it are alive.
-function Test-TreeAlive($Process) {
-  (Test-Alive $Process.Pid) -and $Process.Children.Count -gt 0 -and @($Process.Children | Where-Object { Test-Alive $_ }).Count -eq $Process.Children.Count
-}
-
-# Starts the program under test with the arguments given, unchanged, and returns the process the check
-# started. Output goes to files, never to a pipe, so a holder it starts cannot keep this run waiting.
-function ConvertTo-ArgString([string[]]$Items) {
-  ($Items | ForEach-Object { if ($_ -eq '' -or $_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
-}
-
-function Start-KeeperProcess([string[]]$KeeperArgs, [string]$Tag) {
-  $out = Join-Path $env:AGENTSPACE_STATE_DIR "$Tag.out"
-  $err = Join-Path $env:AGENTSPACE_STATE_DIR "$Tag.err"
-  $p = Start-Process -FilePath $keeperCmd -ArgumentList (ConvertTo-ArgString $KeeperArgs) -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
-  $null = $p.Handle
-  $p
-}
-
-# Runs one pass of the keeper and returns its exit code, or -999 when it did not end in time.
-function Invoke-Keeper([string]$At) {
-  $a = @('-SshExe', $stub)
-  if ($At) { $a += @('-Now', $At) }
-  $p = Start-KeeperProcess $a 'keeper'
-  if (-not $p.WaitForExit(180000)) {
-    Stop-OwnTree $p.Id
-    return -999
-  }
-  $p.ExitCode
-}
-
-# One case: a fresh state folder and home folder, the body, and a cleanup of every process the case
-# started, in a finally.
+# One case: a fresh state folder and home folder, with the harness's child environment for them (the
+# program under test and everything it starts inherits it), the body, and a cleanup of every process
+# the case started, in a finally.
 function Invoke-Case([string]$Name, [string]$Spec, [scriptblock]$Body) {
   if ($Name -notlike $Case) { return }
-  $dir = Join-Path $temp ([guid]::NewGuid().ToString('N'))
-  $stateDir = Join-Path $dir 'state'
-  $userHome = Join-Path $dir 'home'
-  New-Item -ItemType Directory -Force -Path $stateDir, $userHome | Out-Null
-  $env:AGENTSPACE_STATE_DIR = $stateDir
-  $env:USERPROFILE = $userHome
-  $env:AGENTSPACE_SSH_DIR = Join-Path $userHome 'ssh'
-  $env:AWS_CONFIG_FILE = Join-Path $userHome 'no-aws-config'
-  $env:AWS_SHARED_CREDENTIALS_FILE = Join-Path $userHome 'no-aws-credentials'
-  foreach ($v in 'AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN') { [Environment]::SetEnvironmentVariable($v, $null) }
+  $null = New-CaseHome
   $script:caseFails = 0
   $script:caseChecks = 0
   $script:caseSpec = $Spec
@@ -438,9 +144,6 @@ function Invoke-Case([string]$Name, [string]$Spec, [scriptblock]$Body) {
   }
 }
 
-function Test-LogLine([string]$Line, [string]$Action, [string]$LeaseId, [string]$Alias, $ProcessId) {
-  $Line -cmatch ('\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ' + $Action + ' lease=' + [regex]::Escape($LeaseId) + ' alias=' + [regex]::Escape($Alias) + ' pid=' + $ProcessId + '(\s|\z)')
-}
 
 # The recorded start time MUST be exactly the process's creation time, in UTC, truncated to the
 # millisecond. Process.StartTime carries the creation time to 100 ns, and Format-Utc truncates it
@@ -460,98 +163,7 @@ function Assert-Stopped([string]$Name, $Holder, [string]$Letter) {
   Write-Result ($log.Count -eq 1 -and (Test-LogLine $log[0] 'stopped' (Get-TestId $Letter) (Get-TestAlias $Letter) $Holder.Pid)) "${Name}: One stopped line is logged with the lease, alias and PID"
 }
 
-# A running holder that the keeper would trust: a stub with the holder's arguments, and its record.
-function Start-TrustedHolder([string]$Letter) {
-  $h = Start-Stub (Get-TestAlias $Letter)
-  Write-Record $h.Pid $h.Started (Get-TestId $Letter) (Get-TestAlias $Letter)
-  $h
-}
 
-# ---- -Watch helpers ----
-
-# A stand-in for ssh.exe that fails at once, and one that fails at once except its third start, which
-# lives about 10 seconds first. Each counts its starts in a file beside itself, so no environment
-# variable has to reach it. Both are written into the case's own state folder and exit by themselves.
-# -EveryLife <n> makes every start live about n seconds instead (a ping of n + 1 echoes).
-function New-FailStub([bool]$LongThird, [int]$EveryLife = 0) {
-  $path = Join-Path $env:AGENTSPACE_STATE_DIR 'ssh-fail.cmd'
-  $lines = @('@echo off', 'set "f=%~dp0starts.txt"', 'set n=0', 'if exist "%f%" set /p n=<"%f%"', 'set /a n+=1', '>"%f%" echo %n%',
-    'echo stub-fail start %n% %*')
-  if ($LongThird) { $lines += 'if %n%==3 ping -n 11 127.0.0.1 >nul' }
-  if ($EveryLife -gt 0) { $lines += "ping -n $($EveryLife + 1) 127.0.0.1 >nul" }
-  $lines += 'exit /b 1'
-  [IO.File]::WriteAllText($path, (($lines -join "`r`n") + "`r`n"))
-  $path
-}
-
-function Get-StartCount {
-  $starts = Join-Path $env:AGENTSPACE_STATE_DIR 'starts.txt'
-  if (-not (Test-Path -LiteralPath $starts)) { return 0 }
-  try { [int](Get-Content -LiteralPath $starts -TotalCount 1) } catch { 0 }
-}
-
-# Starts the keeper with -Watch and returns the process the check started. The release grace is 95
-# seconds by default, which would stretch every case that restarts a holder. Unless the case names
-# -ReleaseGraceSeconds itself, or asks for the default with -DefaultGrace, the run gets a grace of 1
-# second, shorter than every backoff these cases use. -Tag names the output files, so that two
-# keepers started in one case do not share them.
-function Start-Watch([string[]]$Extra, [string]$Ssh, [switch]$DefaultGrace, [string]$Tag = 'watch') {
-  if (-not $DefaultGrace -and -not ($Extra -contains '-ReleaseGraceSeconds')) { $Extra = @($Extra) + @('-ReleaseGraceSeconds', '1') }
-  Start-KeeperProcess (@('-SshExe', $Ssh, '-Watch') + $Extra) $Tag
-}
-
-# Waits for the process to end on its own; one that does not within the limit is stopped and gives -999.
-function Wait-Watch($Process, [int]$Seconds = 240) {
-  if (-not $Process.WaitForExit($Seconds * 1000)) { Stop-OwnTree $Process.Id; return -999 }
-  $Process.ExitCode
-}
-
-# The times of the log lines whose action is the given one, in order.
-function Get-ActionTimes($Log, [string]$Action) {
-  @($Log | Where-Object { $_ -cmatch ('\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ' + $Action + '(\s|\z)') } | ForEach-Object { Get-LogTime $_ })
-}
-
-# The n of every "grace seconds=<n>" line, in order.
-function Get-GraceSeconds($Log) {
-  @($Log | ForEach-Object { if ($_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ grace seconds=(\d+)\z') { [int]$Matches[1] } })
-}
-
-# Stops a keeper the check started, once the case has seen what it needs.
-function Stop-Watch($Process) { if (-not $Process.HasExited) { Stop-OwnTree $Process.Id } }
-
-function Get-LogTime([string]$Line) {
-  if ($Line -cmatch '\A(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) ') {
-    [DateTime]::ParseExact($Matches[1], "yyyy-MM-dd'T'HH:mm:ss'Z'", $ci, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)
-  }
-}
-
-function Get-BackoffSeconds($Log) {
-  @($Log | ForEach-Object { if ($_ -cmatch '\bbackoff seconds=(\d+)(\s|\z)') { [int]$Matches[1] } })
-}
-
-# Kills the keeper the check started, by the PID of the process it started and that process's own
-# children (the program under test may be a wrapper over the keeper), and spares every holder, so
-# that the holder it started lives on, as it does when the keeper is killed for real. The process
-# object holds a handle, which pins the PID. Returns true when it was killed.
-function Stop-KeeperOnly($Process) {
-  try {
-    $null = $Process.Handle
-    if ($Process.HasExited) { return $false }
-    Stop-OwnTree $Process.Id -SparingHolders
-    return $true
-  } catch { return $false }
-}
-
-# The "another keeper is running" lines of a log.
-function Get-OtherKeeperLines($Log) {
-  @($Log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ another keeper is running pid=(\d+|-)\z' })
-}
-
-# True when the line's PID field is the PID of a process the first keeper runs as, or - for a PID that
-# could not be read. The first keeper is the process the check started or one of its descendants.
-function Test-OtherKeeperPid([string]$Line, [int[]]$KeeperPids) {
-  $Line -cmatch 'pid=(\d+|-)\z' -and ($Matches[1] -ceq '-' -or $KeeperPids -contains [int]$Matches[1])
-}
 
 # Returns 'valid', 'invalid' (rejected by the schema) or 'error: ...' (the schema or the JSON is broken).
 function Test-Document([string]$Json, [string]$SchemaPath) {
@@ -840,7 +452,7 @@ try {
     $recordPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'
     $before = [IO.File]::ReadAllText($recordPath)
     if (-not $script:mut) {
-      try { Lock-Process $h.Pid } catch { Write-Skipped 'Holder that cannot be opened is kept' "The stub's access control list could not be set: $($_.Exception.Message)"; return }
+      try { Lock-Process $h } catch { Write-Skipped 'Holder that cannot be opened is kept' "The stub's access control list could not be set: $($_.Exception.Message)"; return }
     }
     $code = Invoke-Keeper $now
     Write-Result ($code -eq 0) 'Holder that cannot be opened is kept: The pass exits 0' "The exit code was $code."
@@ -1196,7 +808,7 @@ try {
 
   # The default is 95 seconds. A keeper with no -ReleaseGraceSeconds waits for the grace after its
   # holder exits; the case reads the line and stops the keeper, so it never waits the 95. That no
-  # second holder starts during the wait is a wait on a second start, with a deadline of 3 seconds,
+  # second holder starts during the wait is a wait on a second start, with a deadline of 20 seconds,
   # that the case expects to reach: a keeper that waited less would start one inside it.
   Invoke-Case 'Watch: the release grace is 95 seconds by default' 'keeper.md#release-grace' {
     Write-Leases @((New-ReadyRecord 'a' $farFuture))
@@ -1205,13 +817,13 @@ try {
     else { $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '60', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '1') $fail -DefaultGrace }
     try {
       $seen = Wait-Until { @(Get-GraceSeconds (Read-LogLines)).Count -ge 1 } 60 $p
-      $early = Wait-Until { (Get-StartCount) -ge 2 -or @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 2 } 3 $p
+      $early = Wait-Until { (Get-StartCount) -ge 2 -or @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 2 } 20 $p
     } finally { Stop-Watch $p }
     Write-Result $seen 'Watch default grace: A grace line is logged when the holder has exited'
     $log = Read-LogLines
     $g = @(Get-GraceSeconds $log)
     Write-Result ($g.Count -ge 1 -and $g[0] -ge 93 -and $g[0] -le 95) "Watch default grace: The first grace line says seconds=95, less rounding (got $($g -join ','))"
-    Write-Result ($seen -and -not $early -and @(Get-ActionTimes $log 'started').Count -eq 1) 'Watch default grace: No second holder is started within the first seconds of the wait'
+    Write-Result ($seen -and -not $early -and @(Get-ActionTimes $log 'started').Count -eq 1) 'Watch default grace: No second holder is started within the first 20 seconds of the wait'
   }
 
   # A first holder is not delayed: no holder recorded, a ready lease, a grace of 3600 seconds. The
@@ -1366,7 +978,7 @@ try {
   }
 
 } finally {
-  foreach ($n in $envNames) { [Environment]::SetEnvironmentVariable($n, $savedEnv[$n]) }
+  Restore-CaseEnvironment
   Stop-RunProcesses
   $leftBehind = @(Get-RunProcesses).Count
   if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }

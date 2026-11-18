@@ -302,8 +302,8 @@ by a real box.
 - **No other source MAY set the variables.** The operator reads them from the environment alone,
   never from a file. A person in normal use MUST NOT set them, as with the lease CLI's own test
   variables ([lease-api.md](lease-api.md#environment)); the lease CLI does not read them.
-- **A check that stands in for `ssh` MUST first point `LOCALAPPDATA` at a fake receipt and a fake
-  Bot credential**, so the token the stand-in receives is a made-up one ([Secrecy](#secrecy)).
+- **A check that stands in for `ssh` is bound by [Secrecy](#secrecy)'s last rule**, about the
+  receipt and the credential that `LOCALAPPDATA` points at.
 
 **How a test uses it, from outside:**
 1. **It builds a throwaway home** and runs the operator with `USERPROFILE` (and the state and ssh
@@ -911,6 +911,12 @@ app's output (D9's E0.02-T03-S01 finding).
   the repair is [Q17](#open-questions).
 - **Start the tunnel for an instance other than the cached one.**
 
+**The threat model.** The alias argument comes from a ProxyCommand line the lease CLI wrote
+([lease-api.md](lease-api.md#fields): `ssh.host_alias`; the alias file is docs/state.md's).
+Whoever can write a ProxyCommand line already runs commands, since `cmd.exe` parses the whole line
+before the proxy runs, so the proxy does not defend against a hostile line. **`up`'s exact check
+([Command line](#command-line)) MUST be the gate before any ssh.**
+
 ### What a caller sees (D1, card #0087)
 
 **Card #0087 (D1 at connect time) is carried in here as a requirement.** What the ProxyCommand
@@ -949,12 +955,6 @@ nested `up` of every ssh the operator starts
   patch messages into the ProxyCommand's stderr, and the AWS CLI's text on a failure
   ([Requirements the prototype does not meet
   yet](#requirements-the-prototype-does-not-meet-yet)).
-
-**The threat model.** The alias argument comes from a ProxyCommand line the lease CLI wrote
-([lease-api.md](lease-api.md#fields): `ssh.host_alias`; the alias file is docs/state.md's).
-Whoever can write a ProxyCommand line already runs commands, since `cmd.exe` parses the whole line
-before the proxy runs, so the proxy does not defend against a hostile line. **`up`'s exact check
-([Command line](#command-line)) MUST be the gate before any ssh.**
 
 ## The token push
 

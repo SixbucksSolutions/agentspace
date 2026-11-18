@@ -9,4 +9,6 @@
 @{
   AGENTSPACE_CMD          = '..\..\bin\agentspace.cmd'
   AGENTSPACE_OPERATOR_CMD = 'operator.cmd'
+  AGENTSPACE_KEEPER_CMD   = 'keeper.cmd'
+  AGENTSPACE_SSH_PROXY_CMD = 'ssh-proxy.cmd'
 }

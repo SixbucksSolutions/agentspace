@@ -54,8 +54,12 @@ conformance check, by running the program under test instead.**
 
 **E0.04-T02-S04 moved no check. E0.04-T03-S01 (#0084) moved the first: `conformance/lease-cli/`
 holds the harness and the checks of the lease CLI's help, usage errors, values, `create`, `get` and
-`list` ([Running the suite](#running-the-suite)).** Until a check is moved, it is in `scripts/`, and
-the rewrite MUST NOT read it, whatever its class: the rewrite's
+`list` ([Running the suite](#running-the-suite)). E0.04-T03-S02 (#0085) moved the operator's alias
+refusals and the ProxyCommand's argument refusals to `conformance/operator/`, moved the keeper and
+schemas checks, and wrote the checks of requirements the prototype does not meet, in
+`test-unmet-*` files ([The operator and the token push](#the-operator-and-the-token-push),
+[The files that are expected to fail](#the-files-that-are-expected-to-fail)).** Until a check is
+moved, it is in `scripts/`, and the rewrite MUST NOT read it, whatever its class: the rewrite's
 reviewers work from an export of `docs/`, `schemas/` and `conformance/` only (D34). **The export
 MUST leave out every "Findings from ..." block in `docs/decisions.md`, `docs/runs/`, the handoffs
 and `docs/how-it-was-built.md`** (the architect, 2026-11-18; D34). A guess is a gap to report, never
@@ -67,17 +71,19 @@ code that loads the prototype.
 **A conformance check names the program it tests through one environment variable per program,
 so the same check runs against the prototype and against the rewrite (D34).** The variables
 below are **pinned** (the architect, 2026-11-18). The harness reads the first two
-(E0.04-T03-S01, #0084); the other two are proposed for the v0.04-T03 story that builds the keeper
-and proxy checks ([The remaining work](#the-remaining-work)). **A variable that is unset or empty
+(E0.04-T03-S01, #0084); the checks of E0.04-T03-S02 (#0085) read the other two, the operator's and
+ProxyCommand's by `Get-ConformanceProgram` too. **A variable that is unset or empty
 takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**; a variable
-that is set always wins.
+that is set always wins. **Every default is a path in that file, relative to its folder**, and
+each names a program in `conformance/prototype/`, except the first, which names the prototype's
+`bin\agentspace.cmd`.
 
-| Variable | Names | Default (proposed) |
+| Variable | Names | Default, as `conformance/prototype/defaults.ps1` gives it |
 |---|---|---|
-| `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | The prototype's `bin\agentspace.cmd`, named in `conformance/prototype/defaults.ps1` |
-| `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | `conformance/prototype/operator.cmd`, a shim that starts the prototype's operator under Windows PowerShell 5.1 |
-| `AGENTSPACE_KEEPER_CMD` | The keeper | A shim in `conformance/prototype/` that starts the prototype's keeper |
-| `AGENTSPACE_SSH_PROXY_CMD` | The ProxyCommand program | The prototype's `scripts\ssh-proxy.cmd` |
+| `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | `..\..\bin\agentspace.cmd`, the prototype's lease CLI |
+| `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | `operator.cmd`, a shim that starts the prototype's operator under Windows PowerShell 5.1 |
+| `AGENTSPACE_KEEPER_CMD` | The keeper | `keeper.cmd`, a shim that starts the prototype's keeper under PowerShell 7 |
+| `AGENTSPACE_SSH_PROXY_CMD` | The ProxyCommand program | `ssh-proxy.cmd`, a shim that calls the prototype's `scripts\ssh-proxy.cmd` |
 
 **Why four and not one.** The story card asked for `AGENTSPACE_CMD` for the lease CLI and the
 operator. The prototype has them as two programs under two runtimes (the lease CLI under
@@ -170,7 +176,9 @@ any of them today.**
 
 **RFC 2119 keywords again.** This section is for a person or an agent who runs a conformance check
 against a build, the prototype or a rewrite. It was written by E0.04-T03-S01 (#0084), and it holds
-for every check in `conformance/lease-cli/`.
+for every check in `conformance/lease-cli/`. **It holds as well for the checks in
+`conformance/operator/`** (E0.04-T03-S02, #0085), which dot-source the same harness through their
+own `helpers.ps1`, and are described under [The operator and the token push](#the-operator-and-the-token-push).
 
 **To run one check:** `pwsh -NoProfile -File conformance/lease-cli/test-<name>.ps1`, from any
 folder. It needs PowerShell 7 on a Windows laptop, and MUST NOT run elevated, because the
@@ -268,6 +276,36 @@ account, so the real profile is not unreachable), the operator's
 `lease create` then issued a lease, wrote its alias file and its credential under that home, and
 printed a document that validates.
 
+### The files that are expected to fail
+
+**RFC 2119 keywords again.** Some checks assert a requirement that the prototype does not meet
+yet. Each is in its own file, named `test-unmet-<what>.ps1`, so that **every other file passes
+against the prototype in full**, and a runner can tell an expected failure from a regression
+(the architect, 2026-11-18).
+
+- **A `test-unmet-*` file MUST say, in its header, which requirement and card it checks, and that it
+  is expected to FAIL against the prototype.** Its result lines still say `FAIL`: nothing turns a
+  FAIL into a pass, and a rewrite MUST pass every line.
+- **A runner MUST NOT read such a file's exit 1 against the prototype as a regression**, and MUST
+  read the same exit against a rewrite as a failure.
+- **The rows of a spec's "Requirements the prototype does not meet yet" table, such as
+  [operator.md's](operator.md#requirements-the-prototype-does-not-meet-yet), are what these files
+  assert**, so a row leaves its table when a build passes its file.
+
+| File | Requirement | Card | Against the prototype |
+|---|---|---|---|
+| `conformance/operator/test-unmet-proxy-connect-time.ps1` | The ProxyCommand names no backend on success, prints agentspace's own message on failure, and prints backend detail only under `AGENTSPACE_DIAGNOSTIC` ([docs/operator.md](operator.md#what-a-caller-sees-d1-card-0087)), asserted through the seam that names the AWS CLI, `AGENTSPACE_AWS_CMD` ([The test seam](operator.md#the-test-seam)) | #0087 (D1), and #0085 for the seam | FAIL on both paths, `seam not met (AGENTSPACE_AWS_CMD was not used)`: the prototype runs the AWS CLI by a fixed path, so the stand-in is never called. Nothing more is asserted until the seam is met |
+| `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1` | A keeper that tracks a holder, and whose pass does not find it trusted (its process gone while the pass waits for `board-holder.lock`, or its record gone), starts no holder in that pass and waits the release grace after it, logged `grace seconds=<n>` ([docs/keeper.md](keeper.md#release-grace)); the check does not depend on the action word the pass logs ([Q6](keeper.md#open-questions)) | #0068 | FAIL on 3 checks of each of its 2 cases: the pass logs `started` at once, the line after it is not a grace line, and the next start is not the grace after the pass was let go. Nothing else fails ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)) |
+
+- **The D1 file's stand-ins are its own.** It writes two `.cmd` files into its throwaway home, one
+  `aws` that reports a made-up running instance and one that fails with error text, both logging
+  every call. A build that meets the seam calls them, and the file then asserts what the caller's
+  stderr holds (no backend text on success; one `agentspace: ` message on failure; the diagnostic
+  setting changes neither the exit code nor stdout). It sets `AGENTSPACE_NESTED`, so that `up`
+  pushes no token and needs no `ssh` stand-in.
+- **The AWS gate still applies**, so even a build that ignores the seam cannot reach the real
+  account: with the call log empty, the file reports the failure and nothing else.
+
 ## The sorting
 
 ### The summary
@@ -287,8 +325,8 @@ already keeps each case's state in a throwaway folder.
 | `test-lease-alias.ps1` | Prototype code | It dot-sources the alias script and calls five functions | A throwaway subfolder inside the real `%USERPROFILE%\.agentspace` |
 | `test-lease-driver.ps1` | Prototype code | It dot-sources the driver, reads its source text and a variable | The real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed) |
 | `test-schemas.ps1` | Neither; moved to `conformance/schemas/test-schemas.ps1` (E0.04-T03-S02) | No program is driven and no prototype code is loaded | None |
-| `test-push-localswim.ps1` | Prototype code | It extracts five functions from the operator's syntax tree and sets its variables; its process checks run a copied operator and an edited `ssh-proxy.cmd` beside a stand-in operator | None (everything is under `%TEMP%`) |
-| `test-board-holder.ps1`, with `test-board-holder-stub.cmd` | Its 41 process cases are rewritten and moved to `conformance/keeper/test-keeper.ps1`, with a stub of its own (E0.04-T03-S02); its three installer cases stay here as prototype code | It named its keeper by a path parameter, and one installer case reads the real scheduled task | The real keeper task (read only, one installer case, which stays in `scripts/`) |
+| `test-push-localswim.ps1` | Prototype code, except its alias and ProxyCommand refusals, **moved** to `conformance/operator/` (E0.04-T03-S02) | It extracts five functions from the operator's syntax tree and sets its variables; its process checks run a copied operator and an edited `ssh-proxy.cmd` beside a stand-in operator. The script in `scripts/` is unchanged and keeps passing, and the push's checks stay in it until a build meets the seam ([The operator and the token push](#the-operator-and-the-token-push)) | None (everything is under `%TEMP%`) |
+| `test-board-holder.ps1`, with `test-board-holder-stub.cmd` | Its 41 process cases are rewritten and moved to `conformance/keeper/test-keeper.ps1`, with a stub of its own and shared helpers in `keeper-common.ps1` (E0.04-T03-S02); its three installer cases stay here as prototype code. #0068, which it never checked, has its own file, `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, expected to fail against the prototype | It named its keeper by a path parameter, and one installer case reads the real scheduled task | The real keeper task (read only, one installer case, which stays in `scripts/`) |
 | `check-forward-release.ps1` | Neither | A live check of the box, not a suite | The real box, through a ready lease's alias |
 
 **Five suites write lease folders under the real `%USERPROFILE%\.agentspace\leases` and sign each
@@ -429,9 +467,49 @@ or `schemas\` at most, which are spec artifacts and allowed.
 ### The operator and the token push
 
 **The push's checks stay prototype code until a build meets the seam that
-[docs/operator.md](operator.md) specifies** (E0.04-T03-S02): the environment variables that name
-the `aws` and `ssh` programs the operator runs, which a check needs to stand in for them. Until a
-build meets it, no stub can sit in front of the push, and nothing below moves.
+[docs/operator.md](operator.md#the-test-seam) specifies** (E0.04-T03-S02): the environment
+variables that name the `aws` and `ssh` programs the operator runs, which a check needs to stand in
+for them. Until a build meets it, no stub can sit in front of the push, and **every group of
+`test-push-localswim.ps1` below stays prototype code, except the three that need no stub: the
+refusals of `-Alias` and of the ProxyCommand's arguments, which moved to `conformance/operator/`.**
+
+#### `conformance/operator/`: conformance
+
+**Three checks, one helper file and no shim path.** Each check dot-sources `helpers.ps1`, which
+dot-sources the harness (`conformance/lease-cli/harness.ps1`), so the programs are named by
+`AGENTSPACE_OPERATOR_CMD` and `AGENTSPACE_SSH_PROXY_CMD` and run in a throwaway home with the
+harness's whole environment ([The harness](#the-harness)). Each ends with `Exit-ConformanceRun`, and
+each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
+
+| File | What it enforces | Against the prototype |
+|---|---|---|
+| `test-alias-refusals.ps1` | `up -Alias <bad>` and `status -Alias x` are refused before anything runs, with exit 1, the message and an empty stdout: 11 bad values (`a;b`, `a b`, `a&b`, the empty value, `a\|b`, a value with a double quote, `-Fx`, `a/b`, `a%b`, the Kelvin sign U+212A and U+0130) and the `status` case ([docs/operator.md](operator.md#command-line)) | 12 PASS, exit 0 |
+| `test-proxy-arguments.ps1` | The ProxyCommand refuses a second argument before `up`, and fails in `up` on a bad alias with no tunnel started: `a/b extra`, `a;b`, `-Fx`, the empty argument, `a b` and `a/b` ([docs/operator.md](operator.md#the-proxycommand)) | 6 PASS, exit 0 |
+| `test-unmet-proxy-connect-time.ps1` | D1 at connect time, card #0087, through the seam ([The files that are expected to fail](#the-files-that-are-expected-to-fail)) | FAIL, as expected |
+| `helpers.ps1` | The AWS gate, a runner for a value that cmd.exe needs quoted, and the code points a value arrives with. It starts no program under test | Not a check |
+
+- **An alias holding a line feed is not checked, and is a gap** ([The gaps](#the-gaps)). A line
+  feed cannot cross the `cmd.exe` command line: it cuts the value `a<LF>` to `a`, a valid alias, so
+  a run could get past the refusal and reach AWS. The case is left out rather than SKIPPED, so that
+  the file can pass.
+- **The AWS gate runs first, and probes the AWS CLI that the operator runs.** Before any program
+  that can reach AWS starts, the check runs `aws sts get-caller-identity` under the home's
+  environment, for the fixed `C:\Program Files\Amazon\AWSCLIV2\aws.exe` of
+  [docs/operator.md](operator.md#programs-it-starts) and for the `aws` that `PATH` finds, whichever
+  exist. **Every case is SKIPPED, and nothing runs, when no AWS CLI is found or when that call
+  succeeds for any of them.**
+- **A value reaches the operator whole.** The harness starts programs with .NET's argument quoting,
+  which leaves `&` and `|` bare, and `cmd.exe` reads them as operators. The alias checks therefore
+  run the operator through a one-line `.cmd` in the home that quotes the value, as an ssh
+  ProxyCommand line does. **A value with a double quote is escaped with a backslash.** The other
+  checks pass their arguments to the harness directly.
+- **Windows PowerShell 5.1 passes U+212A and U+0130 intact.** Before each of those two cases, the
+  check sends the value through the same `cmd.exe`, `.cmd` and `powershell.exe -File` path and
+  compares the code points it receives (8490 and 304), and SKIPS the case when they differ
+  ([open question 2](#open-questions)).
+- **A program that prints nothing and exits 0 fails every case.** Set to such a `.cmd`, each
+  variable makes `test-alias-refusals.ps1` fail its 12 cases and
+  `test-proxy-arguments.ps1` its 6.
 
 #### `scripts/test-push-localswim.ps1` (about 460 lines): prototype code
 
@@ -451,18 +529,18 @@ build meets it, no stub can sit in front of the push, and nothing below moves.
 | Group of checks | Count | Class | What moving it takes |
 |---|---|---|---|
 | The hash of the credential file ignores CRs, a BOM and blank lines | 1 | Prototype code | Not movable: it is visible only as the stamp written after a confirmed send, which needs a stand-in box |
-| The alias test accepts 3 values and refuses 11 | 14 | Prototype code | The refusals, through `up -Alias <bad>` and `-Alias` on another command: the operator fails before anything runs, with stdout empty. The acceptances proceed to AWS and cannot be shown. The Kelvin sign and U+0130 values need a proof that Windows PowerShell 5.1 receives them intact |
+| The alias test accepts 3 values and refuses 11 | 14 | The 11 refusals are conformance, **moved** to `conformance/operator/test-alias-refusals.ps1`; the 3 acceptances are prototype code | The refusals, through `up -Alias <bad>`: the operator fails before anything runs, with stdout empty (done: 11 values, the Kelvin sign and U+0130 among them, passed intact by Windows PowerShell 5.1). The acceptances proceed to AWS and cannot be shown |
 | The push protocol: a wrong hash, a failed ssh, a hung ssh (the time limit), a confirmed send is recorded, the box gets exactly two lines, the ssh arguments, `-Alias` routes the send, a refused alias starts no ssh, an unchanged token is not re-sent, a forced send | About 25 | Prototype code | Not movable: it needs a stand-in `ssh` in front of the operator ([The gaps](#the-gaps)) |
 | The time zone: a valid zone is sent in the remote command, the stamp includes it, a changed zone makes the push due, 16 invalid zones push the token and send no zone and warn, an empty zone, `zone-failed`, and the zone never changes whether the token counts | About 55 | Prototype code | Not movable, for the same reason |
 | The zone tables: 7 legacy names, 4 current zones that pass through, 8 Windows IDs to IANA names, an unknown ID, `-TimeZone` is sent as given, no `-TimeZone` reads the laptop's zone | About 22 | Prototype code | Not movable: pure functions, and the only observable is the zone in the ssh command. They are a spec table ([docs/operator.md](operator.md#the-time-zone)) with no way to run it against a program |
-| `up -Alias <bad>` fails on the alias, before anything, with nothing on stdout (5 values, 3 checks each); `status -Alias x` is refused | 16 | Prototype code (its checks are conformance in method once rewritten) | Run the program under test, not a copy in a throwaway repo. The alias check precedes everything, so no copy and no cache file are needed. Keep the isolated environment, so a mistaken run cannot reach the token or AWS |
-| `ssh-proxy.cmd` with a second argument (`<alias> extra`, `a;b`) is refused before the operator runs, exit 1, the message `ssh-proxy.cmd takes at most one argument`, stdout empty | 4 | Prototype code (its checks are conformance in method once rewritten) | Use the program `AGENTSPACE_SSH_PROXY_CMD` names |
-| `ssh-proxy.cmd -Fx`, `""`, `"a b"` and `a/b` fail in `up` on the alias, start no tunnel, stdout empty | 8 | Prototype code (its checks are conformance in method once rewritten) | The same variable |
+| `up -Alias <bad>` fails on the alias, before anything, with nothing on stdout (5 values, 3 checks each); `status -Alias x` is refused | 16 | Conformance, **moved** to `conformance/operator/test-alias-refusals.ps1` | Done: it runs the program `AGENTSPACE_OPERATOR_CMD` names, in a throwaway home with the harness's environment, so a mistaken run cannot reach the token or AWS |
+| `ssh-proxy.cmd` with a second argument (`<alias> extra`, `a;b`) is refused before the operator runs, exit 1, the message `ssh-proxy.cmd takes at most one argument`, stdout empty | 4 | Conformance, **moved** to `conformance/operator/test-proxy-arguments.ps1` | Done: it runs the program `AGENTSPACE_SSH_PROXY_CMD` names |
+| `ssh-proxy.cmd -Fx`, `""`, `"a b"` and `a/b` fail in `up` on the alias, start no tunnel, stdout empty | 8 | Conformance, **moved** to `conformance/operator/test-proxy-arguments.ps1` | Done: the same program |
 | A copy of `ssh-proxy.cmd` runs `up` or `up -Alias <alias>`, then the tunnel, and exits with the tunnel's code (7); it stops when `up` fails with exit 1 | 8 | Prototype code | Not movable: it edits the prototype's source text and plants a stand-in operator next to the copy |
 
 ### The keeper suite
 
-#### `conformance/keeper/test-keeper.ps1`, with its own `conformance/keeper/ssh-stub.cmd`: conformance
+#### `conformance/keeper/test-keeper.ps1`, with `keeper-common.ps1` and its own `conformance/keeper/ssh-stub.cmd`: conformance
 
 **E0.04-T03-S02 rewrote the 41 process cases of `scripts/test-board-holder.ps1` as this check, and
 added one.** The original stays in `scripts/` with its three installer cases, which are prototype
@@ -472,10 +550,12 @@ code ([below](#the-three-installer-cases-prototype-code)).
   `AGENTSPACE_KEEPER_CMD` names, run with the keeper's own arguments unchanged
   ([docs/keeper.md](keeper.md#command-line)): `<program> -SshExe <stub> [-Now t]`, and in `-Watch`
   mode with `-IntervalSeconds`, `-MaxPasses`, `-BackoffBaseSeconds`, `-BackoffMaxSeconds`,
-  `-FastFailureSeconds` and `-ReleaseGraceSeconds`. When the variable is unset or empty, the
-  default is the shim `conformance/prototype/keeper.cmd`, found by
-  `conformance/prototype/process-defaults.ps1`; no case names the prototype's script. A check that
-  names a program that is not a file fails.
+  `-FastFailureSeconds` and `-ReleaseGraceSeconds`. The program is found by the harness's
+  `Get-ConformanceProgram`: when the variable is unset or empty, the default is the shim
+  `conformance/prototype/keeper.cmd`, which `conformance/prototype/defaults.ps1` names, and nowhere
+  else; no case names the prototype's script. The variable is read before the first case, because
+  a case strips every `AGENTSPACE_*` variable from the environment. A check that names a program
+  that is not a file fails.
 - **Options:** `-Case <wildcard>` runs only the cases whose name matches. `-SelfCheck` runs each
   case again with a broken fixture, and a case that still passes is reported `CANNOT-FAIL`.
 - **Cases:** 42, each named by the section of [docs/keeper.md](keeper.md) or
@@ -497,14 +577,29 @@ code ([below](#the-three-installer-cases-prototype-code)).
   secret reaches the log.
 - **Folders and variables:** Each case has its own throwaway folder under `%TEMP%`, with a state
   folder (`AGENTSPACE_STATE_DIR`) holding a hand-written `leases.json` and `board-holder.json`, and
-  a home folder (`USERPROFILE`). `AGENTSPACE_SSH_DIR` points into the home, and the AWS variables
-  name nothing real. It never uses the real `%USERPROFILE%\.agentspace`, `~/.ssh`, `ssh.exe` or
-  keeper task, and the three installer cases, with the one read of the real task, are not in it.
+  a home folder (`USERPROFILE`). **Every process a case starts, the keeper, its holders and the
+  stand-ins included, gets the harness's environment for that home** (`Get-ConformanceChildEnvironment`,
+  [Running the suite](#running-the-suite)): `USERPROFILE`, `HOME`, `LOCALAPPDATA`
+  (`<home>\AppData\Local`), `APPDATA` (`<home>\AppData\Roaming`), `AGENTSPACE_STATE_DIR` and
+  `AGENTSPACE_SSH_DIR` inside the case's folder; `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
+  naming files that do not exist; `AWS_EC2_METADATA_DISABLED=true`; the AWS profile, key, session
+  and both container-credential variables removed; and every `AGENTSPACE_*` variable and
+  `PSModulePath` the caller's shell held removed. The suite sets them on its own process, which
+  every child inherits, and puts every one back in a `finally`. It never uses the real
+  `%USERPROFILE%\.agentspace`, `~/.ssh`, `ssh.exe` or keeper task, and the three installer cases,
+  with the one read of the real task, are not in it.
 - **Processes:** A keeper a case starts is stopped by the PID of the process the case started, and
   that process's own children, never by a search for a command line. A case that kills a keeper
   spares its holder, which MUST outlive it ([docs/keeper.md](keeper.md#what-the-keeper-does)). The
   run's cleanup stops only processes whose command line holds the run's own unique folder, and
-  its last check is that none is left.
+  its last check is that none is left. The one case that denies `PROCESS_TERMINATE` on a stub
+  keeps that stub's process object, whose handle pins its PID, and its cleanup gives the right back
+  to that stub alone, through the handle, after its start time matches the one recorded at the
+  lock. It never rewrites the access control list of a PID it did not lock.
+- **Shared helpers:** `conformance/keeper/keeper-common.ps1` holds everything the keeper checks
+  share (the process tree, the stubs, the fixtures, the `-Watch` helpers and the environment of a
+  case), so that `test-keeper.ps1` and `test-unmet-holder-dies-mid-pass.ps1` run their keepers
+  the same way. It dot-sources the harness and loads nothing from the prototype.
 - **Windows-only harness features:** Reading the process tree through CIM, a process access
   control list set to deny termination, a held `board-holder.lock`, and a watcher that keeps a
   copy of the launch files, which live only while a holder is started.
@@ -516,7 +611,7 @@ three fixed sleeps that reading found are gone:
 | The prototype's sleep | The wait that replaces it |
 |---|---|
 | 5 seconds, so that two tries fall inside the hold of a log (case: a log that cannot be written) | A wait, up to 60 seconds, for the stub's count of starts to reach 2: the second try is the proof the loop went on, and the log is released when it is seen |
-| 3 seconds after the first `grace seconds=` line, to show that no second holder starts early (case: the 95-second default) | A wait of up to 3 seconds for a second start, which the case expects not to happen. **This is the one deadline a case expects to reach**: a negative has no other thing to wait on, and a keeper that started a holder early ends the wait at once and fails |
+| 3 seconds after the first `grace seconds=` line, to show that no second holder starts early (case: the 95-second default) | A wait of up to 20 seconds for a second start, which the case expects not to happen. **This is the one deadline a case expects to reach**: a negative has no other thing to wait on, and a keeper that started a holder early ends the wait at once and fails. The grace is 95 seconds, and 20 of them are long enough for a start that the grace was meant to prevent to show itself; the case still never waits the 95 |
 | 2 seconds after the stop, before the second lease becomes ready (case: the holder after a stop) | A wait, up to 60 seconds, for the keeper's `grace seconds=` line, which it writes when it begins the wait after the stop |
 
 **Two more bounds were tightened for the same reason**: the second keeper in the "exits at once"
@@ -526,14 +621,17 @@ not delayed" case uses a grace of 3600 seconds and a deadline, instead of a 40-s
 
 **The cases follow [docs/keeper.md](keeper.md) and [docs/state.md](state.md) alone.** Against the
 prototype they found no disagreement with either. The requirement they do not cover is #0068,
-which has no case yet ([The gaps](#the-gaps)).
+which is checked by its own file, expected to fail against the prototype
+([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)).
 
 **Not yet shown:** #0066's done-when, that the cases pass 5 times in a row beside two other
-copies of the suite and a live keeper, was not run by this story. What was run, on 2026-11-18: the
-full suite against the prototype (206 checks passed, 0 failed, 0 skipped, in 7 minutes 2
-seconds); the full suite against a keeper that prints nothing and exits 0 (every one of the 42
-cases failed at least one check, in 7 minutes 19 seconds); and `-SelfCheck` in two groups (every
-case failed on its broken fixture, in about 7 minutes 22 seconds each).
+copies of the suite and a live keeper, was not run by this story. What was run, on 2026-11-18, after the
+cases were given the harness's environment and the 20-second wait: the full suite against the
+prototype (206 checks passed, 0 failed, 0 skipped, exit 0, in 7 minutes 15 seconds); the full suite
+against a keeper that prints nothing and exits 0 (119 of its 196 checks failed, and every case failed
+at least one, exit 1, in 7 minutes 13 seconds); and the #0068 file ([below](#the-0068-file-test-unmet-holder-dies-mid-passps1)).
+`-SelfCheck` ran in two groups before that change, with every case failing on its broken fixture,
+in about 7 minutes 22 seconds each; after it, only the Idle case was run again.
 
 | Cases | Count | Class | Notes |
 |---|---|---|---|
@@ -541,6 +639,55 @@ case failed on its broken fixture, in about 7 minutes 22 seconds each).
 | Watch: the backoff doubles and is capped; it resets after a long-lived holder; a holder that dies unproven backs off; a log that cannot be written does not end the loop; `-MaxPasses` ends the loop; passes are spaced; a locked pass is skipped; the log holds no secret; the next holder waits the release grace; a first holder is not delayed; a backoff longer than the grace is still waited; the holder after one the keeper stopped waits the grace; the grace is 95 seconds by default; `-ReleaseGraceSeconds <bad>` is a usage error (4 values); a second keeper exits at once; a new keeper starts once the first is killed and adopts its holder; a one-pass run is unaffected by a running keeper | 20 | Conformance | They depend on the flags above and on the `grace seconds=` and `another keeper is running pid=<n>` log lines. The kill case kills the process the suite started, by PID, and spares the holder |
 | The files a keeper run writes match `schemas/state/`: the holder record, the launch request and the launch result against their schemas; the files' bytes; the claim's content; the launch files removed at the pass's end | 1 (new) | Conformance | Answers [docs/state.md](state.md#open-questions)'s Q13. The launch files live only while a holder is started, so a watcher inside the case keeps a copy of each as it appears, and a pass it missed is run again |
 
+#### The #0068 file: `test-unmet-holder-dies-mid-pass.ps1`
+
+**`conformance/keeper/test-unmet-holder-dies-mid-pass.ps1` checks card #0068, and is expected to
+FAIL against the prototype** ([The files that are expected to fail](#the-files-that-are-expected-to-fail)).
+Its header says so, its `FAIL` lines still say `FAIL`, and a rewrite's keeper MUST pass every line.
+
+- **The requirement** ([docs/keeper.md](keeper.md#release-grace)): when a keeper tracks a holder and
+  its pass does not find that holder trusted, the pass MUST NOT start a holder, and the keeper waits
+  the release grace after that pass, logged `grace seconds=<n>`. A holder recorded at the start of a
+  pass and gone by the pass's decision therefore counts as ended, and the grace applies at once. The
+  prototype removes the record and starts a holder at once, which fails on `ExitOnForwardFailure`
+  while the dead session holds the ports.
+- **Drives:** The same program, the same way, and the same environment as the suite, through
+  `keeper-common.ps1`, with the harness's result lines (`PASS`, `FAIL`, `SKIPPED`, and a summary line)
+  and exit codes. A keeper tracks one stub holder, with a grace of 15 seconds and a backoff of 1.
+- **Case 1, a holder that exits while the pass waits for `board-holder.lock`:** the check holds the
+  lock, so that the keeper's pass waits for it, stops the tracked stub while the pass waits, and lets
+  the lock go ([docs/keeper.md](keeper.md#open-questions), Q9). **The one wait that is not on an
+  event:** the keeper logs nothing when its look finds a holder alive and its pass then waits for the
+  lock, so no event marks the window. The check waits on the keeper's own `skipped` line, which a
+  pass writes when its 10-second lock wait runs out, and stops the holder 6 seconds after it: the
+  keeper's 1-second interval, then its look, then a new 10-second wait, so the stop lands about 5
+  seconds inside the window on either side. **The log then says which path the keeper took, and an
+  attempt that missed the window is not a result.** A `grace` or `backoff` line before the pass's
+  own is the look's, a `skipped` line is a pass that gave up, and a `kept` line is a pass that was not
+  waiting; each is run again, up to 3 times, and a check that never reached the window is `SKIPPED`,
+  never `PASS`.
+- **Case 2, the record is gone when the pass looks for the tracked holder:** the same rule, reached
+  with no timing. The look reads the process only and never the record
+  ([docs/keeper.md](keeper.md#watching)), so a record removed while the holder still runs is a
+  holder that the look finds alive and the pass does not find trusted
+  ([docs/keeper.md](keeper.md#release-grace) lists the record missing beside the process gone). The
+  check removes the record while it holds the lock, with 5 seconds before the keeper's next pass, and
+  the log says whether that pass came after it.
+- **What each case checks**, whatever action word the pass logs ([docs/keeper.md](keeper.md#open-questions),
+  Q6): that pass logs no `started` line; the line after it is `grace seconds=<n>`, with n the grace
+  less rounding; and the next `started` line comes at least the grace after the check let the pass
+  go. Case 2 also checks that the holder was still running. The grace counts from the end of the pass,
+  which is never before the check released the lock, so a keeper that meets the rule passes.
+- **Against the prototype:** each case fails three checks and passes the rest. The pass logs
+  `started` at once (the first check, whose message quotes the line), the line after it is `kept`
+  and not a grace line (the second), and the next `started` line is that same one, stamped with a
+  time before the check let the pass go (the third). Case 2's check that the holder was still running
+  passes. The file exits 1: 2 passed, 6 failed, 0 skipped, in about 42 seconds. Against a keeper that
+  prints nothing and exits 0, each case fails its first check, that the keeper starts a holder.
+- **Not shown:** The file has not passed, because no build meets #0068. Its assertions were run
+  against a made-up log of a keeper that meets the rule, to show that they can pass, and case 1
+  reached its window on the first attempt in each of its runs against the prototype; a loaded laptop
+  is what could make it miss, and it would then say `SKIPPED`, never `PASS`.
 #### The three installer cases: prototype code
 
 **These stay in `scripts/test-board-holder.ps1`, whole and untouched, as prototype code.** The
@@ -634,6 +781,7 @@ land with this page's turn, so a link to one resolves once they merge.
 | Unsatisfiable `create`; a failed alias step | lease-api.md: `create`, States, Fields (`reasons`), Concurrency and atomicity; [docs/driver.md](driver.md) |
 | The schemas check | lease-api.md: Schemas, Values (TTL) |
 | `-Alias` refusals, and `ssh-proxy.cmd`'s argument refusals | [docs/operator.md](operator.md): Command line, The ProxyCommand |
+| D1 at connect time (expected to fail against the prototype) | operator.md: What a caller sees (D1, card #0087), The test seam, The ProxyCommand |
 | The keeper's cases (one pass) | [docs/keeper.md](keeper.md): Log lines, Locks, Starting a holder; state.md: The keeper's files |
 | The keeper's `-Watch` cases | keeper.md: Log lines, Locks, Starting a holder |
 | The keeper's files against `schemas/state/` | [docs/state.md](state.md): The keeper's files (the holder record, a holder's launch files), and its Q13; keeper.md: The handshake |
@@ -644,10 +792,11 @@ land with this page's turn, so a link to one resolves once they merge.
 
 | Spec section | Gap |
 |---|---|
-| operator.md: The token push (all of it: When it runs, What the laptop reads, The time zone, The stamp, What the laptop sends, What the box does, What the laptop checks, Secrecy) | **About 110 checks cannot be moved, and no conformance check covers the push.** The operator starts `aws` by a fixed full path that exists on the laptop and `ssh` by a full path under `%SystemRoot%`, so no run of `up` or `sync` reaches the push with a stand-in box. It needs a requirement in the spec and a product seam: an environment variable that names the `ssh` and `aws` programs, and a way to give the push a time zone (operator.md Q11 and Q12 go to the third v0.04-T03 story) |
+| operator.md: The token push (all of it: When it runs, What the laptop reads, The time zone, The stamp, What the laptop sends, What the box does, What the laptop checks, Secrecy) | **About 110 checks cannot be moved, and no conformance check covers the push.** The operator starts `aws` by a fixed full path that exists on the laptop and `ssh` by a full path under `%SystemRoot%`, so no run of `up` or `sync` reaches the push with a stand-in box. The seam is specified now ([docs/operator.md](operator.md#the-test-seam): `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD` and `AGENTSPACE_TIMEZONE`, which close its Q11 and Q12), but the prototype reads none of them. **Until a build meets it, the push's checks stay prototype code, and no conformance check covers the push** |
 | operator.md: The time zone | The zone and legacy-name tables are spec tables with no entry point from outside, and so no check |
 | operator.md: Commands (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`), Starting the box and waiting for it, The box as the laptop sees it, The AWS side | None of the 11 files runs these. They need AWS or a box, or stubs of `aws` and `ssh` that the operator cannot take today |
-| operator.md: The ProxyCommand | Only the argument refusals are checked. The three steps (the folders put on `PATH`, `up`, the tunnel) have no check, because the test that touched them edits the prototype's text |
+| operator.md: Command line | An alias holding a line feed has no check: `cmd.exe` cuts the value at the line feed to a valid alias, so a run could get past the refusal and reach AWS. A check of it needs a way to start the operator that does not pass through `cmd.exe` |
+| operator.md: The ProxyCommand | The argument refusals are checked (`conformance/operator/test-proxy-arguments.ps1`), and what a caller sees by `test-unmet-proxy-connect-time.ps1`, which fails against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)). The three steps (the folders put on `PATH`, `up`, the tunnel) have no check of their own: the test that touched them edits the prototype's text, and a check needs the seam to stand in for `aws` |
 | operator.md: `ca` | No suite runs `ca`. The throwaway CA the lease checks need is its first check |
 | lease-api.md: States | The expiry boundary (`expired` exactly at `expires_at`, `ready` one second before) needs a clock the check controls |
 | lease-api.md: The credential | A short-ID collision, and a caller-chosen lease ID refused by the credential step, cannot be reached through the CLI |
@@ -658,7 +807,7 @@ land with this page's turn, so a link to one resolves once they merge.
 | lease-api.md: The credential, no CA | `create` MUST fail with `internal` and make no CA when none exists (#0029 point 3). **The prototype's `create` makes one**, so a check of the rule would fail against it, and the suite leaves it out until the rewrite ([docs/state.md](state.md#its-checks)). What is checked: an unsatisfiable `create` with no CA answers and makes none |
 | driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable |
 | keeper.md: The installed task | The installer dry run is the prototype's packaging, and no conformance check covers an installed task. The three installer cases stay in `scripts/` as prototype code |
-| keeper.md: Release grace, card #0068 | **No case yet.** The rule (a tracked holder that exits between the look and the pass's trust check gets the grace, with no start in that pass) needs a stub holder to exit inside that window, and keeper.md's Q9 only suggests how (hold `board-holder.lock` from the check while it stops the stub). The prototype does not meet the rule, so the case would fail against it, and this story's cases all pass against the prototype |
+| keeper.md: Release grace, card #0068 | **Checked by `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, which fails against the prototype** ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)). The gap that remains is the window itself: the keeper logs nothing when its look finds a holder alive and its pass then waits for `board-holder.lock`, so no event marks the moment between the look and the trust check. The file enters it with one bounded wait from the keeper's own `skipped` line, reads the log to see which path the keeper took, and reports SKIPPED if it missed. The second case in the file reaches the same rule with no timing, through a record that is gone |
 | keeper.md: Checking the keeper, card #0066 | The 5 passes in a row beside two other copies of the suite are not shown. The waits are conditions with deadlines, but no run of this story was made under that load |
 | keeper.md: The task's launcher; Stopping and starting the keeper | Nothing runs the launcher, the install, or the End and restart steps: they need the real Task Scheduler |
 | keeper.md: Starting a holder | The refusals of "Before the start" (a state folder or a keeper path holding a `"`, an alias outside the form), the create retries and the 35-second, 60-second and 95-second bounds have no case. The first needs a path that holds a `"`, which Windows refuses, and an alias outside the form, which the lease state's schema refuses; the rest need a launcher that does not answer |
@@ -670,14 +819,14 @@ land with this page's turn, so a link to one resolves once they merge.
 
 **No check was rewritten or moved by E0.04-T02-S04.** The sorting showed about 5.6 hours of
 rewriting against a 3-hour story, so the dev lead cut the story at the sorting and this page. **The
-rest is three stories in v0.04-T03, carded by the architect** (2026-11-18). **The estimates below
+rest was three stories in v0.04-T03, carded by the architect** (2026-11-18). **The estimates below
 are the sorter's, in agent active minutes, from reading the suites, and not measured.**
 
 | Story | Contents | Estimate |
 |---|---|---|
 | 1. The lease CLI harness, with `create`, `get` and `list` (done by E0.04-T03-S01, #0084) | The shared helper (a program runner reading `AGENTSPACE_CMD`, a throwaway `USERPROFILE` with a throwaway CA made by the operator's `ca`, throwaway state and ssh folders, cleanup): 25 minutes. The process half of `test-lease-cli.ps1` (help, usage and values): 15 minutes. `create` and `get` retargeted, and `list` with `create`-made seeds: 40 minutes | 80 minutes |
 | 2. The remaining lease CLI checks, against a pinned harness interface | The normalizers as probes (35), the state file through seeded `leases.json` (30), `renew` and `release` with `create`-made seeds (25), the certificate and the renew and release checks (25), the alias and the `Include` line (35), and the driver's unsatisfiable and failed-alias checks (25) | 175 minutes |
-| 3. The operator, keeper and schemas checks, plus the push seam in `operator.md` | The keeper suite parametrized by `AGENTSPACE_KEEPER_CMD` and run twice in full: 60 minutes. The operator's alias refusals and the proxy's argument refusals: 25. The schemas check moved: 10. The push seam is specified in [operator.md](operator.md) by this story: an environment variable naming `ssh` and `aws`, and a way to give the push a time zone (operator.md Q11 and Q12). Until the product has that seam, the push stays prototype code | 95 minutes, without the seam |
+| 3. The operator, keeper and schemas checks, plus the push seam in `operator.md` (done by E0.04-T03-S02, #0085; the push's checks stay prototype code until a build meets the seam) | The keeper suite parametrized by `AGENTSPACE_KEEPER_CMD` and run twice in full: 60 minutes. The operator's alias refusals and the proxy's argument refusals: 25. The schemas check moved: 10. The push seam is specified in [operator.md](operator.md) by this story: an environment variable naming `ssh` and `aws`, and a way to give the push a time zone (operator.md Q11 and Q12). Until the product has that seam, the push stays prototype code | 95 minutes, without the seam |
 
 **The suites left in `scripts/` MUST keep passing until the rewrite replaces them.** The
 conformance suite adds to them, and does not retire one.
@@ -697,8 +846,12 @@ v0.04-T04) closes them, or names the card that will.
    same table. **A rewrite's keeper MUST therefore accept `-FastFailureSeconds`, though it is not
    in the usage text.** What stays open is keeper.md's own Q3, the name of the rewrite's entry
    point, which the variable already hides from the suite.
-2. **Does Windows PowerShell 5.1 pass non-ASCII arguments intact?** The refusal checks for U+212A
-   (the Kelvin sign) and U+0130 depend on it, and only a run on Windows shows it.
+2. **Closed (E0.04-T03-S02): yes, Windows PowerShell 5.1 passes U+212A (the Kelvin sign) and
+   U+0130 intact.** On 2026-11-18, on the laptop, a value sent through `cmd.exe`, a `.cmd` and
+   `powershell.exe -File` arrived as the code points 8490 and 304, and the operator then refused
+   each as an alias, as `conformance/operator/test-alias-refusals.ps1` shows. **A different Windows
+   PowerShell build is not assumed to do the same:** the check sends each value through that path
+   first and reports its case SKIPPED, with the code points it received, if they differ.
 3. **Does a throwaway `USERPROFILE` make `create` work?** **Settled by E0.04-T03-S01 (#0084): yes,
    on the laptop, with two conditions the harness meets** ([Running the suite](#running-the-suite)).
    `ca` made a CA under a new folder in `%TEMP%` and exited 0, and a ready `create` then worked in
