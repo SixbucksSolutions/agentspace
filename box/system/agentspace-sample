@@ -20,6 +20,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 
@@ -43,6 +44,25 @@ MAX_FOR_S = 12 * 3600
 START_WAIT_S = 5.0
 # The longest the sampler sleeps between looks at its stop file, its deadline and its signal flag.
 SLICE_S = 0.5
+
+# A sample can block: a /proc read waits on a target's mmap_lock, or a custom --match backtracks.
+# SIGALRM at the deadline plus this margin ends a run blocked in Python, such as in the regex.
+# A read blocked in the kernel waits killably, so a handled signal never wakes it; that read
+# releases the GIL, and a watchdog thread ends the run a little later.
+DEADLINE_MARGIN_S = 60
+WATCHDOG_GRACE_S = 15
+
+# Signals that end the run with reason "signal" and its end line. SIGPIPE and the SIGUSRs would
+# otherwise kill the sampler with no end line, and SIGQUIT would dump core.
+END_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGQUIT, signal.SIGUSR1, signal.SIGUSR2,
+               signal.SIGPIPE)
+
+# The sampler's own invocations, which MUST NOT be a session or counted in one (R6).
+OWN_COMMANDS = ("start", "stop", "status", "_sample")
+PYTHON_RE = re.compile(r"python[0-9.]*")
+SHELLS = ("sh", "bash", "dash", "zsh", "ksh")
+SHELL_C_RE = re.compile(r"-[a-z]*c[a-z]*")
+ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=\S*")
 
 # The sampler's state, all under ~/agentspace-samples/: <run>.jsonl, <run>.stop, the running
 # marker (JSON: pid, start ticks, run, interval, deadline) and the lock the sampler holds while
@@ -83,6 +103,10 @@ Commands:
 
 class UsageError(Exception):
     """An argument the command refuses, which exits 2."""
+
+
+class DeadlineOverrun(Exception):
+    """Raised by SIGALRM when a sample is still running well past the deadline (R5)."""
 
 
 # ---------------------------------------------------------------------------------------------
@@ -218,8 +242,46 @@ def proc_alive(pid, start_ticks):
     return st[5] == start_ticks and st[6] != b"Z"
 
 
+def is_own_invocation(argv):
+    """True when a command line runs this script's start, stop, status or _sample.
+
+    That is the script run directly or by a python3 interpreter, or a shell's -c command (such
+    as the one SSH runs) that begins with it. Only the sampler's own invocations are excluded, so
+    a session whose command line merely mentions agentspace-sample is still a session (R6).
+    """
+    if SCRIPT_NAME not in argv and "agentspace-sample" not in argv:
+        return False  # The common case, without splitting every command line on the box.
+    tokens = argv.split()
+    if tokens and os.path.basename(tokens[0]) in SHELLS:
+        if len(tokens) < 2 or SHELL_C_RE.fullmatch(tokens[1]) is None:
+            return False
+        tokens = tokens[2:]
+        # The -c command may set variables (HOME=... python3 ...) or exec the script.
+        while tokens and (ASSIGNMENT_RE.fullmatch(tokens[0]) or tokens[0] == "exec"):
+            tokens = tokens[1:]
+    if tokens and PYTHON_RE.fullmatch(os.path.basename(tokens[0])):
+        tokens = tokens[1:]
+        while tokens and tokens[0].startswith("-"):
+            # -X and -W take a value as the next token.
+            tokens = tokens[2:] if tokens[0] in ("-X", "-W") else tokens[1:]
+    return (
+        len(tokens) >= 2
+        and os.path.basename(tokens[0]) in (SCRIPT_NAME, "agentspace-sample")
+        and tokens[1] in OWN_COMMANDS
+    )
+
+
 # ---------------------------------------------------------------------------------------------
 # Record and marker readers, for start, stop and status
+
+
+def marker_pid(folder):
+    """The PID the marker names, alive or not, or None when there is no readable marker."""
+    try:
+        with open(os.path.join(folder, MARKER_NAME), "r", encoding="utf-8") as f:
+            return int(json.load(f)["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def read_marker(folder):
@@ -260,7 +322,12 @@ def tail_lines(path, limit=65536):
 
 
 def end_line(path):
-    for obj in tail_lines(path, 4096):
+    """The record's end line, or None when it has none or the record is gone."""
+    try:
+        lines = tail_lines(path, 4096)
+    except OSError:
+        return None
+    for obj in lines:
         if obj.get("kind") == "end":
             return obj
     return None
@@ -416,9 +483,14 @@ def cmd_start(args):
     waited_until = time.monotonic() + START_WAIT_S
     while True:
         start = first_line(record)
-        if start is not None and start.get("kind") == "start":
-            break
         code = child.poll()
+        if start is not None and start.get("kind") == "start":
+            # The start line can be another start's: two starts of one run at once, where this
+            # one's sampler lost the lock (R3). The marker is written before the start line, so
+            # it names this child when the line is this child's. A child that already exited 0
+            # wrote its whole run, so the line is its own too.
+            if marker_pid(folder) == child.pid or code == 0:
+                break
         if code is not None:
             if code == CHILD_RUNNING:
                 running = read_marker(folder)
@@ -502,22 +574,35 @@ def cmd_stop(args):
               % (run, see_error(folder, run)), file=sys.stderr)
         return 1
 
-    with open(stop_path(folder, run), "a"):
-        pass
     pid = int(marker["pid"])
     ticks = int(marker["start_ticks"])
+    try:
+        with open(stop_path(folder, run), "a"):
+            pass
+    except OSError as e:
+        print("Could not create the stop file for run %s: %s. The sampler (PID %d) runs on."
+              % (run, e.strerror, pid), file=sys.stderr)
+        return 1
     wait_s = 3 * float(marker.get("interval_s", DEFAULT_INTERVAL_S))
     until = time.monotonic() + wait_s
     while True:
-        end = end_line(record)
         alive = proc_alive(pid, ticks)
+        # Read after the liveness check, so an end line written just before the exit is seen.
+        end = end_line(record)
         if end is not None and not alive:
             print("The sampler for run %s ended: %s, after %s samples."
                   % (run, end.get("reason"), end.get("samples")))
             return 0
-        if time.monotonic() >= until:
+        if not alive or time.monotonic() >= until:
             break
         time.sleep(0.1)
+    # A record deleted during the run has no end line to read, and its samples are gone (R9).
+    if not os.path.exists(record):
+        print("The record %s was deleted during the run, so its samples are lost; the sampler "
+              "for run %s %s." % (record, run,
+                                  "is still running" if alive else "has exited"),
+              file=sys.stderr)
+        return 1
     if alive:
         print("The sampler for run %s (PID %d) is still running after %g seconds."
               % (run, pid, wait_s), file=sys.stderr)
@@ -568,29 +653,53 @@ class Sampler:
         self.signalled = False
         self.out = None
         self.lock_fd = None
+        self.seq = 0
+        # The end line is written once, by the main thread or the watchdog, whichever is first.
+        self.write_lock = threading.Lock()
+        self.ended = False
+        self.ending = False
 
     def on_signal(self, signum, frame):
         self.signalled = True
 
+    def on_alarm(self, signum, frame):
+        if not self.ending:
+            raise DeadlineOverrun()
+
+    def watchdog(self, at_mono):
+        """Ends a run whose main thread is blocked in the kernel past its deadline (R5)."""
+        time.sleep(max(0.0, at_mono - time.monotonic()))
+        if self.write_end("deadline"):
+            self.cleanup()
+            os._exit(0)
+
     def write(self, obj):
-        self.out.write(dumps(obj) + "\n")
-        self.out.flush()
+        with self.write_lock:
+            if self.ended:
+                return
+            self.out.write(dumps(obj) + "\n")
+            self.out.flush()
+
+    def write_end(self, reason):
+        """Writes the end line unless one was written. Returns True when this call wrote it."""
+        with self.write_lock:
+            if self.ended:
+                return False
+            self.out.write(dumps({"kind": "end", "t": iso(now_local()), "reason": reason,
+                                  "samples": self.seq}) + "\n")
+            self.out.flush()
+            self.ended = True
+            return True
 
     def excluded(self, pid, start_ticks, argv):
         """True for the sampler's own processes, which MUST NOT be a session or counted in one.
 
-        That is this process, the start that launched it, and any process running this script
-        (stop, status, a refused second start), or a wrapper whose command line names this script
-        and carries the --match text, which a careless sampler would match as a session.
+        That is this process, the start that launched it, and any invocation of this script
+        (stop, status, a refused second start, or a shell that runs one).
         """
         if pid == self.pid or (pid, start_ticks) == self.starter:
             return True
-        if SCRIPT_NAME not in argv:
-            return False
-        parts = argv.split(" ")[:3]
-        if any(os.path.basename(p) == SCRIPT_NAME for p in parts):
-            return True
-        return self.match_text in argv
+        return is_own_invocation(argv)
 
     def setup(self):
         """Takes the lock, creates the record and writes the marker. Returns an exit code or None."""
@@ -715,7 +824,7 @@ class Sampler:
         except OSError:
             if not os.path.exists("/proc/%d" % pid):
                 return None  # The session ended mid-read: skipped for this sample.
-            cwd = None
+            cwd = ""  # Unreadable (another user's process): the record keeps cwd a string (R8a).
         self_pss, self_rss = read_mem(pid)
 
         # Every live descendant, from this sample's parent tree. A descendant whose stat was read
@@ -754,8 +863,38 @@ class Sampler:
             },
         }
 
+    def loop(self, mono0, deadline_mono):
+        """Samples until a signal, the stop file or the deadline. Returns the end line's reason."""
+        next_sample = mono0
+        while True:
+            if self.signalled:
+                reason = "signal"
+                break
+            if os.path.exists(self.stop_file):
+                reason = "stop-file"
+                break
+            now = time.monotonic()
+            if now >= deadline_mono:
+                reason = "deadline"
+                break
+            if now >= next_sample:
+                self.seq += 1
+                self.sample(self.seq)
+                next_sample += self.interval
+                if next_sample <= time.monotonic():
+                    # A sample that ran past the next slot: start counting again from now
+                    # rather than sampling in a burst.
+                    next_sample = time.monotonic() + self.interval
+                continue
+            # Both differences are positive here. The slice bounds how late a stop file or a
+            # signal is seen, since a signal handler does not cut a sleep short.
+            time.sleep(min(next_sample - now, deadline_mono - now, SLICE_S))
+        # From here a late SIGALRM does nothing, so it cannot cut the end line short.
+        self.ending = True
+        return reason
+
     def main(self):
-        for signum in (signal.SIGTERM, signal.SIGINT):
+        for signum in END_SIGNALS:
             signal.signal(signum, self.on_signal)
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
@@ -781,33 +920,22 @@ class Sampler:
                 "sampler": VERSION,
             })
 
-            seq = 0
-            next_sample = mono0
-            while True:
-                if self.signalled:
-                    reason = "signal"
-                    break
-                if os.path.exists(self.stop_file):
-                    reason = "stop-file"
-                    break
-                now = time.monotonic()
-                if now >= deadline_mono:
-                    reason = "deadline"
-                    break
-                if now >= next_sample:
-                    seq += 1
-                    self.sample(seq)
-                    next_sample += self.interval
-                    if next_sample <= time.monotonic():
-                        # A sample that ran past the next slot: start counting again from now
-                        # rather than sampling in a burst.
-                        next_sample = time.monotonic() + self.interval
-                    continue
-                # Both differences are positive here. The slice bounds how late a stop file or a
-                # signal is seen, since a signal handler does not cut a sleep short.
-                time.sleep(min(next_sample - now, deadline_mono - now, SLICE_S))
+            # The sampler MUST end by itself (D33), even when a sample never returns (R5).
+            signal.signal(signal.SIGALRM, self.on_alarm)
+            signal.alarm(self.for_s + DEADLINE_MARGIN_S)
+            threading.Thread(
+                target=self.watchdog,
+                args=(deadline_mono + DEADLINE_MARGIN_S + WATCHDOG_GRACE_S,),
+                daemon=True,
+            ).start()
+            try:
+                reason = self.loop(mono0, deadline_mono)
+            except DeadlineOverrun:
+                reason = "deadline"
+            self.ending = True
+            signal.alarm(0)
 
-            self.write({"kind": "end", "t": iso(now_local()), "reason": reason, "samples": seq})
+            self.write_end(reason)
             self.out.close()
             return 0
         except BaseException:

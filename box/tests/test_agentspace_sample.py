@@ -271,7 +271,21 @@ class TestMeasurement(SampleTestBase):
         stub = self.make_stub()
         self.start("cpu", "--interval", "1", "--match", stub.match)
         base = self.wait_session("cpu")
+        spawned = datetime.now().astimezone()
         marker = stub.spawn(BURN_CODE, "20")
+        # A sample taken while the child is alive, about 10 s in: tools.cpu_s MUST already
+        # count its CPU, not only the CPU of reaped children (cutime + cstime).
+        mid = self.wait_session(
+            "cpu",
+            lambda s: s["tools"]["procs"] == 1
+            and (parse_t(s["t"]) - spawned).total_seconds() >= 10,
+            timeout=60)
+        d_mid = mid["tools"]["cpu_s"] - base["tools"]["cpu_s"]
+        elapsed = (parse_t(mid["t"]) - parse_t(base["t"])).total_seconds()
+        self.assertGreaterEqual(d_mid, 5.0,
+                                "Mid-burn tools.cpu_s rose by only %.2f s" % d_mid)
+        self.assertLessEqual(d_mid, elapsed + 2.0,
+                             "Mid-burn tools.cpu_s rose by %.2f s in %.2f s" % (d_mid, elapsed))
         self.assertTrue(wait_for(lambda: os.path.exists(marker), 90),
                         "Burn child never finished")
         seq_done = self.last_seq("cpu")
@@ -290,7 +304,8 @@ class TestMeasurement(SampleTestBase):
         self.assertTrue(wait_for(lambda: os.path.exists(marker), 90),
                         "Memory child never became ready")
         seq_ready = self.last_seq("mem")
-        s = self.wait_session("mem", lambda s: s["seq"] > seq_ready)
+        # The scan of seq_ready + 1 can begin before the child writes its marker.
+        s = self.wait_session("mem", lambda s: s["seq"] > seq_ready + 1)
         self.assertGreaterEqual(s["tools"]["pss_kib"], 486 * 1024)
         self.assertGreaterEqual(s["tools"]["rss_kib"], 486 * 1024)
         self.assertLess(s["tools"]["pss_kib"], 700 * 1024,
@@ -308,14 +323,32 @@ class TestMeasurement(SampleTestBase):
         marker = stub.spawn(BURN_CODE, "1")
         self.assertTrue(wait_for(lambda: os.path.exists(marker), 20),
                         "Short child never finished")
-        self.assertEqual(self.last_seq("short"), s1["seq"],
-                         "A sample landed during the short build; the test is void")
+        if self.last_seq("short") != s1["seq"]:
+            self.skipTest("A sample landed during the short build; load stretched it")
         s2 = self.wait_session("short", lambda s: s["seq"] == s1["seq"] + 1, timeout=20)
         gap = (parse_t(s2["t"]) - parse_t(s1["t"])).total_seconds()
         self.assertGreaterEqual(gap, 4.0, "Samples were not 5 s apart")
         self.assertEqual(s2["tools"]["procs"], 0, "Child was still alive at the sample")
         d = s2["tools"]["cpu_s"] - s1["tools"]["cpu_s"]
         self.assertAlmostEqual(d, 1.0, delta=0.35, msg="tools.cpu_s rose by %.2f s" % d)
+
+    def test_session_mentioning_sampler_is_recorded(self):
+        # With a custom --match, a session whose command line also names agentspace-sample
+        # (R6) is still a session; only the sampler's own invocations are excluded.
+        stub = self.make_stub()
+        stub.root.kill()
+        stub.root.wait(timeout=5)
+        # No regex metacharacters, so the match text appears literally in the command line.
+        token = "stubroot%s" % uuid.uuid4().hex[:12]
+        root = subprocess.Popen(
+            [sys.executable, "-c", ROOT_CODE, token, stub.cmd_dir, "agentspace-sample"],
+            cwd=stub.cwd, start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        stub.root = root
+        self.start("mention", "--interval", "1", "--match", token)
+        s = self.wait_session("mention", timeout=20)
+        self.assertTrue(s["session"].startswith("%d-" % root.pid))
 
     def test_matching_process_inside_tree_is_not_a_second_session(self):
         stub = self.make_stub()
