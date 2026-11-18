@@ -66,9 +66,10 @@ its requirement, or says why it is declined.
     into a Windows path.
   - The prototype breaks this in one known case, an argument such as `-:x`, which its runtime
     refuses before the CLI starts, with exit 1 and no error document. That is a defect, not
-    behavior to copy.
+    behavior to copy (#0083).
 - **Every run that fails MUST still end with one error document and an exit code from
-  [the table](#exit-codes-and-errors)**, whatever stage it failed at.
+  [the table](#exit-codes-and-errors)**, whatever stage it failed at. The prototype's runtime
+  version check is such a stage: a runtime too old for it exits 1 with no error document (#0083).
 - **No command reads standard input, and no command prompts.** Every command MUST run unattended,
   with no terminal.
 
@@ -154,7 +155,7 @@ covers form only:
 - **To give a value that starts with `--`, or a value of `-h`, use the `=` form.**
 - **For any other value, the two forms MUST give the same result**, a value that contains a line
   feed included. The prototype treats `--project=<a value with a line feed>` as an unknown option
-  instead, which is a defect, not behavior to copy.
+  instead, which is a defect, not behavior to copy (#0083).
 
 **Usage errors** (`usage`, exit 2):
 - **An unknown command or subcommand.** Reading stops there, so nothing after it is checked, a
@@ -347,8 +348,10 @@ how they are made and removed, are [docs/state.md](state.md)'s.
   the lease behind every connection (D7).
 - **Its valid-before time is `expires_at`:** the issue time plus the TTL, exactly ([Times](#times)).
 - **Its valid-after time MUST NOT be later than the issue time, and SHOULD be 5 minutes before it
-  (#0029),** so that a host whose clock is a little behind the caller's still accepts a new
-  certificate. The back-dating does not count toward the TTL, and never moves `expires_at`.
+  (D24, #0029),** so that a host whose clock is a little behind the caller's still accepts a new
+  certificate. The back-dating does not count toward the TTL, and never moves `expires_at`. The
+  prototype does not back-date yet: its valid-after is the issue time, and #0029's point is met in
+  v0.05 (#0054).
 - **It permits a terminal (PTY) and port forwarding, and nothing else:** no agent forwarding, no
   X11 forwarding and no user rc file (D7). Port forwarding MUST stay permitted, because agentspace's
   board reaches a lease host through it (D12, D30).
@@ -1187,15 +1190,15 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 
 ## Hardening carried in
 
-**Every point of the two lease CLI hardening cards, and where this contract meets it (D28).** Each
-card is OBE once the Rust CLI (v0.05, #0054) meets every requirement below. The operator's cards,
-#0027 and #0034, are [docs/operator.md](operator.md)'s.
+**Every point of the lease CLI's hardening and defect cards, and where this contract meets it
+(D28).** Each card is OBE once the Rust CLI (v0.05, #0054) meets every requirement below. The
+operator's cards, #0027 and #0034, are [docs/operator.md](operator.md)'s.
 
 **#0029, harden lease credential issuing:**
 
 | Point | Carried in as |
 |---|---|
-| 1. Clock skew: validity starts at the caller's now | The certificate's valid-after SHOULD be 5 minutes before its issue time, and `expires_at` stays the issue time plus the TTL ([The credential](#the-credential)). |
+| 1. Clock skew: validity starts at the caller's now | The certificate's valid-after SHOULD be 5 minutes before its issue time, and `expires_at` stays the issue time plus the TTL (D24; [The credential](#the-credential)). |
 | 2. The lease ID check lets a trailing line feed and a trailing dot through | Every check matches the whole value ([Input tolerance](#input-tolerance)), and everything derived from a lease ID comes from its normalized form, which never ends in a dot ([Lease ID](#lease-id)). |
 | 3. The first lease on a fresh laptop creates a CA no host trusts | `create` and `renew` MUST NOT create the CA, and fail with `internal` when there is none ([The credential](#the-credential)). #0041 dropped its own copy of this point under D18, which was MVP only and is replaced by D28. |
 | 4. A failed signing leaves the key behind | A failed `create` leaves no key, certificate, alias or record, and never blocks a later `create` ([Concurrency and atomicity](#concurrency-and-atomicity)). |
@@ -1210,6 +1213,13 @@ card is OBE once the Rust CLI (v0.05, #0054) meets every requirement below. The 
 | 1. Credential errors reach `internal` unwrapped, with laptop paths, the user name and CA-check output | An `internal` message carries no absolute path, user name or other program's output ([Exit codes and errors](#exit-codes-and-errors)). |
 | 2. A `ready` record without its driver can be neither renewed nor released | A `ready` lease MUST be renewable, and one ever `ready` releasable, for as long as it is kept ([`renew`](#agentspace-lease-renew)). How the record keeps what that needs is [docs/state.md](state.md)'s, so its schema is left to that story (E0.04-T02-S01). |
 | 3. Release deletes files before writing the record, and renew re-signs before writing | A failed `renew` leaves the lease's expiry, TTL and certificate as they were, and a failed `release` never leaves a `ready` or `expired` lease without its credential; a retried `release` deletes whatever a failed one left ([Concurrency and atomicity](#concurrency-and-atomicity)). |
+
+**#0083, arguments refused or misread before parsing:**
+
+| Point | Carried in as |
+|---|---|
+| 1. An argument the runtime refuses before the CLI starts (`-:x`), or a runtime version check that fails, exits 1 with no error document | Every run that fails ends with one error document and an exit code from the table ([The program](#the-program)). |
+| 2. A line feed inside a `--flag=value` value makes it an unknown option, while the separate form gives `invalid_value` | The two forms give the same result for any value that is not a help request ([Command lines](#command-lines)). |
 
 ## Open questions
 
@@ -1230,8 +1240,8 @@ closes each one, or names the story that will.
 4. **How the prototype escapes strings in its JSON output**, for instance whether `'`, `<`, `>`,
    `&` or non-ASCII characters come out as `\u` escapes. This page allows any valid escaping; a
    conformance check that compares bytes would need to know.
-5. **The back-dating of a certificate's valid-after time (#0029):** this page chose 5 minutes as
-   the SHOULD. The architect or the clean-room review confirms the number.
+5. **The back-dating of a certificate's valid-after time (#0029):** settled by D24, which sets
+   5 minutes as the SHOULD. Kept here so the numbers of the questions below do not change.
 6. **Whether `agent-linux`'s tools are on the `PATH` of a command run without an interactive login
    shell**, as in `ssh <host_alias> node --version`. Today Node and Codex are put on the `PATH` by
    lines at the end of `ubuntu`'s `~/.bashrc`, after Ubuntu's early return for non-interactive
