@@ -148,6 +148,12 @@ Docs cite its cards as `#0001`.
   starts on any of its stories, and follows its last story to Ready For Review as soon as that
   story arrives there (Terry, 2026-11-17). The architect moves it both times. Its description
   carries the execution plan by turn (decision D14). Only Terry moves a card to Completed.
+- **Dependencies MUST be board relationships, not only text** (Terry, 2026-11-18). Each story is a
+  child of its epic. Each "Depends on" a card states is a `blocks` relationship from the card
+  depended on to the one that waits, between stories and between release epics alike. A defect
+  card carried into a story is linked with `references`, and a looser tie with `relates_to`
+  (`localswim relationship create <board> <source> <kind> <target>`). Until then the board held
+  none, and every dependency lived only in card text; 44 were added that day.
 - **A session SHOULD arm Terry's board watcher at its start**, as his global instructions
   describe: `C:\Projects\claude-localswim-watcher\watch.ps1 -Board agentspace -Reader agentspace`
   under the Monitor tool. The board is already in the watcher's `config.json`.
