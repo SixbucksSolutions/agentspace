@@ -328,8 +328,9 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
      seconds and was stopped. The agent MUST report the message, which names
      `~/agentspace-samples/<run>.error` when the sampler left one.
    - **`--match` is a Python regex**, searched in each process's full command line with NUL bytes
-     read as spaces. The default, `^(?:\S*/)?claude(?:\s|$)`, matches a process whose first
-     argument is `claude` or a path ending in `/claude`. A summary with no session rows means
+     read as spaces. The default, `^(?:\S*/)?(?:claude|ccd-cli/[^/\s]+)(?:\s|$)`, matches a
+     process whose first argument is `claude` or a path ending in `/claude`, and a desktop-app
+     session's `~/.claude/remote/ccd-cli/<version>`. A summary with no session rows means
      the match missed, and the agent MUST NOT read it as a zero footprint.
 2. **Confirm it is running:**
 

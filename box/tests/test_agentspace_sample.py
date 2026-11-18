@@ -504,6 +504,32 @@ class TestArguments(SampleTestBase):
         self.assertAlmostEqual(span, 12 * 3600, delta=5)
         self.sample("stop", "edges")
 
+    def test_default_match_takes_cli_and_desktop_app_sessions_only(self):
+        # The default is read from a run's start line, since the script MUST NOT be imported.
+        self.start("dmatch", "--for", "5s")
+        default = re.compile(self.records("dmatch")[0]["match"])
+        self.sample("stop", "dmatch")
+        sessions = [
+            "claude",
+            "claude -p hello",
+            "/home/ubuntu/.local/bin/claude --resume",
+            # A desktop-app session over SSH (E0.03-T02-S01).
+            "/home/ubuntu/.claude/remote/ccd-cli/2.1.325-697a82e23a44 --output-format stream-json",
+        ]
+        others = [
+            "/bin/bash -c source /home/ubuntu/.claude/shell-snapshots/snapshot-bash-1.sh && ls",
+            "grep claude",
+            "bash -c claude -p hi",
+            "/usr/bin/python3 /usr/local/bin/agentspace-sample _sample",
+            "/home/ubuntu/.claude/remote/srv/87375cc7/server --serve --socket /home/ubuntu/.claude/remote/run/a/rpc.sock",
+            "/home/ubuntu/.claude/remote/srv/87375cc7/server --bridge --socket x",
+            "/home/ubuntu/.claude/remote/ccd-cli/",
+        ]
+        for argv in sessions:
+            self.assertIsNotNone(default.search(argv), "Missed a session: %r" % argv)
+        for argv in others:
+            self.assertIsNone(default.search(argv), "Matched a non-session: %r" % argv)
+
 
 class TestRecordFormat(SampleTestBase):
     def test_record_parses_and_matches_format(self):

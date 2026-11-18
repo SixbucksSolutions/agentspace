@@ -30,7 +30,10 @@ VERSION = "agentspace-sample 1"
 # box is one native `claude` process, whose argv[0] is the path it was called by, such as
 # /home/ubuntu/.local/bin/claude. Anchoring on argv[0] keeps out its tool calls' `bash -c` lines
 # (which name ~/.claude/shell-snapshots), a wrapper shell, `grep claude`, and this sampler.
-DEFAULT_MATCH = r"^(?:\S*/)?claude(?:\s|$)"
+# A desktop-app session over SSH is the same CLI under another name (E0.03-T02-S01, 2026-11-18):
+# argv[0] is ~/.claude/remote/ccd-cli/<version>, such as .../ccd-cli/2.1.325-697a82e23a44, and its
+# parent is the app's bridge, ~/.claude/remote/srv/<hash>/server, which MUST NOT match.
+DEFAULT_MATCH = r"^(?:\S*/)?(?:claude|ccd-cli/[^/\s]+)(?:\s|$)"
 
 RUN_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 FOR_RE = re.compile(r"([0-9]+)([smh])")
