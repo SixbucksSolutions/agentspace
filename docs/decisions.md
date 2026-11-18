@@ -1474,6 +1474,12 @@ prototyping happy paths."
 (the CA, lease keys and certificates, the localswim token hash) MUST live under
 `%USERPROFILE%\.agentspace`. It MUST NOT live under `%LOCALAPPDATA%` or `%APPDATA%`. Story E2.09
 moves it.
+- **The instance-ID cache is laptop state too, so the rewrite MUST keep it under
+  `%USERPROFILE%\.agentspace`** (architect, 2026-11-18, settling docs/operator.md's Q7 and
+  docs/state.md's Q1). The prototype keeps it as `.instance-id` in the checkout, which this rule
+  lists as a requirement the prototype does not meet. It is only a cache, rebuilt from the stack's
+  output when missing, so a rewrite needs no migration from the checkout's copy. Build output
+  (`.build\`) is not state, and MAY stay in the checkout.
 
 **Why:**
 - **The Claude desktop app is MSIX-packaged, and Windows redirects every write that a packaged
