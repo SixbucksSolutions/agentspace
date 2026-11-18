@@ -269,6 +269,10 @@ XML, so they pass with the real task registered.**
   running reporter, which re-reads the file each pass, reports it back onto Terry's phone.
 - **`localswim card list` pages its results** (`--limit`, `--cursor`, and `next_cursor` in the
   output). A single call is not the whole board.
+- **A localswim card says it is archived with `archived` (`true` or `false`), and has no
+  `archived_at` field.** Outside strict mode, reading `archived_at` gives an empty value, which
+  read as "not archived" and put a false claim about #0065 into the first draft of this file. Read
+  a field only after seeing it in a card's output.
 - **The watcher's `lib\env.ps1` runs in strict mode**, so a property a JSON object lacks throws
   instead of reading as null. Lanes were matched by ID prefix instead.
 - **Archiving a desktop-app session can leave its SSH connections running on the laptop** (#0064
@@ -292,11 +296,10 @@ XML, so they pass with the real task registered.**
 | #0029, #0041 | The lease CLI's hardening | v0.04's specs, met by v0.05 |
 | #0043 | The CloudWatch backstop stops a quiet box | Replaced by v0.08 |
 
-**Cards to tidy, which need Terry's hand because Bot cannot move a card out of Backlog:**
+**Cards tidied at cutover** (Bot cannot move a card out of Backlog, so these took Terry's hand):
 - **#0042, #0044 and #0028, the gaps v0.02 fixed, are closed.** Terry moved them to Completed at
   cutover (board revision 378), and each carries a note naming the stories that met it.
-- **#0065 is superseded by #0067** and was meant to be archived when #0067 was created; it is still
-  in Backlog, unarchived.
+- **#0065, superseded by #0067, is archived**, since #0067 was created on 2026-11-17.
 
 ## Rules that are easy to break
 
