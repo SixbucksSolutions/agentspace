@@ -110,6 +110,8 @@ when Terry says so (D14).
 up.
 
 - **GPU sizes**, for when an agent needs to run a model rather than call one.
+- **Requests that state what an agent needs, not only a profile's name**, such as a libc of
+  `glibc`, `musl` or `any` matched against what each profile has (D4).
 - **Board-driven leases.** v0.12 reads a plan from the board; this goes further: moving an epic to
   In Progress asks for its lease, and closing it releases the lease.
 - **Sub-leases.** An agent on a lease asks for more compute for its own helpers.

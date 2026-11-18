@@ -82,6 +82,12 @@ its own, unsatisfiable until a driver supports it (D5). E0.04-T01-S02 (#0074) st
   `scratch` container that runs a CGO-disabled Go binary. A `none` profile has no libc version,
   and promises nothing that needs one. So the family is one of `glibc`, `musl` or `none`, and only
   the first two carry a minimum version.
+- **A profile states what a host has; what an agent needs is a separate value, for later**
+  (Terry, 2026-11-18, taking the architect's recommendation). A need would be `glibc`, `musl` or
+  `any`, where `any` matches every profile, `none` included: the CGO-disabled Go binary runs
+  whether a libc is there or not. `any` is never a profile's value, since a host cannot have
+  "any" libc. Today a request names a profile, never a libc, so no request carries a need. It is
+  deferred until after 1.0, in the roadmap's "Someday, maybe".
 
 **Windows hosts are in scope (Terry, 2026-11-18):** "if we need a windows EC2 instance as part of
 the agentspace fleet, that's in scope. Whole point is to be a multi-platform agent
