@@ -233,11 +233,12 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      a kill included. A one-pass run does not use it.
    - **End in Task Scheduler stops only the launcher** and leaves the keeper's pwsh running; the
      next firing's keeper then exits on the lock and does not loop beside it (E0.02-T04-S03,
-     E0.02-T05-S01). The first keeper keeps the board held meanwhile. To stop the keeper, its pwsh
-     MUST be stopped by its checked PID after the task is ended. To keep it stopped, the task MUST
-     also be disabled (`Disable-ScheduledTask`) or removed with `-Uninstall`; `-Uninstall` ends the task the same
-     way, so its keeper's pwsh MUST still be stopped by PID. A re-registration is refused while a
-     keeper runs, for the same reason.
+     E0.02-T05-S01). The first keeper keeps the board held meanwhile, and each firing logs one
+     `another keeper is running` line, one a minute, until that keeper is stopped. To stop the
+     keeper, its pwsh MUST be stopped by its checked PID after the task is ended. To keep it
+     stopped, the task MUST also be disabled (`Disable-ScheduledTask`) or removed with
+     `-Uninstall`; `-Uninstall` ends the task the same way, so its keeper's pwsh MUST still be
+     stopped by PID. A re-registration is refused while a keeper runs, for the same reason.
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that

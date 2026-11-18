@@ -1027,8 +1027,10 @@ try {
         Write-Result $ran 'Watch single: the first keeper logged its first pass'
       }
       $clock = [Diagnostics.Stopwatch]::StartNew()
-      $p2 = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '3') $stub -Tag 'second'
-      $ended = $p2.WaitForExit(20000)
+      # A keeper without the lock would run 3 passes 10 seconds apart, so it would take at least 20
+      # seconds: the 10-second check below tells it from one that exits on the lock.
+      $p2 = Start-Watch @('-IntervalSeconds', '10', '-MaxPasses', '3') $stub -Tag 'second'
+      $ended = $p2.WaitForExit(40000)
       $clock.Stop()
       if (-not $ended) { Stop-OwnTree $p2.Id }
       Write-Result ($ended -and $p2.ExitCode -eq 0) "Watch single: the second keeper exits 0 (ended $ended, code $(if ($ended) { $p2.ExitCode } else { 'none' }))"

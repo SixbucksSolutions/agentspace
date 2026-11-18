@@ -160,7 +160,9 @@
 # A usage error exits 2. -FastFailureSeconds (default 60) is hidden, for tests only. A rotation of
 # board-holder-ssh.log (past 1 MB, to board-holder-ssh.log.1) logs "rotated lease=- alias=- pid=-".
 # Backoff waits log "<YYYY-MM-DDTHH:MM:SSZ> backoff seconds=<n>" to board-holder.log, and release grace
-# waits log "<YYYY-MM-DDTHH:MM:SSZ> grace seconds=<n>" (D30; described above the Watch section).
+# waits log "<YYYY-MM-DDTHH:MM:SSZ> grace seconds=<n>" (D30; described above the Watch section). A
+# -Watch that finds another keeper running logs "<YYYY-MM-DDTHH:MM:SSZ> another keeper is running
+# pid=<n>" and exits 0 (board-holder-keeper.lock, under Files above).
 #
 # The arguments are parsed by this script, not by PowerShell's binder, so that every usage error
 # exits 2: names are matched exactly, case ignored, and each takes one value.
@@ -1439,9 +1441,9 @@ function Wait-Release([int]$Failures) {
 # FileShare.Read, so that no second writer can open the file, and kept open in $script:KeeperLock
 # until the process ends. Windows closes the handle when the process ends for any reason, a kill
 # included, so the lock cannot outlive its keeper. The handle is not inheritable (the .NET default),
-# and the holder is started through Win32_Process.Create, outside this process's handle table, so
-# the holder never carries it. The PID written to the file is for the log line of a second keeper
-# only; the share mode is the lock.
+# the -Launch launcher is created through Win32_Process.Create, outside this process's handle table
+# and job, and it passes the holder only its two log handles, so the holder never carries it. The
+# PID written to the file is for the log line of a second keeper only; the share mode is the lock.
 # - Taken: the keeper goes on.
 # - Held by another keeper (a sharing violation): logs "<time> another keeper is running pid=<n>",
 #   pid=- when the file cannot be read, and exits 0 without a pass. It tries once and never waits.

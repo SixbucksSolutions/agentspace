@@ -1851,9 +1851,15 @@ whole life, so one keeper runs at a time.
   minute. A one-pass run does not use this lock and keeps `board-holder.lock` as before.
 - **The lock is the OS's.** It is a `FileStream` opened with `FileShare.Read` and kept open until
   the process ends, so a keeper that is killed releases it. The PID written in the file is for the
-  log line only; the share mode is the lock. The holder does not inherit it: the handle is not
-  inheritable, and the holder is started through `Win32_Process.Create`, outside the keeper's
-  handle table and job.
+  log line only; the share mode is the lock, so the PID can be stale when something other than a
+  keeper holds the file (a scanner, for a moment), and the next firing tries again. The holder
+  does not inherit it: the handle is not inheritable, and the `-Launch` launcher is created
+  through `Win32_Process.Create`, outside the keeper's handle table and job, and passes the holder
+  only its two log handles.
+- **An orphaned keeper logs once a minute.** After End, until the orphan is stopped by its PID,
+  each firing's keeper logs one `another keeper is running` line, about 90 KB of
+  `board-holder.log` a day. That is accepted: End is a step Terry or an agent takes on purpose, and
+  the README says to stop the keeper's pwsh after it.
 - **Left out: the card's optional item.** `BoardHolderLauncher.exe` does not put pwsh in a
   kill-on-close job, so End in Task Scheduler still leaves the keeper running. Rebuilding the
   launcher exe needs a re-install of the task, and the lifetime lock already closes the gap that
