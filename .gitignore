@@ -4,3 +4,6 @@ infra/local.parameters
 # The SSH CA lives in %USERPROFILE%\.agentspace\ca (D17, D21); a copy MUST NOT land in the repo.
 agentspace_ca
 agentspace_ca.pub
+
+# Python's bytecode cache, made by running box/tests
+__pycache__/
