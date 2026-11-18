@@ -1732,6 +1732,12 @@ or later we will hit double digit turns or stories, so let's plan for it now."
 - **The name is the execution plan.** A story's turn is read from its name, so laying out the turns
   and naming the stories are one step. A story whose entry requirements change MUST be renamed
   with them.
+  - **Changed by Terry, 2026-11-18: turns are laid out one at a time.** When an epic is broken
+    into stories, only its first turn becomes cards. The later turns stay an outline in the epic's
+    execution plan, and each turn's cards are made once every PR of the turn before is merged,
+    with that turn's findings in hand. The name still carries the turn. In v0.04, laying out every
+    turn at once cost a re-plan when T02's sorting turned T03 into three new stories and pushed
+    #0080 to T04.
 - **Docs, pull requests and conversation MUST cite a release story the same way:** `E0.02-T03-S01`.
 - **Its branch is the name in lowercase, under `vX.YY/`**, as in `v0.02/e0.02-t03-s01`.
 - **A release's turns are `vX.YY-Tnn`**, as in `v0.02-T03`, so they never collide with the MVP's T1
