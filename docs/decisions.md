@@ -2083,6 +2083,48 @@ D27's per-agent footprint is measured.
 **Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
 or counts a shared library four times, sizes every host wrong.
 
+**Findings from story E0.03-T01-S01 (2026-11-18).** D33 stands. One throwaway lease, 4 CPUs and
+about 210 processes. Times are Pacific Standard Time, the box's and the laptop's, with UTC beside.
+- **A Claude Code session is one native `claude` process** (2.1.326, a binary under
+  `~/.local/share/claude/versions/`), whose argv[0] is the path it was called by. Each tool call is
+  a child `bash -c` that sources `~/.claude/shell-snapshots/`, and a subagent adds no process. No
+  helper ran under a `-p` session with no MCP servers (1:45am, 09:45Z); an interactive or MCP
+  session is unverified.
+- **The default `--match` is `^(?:\S*/)?claude(?:\s|$)`, anchored on argv[0].** A bare `claude`
+  matched the tool calls' `bash -c`, the SSH wrapper's shell, `grep claude` and the sampler's own
+  `--match`; the anchor keeps all four out. **Known gap:** a launch whose argv[0] is not
+  `.../claude`, such as an npm install's `node .../cli.js`, is not matched, and MUST be given its
+  own `--match`.
+- **Live, from 1:55am to 2:01am (09:55Z to 10:01Z),** the sampler outlived the connection that
+  started it, and took 160 samples with no gap. A `claude -p` session's 20-second burn was exactly
+  one session, with no wrapper: tools.cpu_s rose 20.02 s and self.cpu_s 0.74 s.
+- **Overhead is 0.113% of one core** at the default 2 seconds (sampler_cpu_s rose 0.36 s in 318 s),
+  under the card's 1%.
+- **The host line checks the sessions.** In the burn the host and the session sum agreed each
+  sample (1.01 against 1.00 to 1.01 cores; cpu_total_s grew 3.98 to 4.01 s a second). From 1:59am
+  to 2:01am (09:59Z to 10:01Z) the host ran 3.00 to 3.13 cores with no session alive: the
+  reviewer's 3-thread experiment, under another match. A session sum below the host's is work
+  outside every session, which is what the host line is for.
+- **"Every live descendant" (#0069) misses work a session orphans; #0082 is to count it.** A tool
+  call's `cmd &`, `nohup` or `setsid` is reparented to PID 1, since `claude` is no subreaper, and
+  Docker's work runs under containerd and `systemd-run`'s under systemd. A stub session's `sh -c
+  "<8 s burn> & exit 0"` raised the host about 1 core for 8 s while tools.cpu_s stayed 0.0, procs 0.
+  The host totals still show it. **v0.03-T02 (#0071) compares host CPU with the session sums plus
+  the idle baseline, as a tripwire that can pull #0082 into v0.03 before T03.**
+- **Smaller errors, recorded and not fixed.** A child reaped mid-scan can dip tools.cpu_s for one
+  sample (not seen in 300 samples at 0.5 s); a matching process whose matching parent dies
+  mid-scan can be its own session for one sample; another user's process reads 0 PSS and RSS;
+  cpu_busy_s can fall slightly, since iowait is not monotonic.
+- **A session whose working directory cannot be read is recorded with cwd "", and
+  agentspace-footprint labels it `?`.** The card implies a string, so it is never null.
+- **Choices beyond the card.** `sampler.lock` (held while running) and `sampler.json` (the marker)
+  are in `~/agentspace-samples/`. A crash writes `<run>.error` and no end line. `start` runs the
+  hidden `_sample` command with its settings in the environment, so `--match` is never on the
+  sampler's command line, and only the script's own invocations are excluded from sessions.
+  cpu_total_s sums /proc/stat's first 8 fields, since guest is already in user. A sample stuck 60 s
+  past the deadline is ended by SIGALRM, or by a watchdog thread 15 s later when a /proc read is
+  blocked in the kernel.
+
 ### D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype
 
 **Decided, architect, 2026-11-18, when Terry had v0.04 (#0030) broken into stories.** It settles

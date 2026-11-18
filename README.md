@@ -319,11 +319,14 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
    other defaults suit a turn: a sample every 2 seconds, and the default match. Without `--for`
    the deadline is 8 hours away. They MAY be changed with `--interval <seconds>` (0.5 to 60),
    `--for <duration>` (`30m`, `8h` or `90s` style; above 12h is refused) and `--match <regex>`.
-   - **Exit 2** means the record already exists, or a sampler is already running: one runs on
-     the box at a time. For an existing record, the agent MUST pick a new `<run>` and repeat
-     step 1. For a running sampler, it MUST run `agentspace-sample status` the same way, MUST NOT
-     stop a run it did not start, and MUST wait for that run to end or ask agentspace's
-     architect.
+   - **Exit 2** means the record already exists, a sampler is already running (one runs on the
+     box at a time), or an argument was refused; the message on stderr says which. For an
+     existing record, the agent MUST pick a new `<run>` and repeat step 1. For a running sampler,
+     it MUST run `agentspace-sample status` the same way, MUST NOT stop a run it did not start,
+     and MUST wait for that run to end or ask agentspace's architect.
+   - **Exit 1** means the sampler did not start: it exited, or wrote no start line within 5
+     seconds and was stopped. The agent MUST report the message, which names
+     `~/agentspace-samples/<run>.error` when the sampler left one.
    - **`--match` is a Python regex**, searched in each process's full command line with NUL bytes
      read as spaces. The default, `^(?:\S*/)?claude(?:\s|$)`, matches a process whose first
      argument is `claude` or a path ending in `/claude`. A summary with no session rows means
@@ -353,8 +356,9 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
    The sampler writes its end line within one interval. `stop` waits up to three intervals,
    prints the end line's reason, and exits 0. It does the same for a run that has already ended,
    such as at its deadline.
-   - **Exit 1** means the record has no end line: the sampler still runs, or was killed. The
-     agent MUST wait one more interval and run `status`. If the sampler still runs, the agent
+   - **Exit 1** means the record has no end line: the sampler still runs, or was killed, or the
+     record was deleted during the run, which the message says. The agent MUST wait one more
+     interval and run `status`. If the sampler still runs, the agent
      MUST end it with `kill <PID>`, the PID that `start` printed and `status` shows, which writes
      the end line with the reason `signal`, and MUST report it. A record with no end line is
      still summarized, and `agentspace-footprint` says so.
