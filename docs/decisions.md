@@ -12,22 +12,26 @@ these decisions serve is in [roadmap.md](roadmap.md).
 - **Replaced** is a decision that a later decision has replaced. It names the decision that
   replaced it, and it no longer binds; its text stays as history.
 - **Direction** is where things are headed, binding on design now, and built later.
+- **A Direction becomes Decided once it is built**, and its status says where (D30).
 - **Open** questions are listed at the end, each with the card that settles it.
 
-**MVP only and Replaced differ in what has taken the place.**
+**MVP only and Replaced differ in what has taken its place.**
 - **A decision is MVP only while its replacement is still to be built:** a card or a release,
   such as #0011 or v0.08. It still describes today's prototype until that lands.
 - **A decision is Replaced once a later decision has taken its place.** D18 began as MVP only,
   and became Replaced when D28 replaced it, so its opening still reads "MVP only. Replaced by
-  D28" and its status is Replaced.
+  D28" and its status is Replaced. A Replaced decision MAY still describe the prototype until its
+  replacement is built (D18).
 - **A decision replaced only in part keeps the status of the part that stands**, and its status
   says in a few words what the later decision replaced, naming it (D14, for one).
+- **A decision that is MVP only in part is Decided for the rest**, and its status says which part
+  and what replaces or revisits it (D24).
 
 **Every decision MUST have exactly one status**, in the first bold text of its header block,
 directly under its heading. Where its opening does not state one plainly, a line
 `**Status: ...**` at the top of the block does, and that line governs. The index below MUST match
-the headers exactly: the status word for a decision with no such line, and the whole line for one
-with it.
+the headers exactly: the status word for a decision with no such line, and for one with it, the
+line's text after `Status:`, without its full stop.
 
 ## Index
 
@@ -36,15 +40,15 @@ with it.
 
 - [D1. Clients never know the backend](#d1-clients-never-know-the-backend): Decided
 - [D2. The unit is a lease](#d2-the-unit-is-a-lease): Decided
-- [D3. SSH credential per agent, isolation per project](#d3-ssh-credential-per-agent-isolation-per-project): Direction; its isolation half was replaced by D25
+- [D3. SSH credential per agent, isolation per project](#d3-ssh-credential-per-agent-isolation-per-project): Decided; its isolation half was replaced by D25
 - [D4. Platform as `os/arch`; software as a named profile; no distro field](#d4-platform-as-osarch-software-as-a-named-profile-no-distro-field): Direction
 - [D5. An unmet request is unsatisfiable, never quietly downgraded](#d5-an-unmet-request-is-unsatisfiable-never-quietly-downgraded): Decided
 - [D6. Drivers place leases, not hosts](#d6-drivers-place-leases-not-hosts): Direction; narrowed by D25 to one project per host
 - [D7. SSH access through short-lived certificates from an agentspace CA](#d7-ssh-access-through-short-lived-certificates-from-an-agentspace-ca): Decided
-- [D8. The MVP control plane is a CLI on the laptop](#d8-the-mvp-control-plane-is-a-cli-on-the-laptop): MVP only
+- [D8. The MVP control plane is a CLI on the laptop](#d8-the-mvp-control-plane-is-a-cli-on-the-laptop): MVP only; replaced by card #0011
 - [D9. Reachability belongs to the driver](#d9-reachability-belongs-to-the-driver): Decided
-- [D10. Releasing a lease does not revoke its certificate](#d10-releasing-a-lease-does-not-revoke-its-certificate): MVP only
-- [D11. Today's idle stop stays](#d11-todays-idle-stop-stays): MVP only
+- [D10. Releasing a lease does not revoke its certificate](#d10-releasing-a-lease-does-not-revoke-its-certificate): MVP only; replaced by card #0010
+- [D11. Today's idle stop stays](#d11-todays-idle-stop-stays): MVP only; replaced by v0.08 (#0048)
 - [D12. Board access is unchanged](#d12-board-access-is-unchanged): MVP only; replaced by card #0008, and its hand-run holder by D30
 - [D13. arm64 is the default platform](#d13-arm64-is-the-default-platform): Decided
 - [D14. Roadmap horizons, epics before stories](#d14-roadmap-horizons-epics-before-stories): Decided; its horizons were replaced by D26, and its story names for releases by D29
@@ -52,7 +56,7 @@ with it.
 - [D16. Roles: architect, dev lead per turn, subagents per story](#d16-roles-architect-dev-lead-per-turn-subagents-per-story): Decided
 - [D17. The CA key lives on the laptop, owner-only and without a passphrase](#d17-the-ca-key-lives-on-the-laptop-owner-only-and-without-a-passphrase): MVP only; replaced by card #0011, and its location by D21
 - [D18. The lease CLI is PowerShell 7](#d18-the-lease-cli-is-powershell-7): Replaced by D28
-- [D19. The MVP's bar is the happy path](#d19-the-mvps-bar-is-the-happy-path): Decided
+- [D19. The MVP's bar is the happy path](#d19-the-mvps-bar-is-the-happy-path): Decided; its happy-path bar for stories and reviews is MVP only, and D34 carries the hardening it deferred into v0.04's specs
 - [D20. The clean-room team gets specs and vision, never the prototype's code](#d20-the-clean-room-team-gets-specs-and-vision-never-the-prototypes-code): Decided
 - [D21. Laptop state lives in %USERPROFILE%\.agentspace, never in AppData](#d21-laptop-state-lives-in-userprofileagentspace-never-in-appdata): Decided
 - [D22. The architect keeps a 10-minute watchdog on each dev lead](#d22-the-architect-keeps-a-10-minute-watchdog-on-each-dev-lead): Decided
@@ -63,7 +67,7 @@ with it.
 - [D27. A host is sized by concurrency, never by model or effort](#d27-a-host-is-sized-by-concurrency-never-by-model-or-effort): Direction
 - [D28. agentspace is Rust by v0.06; PowerShell was the prototype's](#d28-agentspace-is-rust-by-v006-powershell-was-the-prototypes): Decided
 - [D29. A release's stories are `EX.YY-Tnn-Smm`, named for their turn](#d29-a-releases-stories-are-exyy-tnn-smm-named-for-their-turn): Decided
-- [D30. A keeper on the laptop holds the board's forwards](#d30-a-keeper-on-the-laptop-holds-the-boards-forwards): Direction
+- [D30. A keeper on the laptop holds the board's forwards](#d30-a-keeper-on-the-laptop-holds-the-boards-forwards): Decided; built in v0.02
 - [D31. Each story's card names every subagent, run in parallel where reasonable](#d31-each-storys-card-names-every-subagent-run-in-parallel-where-reasonable): Decided
 - [D32. A lease's box runs in the laptop's time zone](#d32-a-leases-box-runs-in-the-laptops-time-zone): Decided
 - [D33. v0.03 measures each agent session's process tree, split into the session and its tool calls](#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls): Decided
@@ -91,7 +95,7 @@ container of its own.
 
 ### D3. SSH credential per agent, isolation per project
 
-**Status: Direction; its isolation half was replaced by D25.**
+**Status: Decided; its isolation half was replaced by D25.**
 
 **Direction; MVP only for the isolation half.** Each lease gets its own SSH key and certificate,
 so each agent's access can be told apart, expired and audited on its own. The isolation boundary
@@ -395,6 +399,8 @@ only `TrustedUserCAKeys` and `PermitRootLogin`.
   section appears for a trusted CA's expired or invalid certificate.
 
 ### D8. The MVP control plane is a CLI on the laptop
+
+**Status: MVP only; replaced by card #0011.**
 
 **MVP only.** `agentspace lease ...` runs on the laptop, prints JSON, and keeps lease state in a
 local file. There is no server to run.
@@ -942,6 +948,8 @@ alias, the desktop app included. The evidence is in
 
 ### D10. Releasing a lease does not revoke its certificate
 
+**Status: MVP only; replaced by card #0010.**
+
 **MVP only.** Release deletes the lease's key on the laptop, and the certificate stays valid until
 it expires. TTLs are short, so the exposure is bounded. **Replaced by card #0010**, which pushes a
 revocation list (KRL) to hosts.
@@ -1031,6 +1039,8 @@ client's close on to sshd, and every dead session that had ended did so by `Time
 responding`, never by a disconnect. A live session open at release keeps running, as before.
 
 ### D11. Today's idle stop stays
+
+**Status: MVP only; replaced by v0.08 (#0048).**
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
 no CPU work. An agent holding a lease but doing nothing can still have the box stopped under it;
@@ -1374,6 +1384,8 @@ TTL as a parameter. D24 settled it in story E1.01.
 
 ### D19. The MVP's bar is the happy path
 
+**Status: Decided; its happy-path bar for stories and reviews is MVP only, and D34 carries the hardening it deferred into v0.04's specs.**
+
 **Decided, Terry, 2026-11-16:** "as it's a lean MVP, nothing gets us pot committed, we are largely
 prototyping happy paths."
 
@@ -1698,6 +1710,8 @@ README: that takes a `policy grant`). A release epic leaves Backlog by Terry's h
 a release is always his click. The architect MUST NOT grant Bot that move on its own.
 
 ### D30. A keeper on the laptop holds the board's forwards
+
+**Status: Decided; built in v0.02.**
 
 **Direction, architect, 2026-11-17; built in v0.02 by 0.02.T1.2 and 0.02.T2.2, shown in E0.02-T03-S01.**
 Replaces D12's hand-run holder (card #0042).
