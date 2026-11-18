@@ -45,7 +45,8 @@
 #   "skipped lease=- alias=- pid=- reason=locked". reason is written for failed and skipped only, is
 #   the last field and runs to the end of the line; it never holds a control character.
 # - board-holder-ssh.log, the holder's stdout and stderr, appended. It holds raw bytes in the
-#   console's code page, and nothing parses it. Its growth is not bounded yet.
+#   console's code page, and nothing parses it. Past 1 MB, the next pass renames it to
+#   board-holder-ssh.log.1, replacing any older one, and a new holder starts a new log.
 # - board-holder.lock, held with FileShare.None for the whole pass, so that two passes never both
 #   start a holder (one holder per host, D30). A pass that cannot take it in 10 seconds logs
 #   skipped with reason=locked, and exits 0.
@@ -140,7 +141,16 @@
 #   only when the recorded holder is gone or was stopped.
 #
 # A holder that fails is not restarted in a loop: each pass starts at most one, and backoff
-# between passes belongs to -Watch, which 0.02.T2.2 adds (D14, D30).
+# between passes belongs to -Watch (0.02.T2.2; D14, D30), described above the Watch section below:
+#
+#   pwsh -NoProfile -File scripts\board-holder.ps1 -Watch [-SshExe <path>] [-IntervalSeconds <n>]
+#     [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>]
+#
+# Each is a whole number from 1 to 86400. Defaults: interval 30, base 30, max 300, no limit on
+# passes; max MUST NOT be less than base, and -Now MUST NOT be given with -Watch. A usage error
+# exits 2. -FastFailureSeconds (default 60) is hidden, for tests only. A rotation of
+# board-holder-ssh.log (past 1 MB, to board-holder-ssh.log.1) logs "rotated lease=- alias=- pid=-".
+# Backoff waits log "<YYYY-MM-DDTHH:MM:SSZ> backoff seconds=<n>" to board-holder.log.
 #
 # The arguments are parsed by this script, not by PowerShell's binder, so that every usage error
 # exits 2: names are matched exactly, case ignored, and each takes one value.
@@ -151,12 +161,19 @@ $ErrorActionPreference = 'Stop'
 function Exit-Usage([string]$Message) {
   [Console]::Error.WriteLine("board-holder.ps1: $Message")
   [Console]::Error.WriteLine('Usage: board-holder.ps1 [-SshExe <full path>] [-Now <YYYY-MM-DDTHH:MM:SSZ>]')
+  [Console]::Error.WriteLine('       board-holder.ps1 -Watch [-SshExe <full path>] [-IntervalSeconds <n>] [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>]')
   exit 2
 }
 
 $SshExe = 'C:\Windows\System32\OpenSSH\ssh.exe'
 $Now = $null
 $Launch = $null
+$Watch = $false
+$IntervalSeconds = 30
+$MaxPasses = 0
+$BackoffBaseSeconds = 30
+$BackoffMaxSeconds = 300
+$FastFailureSeconds = 60
 $given = @{}
 for ($i = 0; $i -lt $args.Count; $i++) {
   $raw = [string]$args[$i]
@@ -164,10 +181,17 @@ for ($i = 0; $i -lt $args.Count; $i++) {
     '-sshexe' { 'SshExe' }
     '-now' { 'Now' }
     '-launch' { 'Launch' }
+    '-watch' { 'Watch' }
+    '-intervalseconds' { 'IntervalSeconds' }
+    '-maxpasses' { 'MaxPasses' }
+    '-backoffbaseseconds' { 'BackoffBaseSeconds' }
+    '-backoffmaxseconds' { 'BackoffMaxSeconds' }
+    '-fastfailureseconds' { 'FastFailureSeconds' }
     default { $null }
   }
   if (-not $name) { Exit-Usage "Unknown argument '$raw'." }
   if ($given.ContainsKey($name)) { Exit-Usage "-$name is given twice." }
+  if ($name -ceq 'Watch') { $given[$name] = $true; continue }
   if ($i + 1 -ge $args.Count -or [string]::IsNullOrWhiteSpace([string]$args[$i + 1]) -or ([string]$args[$i + 1]).StartsWith('-')) {
     Exit-Usage "-$name needs a value."
   }
@@ -176,6 +200,18 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 if ($given.ContainsKey('SshExe')) { $SshExe = $given['SshExe'] }
 if ($given.ContainsKey('Now')) { $Now = $given['Now'] }
 if ($given.ContainsKey('Launch')) { $Launch = $given['Launch'] }
+if ($given.ContainsKey('Watch')) { $Watch = $true }
+foreach ($n in 'IntervalSeconds', 'MaxPasses', 'BackoffBaseSeconds', 'BackoffMaxSeconds', 'FastFailureSeconds') {
+  if (-not $given.ContainsKey($n)) { continue }
+  if (-not $Watch) { Exit-Usage "-$n is for -Watch." }
+  $parsed = 0
+  if (-not [int]::TryParse($given[$n], [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 86400) {
+    Exit-Usage "-$n '$($given[$n])' is not a whole number from 1 to 86400."
+  }
+  Set-Variable -Name $n -Value $parsed
+}
+if ($Watch -and $Now) { Exit-Usage '-Now is not allowed with -Watch.' }
+if ($BackoffMaxSeconds -lt $BackoffBaseSeconds) { Exit-Usage '-BackoffMaxSeconds is less than -BackoffBaseSeconds.' }
 . (Join-Path $PSScriptRoot 'lease-state.ps1')
 
 if (-not ('Agentspace.BoardHolder.Native' -as [type])) {
@@ -851,8 +887,27 @@ function Write-HolderLog {
     if (-not $text) { $text = 'Unknown.' }
     $line += " reason=$text"
   }
-  [System.IO.File]::AppendAllText($script:LogPath, $line + "`n", $script:Utf8)
+  Add-LogLine $line
   Write-Output $line
+}
+
+# Appends one line to board-holder.log. The file is opened for append with FileShare.ReadWrite, so a
+# reader or another writer that shares the file does not block it, and an open that still fails (a
+# writer that does not share it, or a scanner holding it for a moment) is tried up to 5 times, 50
+# ms apart, before the error is thrown. Every write to board-holder.log MUST go through here.
+function Add-LogLine([string]$Line) {
+  $bytes = $script:Utf8.GetBytes($Line + "`n")
+  for ($try = 1; ; $try++) {
+    try {
+      $stream = [System.IO.FileStream]::new($script:LogPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::ReadWrite)
+      try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+      return
+    } catch {
+      if ($try -ge 5) { throw }
+      Start-Sleep -Milliseconds 50
+    }
+  }
 }
 
 # The record as a hashtable, or $null when there is none or it is not a valid record. A record that
@@ -1069,6 +1124,10 @@ function Invoke-HolderPass {
   $broken = $script:HolderCommand::Check()
   if ($broken.Count -gt 0) { throw "The holder command matcher failed its own checks: $($broken -join '; ')" }
 
+  $script:PassEvent = $null
+  $script:PassHolder = $null
+  Rotate-SshLog
+
   try {
     $leases = Read-LeaseState
   } catch {
@@ -1098,6 +1157,7 @@ function Invoke-HolderPass {
       Write-HolderLog -Action kept -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid
       return 0
     }
+    $script:PassEvent = 'stopping'
     try { $result = $script:Native::StopTree($holder.Pid, $holder.StartedAt, $SshExe, $record.alias) }
     catch {
       Write-HolderLog -Action failed -LeaseId $record.lease_id -Alias $record.alias -ProcessId $record.pid -Reason "The holder could not be stopped: $($_.Exception.Message)"
@@ -1147,6 +1207,8 @@ function Invoke-HolderPass {
   $leaseId = $lease['id']
   $alias = $lease['ssh']['host_alias']
 
+  # From here on the pass tries to start a holder, and -Watch counts a failure as a fast failure.
+  $script:PassEvent = 'start-failed'
   $why = Test-HolderPaths $SshExe $alias
   if ($why) {
     Write-HolderLog -Action failed -LeaseId $leaseId -Alias $alias -Reason "The holder could not be started: $why"
@@ -1170,8 +1232,25 @@ function Invoke-HolderPass {
     }
     return 0
   }
+  $script:PassEvent = 'started'
+  $script:PassHolder = $started
+  $script:PassAlias = $alias
   Write-HolderLog -Action started -LeaseId $leaseId -Alias $alias -ProcessId $started.Pid
   0
+}
+
+# Bounds board-holder-ssh.log: past 1 MB it is renamed to board-holder-ssh.log.1, replacing any older
+# one, and the next holder starts a new log. A holder that still has the old file open keeps writing
+# to it, which is acceptable (it opened the file shared for delete). One line is logged per rotation.
+# A failure here MUST NOT stop the pass.
+function Rotate-SshLog {
+  try {
+    $info = [System.IO.FileInfo]::new($script:SshLogPath)
+    if ($info.Exists -and $info.Length -gt 1MB) {
+      [System.IO.File]::Move($script:SshLogPath, "$($script:SshLogPath).1", $true)
+      Write-HolderLog -Action rotated
+    }
+  } catch { }
 }
 
 # --- Main ---------------------------------------------------------------------------------------
@@ -1195,33 +1274,154 @@ if (-not (Test-Path -LiteralPath $script:StateDir -PathType Container)) {
   New-Item -ItemType Directory -Force -Path $script:StateDir | Out-Null
 }
 
-$code = 1
-$lock = $null
-try {
-  $deadline = [DateTime]::UtcNow.AddSeconds(10)
-  while (-not $lock) {
-    try {
-      $lock = [System.IO.FileStream]::new($script:LockPath, [System.IO.FileMode]::OpenOrCreate,
-        [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-    } catch [System.IO.IOException] {
-      if ([DateTime]::UtcNow -gt $deadline) { break }
-      Start-Sleep -Milliseconds 100
+# Takes the lock, runs one pass and releases the lock. Its log lines go to the pipeline, and its exit
+# code is left in $script:LockedCode: 0 for a pass that ran or was skipped, 1 for an error.
+function Invoke-LockedPass {
+  $script:LockedCode = 1
+  $lock = $null
+  try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not $lock) {
+      try {
+        $lock = [System.IO.FileStream]::new($script:LockPath, [System.IO.FileMode]::OpenOrCreate,
+          [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+      } catch [System.IO.IOException] {
+        if ([DateTime]::UtcNow -gt $deadline) { break }
+        Start-Sleep -Milliseconds 100
+      }
     }
+    if (-not $lock) {
+      # Another pass is running: this one is skipped, and says so; it is never logged as idle.
+      Write-HolderLog -Action skipped -Reason 'locked'
+      $script:LockedCode = 0
+    } else {
+      # The pass writes its log line to the pipeline and returns its exit code last.
+      $script:PassCode = 1
+      Invoke-HolderPass | ForEach-Object { if ($_ -is [int]) { $script:PassCode = $_ } else { Write-Output $_ } }
+      $script:LockedCode = $script:PassCode
+    }
+  } catch {
+    try { Write-HolderLog -Action failed -Reason "The pass stopped on an error: $($_.Exception.Message)" } catch { }
+    $script:LockedCode = 1
+  } finally {
+    if ($lock) { $lock.Dispose() }
   }
-  if (-not $lock) {
-    # Another pass is running: this one is skipped, and says so; it is never logged as idle.
-    Write-HolderLog -Action skipped -Reason 'locked'
-    $code = 0
-  } else {
-    # The pass writes its log line to the pipeline and returns its exit code last.
-    $script:PassCode = 1
-    Invoke-HolderPass | ForEach-Object { if ($_ -is [int]) { $script:PassCode = $_ } else { Write-Output $_ } }
-    $code = $script:PassCode
-  }
-} catch {
-  try { Write-HolderLog -Action failed -Reason "The pass stopped on an error: $($_.Exception.Message)" } catch { }
-  $code = 1
-} finally {
-  if ($lock) { $lock.Dispose() }
 }
-exit $code
+
+if (-not $Watch) {
+  Invoke-LockedPass
+  exit $script:LockedCode
+}
+
+# --- Watch --------------------------------------------------------------------------------------
+#
+# -Watch runs Invoke-LockedPass every IntervalSeconds, in this one process, so the C# type above is
+# compiled once. Only two things end it: a bad argument (exit 2, above, before the loop starts) and
+# a finished -MaxPasses (exit 0). No exception ends the loop: each of its three steps (the look at
+# the tracked holder with its backoff, the pass, and the wait) runs in its own try, and an error
+# that escapes one is logged as "failed lease=- alias=- pid=- reason=<text>", when the log can be
+# written, and the loop goes on. Every iteration MUST sleep at least IntervalSeconds, or the backoff
+# when that is longer, on every path, the error paths included, so no failure can make a tight loop
+# (D14).
+#
+# What happens to a keeper that stops anyway. After the rule above, only a killed process stops it.
+# The logon task's settings restart a keeper whose process ended with an exit code other than 0 up
+# to 3 times, a minute apart; that is unverified until E0.02-T03-S01 registers the task. A keeper
+# stopped on purpose (-Uninstall, or End in Task Scheduler) is not restarted, and stays stopped
+# until the next logon, as does one whose restarts are used up.
+#
+# Fast failures. The keeper learns of one in two ways, and both count:
+# - A pass that tried to start a holder and did not get a live one (the holder exited at once, or
+#   could not be started or recorded): PassEvent is 'start-failed'.
+# - A holder this process started (PassEvent 'started') that is found dead before it was proven.
+#   A holder is proven when a look finds it alive after it has lived FastFailureSeconds; its life is
+#   the time from the start to that look, so it is measured to the interval's resolution.
+# Only proof of life resets the count: a look that finds the tracked holder alive after
+# FastFailureSeconds sets it to 0 and marks the holder proven. A holder found dead that was never
+# proven is a fast failure however long ago it started, because it may have died at any time since
+# the look before. Stopping a holder on purpose (its lease ended) resets the count too.
+# FastFailureSeconds is 60, and is changed only by tests, with the hidden argument
+# -FastFailureSeconds.
+#
+# Backoff. The count of fast failures in a row lives in this process, not in a file: a restarted
+# -Watch starts at 0. After the n-th fast failure the next start waits
+# min(BackoffMaxSeconds, BackoffBaseSeconds * 2^(n-1)) seconds, or IntervalSeconds when that is
+# longer, and each wait logs "<time> backoff seconds=<n>" with the seconds actually waited. The
+# wait happens even when that line cannot be logged. A start that failed waits after its pass; a
+# holder found dead waits before the next pass, which would start one.
+
+function Write-WatchLine([string]$Text) {
+  $line = '{0} {1}' -f (ConvertTo-LeaseTime (Get-LeaseNow)), $Text
+  Add-LogLine $line
+  Write-Output $line
+}
+
+# Logs an error that escaped a step of the loop, as a failed line. A failure to log it is
+# swallowed: the loop MUST go on whether or not the log can be written.
+function Write-WatchFailure([string]$Step, $ErrorRecord) {
+  try {
+    $text = ("$Step stopped on an error: $($ErrorRecord.Exception.Message)" -replace '[\x00-\x1f\x7f]+', ' ').Trim()
+    Write-WatchLine "failed lease=- alias=- pid=- reason=$text"
+  } catch { }
+}
+
+# Sleeps for the backoff after the given count of fast failures, and logs it. The sleep runs in a
+# finally, so a log line that cannot be written never shortens the wait.
+function Wait-Backoff([int]$Failures) {
+  $backoff = [Math]::Min([double]$BackoffMaxSeconds, [double]$BackoffBaseSeconds * [Math]::Pow(2, $Failures - 1))
+  $seconds = [int][Math]::Max($backoff, [double]$IntervalSeconds)
+  try { Write-WatchLine "backoff seconds=$seconds" }
+  finally { Start-Sleep -Seconds $seconds }
+}
+
+$failures = 0
+$tracked = $null
+$passes = 0
+while ($true) {
+  # The tracked holder: proven, still unproven, or dead.
+  try {
+    if ($tracked) {
+      $lived = ([DateTime]::UtcNow - $tracked.Clock).TotalSeconds
+      $alive = $false
+      try { $alive = Test-Identity ($script:Native::Probe($tracked.Pid)) $tracked.StartedAt $SshExe $tracked.Alias } catch { }
+      if ($alive) {
+        if ($lived -ge $FastFailureSeconds) { $failures = 0; $tracked.Proven = $true }
+      } else {
+        $proven = $tracked.Proven
+        $tracked = $null
+        if (-not $proven) {
+          $failures++
+          Wait-Backoff $failures
+        }
+      }
+    }
+  } catch { Write-WatchFailure 'The look at the holder' $_ }
+
+  # The pass. It counts towards -MaxPasses whether or not it ran to the end.
+  $script:PassEvent = $null
+  $script:PassHolder = $null
+  try {
+    $script:PassTime = Get-LeaseNow
+    Invoke-LockedPass
+  } catch { Write-WatchFailure 'The pass' $_ }
+  $passes++
+
+  $failedStart = $false
+  switch ($script:PassEvent) {
+    'started' {
+      $tracked = @{ Pid = $script:PassHolder.Pid; StartedAt = $script:PassHolder.StartedAt; Alias = $script:PassAlias; Clock = [DateTime]::UtcNow; Proven = $false }
+    }
+    'start-failed' { $tracked = $null; $failures++; $failedStart = $true }
+    'stopping' { $tracked = $null; $failures = 0 }
+  }
+  if ($MaxPasses -gt 0 -and $passes -ge $MaxPasses) { break }
+
+  # The wait. On an error it still sleeps IntervalSeconds, so no path makes a tight loop.
+  try {
+    if ($failedStart) { Wait-Backoff $failures } else { Start-Sleep -Seconds $IntervalSeconds }
+  } catch {
+    Write-WatchFailure 'The wait' $_
+    Start-Sleep -Seconds $IntervalSeconds
+  }
+}
+exit 0
