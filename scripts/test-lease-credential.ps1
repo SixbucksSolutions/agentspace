@@ -1,4 +1,5 @@
 #Requires -Version 7
+# Prototype code under D34: the rewrite MUST NOT read this suite. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Scripted check for scripts\lease-credential.ps1. It issues credentials for throwaway lease IDs,

@@ -1,4 +1,5 @@
 #Requires -Version 7
+# A spec self-check under D34: it drives no program and loads no prototype code; the rewrite MAY read it only once it is moved to conformance/. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Checks the lease contract's JSON schemas (docs/lease-api.md, D20) against their samples:
