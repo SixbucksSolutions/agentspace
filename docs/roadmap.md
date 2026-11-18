@@ -66,7 +66,8 @@ when Terry says so (D14).
 
 **Why this order:**
 - **v0.02 and v0.03 come first** because they are small, mostly on the box, and fix what blocks real
-  use today. v0.03's numbers are what v0.09 and v0.10 size from, once v0.09 has measured them\n  again on a turn that compiles (D33).
+  use today. v0.03's numbers are what v0.09 and v0.10 size from, once v0.09 has measured them
+  again on a turn that compiles (D33).
 - **The Rust rewrite (v0.04 to v0.06) comes before the hosts**, because every release from v0.07 on
   rewrites the driver, and doing that in PowerShell first would mean writing it twice (D28).
 - **A host per project comes before sizes and plans,** because a size means nothing until a project
