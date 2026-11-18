@@ -1794,6 +1794,90 @@ and on the box the system is UTC, so the rule was followed and still gave him th
 - **Carded as E0.02-T04-S01, v0.02's fourth turn**, which starts after T3 merges, because it changes
   the push that T3 is exercising live.
 
+**How it is built (E0.02-T04-S01, 2026-11-17).** `Push-Localswim` in `scripts/agentspace.ps1`
+carries the zone with the token:
+- **Windows PowerShell 5.1 has no `TryConvertWindowsIdToIanaId`.** The method is .NET 6's, and 5.1
+  runs on .NET Framework 4.8, which lacks it, while `up` runs in 5.1 under the ProxyCommand. So
+  the push MUST use the method when the runtime has it, as PowerShell 7 does, and otherwise MUST
+  ask the ICU that Windows ships (`icu.dll`) through `ucal_getTimeZoneIDForWindowsID`, with no
+  region. That is the call .NET itself makes on Windows for the conversion, and both gave the same
+  IANA name for every zone tried on the laptop. Any failure in either path sends no zone.
+- **Windows PowerShell 5.1 compiles the ICU call with `Add-Type` on each `up`**, about 0.2 seconds,
+  even when nothing is pushed, because the zone is worked out before the stamp is compared. This
+  was accepted: it is small beside the connection, and a cached assembly would be one more file
+  to keep in step with the script.
+- **Seven legacy names MUST be mapped to their current IANA names on the laptop**, after the
+  conversion and before the zone is checked. Both paths give CLDR's names, and for some Windows
+  zones CLDR's name is a legacy one. The box runs Ubuntu with `tzdata` and without
+  `tzdata-legacy`, so `timedatectl` refuses those names. Of the 139 names this laptop's Windows
+  zones convert to, exactly these 7 were missing on the box when checked on 2026-11-17:
+
+  | Legacy name | Current name |
+  |---|---|
+  | `Asia/Calcutta` | `Asia/Kolkata` |
+  | `Asia/Katmandu` | `Asia/Kathmandu` |
+  | `Asia/Rangoon` | `Asia/Yangon` |
+  | `Europe/Kiev` | `Europe/Kyiv` |
+  | `America/Buenos_Aires` | `America/Argentina/Buenos_Aires` |
+  | `America/Godthab` | `America/Nuuk` |
+  | `America/Indianapolis` | `America/Indiana/Indianapolis` |
+
+  `ConvertTo-CurrentZone` holds the map, and `Get-LaptopZone` applies it to the converted zone
+  only; `-TimeZone` is sent as given. A name that is still missing on the box, such as one a
+  later `tzdata` drops, answers `zone-failed`, warns, and is pushed again on each connection.
+  That repeated push is the cost of a future gap, and the fix is to add the name to the map.
+- **A zone MUST match `^[A-Za-z0-9_+][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*\z`, case-sensitively
+  (`-cmatch`).** It is checked before the remote command is built, and only a zone that passes is
+  ever put in it. **This departs from the card's pinned regex**, `^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$`,
+  in two ways, each a refusal the pinned one lacks:
+  - **The first character MUST NOT be `-`**, because `timedatectl` would read the zone as an
+    option, such as `-H <host>`, just as `Test-AliasName` refuses one for ssh. No IANA name starts
+    with `-`. The first build refused it with a separate check; the review folded it into the
+    regex, so one test decides.
+  - **`\z` replaces `$`**, which also matches before a trailing newline.
+
+  It MUST be applied with `-cmatch`: PowerShell's `-match` ignores case, and then `[A-Za-z]` also
+  matches the Kelvin sign (U+212A).
+
+  `-TimeZone` overrides the laptop's zone, for tests only.
+- **The zone travels on the box's command line, and the token MUST stay on stdin.** A checked zone
+  holds no character that the shell treats as syntax, and no quote, so it cannot break the remote
+  command's quoting on Windows either.
+- **The box sets the zone only after `bot.env` is in place and its SHA-256 printed**, as
+  `timeout -k 1 5 sudo -n timedatectl set-timezone <zone>`, with stdin, stdout and stderr on
+  `/dev/null`. It then prints `zone <zone>` or `zone-failed` and exits 0, so the zone never changes
+  the exit code or the hash line that confirm the token. `timeout` keeps a slow `timedatectl` well
+  inside the push's 20-second limit, `-k 1` kills it a second later if it ignores SIGTERM, and
+  `sudo -n` never prompts.
+- **The stamp is the SHA-256 of the instance ID, the zone and `bot.env`'s content, joined by LFs**,
+  with an empty zone when none is sent. It is written only when the token is confirmed and, if a
+  zone was sent, the box's `zone <zone>` line matches it exactly. `zone-failed`, or no zone line at
+  all, warns and writes no stamp, so the next connection asks again.
+
+**Findings from story E0.02-T04-S01 (2026-11-17).** D32 stands. One throwaway lease, with the
+laptop on Pacific time. Times are the laptop's, Pacific Standard Time, with UTC beside them.
+- **The push set the box's zone, over the lease's certificate, and left the token as it was.** At
+  9:07pm (05:07:47Z on 2026-11-18) the push's nested login was `ED25519-CERT ... ID <lease>`, and
+  `timedatectl show -p Timezone` went from `Etc/UTC` to `America/Los_Angeles`. `date` then printed
+  `Tue Nov 17 21:07:49 PST 2026`. `bot.env` was rewritten with its size, mode and SHA-256
+  unchanged, and the laptop's stamp equalled the SHA-256 of the instance ID, the zone and the
+  content, in the new form. A second connection, at 9:08pm (05:08:15Z), did not push: there was
+  no nested login, and neither `bot.env` nor the stamp changed.
+- **The keeper's holder pushed first, before the verifier's step.** The lease alias's
+  ProxyCommand ran the branch's code, so the holder's connection at 9:07pm (05:07:00Z) already
+  pushed the zone. The verifier set the box back to `Etc/UTC` on the box alone, and set the stamp
+  aside, before its own connection, so that the timed push had to make the change it saw.
+- **The agent on the box answered "It's 9:08pm Pacific."** That is the form Terry asked for: the
+  laptop's zone, in `h:mm` plus `am` or `pm`. The box's `date` carries the numeric UTC offset for
+  any agent that needs to compute deltas.
+- **Until this story merges, two code versions re-push on alternate connections.** A connection
+  running `main`'s code writes the old stamp form, without the zone, and one running this branch
+  writes the new form, so each sees the other's stamp as stale and pushes. It is harmless, since
+  each push writes the same token, and it ends at the merge.
+- **`claude` on the box is `~/.local/bin/claude`, which is not on a non-interactive shell's
+  `PATH`.** A script that runs `claude -p` over a lease MUST call it by that path, or set `PATH`
+  first.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase

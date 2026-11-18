@@ -83,7 +83,8 @@ powershell -File scripts\agentspace.ps1 ca
     (D12, 0.02.T1.1 finding). It shares the CA drop-in's `sshd -t` gate and rollback.
 
   It also copies the laptop's `~/.claude/CLAUDE.md` (Terry's global instructions for Claude
-  Code) there, builds and installs the localswim CLI, and sends the current localswim Bot token.
+  Code) there, builds and installs the localswim CLI, and sends the current localswim Bot token
+  with the laptop's time zone.
 - **`deploy`** updates the CloudFormation stack and then runs `sync`. The account-specific
   parameters (`VpcId`, `SubnetId`) come from `infra\local.parameters`, which is not committed;
   `infra\local.parameters.example` shows the format.
@@ -288,6 +289,22 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   `bot.env` in place, records nothing, and is tried again at the next connection. The send's ssh
   is stopped after 20 seconds, so a hang delays a connection by at most that. `scripts\test-push-localswim.ps1`
   checks this without the box, in Windows PowerShell 5.1.
+- **The same push sets the box's time zone to the laptop's**
+  ([D32](docs/decisions.md#d32-a-leases-box-runs-in-the-laptops-time-zone)), so `date` on the box
+  gives Terry's local time and UTC offset. `up` works out the laptop's zone as an IANA name, such
+  as `America/Los_Angeles`, and maps the seven legacy names that Windows gives and the box lacks,
+  such as `Asia/Calcutta`, to their current ones, such as `Asia/Kolkata`. Once `bot.env` is in place and its SHA-256 sent back, the box runs
+  `sudo -n timedatectl set-timezone <zone>` and answers with one more line, `zone <zone>` or
+  `zone-failed`.
+  - **The zone is part of the stamp**, so a laptop that has changed zone pushes again at its next
+    connection.
+  - **The zone never puts the token at risk.** A zone the laptop cannot work out is not sent, and
+    `up` says so. A zone the box refuses leaves the box's zone as it was, records nothing, and is
+    asked again at the next connection. Either way the token is still sent and confirmed as above,
+    and the board works.
+  - **Only a checked zone reaches the box's command line:** letters, digits, `_`, `+` and `-`, in
+    segments joined by `/`, not starting with `-`. The zone travels on the command line, while the
+    token stays on stdin.
 - **The wrapper sets the URL and token for one run only**, and refuses with a stop-and-report
   message when the board is unreachable, so an agent learns why instead of seeing a timeout.
 - **A project's own localswim wrapper still decides how that project's agents call it.**
@@ -315,6 +332,11 @@ RFC 2119 keywords; the capitals are load-bearing.
 - **The laptop's `~/.claude/CLAUDE.md` is the source; the box's copy MUST NOT be edited.**
   `sync` replaces it. After changing the laptop copy, run `sync`; a Claude session already
   running on the box picks it up only when a new session starts.
+- **The box MUST run in the laptop's time zone**
+  ([D32](docs/decisions.md#d32-a-leases-box-runs-in-the-laptops-time-zone)), so agents there
+  report times in Terry's local time and offset under his rule, unchanged. The token push sets it.
+  It MUST be set as the system zone, never by exporting `TZ` or by editing the box's copy of
+  `CLAUDE.md`. Machine-readable timestamps keep their own form.
 - **The disk SHOULD stay above about 70% used**, by Terry's preference: grow it in small steps
   when it passes 85%. EBS volumes cannot shrink, and allow one change every 6 hours.
 - **Long agent runs SHOULD stay attached to a session or keep the CPU busy.** The idle check
