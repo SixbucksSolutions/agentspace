@@ -157,6 +157,11 @@ Docs cite its cards as `#0001`.
   starts on any of its stories, and follows its last story to Ready For Review as soon as that
   story arrives there (Terry, 2026-11-17). The architect moves it both times. Its description
   carries the execution plan by turn (decision D14). Only Terry moves a card to Completed.
+- **A story reaches Ready For Review only once its pull request is merged** (Terry, 2026-11-18,
+  after approving a story whose PR was still open). The dev lead moves it to In Progress when work
+  starts and leaves it there while its PR is open. The architect moves it to Ready For Review
+  when it merges the PR. So everything in Ready For Review is merged and safe for Terry to
+  approve.
 - **Epics with a dependency run in serial** (Terry, 2026-11-18: "let's work epics with
   dependencies in serial"). An epic that another epic `blocks` MUST NOT be broken into stories or
   started until the blocking epic is done: its stories merged and Terry's word that it is
