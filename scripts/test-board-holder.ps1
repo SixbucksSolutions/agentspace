@@ -29,6 +29,13 @@
 # that expires last; exit 1 when the lease state cannot be read, with and without a holder running;
 # keep the record of a holder that cannot be opened to stop it; skip a pass while another holds
 # board-holder.lock; exit 2 on a -Now that is not a time.
+# Story 0.02.T2.2 adds -Watch and the installer (D30), checked from the story's pinned interface:
+# backoff doubles and is capped; backoff resets after a holder that lived past -FastFailureSeconds (a
+# test-only name for the 60-second threshold, assumed, so a case need not wait a minute); -MaxPasses
+# ends the loop; passes are spaced; a locked pass is logged as skipped and the loop carries on; the
+# log holds no secret; install-board-holder.ps1 -DryRun prints the logon task and changes nothing.
+# Every -Watch run has a time limit, so a loop that never ends fails the case rather than hanging it.
+# The installer is run with -DryRun only, and the test never registers, changes or removes a task.
 #
 # Every case MUST be shown able to fail. -SelfCheck does it: each case is run again with a
 # deliberately broken fixture (for example the lease is released where the case expects it ready,
@@ -293,6 +300,49 @@ function Start-TrustedHolder([string]$Letter) {
   Write-Record $h.Pid $h.Started (Get-Id $Letter) (Get-Alias $Letter)
   $h
 }
+
+# ---- -Watch and installer helpers (story 0.02.T2.2) ----
+
+# A stand-in for ssh.exe that fails at once, and one that fails at once except its third start, which
+# lives about 5 seconds first. Each counts its starts in a file beside itself, so no environment
+# variable has to reach it. Both are written into the case's own state folder and exit by themselves.
+function New-FailStub([bool]$LongThird) {
+  $path = Join-Path $env:AGENTSPACE_STATE_DIR 'ssh-fail.cmd'
+  $lines = @('@echo off', 'set "f=%~dp0starts.txt"', 'set n=0', 'if exist "%f%" set /p n=<"%f%"', 'set /a n+=1', '>"%f%" echo %n%',
+    'echo stub-fail start %n% %*')
+  if ($LongThird) { $lines += 'if %n%==3 ping -n 6 127.0.0.1 >nul' }
+  $lines += 'exit /b 1'
+  [IO.File]::WriteAllText($path, (($lines -join "`r`n") + "`r`n"))
+  $path
+}
+
+# Starts the keeper with -Watch and returns the process. Output goes to files, never to a pipe.
+function Start-Watch([string[]]$Extra, [string]$Ssh) {
+  $out = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.out'
+  $err = Join-Path $env:AGENTSPACE_STATE_DIR 'watch.err'
+  $a = @('-NoProfile', '-File', $Keeper, '-SshExe', $Ssh, '-Watch') + $Extra
+  $p = Start-Process -FilePath $pwsh -ArgumentList $a -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
+  $null = $p.Handle
+  $p
+}
+
+# Waits for the process to end on its own; one that does not within the limit is stopped and gives -999.
+function Wait-Watch($Process, [int]$Seconds = 90) {
+  if (-not $Process.WaitForExit($Seconds * 1000)) { Stop-OwnTree $Process.Id; return -999 }
+  $Process.ExitCode
+}
+
+function Get-LogTime([string]$Line) {
+  if ($Line -cmatch '\A(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) ') {
+    [DateTime]::ParseExact($Matches[1], "yyyy-MM-dd'T'HH:mm:ss'Z'", $ci, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal)
+  }
+}
+
+function Get-BackoffSeconds($Log) {
+  @($Log | ForEach-Object { if ($_ -cmatch '\bbackoff seconds=(\d+)(\s|\z)') { [int]$Matches[1] } })
+}
+
+$farFuture = '2099-01-01T00:00:00Z'
 
 try {
   # Idle.
@@ -573,6 +623,162 @@ try {
     Write-Result ((Get-StubProcesses).Count -eq 0) 'Bad -Now: no holder is started'
     Write-Result ($null -eq (Read-Record)) 'Bad -Now: no record is written'
   }
+
+  # -Watch, backoff: a holder that fails at once is restarted after 1, 2, 4, 4 seconds, never faster.
+  Invoke-Case 'Watch: backoff doubles and is capped' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $fail = New-FailStub $false
+    $cap = if ($script:mut) { '64' } else { '4' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '12', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', $cap) $fail
+    $code = Wait-Watch $p 120
+    Write-Result ($code -eq 0) 'Watch backoff: the loop ends on its own with exit 0'
+    $b = Get-BackoffSeconds (Read-LogLines)
+    Write-Result ($b.Count -ge 4 -and (($b[0..3]) -join ',') -ceq '1,2,4,4') "Watch backoff: the first four backoff lines say seconds 1, 2, 4, 4 (got $($b -join ','))"
+    Write-Result (@($b | Where-Object { $_ -gt 4 }).Count -eq 0) 'Watch backoff: no wait is longer than BackoffMaxSeconds'
+  }
+
+  # -Watch, backoff reset: a holder that lived past the fast-failure threshold clears the doubling.
+  # The third start lives about 5 seconds and the threshold is 2 (-FastFailureSeconds, assumed name).
+  Invoke-Case 'Watch: backoff resets after a long-lived holder' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $fail = New-FailStub $true
+    $threshold = if ($script:mut) { '60' } else { '2' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '12', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '4', '-FastFailureSeconds', $threshold) $fail
+    $code = Wait-Watch $p 120
+    Write-Result ($code -eq 0) 'Watch backoff reset: the loop ends on its own with exit 0'
+    $starts = Join-Path $env:AGENTSPACE_STATE_DIR 'starts.txt'
+    $n = if (Test-Path -LiteralPath $starts) { [int](Get-Content -LiteralPath $starts -TotalCount 1) } else { 0 }
+    Write-Result ($n -ge 4) "Watch backoff reset: the holder was started at least four times (started $n)"
+    $b = Get-BackoffSeconds (Read-LogLines)
+    Write-Result ($b.Count -ge 3 -and $b[0] -eq 1 -and $b[1] -eq 2) "Watch backoff reset: the waits before the long-lived start are 1 then 2 (got $($b -join ','))"
+    Write-Result ($b.Count -ge 3 -and $b[2] -eq 1) 'Watch backoff reset: the first wait after the long-lived holder is back at the base, 1'
+  }
+
+  # -Watch, -MaxPasses: the process ends by itself after that many passes.
+  Invoke-Case 'Watch: MaxPasses ends the loop' {
+    Write-Leases @((New-ReleasedRecord 'a' $farFuture))
+    $max = if ($script:mut) { '2' } else { '3' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', $max) $stub
+    $code = Wait-Watch $p 60
+    Write-Result ($code -eq 0) 'Watch MaxPasses: the process exits 0 on its own, within 60 seconds'
+    $log = Read-LogLines
+    $idle = @($log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ idle(\s|\z)' })
+    Write-Result ($idle.Count -eq 3) "Watch MaxPasses: exactly 3 passes ran, 3 idle lines (got $($idle.Count))"
+    Write-Result ((Get-StubProcesses).Count -eq 0) 'Watch MaxPasses: no holder is started'
+  }
+
+  # -Watch, no tight loop: passes are IntervalSeconds apart, and a failing holder's starts are further apart.
+  Invoke-Case 'Watch: passes are spaced' {
+    Write-Leases @((New-ReleasedRecord 'a' $farFuture))
+    $interval = 2
+    $max = if ($script:mut) { '1' } else { '4' }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $p = Start-Watch @('-IntervalSeconds', "$interval", '-MaxPasses', $max) $stub
+    $code = Wait-Watch $p 60
+    $sw.Stop()
+    Write-Result ($code -eq 0) 'Watch spacing: the process exits 0 on its own'
+    Write-Result ($sw.Elapsed.TotalSeconds -ge 5.5) "Watch spacing: 4 passes at 2 seconds took at least 6 seconds, less a rounding margin (took $([Math]::Round($sw.Elapsed.TotalSeconds, 1)))"
+    $tlog = Read-LogLines
+    $times = @($tlog | ForEach-Object { Get-LogTime $_ } | Where-Object { $_ })
+    Write-Result ($times.Count -eq 4) "Watch spacing: one timed line per pass (got $($times.Count))"
+    $gapsOk = $times.Count -ge 2
+    for ($i = 1; $i -lt $times.Count; $i++) { if (($times[$i] - $times[$i - 1]).TotalSeconds -lt 1) { $gapsOk = $false } }
+    Write-Result $gapsOk 'Watch spacing: every pass is at least IntervalSeconds apart, less a one-second rounding margin on the log time'
+    Write-Result ($times.Count -ge 2 -and ($times[-1] - $times[0]).TotalSeconds -ge 5) 'Watch spacing: the first and last pass are at least 6 seconds apart, less the margin'
+
+    # A holder that fails at once: starts are spaced by the backoff, not by the interval alone.
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    Remove-Item -LiteralPath (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log') -ErrorAction SilentlyContinue
+    $fail = New-FailStub $false
+    $base = if ($script:mut) { '1' } else { '3' }
+    $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '10', '-BackoffBaseSeconds', $base, '-BackoffMaxSeconds', '3') $fail
+    $code = Wait-Watch $p 90
+    $slog = Read-LogLines
+    $started = @($slog | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ (started|failed)(\s|\z)' } | ForEach-Object { Get-LogTime $_ })
+    Write-Result ($started.Count -ge 2) "Watch spacing: a failing holder is tried more than once (a start or a failed line, each one try) (got $($started.Count))"
+    $startGaps = $true
+    for ($i = 1; $i -lt $started.Count; $i++) { if (($started[$i] - $started[$i - 1]).TotalSeconds -lt 2) { $startGaps = $false } }
+    Write-Result ($started.Count -ge 2 -and $startGaps) 'Watch spacing: tries of a failing holder are at least 3 seconds apart, less a one-second margin'
+  }
+
+  # -Watch, lock busy: the pass is logged as skipped, and the loop carries on once the lock is free.
+  Invoke-Case 'Watch: a locked pass is skipped and the loop carries on' {
+    Write-Leases @((New-ReleasedRecord 'a' $farFuture))
+    $lockPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.lock'
+    $held = $null
+    if (-not $script:mut) { $held = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    try {
+      $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '6') $stub
+      if (-not $script:mut) { Wait-Until { @(Read-LogLines | Where-Object { $_ -cmatch ' skipped .*reason=locked' }).Count -ge 1 } 30 | Out-Null }
+    } finally { if ($held) { $held.Dispose() } }
+    $code = Wait-Watch $p 90
+    Write-Result ($code -eq 0) 'Watch locked: the loop ends on its own with exit 0'
+    $log = Read-LogLines
+    $skipped = @($log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ skipped lease=- alias=- pid=- reason=locked\z' })
+    Write-Result ($skipped.Count -ge 1) "Watch locked: at least one line ""skipped lease=- alias=- pid=- reason=locked"" is logged (got $($skipped.Count))"
+    $firstSkip = -1
+    for ($i = 0; $i -lt $log.Count; $i++) { if ($log[$i] -cmatch ' skipped ') { $firstSkip = $i; break } }
+    $idleAfter = 0
+    if ($firstSkip -ge 0) { for ($i = $firstSkip + 1; $i -lt $log.Count; $i++) { if ($log[$i] -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ idle(\s|\z)') { $idleAfter++ } } }
+    Write-Result ($idleAfter -ge 1) 'Watch locked: a later pass ran and logged idle, so the loop carried on'
+  }
+
+  # The log holds no secret: no token-like string, key path or certificate path, whatever the passes did.
+  Invoke-Case 'Watch: the log holds no secret' {
+    Write-Leases @((New-ReadyRecord 'a' $farFuture))
+    $sentinel = 'tok' + [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+    $env:AGENTSPACE_TEST_SECRET_TOKEN = $sentinel
+    $logPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log'
+    if ($script:mut) { [IO.File]::WriteAllText($logPath, "2026-11-17T12:00:00Z failed key=C:\Users\x\.ssh\id_ed25519 cert=C:\x\lease.pem`n") }
+    try {
+      $fail = New-FailStub $false
+      $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '6', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '2') $fail
+      $code = Wait-Watch $p 90
+    } finally { Remove-Item Env:\AGENTSPACE_TEST_SECRET_TOKEN -ErrorAction SilentlyContinue }
+    Write-Result ($code -eq 0) 'Watch secrets: the loop ends on its own with exit 0'
+    $log = Read-LogLines
+    Write-Result ($log.Count -ge 2) "Watch secrets: the log has lines to check (got $($log.Count))"
+    $text = $log -join "`n"
+    Write-Result (-not $text.Contains($sentinel)) 'Watch secrets: a token in the environment is not logged'
+    Write-Result ($text -cnotmatch '-----BEGIN') 'Watch secrets: no private key block'
+    Write-Result ($text -inotmatch '\.(pem|key|crt|cer|pfx|p12)\b|id_(rsa|ed25519|ecdsa)|[\\/]\.ssh[\\/]') 'Watch secrets: no key or certificate path'
+    Write-Result ($text -cnotmatch '[A-Za-z0-9+/]{32,}') 'Watch secrets: no token-like run of 32 or more characters'
+    Write-Result ($text -inotmatch '(token|secret|password|passwd|bearer)\s*[=:]\s*\S{8,}') 'Watch secrets: no token=, secret= or password= value'
+  }
+
+  # The installer's dry run prints the logon task and changes nothing. The installer is run with
+  # -DryRun only; the test never registers, changes or removes a task.
+  Invoke-Case 'Installer: -DryRun prints the logon task and changes nothing' {
+    $installer = Join-Path $repo 'scripts\install-board-holder.ps1'
+    $taskName = 'agentspace board holder'
+    $getTask = { try { Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { $null } }
+    Write-Result (Test-Path -LiteralPath $installer) 'Installer: scripts\install-board-holder.ps1 exists'
+    Write-Result ($null -eq (& $getTask)) 'Installer: no task named "agentspace board holder" exists before the dry run'
+    if (-not (Test-Path -LiteralPath $installer)) { return }
+    $out = Join-Path $env:AGENTSPACE_STATE_DIR 'install.out'
+    $err = Join-Path $env:AGENTSPACE_STATE_DIR 'install.err'
+    $p = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile', '-File', $installer, '-DryRun') -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
+    $null = $p.Handle
+    $code = if ($p.WaitForExit(60000)) { $p.ExitCode } else { Stop-OwnTree $p.Id; -999 }
+    $text = if (Test-Path -LiteralPath $out) { Get-Content -LiteralPath $out -Raw } else { '' }
+    if ($null -eq $text) { $text = '' }
+    $lines = @($text -split "`r?`n")
+    Write-Result ($code -eq 0) 'Installer: -DryRun exits 0'
+    $limited = if ($script:mut) { 'Highest' } else { 'Limited' }
+    $ignore = if ($script:mut) { 'Parallel' } else { 'IgnoreNew' }
+    $user = [regex]::Escape($env:USERNAME)
+    Write-Result ($text -imatch 'agentspace board holder') 'Installer: the task is named "agentspace board holder"'
+    Write-Result ($text -imatch 'log\s*on' -and $text -imatch ('(\\|\s|^)' + $user + '\b')) 'Installer: a logon trigger for the current user'
+    Write-Result ($text -imatch "\b$limited\b") "Installer: run level $limited"
+    Write-Result ($text -imatch '(no\s+(execution\s+)?time\s*limit|time\s*limit\W+(none|no|off|unlimited|disabled|0)|\bPT0S\b|unlimited)') 'Installer: no execution time limit'
+    Write-Result ($text -imatch "\b$ignore\b") "Installer: a second start is handled as $ignore"
+    Write-Result ($text -imatch 'start\s*when\s*available|a missed start|missed start') 'Installer: a missed start runs when available'
+    $action = '-NoProfile\s+-NonInteractive\s+-File\s+"?' + [regex]::Escape((Join-Path $repo 'scripts\board-holder.ps1')) + '"?\s+-Watch\b'
+    Write-Result (@($lines | Where-Object { $_ -imatch 'pwsh(\.exe)?"?\s' -and $_ -imatch $action }).Count -ge 1) 'Installer: the action runs pwsh -NoProfile -NonInteractive -File <repo>\scripts\board-holder.ps1 -Watch'
+    Write-Result ($text -imatch 'no[\s-]*window|hidden|windowstyle|CreateNoWindow|headless|wscript|conhost') 'Installer: the launcher shows no window'
+    Write-Result ($null -eq (& $getTask)) 'Installer: still no task named "agentspace board holder" after the dry run'
+  }
+
 } finally {
   $env:AGENTSPACE_STATE_DIR = $savedState
   Stop-Stubs
