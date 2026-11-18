@@ -1459,6 +1459,82 @@ Replaces D12's hand-run holder (card #0042).
 - **A keeper that reconciles leases against one holder** handles every one of those cases, and is
   the shape a hosted control plane (#0011) would take anyway.
 
+**Findings from story 0.02.T1.2 (2026-11-17).** D30 stands. `scripts/board-holder.ps1` runs one
+pass of the keeper to the card's pinned interface, and `scripts/test-board-holder.ps1` checks it
+against a throwaway state folder and a stub for `ssh.exe`
+(`scripts/test-board-holder-stub.cmd`), never the box.
+- **Only a holder started through CIM, `Win32_Process.Create`, outlives the pass.** The spike found
+  that a holder started with `Start-Process` or `[Diagnostics.Process]::Start` dies when the
+  starting pwsh's Job Object is torn down, as when an agent's tool call or a task ends. Only one
+  started through `Win32_Process.Create` survived.
+- **cmd's `>>` opens the log without write sharing.** With a wrapper `cmd /c "... >> log"`, a new
+  holder failed at once while any earlier process still held the log. That is why the keeper does
+  not use one.
+- **The hidden `-Launch` parameter is a self-relaunch shim.** `Win32_Process.Create` cannot set a
+  process's standard handles, so it starts the script again with `-Launch <request>`, and that
+  launcher calls `CreateProcess` for the holder with:
+  - Stdin from `NUL`.
+  - Stdout and stderr on one append-only handle to `board-holder-ssh.log`, shared for read, write
+    and delete.
+  - No window, and breakaway from a job where that is allowed.
+
+  Code outside `scripts/board-holder.ps1` MUST NOT call `-Launch`; it is not part of the pinned
+  interface.
+- **A launch request is claimed by creating a claim file with `CREATE_NEW`, never by a rename.**
+  A trial of four launchers renaming one request to one name had two of them succeed, and start
+  two holders, in 2 rounds of 9: the loser's rename of a file already given that name succeeds
+  too. With the claim file, the same trial started exactly one holder in 12 rounds of 12.
+  - A launcher claims the request before it starts anything, and one that cannot claim it starts
+    nothing. So a second launcher, from a `Win32_Process.Create` retry after a call that threw but
+    had made one, starts nothing.
+  - A pass that gives up waiting, or whose create failed, withdraws the request by claiming it
+    itself. If a launcher claimed it first, the pass waits up to 60 more seconds for its answer,
+    and records the holder if one comes.
+  - The request also carries a deadline, past which a launcher that claims it starts nothing.
+
+  What this guarantees, and no more: a holder the launcher starts is recorded by its pass, unless
+  the launcher claimed the request and then gave no answer within those 60 seconds, or the record
+  could not be written and the holder could not be stopped. In both cases the pass logs `failed`
+  with a reason that says a holder may be running, or runs, unrecorded.
+- **A stop that fails keeps the record.** When the stop could not open the holder with the right
+  to terminate it (one started elevated, met by a pass that is not, say), or stopped nothing for
+  another reason while the recorded holder still runs, the pass logs `failed` and keeps the
+  record, so the next pass tries again. `stopped` is logged only when the recorded holder is gone.
+- **Exit codes, by the architect's ruling (2026-11-17):** 0 when the pass ran, `failed` included,
+  and when it was skipped because another pass held `board-holder.lock` (logged `skipped
+  lease=- alias=- pid=- reason=locked`, never `idle`); 1 when lease state could not be read or the
+  pass met an error it does not handle, with a `failed` line; 2 for a usage error, such as an
+  unknown argument or a `-Now` that is not a time, as for the lease CLI, with nothing logged.
+- **The record names the holder process itself:** `ssh.exe` for an exe, or the `cmd.exe` running
+  the batch for a `.cmd` stand-in. It never names a wrapper or the launcher.
+- **Identity is the PID plus the process start time to the millisecond** (`GetProcessTimes`, UTC),
+  which is what defeats PID reuse. The record keeps only the pinned fields: `pid`,
+  `process_started_at`, `lease_id` and `alias`.
+- **The command line is matched structurally, never byte for byte.** The first build compared it
+  exactly with the keeper's own quoting, so it never trusted a holder started any other way, the
+  tests' `Start-Process` stand-ins included. The matcher (`HolderCommand.Matches`) now:
+  - Splits the line by `CommandLineToArgvW`'s rules, so quoting and spacing do not matter.
+  - Compares the program with `-SshExe` as Windows paths, case ignored. For a `.cmd` or `.bat`, it
+    also accepts `<System32>\cmd.exe /c`, with or without `/d`, after cmd's own outer quote
+    stripping.
+  - Requires the arguments after the program to be exactly `-N -o ExitOnForwardFailure=yes
+    <alias>`, the alias compared exactly.
+
+  The pass's trust check and the stop's re-check on its open handle MUST use this one matcher. It
+  checks itself against the keeper's own form, `Start-Process` of an exe and of a `.cmd`, paths
+  with spaces, and near misses at the start of every pass, and a pass whose matcher fails trusts
+  nothing.
+- **A process that fails either check is never touched.** Its record is dropped, it is left
+  running, and a holder is started afresh if a lease is ready.
+- **The stop takes down the recorded tree only.** It goes leaves first, and each child is checked
+  on its own handle against its parent's PID and creation time. There is no `taskkill` and no
+  sweep by command line. So a ProxyCommand child already orphaned by a dead parent is left alone,
+  and the dead session is then freed on the box by 0.02.T1.1's `ClientAliveInterval` bound.
+- **A pass that stops a holder does not start one in the same pass.** The next pass does.
+- **Known follow-ups, not done:**
+  - `board-holder-ssh.log` grows without bound.
+  - Each pass compiles its C# type, which takes about 1 to 3 seconds.
+
 ### D31. Each story's card names every subagent, run in parallel where reasonable
 
 **Decided, Terry, 2026-11-17:** "Identify as much parallel subagent work as reasonable per story.
