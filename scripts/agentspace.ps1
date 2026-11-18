@@ -213,7 +213,8 @@ function Start-Box([string]$Id) {
 # line, never printed, never stored on the laptop outside localswim's own DPAPI file. The box
 # confirms the write by sending back the file's SHA-256, and only a confirmed send is recorded
 # as sent (card #0026). A failure warns and never blocks the connection. The ssh goes to $Alias,
-# the SSH host alias the caller connected with, never to another entry (D9).
+# the SSH host alias the caller connected with, never to another entry (D9). sync passes no
+# alias, so its push goes over agentspace, Terry's own entry, as intended.
 function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspace') {
   # The script checks -Alias before anything runs; this check keeps any other caller from putting
   # a bad alias on ssh's command line.
@@ -251,8 +252,9 @@ function Push-Localswim([string]$Id, [switch]$Force, [string]$Alias = 'agentspac
       'then sha256sum < $d/bot.env; else rm -f $t; exit 1; fi'
     $psi = New-Object Diagnostics.ProcessStartInfo $Ssh
     # Windows PowerShell 5.1's ProcessStartInfo takes one argument string. The remote command
-    # holds no double quote, so a pair of them around it keeps it one argument.
-    $psi.Arguments = (@($NoForward) + $Alias + "`"$remote`"") -join ' '
+    # holds no double quote, so a pair of them around it keeps it one argument. BatchMode makes an
+    # alias that resolves to an unknown host fail at once rather than wait on a prompt.
+    $psi.Arguments = (@($NoForward) + '-o' + 'BatchMode=yes' + $Alias + "`"$remote`"") -join ' '
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true

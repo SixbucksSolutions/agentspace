@@ -40,6 +40,21 @@ try {
   Check 'A non-UUID is refused' (Refused { Get-LeaseAliasName -Project 'x' -LeaseId 'not-a-uuid' })
   Check 'A UUIDv1 is refused' (Refused { Get-LeaseAliasName -Project 'x' -LeaseId '3f2a9c1e-7b4d-1e6a-8c2f-0a1b2c3d4e5f' })
   Check 'A project like ..\x is refused' (Refused { Get-LeaseAliasName -Project '..\x' -LeaseId $idA })
+  # Letters that a case-insensitive match folds to ASCII: U+0130 stays itself when lowercased, and
+  # U+212A, the Kelvin sign, becomes k. Both MUST be refused.
+  foreach ($bad in ([string][char]0x130 + 'wim'), ([string][char]0x212A + 'wim')) {
+    $shown = ($bad.ToCharArray() | ForEach-Object { if ([int]$_ -lt 0x21 -or [int]$_ -gt 0x7E) { 'U+{0:X4}' -f [int]$_ } else { $_ } }) -join ''
+    Check "A project $shown is refused" (Refused { Get-LeaseAliasName -Project $bad -LeaseId $idA })
+  }
+  # Test-LeaseAliasName is the check Set-LeaseAlias applies to the alias; it MUST equal
+  # agentspace.ps1's Test-AliasName.
+  foreach ($good in 'agentspace', 'agentspace-swimcoach-3f2a9c1e', 'A.b_c-9') {
+    Check "Test-LeaseAliasName accepts '$good'" (Test-LeaseAliasName $good)
+  }
+  foreach ($bad in '-Fx', 'a;b', 'a b', '', "a`n", ('agentspace-' + [char]0x212A), ('agentspace-' + [char]0x130)) {
+    $shown = ($bad.ToCharArray() | ForEach-Object { if ([int]$_ -lt 0x21 -or [int]$_ -gt 0x7E) { 'U+{0:X4}' -f [int]$_ } else { $_ } }) -join ''
+    Check "Test-LeaseAliasName refuses '$shown'" (-not (Test-LeaseAliasName $bad))
+  }
 
   # Include on an LF config
   $ssh1 = Fresh 'ssh1'

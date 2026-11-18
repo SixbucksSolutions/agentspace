@@ -4,9 +4,10 @@
 # sends over (card #0057). It loads Push-Localswim, Get-BotEnvHash and Test-AliasName from the
 # script's syntax tree, points them at a throwaway receipt, a dummy token and a stand-in for ssh,
 # and checks that a send goes to the right alias and is recorded only when the stand-in confirms
-# the file it wrote. It then runs a copy of agentspace.ps1 with bad aliases, and ssh-proxy.cmd
-# against a stand-in agentspace.ps1, to check that a bad alias stops each of them before anything
-# else runs. Nothing reaches the box or AWS, and the real token and hash file are never touched.
+# the file it wrote. It then runs a copy of agentspace.ps1 with bad aliases, to check that a bad
+# alias stops it before anything else runs, and copies of ssh-proxy.cmd with a stand-in tunnel, to
+# check the arguments they pass to up and that they exit with the tunnel's code. Nothing reaches
+# the box or AWS, and the real token and hash file are never touched.
 # It MUST run in Windows PowerShell 5.1, as agentspace.ps1 does:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-push-localswim.ps1
 $ErrorActionPreference = 'Stop'
@@ -157,15 +158,15 @@ public static class FakeSsh {
   Check 'A confirmed send warns about nothing' (-not (($script:said -join ' ') -match 'agentspace:'))
   Check 'The stand-in box got exactly the two lines' ((Test-Path $box) -and [IO.File]::ReadAllText($box) -eq $expected)
   $got = Get-SshArgs
-  Check 'Without -Alias the push goes to agentspace, clearing forwards' (
-    $got.Count -eq 4 -and $got[0] -eq '-o' -and $got[1] -eq 'ClearAllForwardings=yes' -and $got[2] -eq 'agentspace') ($got -join ' | ')
+  Check 'Without -Alias the push goes to agentspace, clearing forwards, in batch mode' (
+    ($got[0..4] -join ' ') -ceq '-o ClearAllForwardings=yes -o BatchMode=yes agentspace' -and $got.Count -eq 6) ($got -join ' | ')
 
   $script:said = @()
   Remove-Item $sshArgs, $box -ErrorAction SilentlyContinue
   Push-Localswim $id -Force -Alias $leaseAlias
   $got = Get-SshArgs
-  Check 'With -Alias the push goes to that alias, clearing forwards' (
-    $got.Count -eq 4 -and $got[0] -eq '-o' -and $got[1] -eq 'ClearAllForwardings=yes' -and $got[2] -eq $leaseAlias) ($got -join ' | ')
+  Check 'With -Alias the push goes to that alias, clearing forwards, in batch mode' (
+    ($got[0..4] -join ' ') -ceq "-o ClearAllForwardings=yes -o BatchMode=yes $leaseAlias" -and $got.Count -eq 6) ($got -join ' | ')
   Check 'With -Alias the stand-in box got exactly the two lines' ((Test-Path $box) -and [IO.File]::ReadAllText($box) -eq $expected)
   Check 'With -Alias a confirmed send is recorded' ((Get-Content $PushedFile -Raw) -eq $sha)
 
@@ -211,48 +212,73 @@ public static class FakeSsh {
   $r = Invoke-Child $ps "$run status -Alias $leaseAlias" $isolated
   Check 'agentspace.ps1 refuses -Alias on a command other than up' ($r.Code -ne 0 -and $r.Err -match '-Alias applies to up alone') $r.Err
 
-  # ssh-proxy.cmd beside a stand-in agentspace.ps1 that records its arguments and fails, so the
-  # proxy stops there and never starts the tunnel.
-  $proxyDir = Join-Path $work 'proxy\scripts'
-  New-Item -ItemType Directory $proxyDir | Out-Null
-  Copy-Item (Join-Path $PSScriptRoot 'ssh-proxy.cmd') $proxyDir
-  Set-Content (Join-Path $proxyDir 'agentspace.ps1') @'
-Set-Content -Path $env:AGENTSPACE_TEST_UP -Value ($args -join ' ') -NoNewline
-exit 1
-'@
-  $proxy = Join-Path $proxyDir 'ssh-proxy.cmd'
-  $upArgs = Join-Path $work 'up-args.txt'
-  $proxyTemp = Join-Path $work 'tmp'
-  New-Item -ItemType Directory $proxyTemp | Out-Null
-  $proxyEnv = @{ AGENTSPACE_TEST_UP = $upArgs; TEMP = $proxyTemp; TMP = $proxyTemp }
+  # Copies of ssh-proxy.cmd whose aws line is a stand-in tunnel that exits 7, so a run that reaches
+  # the tunnel is told apart from one that stops at up, and the tunnel's exit code is checked.
+  $proxyLines = [IO.File]::ReadAllLines((Join-Path $PSScriptRoot 'ssh-proxy.cmd'))
+  $awsAt = @(for ($i = 0; $i -lt $proxyLines.Count; $i++) {
+      if ($proxyLines[$i].StartsWith('"C:\Program Files\Amazon\AWSCLIV2\aws.exe" ssm start-session ')) { $i } })
+  if ($awsAt.Count -ne 1) { throw "ssh-proxy.cmd has $($awsAt.Count) aws start-session lines; the test expects exactly one." }
+  $proxyLines[$awsAt[0]] = 'C:\Windows\System32\cmd.exe /d /c "exit 7"'
+  function New-ProxyCopy([string]$Dir) {
+    New-Item -ItemType Directory (Join-Path $Dir 'scripts') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Dir 'scripts\ssh-proxy.cmd'), (($proxyLines -join "`r`n") + "`r`n"), [Text.Encoding]::ASCII)
+    Set-Content (Join-Path $Dir '.instance-id') $id -NoNewline
+    Join-Path $Dir 'scripts\ssh-proxy.cmd'
+  }
   $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
+
+  # The first copy sits beside a stand-in agentspace.ps1 that records its arguments and exits with
+  # AGENTSPACE_TEST_UP_EXIT.
+  $proxy = New-ProxyCopy (Join-Path $work 'proxy')
+  Set-Content (Join-Path (Split-Path $proxy) 'agentspace.ps1') @'
+Set-Content -Path $env:AGENTSPACE_TEST_UP -Value ($args -join ' ') -NoNewline
+exit [int]$env:AGENTSPACE_TEST_UP_EXIT
+'@
+  $upArgs = Join-Path $work 'up-args.txt'
   # The two ProxyCommand lines exactly as Terry's entry and a lease alias write them.
   $shaped = [ordered]@{
     "/d /c `"$proxy`""             = 'up'
     "/d /c `"$proxy`" $leaseAlias" = "up -Alias $leaseAlias"
   }
   foreach ($line in $shaped.Keys) {
-    Remove-Item $upArgs -ErrorAction SilentlyContinue
-    $r = Invoke-Child $cmd $line $proxyEnv
-    $got = if (Test-Path $upArgs) { Get-Content $upArgs -Raw } else { '(not run)' }
     $label = $line -replace '^.*ssh-proxy\.cmd"\s*', ''
     $label = if ($label) { "ssh-proxy.cmd $label" } else { 'ssh-proxy.cmd with no argument' }
-    Check "$label runs agentspace.ps1 $($shaped[$line])" ($got -eq $shaped[$line]) $got
-    Check "$label stops when up fails, writing nothing to stdout" ($r.Code -eq 1 -and $r.Out -eq '') "exit $($r.Code), stdout '$($r.Out)'"
-  }
-  # Arguments a cmd line can hand the proxy that MUST NOT reach agentspace.ps1 or run anything.
-  # /s keeps each one exactly as written here; INJECTED in stdout or stderr would mean a command ran.
-  $hostile = @('a;b', 'a b', '"a b"', '"a&b"', 'a^&b', '"a|b"', 'a^>b', '"a^b"', '""', '-Fx', '"a!b"',
-    '"a%AGENTSPACE_TEST_UNSET%b"', 'a^&b"c&echo INJECTED"', '"x"a^&echo INJECTED"', 'a"b', "$leaseAlias extra")
-  foreach ($arg in $hostile) {
+
     Remove-Item $upArgs -ErrorAction SilentlyContinue
-    $r = Invoke-Child $cmd "/d /s /c `"`"$proxy`" $arg`"" $proxyEnv
+    $r = Invoke-Child $cmd $line @{ AGENTSPACE_TEST_UP = $upArgs; AGENTSPACE_TEST_UP_EXIT = '1' }
+    $got = if (Test-Path $upArgs) { Get-Content $upArgs -Raw } else { '(not run)' }
+    Check "$label runs agentspace.ps1 $($shaped[$line])" ($got -eq $shaped[$line]) $got
+    Check "$label stops when up fails, starting no tunnel and writing nothing to stdout" ($r.Code -eq 1 -and $r.Out -eq '') "exit $($r.Code), stdout '$($r.Out)'"
+
+    Remove-Item $upArgs -ErrorAction SilentlyContinue
+    $r = Invoke-Child $cmd $line @{ AGENTSPACE_TEST_UP = $upArgs; AGENTSPACE_TEST_UP_EXIT = '0' }
+    $got = if (Test-Path $upArgs) { Get-Content $upArgs -Raw } else { '(not run)' }
+    Check "$label runs the tunnel after up succeeds" ($got -eq $shaped[$line]) $got
+    Check "$label exits with the tunnel's code" ($r.Code -eq 7) "exit $($r.Code)"
+  }
+  # A second argument is refused before agentspace.ps1 runs. /s keeps each line exactly as written
+  # here. Cmd splits an argument at ';' as it does at a space.
+  foreach ($arg in "$leaseAlias extra", 'a;b') {
+    Remove-Item $upArgs -ErrorAction SilentlyContinue
+    $r = Invoke-Child $cmd "/d /s /c `"`"$proxy`" $arg`"" @{ AGENTSPACE_TEST_UP = $upArgs; AGENTSPACE_TEST_UP_EXIT = '0' }
     Check "ssh-proxy.cmd $arg is refused before agentspace.ps1 runs" (-not (Test-Path $upArgs) -and $r.Code -eq 1 -and
       $r.Err -match 'ssh-proxy\.cmd takes at most one argument') "exit $($r.Code), stderr '$($r.Err.Trim())'"
-    Check "ssh-proxy.cmd $arg runs nothing and writes nothing to stdout" ($r.Out -eq '' -and $r.Err -notmatch 'INJECTED' -and
-      -not (Test-Path (Join-Path $work 'b'))) "stdout '$($r.Out)'"
+    Check "ssh-proxy.cmd $arg writes nothing to stdout" ($r.Out -eq '') "stdout '$($r.Out)'"
   }
-  Check 'ssh-proxy.cmd leaves no folder of its own behind' (@(Get-ChildItem $proxyTemp).Count -eq 0)
+
+  # The second copy sits beside the real agentspace.ps1, run in the isolated environment above. A
+  # bad alias MUST stop up on its alias check, before any ssh or tunnel. Arguments with cmd
+  # metacharacters are not tried: the outer cmd.exe parses the whole ProxyCommand line before
+  # ssh-proxy.cmd runs, so whoever can put one there already runs commands. The line MUST come
+  # from lease-alias.ps1, whose exact alias check is the gate (ssh-proxy.cmd's header).
+  $realProxy = New-ProxyCopy (Join-Path $work 'proxy-real')
+  Copy-Item (Join-Path $PSScriptRoot 'agentspace.ps1') (Split-Path $realProxy)
+  foreach ($arg in '-Fx', '""', '"a b"', 'a/b') {
+    $r = Invoke-Child $cmd "/d /s /c `"`"$realProxy`" $arg`"" $isolated
+    Check "ssh-proxy.cmd $arg fails in up on the alias, starting no tunnel" ($r.Code -eq 1 -and
+      $r.Err -match '-Alias MUST be an SSH host alias') "exit $($r.Code), stderr '$($r.Err.Trim())'"
+    Check "ssh-proxy.cmd $arg writes nothing to stdout" ($r.Out -eq '') "stdout '$($r.Out)'"
+  }
 }
 catch { Check 'No unexpected error' $false $_.Exception.Message }
 finally {

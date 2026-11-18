@@ -751,7 +751,10 @@ found (#0028). Times are Pacific, the laptop's zone.
 - **`ssh-proxy.cmd`'s argument check refused a bad alias through ssh.** With `-bad` after the
   script in the ProxyCommand, it printed its `takes at most one argument` message and started
   nothing, and ssh exited 255 with `Connection closed by UNKNOWN port 65535`. It was run once, not
-  retried (D14). No `agentspace-proxy-*` folder was left in `%TEMP%` after any of the runs.
+  retried (D14). That check, and the read-back through `%TEMP%` behind it, were dropped after
+  review: the outer `cmd.exe` parses the whole ProxyCommand line before `ssh-proxy.cmd` runs, so
+  the gate is `lease-alias.ps1`'s exact check, and `up` now refuses `-bad` with its own `-Alias`
+  message before any ssh (`scripts\test-push-localswim.ps1`).
 - **The lease was released** (`lease release` exited 0). Its alias file and key folder were gone,
   `agentspace.d` was empty, the `Include` stayed, and the copied `.instance-id` was deleted.
 - **`up` prints `Ready: <instance ID>` to the caller's stderr.** A check that captures a

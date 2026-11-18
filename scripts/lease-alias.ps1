@@ -27,11 +27,24 @@ function ConvertTo-LeaseId {
 function ConvertTo-LeaseProject {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$Project)
-  $p = $Project.Trim().ToLowerInvariant()
-  if ($p -notmatch '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$') {
-    throw "Project '$Project' MUST match ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?`$ once lowercased."
+  # The project ends up on a command line in the alias, so both checks are case-sensitive and end
+  # at \z: -match ignores case, which lets a letter such as U+0130 pass as i, and $ matches before
+  # a trailing newline. ToLowerInvariant folds U+212A, the Kelvin sign, to k, so the project MUST
+  # also be ASCII before it is lowercased.
+  $p = $Project.Trim()
+  if ($p -cmatch '[^\x00-\x7F]') { throw "Project '$Project' MUST be ASCII." }
+  $p = $p.ToLowerInvariant()
+  if ($p -cnotmatch '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?\z') {
+    throw "Project '$Project' MUST match ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?\z once lowercased."
   }
   $p
+}
+
+# Whether $Name may be written as a lease alias. It MUST equal agentspace.ps1's Test-AliasName,
+# since ssh-proxy.cmd hands the alias to `up -Alias` (D9): letters, digits, '.', '_' and '-'
+# alone, case-sensitive and ending at \z, and no leading '-', which ssh would read as an option.
+function Test-LeaseAliasName([string]$Name) {
+  $Name -cmatch '^[A-Za-z0-9._-]+\z' -and -not $Name.StartsWith('-')
 }
 
 function Get-LeaseAliasName {
@@ -152,7 +165,9 @@ function Set-LeaseAlias {
   }
 
   # The alias is on a command line, so it MUST stay within what `up -Alias` accepts.
-  if ($alias -notmatch '^[A-Za-z0-9._-]+$') { throw "Alias '$alias' MUST match ^[A-Za-z0-9._-]+`$." }
+  if (-not (Test-LeaseAliasName $alias)) {
+    throw "Alias '$alias' MUST match ^[A-Za-z0-9._-]+\z and MUST NOT start with '-'."
+  }
 
   # A line break would add directives to the alias; ssh expands % tokens, so a literal % is %%.
   foreach ($v in $key, $ProxyCommand) {
