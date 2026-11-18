@@ -8,18 +8,21 @@
 # agentspace's own words. It MUST NOT carry an absolute path on the caller's machine, the caller's
 # user name, the output or error text of another program such as ssh-keygen, or a machine.
 #   - docs/lease-api.md, "Exit codes and errors" (the rules for an `internal` message) and "Messages".
-#   - docs/state.md, "Renewal" (step 2: a lease folder with no key fails) and "Requirements the
-#     prototype does not meet yet".
+#   - docs/lease-api.md, `renew` (the key MUST NOT change, so with no key pair no certificate can be
+#     issued and `renew` fails with `internal`) and docs/state.md, "Requirements the prototype does
+#     not meet yet". The order in which a build reads the two key files is state.md's SHOULD, and is
+#     not checked.
 # Card: E0.04-T03-S03 (#0086), carrying #0041 point 1. What the prototype does instead: `renew` of a
-# lease whose private key is gone fails with an `internal` message that holds a path.
+# lease whose key pair is gone fails with an `internal` message that holds a path.
 #
-# How it gets there: a ready lease is made by create, its private key is deleted from the throwaway
-# lease folder, and renew is run. The message is then read for what it MUST NOT hold. The check for
-# another program's text is a heuristic: the words ssh-keygen and the system's own error phrases.
+# How it gets there: a ready lease is made by create, its private key and public key are both deleted
+# from the throwaway lease folder, and renew is run. The message is then read for what it MUST NOT
+# hold. The check for another program's text is a heuristic: the words ssh-keygen and the system's
+# own error phrases.
 #
 # - It drives the program that AGENTSPACE_CMD names, only through the harness, as a separate process,
 #   in a throwaway home. It reads no real folder, loads no prototype code and names no prototype path.
-# - The only delete it makes is the throwaway lease's key, through Assert-ConformancePath, on a path
+# - The only deletes it makes are the throwaway lease's two key files, through Assert-ConformancePath, on a path
 #   built from an ID and an alias that passed the schema and their patterns.
 # - A failure reason never quotes the message, which is what holds the path or the name.
 #
@@ -92,12 +95,14 @@ try {
     } else {
       $key = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.UserProfile ".agentspace\leases\$($lease.Id)\id_ed25519")
       if (-not (Test-Path -LiteralPath $key -PathType Leaf)) {
-        Write-ConformanceResult -Name "$renew`: Setup, the ready lease has a private key to delete" -Status FAIL -Reason 'The lease folder holds no id_ed25519'
+        Write-ConformanceResult -Name "$renew`: Setup, the ready lease has a key pair to delete" -Status FAIL -Reason 'The lease folder holds no id_ed25519'
       } else {
+        # Both halves go, so that no certificate can be issued and the key MUST NOT change (lease-api.md, `renew`).
         Remove-Item -LiteralPath $key -Force
+        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path "$key.pub") -Force -ErrorAction SilentlyContinue
         $run = Invoke-UnmetLease $lab @('renew', $lease.Id)
         $p = Get-UnmetErrorProblems -Run $run -Code 'internal' -Exit 1
-        Add-UnmetResult -Name "$renew`: renew of a lease with no private key fails with internal, exit 1, one error document and no stdout (state.md#renewal step 2)" -Problems $p
+        Add-UnmetResult -Name "$renew`: renew of a lease with no key pair fails with internal, exit 1, one error document and no stdout (lease-api.md#agentspace-lease-renew)" -Problems $p
         $message = if ($run.ErrorJson -is [hashtable] -and $run.ErrorJson['message'] -is [string]) { [string]$run.ErrorJson['message'] } else { $null }
         if ($null -eq $message -or $p.Count -gt 0) {
           foreach ($what in 'no drive-letter path', 'no UNC path', 'no home folder', 'no text of another program', 'no user name or computer name') {

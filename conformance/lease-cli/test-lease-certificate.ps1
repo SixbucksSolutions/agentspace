@@ -36,7 +36,7 @@ try {
     $offset = [TimeZoneInfo]::Local.GetUtcOffset([DateTime]::UtcNow)
     $zone = "UTC$(if ($offset -lt [TimeSpan]::Zero) { '-' } else { '+' })$($offset.Duration().ToString('hh\:mm'))"
     if ($offset -eq [TimeSpan]::Zero) {
-      Write-ConformanceResult -Name 'lease-api.md#times: the run is in a time zone other than UTC' -Status SKIPPED -Reason 'The machine is set to UTC, so a UTC and local time mix-up would go unseen.'
+      Write-ConformanceResult -Name 'lease-api.md#times: The run is in a time zone other than UTC' -Status SKIPPED -Reason 'The machine is set to UTC, so a UTC and local time mix-up would go unseen.'
     }
 
     $t0 = Get-CcNowSecond
@@ -191,7 +191,7 @@ try {
   }
 }
 catch {
-  Write-ConformanceResult -Name 'test-lease-certificate: no unexpected error' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
+  Write-ConformanceResult -Name 'No unexpected error in test-lease-certificate' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
 }
 finally {
   Remove-ConformanceHome -ConformanceHome $lab

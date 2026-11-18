@@ -238,10 +238,12 @@ function Remove-ConformanceHome {
   if (Test-Path -LiteralPath $root) { Write-Host "FAIL Remove-ConformanceHome: The throwaway home could not be removed: $root"; $global:ConformanceCounts['FAIL']++ }
 }
 
-# Resolves a path and returns it in full, or throws unless it is the home's root or under it. The
-# program under test is untrusted (docs/conformance.md), so every delete and every write a check
-# makes MUST go through this first, and a path built from the program's output (a lease ID, a host
-# alias) MUST be checked here after its document has passed its schema.
+# Resolves a path and returns it in full, or throws unless it is the home's root or under it. It also
+# throws when the root itself, or any folder or file that exists between the root and the path, is a
+# reparse point (a junction or a symbolic link), because a write or a delete through one could reach
+# outside the home. The program under test is untrusted (docs/conformance.md), so every delete and
+# every write a check makes MUST go through this first, and a path built from the program's output (a
+# lease ID, a host alias) MUST be checked here after its document has passed its schema.
 function Assert-ConformancePath {
   param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][AllowEmptyString()][string]$Path)
   if ([string]::IsNullOrWhiteSpace($Path)) { throw 'Refusing an empty path: it is not under the throwaway home.' }
@@ -249,6 +251,16 @@ function Assert-ConformancePath {
   $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
   if (-not ($full -eq $root -or $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase))) {
     throw "Refusing a path that is not under the throwaway home: $full"
+  }
+  $reparse = [IO.FileAttributes]::ReparsePoint
+  $step = $root
+  $rest = if ($full.Length -gt $root.Length) { $full.Substring($root.Length + 1) } else { '' }
+  $parts = @('') + @($rest -split '\\' | Where-Object { $_ -ne '' })
+  foreach ($part in $parts) {
+    if ($part -ne '') { $step = $step + '\' + $part }
+    $item = Get-Item -LiteralPath $step -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { break }
+    if (($item.Attributes -band $reparse) -ne 0) { throw "Refusing a path through a junction or symbolic link: $step" }
   }
   return $full
 }

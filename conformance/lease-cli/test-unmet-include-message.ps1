@@ -104,7 +104,7 @@ try {
     if ($doc -isnot [hashtable] -or $doc['message'] -isnot [string]) { $p.Add('There is no error message to read') }
     else {
       $message = [string]$doc['message']
-      if ($message -inotmatch '\bmove\b') { $p.Add('The message does not say to move anything') }
+      if ($message -inotmatch '\bmov(e|ed|ing)\b') { $p.Add('The message does not say to move anything') }
       if ($message -inotmatch '\btop\b') { $p.Add('The message does not say the top of the file') }
     }
     Add-UnmetResult -Name "$include`: create MUST say that a person has to move the line to the top of the file (state.md, the Include line; lease-api.md#messages)" -Problems $p

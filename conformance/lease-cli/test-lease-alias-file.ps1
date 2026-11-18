@@ -311,7 +311,7 @@ try {
   }
 }
 catch {
-  Write-ConformanceResult -Name 'test-lease-alias-file: no unexpected error' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
+  Write-ConformanceResult -Name 'No unexpected error in test-lease-alias-file' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
 }
 finally {
   Remove-ConformanceHome -ConformanceHome $lab

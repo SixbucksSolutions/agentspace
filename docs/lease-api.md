@@ -199,9 +199,10 @@ covers form only:
   half changed.
 - **`get` and `list` MUST NOT wait for a command that changes leases.** They see the leases as they
   were before that command or as they are after it.
-- **`create`, `renew` and `release` MAY wait for one another, for at most 30 seconds.** One that
-  cannot start within 30 seconds MUST fail with `internal`, change nothing, and say to try again.
-  `release` of a lease that needs no change MAY wait too.
+- **`create`, `renew` and `release` MUST wait for one another for up to 30 seconds, and MUST NOT
+  wait longer. One that cannot start within 30 seconds MUST fail with `internal`, change nothing,
+  and say to try again** (architect ruling, 2026-11-18). `release` of a lease that needs no change
+  MAY wait too.
 - **A command that fails MUST leave every lease as it was before the command**, except as the
   bullets below allow.
   - **A failed `create` MUST leave no lease record, no key, no certificate and no alias behind

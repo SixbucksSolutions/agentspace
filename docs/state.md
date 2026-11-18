@@ -1126,8 +1126,10 @@ folder, the `Include` line and the alias file all happens under it. Each first c
 - **The file is never deleted, and its content is empty and meaningless.** The operating system
   releases the lock when the handle closes, however the process ends, so a crashed command never
   leaves the lock held.
-- **A command that cannot open it waits, trying again about every 50 milliseconds, for at most 30
-  seconds**, then fails as [lease-api.md](lease-api.md#concurrency-and-atomicity) says.
+- **A command that cannot open it MUST keep trying until 30 seconds have passed, and MUST NOT wait
+  longer** (architect ruling, 2026-11-18). The prototype tries again about every 50 milliseconds,
+  and a rewrite MAY pick its own interval. What a command does when the time runs out is
+  [lease-api.md's](lease-api.md#concurrency-and-atomicity) to say.
 - **`create` holds it through the whole of issuing**, the CA check and signing included, which
   makes a concurrent `renew` or `release` wait ([lease-api.md Q11](lease-api.md#open-questions)).
 - **`get` and `list` MUST NOT take it, and the keeper MUST NOT take it either.**

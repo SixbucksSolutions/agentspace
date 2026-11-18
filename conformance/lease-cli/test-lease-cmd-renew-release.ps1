@@ -54,6 +54,7 @@ function Get-CcLeaseFacts($Lab, $Doc) {
     Key = (Get-CcFileHash (Join-Path $dir 'id_ed25519')); Pub = (Get-CcFileHash (Join-Path $dir 'id_ed25519.pub'))
     Cert = (Get-CcFileHash (Join-Path $dir 'id_ed25519-cert.pub')); AliasHash = (Get-CcFileHash (Get-CcAliasPath $Lab $alias))
     Config = (Get-CcFileHash (Join-Path $Lab.SshDir 'config')); Names = ((Get-CcFileNames $dir) -join '|')
+    StateNames = ((Get-CcFileNames (Split-Path -Parent (Get-CcStatePath $Lab))) -join '|')
     State = (Get-CcStateCanonical $Lab)
   }
 }
@@ -263,30 +264,34 @@ try {
     $r4 = New-CcReadyLease $lab 'delta'
     $d4 = $r4.Doc
     $f4 = Get-CcLeaseFacts $lab $d4
-    if ($d4) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $f4.Dir 'id_ed25519')) -Force }
+    # Both halves of the key pair go, so that no certificate can be issued, and the key MUST NOT change
+    # (lease-api.md "renew", "The key, the alias, the user, the ID and `created_at` do not change"). The
+    # order in which a build reads the two files is state.md's SHOULD, and is not checked.
+    if ($d4) { foreach ($half in 'id_ed25519', 'id_ed25519.pub') { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $f4.Dir $half)) -Force } }
     $f4b = Get-CcLeaseFacts $lab $d4
     $run = Invoke-CcLease $lab @('renew', $f4.Id)
     $f4c = Get-CcLeaseFacts $lab $d4
-    Test-Cc "$renew`: Renew of a lease whose key is missing is internal (exit 1), changes nothing and leaves no temporary file (state.md#renewal)" {
+    Test-Cc "$renew`: Renew of a lease whose key pair is missing is internal (exit 1), changes nothing, makes no new key and leaves no temporary file in the lease folder or the state folder (the key MUST NOT change)" {
       if (-not $r4.Ok) { return "Setup: create gave $(Format-CcRun $r4.Run)" }
-      if ($f4b.Key -ne 'absent' -or $f4b.Cert -eq 'absent') { return 'Setup: the key was not removed, or there was no certificate.' }
+      if ($f4b.Key -ne 'absent' -or $f4b.Pub -ne 'absent' -or $f4b.Cert -eq 'absent') { return 'Setup: the key pair was not removed, or there was no certificate.' }
       if (-not (Test-CcFailure $run 1 'internal')) { return "Not the expected failure: $(Format-CcRun $run)" }
       if ($f4c.State -cne $f4b.State) { return 'The state file changed.' }
       if ($f4c.Cert -ne $f4b.Cert) { return 'The certificate changed.' }
       if ($f4c.Names -cne $f4b.Names) { return "The folder changed from '$($f4b.Names)' to '$($f4c.Names)'." }
+      if ($f4c.StateNames -cne $f4b.StateNames) { return "The state folder changed from '$($f4b.StateNames)' to '$($f4c.StateNames)'." }
       $true
     }
 
-    # A ready lease whose whole folder is gone cannot be renewed: state.md "Renewal", step 2, requires the
-    # key pair and says to fail and change nothing, and lease-api.md says `internal` for a certificate
-    # that could not be issued. A missing certificate alone is no error, and is not made here.
+    # A ready lease whose whole folder is gone cannot be renewed: with no key pair no certificate can be
+    # issued, the key MUST NOT change, and lease-api.md says `internal` for a certificate that could not be
+    # issued. A missing certificate alone is no error, and is not made here.
     $r5 = New-CcReadyLease $lab 'echo'
     $f5 = Get-CcLeaseFacts $lab $r5.Doc
     if ($r5.Ok) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path $f5.Dir) -Recurse -Force }
     $f5b = Get-CcLeaseFacts $lab $r5.Doc
     $run = Invoke-CcLease $lab @('renew', $f5.Id)
     $f5c = Get-CcLeaseFacts $lab $r5.Doc
-    Test-Cc "$renew`: Renew of a ready lease whose folder is gone is internal (exit 1), makes no folder, and changes nothing (state.md#renewal, step 2)" {
+    Test-Cc "$renew`: Renew of a ready lease whose folder is gone is internal (exit 1), makes no folder, and changes nothing (the key MUST NOT change)" {
       if (-not $r5.Ok) { return "Setup: create gave $(Format-CcRun $r5.Run)" }
       if (Test-Path -LiteralPath $f5b.Dir) { return 'Setup: the folder was not removed.' }
       if (-not (Test-CcFailure $run 1 'internal')) { return "Not the expected failure: $(Format-CcRun $run)" }
@@ -310,11 +315,12 @@ try {
       try { $run6 = Invoke-CcLease $lab @('renew', $f6.Id) } finally { $held6.Dispose() }
     }
     $f6c = Get-CcLeaseFacts $lab $r6.Doc
-    Test-Cc "$renew`: A renew whose record cannot be written is internal (exit 1), leaves the record as it was and no temporary file, and keeps the key, the alias and the config (state.md#replacing-a-file)" {
+    Test-Cc "$renew`: A renew whose record cannot be written is internal (exit 1), leaves the record as it was and no temporary file in the lease folder or the state folder, and keeps the key, the alias and the config (state.md#replacing-a-file)" {
       if (-not $r6.Ok) { return "Setup: create gave $(Format-CcRun $r6.Run)" }
       if (-not (Test-CcFailure $run6 1 'internal')) { return "Not the expected failure: $(Format-CcRun $run6)" }
       if ($f6c.State -cne $f6.State) { return 'The state file changed.' }
       if ($f6c.Names -cne $threeNames) { return "The lease folder holds '$($f6c.Names)'." }
+      if ($f6c.StateNames -cne $f6.StateNames) { return "The state folder changed from '$($f6.StateNames)' to '$($f6c.StateNames)'." }
       if ($f6c.Key -ne $f6.Key -or $f6c.Pub -ne $f6.Pub -or $f6c.AliasHash -ne $f6.AliasHash -or $f6c.Config -ne $f6.Config) { return 'The key pair, the alias file or the config changed.' }
       $true
     }
@@ -480,7 +486,7 @@ try {
   }
 }
 catch {
-  Write-ConformanceResult -Name 'test-lease-cmd-renew-release: no unexpected error' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
+  Write-ConformanceResult -Name 'No unexpected error in test-lease-cmd-renew-release' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
 }
 finally {
   Remove-ConformanceHome -ConformanceHome $lab

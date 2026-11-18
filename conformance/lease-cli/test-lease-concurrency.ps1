@@ -17,11 +17,14 @@
 #   E. Two ready `create`s and two renews, all at once.
 #   G. A gated round. The check holds the state lock itself, as state.md says an implementation does,
 #      and starts ready and unsatisfiable `create`s, `renew`s and a `release`. It waits until every
-#      process is running and none has finished, and only then lets go of the lock, so that all of
-#      them contend for it at the same moment.
+#      process is running and none has finished, and only then lets go of the lock. A process seen
+#      running is not proved to be blocked on the lock, so this makes it likely, not certain, that
+#      they all reach it at about the same moment.
 #   F. The check holds the state lock itself again: `get` and `list` MUST NOT wait, and a `create`, a
 #      `renew` and a `release` that cannot start within 30 seconds MUST each fail with `internal`,
-#      change nothing, and say to try again (lease-api.md, "Concurrency and atomicity").
+#      change nothing, and say to try again (lease-api.md, "Concurrency and atomicity"). Rounds B to
+#      E and G also need a command to wait for the lock for up to 30 seconds, which the same section
+#      requires (architect ruling, 2026-11-18): a build that gives up sooner fails them.
 #
 # What a lost update looks like. A command that does not hold the state lock reads the file, changes
 # its copy, and writes the whole file back. Two such commands that overlap each start from the same
@@ -42,9 +45,9 @@
 # between the starts, so rounds B to E overlap their processes in time. That does not make their
 # interleaving certain: a build that checked the lock and let go of it before it wrote could pass
 # them whenever the processes happened not to collide. Round G narrows that gap and does not close
-# it. Each of its processes is waiting on a lock another party holds, and all are let in together, so
-# a build that does not keep the lock for the whole of its read, change and write has every process
-# writing at once. A race that needs one particular interleaving may still pass any number of runs.
+# it. Each of its processes is running while another party holds the lock, which makes it likely, not
+# certain, that it is waiting for it, and all are let in together, so a build that does not keep the
+# lock for the whole of its read, change and write probably has the processes writing at about once. A race that needs one particular interleaving may still pass any number of runs.
 # So a pass means that no run so far lost an update, and not that none can.
 #
 # Nothing connects anywhere. The throwaway home has its own CA, state, ssh folder and leases.
@@ -109,6 +112,7 @@ function Get-CcSeenTokens([string[]]$Tokens) {
 
 # Holds the state lock (state.md, "The lease state lock": leases.lock opened with no sharing), starts
 # every job, waits until all of them are running and none has finished, and lets go of the lock. A
+# process seen running is not proved to be blocked on the lock. A
 # job is @{ Tag; Args; Token }, where Token is a text that the job's command line holds and no other
 # job's does. Returns Results (as Invoke-CcRound), ReleasedAt (read just before the lock was let go),
 # AllSeen (every process was found on the machine's process list while the lock was held, or, when the
@@ -396,7 +400,7 @@ try {
     # state.md, "The lease state lock": a command that cannot open leases.lock waits and tries again. With
     # the lock held, the check starts ready creates, an unsatisfiable create, two renews and a release,
     # waits until every process is running and none has finished, and lets go. Every command MUST have
-    # waited (none finished while the lock was held), and then all of them contend at once.
+    # waited (none finished while the lock was held), and then all of them are let go at about the same moment.
     foreach ($k in $problems.Keys) { $problems[$k].Clear() }
     $haveGate = $readyIds.Count -ge 6
     $noGate = 'Setup: fewer than six ready leases were made in phase B.'
@@ -559,7 +563,7 @@ try {
   }
 }
 catch {
-  Write-ConformanceResult -Name 'test-lease-concurrency: no unexpected error' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
+  Write-ConformanceResult -Name 'No unexpected error in test-lease-concurrency' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
 }
 finally {
   Remove-ConformanceHome -ConformanceHome $lab
