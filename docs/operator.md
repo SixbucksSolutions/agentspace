@@ -15,7 +15,8 @@ as the laptop sees it, and the AWS calls each command makes. The reasoning behin
   every lease alias runs ([The ProxyCommand](#the-proxycommand)).
 - **Every file the operator reads or writes on the laptop is [docs/state.md](state.md)'s**: its
   location, format and access rules. This page names each file, says when it is read or written,
-  and cites that doc for the rest ([Laptop files](#laptop-files)).
+  and cites that doc for the rest ([Laptop files](#laptop-files)). docs/state.md is written in
+  E0.04-T02-S01; until then, links to it do not resolve.
 - **The box's own code stays shell (D28).** This page states the contract between the laptop and
   the box: what is sent, what is installed, what is asked and what is answered. It does not
   specify how the box's scripts do it.
@@ -73,8 +74,9 @@ operator <command> -h | --help
 ```
 
 **`operator` stands for the operator's entry point.** Today that is `powershell -NoProfile -File
-<checkout>\scripts\agentspace.ps1`, and the help texts below write it `agentspace.ps1`. What the
-rewrite's executable is called is open ([Q10](#open-questions)).
+<checkout>\scripts\agentspace.ps1`, to which the ProxyCommand adds `-ExecutionPolicy Bypass`, and
+the help texts below write it `agentspace.ps1`. What the rewrite's executable is called is open
+([Q10](#open-questions)).
 
 - **`<command>` is the first positional argument** and MUST be one of `deploy`, `up`, `sync`,
   `ca`, `down`, `status` and `grow`. It is matched without regard to case.
@@ -86,16 +88,18 @@ rewrite's executable is called is open ([Q10](#open-questions)).
   ([Exit codes](#exit-codes)). The operator MUST NOT prompt for a missing command, because it runs
   where nobody can answer (inside a ProxyCommand, and under the lease CLI). The prototype's shell
   most likely prompts instead ([Q1](#open-questions)).
-- **The alias check is part of the command line**, and runs before anything else, as below.
+- **Help is checked first.** A command line that asks for help gets it, whatever else it holds,
+  so `sync -Alias x --help` prints `sync`'s help and exits 0.
+- **The alias check is part of the command line**, and runs before anything but help, as below.
 
 | Parameter | Type | Default | Applies to | Notes |
 |---|---|---|---|---|
 | `-GiB <n>` | Integer | `2` | `grow` | The GiB to add to the root volume. Accepted and ignored by every other command. No range is checked; AWS refuses a size that is not larger ([grow](#grow)). |
 | `-Alias <alias>` | SSH host alias | `agentspace` | `up` | The SSH host alias the token push connects with (D9, card #0057). Any other command given `-Alias` fails. |
 | `-Quiet` | Switch | Off | Every command | Suppresses every message that is not a failure and not `status`'s report, warnings included ([Messages](#messages)). |
-| `-h`, `--help` | Switch | | Every level | Prints the help of the level it is at to stdout and exits 0, doing nothing else. The prototype has no help of its own ([Q2](#open-questions)); the texts below are what the rewrite MUST print. |
+| `-h`, `--help` | Switch | | Every level | Prints the help of the level it is at to stdout and exits 0, doing nothing else. The prototype has no help of its own ([Q2](#open-questions)); the texts below are what the rewrite MUST print, with its own entry point's name in place of `agentspace.ps1` ([Q10](#open-questions)). |
 
-**`-Alias` is checked before anything else runs**, for every command:
+**`-Alias` is checked before anything but help runs**, for every command:
 1. **Given with any command but `up`**, the operator fails with `agentspace: -Alias applies to up
    alone.`
 2. **An alias MUST match `^[A-Za-z0-9._-]+\z`, case-sensitively, and MUST NOT start with `-`**,
@@ -108,13 +112,15 @@ rewrite's executable is called is open ([Q10](#open-questions)).
 ### Streams
 
 - **The operator's own messages go to stderr, every one**, progress, warnings, failures and
-  `status`'s report alike. This is what makes `up` safe inside a ProxyCommand, where stdout is the
-  SSH connection ([The ProxyCommand](#the-proxycommand)).
-- **`up` MUST write nothing to stdout**, and neither MUST anything it starts. The ProxyCommand
-  also sends `up`'s stdout to stderr, as a second guard.
-- **`up` MUST NOT read its stdin, and MUST NOT let anything it starts read it.** Inside a ProxyCommand,
-  stdin carries the SSH client's bytes for the server, and a byte read there is lost to the
-  connection. Every program the operator starts that needs input gets its own pipe.
+  `status`'s report alike, so that `up` is safe inside a ProxyCommand, whose stdout is the SSH
+  connection ([The ProxyCommand](#the-proxycommand) says why).
+- **`up` MUST write nothing to stdout, and MUST NOT let anything it starts write there.** The
+  ProxyCommand also sends `up`'s stdout to stderr, as a second guard.
+- **`up` MUST NOT read its stdin, and MUST NOT let anything it starts read it**, because inside a
+  ProxyCommand its stdin is the SSH client's. Every program the operator starts that needs input
+  gets its own pipe, and every other program gets an empty or closed stdin. The prototype lets the
+  AWS CLI inherit `up`'s stdin ([Requirements the prototype does not meet
+  yet](#requirements-the-prototype-does-not-meet-yet)).
 - **Output of programs the operator runs is passed through as they write it**, for `deploy`,
   `sync` and `grow`: the AWS CLI's `cloudformation deploy` output, `go build`'s, the box's
   `install.sh` lines and `grow`'s `df` table reach the operator's stdout or stderr as those
@@ -125,12 +131,13 @@ rewrite's executable is called is open ([Q10](#open-questions)).
 
 | Exit | When |
 |---|---|
-| 0 | The command did what was asked. Warnings from the token push do not change it. |
+| 0 | The command did what was asked. |
 | 1 | Any failure, usage errors included. The last message on stderr says what failed. |
 
-**No other exit code MAY be used by `agentspace.ps1`'s commands.** The ProxyCommand has its own
-rule: [The ProxyCommand](#the-proxycommand). Unlike the lease CLI, the operator gives usage errors
-exit 1, as the prototype does for `-Alias` ([Q1](#open-questions)).
+**The operator's commands MUST NOT exit with any other code.** The ProxyCommand has its own
+rule: [The ProxyCommand](#the-proxycommand). Unlike
+[the lease CLI](lease-api.md#exit-codes-and-errors), the operator gives usage errors exit 1, as the
+prototype does for `-Alias` ([Q1](#open-questions)).
 
 **A failure MUST end the command at once**, with nothing after it run, and MUST print one message
 that starts `agentspace: `. **A failure MUST NOT print a runtime's error record, stack or
@@ -162,10 +169,12 @@ exception text in place of that message.** The prototype does in some cases
   `%SystemRoot%\System32\OpenSSH\ssh.exe` and `scp.exe`. It MUST NOT be found through `PATH`.
   Started from Git Bash, `PATH` finds MSYS's ssh, which runs the ProxyCommand through `/bin/sh`
   and mangles its Windows path (`exec: C:WindowsSystem32cmd.exe: not found`).
-- **So `up`, `sync`, `status` and `grow` MUST work when the operator is started from Git Bash.**
+- **So `deploy`, `up`, `sync`, `status` and `grow` MUST work when the operator is started from
+  Git Bash.**
   That is #0027's done-when, and this requirement closes it once the rewrite meets it.
-- **Source:** the prototype calls the token push's ssh and the CA key's scp by full path, and
-  every other ssh and scp by bare name (D9's E2.01 finding).
+- **Source:** D9's E2.01 finding, that every ssh and scp was called by bare name. Since then the
+  token push's ssh is by full path (D9's E3.02 finding), and so is the CA key's scp in the
+  prototype; every other ssh and scp is still by bare name.
 
 **The other programs, and how each is found:**
 
@@ -179,7 +188,7 @@ exception text in place of that message.** The prototype does in some cases
 | `go` | On `PATH` | `sync`, to build the localswim CLI |
 | `powershell.exe` (Windows PowerShell 5.1) | On `PATH` | The prototype's ProxyCommand, to run `up` |
 
-**No secret is ever among any program's arguments** ([The token push](#the-token-push)).
+**What MUST NOT appear among any program's arguments is in [Secrecy](#secrecy).**
 
 ### AWS failures
 
@@ -195,14 +204,19 @@ requirement.**
   A failure is a sign-in failure when the CLI's error text matches `expired`, `aws login` or
   `Unable to locate credentials`, without regard to case. That is the prototype's test; whether
   it catches every form of the CLI's expired-login error is [Q26](#open-questions).
-- **Any other AWS CLI failure MUST fail with `agentspace: ` followed by the CLI's own error text**,
-  trimmed, and never with a runtime's error record or stack in its place.
+- **Any other failure of a call whose output the operator reads MUST fail with `agentspace: `
+  followed by the CLI's own error text**, trimmed, and never with a runtime's error record or stack
+  in its place.
 - **This MUST hold inside the ProxyCommand**, so that `ssh agentspace`, `ssh <lease alias>` and the
   Claude desktop app show the sign-in message, not a raw error, before ssh's own `Connection
   closed by UNKNOWN port 65535`.
 - **It MUST hold for every AWS call whose failure fails the command**, `cloudformation deploy`
   included. The calls whose failure is retried or ignored are listed in
   [Calls by command](#calls-by-command).
+- **`cloudformation deploy`'s output is passed through as it is written.** The operator MUST also
+  scan its error text for the sign-in test, and otherwise ends with `deploy`'s own message
+  ([deploy](#deploy), step 4). The prototype does not scan it. The tunnel's errors are the CLI's
+  own, passed through.
 - **Source:** in the prototype, the AWS CLI's stderr is merged into its output while every error
   is terminating, so under Windows PowerShell 5.1 the CLI's first stderr line throws before the
   exit code is checked, and the message above never prints (#0034; D9's E2.02 finding). The same
@@ -219,12 +233,12 @@ reads also passes `--output json`.** The region is today's, and not configurable
 | `AGENTSPACE_NESTED` | Read at start; set to `1` for everything the operator starts | When it is set to a non-empty value as the operator starts, `up` does not push the token. Every ssh the operator starts runs the ProxyCommand and so `up` again ([below](#every-ssh-runs-the-proxycommand)), and this keeps that nested `up` from pushing a second time. |
 | `*_POSIX_FD_STATE` | Removed at start | Windows OpenSSH gives each process it starts, the ProxyCommand included, a variable named `<GUID>_POSIX_FD_STATE`. Inherited by an ssh that the operator starts, it makes that ssh never read its stdin, so the token push never sent its input and hung (card #0026, D9's E3.02 finding). **The operator MUST remove every variable whose name ends `_POSIX_FD_STATE`, whatever the GUID, before it starts any program.** |
 | `GOOS`, `GOARCH`, `CGO_ENABLED` | Set for `go build` only | `linux`, `arm64` and `0` while `sync` builds the localswim CLI, and removed afterwards. `linux/arm64` is today's box's platform. |
-| `USERPROFILE`, `LOCALAPPDATA`, `SystemRoot` | Read | Where the laptop files and Windows programs are. |
+| `USERPROFILE`, `LOCALAPPDATA`, `SystemRoot` | Read | Where the laptop files and Windows programs are. `LOCALAPPDATA` is the only way the operator finds localswim's receipt ([Secrecy](#secrecy)). |
 | `OneDrive`, `OneDriveConsumer`, `OneDriveCommercial` | Read by `ca` | Folders the CA MUST NOT be inside (D17). |
 | `USERNAME`, `COMPUTERNAME` | Read by `ca` and `sync` | The user named in the CA's messages, and the computer named in a new CA's key comment (docs/state.md). |
 | `PATH` | Read; the ProxyCommand prepends two folders | Finding `go`, the AWS CLI's fallback, and the Session Manager plugin. |
 
-**No environment variable carries a secret, and the token MUST NOT be put in one.**
+**The token MUST NOT be in any environment variable the operator sets ([Secrecy](#secrecy)).**
 
 ### Laptop files
 
@@ -247,8 +261,13 @@ This table says only which command reads or writes it.
 | `C:\Projects\localswim` | `sync` | Never | The localswim checkout the CLI is built from |
 | `%LOCALAPPDATA%\localswim-v2\service.json` and the `bot.xml` it points to | `up`, `sync` | Never | The localswim service's receipt and its DPAPI-protected Bot credential ([The token push](#the-token-push)) |
 
-**The token MUST NOT be written to any laptop file** by the operator. It lives only in
-localswim's own protected credential, and the stamp holds a hash that covers it.
+**The token is never in any of the operator's own files** ([Secrecy](#secrecy)).
+
+**The instance-ID cache.** A cache that is empty, or holds only whitespace, MUST be treated as
+missing. A cache that cannot be read fails with an `agentspace: ` message naming it. A stack with
+no `InstanceId` output MUST fail with `agentspace: Stack 'agentbox' has no InstanceId output.`, and
+write no cache. The prototype writes an empty cache then, and every later command fails with a
+runtime error until `deploy` deletes it ([Q24](#open-questions)).
 
 ### The `agentspace` SSH entry
 
@@ -318,8 +337,9 @@ Parameters:
   -Quiet          Print no progress or warnings; failures and status still print
   -h, --help      Print this help, or a command's, and exit
 
-Every message goes to stderr. up writes nothing to stdout, so it is safe in an
-SSH ProxyCommand.
+The operator's own messages go to stderr; deploy, sync and grow pass other
+programs' output through. up writes nothing to stdout, so it is safe in an SSH
+ProxyCommand.
 
 Exit codes:
   0  Success
@@ -337,19 +357,22 @@ operator deploy [-Quiet]
 
 1. **Reads the user's public key** from `%USERPROFILE%\.ssh\id_ed25519.pub`, trimmed. A missing,
    unreadable or empty file MUST fail with an `agentspace: ` message naming it. The prototype fails
-   with a runtime error for a missing file, and passes an empty key on to the stack.
+   with a runtime error for a missing or empty file, and passes an empty key on for a
+   whitespace-only one.
 2. **Reads `<checkout>\infra\local.parameters`.** A missing file fails with `agentspace: Missing
    <path>; copy infra\local.parameters.example and fill it in.`, where `<path>` is the file's
    full path. Each line of the form `<Name>=<value>` becomes a parameter override, and every
    other line, such as a comment, is skipped (format: docs/state.md). Any stack parameter can be set
-   there, not only `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack.
+   there, not only `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack
+   ([The stack](#the-stack)).
 3. **Prints `Deploying stack 'agentbox' in us-west-2...`.**
 4. **Runs `cloudformation deploy`** ([The AWS side](#calls-by-command)), with its output passed
    through. A non-zero exit fails with `agentspace: Stack deploy failed; see the stack events in
    the console.` An expired sign-in MUST fail with #0034's message instead
    ([AWS failures](#aws-failures)).
 5. **Deletes the instance-ID cache, reads the instance ID from the stack's `InstanceId` output,
-   writes the cache again**, and prints `Instance: <id>`.
+   writes the cache again** ([Laptop files](#laptop-files), the instance-ID cache), and prints
+   `Instance: <id>`.
 6. **Runs `sync`**, as if `operator sync` had been run. **`deploy` MUST exit 1 when `sync`
    fails.** The prototype runs `sync` as a nested script, whose failure most likely does not
    reach `deploy`'s exit code ([Q3](#open-questions)). Whether `-Quiet` reaches `sync` is
@@ -358,9 +381,8 @@ operator deploy [-Quiet]
 **Stdout:** the AWS CLI's deploy output, then `sync`'s. **Stderr:** the messages above, then
 `sync`'s. **Exit codes:** 0 and 1.
 
-**`deploy` passes no `ImageId`, so the template's pinned default applies.** The template's
-`ImageId` default MUST NOT be changed while the stack is live: CloudFormation replaces the instance
-to change its image, and its disk with it (README, "Rules").
+**`deploy` passes no `ImageId`, so the template's pinned default applies** ([The
+stack](#the-stack)).
 
 **Help:**
 
@@ -391,12 +413,13 @@ due.** The ProxyCommand runs it before every connection.
    writing the cache then.
 2. **Starts the box and waits for it**, as [Starting the box and waiting for
    it](#starting-the-box-and-waiting-for-it) says, ending with `Ready: <id>`.
-3. **Pushes the token over `<alias>`**, as [The token push](#the-token-push) says, unless
-   `AGENTSPACE_NESTED` was set when the operator started. The push only warns; it never fails
-   `up`.
+3. **Pushes the token over `<alias>`**, as [The token push](#the-token-push) says, unless it is
+   a nested `up` ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)).
 
 **Stdout:** nothing, ever. **Stderr:** the messages of steps 2 and 3, and the stderr of the push's
-ssh. **Exit codes:** 0 once the box is ready, whatever the push did; 1 on any failure before that.
+ssh, which carries the nested `up`'s `Ready: <id>`. **Exit codes:** 0 once the box is ready,
+whatever the push did ([What the laptop checks](#what-the-laptop-checks)); 1 on any failure before
+that.
 
 **Help:**
 
@@ -428,8 +451,10 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
 `agentspace` alias, with forwards cleared.
 
 1. **Checks the CA**, exactly as `ca` checks an existing one ([ca](#ca), the checks), and fails
-   with that check's message before the box is touched. A missing, half-made, mismatched or
-   loosened CA never becomes a host's trusted CA (D17).
+   with that check's message before the box is touched. A missing `ssh-keygen.exe` fails first,
+   with `ca`'s step 1 message; the prototype does not check for it, and fails with another
+   error. A missing, half-made, mismatched or loosened CA never becomes a host's trusted CA
+   (D17).
 2. **Starts the box and waits for it** ([Starting the box](#starting-the-box-and-waiting-for-it)).
 3. **Prints `Copying box/system to the instance...`**, removes the box's staging folder
    (`/tmp/agentspace-system` on today's box), and copies `<checkout>\box\system` there, whole and
@@ -443,7 +468,8 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
    through. A non-zero exit fails with `agentspace: Install on the instance failed.` What the
    install does is in [What sync installs](#what-sync-installs).
 6. **If `%USERPROFILE%\.claude\CLAUDE.md` exists**, prints `Copying ~/.claude/CLAUDE.md to the
-   instance...`, makes sure the login user's `~/.claude` exists on the box, and copies the file to
+   instance...`, makes sure the login user's `~/.claude` exists on the box (unchecked by the
+   prototype; a failure shows as the copy's), and copies the file to
    `~/.claude/CLAUDE.md` there, replacing the box's copy. A failed copy fails with
    `agentspace: Copying CLAUDE.md to the instance failed.` The laptop's copy is the source, and
    the box's copy MUST NOT be edited (README, "Rules").
@@ -461,11 +487,12 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
    - **Installs it as root, mode 0755, at `/usr/local/lib/localswim/localswim`**, and removes the
      staged copy. A failure fails with `agentspace: Installing the localswim CLI failed.`
 8. **Pushes the token over `agentspace`, forced**: the stamp is not compared, so the push always
-   runs ([The token push](#the-token-push)). A failed push warns and does not fail `sync`.
+   runs ([The token push](#the-token-push)).
 
-**Stdout:** the install's output, `go build`'s, and whatever else the remote commands print.
+**Stdout:** the install's `Installed:` lines, and whatever else the remote commands print.
+**Stderr** also carries `go build`'s output and the install's `install.sh:` lines.
 **Stderr:** the messages above, one `Ready: <id>` per nested ssh or scp, and the push's.
-**Exit codes:** 0 and 1.
+**Exit codes:** 0 and 1, whatever the push did ([What the laptop checks](#what-the-laptop-checks)).
 
 **After the localswim service on the laptop is updated, `sync` MUST be run again**, so the box's
 CLI speaks the same API (README, "The localswim board on the box").
@@ -669,11 +696,11 @@ operator grow [-GiB <n>] [-Quiet]
 4. **Otherwise** prints `The filesystem grows on its own at next boot.` and does not start the
    box.
 
-**A volume never shrinks**, and EBS allows one change per volume every 6 hours. The disk SHOULD
-stay above about 70% used, grown in small steps once it passes 85% (README, "Rules").
+**A volume never shrinks**, and EBS allows one change per volume every 6 hours. How full the disk
+is kept is the README's ("Rules", disk size).
 
-**Stdout:** the remote command's output. **Stderr:** the messages above, and `Ready: <id>` from
-the nested ssh. **Exit codes:** 0 and 1.
+**Stdout:** the remote command's stdout. **Stderr:** its stderr, the messages above, and
+`Ready: <id>` from the nested ssh. **Exit codes:** 0 and 1.
 
 **Help:**
 
@@ -709,16 +736,18 @@ Exit codes: 0 success, 1 failure.
    - **If it is, asks the box whether its patch run has finished**
      ([What up waits for](#what-up-waits-for)). An answer other than `pending` ends the wait. A
      `pending` answer gives the message `Patching Ubuntu (dist-upgrade, reboot if the kernel
-     changed)...`.
+     changed)...`, which is today's box's wording.
    - **A message is printed only when it differs from the last one printed**, so a long wait shows
      each phase once.
    - **At the deadline** it fails with `agentspace: <id> was not ready within 15 minutes; check:
-     ssh agentspace journalctl -u agentspace-patch`.
+     ssh agentspace journalctl -u agentspace-patch`, whose command is today's box's.
 4. **Prints `Ready: <id>`.**
 
 **`up` MUST NOT print `Ready` before the box's patch run has finished** (README, "Rules"), within
-the two exceptions above: a box running for 20 minutes is not asked, and an answer of `unknown`
-counts as finished ([What up waits for](#what-up-waits-for)).
+three exceptions: a box running for 20 minutes is not asked, an answer of `unknown` counts as
+finished, and so does an empty or unexpected answer from a failed check
+([What up waits for](#what-up-waits-for); [Q6](#open-questions)). This is the one statement of
+them.
 
 ## The ProxyCommand
 
@@ -781,11 +810,11 @@ app's output (D9's E0.02-T03-S01 finding).
   the repair is [Q17](#open-questions).
 - **Start the tunnel for an instance other than the cached one.**
 
-**The threat model.** The alias argument MUST come from a ProxyCommand line that the lease CLI
-wrote, and the lease CLI MUST refuse any alias that fails the check in
-[Command line](#command-line). Whoever can write a ProxyCommand line already runs commands, since
-`cmd.exe` parses the whole line before the proxy runs, so the proxy does not defend against a
-hostile line; `up`'s exact check is the gate before any ssh.
+**The threat model.** The alias argument comes from a ProxyCommand line the lease CLI wrote
+([lease-api.md](lease-api.md#fields): `ssh.host_alias`; the alias file is docs/state.md's).
+Whoever can write a ProxyCommand line already runs commands, since `cmd.exe` parses the whole line
+before the proxy runs, so the proxy does not defend against a hostile line. **`up`'s exact check
+([Command line](#command-line)) MUST be the gate before any ssh.**
 
 ## The token push
 
@@ -796,26 +825,47 @@ sends only when something has changed.
 
 ### When it runs
 
-- **`up` pushes over its `-Alias`** (default `agentspace`), unless `AGENTSPACE_NESTED` was set
-  when the operator started. It sends only when the push is due ([The stamp](#the-stamp)).
-- **`sync` pushes over `agentspace`, forced**: always, whatever the stamp says.
-- **`up` over a lease alias pushes with the lease's own key and certificate**, never through the
-  user's `agentspace` entry (D9, card #0057).
+- **`up` pushes over its `-Alias`** (default `agentspace`), after it prints `Ready: <id>`, unless
+  it is a nested `up` ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)). It
+  sends only when the push is due ([The stamp](#the-stamp)).
+- **`sync` pushes over `agentspace`, forced**, as its last step: always, whatever the stamp says.
+  `AGENTSPACE_NESTED` does not stop it.
+- **`up` over a lease alias pushes with the lease's own key and certificate**, which that alias's
+  entry in the SSH client configuration supplies. The push passes no identity option of its own,
+  and never goes through the user's `agentspace` entry (D9, card #0057).
 - **Two `up`s at the same time may both push.** Each writes the same token, so nothing breaks, but
   each push is a login (D9's E0.02-T03-S01 finding). Nothing serializes them ([Q20](#open-questions)).
 
 ### What the laptop reads
 
-1. **localswim's service receipt** (`%LOCALAPPDATA%\localswim-v2\service.json`; docs/state.md). When
-   it does not exist, the push is skipped without a message: localswim is not set up on this
-   laptop.
+**Every time it considers a push, due or not, the laptop reads these, in this order**, because the
+stamp covers the token and so cannot be computed without it:
+
+1. **localswim's service receipt**, found only through `LOCALAPPDATA`
+   (`%LOCALAPPDATA%\localswim-v2\service.json`; docs/state.md). When it does not exist, the push is
+   skipped without a message: localswim is not set up on this laptop ([Q19](#open-questions)).
 2. **From the receipt, the service's base URL** (its `base` member) **and the folder of its
-   credentials** (its `credential_directory` member), **and from that folder the Bot credential**
-   (`bot.xml`, protected for the current Windows user with DPAPI). Any failure to read either
-   prints the warning `agentspace: Could not read the localswim Bot token; the board will not work
-   on the box this session.` and skips the push. The warning MUST NOT include the failure's own
-   text, which could carry part of the credential.
+   credentials** (its `credential_directory` member), **and from that folder the Bot credential,
+   `bot.xml`.** `bot.xml` is a PowerShell CLIXML-serialized `PSCredential` (`Export-Clixml`). The
+   token is its password, a SecureString protected with DPAPI for the current user, which
+   `Import-Clixml` by that user reverses. The receipt's format and `bot.xml`'s are localswim's, and
+   nothing in this repo specifies them ([Q28](#open-questions)).
 3. **The laptop's time zone**, as an IANA name ([The time zone](#the-time-zone)).
+
+**The push MUST warn `agentspace: Could not read the localswim Bot token; the board will not work
+on the box this session.`, and send nothing, when any of these holds:**
+- The receipt cannot be read or parsed, or names no credential folder.
+- `bot.xml` cannot be read or decrypted.
+- The base URL or the token is missing or empty.
+- The base URL or the token holds a CR, an LF or a NUL. Any of them would break the content's
+  two-line framing, or make the box install a value other than the one sent.
+
+The warning MUST NOT include the failure's own text, which could carry part of the credential.
+Because the token is read before the push is known to be due, a laptop whose credential cannot be
+read gets this warning at every `up`, even when nothing would have been sent. What other characters
+the URL and the token may hold is [Q9](#open-questions). The prototype checks neither empty values
+nor CR, LF and NUL ([Requirements the prototype does not meet
+yet](#requirements-the-prototype-does-not-meet-yet)).
 
 **The content** is exactly these two lines, UTF-8, each ending in a line feed (LF):
 
@@ -827,14 +877,15 @@ LOCALSWIM_TOKEN=<token>
 ### The time zone
 
 **The push carries the laptop's time zone as an IANA name, so that `date` on the box gives the
-laptop's local time and offset (D32).** It is worked out each time `up` or `sync` pushes or decides
-whether to:
+laptop's local time and offset (D32).** It is worked out each time `up` or `sync` considers a push:
 
-1. **The laptop's Windows zone ID is converted to an IANA name** with CLDR's mapping for territory
-   `001`, the zone's default, for example `Pacific Standard Time` to `America/Los_Angeles`. On
-   Windows that is what .NET's `TimeZoneInfo.TryConvertWindowsIdToIanaId` and ICU's
-   `ucal_getTimeZoneIDForWindowsID` with no region both give. A conversion that fails gives no
-   zone.
+1. **The Windows ID of the zone the laptop is set to at that moment is converted to an IANA name**
+   with CLDR's mapping for territory `001`, the zone's default, for example `Pacific Standard
+   Time` to `America/Los_Angeles`. On Windows that is what .NET's
+   `TimeZoneInfo.TryConvertWindowsIdToIanaId` and ICU's `ucal_getTimeZoneIDForWindowsID` with no
+   region both give, and the rewrite MAY use either. The prototype uses .NET's where its runtime
+   has it, and otherwise the unversioned export of the `icu.dll` that Windows ships. A conversion
+   that fails gives no zone.
 2. **Seven legacy names are mapped to their current ones**, because CLDR gives them and today's
    box's `tzdata`, without `tzdata-legacy`, refuses them. Every other name is kept as it is:
 
@@ -867,16 +918,26 @@ quote and no character a shell treats as syntax.
 <instance ID> LF <zone> LF <content>
 ```
 
-where `<zone>` is the checked zone or empty, and `<content>` is the two lines above with their
-LFs. So it changes when the instance, the zone, the URL or the token changes.
+where `<instance ID>` is the ID as EC2 gives it, with no whitespace around it, `<zone>` is the
+checked zone or empty, and `<content>` is the two lines above with their LFs. So it changes when
+the instance, the zone, the URL or the token changes, and a stamp written by an operator that
+built its input differently never matches, so the first connection after such a change pushes once.
 
-- **A push is due when it is forced (`sync`), when there is no stamp, or when the stored stamp
-  differs from the one just computed.** How the stamp is stored and compared, and where, is
-  docs/state.md's (`%USERPROFILE%\.agentspace\localswim-pushed.sha256` today).
-- **When the push is not due, nothing is printed and nothing is sent.**
+- **The stamp is that hash written as hex.** The prototype writes it in uppercase. **A stored stamp
+  MUST be compared with the computed one without regard to case, and ignoring whitespace around
+  the stored one**, so that a stamp written by either the prototype or the rewrite matches. How it
+  is stored, and where, is docs/state.md's (`%USERPROFILE%\.agentspace\localswim-pushed.sha256`
+  today, the hex alone with no line end).
+- **A push is due when it is forced (`sync`), when there is no stamp, when the stored stamp is
+  empty or cannot be read, or when it differs from the one just computed.** The prototype instead
+  warns "Could not send" and pushes nothing when the stamp file is empty or unreadable
+  ([Requirements the prototype does not meet
+  yet](#requirements-the-prototype-does-not-meet-yet)).
+- **When the push is not due, nothing is sent, and nothing is printed** but a warning from
+  [What the laptop reads](#what-the-laptop-reads).
 - **The stamp is written only after the box confirms the token and, when a zone was sent, the
-  zone** ([What the laptop checks](#what-the-laptop-checks)). Any other outcome leaves the stored
-  stamp as it was, so the next connection tries again.
+  zone** ([What the laptop checks](#what-the-laptop-checks)), creating its folder if needed. Any
+  other outcome leaves the stored stamp as it was, so the next connection tries again.
 - **The stamp is not `bot.env`'s hash**, and a check MUST NOT compare it with `sha256sum` of the
   box's file. A test proves a push by setting the stamp aside and seeing it come back equal, and by
   `bot.env`'s modification time (D9's E3.03 finding).
@@ -896,23 +957,34 @@ When the push is due, the laptop:
 
    - `<alias>` is `up`'s `-Alias`, or `agentspace` for `sync`.
    - `BatchMode=yes` makes an alias that needs a prompt, such as an unknown host, fail at once.
-   - `<remote command>` is one argument, the box's half of the protocol
-     ([Today's remote command](#todays-remote-command)). It names the zone when one is sent, and
-     never the token.
+   - **`<remote command>` MUST reach ssh as one argument, its last**: the box's half of the
+     protocol ([Today's remote command](#todays-remote-command)), which ssh hands to the login
+     user's shell on the box. It names the zone when one is sent, and never the token. On Windows,
+     where a program receives one command-line string, the operator MUST quote it so that the C
+     runtime's argument rules give it back to ssh as one argument. The prototype wraps it in one
+     pair of double quotes, which is enough because the command holds no double quote and does not
+     end in a backslash.
    - The ssh gets a pipe for its stdin and one for its stdout; its stderr is the operator's
-     stderr. Its environment has `AGENTSPACE_NESTED=1` and no `*_POSIX_FD_STATE` variable.
-3. **Writes the content to the ssh's stdin, and closes it.** The content SHOULD be sent with no
-   byte order mark; the prototype's runtime may put a UTF-8 BOM ahead of it, which is why the box
-   strips one. A write that fails because ssh has already exited is not an error here; the
-   missing confirmation reports it.
-4. **Waits at most 20 seconds for the ssh to exit.** At the limit it stops that ssh and every
-   process the ssh started (its ProxyCommand, the nested `up`, the tunnel), and no other process,
-   prints the warning `agentspace: Sending the localswim token took over 20 seconds and was
-   stopped; the board will not work on the box this session.`, and ends the push with nothing
-   recorded. A push takes 5 to 8 seconds, and a client such as the desktop app gives up on a slow
-   banner, so the limit stays short (D9's E3.02 finding).
-5. **Reads the ssh's stdout and its exit code**, waiting at most 10 more seconds for the stdout to
-   end once the ssh has exited, and taking it as empty if it does not.
+     stderr, so it carries the nested `up`'s messages, `Ready: <id>` among them. Its environment is
+     the operator's, as [Environment variables](#environment-variables) sets it.
+   - An ssh that cannot be started at all warns as [any other failure](#what-the-laptop-checks)
+     does.
+3. **Starts a 20-second clock as the ssh starts, writes the content to the ssh's stdin, and closes
+   it.** The write is inside the 20 seconds, so a write that blocks is cut off by the same limit.
+   The content SHOULD be sent with no byte order mark; the prototype's runtime may put a UTF-8 BOM
+   ahead of it, which is why the box strips one ([Q18](#open-questions)). A write that fails
+   because ssh has already exited is not an error here; the missing confirmation reports it.
+4. **Waits for the ssh to exit until the 20 seconds are up.** At the limit it stops, forcibly and
+   without asking them to exit, that ssh and every process descended from it (its ProxyCommand,
+   the nested `up`, the tunnel), and no other process: today `taskkill /T /F /PID <ssh's PID>`,
+   then a kill of the ssh itself. It then prints the warning `agentspace: Sending the localswim
+   token took over 20 seconds and was stopped; the board will not work on the box this session.`,
+   and ends the push at once, reading nothing more and recording nothing. A push takes 5 to 8
+   seconds, and a client such as the desktop app gives up on a slow banner, so the limit stays
+   short (D9's E3.02 finding).
+5. **Once the ssh has exited on its own, reads its exit code and its stdout**, waiting at most 10
+   more seconds for the stdout to end, and taking it as empty if it does not. The 10 seconds apply
+   only here, never after a kill.
 
 ### What the box does
 
@@ -921,14 +993,18 @@ shell command run by the login user's shell; on another platform it is that plat
 equivalent.
 
 1. **Read at most two lines from stdin, and stop reading after 30 seconds.** It MUST NOT wait for
-   the end of its input beyond those two lines.
+   the end of its input beyond those two lines. The box's 30 seconds are longer than the laptop's
+   20, so in a push the laptop's limit comes first; the box's bounds a read whose laptop end has
+   gone without closing the connection.
 2. **Normalize them:** remove every CR, remove a UTF-8 BOM at the start of the first line, and drop
    every empty line. The two lines are taken before empty lines are dropped, so a blank line ahead
    of them leaves one line, and the content is refused. The laptop MUST send nothing ahead of the
    two lines but, at most, a BOM.
 3. **Write the result to a new temporary file in the credential file's folder**, creating the
-   folder if needed. The folder and the file MUST be readable by the login user alone from the
-   moment they exist (today: folder mode 0700, file mode 0600, made under `umask 077`).
+   folder if it does not exist. The temporary file and the credential file MUST be readable by the
+   login user alone from the moment they exist, and so MUST a folder the box creates (today: file
+   mode 0600, and a new folder 0700, made under `umask 077`). A folder that already exists is used
+   as it is, its mode unchanged.
 4. **Accept it only if it has exactly two lines, one starting `LOCALSWIM_URL=` and one starting
    `LOCALSWIM_TOKEN=`, each followed by at least one character.** Today's box checks the count and
    that each prefix is present, not their order.
@@ -940,13 +1016,16 @@ equivalent.
    prompting, and giving up within about 6 seconds (today `timeout -k 1 5 sudo -n timedatectl
    set-timezone <zone>`, with its input and output on `/dev/null`). Then print one more line,
    `zone <zone>` if it succeeded or `zone-failed` if not, and exit 0 whatever the zone did. The
-   zone MUST be the system zone, never an exported `TZ` (D32).
+   zone MUST be the system zone, never an exported `TZ` (D32). Today's box does not check the zone
+   itself; the laptop's check is the only one ([The time zone](#the-time-zone)), and a host MAY
+   check it again.
 8. **Without a zone,** exit 0 once the hash is printed.
 
 **On any failure before step 6**, the box MUST remove the temporary file, leave the old credential
 file as it was, and exit non-zero (1 today). If step 6 itself fails, the new credential file stays
-in place, and the box exits non-zero. The credential file is never left empty or partial,
-whatever happens to the connection. The answer MUST NOT echo the content.
+in place, no hash line is printed, and the box exits non-zero. The credential file is never left
+empty or partial, whatever happens to the connection. **The box MUST NOT write the content, or any
+part of it, to stdout or stderr.**
 
 **What the box answers, then:**
 
@@ -955,44 +1034,63 @@ whatever happens to the connection. The answer MUST NOT echo the content.
 | Token installed, no zone sent | `<hash>  -` | 0 |
 | Token installed, zone set | `<hash>  -`, then `zone <zone>` | 0 |
 | Token installed, zone refused | `<hash>  -`, then `zone-failed` | 0 |
-| Token refused or not installed | Nothing that matches a hash line | Non-zero (1 today) |
+| Token refused, or any failure before step 6; the old credential file stays | No hash line | Non-zero (1 today) |
+| Token installed, but step 6 failed | No hash line | Non-zero (1 today) |
 | The ssh itself failed: no login, an alias that needs a prompt, no tunnel | Nothing | 255, ssh's own |
+
+**Other lines MAY come before or among these**, such as a banner that the login user's shell or
+its startup files print. The laptop skips every line it is not looking for
+([What the laptop checks](#what-the-laptop-checks)).
 
 ### What the laptop checks
 
-1. **The token is confirmed** when the ssh exited 0 and the first line of its stdout that starts
-   with 64 lowercase hex digits followed by whitespace carries exactly the expected hash. The
-   expected hash is the SHA-256, as lowercase hex, of the content as the box writes it: CRs
-   removed, a leading BOM removed, empty lines dropped, and every remaining line ending in LF.
-   Otherwise it warns `agentspace: The instance did not confirm the localswim token; the board will
-   not work on the box this session.` and records nothing.
-2. **The zone is confirmed**, when one was sent, when a line of stdout (split at LF or CRLF) is
-   exactly `zone <zone>`, compared case-sensitively. Otherwise (`zone-failed`, or no zone line) it
-   warns `agentspace: The instance did not take the time zone <zone>; times on the box stay in its
-   own zone.` and records nothing, so the next connection asks again. The token stays installed.
-3. **Both confirmed:** it writes the stamp (docs/state.md).
+**The ssh's stdout is split into lines at each LF**; a CR just before an LF belongs to the line's
+end.
 
-**Any other failure in the push** warns `agentspace: Could not send the localswim token; the board
-will not work on the box this session.` and records nothing. **A push never fails the command**:
-every outcome here is a warning, and `up` and `sync` go on as if the push had succeeded.
+1. **The token is confirmed when the ssh exited 0, and the first hash line of its stdout carries
+   the expected hash.** A hash line is one whose first 64 characters are hex digits (`0-9`, `a-f`
+   or `A-F`) and whose 65th is a space, a tab, a CR or the LF that ends it. The hash is compared
+   with the expected one without regard to case. The expected hash is the SHA-256, as hex, of the
+   content as the box writes it: CRs removed, a leading BOM removed, empty lines dropped, and every
+   remaining line ending in LF. Content the laptop has accepted holds none of those, so that is the
+   SHA-256 of the content's own bytes.
+   **Otherwise, for any non-zero exit (255 included) or no matching hash line**, it warns
+   `agentspace: The instance did not confirm the localswim token; the board will not work on the
+   box this session.`, records nothing, and checks no zone.
+2. **The zone is confirmed**, when one was sent, when a line of stdout is exactly `zone <zone>`,
+   compared case-sensitively, with its line end (LF or CRLF) removed. Otherwise (`zone-failed`, or
+   no zone line) it warns `agentspace: The instance did not take the time zone <zone>; times on the
+   box stay in its own zone.` and records nothing, so every later connection pushes again, a login
+   each time, until the box takes a zone. The token stays installed.
+3. **Both confirmed:** it writes the stamp ([The stamp](#the-stamp)).
 
-**`-Alias` is checked again by the push itself**, in case any other path reaches it with a bad
-one: it then warns `agentspace: The SSH host alias for the localswim token is not valid; the board
-will not work on the box this session.` and skips the push. From the command line this cannot
-happen, since the alias is checked first.
+**Any other failure in the push**, such as an ssh that cannot be started or a stamp that cannot be
+written, warns `agentspace: Could not send the localswim token; the board will not work on the box
+this session.` and records nothing. **A push never fails the command**: every outcome here is a
+warning, and `up` and `sync` go on as if the push had succeeded. `-Quiet` suppresses these
+warnings with the rest ([Messages](#messages); [Q21](#open-questions)).
+
+**A push handed a bad alias by any path but the command line** warns `agentspace: The SSH host
+alias for the localswim token is not valid; the board will not work on the box this session.` and
+skips; from the command line it cannot happen.
 
 ### Secrecy
 
 - **The token MUST travel only on the push's stdin.** It MUST NOT appear in any process's
-  arguments, on the laptop or the box, in any environment variable, in any message, warning or
-  log, or in any file on the laptop.
+  arguments, on the laptop or the box; in any environment variable the operator sets or any
+  program it starts inherits; in any message, warning or log; or in any file on the laptop. On the
+  box, only the wrapper puts it in the environment, of the one CLI run it starts
+  ([The box's files](#the-boxs-files)).
 - **On the box it lives only in the credential file**, and briefly in its temporary file, both
   readable by the login user alone.
-- **On the laptop the operator keeps only the stamp**, a hash that covers the token. It MUST NOT
-  keep the token in a file, a cache or a temporary file, and SHOULD drop it from memory once the
-  push ends.
+- **On the laptop the operator keeps only the stamp**, a hash that covers the token
+  ([Q27](#open-questions)). It MUST NOT keep the token in a file, a cache or a temporary file, and
+  SHOULD drop it from memory once the push ends.
 - **A warning or failure in the push MUST NOT quote the error that caused it**, because that text
   could carry part of the receipt or the credential. Each warning is a fixed text.
+- **A check that stubs ssh MUST point `LOCALAPPDATA` at a fake receipt and credential**, so that a
+  stub never receives the real token on its stdin. The operator finds the receipt only through
+  `LOCALAPPDATA` ([What the laptop reads](#what-the-laptop-reads); [Q11](#open-questions)).
 
 ### Today's remote command
 
@@ -1004,7 +1102,8 @@ message: it is ssh's last argument, which can be seen in the laptop's process li
 then sha256sum < $d/bot.env || exit 1; if timeout -k 1 5 sudo -n timedatectl set-timezone <zone> </dev/null >/dev/null 2>&1; then echo zone <zone>; else echo zone-failed; fi; exit 0; 
 ```
 
-and without one, `<then>` is `then sha256sum < $d/bot.env; `. The whole command, on one line, is:
+and without one, `<then>` is `then sha256sum < $d/bot.env; `, whose exit code is then
+`sha256sum`'s. Each form of `<then>` ends in a space. The whole command, on one line, is:
 
 ```
 umask 077; d=$HOME/.config/localswim; mkdir -p $d && t=$(mktemp $d/bot.env.XXXXXX) || exit 1; trap 'rm -f $t' EXIT; timeout 30 head -n 2 | tr -d '\r' | sed '1s/^\xEF\xBB\xBF//; /^$/d' > $t; if test $(wc -l < $t) -eq 2 && grep -q '^LOCALSWIM_URL=.' $t && grep -q '^LOCALSWIM_TOKEN=.' $t && mv -f $t $d/bot.env; <then>else rm -f $t; exit 1; fi
@@ -1077,14 +1176,15 @@ exit.
 | `/etc/ssh/agentspace_ca.pub` | `sync` | The CA sshd trusts for user certificates |
 | `/etc/ssh/sshd_config.d/50-agentspace-ca.conf` | `sync` | Trusts the CA, and closes root login (D7) |
 | `/etc/ssh/sshd_config.d/51-agentspace-logins.conf` | `sync` | Exempts 127.0.0.1 from login penalties, a 30-second login grace time, and a dead client dropped after about 90 seconds (D7, D12) |
-| `~/.config/localswim/bot.env` (login user's, mode 0600, folder 0700) | The token push | The board's URL and Bot token, for the wrapper |
+| `~/.config/localswim/bot.env` (login user's, mode 0600, folder 0700 when created) | The token push | The board's URL and Bot token, for the wrapper |
 | `~/.claude/CLAUDE.md` (login user's) | `sync` | A copy of the laptop's; MUST NOT be edited on the box |
 | The system time zone | The token push | The laptop's zone (D32) |
 | `/tmp/agentspace-system/`, `/tmp/localswim` | `sync`, briefly | Staging; removed once installed |
 
 **The credential file is read by the wrapper as shell assignments**: it exports each line for one
 run of the CLI and never prints them. So the URL and the token MUST be safe to read that way
-([Q9](#open-questions)). The wrapper refuses with a message to stderr and exit 1 when the CLI is
+([Q9](#open-questions)); the push refuses only empty values and a CR, LF or NUL
+([What the laptop reads](#what-the-laptop-reads)). The wrapper refuses with a message to stderr and exit 1 when the CLI is
 not installed, when the credential file is missing, or when the board's address does not answer,
 which happens whenever no connection holds the board's forwards (D12).
 
@@ -1097,32 +1197,29 @@ which `box/bootstrap.sh` installs once per instance when a person runs it over `
 **`up` asks the box one question through Session Manager's Run Command, never over SSH**, because
 SSH is what it is getting ready:
 
-- **The question** is sent as the document `AWS-RunShellScript`, which today's box runs as root,
-  with the comment `agentspace up: patch check`. The box MUST answer with exactly one word on
-  stdout:
-  - **`patched`** when the marker `/run/agentspace/patched` exists.
-  - **`pending`** when it does not and the patch unit `agentspace-patch.service` is enabled, so a
-    run is due or under way this boot.
-  - **`unknown`** when neither, such as before the first `sync`.
+- **The question** is sent with the comment `agentspace up: patch check`. The box MUST answer
+  with exactly one word on stdout:
+  - **`patched`** when this boot's patch run has finished.
+  - **`pending`** when a patch run is due or under way this boot.
+  - **`unknown`** when no patch run is set up, such as before the first `sync`.
 
-  Today's command is `test -f /run/agentspace/patched && echo patched || (systemctl is-enabled
+  On today's box the marker of a finished run is `/run/agentspace/patched`, the patch run is the
+  unit `agentspace-patch.service`, enabled when set up, and the question is sent as the document
+  `AWS-RunShellScript`, which runs as root. Today's command is `test -f /run/agentspace/patched && echo patched || (systemctl is-enabled
   --quiet agentspace-patch.service && echo pending || echo unknown)`. It holds no comma, bracket or
   equals sign, which the AWS CLI's shorthand syntax would split on.
 - **How the answer is read.** `up` polls the command's invocation once a second, for up to 20
   seconds. While its status is `Pending`, `InProgress` or `Delayed`, or the invocation cannot be
   read yet, it polls again. Any other status ends the poll, and the answer is the invocation's
   stdout, trimmed. **20 polls without an end count as `pending`.**
-- **What counts as ready:** every answer but `pending`. So `unknown` is ready, and so is an empty
-  or unexpected answer from a command that failed. That last case is the prototype's behavior, and
-  whether it is intended is [Q6](#open-questions).
+- **What counts as ready:** every answer but `pending`
+  ([Starting the box](#starting-the-box-and-waiting-for-it) lists what that lets through).
 - **What the box does at boot, as far as `up` can see:** the patch unit runs once, after the
   network is up, with a 20-minute limit. It removes the marker, upgrades every package
   (`dist-upgrade`, phased updates included) and snaps, reboots at most once per 15 minutes if a
   package asks for it, moves the toolchain forward, and then writes the marker. A failed run
   writes no marker, so `up` waits until its 15-minute deadline. The unit's own limit, 20 minutes,
-  is longer than `up`'s wait, so a slow run that is still working also ends in `up`'s failure;
-  the next connection after 20 minutes from the start skips the wait
-  ([Starting the box](#starting-the-box-and-waiting-for-it)).
+  is longer than `up`'s wait, so a slow run that is still working also ends in `up`'s failure.
 
 ### Idle stop, as the laptop sees it
 
@@ -1173,7 +1270,8 @@ operator MUST use that name.
 **Output:** `InstanceId`, the instance's ID. The operator reads it into its instance-ID cache.
 
 **What the laptop's AWS identity needs:** rights to deploy and describe the stack and create its
-IAM role (`CAPABILITY_IAM`), to describe, start and stop the instance, to describe and modify its
+IAM role (`CAPABILITY_IAM`) and pass it to the instance (`iam:PassRole`), to create and change the
+stack's CloudWatch alarm, to describe, start and stop the instance, to describe and modify its
 volume, and to use Session Manager (describe instance information, send a command, read its
 invocation, start a session). Today the identity is an administrator signed in with `aws login`,
 which gives short-lived credentials (README, "Rules"; docs/how-it-was-built.md).
@@ -1203,14 +1301,22 @@ invocation is often not readable for a moment after `send-command`; the prototyp
 ## Requirements the prototype does not meet yet
 
 **Behavior this page requires that the prototype does not show, so that a conformance check run
-against the prototype is expected to fail here.** None of it is to be copied.
+against the prototype is expected to fail here.** **The rewrite MUST NOT copy the prototype's
+behavior in this table.**
 
 | Requirement | The prototype | Card or question |
 |---|---|---|
 | Every ssh and scp by full path | Only the push's ssh and the CA key's scp are | #0027 |
 | An expired sign-in prints agentspace's message, and other AWS failures the CLI's text | A raw runtime error, under Windows PowerShell 5.1 | #0034 |
+| An expired sign-in during `deploy` prints agentspace's message | The CLI's text, then `Stack deploy failed; see the stack events in the console.` | #0034 |
 | `deploy` exits 1 when its `sync` step fails | Most likely exits 0 | [Q3](#open-questions) |
-| A missing `id_ed25519.pub` fails with an `agentspace: ` message | A runtime error | [Exit codes](#exit-codes) |
+| A missing or empty `id_ed25519.pub` fails with an `agentspace: ` message | A runtime error; a whitespace-only file passes an empty key on | [Exit codes](#exit-codes) |
+| An empty instance-ID cache counts as missing, and a stack with no `InstanceId` output fails | Writes an empty cache, after which every command fails with a runtime error until `deploy` | [Q24](#open-questions) |
+| `sync` with `ssh-keygen.exe` missing fails with `ca`'s step 1 message | No check; another error | [sync](#sync) |
+| A program that needs no input gets an empty or closed stdin | The AWS CLI inherits `up`'s stdin, the SSH client's stream | [Streams](#streams) |
+| An empty or missing URL or token, or one with a CR, LF or NUL, warns "Could not read" and sends nothing | Sends it. The box refuses an empty value, so the laptop warns "did not confirm"; with an LF the box installs the first two lines, a cut token, and the laptop warns "did not confirm"; a CR is removed by the box and the push is confirmed | [What the laptop reads](#what-the-laptop-reads) |
+| An empty or unreadable stamp makes the push due | Warns "Could not send" and pushes nothing, at every `up` until a `sync` | [The stamp](#the-stamp) |
+| The push's 20 seconds cover the write to ssh's stdin | Starts the clock after the write; the content fits in a pipe's buffer, so a blocked write has not been seen | [What the laptop sends](#what-the-laptop-sends) |
 | A missing command is a usage error, never a prompt | The shell prompts for it | [Q1](#open-questions) |
 | Help at every level | None of its own | [Q2](#open-questions) |
 
@@ -1229,10 +1335,10 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q5** | **Does #0034's mechanism also hit `ssm get-command-invocation` and `ec2 wait`?** The poll discards the CLI's stderr while every error is terminating; under Windows PowerShell 5.1 a stderr line from it (such as an invocation not yet registered) may throw and fail `up` with a raw error instead of polling again. | A run on the laptop |
 | **Q6** | **Is an empty or unexpected answer to the patch check meant to count as ready?** The prototype ends the wait on anything but `pending`, so a check that fails lets `up` print `Ready` before the patch run has finished, against the README's rule. | The architect |
 | **Q7** | **Where do the instance-ID cache and the localswim CLI's build output live?** The prototype keeps them in the checkout (`.instance-id`, `.build\`), while D21 says everything agentspace keeps on the laptop lives under `%USERPROFILE%\.agentspace`. The ProxyCommand and the lease CLI's default ProxyCommand both depend on the cache's place today. | docs/state.md (E0.04-T02-S01) |
-| **Q8** | **Does docs/state.md own the files the operator reads but agentspace never writes?** Those are localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry, and `infra\local.parameters`. D34 gives it "every file and folder agentspace writes". The receipt's and `bot.xml`'s formats are localswim's, and nothing in this repo specifies them. | docs/state.md (E0.04-T02-S01) |
-| **Q9** | **What characters can a localswim URL and Bot token contain, and what form MUST the URL have?** The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either would break or change it, and it finds the board's address by taking the URL as `http://<host>:<port>...`. The push checks only that each is non-empty. | localswim's docs; the architect |
+| **Q8** | **Does docs/state.md own the files the operator reads but agentspace never writes?** Those are localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry, and `infra\local.parameters`. D34 gives it "every file and folder agentspace writes". | docs/state.md (E0.04-T02-S01) |
+| **Q9** | **What characters can a localswim URL and Bot token contain, and what form MUST the URL have?** The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either would break or change it, and it finds the board's address by taking the URL as `http://<host>:<port>...`. The push refuses an empty value and a CR, LF or NUL, and checks nothing else. | localswim's docs; the architect |
 | **Q10** | **What are the rewrite's entry points called, and does it keep PowerShell-style parameters (`-GiB`, `-Alias`, `-Quiet`)?** Lease alias files on the laptop name `<checkout>\scripts\ssh-proxy.cmd` in their ProxyCommand line, and the lease CLI runs `scripts\agentspace.ps1 ca`, so a renamed entry point changes those too. | v0.06 (#0055) |
-| **Q11** | **How does a conformance check stub ssh and aws?** D34 allows stubs for them, but #0027 requires ssh and scp by full path, and the AWS CLI is called by full path when it is installed. The rewrite needs a documented override, such as an environment variable, that a check can set and that nothing else uses. | E0.04-T02-S04 |
+| **Q11** | **How does a conformance check stub ssh and aws?** D34 allows stubs for them, but #0027 requires ssh and scp by full path, and the AWS CLI is called by full path when it is installed. The rewrite needs a documented override, such as an environment variable, that a check can set and that nothing else uses. A stub ssh MUST NOT receive the real token ([Secrecy](#secrecy)). | E0.04-T02-S04 |
 | **Q12** | **How does a conformance check give the push a time zone?** The prototype's override is reachable only by loading its code; from outside, only the laptop's own zone works. | E0.04-T02-S04 |
 | **Q13** | **What does `deploy` do when `id_ed25519.pub` has changed?** The key is in the instance's user data, which runs at first boot only, so the new key is never installed; and CloudFormation may stop and start the instance to change user data. | A deploy on the laptop, or AWS's documentation |
 | **Q14** | **Does the box require IMDSv2?** docs/how-it-was-built.md says the template requires it and that an IMDSv1 request was refused, but the template sets no metadata options, so it most likely comes from the image's defaults. | A look at the instance's metadata options |
@@ -1245,7 +1351,8 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q21** | **SHOULD `-Quiet` suppress the push's warnings?** It does in the prototype, so a quiet `sync` hides a token that did not land. The ProxyCommand never passes `-Quiet`. | The architect |
 | **Q22** | **SHOULD `-GiB` be checked before AWS is asked?** The prototype passes any integer through, and AWS refuses 0 and below. | The architect |
 | **Q23** | **SHOULD `grow` fail when the online filesystem step fails?** The prototype ignores that step's exit code. | The architect |
-| **Q24** | **What does the prototype print when `.instance-id` is missing and the stack has no `InstanceId` output?** It most likely writes an empty cache and fails later with an AWS error about an empty ID. | A run on the laptop |
+| **Q24** | **What exactly does the prototype print when the stack has no `InstanceId` output?** It writes an empty cache, and this page requires otherwise ([Laptop files](#laptop-files)). | A run on the laptop |
 | **Q25** | **What does a failed `rm -rf` of the box's staging folder lead to in `sync`?** The prototype does not check it. A leftover folder would make the recursive copy nest `system` inside it, and the install would then fail; that the failure message then names the install rather than the copy is unverified. | A run on the laptop |
 | **Q26** | **Does the sign-in test catch every form of the AWS CLI's expired-login error?** The prototype matches `expired`, `aws login` or `Unable to locate credentials`. The exact text of the CLI's error after an `aws login` session expires was not recorded with #0034. | A run on the laptop with an expired sign-in |
 | **Q27** | **SHOULD the stamp stay an unsalted hash that covers the token?** It is kept on the laptop, and anyone who can read it can test a guessed token against it. A keyed digest would hide that, but the stamp MUST still change whenever the instance, the zone, the URL or the token does. Its storage is docs/state.md's. | The architect; docs/state.md |
+| **Q28** | **Where is the format of localswim's receipt and `bot.xml` specified, so the rewrite can read the token without PowerShell?** This page says what the prototype relies on ([What the laptop reads](#what-the-laptop-reads)), but the formats are localswim's. | localswim's docs; the architect |
