@@ -4,6 +4,8 @@
 # Helpers shared by the lease CLI's conformance checks. Dot-source conformance/lease-cli/harness.ps1
 # first. Nothing here starts a program, except through the harness, and nothing here loads prototype
 # code. Every expectation below is taken from docs/lease-api.md or docs/state.md, never from a build.
+# The program under test is untrusted (docs/conformance.md, "The program under test is untrusted"), so
+# every write below calls Assert-ConformancePath first.
 
 $script:ExitCodeOf = @{ internal = 1; usage = 2; invalid_value = 2; out_of_range = 2; not_found = 3; invalid_state = 4 }
 
@@ -161,7 +163,7 @@ function Read-ConformanceStateFile {
 # Writes the document back as state.md says: compact JSON, UTF-8 without a byte order mark, one line feed.
 function Write-ConformanceStateFile {
   param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)]$Document, [string]$StateDir)
-  $path = Get-ConformanceStatePath -ConformanceHome $ConformanceHome -StateDir $StateDir
+  $path = Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Get-ConformanceStatePath -ConformanceHome $ConformanceHome -StateDir $StateDir)
   $json = $Document | ConvertTo-Json -Compress -Depth 50
   [IO.File]::WriteAllText($path, $json + "`n", [Text.UTF8Encoding]::new($false))
 }

@@ -25,6 +25,7 @@ folders alone were then run, to show the header lines broke nothing, and all pas
   [the live-box check](#the-live-box-check)
 - [The header line in each script](#the-header-line-in-each-script)
 - [Which spec section each check would enforce](#which-spec-section-each-check-would-enforce)
+- [The files that are expected to fail](#the-files-that-are-expected-to-fail)
 - [The gaps](#the-gaps)
 - [The remaining work](#the-remaining-work)
 - [Open questions](#open-questions)
@@ -147,8 +148,8 @@ two more, so each needs a name. A rewrite that ships one binary sets all four to
 
 ## What the specs require of the suite
 
-**Three requirements in the specs say what the conformance suite MUST do. No sorted check meets
-any of them today.**
+**Three requirements in the specs say what the conformance suite MUST do. Where a conformance
+check meets one, its bullet says so.**
 
 - **The lease CLI's times** ([docs/lease-api.md](lease-api.md#times), #0029 point 7). The suite
   MUST check a certificate's validity and `expires_at` against its own clock, and MUST run at
@@ -160,6 +161,12 @@ any of them today.**
     valid-before against the check's own clock and against each other. **It cannot set a zone for
     the program**: Windows has no environment variable for it, so the run uses the laptop's zone,
     and a run on a machine set to UTC does not meet the second half ([Running the suite](#running-the-suite)).
+  - **Met for a certificate's validity** by `conformance/lease-cli/test-lease-certificate.ps1`
+    (E0.04-T03-S03). It compares valid-before with `expires_at`, and the issue time with its own
+    clock (to the second, within the `create` call), after converting `ssh-keygen -L`'s local time
+    to UTC. It reports SKIPPED when the machine is set to UTC, because a process's zone cannot be
+    set on Windows, so a run on a UTC machine is incomplete. A run on a laptop set to another
+    zone passes.
 - **The `usage` error's `field`** ([docs/lease-api.md](lease-api.md#schemas)). The error schema
   cannot say which `usage` errors carry `field`, so a conformance check MUST test that rule. The
   first half of `scripts\test-lease-cli.ps1` compares the code and `field` of each error run, so
@@ -171,6 +178,46 @@ any of them today.**
   requires commands to be safe under concurrent processes
   ([docs/state.md](state.md#concurrency)), so a race check through the CLI is a conformance check,
   and the suite MUST contain one. The prototype's one race check is in-process, so it is not.
+  - **Met by `conformance/lease-cli/test-lease-concurrency.ps1`** (E0.04-T03-S03), as the two
+    sections cited above ask. Rounds A to E start several lease CLI processes at one instant (a
+    barrier releases them together) and read the state file after they end, for `create`s, `renew`s
+    and both together. Round G holds the lease state lock itself, starts `create`s, `renew`s and a
+    `release`, waits until every process is running and none has finished, and lets go. A process seen
+    running is not proved to be blocked on the lock, so this makes it likely, not certain, that
+    they all reach it at about the same moment. Round F holds the lock and checks that `get` and `list` do not wait
+    and that a `create`, a `renew` and a `release` each fail with `internal` and say to try again.
+    After every round the check reads the state file and tests what those two sections require of
+    it: that it validates, that each lease a `create` printed is in it exactly once and nothing else
+    is, and that each renew's record, certificate and printed expiry agree. Rounds B to E and G also
+    need a command to wait for the lock for up to 30 seconds, which
+    [lease-api.md](lease-api.md#concurrency-and-atomicity) requires (architect ruling, 2026-11-18),
+    so a build that gives up sooner fails them.
+  - **A pass is evidence, not proof.** A build that checks the lock and lets go of it before it
+    writes can pass rounds A to E whenever its processes happen not to collide, and round G narrows
+    that gap without closing it: a race that needs one interleaving can pass any number of runs.
+    **An earlier version of the check (rounds A to F, without G) was shown to fail** against a scratch
+    copy of the prototype with its lock opened shared, which loses updates in round A's first round and
+    in rounds B, C and E. Round G was added after review, and has not been shown to fail against such
+    a copy. Against a program that prints nothing it fails, because its processes end while the check
+    still holds the lock.
+
+### SHOULDs not checked
+
+**A conformance check enforces MUSTs only** (the architect, 2026-11-18). A SHOULD is never a PASS
+or a FAIL, because a conforming build MAY choose otherwise for a good reason. These are SHOULDs the
+specs make and no check enforces:
+- **The certificate's valid-after time, 5 minutes before its issue time** ([state.md, The
+  certificate](state.md#the-certificate); D24, #0029 point 1). The certificate check holds only to
+  "not later than the issue time, and not an hour or more before it", which a build of either choice
+  meets.
+- **The wording of a message** ([lease-api.md, Messages](lease-api.md#messages)): a build MAY word
+  its messages differently where the spec does not say MUST. A check looks for what a MUST asks a
+  message to say (that a failed lock wait says to try again) and for nothing more.
+- **The alias file's comment** ([state.md, The alias file](state.md#the-alias-file)): it SHOULD say
+  that agentspace wrote the file and that it MUST NOT be edited. A check requires one comment after
+  a semicolon, and no words.
+- **The order of a renew's steps** ([state.md, Renewal](state.md#renewal)): the rewrite SHOULD follow
+  it. A check sees only what a renew leaves, and what a failed one leaves.
 
 ## Running the suite
 
@@ -191,6 +238,15 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 | `test-values.ps1` | `invalid_value` and `out_of_range`, their `field`, and the error schema's refusal of a line feed ([Values](lease-api.md#values), [Schemas](lease-api.md#schemas)) | No |
 | `test-create-get.ps1` | `create` and `get`: a ready lease, its credential files, TTL, uppercase ID, unsatisfiable, a tolerant command line, a failed write, `not_found`, expiry, the state file ([lease-api.md](lease-api.md#agentspace-lease-create), [state.md](state.md#a-leases-credential)) | For a ready lease |
 | `test-list.ps1` | `list`: its order, filters and empty list, with leases made by `create` and given the times and states the state file can hold ([lease-api.md](lease-api.md#agentspace-lease-list)) | For a ready lease |
+| `test-lease-cmd-renew-release.ps1` | `renew` and `release`: the new certificate and its window, the record, the refusals by state and by value, a failed renew leaving the lease as it was (no key pair, no folder, a record that cannot be written), and what `release` deletes and leaves ([renew](lease-api.md#agentspace-lease-renew), [release](lease-api.md#agentspace-lease-release), [state.md](state.md#renewal)) | Yes. One SKIPPED result, and nothing else is run, when no CA could be made |
+| `test-lease-certificate.ps1` | The certificate, the key and the times a ready `create` leaves ([lease-api.md](lease-api.md#the-credential), [Times](lease-api.md#times), [state.md](state.md#the-certificate)), read with `ssh-keygen` | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when the machine's zone is UTC (see below) |
+| `test-lease-alias-file.ps1` | The alias file, read with `ssh -G`, and the `Include` line on each shape of config; a ProxyCommand with a CR or LF refused ([state.md](state.md#the-alias-file), [The `Include` line](state.md#the-include-line), [lease-api.md](lease-api.md#environment)) | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when `create` fails under the default transport (see below) |
+| `test-lease-driver-outcomes.ps1` | The driver as a caller sees it: unsatisfiable requests, no driver name in any output, a failed alias step ([driver.md](driver.md#unsatisfiable-requests), [lease-api.md](lease-api.md#concurrency-and-atomicity)) | Only for the ready half. The unsatisfiable half runs without one |
+| `test-lease-concurrency.ps1` | Concurrent `create`s, `renew`s and `release`s, readers that never wait, the lease state lock and its 30 seconds ([lease-api.md](lease-api.md#concurrency-and-atomicity), [state.md](state.md#the-lease-state-lock)) | Yes. SKIPPED when no CA could be made |
+
+**The helpers the checks share are two files.** `conformance/lease-cli/lease-cli-common.ps1` serves
+S01's five, and `conformance/lease-cli/lease-check-support.ps1` serves the last five, which are
+E0.04-T03-S03's.
 
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
@@ -199,10 +255,19 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 - **The exit code is 0 when every result was PASS, 1 when any was FAIL, and 2 when none failed but
   any was SKIPPED.** **A run that counted no result at all MUST exit 1**, with a `FAIL` line saying
   that no check ran. A run that exits 2 is incomplete, never passed (see
-  [What a conformance run needs](#what-a-conformance-run-needs)). The checks skip only when the
-  harness could not make a throwaway CA, when no `ssh-keygen` is on the `PATH` (two checks of
-  `test-create-get.ps1`), or when the local UTC offset is 0 (one check of `test-create-get.ps1`),
-  and the reason says which.
+  [What a conformance run needs](#what-a-conformance-run-needs)). The checks skip only for these
+  reasons, and each reason says which:
+  - **The harness could not make a throwaway CA** (any check that places a ready lease).
+  - **No `ssh-keygen` is on the `PATH`** (two checks of `test-create-get.ps1`).
+  - **The local UTC offset is 0** (one check of `test-create-get.ps1` and one of
+    `test-lease-certificate.ps1`).
+  - **A `create` under the default transport fails with a valid `internal` error** (one check of
+    `test-lease-alias-file.ps1`). That check leaves `AGENTSPACE_PROXY_COMMAND` unset, so the program
+    forms its own transport, which may need an instance-ID cache that a checkout lacks. **The reason
+    says "may need", because the check cannot tell that cause from another.** In a checkout with
+    no cache the run exits 2. What the failed `create` leaves (no lease folder, no alias file, no
+    record) is checked as PASS or FAIL either way, and any other failure of that `create` is a
+    FAIL, not a SKIPPED ([The gaps](#the-gaps)).
 - **The program under test is named by `AGENTSPACE_CMD`** ([Naming the program under test](#naming-the-program-under-test)).
   It is run as a separate process with its arguments unchanged, and its stdin is closed. Set it to a
   program that prints nothing and exits 0, and **every check MUST fail**: that proves the variable is
@@ -214,10 +279,11 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
   set to UTC a zone mix-up in the program stays hidden. **`test-create-get.ps1` reports one SKIPPED
   check, with a reason, when the local UTC offset is 0**, so a run on a UTC machine exits 2: it is
   incomplete, never passed.
-- **A check takes from about 20 to about 50 seconds against the prototype, and all five about 3
-  minutes**, most of it starting programs: about 0.5 seconds for a run that issues no credential,
-  and a few seconds for a ready `create`. Against a program that prints nothing, all five take
-  about 15 seconds.
+- **A check takes from about 20 seconds to about 2 minutes against the prototype, and the ten about
+  10 minutes**, most of it starting programs: about 0.5 seconds for a run that issues no credential,
+  and a few seconds for a ready `create`. `test-lease-concurrency.ps1` is the longest, because
+  round F waits out the lock's 30 seconds. Against a program that prints nothing, all ten take
+  about a minute.
 
 ### The harness
 
@@ -233,6 +299,7 @@ the checks share, which start no program of their own, are in `conformance/lease
 | `Invoke-ConformanceProgram -Variable <name> ...` | The same for any program a conformance variable names, such as `AGENTSPACE_OPERATOR_CMD` |
 | `Test-ConformanceSchema -Json <string> -Schema <file>` | True when the document validates against a schema under `schemas/` (`state/leases.state.schema.json` is allowed), by PowerShell 7's `Test-Json -SchemaFile`. False when it does not validate or is not JSON |
 | `Write-ConformanceResult -Name <check> -Status PASS\|FAIL\|SKIPPED [-Reason <text>]` | Prints one result line and counts it |
+| `Assert-ConformancePath -ConformanceHome <h> -Path <p>` | Resolves the path and returns it in full, or throws unless it is the home's `Root` or under it (an empty path, a path with `..` that leads out, another drive). **It also throws when the `Root` itself, or any folder or file that exists between the `Root` and the path, is a reparse point (a junction or a symbolic link)**, because a write or a delete through one could reach outside the home. It checks the attributes of each existing step, from the `Root` down. **Every delete and every write a lease CLI check makes MUST call it first** ([The program under test is untrusted](#the-program-under-test-is-untrusted)). The path it returns is in full and long form, so it can differ in spelling from the text a program wrote (a short `8.3` folder name in `%TEMP%` is expanded): a check that compares a path with such text uses the path as it built it, after the call |
 | `Remove-ConformanceHome -ConformanceHome <h>` | Deletes the home's `Root`, and only it. It refuses a folder that is not an `agentspace-conformance-*` folder directly under `%TEMP%` |
 | `Exit-ConformanceRun` | Prints the summary line and exits with the code above. A run that counted no result exits 1, after a `FAIL` line saying that no check ran |
 
@@ -267,6 +334,26 @@ the checks share, which start no program of their own, are in `conformance/lease
   verifier proving a run touched nothing lists them, before and after.
 - **A check MUST NOT load prototype code** (D34). It reaches the program only through the harness.
 
+### The program under test is untrusted
+
+**The suite runs against builds other than the prototype, and a build under test can be wrong, so its output is data and never a path to act on.** The architect's rule, 2026-11-18:
+- **A check MUST NOT trust the program's output to build a path.** A lease ID or a host alias read
+  from a document MUST NOT be used to name a file until the document has passed its schema and
+  the UUID and alias patterns (`lease.output.schema.json`), and then only through
+  `Assert-ConformancePath`. In `lease-check-support.ps1`, `New-CcReadyLease` returns a document only
+  when the run passed the whole success test, and `Get-CcLeaseDir` and `Get-CcAliasPath`, the only
+  functions that build a lease's paths, refuse an ID or an alias that does not match and check the
+  path.
+- **Every delete and every write a lease CLI check makes MUST call `Assert-ConformancePath` first,
+  at the call**: `Remove-Item`, `Set-Content`, `Add-Content`, `Out-File`, `[IO.File]::Write*`,
+  `New-Item`, `Copy-Item` and `Move-Item`. The checks of S01 on `main` are included. A path that is
+  outside the throwaway home makes the check throw, and the check reports FAIL.
+- **A time the program printed is untrusted too.** A check MUST NOT wait for one, without a limit.
+- **Shown by a run:** a program that prints a ready lease whose `id` and `host_alias` are
+  `..\..\..\..\<folder>` and `..\..\..\..\<folder>\id_ed25519`, where the folder is a sibling of
+  the home under `%TEMP%`, makes every check FAIL or refuse, and leaves the file in that folder
+  untouched.
+
 ### What the first run proved
 
 **It answers [open question 3](#open-questions).** On 2026-11-18, on the laptop, with `USERPROFILE`
@@ -275,36 +362,6 @@ account, so the real profile is not unreachable), the operator's
 `ca` made a CA there and exited 0, a second `ca` exited 0 and changed nothing, and a ready
 `lease create` then issued a lease, wrote its alias file and its credential under that home, and
 printed a document that validates.
-
-### The files that are expected to fail
-
-**RFC 2119 keywords again.** Some checks assert a requirement that the prototype does not meet
-yet. Each is in its own file, named `test-unmet-<what>.ps1`, so that **every other file passes
-against the prototype in full**, and a runner can tell an expected failure from a regression
-(the architect, 2026-11-18).
-
-- **A `test-unmet-*` file MUST say, in its header, which requirement and card it checks, and that it
-  is expected to FAIL against the prototype.** Its result lines still say `FAIL`: nothing turns a
-  FAIL into a pass, and a rewrite MUST pass every line.
-- **A runner MUST NOT read such a file's exit 1 against the prototype as a regression**, and MUST
-  read the same exit against a rewrite as a failure.
-- **The rows of a spec's "Requirements the prototype does not meet yet" table, such as
-  [operator.md's](operator.md#requirements-the-prototype-does-not-meet-yet), are what these files
-  assert**, so a row leaves its table when a build passes its file.
-
-| File | Requirement | Card | Against the prototype |
-|---|---|---|---|
-| `conformance/operator/test-unmet-proxy-connect-time.ps1` | The ProxyCommand names no backend on success, prints agentspace's own message on failure, and prints backend detail only under `AGENTSPACE_DIAGNOSTIC` ([docs/operator.md](operator.md#what-a-caller-sees-d1-card-0087)), asserted through the seam that names the AWS CLI, `AGENTSPACE_AWS_CMD` ([The test seam](operator.md#the-test-seam)) | #0087 (D1), and #0085 for the seam | FAIL on both paths, `seam not met (AGENTSPACE_AWS_CMD was not used)`: the prototype runs the AWS CLI by a fixed path, so the stand-in is never called. Nothing more is asserted until the seam is met |
-| `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1` | A keeper that tracks a holder, and whose pass does not find it trusted (its process gone while the pass waits for `board-holder.lock`, or its record gone), starts no holder in that pass and waits the release grace after it, logged `grace seconds=<n>` ([docs/keeper.md](keeper.md#release-grace)); the check does not depend on the action word the pass logs ([Q6](keeper.md#open-questions)) | #0068 | FAIL on 3 checks of each of its 2 cases: the pass logs `started` at once, the line after it is not a grace line, and the next start is not the grace after the pass was let go. Nothing else fails ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)) |
-
-- **The D1 file's stand-ins are its own.** It writes two `.cmd` files into its throwaway home, one
-  `aws` that reports a made-up running instance and one that fails with error text, both logging
-  every call. A build that meets the seam calls them, and the file then asserts what the caller's
-  stderr holds (no backend text on success; one `agentspace: ` message on failure; the diagnostic
-  setting changes neither the exit code nor stdout). It sets `AGENTSPACE_NESTED`, so that `up`
-  pushes no token and needs no `ssh` stand-in.
-- **The AWS gate still applies**, so even a build that ignores the seam cannot reach the real
-  account: with the call log empty, the file reports the failure and nothing else.
 
 ## The sorting
 
@@ -319,11 +376,11 @@ already keeps each case's state in a throwaway folder.
 |---|---|---|---|
 | `test-lease-cli.ps1` | Mixed: the process half is conformance in method, the in-process half is prototype code | The second half dot-sources the state script. **Its process half is moved** to `conformance/lease-cli/` (#0084): `test-help.ps1`, `test-usage-errors.ps1` and `test-values.ps1` | None |
 | `test-lease-cmd-create-get.ps1` | Conformance in method, **moved** to `conformance/lease-cli/test-create-get.ps1` (#0084) | The credential step had no root override. The moved check runs in a throwaway `USERPROFILE` with a throwaway CA, and the script in `scripts/` stays until the rewrite replaces it | The script in `scripts/` still: the real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed). The moved check: none |
-| `test-lease-cmd-renew-release-list.ps1` | Prototype code as it stands; its checks are conformance in method | It dot-sources the driver to make each ready lease | The same as the line above |
-| `test-lease-credential.ps1` | Prototype code | It dot-sources the credential script and calls its function | The real CA (signs with it), the real `leases` folder (written, removed) |
-| `test-lease-renew-release.ps1` | Prototype code | It dot-sources the credential and alias scripts | The same as the line above |
-| `test-lease-alias.ps1` | Prototype code | It dot-sources the alias script and calls five functions | A throwaway subfolder inside the real `%USERPROFILE%\.agentspace` |
-| `test-lease-driver.ps1` | Prototype code | It dot-sources the driver, reads its source text and a variable | The real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed) |
+| `test-lease-cmd-renew-release-list.ps1` | Prototype code as it stands; its checks are conformance in method | It dot-sources the driver to make each ready lease. **Renew and release are rewritten** in `conformance/lease-cli/test-lease-cmd-renew-release.ps1` (E0.04-T03-S03); `list` is E0.04-T03-S01's | The same as the line above |
+| `test-lease-credential.ps1` | Prototype code | It dot-sources the credential script and calls its function. **Its certificate and key checks are rewritten** in `conformance/lease-cli/test-lease-certificate.ps1`; two checks are not movable (a bad ID and a second issue for one ID) | The real CA (signs with it), the real `leases` folder (written, removed) |
+| `test-lease-renew-release.ps1` | Prototype code | It dot-sources the credential and alias scripts. **Its renew and release checks are rewritten** in `test-lease-cmd-renew-release.ps1`, and its certificate checks in `test-lease-certificate.ps1`; "no `renew-*` file is left" is now "the lease folder holds the three files" | The same as the line above |
+| `test-lease-alias.ps1` | Prototype code | It dot-sources the alias script and calls five functions. **Its config, alias file and `ssh -G` checks are rewritten** in `conformance/lease-cli/test-lease-alias-file.ps1`; the alias-name acceptances, the short-ID collision and the internal calls are not movable | A throwaway subfolder inside the real `%USERPROFILE%\.agentspace` |
+| `test-lease-driver.ps1` | Prototype code | It dot-sources the driver, reads its source text and a variable. **Its unsatisfiable, failed-alias and no-driver-name checks are rewritten** in `conformance/lease-cli/test-lease-driver-outcomes.ps1`; the registration checks stay prototype code | The real CA (signs with it), the real `leases` folder (written, removed), `~/.ssh` (hashed) |
 | `test-schemas.ps1` | Neither; moved to `conformance/schemas/test-schemas.ps1` (E0.04-T03-S02) | No program is driven and no prototype code is loaded | None |
 | `test-push-localswim.ps1` | Prototype code, except its alias and ProxyCommand refusals, **moved** to `conformance/operator/` (E0.04-T03-S02) | It extracts five functions from the operator's syntax tree and sets its variables; its process checks run a copied operator and an edited `ssh-proxy.cmd` beside a stand-in operator. The script in `scripts/` is unchanged and keeps passing, and the push's checks stay in it until a build meets the seam ([The operator and the token push](#the-operator-and-the-token-push)) | None (everything is under `%TEMP%`) |
 | `test-board-holder.ps1`, with `test-board-holder-stub.cmd` | Its 41 process cases are rewritten and moved to `conformance/keeper/test-keeper.ps1`, with a stub of its own and shared helpers in `keeper-common.ps1` (E0.04-T03-S02); its three installer cases stay here as prototype code. #0068, which it never checked, has its own file, `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, expected to fail against the prototype | It named its keeper by a path parameter, and one installer case reads the real scheduled task | The real keeper task (read only, one installer case, which stays in `scripts/`) |
@@ -793,6 +850,59 @@ land with this page's turn, so a link to one resolves once they merge.
 | The keeper's `-Watch` cases | keeper.md: Log lines, Locks, Starting a holder |
 | The keeper's files against `schemas/state/` | [docs/state.md](state.md): The keeper's files (the holder record, a holder's launch files), and its Q13; keeper.md: The handshake |
 
+## The files that are expected to fail
+
+**RFC 2119 keywords again.** Every file in `conformance/` named `test-unmet-<what>.ps1` checks a
+MUST that the prototype does not meet yet (E0.04-T03-S03, #0086; the pins of v0.04-T03). It says
+so in its header, with the requirement and its card.
+
+- **Every other check file passes against the prototype in full, with one exception.**
+  `conformance/lease-cli/test-lease-alias-file.ps1` exits 2 in a checkout with no instance-ID cache,
+  because its one SKIPPED result is not a failure ([The gaps](#the-gaps)). A run of any other that
+  does not pass is a regression of the prototype, or a defect in the check.
+- **Every `test-unmet-*` file FAILs against the prototype, and a rewrite MUST pass it.** Its result
+  lines still say `FAIL`, and nothing turns a `FAIL` into a `PASS`. Some of its lines PASS against
+  the prototype, since each file also checks what the failing line assumes.
+- **A runner MUST NOT count the FAIL of a `test-unmet-*` file as a regression of the prototype.**
+  It MUST count a `PASS` of one against a rewrite, and a `FAIL` of one against a rewrite, as the
+  rewrite's result. A runner finds these files by the `test-unmet-` prefix.
+- **Each file checks MUSTs only.** A SHOULD is never a result line, because a conforming build MAY
+  choose otherwise for a good reason (the certificate's valid-after back-dating, D24, is one).
+- **Each lease CLI file drives the lease CLI only**, through the harness, in a throwaway home. Every delete
+  and write it makes goes through `Assert-ConformancePath`, and a path built from the program's
+  output is used only after the document has passed its schema and the ID and alias patterns.
+  A failure reason never quotes the program's output, which can hold a path or a name.
+- **The rows of a spec's "Requirements the prototype does not meet yet" table, such as
+  [operator.md's](operator.md#requirements-the-prototype-does-not-meet-yet), are what these files
+  assert**, so a row leaves its table when a build passes its file.
+
+| File | Requirement and spec section | Card | What it shows against the prototype |
+|---|---|---|---|
+| `conformance/operator/test-unmet-proxy-connect-time.ps1` | The ProxyCommand names no backend on success, prints agentspace's own message on failure, and prints backend detail only under `AGENTSPACE_DIAGNOSTIC` ([docs/operator.md](operator.md#what-a-caller-sees-d1-card-0087)), asserted through the seam that names the AWS CLI, `AGENTSPACE_AWS_CMD` ([The test seam](operator.md#the-test-seam)) | #0087 (D1), and #0085 for the seam | FAIL on both paths, `seam not met (AGENTSPACE_AWS_CMD was not used)`: the prototype runs the AWS CLI by a fixed path, so the stand-in is never called. Nothing more is asserted until the seam is met |
+| `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1` | A keeper that tracks a holder, and whose pass does not find it trusted (its process gone while the pass waits for `board-holder.lock`, or its record gone), starts no holder in that pass and waits the release grace after it, logged `grace seconds=<n>` ([docs/keeper.md](keeper.md#release-grace)); the check does not depend on the action word the pass logs ([Q6](keeper.md#open-questions)) | #0068 | FAIL on 3 checks of each of its 2 cases: the pass logs `started` at once, the line after it is not a grace line, and the next start is not the grace after the pass was let go. Nothing else fails ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)) |
+| `conformance/lease-cli/test-unmet-no-ca.ps1` | `create` and `renew` MUST fail with `internal`, change nothing and make no CA when there is none ([lease-api.md, The credential](lease-api.md#the-credential); [state.md, Its checks](state.md#its-checks)) | #0029, point 3 | Both succeed, and each makes a CA that no host trusts. `create` leaves a record, a lease folder and an alias file, and `renew` changes the lease's record and certificate |
+| `conformance/lease-cli/test-unmet-internal-no-path.ps1` | An `internal` message MUST carry no absolute path, no home folder, no user name and no other program's text ([lease-api.md, Exit codes and errors](lease-api.md#exit-codes-and-errors), Messages) | #0041, point 1 | `renew` of a lease with no key pair fails `internal`, as it MUST, and the message holds a drive-letter path and the home folder |
+| `conformance/lease-cli/test-unmet-release-released.ps1` | `release` of a `released` lease MUST delete whatever is left of its alias file and lease folder ([lease-api.md, `release`](lease-api.md#agentspace-lease-release); [state.md, Release, and what it leaves](state.md#release-and-what-it-leaves)) | #0041, point 3 | It exits 0 and prints the first `released_at`, and touches no file: the alias file and the lease folder put back after the first release are still there |
+| `conformance/lease-cli/test-unmet-argument-line-feed.ps1` | A line feed in a flag's value MUST give `invalid_value` for `project`, in the `--project <value>` and `--project=<value>` forms alike ([lease-api.md, The program](lease-api.md#the-program) and [Command lines](lease-api.md#command-lines)) | #0083 | `bin\agentspace.cmd`, a batch file, is cut by cmd.exe at the line feed before the CLI sees the value: the create succeeds with the part before it and records a lease, in both forms |
+| `conformance/lease-cli/test-unmet-record-no-driver.ps1` | A stored `ready` record with no `driver` member MUST be read as `ec2`, so `renew` and `release` MUST succeed on it, and neither MUST add the member ([state.md, The lease state file](state.md#the-lease-state-file); [lease-api.md, `renew`](lease-api.md#agentspace-lease-renew) and [`release`](lease-api.md#agentspace-lease-release)) | #0041, point 2 | Both fail with `internal`. The record stays as it was, so the lines that check the member is not added pass |
+| `conformance/lease-cli/test-unmet-include-message.ps1` | When the `Include` line is below a `Host` line, `create` MUST fail, change nothing, and say that a person has to move the line to the top of the file ([state.md, The `Include` line](state.md#the-include-line)). Only the move and the top are checked, never the template's wording ([lease-api.md, Messages](lease-api.md#messages)) | #0086 | `create` fails with `internal` and changes nothing, as it MUST, but the message says nothing of moving the line or of the top of the file |
+| `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1` | A failed `renew` MUST leave the previous certificate byte for byte, as well as `expires_at` and `ttl_seconds` ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity); [state.md, Renewal](state.md#renewal)). The write of the record is made to fail by holding `leases.json` open with `FileShare.Read` | #0041, point 3 | `renew` fails with `internal` after about 13 seconds, and leaves the new certificate in place |
+| `conformance/lease-cli/test-unmet-release-partial.ps1` | A `release` that fails part way MUST NOT leave a `ready` record with its alias, key or certificate gone, and a retried `release` MUST finish it ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity); [state.md, Release, and what it leaves](state.md#release-and-what-it-leaves)). The failure is made by holding the lease's `id_ed25519` open with `FileShare.None` | #0041, point 3 | `release` fails with `internal` after deleting the alias file, and leaves a `ready` record with no alias file. The retry then succeeds |
+
+- **The D1 file's stand-ins are its own.** It writes two `.cmd` files into its throwaway home, one
+  `aws` that reports a made-up running instance and one that fails with error text, both logging
+  every call. A build that meets the seam calls them, and the file then asserts what the caller's
+  stderr holds (no backend text on success; one `agentspace: ` message on failure; the diagnostic
+  setting changes neither the exit code nor stdout). It sets `AGENTSPACE_NESTED`, so that `up`
+  pushes no token. It also sets `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD` to a stand-in that
+  MUST NOT be called on this path, which logs and exits 1, so that a build that starts `ssh` or `scp`
+  is caught and never reaches the real home.
+- **The AWS gate still applies**, so even a build that ignores the seam cannot reach the real
+  account: with the call log empty, the file reports the failure and nothing else.
+
+**The valid-after back-dating** is a SHOULD ([lease-api.md, The credential](lease-api.md#the-credential)),
+and no file checks it.
+
 ## The gaps
 
 **A gap is a spec section that no sorted check covers.** The sorted checks leave these.
@@ -806,13 +916,17 @@ land with this page's turn, so a link to one resolves once they merge.
 | operator.md: The ProxyCommand | The argument refusals are checked (`conformance/operator/test-proxy-arguments.ps1`), and what a caller sees by `test-unmet-proxy-connect-time.ps1`, which fails against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)). The three steps (the folders put on `PATH`, `up`, the tunnel) have no check of their own: the test that touched them edits the prototype's text, and a check needs the seam to stand in for `aws` |
 | operator.md: `ca` | No suite runs `ca`. The throwaway CA the lease checks need is its first check |
 | lease-api.md: States | The expiry boundary (`expired` exactly at `expires_at`, `ready` one second before) needs a clock the check controls |
-| lease-api.md: The credential | A short-ID collision, and a caller-chosen lease ID refused by the credential step, cannot be reached through the CLI |
-| lease-api.md: `renew`, States | Renew of a `ready` lease with no folder: the sorter found no statement of what happens, and the suite's check of it cannot be moved |
+| lease-api.md: The credential | A short-ID collision, and a caller-chosen lease ID refused by the credential step, cannot be reached through the CLI. The requirements the prototype does not meet are in `test-unmet-*` files, not here ([The files that are expected to fail](#the-files-that-are-expected-to-fail)); the certificate's valid-after is a SHOULD and has none ([SHOULDs not checked](#shoulds-not-checked)). The key's access rules are not checked, because they are a Windows security descriptor ([lease-api.md Q12](lease-api.md#open-questions)) |
+| lease-api.md: `renew`, States | **Checked:** a `renew` of a lease whose key pair is missing (both `id_ed25519` and `id_ed25519.pub`, so that no certificate can be issued, and the key MUST NOT change: [lease-api.md, `renew`](lease-api.md#agentspace-lease-renew)), of one whose folder is gone, and of one whose record cannot be written (the state file held open without delete sharing, which [state.md, Replacing a file](state.md#replacing-a-file) says makes a rename fail) each fail with `internal` and leave the record, the key, the alias and the config as they were, with no temporary file and no folder made. **Not checked, because the prototype does not meet it:** a failed `renew` MUST leave the previous certificate byte for byte (#0041 point 3). The prototype leaves the new one when the record cannot be written. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1` |
+| lease-api.md: `release`, States | **Not checked, because the prototype does not meet it:** a `release` that fails part way MUST NOT leave a lease `ready` with its alias, key or certificate gone (#0041 point 3). Holding the lease's key file open without delete sharing makes the prototype's `release` fail with `internal` after it has deleted the alias file, which leaves a `ready` record with no alias. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-release-partial.ps1` |
+| state.md: The lease state file, #0041 point 2 | **Not checked, because the prototype does not meet it:** a stored `ready` record with no `driver` MUST be renewed and released by the v0 default driver, and `renew` and `release` MUST NOT add the member. The prototype fails both with `internal`. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-record-no-driver.ps1` |
+| state.md: The `Include` line | **Not checked, because the prototype does not meet it:** when the line is below a `Host` line, `create` MUST say that a person has to move it to the top of the file. The prototype fails `create` with `internal` and leaves everything as it was, as it MUST, but its message names neither the line nor the move. That is a `test-unmet-*` requirement, held by `conformance/lease-cli/test-unmet-include-message.ps1`, which checks the move and the top only |
+| driver.md: How it is reached; state.md: The alias file | **The default ProxyCommand has no check that can always run.** `test-lease-alias-file.ps1` leaves `AGENTSPACE_PROXY_COMMAND` unset, and the prototype's `create` then may need an instance-ID cache that is a file in its own checkout, which a check cannot make and MUST NOT. When that `create` fails with a valid `internal` error, the check reports SKIPPED ("may need the instance-ID cache"), so a run in such a checkout exits 2. The check of what the failed `create` leaves still runs. D21 moves the cache to laptop state, and a check can then seed it in the home |
 | lease-api.md: Times | No check sets the caller's time zone, as the spec requires ([What the specs require of the suite](#what-the-specs-require-of-the-suite)). Windows has no environment variable for it, so a run uses the laptop's zone ([Running the suite](#running-the-suite)) |
-| lease-api.md: Concurrency and atomicity | The 30-second wait, and a failed `renew` or `release` leaving the lease as it was (#0041), have no check. The race check, one group, covers only three writers and a reader |
-| lease-api.md: The program | Arguments reach the program unchanged from Git Bash, and an argument such as `-:x` (#0083), have no check. **A line feed inside an argument has none either**: the prototype's `bin\agentspace.cmd` cuts the argument at it, so a project value `a<LF>b` is read as `a` and the create succeeds, where the spec requires `invalid_value`. A check of it would fail against the prototype, so the suite leaves it out until the rewrite |
-| lease-api.md: The credential, no CA | `create` MUST fail with `internal` and make no CA when none exists (#0029 point 3). **The prototype's `create` makes one**, so a check of the rule would fail against it, and the suite leaves it out until the rewrite ([docs/state.md](state.md#its-checks)). What is checked: an unsatisfiable `create` with no CA answers and makes none |
-| driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable |
+| lease-api.md: Concurrency and atomicity | **Covered by `conformance/lease-cli/test-lease-concurrency.ps1`**: concurrent creates, renews and a release as separate processes, readers that never wait, and the 30-second limit for each of the three commands. It is evidence and not proof ([What the specs require of the suite](#what-the-specs-require-of-the-suite)). Left: a failed `release` leaving the lease as it was (the `release` row above), and a command killed in the middle |
+| lease-api.md: The program | Arguments reach the program unchanged from Git Bash, and an argument such as `-:x` (#0083), have no check. **A line feed inside an argument is checked, and fails against the prototype**: its `bin\agentspace.cmd` cuts the argument at it, so a project value `a<LF>b` is read as `a` and the create succeeds, where the spec requires `invalid_value`. The check is `conformance/lease-cli/test-unmet-argument-line-feed.ps1`, which fails against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)) |
+| lease-api.md: The credential, no CA | `create` and `renew` MUST fail with `internal` and make no CA when none exists (#0029 point 3). **The prototype's `create` makes one**, so the check of the rule fails against it: `conformance/lease-cli/test-unmet-no-ca.ps1` ([The files that are expected to fail](#the-files-that-are-expected-to-fail); [docs/state.md](state.md#its-checks)). Also checked, and passing: an unsatisfiable `create` with no CA answers and makes none |
+| driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable. What a caller sees of the driver is covered by `conformance/lease-cli/test-lease-driver-outcomes.ps1`: unsatisfiable requests, no driver name in any output, and a failed alias step. A foreign alias file kept by a failed `create` is not movable, since the alias name comes from a random ID |
 | keeper.md: The installed task | The installer dry run is the prototype's packaging, and no conformance check covers an installed task. The three installer cases stay in `scripts/` as prototype code |
 | keeper.md: Release grace, card #0068 | **Checked by `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, which fails against the prototype** ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)). The gap that remains is the window itself: the keeper logs nothing when its look finds a holder alive and its pass then waits for `board-holder.lock`, so no event marks the moment between the look and the trust check. The file enters it with one bounded wait from the keeper's own `skipped` line, reads the log to see which path the keeper took, and reports SKIPPED if it missed. The second case in the file reaches the same rule with no timing, through a record that is gone |
 | keeper.md: Checking the keeper, card #0066 | The 5 passes in a row beside two other copies of the suite are not shown. The waits are conditions with deadlines, but no run of this story was made under that load |
