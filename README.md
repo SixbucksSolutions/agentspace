@@ -194,14 +194,23 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      `scripts\board-holder.ps1 -Watch` through a no-window launcher. While a lease is ready and no
      holder runs, it starts `ssh.exe -N -o ExitOnForwardFailure=yes <alias>` through the ready
      lease that expires last, and it stops a holder whose lease is no longer ready.
-   - **`scripts\install-board-holder.ps1` registers the task.** `-DryRun` prints what it would
-     register and changes nothing, and `-Uninstall` removes the task and its launcher. Registering
-     the task is persistent configuration on Terry's laptop, so it MUST only happen with his yes
-     (E0.02-T03-S01).
+   - **`scripts\install-board-holder.ps1` registers the task.** `-DryRun` prints every field of
+     the task it would register and changes nothing, and `-Uninstall` removes the task and its
+     launcher. Registering the task is persistent configuration on Terry's laptop, so it MUST only
+     happen with his yes (E0.02-T03-S01).
+   - **The install MUST be run from the main checkout, never from a worktree.** The task points at
+     the folder the installer is in, and a worktree is deleted after its branch merges. An install
+     from a worktree is refused with exit 2, and `-DryRun` there prints a `Warning:` line.
    - **The keeper logs to `%USERPROFILE%\.agentspace\board-holder.log`**, and the holder's own
-     output goes to `board-holder-ssh.log` beside it.
+     output goes to `board-holder-ssh.log` beside it, which is rotated to `board-holder-ssh.log.1`
+     past 1 MB.
    - **A holder that fails fast is retried with backoff**, from 30 seconds doubling to 5 minutes,
-     never in a tight loop.
+     never in a tight loop. Only a holder seen alive after 60 seconds resets the backoff.
+   - **No error ends the keeper.** It logs the error and carries on at its next interval, so only
+     bad arguments or a killed process can stop it. A crashed keeper is restarted up to 3 times, a
+     minute apart, by the task's settings (unverified until E0.02-T03-S01 registers the task). A
+     keeper stopped on purpose (`-Uninstall`, or End in Task Scheduler) stays stopped until the
+     next logon.
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that
