@@ -238,6 +238,21 @@ function Remove-ConformanceHome {
   if (Test-Path -LiteralPath $root) { Write-Host "FAIL Remove-ConformanceHome: The throwaway home could not be removed: $root"; $global:ConformanceCounts['FAIL']++ }
 }
 
+# Resolves a path and returns it in full, or throws unless it is the home's root or under it. The
+# program under test is untrusted (docs/conformance.md), so every delete and every write a check
+# makes MUST go through this first, and a path built from the program's output (a lease ID, a host
+# alias) MUST be checked here after its document has passed its schema.
+function Assert-ConformancePath {
+  param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+  if ([string]::IsNullOrWhiteSpace($Path)) { throw 'Refusing an empty path: it is not under the throwaway home.' }
+  $root = [IO.Path]::GetFullPath([string]$ConformanceHome.Root).TrimEnd('\')
+  $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+  if (-not ($full -eq $root -or $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase))) {
+    throw "Refusing a path that is not under the throwaway home: $full"
+  }
+  return $full
+}
+
 # Runs the lease CLI, the program AGENTSPACE_CMD names, inside a throwaway home. $Arguments reach it
 # unchanged. Returns ExitCode, Stdout, Stderr, Json and ErrorJson (see Invoke-ConformanceProgram).
 function Invoke-AgentspaceCli {

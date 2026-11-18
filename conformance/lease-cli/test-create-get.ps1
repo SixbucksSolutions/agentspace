@@ -29,7 +29,7 @@ function Get-LeaseFolderNames {
 function Get-AliasFile {
   param($ConformanceHome, [string]$Alias, [string]$SshDir)
   if (-not $SshDir) { $SshDir = $ConformanceHome.SshDir }
-  return (Join-Path $SshDir "agentspace.d\$Alias")
+  return (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Join-Path $SshDir "agentspace.d\$Alias"))
 }
 
 # Runs a ready create and the checks every ready lease MUST meet; returns the run and the clock window.
@@ -43,6 +43,9 @@ function Test-ReadyCreate {
   if ($a -and $a['state'] -cne 'ready') { $p.Add("State is '$($a['state'])', not 'ready'") }
   if ($a -and $a['ttl_seconds'] -ne $Ttl) { $p.Add("ttl_seconds is $($a['ttl_seconds']), not $Ttl") }
   Complete-ConformanceCheck -Name "lease-api.md#agentspace-lease-create: $Label is ready, exit 0, one compact document, validates against lease.output.schema.json" -Problems $p
+  # A path is built from the document's id and alias only when the document validated: the program
+  # under test is untrusted (docs/conformance.md).
+  $valid = ($p.Count -eq 0)
 
   # The times are the suite's own clock's (lease-api.md#times): whole seconds in UTC, created_at during the
   # command, and expires_at the issue time plus the TTL, the issue time also during the command.
@@ -70,7 +73,7 @@ function Test-ReadyCreate {
     if ($r.Stdout -match '(?i)\b(ec2|aws|driver)\b') { $p.Add('The output names a backend or a driver') }
   } else { $p.Add('No document') }
   Complete-ConformanceCheck -Name "lease-api.md#fields: $Label has a lowercase UUIDv4 id, the lowercased project, the defaults, the alias agentspace-<project>-<first 8 hex> and user ubuntu, and names no backend" -Problems $p
-  return [pscustomobject]@{ Run = $r; Doc = $a; T0 = $t0; T1 = $t1 }
+  return [pscustomobject]@{ Run = $r; Doc = $a; Valid = $valid; T0 = $t0; T1 = $t1 }
 }
 
 $h = $null
@@ -85,8 +88,8 @@ try {
     $ready = Test-ReadyCreate -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'Test-Create') -Label 'A default create' -Ttl 28800 -ExpectProject 'test-create'
     $made++
     $a = $ready.Doc
-    $id = if ($a) { [string]$a['id'] } else { '00000000-0000-4000-8000-000000000000' }
-    $alias = if ($a -and $a['ssh']) { [string]$a['ssh']['host_alias'] } else { 'none' }
+    $id = if ($a -and $ready.Valid -and $a['id'] -cmatch $uuid4) { [string]$a['id'] } else { '00000000-0000-4000-8000-000000000000' }
+    $alias = if ($a -and $ready.Valid -and $a['ssh'] -and [string]$a['ssh']['host_alias'] -cmatch '\Aagentspace-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{8}\z') { [string]$a['ssh']['host_alias'] } else { 'agentspace-none-00000000' }
 
     # The alias file (state.md#the-alias-file): in <ssh folder>\agentspace.d, owner mark first, then the Host block.
     $p = [System.Collections.Generic.List[string]]::new()
@@ -101,7 +104,7 @@ try {
 
     # The lease folder (state.md#the-lease-folder): exactly the key pair and the certificate.
     $p = [System.Collections.Generic.List[string]]::new()
-    $dir = Join-Path $h.UserProfile ".agentspace\leases\$id"
+    $dir = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile ".agentspace\leases\$id")
     $names = if (Test-Path -LiteralPath $dir) { @(Get-ChildItem -LiteralPath $dir -Force | ForEach-Object Name | Sort-Object) } else { @() }
     $want = @('id_ed25519', 'id_ed25519-cert.pub', 'id_ed25519.pub')
     if (($names -join ',') -cne ($want -join ',')) { $p.Add("The lease folder under the home's .agentspace\leases holds '$($names -join ',')'") }
@@ -167,7 +170,7 @@ try {
     # goes, so the record cannot be written. Nothing may be left behind (lease-api.md#concurrency-and-atomicity).
     $badState = Join-Path $h.Root 'badstate'
     $badSsh = Join-Path $h.Root 'badssh'
-    New-Item -ItemType Directory -Force -Path (Join-Path $badState 'leases.json') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $badState 'leases.json')) | Out-Null
     $foldersBefore = Get-LeaseFolderNames -ConformanceHome $h
     $f = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create') `
       -Environment @{ AGENTSPACE_STATE_DIR = $badState; AGENTSPACE_SSH_DIR = $badSsh }
@@ -334,7 +337,7 @@ try {
 
   # An unsatisfiable create needs no CA, and never makes one (state.md#creation-in-order). The throwaway CA is removed.
   $caDir = Join-Path $h.UserProfile '.agentspace\ca'
-  if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath $caDir -Recurse -Force }
+  if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $caDir) -Recurse -Force }
   $n = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--size', 'xl')
   $p = Get-ConformanceSuccessProblems -Run $n
   if ($n.Json -and $n.Json['state'] -cne 'unsatisfiable') { $p.Add("State is '$($n.Json['state'])'") }
