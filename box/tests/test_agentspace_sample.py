@@ -524,6 +524,7 @@ class TestArguments(SampleTestBase):
             "/home/ubuntu/.claude/remote/srv/87375cc7/server --serve --socket /home/ubuntu/.claude/remote/run/a/rpc.sock",
             "/home/ubuntu/.claude/remote/srv/87375cc7/server --bridge --socket x",
             "/home/ubuntu/.claude/remote/ccd-cli/",
+            "/home/ubuntu/.claude/remote/ccd-cli/2.1.325-697a82e23a44/helper --x",
         ]
         for argv in sessions:
             self.assertIsNotNone(default.search(argv), "Missed a session: %r" % argv)

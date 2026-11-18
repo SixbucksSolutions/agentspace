@@ -2180,7 +2180,8 @@ about 210 processes. Times are Pacific Standard Time, the box's and the laptop's
   a child `bash -c` that sources `~/.claude/shell-snapshots/`, and a subagent adds no process. No
   helper ran under a `-p` session with no MCP servers (1:45am, 09:45Z); an interactive or MCP
   session is unverified.
-- **The default `--match` is `^(?:\S*/)?claude(?:\s|$)`, anchored on argv[0].** A bare `claude`
+- **The default `--match` is `^(?:\S*/)?claude(?:\s|$)`, anchored on argv[0]** (widened by
+  E0.03-T02-S01's findings below, to take a desktop-app session's `ccd-cli`). A bare `claude`
   matched the tool calls' `bash -c`, the SSH wrapper's shell, `grep claude` and the sampler's own
   `--match`; the anchor keeps all four out. **Known gap:** a launch whose argv[0] is not
   `.../claude`, such as an npm install's `node .../cli.js`, is not matched, and MUST be given its
@@ -2224,11 +2225,15 @@ lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D3
   turn's agents launch, a measurer MUST confirm that the session shows as a session row.
 - **A turn is one session, and its `cwd` moves:** a dev lead entering each story's worktree moves
   its row's `cwd` with it. A row is identified by its session id, never by its folder.
-- **The host-versus-sessions check did not trip #0082 on this turn.** The host ran 19.69
-  CPU-seconds (0.009 cores, 26% of a light host) above the session, the sampler and the idle
-  baseline. It was steady and grew with the session's activity, and the observer saw no orphan,
-  which points to the desktop app's transport rather than orphaned work. The turn ran few builds,
-  so the check is weak here.
+- **The host-versus-sessions check tripped by its letter, and was then measured.** The host ran
+  19.69 CPU-seconds above the session, the sampler and the idle baseline, 210% of the session's
+  tools CPU. Read per process from `/proc`, the observer's own 1-second poll loop took about 6.9
+  and the desktop app's connection (two SSM session workers, its bridge and four `sshd`
+  processes) 6.0 to 6.8, leaving 2.0 to 5.1 with the logins and the kernel. No orphan was seen.
+  The baseline had neither the connection nor the observer in it, which is why the check could
+  not tell them from orphaned work.
+- **A desktop-app session carries a connection overhead outside its row,** about 0.003 cores and
+  up to 161 MiB RSS on this turn. v0.03-T03's table SHOULD give it a line of its own.
 - **CloudWatch's idle backstop (#0043) stopped the box at 5:26am** while it waited 3 hours for the
   turn to start, and the sampler with it. Until #0043 is fixed, a measurer SHOULD start the
   sampler close to the turn's start, and MUST run `agentspace-sample status` when the turn starts.
