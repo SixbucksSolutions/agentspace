@@ -177,6 +177,9 @@ Docs cite its cards as `#0001`.
     turn's milestone when that turn starts. v0.02's first two keep the names they were reported
     under, `v0.2` and `v0.2-T1`.
   - The architect edits `milestones.json` when stories are added or a turn starts.
+  - **When Terry says a milestone is complete, it MUST be removed from `milestones.json` before
+    `swimcoach stop` is sent.** The running reporter re-reads the file each pass, and would report
+    a stopped milestone back onto his phone.
   - **`milestones.json` MUST be edited as text, never rewritten from `ConvertFrom-Json`.** Without
     `-DateKind String`, PowerShell 7 turns each `start` into a DateTime, and writing it back loses
     the ISO 8601 form and the `Z` (it happened on 2026-11-17, fixed in 8182010).
