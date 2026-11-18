@@ -2041,6 +2041,13 @@ D27's per-agent footprint is measured.
   later release makes sampling part of the product, it is specified then and built in Rust.
 - **Their record format is pinned on E0.03-T01-S01's card**, so the sampler and the summarizer
   are built at the same time (D31).
+- **The turn measured is agentspace's own: v0.04's first turn with two or more stories in
+  parallel** (Terry, 2026-11-18). No other project had stories ready. That turn's dev lead runs as
+  a desktop-app session on E0.03-T02-S01's lease, and v0.03-T02 runs beside it.
+- **v0.09 MUST measure the footprint again on a v0.05 turn with two or more stories in parallel
+  before it sets any size** (Terry, 2026-11-18). v0.04 writes specs and runs few builds, so its
+  tool-call peaks understate a turn that compiles. v0.05's `cargo` builds and test suites are that
+  load, and v0.03's tools are built to be rerun. The requirement is on #0049.
 
 **Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
 or counts a shared library four times, sizes every host wrong.

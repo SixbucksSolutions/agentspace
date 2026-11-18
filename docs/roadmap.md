@@ -52,13 +52,13 @@ when Terry says so (D14).
 | Release | Epic | What | Done when |
 |---|---|---|---|
 | **v0.02** | #0045 | **Done 2026-11-18** (nine stories in five turns; [handoff-v0.02.md](handoff-v0.02.md)). **Unattended leases.** The gaps E3.03 found: #0042 (the desktop app clears the board forwards), #0044 (a dead client keeps them), #0028 (the token push rides Terry's own SSH entry). Then the box runs in the laptop's time zone (D32), and the keeper recovers from its own crash and from a dead holder, one keeper at a time (D30) | A desktop-app session on a lease reaches the board with nothing started by hand, and reports times in Terry's zone |
-| **v0.03** | #0046 | **Measure what an agent uses.** CPU and memory per agent, and everything under it, while real stories run | A per-agent footprint table, measured on a real turn |
+| **v0.03** | #0046 | **Measure what an agent uses.** CPU and memory per agent, and everything under it, while real stories run | A per-agent footprint table, measured on agentspace's own v0.04 turn |
 | **v0.04** | #0030 | **Clean-room spec package.** A vision doc and specs for every interface, so the rewrite never reads the prototype's code (D20) | A reviewer who cannot read the code agrees a drop-in could be built from them |
 | **v0.05** | #0054 | **The lease CLI in Rust** (D28), contract v0 unchanged | The Rust CLI meets lease-api.md and replaces the PowerShell one |
 | **v0.06** | #0055 | **The operator in Rust; PowerShell retired** | A lease connects through the Rust ProxyCommand, and no PowerShell is left in the product |
 | **v0.07** | #0047 | **A host per project** (D25). One size, one platform | A second project's first lease creates its own host and works a card there |
 | **v0.08** | #0048 | **Host lifecycle and cost guard.** A host runs only while its project holds a live lease | The last release stops the host, and no host can run unnoticed |
-| **v0.09** | #0049 | **Size classes.** `s` to `xl`, set by resizing a stopped host | `--size l` gets a bigger host |
+| **v0.09** | #0049 | **Size classes.** `s` to `xl`, set by resizing a stopped host | `--size l` gets a bigger host, sized from a footprint measured again on a v0.05 turn |
 | **v0.10** | #0050 | **Plan-sized leases; contract v1.** Peak concurrency times footprint picks the size (D27) | Two plans of different peak concurrency get different sizes |
 | **v0.11** | #0051 | **`linux/amd64`** as a second platform (D13) | `--platform linux/amd64` gives a ready lease |
 | **v0.12** | #0052 | **Plan from the board.** The plan is read from the project's localswim epic | Naming an epic is enough to get a sized lease |
@@ -66,7 +66,7 @@ when Terry says so (D14).
 
 **Why this order:**
 - **v0.02 and v0.03 come first** because they are small, mostly on the box, and fix what blocks real
-  use today. v0.03's numbers are what v0.09 and v0.10 size from.
+  use today. v0.03's numbers are what v0.09 and v0.10 size from, once v0.09 has measured them\n  again on a turn that compiles (D33).
 - **The Rust rewrite (v0.04 to v0.06) comes before the hosts**, because every release from v0.07 on
   rewrites the driver, and doing that in PowerShell first would mean writing it twice (D28).
 - **A host per project comes before sizes and plans,** because a size means nothing until a project
