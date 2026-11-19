@@ -183,3 +183,107 @@ fn check_alias_owner_refuses_a_file_with_no_mark() {
     fs::write(&file, b"Host mine\n").unwrap();
     assert!(check_alias_owner(&dir, ALIAS, ID).is_err());
 }
+
+/// Every one of the four calls that reach `agentspace.d`, with the same arguments, in the order
+/// the tests below name them in their failure text.
+fn every_call(dir: &std::path::Path, s: &Scratch) -> Vec<(&'static str, Result<(), AliasFailure>)> {
+    vec![
+        ("ensure_include", ensure_include(dir, NOW)),
+        (
+            "write_alias",
+            write_alias(dir, ALIAS, ID, &bytes_for(s, ID)),
+        ),
+        ("check_alias_owner", check_alias_owner(dir, ALIAS, ID)),
+        ("remove_alias", remove_alias(dir, ALIAS, ID)),
+    ]
+}
+
+#[test]
+fn a_file_where_the_ssh_folder_must_be_is_refused_and_nothing_changes() {
+    let s = scratch("f1");
+    let home = s.0.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let dir = home.join(".ssh");
+    fs::write(&dir, b"not a folder").unwrap();
+    for (call, result) in every_call(&dir, &s) {
+        let err = result.expect_err(call);
+        assert_eq!(err.kind, AliasFailureKind::Io, "{call}");
+        assert!(err.message.contains("is a file, not a folder"), "{call}");
+        assert_plain_message(&err.message, &s);
+    }
+    assert_eq!(fs::read(&dir).unwrap(), b"not a folder");
+    assert_eq!(names(&home), [".ssh"]);
+    assert_eq!(names(&s.0), ["home"]);
+}
+
+#[test]
+fn a_file_where_agentspace_d_must_be_is_refused_and_nothing_changes() {
+    let s = scratch("f2");
+    let dir = ssh_dir(&s);
+    fs::write(dir.join("config"), b"Host a\n").unwrap();
+    let d = dir.join("agentspace.d");
+    fs::write(&d, b"not a folder").unwrap();
+    for (call, result) in every_call(&dir, &s) {
+        let err = result.expect_err(call);
+        assert_eq!(err.kind, AliasFailureKind::Io, "{call}");
+        assert!(err.message.contains("is a file, not a folder"), "{call}");
+        assert_plain_message(&err.message, &s);
+    }
+    assert_eq!(fs::read(&d).unwrap(), b"not a folder");
+    assert_eq!(fs::read(dir.join("config")).unwrap(), b"Host a\n");
+    // No backup, no temporary file and no new entry of any kind.
+    assert_eq!(names(&dir), ["agentspace.d", "config"]);
+}
+
+/// Denies the current user the right to add a file to `dir` itself (not inherited by what is
+/// created under it), and lifts the denial again when dropped, so that the folder can be deleted.
+struct NoNewFiles(std::path::PathBuf);
+
+impl NoNewFiles {
+    fn new(dir: &std::path::Path) -> Self {
+        let user = std::env::var("USERNAME").unwrap();
+        let out = std::process::Command::new("icacls")
+            .arg(dir)
+            .args(["/deny", &format!("{user}:(WD)")])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "icacls could not deny the folder");
+        NoNewFiles(dir.to_path_buf())
+    }
+}
+
+impl Drop for NoNewFiles {
+    fn drop(&mut self) {
+        let user = std::env::var("USERNAME").unwrap();
+        let _ = std::process::Command::new("icacls")
+            .arg(&self.0)
+            .args(["/remove:d", &user])
+            .output();
+    }
+}
+
+#[test]
+fn the_temporary_file_is_made_in_the_ssh_folder_not_in_agentspace_d() {
+    let (s, dir, file) = world("t1");
+    let bytes = bytes_for(&s, ID);
+    {
+        // New files cannot be made in the ssh folder itself, while agentspace.d still takes them.
+        let _deny = NoNewFiles::new(&dir);
+        assert!(
+            fs::write(dir.join("probe"), b"x").is_err(),
+            "the ssh folder still takes new files"
+        );
+        fs::write(dir.join("agentspace.d").join("probe"), b"x").unwrap();
+        fs::remove_file(dir.join("agentspace.d").join("probe")).unwrap();
+        // The temporary file belongs in the ssh folder, so the write fails and leaves nothing.
+        let err = write_alias(&dir, ALIAS, ID, &bytes).expect_err("no new file in the ssh folder");
+        assert_eq!(err.kind, AliasFailureKind::Io);
+        assert_plain_message(&err.message, &s);
+        assert!(!file.exists());
+        assert!(names(&dir.join("agentspace.d")).is_empty());
+    }
+    // With the denial lifted the same call works, so the denial was what stopped it.
+    write_alias(&dir, ALIAS, ID, &bytes).unwrap();
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert!(tmps(&dir).is_empty());
+}

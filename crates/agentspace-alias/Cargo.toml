@@ -10,7 +10,7 @@ publish = false
 sha2 = { version = "=0.10.9", default-features = false }
 
 # The two Windows calls the alias file's disk half needs: ReplaceFileW, which keeps a config's own
-# owner and access rules, and BCryptGenRandom, for the temporary files' names.
+# access rules, and BCryptGenRandom, for the temporary files' names.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
 

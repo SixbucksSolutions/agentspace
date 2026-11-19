@@ -70,6 +70,40 @@ fn alias_path(ssh_dir: &Path, alias: &str) -> Result<PathBuf, AliasFailure> {
     Ok(alias_dir(ssh_dir).join(alias))
 }
 
+/// Whether `path` exists and is not a folder (a link counts as what it points to, and a link that
+/// points nowhere is not a folder).
+fn exists_and_not_a_folder(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => !fs::metadata(path).is_ok_and(|m| m.is_dir()),
+        Ok(m) => !m.is_dir(),
+        Err(_) => false,
+    }
+}
+
+/// Refuses a file where the OpenSSH client folder or `agentspace.d` has to be a folder, before
+/// anything is read, written or deleted: on Windows a path through a file reads as "not found",
+/// which would otherwise pass for a missing alias file. A folder that is not there is fine.
+fn check_folders(ssh_dir: &Path) -> Result<(), AliasFailure> {
+    // The <why>s are the architect's ruling of 2026-11-19 (docs/state.md, Release and what it
+    // leaves, step 1): the CLI prints them through lease-api.md's "Anything else" row.
+    if exists_and_not_a_folder(ssh_dir) {
+        return Err(io_fail("the OpenSSH client folder is a file, not a folder"));
+    }
+    if exists_and_not_a_folder(&alias_dir(ssh_dir)) {
+        return Err(io_fail(
+            "the folder for host aliases is a file, not a folder",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether the file at `path` holds exactly the bytes of `original`, by SHA-256 (docs/state.md,
+/// "The `Include` line": the backup's hash is checked against the bytes read). A file that cannot
+/// be read does not match.
+fn backup_matches(path: &Path, original: &[u8]) -> bool {
+    fs::read(path).is_ok_and(|copied| Sha256::digest(&copied) == Sha256::digest(original))
+}
+
 /// 32 lowercase hex digits from the operating system's random source.
 fn random_hex() -> io::Result<String> {
     let mut buf = [0u8; 16];
@@ -137,9 +171,11 @@ fn write_temp(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
 /// another reparse point or read-only is refused with [`AliasFailureKind::Config`] before any
 /// backup, and else the config is backed up as `config.agentspace-backup-<UTC time>`, never over a
 /// file and with its SHA-256 checked against the bytes read, and replaced through
-/// `config.agentspace-tmp-<32 hex digits>` so that it keeps its own owner and access rules.
+/// `config.agentspace-tmp-<32 hex digits>` so that it keeps its own access rules; its owner becomes
+/// the user running this (docs/state.md, Replacing a file).
 /// `now_unix` is the Unix time the backup's name is made from.
 pub fn ensure_include(ssh_dir: &Path, now_unix: i64) -> Result<(), AliasFailure> {
+    check_folders(ssh_dir)?;
     fs::create_dir_all(alias_dir(ssh_dir))
         .map_err(|_| io_fail("the folder for the host aliases could not be created"))?;
 
@@ -196,8 +232,7 @@ pub fn ensure_include(ssh_dir: &Path, now_unix: i64) -> Result<(), AliasFailure>
         .and_then(|()| file.sync_all())
         .map_err(|_| io_fail(BACKUP_WHY))?;
     drop(file);
-    let copied = fs::read(&backup).map_err(|_| io_fail(BACKUP_WHY))?;
-    if Sha256::digest(&copied) != Sha256::digest(&original) {
+    if !backup_matches(&backup, &original) {
         return Err(io_fail(BACKUP_WHY));
     }
 
@@ -268,6 +303,7 @@ pub fn write_alias(
 ) -> Result<(), AliasFailure> {
     const WHY: &str = "the host alias file could not be written";
     let dest = alias_path(ssh_dir, alias)?;
+    check_folders(ssh_dir)?;
     match existing(&dest, id, WHY)? {
         Existing::Foreign => return Err(fail(AliasFailureKind::Foreign, FOREIGN_WHY)),
         Existing::Mine(old) if old == bytes => return Ok(()),
@@ -288,6 +324,7 @@ pub fn write_alias(
 /// included, give [`AliasFailureKind::Foreign`].
 pub fn check_alias_owner(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFailure> {
     let path = alias_path(ssh_dir, alias)?;
+    check_folders(ssh_dir)?;
     match existing(&path, id, "the host alias file could not be read")? {
         Existing::Foreign => Err(fail(AliasFailureKind::Foreign, FOREIGN_WHY)),
         Existing::Missing | Existing::Mine(_) => Ok(()),
@@ -299,6 +336,7 @@ pub fn check_alias_owner(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), Al
 /// [`AliasFailureKind::Io`].
 pub fn remove_alias(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFailure> {
     let path = alias_path(ssh_dir, alias)?;
+    check_folders(ssh_dir)?;
     match existing(&path, id, "the host alias file could not be read")? {
         Existing::Foreign => Err(fail(AliasFailureKind::Foreign, FOREIGN_WHY)),
         Existing::Missing => Ok(()),
@@ -313,8 +351,12 @@ pub fn remove_alias(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFa
 /// The ProxyCommand program beside the running executable (docs/operator.md, "How each program
 /// finds the others"): `agentspace-ssh-proxy.exe`, or when that is not there,
 /// `agentspace-ssh-proxy.cmd`, as a path in the executable's own folder. `None` when neither is a
-/// file there. `own_exe` is the executable the operating system started, as a full path.
+/// file there. `own_exe` is the executable the operating system started, as a full path: a
+/// relative one gives `None`, because the working folder is never searched.
 pub fn find_proxy_program(own_exe: &Path) -> Option<PathBuf> {
+    if !own_exe.is_absolute() {
+        return None;
+    }
     let folder = own_exe.parent()?;
     ["agentspace-ssh-proxy.exe", "agentspace-ssh-proxy.cmd"]
         .iter()
@@ -568,28 +610,19 @@ mod tests {
         assert!(names(&s.0).is_empty());
     }
 
-    /// `icacls` and `dir /q` for a file, without the file's own path: its access list and owner.
+    /// `icacls` for a file, without the file's own path: its access list. The owner is not kept
+    /// by the replace, and is not compared (architect, 2026-11-19; docs/state.md, Replacing a file).
     #[cfg(windows)]
-    fn rules_and_owner(path: &Path) -> String {
+    fn rules(path: &Path) -> String {
         use std::process::Command;
         let p = path.to_string_lossy().into_owned();
         let icacls = Command::new("icacls").arg(&p).output().unwrap();
-        let acl = String::from_utf8_lossy(&icacls.stdout).replace(&p, "");
-        let dir = Command::new("cmd")
-            .args(["/c", "dir", "/q", &p])
-            .output()
-            .unwrap();
-        let owner: Vec<String> = String::from_utf8_lossy(&dir.stdout)
-            .lines()
-            .filter(|l| l.contains("config"))
-            .map(|l| l.split_whitespace().skip(4).take(1).collect())
-            .collect();
-        format!("{acl}\n{owner:?}")
+        String::from_utf8_lossy(&icacls.stdout).replace(&p, "")
     }
 
     #[cfg(windows)]
     #[test]
-    fn an_insert_keeps_the_configs_own_access_list_and_owner() {
+    fn an_insert_keeps_the_configs_own_access_list() {
         use std::process::Command;
         let s = scratch();
         let config = s.0.join("config");
@@ -604,9 +637,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(out.status.success());
-        let before = rules_and_owner(&config);
+        let before = rules(&config);
         ensure_include(&s.0, 0).unwrap();
-        assert_eq!(rules_and_owner(&config), before);
+        assert_eq!(rules(&config), before);
         assert!(before.contains("(R,W)"), "{before}");
         assert_eq!(
             fs::read(&config).unwrap(),
@@ -710,5 +743,25 @@ mod tests {
         fs::create_dir(s.0.join("agentspace-ssh-proxy.exe")).unwrap();
         assert_eq!(find_proxy_program(&exe), None);
         assert_eq!(find_proxy_program(Path::new("")), None);
+    }
+
+    #[test]
+    fn a_backup_is_checked_byte_for_byte_by_its_hash() {
+        let s = scratch();
+        let original = b"Host a\r\n  User b\n";
+        let copy = s.0.join("copy");
+        fs::write(&copy, original).unwrap();
+        assert!(backup_matches(&copy, original));
+        // One byte different, the same length, a prefix, an extension, nothing, and no file.
+        for other in [
+            &b"Host a\r\n  User c\n"[..],
+            b"Host a\r\n  User b",
+            b"Host a\r\n  User b\n\n",
+            b"",
+        ] {
+            fs::write(&copy, other).unwrap();
+            assert!(!backup_matches(&copy, original), "{other:?}");
+        }
+        assert!(!backup_matches(&s.0.join("missing"), original));
     }
 }

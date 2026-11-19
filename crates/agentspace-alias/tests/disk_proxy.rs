@@ -67,3 +67,19 @@ fn the_result_is_a_full_path_for_a_full_path_input() {
     assert!(found.is_absolute());
     assert!(found.is_file());
 }
+
+#[test]
+fn a_relative_executable_path_never_searches_the_working_folder() {
+    let s = scratch("p6");
+    // A proxy program in the working folder, and relative paths whose folder is the working folder.
+    fs::write(s.0.join("agentspace-ssh-proxy.exe"), b"").unwrap();
+    fs::write(s.0.join("agentspace-ssh-proxy.cmd"), b"").unwrap();
+    let before = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&s.0).unwrap();
+    let bare = find_proxy_program(std::path::Path::new("agentspace.exe"));
+    let dotted = find_proxy_program(std::path::Path::new(".\\agentspace.exe"));
+    // Back out of the folder first, so that it can be deleted.
+    std::env::set_current_dir(before).unwrap();
+    assert_eq!(bare, None);
+    assert_eq!(dotted, None);
+}

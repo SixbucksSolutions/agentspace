@@ -26,8 +26,8 @@ pub(crate) fn is_link_or_read_only(meta: &Metadata) -> bool {
     meta.file_type().is_symlink() || meta.permissions().readonly()
 }
 
-/// Replaces `replaced` with `replacement` so that `replaced` keeps its own owner and access rules
-/// (`ReplaceFileW`, no backup file, no flags). One attempt. On failure `replacement` is left where
+/// Replaces `replaced` with `replacement` so that `replaced` keeps its own access rules
+/// (`ReplaceFileW`, no backup file, no flags); the owner becomes the running user's. One attempt. On failure `replacement` is left where
 /// it is, and so is `replaced` unless the call lost it part way.
 #[cfg(windows)]
 pub(crate) fn replace_keeping_rules(replaced: &Path, replacement: &Path) -> io::Result<()> {

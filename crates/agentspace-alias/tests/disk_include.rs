@@ -138,7 +138,10 @@ fn a_backup_is_never_overwritten() {
 }
 
 #[test]
-fn an_insert_keeps_the_configs_own_access_list_and_owner() {
+fn an_insert_keeps_the_configs_own_access_list() {
+    // The replace keeps the config's access list; its owner becomes the user running it, which
+    // OpenSSH accepts, so the owner is not compared (architect, 2026-11-19; docs/state.md,
+    // Replacing a file).
     let (_s, dir, cfg) = config_with(b"Host a\n  User x\n");
     let user = std::env::var("USERNAME").unwrap();
     // A protected list of its own: the user with full control, plus Everyone (S-1-1-0) read.
@@ -148,37 +151,25 @@ fn an_insert_keeps_the_configs_own_access_list_and_owner() {
          icacls {c} /grant:r '{user}:(F)' | Out-Null; \
          icacls {c} /grant '*S-1-1-0:(R)' | Out-Null"
     ));
-    // Best effort: give it an owner other than the process's user. Needs a privilege, so it MAY fail.
-    let owner_changed = std::process::Command::new("icacls")
-        .arg(&cfg)
-        .args(["/setowner", "*S-1-5-32-544"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let before = sddl(&cfg);
-    assert!(before.starts_with("O:"), "{before}");
+    let dacl = |s: String| s[s.find("D:").unwrap_or(0)..].to_string();
+    let before = dacl(sddl(&cfg));
     assert!(
-        before.contains("D:P"),
+        before.starts_with("D:P"),
         "the list should be protected: {before}"
     );
     assert!(
         before.contains(";;;WD)"),
         "Everyone entry missing: {before}"
     );
-    if owner_changed {
-        assert!(before.starts_with("O:BA"), "{before}");
-    } else {
-        eprintln!("owner is the process's user: setting another owner needs a privilege");
-    }
     ensure_include(&dir, NOW).unwrap();
     assert_eq!(
         fs::read(&cfg).unwrap(),
         [LF_LINE, b"Host a\n  User x\n"].concat()
     );
     assert_eq!(
-        sddl(&cfg),
+        dacl(sddl(&cfg)),
         before,
-        "owner or access list changed by the replace"
+        "access list changed by the replace"
     );
 }
 

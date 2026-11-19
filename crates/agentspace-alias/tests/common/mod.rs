@@ -91,12 +91,18 @@ pub fn tmps(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Runs a Windows PowerShell 5.1 command and returns its trimmed stdout.
+/// Runs a Windows PowerShell 5.1 command and returns its trimmed stdout. It is started by its full
+/// path, and without the `PSModulePath` that a PowerShell 7 parent hands down, which would make
+/// 5.1 fail to load its own modules.
 pub fn ps(script: &str) -> String {
-    let out = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .expect("powershell.exe must run");
+    let root = std::env::var("SystemRoot").expect("SystemRoot must be set");
+    let out = Command::new(format!(
+        "{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    ))
+    .env_remove("PSModulePath")
+    .args(["-NoProfile", "-NonInteractive", "-Command", script])
+    .output()
+    .expect("powershell.exe must run");
     assert!(
         out.status.success(),
         "powershell failed: {}",
