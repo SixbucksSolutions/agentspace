@@ -208,11 +208,15 @@ fn new_lease_key_formats_and_comment() {
             .trim_end()
             .ends_with("-----END OPENSSH PRIVATE KEY-----")
     );
-    let line = key.public_line.trim_end_matches(['\r', '\n']);
     assert!(
-        !line.contains('\n') && !line.contains('\r'),
+        !key.public_line.ends_with(['\r', '\n']),
+        "The public line MUST have no line ending"
+    );
+    assert!(
+        !key.public_line.contains(['\r', '\n']),
         "The public key MUST be one line"
     );
+    let line = key.public_line.as_str();
     let w = words(line);
     assert_eq!(w[0], "ssh-ed25519");
     assert_eq!(
@@ -261,6 +265,49 @@ fn new_lease_key_makes_a_different_key_each_time() {
 fn new_lease_key_is_unencrypted_by_its_own_check() {
     let key = ok(new_lease_key(ID));
     ok(check_unencrypted(key.private_openssh.as_bytes()));
+}
+
+#[test]
+fn lease_key_debug_holds_no_private_key_body() {
+    let key = ok(new_lease_key(ID));
+    let shown = format!("{key:?}");
+    assert!(shown.contains(&key.public_line), "{shown}");
+    for line in key
+        .private_openssh
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+    {
+        assert!(
+            line.len() >= 12 && !shown.contains(line),
+            "Debug MUST NOT show the private key: {shown}"
+        );
+    }
+    assert!(!shown.contains("BEGIN OPENSSH PRIVATE KEY"), "{shown}");
+}
+
+#[test]
+fn a_line_break_in_the_id_is_refused_without_echoing_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ca_priv, _) = keygen(dir.path(), "ca", "ed25519", "");
+    let ca = fs::read(ca_priv).unwrap();
+    let key = ok(new_lease_key(ID));
+    for bad in [
+        "leak-one\nleak-two",
+        "leak-one\rleak-two",
+        "leak-one\r\nleak-two",
+    ] {
+        let m = err(new_lease_key(bad));
+        assert!(!m.is_empty() && !m.contains("leak"), "ID echoed: {m}");
+        let m = err(sign_certificate(
+            &ca,
+            key.public_line.as_bytes(),
+            bad,
+            "ubuntu",
+            ISSUE,
+            3600,
+        ));
+        assert!(!m.is_empty() && !m.contains("leak"), "ID echoed: {m}");
+    }
 }
 
 // ---------------------------------------------------------------- check_unencrypted
@@ -399,10 +446,10 @@ fn certificate_window_is_absolute_and_not_in_the_signers_zone() {
     let s = sign_with_fresh_keys("ubuntu", ISSUE, 3600);
     let (good, out, stderr) = run(
         &["-L", "-f", s.cert_file.to_str().unwrap()],
-        &[("TZ", "Pacific/Auckland")],
+        &[("TZ", "NZT-13")],
     );
     assert!(good, "{stderr}");
-    // Auckland is UTC+13 in January: 07:55 UTC is 20:55 local.
+    // The POSIX zone NZT-13 is UTC+13, as Auckland is in January: 07:55 UTC is 20:55 local.
     assert_eq!(
         value_of(&out, "Valid:"),
         "from 2027-01-15T20:55:00 to 2027-01-15T22:00:00"
@@ -475,6 +522,50 @@ fn sign_refuses_garbage_without_panicking() {
         assert!(!err(sign_certificate(bad, public, ID, "ubuntu", ISSUE, 3600)).is_empty());
         assert!(!err(sign_certificate(&ca, bad, ID, "ubuntu", ISSUE, 3600)).is_empty());
     }
+}
+
+#[test]
+fn certificate_with_a_ttl_of_zero_is_valid_from_issue_minus_300_to_issue() {
+    // 2026-11-25 08:00:00 UTC.
+    let issue = 1_795_593_600;
+    let s = sign_with_fresh_keys("ubuntu", issue, 0);
+    assert_eq!(
+        value_of(&describe(&s.cert_file), "Valid:"),
+        "from 2026-11-25T07:55:00 to 2026-11-25T08:00:00"
+    );
+}
+
+#[test]
+fn sign_refuses_a_negative_issue_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ca_priv, _) = keygen(dir.path(), "ca", "ed25519", "");
+    let ca = fs::read(ca_priv).unwrap();
+    let key = ok(new_lease_key(ID));
+    for issue in [-1, i64::MIN] {
+        let m = err(sign_certificate(
+            &ca,
+            key.public_line.as_bytes(),
+            ID,
+            "ubuntu",
+            issue,
+            3600,
+        ));
+        assert!(!m.is_empty());
+    }
+}
+
+#[test]
+fn certificate_decoded_has_empty_extension_data_and_no_critical_options() {
+    let s = sign_with_fresh_keys("ubuntu", ISSUE, 3600);
+    let cert = ssh_key::Certificate::from_openssh(&s.cert_line).unwrap();
+    assert!(cert.critical_options().is_empty(), "A critical option");
+    let ext: Vec<(&String, &String)> = cert.extensions().iter().collect();
+    assert_eq!(ext.len(), 2, "{ext:?}");
+    for (name, data) in &ext {
+        assert!(data.is_empty(), "Extension {name} MUST have empty data");
+    }
+    let names: Vec<&str> = ext.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, vec!["permit-port-forwarding", "permit-pty"]);
 }
 
 // ---------------------------------------------------------------- check_ca_keys
@@ -572,6 +663,91 @@ fn ca_with_an_unreadable_private_key_never_panics() {
     ] {
         assert!(check_ca_keys(junk, &public).is_err());
     }
+}
+
+#[test]
+fn ca_rsa_private_key_with_an_ed25519_public_key_fails_not_ed25519() {
+    let dir = tempfile::tempdir().unwrap();
+    let (rsa_priv, _) = keygen(dir.path(), "rsa", "rsa", "");
+    let (_, ed_pub) = keygen(dir.path(), "ed", "ed25519", "");
+    let r = check_ca_keys(&fs::read(rsa_priv).unwrap(), &fs::read(ed_pub).unwrap());
+    assert_eq!(r, Err(CaProblem::NotEd25519));
+}
+
+#[test]
+fn ca_checks_run_in_the_rulings_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let (rsa_priv, _) = keygen(dir.path(), "rsa", "rsa", "");
+    let (rsa_enc, rsa_enc_pub) = keygen(dir.path(), "rsaenc", "rsa", "a passphrase");
+    let (ed_priv, _) = keygen(dir.path(), "ed", "ed25519", "");
+    let (ed_enc, _) = keygen(dir.path(), "edenc", "ed25519", "a passphrase");
+    let rsa_priv = fs::read(rsa_priv).unwrap();
+    let rsa_enc = fs::read(rsa_enc).unwrap();
+    let rsa_enc_pub = fs::read(rsa_enc_pub).unwrap();
+    let ed_priv = fs::read(ed_priv).unwrap();
+    let ed_enc = fs::read(ed_enc).unwrap();
+
+    // Encrypted comes before the key's algorithm and before the public key is read.
+    assert_eq!(
+        check_ca_keys(&rsa_enc, &rsa_enc_pub),
+        Err(CaProblem::Encrypted)
+    );
+    assert_eq!(check_ca_keys(&ed_enc, b"junk"), Err(CaProblem::Encrypted));
+    // A public key under two words is Unreadable before the private key's algorithm is judged.
+    assert_eq!(
+        check_ca_keys(&rsa_priv, b"ssh-ed25519"),
+        Err(CaProblem::Unreadable)
+    );
+    // A wrong first word is NotEd25519 before the public key is parsed.
+    assert_eq!(
+        check_ca_keys(&ed_priv, b"ssh-rsa AAAAB3"),
+        Err(CaProblem::NotEd25519)
+    );
+}
+
+#[test]
+fn ca_public_key_comparison_is_exact_not_case_folded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = keygen(dir.path(), "ca", "ed25519", "");
+    let private = fs::read(p).unwrap();
+    let public = fs::read_to_string(q).unwrap();
+    let w = words(&public);
+    assert_eq!(check_ca_keys(&private, public.as_bytes()), Ok(()));
+
+    // The first word's case is part of the check.
+    let upper_kind = format!("SSH-ED25519 {}", w[1]);
+    assert_eq!(
+        check_ca_keys(&private, upper_kind.as_bytes()),
+        Err(CaProblem::NotEd25519)
+    );
+
+    // One letter of the blob in the other case, from the end, at the first position where the
+    // result still parses as a key: a different key text, so a Mismatch.
+    let blob: Vec<char> = w[1].chars().collect();
+    let mut tried = 0;
+    for i in (0..blob.len())
+        .rev()
+        .filter(|i| blob[*i].is_ascii_alphabetic())
+    {
+        let mut flipped = blob.clone();
+        flipped[i] = if flipped[i].is_ascii_lowercase() {
+            flipped[i].to_ascii_uppercase()
+        } else {
+            flipped[i].to_ascii_lowercase()
+        };
+        let line = format!("ssh-ed25519 {}", flipped.iter().collect::<String>());
+        if ssh_key::PublicKey::from_openssh(&line).is_err() {
+            continue;
+        }
+        tried += 1;
+        assert_eq!(
+            check_ca_keys(&private, line.as_bytes()),
+            Err(CaProblem::Mismatch),
+            "A blob that differs in the case of one letter MUST be a Mismatch"
+        );
+        break;
+    }
+    assert_eq!(tried, 1, "No case-flipped blob parsed, so none was tested");
 }
 
 // ---------------------------------------------------------------- messages

@@ -10,7 +10,7 @@
 //!   `ssh-keygen`, and the random source MUST be the operating system's.
 //! - A [`CredError`] message MUST be in agentspace's own words. It MUST NOT carry key material, a
 //!   secret, or a library's error text.
-//! - No function here MAY panic on bad input, and none writes to stdout or stderr.
+//! - A function here MUST NOT panic on bad input, and MUST NOT write to stdout or stderr.
 
 use ssh_key::certificate::{Builder, CertType};
 use ssh_key::rand_core::OsRng;
@@ -217,22 +217,22 @@ fn first_two_words(text: &str) -> Option<(&str, &str)> {
 
 /// Checks 3 to 5 of state.md's "The CA", "Its checks", on the two files' bytes.
 ///
-/// Checks 1 and 2 (the files exist, and are owner-only) are not made here. The first failure ends
-/// the check, in this order:
+/// Checks 1 and 2 (the files exist, and are owner-only) are not made here. The architect's rulings
+/// of 2026-11-19 set the order, and the first failure ends the check:
 ///
-/// 1. The private key is not an OpenSSH private key at all: [`CaProblem::Unreadable`].
+/// 1. The private key is not an OpenSSH private key at all: [`CaProblem::Unreadable`]. An
+///    algorithm this crate does not know is [`CaProblem::NotEd25519`] instead.
 /// 2. Its cipher or its KDF is not `none`: [`CaProblem::Encrypted`].
-/// 3. The public key has fewer than two words, or its second does not parse as a key:
-///    [`CaProblem::Unreadable`].
-/// 4. The private key, or the public key's first word, is not ed25519: [`CaProblem::NotEd25519`].
-/// 5. The public key's first two words differ from those derived from the private key, compared
+/// 3. The public key has fewer than two words: [`CaProblem::Unreadable`].
+/// 4. The public key's first word is not `ssh-ed25519`, or the private key is not ed25519:
+///    [`CaProblem::NotEd25519`].
+/// 5. The public key does not parse: [`CaProblem::Unreadable`].
+/// 6. The public key's first two words differ from those derived from the private key, compared
 ///    exactly: [`CaProblem::Mismatch`].
 pub fn check_ca_keys(private: &[u8], public: &[u8]) -> Result<(), CaProblem> {
-    // GAP: state.md numbers the checks 3 (loads unencrypted), 4 (words equal, first is
-    // ssh-ed25519) and 5 (parses) but names no case for a private key that is not ed25519, or for
-    // a public key that does not parse and so also differs from the derived words. A private key
-    // that is not ed25519 is reported as NotEd25519, and an unparseable public key as Unreadable
-    // before Mismatch (the card's done-when: a truncated public key is Unreadable).
+    // The order of the checks, and which problem each failure is, are the architect's rulings of
+    // 2026-11-19 (the doc comment above lists the six steps). A private key that is not ed25519
+    // is NotEd25519, and a public key that does not parse is Unreadable before Mismatch.
     let private_key = match parse_private(private) {
         Ok(key) => key,
         // An algorithm this crate does not know is not ed25519, and the file is still a key.
