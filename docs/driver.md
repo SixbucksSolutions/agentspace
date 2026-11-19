@@ -101,7 +101,7 @@ to those streams either, and its output MUST be captured for the failure's cause
 caller asked for, and the contract holds no assumption about the host's operating system
 (D4). Wherever this page names Linux, an `ubuntu` user, `sshd` or `systemd`, it is describing
 today's box in [The EC2 driver](#the-ec2-driver), and is a property of that driver, never of the
-contract. A Windows host (v0.13, #0081) is a platform like any other: unsatisfiable until a
+contract. A Windows host (v0.12, #0051) is a platform like any other: unsatisfiable until a
 driver supports it (D5), and how a lease on one logs in is still open
 ([Q10](#open-questions)).
 
@@ -856,11 +856,11 @@ none blocks building a drop-in of contract v0.
    [state.md](state.md) lists. "Kept" in
    [Failure](#failure) means kept apart from the message, up to the CLI. Later, not blocking: a
    place to keep it, such as a log ([lease-api.md](lease-api.md#open-questions), Q10).
-10. **Later, not blocking:** Windows hosts come with v0.13 (#0081), and until then D4's lease model
+10. **Later, not blocking:** Windows hosts come with v0.12 (#0051), and until then D4's lease model
     is a Linux user and a certificate.
     **Q10: What does a lease on a Windows host look like at this boundary?** The result carries a
     login user and an alias, which assume an SSH login. D4 says the lease model assumes a Linux
-    user and a certificate until v0.13 (#0081), and the vision's V2 asks whether a certificate
+    user and a certificate until v0.12 (#0051), and the vision's V2 asks whether a certificate
     stays the way in. Whether the three operations survive that unchanged is not known.
 11. **Later, not blocking:** today's driver needs nothing more than the driver's name, the lease ID
     and the project, and no v0 driver has a per-lease backend.

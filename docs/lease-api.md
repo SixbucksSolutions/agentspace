@@ -1386,8 +1386,8 @@ none blocks building a drop-in of contract v0.
    should move to the keeper's own connection. Today a caller's second session on a host warns
    that its remote port forwarding failed.
 8. **Later, not blocking:** every v0 lease logs in as `ubuntu` (D3), which the pattern accepts,
-   and a user it would refuse comes only with a later driver's host (v0.13, #0081).
-   **Whether `ssh.user`'s pattern fits every host a later driver serves** (D4, v0.13, #0081). It
+   and a user it would refuse comes only with a later driver's host (v0.12, #0051).
+   **Whether `ssh.user`'s pattern fits every host a later driver serves** (D4, v0.12, #0051). It
    accepts 1 to 64 letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, which covers
    Unix and Windows local user names. A Windows domain user (`DOMAIN\user` or `user@domain`), or a
    name with a space, would not fit, and widening the pattern later would be a new contract

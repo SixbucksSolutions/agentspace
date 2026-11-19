@@ -182,7 +182,8 @@ compute-on-demand service."
 - **A spec or design MUST NOT assume a host is Linux,** except where it describes today's EC2 box
   as it is. The platform stays a parameter of the contract, and `windows/amd64` (and later
   `windows/arm64`) are platforms like any other: unsatisfiable until a driver supports them (D5).
-- **Windows hosts come before 1.0, as v0.13 (#0081)** (Terry, 2026-11-18). The work is a lease
+- **Windows hosts come before 1.0, in v0.12 (#0051)** (Terry, 2026-11-18, as v0.13, #0081; folded
+  into v0.12 beside `linux/amd64` on 2026-11-19, D26). The work is a lease
   model that today assumes a Linux user and an SSH certificate, and a host agent of its own.
 
 ### D5. An unmet request is unsatisfiable, never quietly downgraded
@@ -1642,7 +1643,8 @@ the releases are taken in order.
 - **The minor number has two digits** (Terry, 2026-11-17, by retitling the epics): `v0.02`, not
   `v0.2`. So the releases sort in order, and v0.10 follows v0.09 everywhere.
 - **1.0 keeps one digit: `v1.0`, not `v1.00`** (Terry, 2026-11-18). Two digits were needed only
-  below 1.0, because the releases run to v0.12 before it (v0.13 since 2026-11-18). Epic #0053 keeps its title.
+  below 1.0, because the releases run to v0.12 before it (to v0.13 from 2026-11-18 until v0.13 was
+  folded into v0.12 on 2026-11-19, below). Epic #0053 keeps its title.
 - **The plan was first written with one digit** (v0.2 to v0.12). Docs and cards were rewritten to
   two digits the same day, except the swimcoach milestones `v0.2` and `v0.2-T1`, which keep the
   names they were first reported under (D29).
@@ -1651,6 +1653,15 @@ the releases are taken in order.
   their epics: #0052 is v0.11, and #0051 is v0.12. Neither depends on the other: reading a plan
   from an epic names no platform, and sizes it as v0.10 does. The platforms now run back to back,
   v0.12 then v0.13, so Windows builds directly on the driver that first serves two platforms.
+- **v0.13 is folded into v0.12, and both platforms are built in parallel** (Terry, 2026-11-19:
+  "let's double the platforms worked in v0.12"). Windows needs the multi-platform driver that
+  `linux/amd64` was to bring, not the amd64 host itself. So v0.12's first turn is shared: the
+  driver, the lease state and placement serve more than one platform, a project MAY hold one host
+  per platform, and each platform gets its own seam (its image, its instance family and its
+  bootstrap) so the two tracks touch different files. After it, the `linux/amd64` track and the
+  `windows/amd64` track run as parallel stories in the same turns, and the release ends when the
+  longer, Windows, does. #0081 is folded into #0051 and archived, as #0013 was, and v0.13 is not
+  used: v1.0 follows v0.12.
 
 | Release | Epic | What |
 |---|---|---|
@@ -1664,8 +1675,7 @@ the releases are taken in order.
 | v0.09 | #0049 | Size classes |
 | v0.10 | #0050 | Plan-sized leases; contract v1 (D27) |
 | v0.11 | #0052 | Plan from the board |
-| v0.12 | #0051 | `linux/amd64` platform |
-| v0.13 | #0081 | `windows/amd64` platform (D4; added by Terry, 2026-11-18) |
+| v0.12 | #0051 | `linux/amd64` and `windows/amd64` platforms, in parallel (D4; Windows added by Terry, 2026-11-18, as v0.13, #0081, and folded in 2026-11-19) |
 | v1.0 | #0053 | A real project runs an epic on a plan-sized host |
 
 - **A release number is not the contract version.** The lease contract stays v0 until a release

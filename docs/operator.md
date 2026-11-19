@@ -73,7 +73,7 @@ that a lease's client sees, so D1 binds it, and everything it runs
 - **The box is a host, and a host's platform is a parameter of the contract (D4).** Today there is
   one host: an EC2 instance running Ubuntu on `linux/arm64`, logged in to as `ubuntu`, with
   systemd, bash and passwordless `sudo`. Wherever this page names one of those, it is a property
-  of today's box, marked "today's box", and not of the contract. A Windows host (v0.13, #0081)
+  of today's box, marked "today's box", and not of the contract. A Windows host (v0.12, #0051)
   would answer the same questions in its own way.
 - **The prototype is `scripts/agentspace.ps1`, run by Windows PowerShell 5.1, and
   `scripts/ssh-proxy.cmd`.** They are named here only where a note says where a requirement came

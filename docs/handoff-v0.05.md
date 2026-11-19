@@ -62,6 +62,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 | No review lists, reads or hashes Terry's real files; isolation is enough | AGENTS.md, "Terry's real files in a review" |
 | By v1.0, agentspace's own files are JSON where feasible; the keeper's logs and the YAML template stay | D40 |
 | #0054's done-when no longer deletes the prototype's lease CLI files in v0.05 (the architect's call, made at layout and not overruled) | D38; #0054 |
+| Plan from the board (#0052) is v0.11 and comes before the new platforms, so agentspace is feature complete on one platform first | D26; roadmap.md; #0052 |
+| v0.13 is folded into v0.12 (#0051): `linux/amd64` and `windows/amd64` in one release, a shared multi-platform turn and then two tracks in parallel. #0081 is archived, v0.13 is not used, and v1.0 follows v0.12 | D26, D4; roadmap.md; #0051 |
 
 **One question is still Terry's:** whether D33's measured compiling turn, which v0.05-T01 owed and
 recorded only in part, is measured again in v0.06's first turn on the box. Nothing in v0.05 runs
@@ -207,6 +209,18 @@ word (AGENTS.md, "The board").
   (D39) and plan the sampler's watch.
 - **Plan the cutover of the keeper's task**, which is persistent configuration on Terry's laptop
   and takes his yes (D30, D37).
+
+**The road after v0.06 changed during v0.05** (Terry, 2026-11-19; D26, roadmap.md). The v0.04
+handoff's order no longer holds past v0.10:
+- **v0.11 is plan from the board (#0052)**, swapped ahead of `linux/amd64`, so agentspace is
+  feature complete on one platform before it turns to others. Neither depends on the other.
+- **v0.12 is both new platforms (#0051), `linux/amd64` and `windows/amd64`**, with v0.13 (#0081)
+  folded in and archived. Its first turn is shared: the driver serves more than one platform, with
+  a seam per platform, so the two tracks then run as parallel stories and touch different files.
+  Windows is the long track and carries the open design calls (its lease identity, the vision's
+  V2; its host agent; its profile; licensing cost). Expect a re-plan once those are made (D29).
+- **v1.0 (#0053) follows v0.12**, and v0.13 is not used. On the board, #0051 now blocks #0053
+  directly.
 
 ## When Terry approves v0.05
 
