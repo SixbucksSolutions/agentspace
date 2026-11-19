@@ -7,5 +7,9 @@ publish = false
 [dependencies]
 ssh-key = { version = "=0.6.7", default-features = false, features = ["alloc", "ed25519", "rand_core", "getrandom"] }
 
+# The Windows access rules (E0.05-T02-S02). The one module that calls them is src/win.rs.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile = { version = "=3.23.0", default-features = false }

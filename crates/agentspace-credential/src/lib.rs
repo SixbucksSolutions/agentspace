@@ -1,7 +1,7 @@
 //! agentspace-credential (docs/decisions.md, D38).
 //!
-//! A lease's key and certificate, and the checks of agentspace's CA, on bytes only. This crate
-//! does no file I/O (E0.05-T02-S02 adds the files and the access rules).
+//! A lease's key and certificate, and the checks of agentspace's CA, on bytes (E0.05-T01-S04); then
+//! their files, with the Windows access rules, and issue, renew and delete (E0.05-T02-S02).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. The rules are those of state.md, "A
 //! lease's credential" and "The CA":
@@ -11,6 +11,28 @@
 //! - A [`CredError`] message MUST be in agentspace's own words. It MUST NOT carry key material, a
 //!   secret, or a library's error text.
 //! - A function here MUST NOT panic on bad input, and MUST NOT write to stdout or stderr.
+//! - `unsafe` MUST NOT appear outside `win.rs`, the one module that calls Windows.
+//! - The build for a platform that is not Windows (`other.rs`) is NOT THE CONTRACT'S: it exists so
+//!   that the portable half builds and is tested on Linux, and it refuses every check of access
+//!   rules, so `check_ca`, `issue` and `renew` fail there.
+
+#![deny(unsafe_code)]
+
+mod lease;
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+#[path = "win.rs"]
+mod platform;
+
+#[cfg(not(windows))]
+#[path = "other.rs"]
+mod platform;
+
+pub use lease::{
+    CaFailure, CredFailure, Issued, RenewGuard, ca_failure_message, check_ca, issue,
+    remove_lease_folder, renew,
+};
 
 use ssh_key::certificate::{Builder, CertType};
 use ssh_key::rand_core::OsRng;
