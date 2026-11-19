@@ -6,7 +6,9 @@ What one agent costs a host in CPU and memory, as measured on a real turn, and h
 again for another project. It is D27's footprint, measured under D33
 ([decisions](decisions.md#d27-a-host-is-sized-by-concurrency-never-by-model-or-effort),
 [D33](decisions.md#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls)).
-Card #0072, story E0.03-T03-S01.
+Card #0072, story E0.03-T03-S01. A second measured turn, v0.05-T01's, which compiles and is only
+partly recorded, was added by card #0102 (E0.05-T02-S04): see
+["The second measured turn"](#the-second-measured-turn-v005-t01-which-compiles-and-is-partial).
 
 - **Every number here MUST come from the measured run alone, never from an estimate** (D27). A
   figure the run cannot give is left out, and the gap is said.
@@ -14,8 +16,11 @@ Card #0072, story E0.03-T03-S01.
   turn's record and its transcripts. A figure that the script cannot give MUST be left out and the
   gap said, and MUST NOT be marked as pending.
 - **This table MUST NOT size a host.** The turn was light, as the section "What the numbers do not
-  cover" says, and D33 requires a second measurement on a v0.05 turn first.
-- Times are 2026-11-18, Pacific Standard Time (-08:00), as in the run record.
+  cover" says, and D33 requires a second measurement on a v0.05 turn first. **That second
+  measurement was taken and is partial** (the section on the second measured turn), so it is still
+  owed in full, and the tables of the first turn, below, still MUST NOT size a host.
+- Times are 2026-11-18, Pacific Standard Time (-08:00), as in the run record, except the second
+  measured turn's, which are 2026-11-19, also -08:00.
 
 ## The turn that was measured
 
@@ -252,16 +257,111 @@ above.
 - **The default match is fixed** (E0.03-T02-S01), and a measurer MUST confirm that the session
   shows as a session row before the turn's agents launch (D33).
 
+## The second measured turn: v0.05-T01, which compiles and is partial
+
+Measured by card #0102 (story E0.05-T02-S04), under D33 and D27, for v0.09 (#0049). The full
+account, with the timeline and the checks, is
+[docs/runs/e0.05-t02-s04.md](runs/e0.05-t02-s04.md); the record is committed beside it as
+`runs/data/e0.05-t02-s04.jsonl.gz`.
+
+- **The project and the turn:** agentspace itself, v0.05-T01 (epic #0054, D38): five Rust stories
+  in parallel, one crate each, built on the box (#0094 to #0098). Each story's plan peaks at 2
+  subagents, so D27's count for the turn is 11: 2 + 2 + 2 + 2 + 2, plus the dev lead.
+- **This turn compiles.** It is the first turn on which `cargo` ran, and v0.04-T01, which wrote
+  specs, is not that (the section "What the numbers do not cover").
+- **It is partial, and that is the first thing to read.** The record covers 2:26:18am to
+  2:33:12am on 2026-11-19, and sees the dev lead's session for 354 seconds, from 2:27:16am to
+  2:33:10am. The turn ran from about 2:27am to about 2:58am, so the record is about a fifth of it. It holds the first
+  compile burst, and nothing after 2:33:12am. The sampler died there when the box's root disk
+  filled (#0109), and the record has no end line.
+- **Every figure below MUST be read as the first 7 minutes, never as the turn.** D33's measured
+  compiling turn is still owed.
+- **There are no per-agent figures and no measured concurrency for this turn.** The dev lead's
+  transcript was not fetched and the lease is released, so the working agents at each moment cannot
+  be counted. D27's count of 11 is unchecked by this record.
+
+### The two turns beside each other
+
+Peak, p95 and p50. Every figure is `agentspace-footprint`'s over its record, and none is divided
+among agents.
+
+| What | v0.04-T01, specs, whole turn (2172 s) | v0.05-T01, compiles, first 7 minutes (354 s of the session) |
+| --- | --- | --- |
+| The session's tool calls, CPU cores | 0.42, 0.02, 0.00 | 3.67, 1.21, 0.01 |
+| The session's tool calls, PSS MiB | 62.29, 0.00, 0.00 | 662.06, 250.28, 0.00 |
+| The session's own process, CPU cores | 0.14, 0.06, 0.01 | 0.17, 0.11, 0.04 |
+| The session's own process, PSS MiB | 538.41, 484.48, 436.82 | 515.43, 486.00, 370.94 |
+| Host CPU, cores | 0.51, 0.10, 0.02 | 3.83, 1.09, 0.05 |
+| Host memory used, GiB | 1.09, 1.04, 0.99 | 1.91, 1.36, 0.94 |
+
+- **Tool-call processes peaked at 8 at once** in both turns: at 6:47:32am in v0.04-T01, and at
+  2:32:26am and 2:32:34am in this one. Sessions at once: 1 in both.
+- **Compiling moved the tool calls, not the session's own process.** The tool calls' peaks are 8.7
+  times (CPU) and 10.6 times (PSS) v0.04-T01's, and the session's own process is about the same
+  size. The tool calls spent 53.28 CPU-seconds in this window against the session's 15.22, where
+  v0.04-T01's spent 9.36 against 37.81.
+- **The host's peak, 3.83 cores, is 96% of the box's 4.** It was reached in one 2-second interval,
+  3.67 cores of it the tool calls. A box with 4 cores cannot show more, so what a build wants beyond
+  it is not seen, and the later builds are not in the record at all.
+- **The per-agent figures: none for this turn.** v0.04-T01's are 0.11, 0.01 and 0.00 cores and
+  46.17, 0.00 and 0.00 MiB. Nothing of v0.05-T01's MUST be put beside them, since the division by
+  working agents needs the transcripts.
+
+### Which figures v0.09 reads
+
+- **v0.09 SHOULD read these as a floor for a compiling turn,** and MUST NOT size a host from them
+  alone (D33):
+  - **The tool calls' peaks:** 3.67 cores and 662.06 MiB of PSS, in one session. They are the load
+    that grows with the agents working, and the PSS is a floor for the reason in "All of the
+    session's tool calls".
+  - **The host's peak CPU:** 3.83 cores, against a 4-core box.
+  - **The tool calls' p95 CPU,** 1.21 cores, as what a compile burst looks like, not a sustained
+    load. It is 1.21 and not more because most of the window held no compile.
+- **v0.09 MUST NOT read these from this turn:**
+  - **The p50 figures.** 144 of the session's 178 rows have no tool-call process alive. The first
+    is at 2:30:16am, 180 seconds after the session was first seen, so the p50s describe a window
+    that mostly did not compile.
+  - **The host's memory,** 1.91 GiB at its peak. It is the processes' memory only: from 2:33am the
+    build output sat in a tmpfs and counted in the host's memory and in no session's PSS, and the
+    record ends before it shows.
+  - **Per-agent figures and concurrency,** which this turn does not have.
+- **The session's own process is paid once per session** (D33), so v0.09 reads it from the longer
+  v0.04-T01 record above, where its peak PSS was 538.41 MiB, and MAY compare it with this turn's
+  515.43, which is about the same.
+
+### Sizing facts the record does not hold
+
+They come from the architect's notes and the dev lead's account (PR #52), not from the sampler, and
+the run record marks each one's source.
+
+- **A 6.8G root disk did not fit the turn.** It filled to 100% between 2:29am and 2:33am with five
+  `cargo` `target` folders at about 370 MB, and was grown to 11 GiB (a 9.7G filesystem) at 2:41am.
+  A project host that builds Rust (v0.07, #0047) MUST be sized for a build's output, and a
+  turn's build output is not in these figures.
+- **The build output of five Rust stories passed 5 GB.** At 2:33am the targets moved to a tmpfs
+  under `/tmp`, which holds them in RAM, and its 7.7G (half the box's memory) was full shortly
+  before 2:53am: one story's target held 2.7 GB and the reviewers' scratch builds another 2.7 GB.
+  So a RAM-backed `/tmp` on a 15.27 GiB box can take half of its memory, and v0.09 SHOULD size the
+  host's memory with that in view. Counting the build output in the host and in no session's PSS
+  means the sessions' PSS figures cannot show it.
+- **D33's compiling turn is still owed,** and whether a v0.06 turn is measured again is Terry's
+  open call.
+
 ## What the numbers do not cover
 
-- **One project, one turn.** They are agentspace's own v0.04-T01 turn: 3 stories, 1 session, 16
-  subagents. Another project's builds and test suites can load a host differently.
+- **One project, one turn,** for the tables of the first turn above. They are agentspace's own
+  v0.04-T01 turn: 3 stories, 1 session, 16 subagents. Another project's builds and test suites can
+  load a host differently. The second measured turn, v0.05-T01's, compiles, but covers 7 minutes of
+  31 and is the only other turn measured.
 - **The turn was spec writing, which is light.** v0.04's stories write documents and run few
   builds, so its tool-call peaks understate a turn that compiles. The tool calls took a fifth of
   the turn's CPU, and the host never passed 0.51 cores.
   **v0.09 MUST measure the footprint again on a v0.05 turn with two or more stories in parallel
   before it sets any size** (D33, #0049). v0.05's `cargo` builds and test suites are the load that
   matters, and the tools are built to be rerun.
+  - **The v0.05-T01 measurement does not meet that.** It covers 7 minutes of a 31-minute turn
+    (the section on the second measured turn), so the complete compiling turn D33 asks for is still
+    owed.
 - **A 4-core, 15.27 GiB box caps what a peak can reach.** The lease's box has 4 CPUs, and the
   sampler's start line reports 16,008,512 KiB of memory (15.27 GiB). The instance is sold as 16
   GiB, and the figure the kernel reports is what it can use. The earlier record's "15 GiB" is the
@@ -324,3 +424,6 @@ runs this analysis, which needs the turn's transcripts as well as its record.
 | The session's own process, its tool calls, the host and the sampler's overhead | `agentspace-footprint` over `agentspace-v004-t01c`, in the run record's "agentspace-footprint's output for the turn" |
 | The connection, the observer and the leftover | The run record's "The host against the sessions" |
 | The per-agent and main-agent-alone rows, the subagent peak and the joined counts | `agentspace-agents` over the same record and the turn's 17 transcripts, in its Markdown and `--json` outputs; the two exceptions are named in the text: the 6:16:31.936am start of the peak and the Bash call times |
+| The second measured turn's host, session and tool-call figures | `agentspace-footprint` over `agentspace-v005-t01`, in the run record's "agentspace-footprint's output for the run" ([docs/runs/e0.05-t02-s04.md](runs/e0.05-t02-s04.md)) |
+| The second turn's times of its peaks, its CPU-seconds, its counts of rows with no tool call and its #0082 check | A short Python over the same record, described in the run record's "How the figures the tool does not give were computed" |
+| The second turn's disk, tmpfs and build-output sizes | The architect's notes on card #0102 and PR #52's body, not the sampler: the record holds no disk field |
