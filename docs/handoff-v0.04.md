@@ -3,8 +3,9 @@
 RFC 2119 keywords; the capitals are load-bearing.
 
 > **Final, written by the architect at 11:45pm Pacific on 2026-11-18, once every v0.04 pull request
-> was merged and every dev lead archived.** One step remains, and it is Terry's: approving #0030
-> into Completed. "When Terry approves v0.04" at the end says what the architect does then. Terry
+> was merged and every dev lead archived.** Terry approved #0030 into Completed the same night,
+> and the architect then did every step of "When Terry approves v0.04" at the end: v0.04 is
+> closed, `milestones.json` is empty, and no reporter runs. Terry
 > `/clear`s the architect after v0.04 closes, so this file is how the next architect learns
 > everything that is not in AGENTS.md.
 
@@ -28,8 +29,8 @@ duties" below).
 - **v0.03 (#0046, "Measure what an agent uses") is done:** four stories in three turns, all
   merged and approved, and the epic is in Completed (Terry, 2026-11-18). Its table is
   [footprint.md](footprint.md), its measured run [runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md).
-- **v0.04 (#0030, "Clean-room spec package") is done, and waits only on Terry's approval.** All
-  six turns and seventeen stories are merged, and #0030 and its last story are in Ready For Review.
+- **v0.04 (#0030, "Clean-room spec package") is done:** all six turns and seventeen stories are
+  merged, and Terry approved the epic into Completed on 2026-11-18.
   - T04 (#0080, PR #41) ran the first clean-room pass: both readers said NO (A: 32 gaps, B: 54).
     T04 closed the lease CLI's gaps, and docs/runs/e0.04-t04-s01.md records every gap's
     disposition.
@@ -48,8 +49,8 @@ duties" below).
   restarts it if it dies; a later PID is not a fault.
 - **The box** runs only when something connects. Its installed tools match `main`:
   `agentspace-sample`, `agentspace-footprint` and `agentspace-agents` (synced after PR #35).
-- **Swimcoach reports `v0.04` only**, from the reporter pwsh 9964 (started 8:30pm on 2026-11-18).
-  Every turn's milestone is stopped. `v0.04` stays until Terry approves #0030.
+- **Swimcoach reports nothing:** every v0.04 milestone is stopped, `milestones.json` is empty, and
+  the reporter is stopped. A fresh architect starts it again when v0.05's stories are laid out.
 - **Every dev lead session of v0.03 and v0.04 is archived.**
 
 ## The architect's standing duties
