@@ -155,6 +155,16 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
 - **The first step**, the same day during v0.05-T01: 8 to 11 GiB at 2:41am Pacific, which left
   the filesystem at 9.7G, 5.9G used (62%). It had filled at 6.8G with five crates' builds (D38).
 
+## Terry's real files in a review
+
+**Terry, 2026-11-19: "isolation is enough".** A review or a check MUST NOT list, read or hash
+Terry's real `%USERPROFILE%\.agentspace`, `~/.ssh`, CA or `%LOCALAPPDATA%\localswim-v2` as a
+before-and-after proof that a run left them alone. What protects them is isolation: the
+conformance harness points `USERPROFILE`, `HOME`, `LOCALAPPDATA` and `APPDATA` into a throwaway
+home and refuses any write outside it (conformance.md, The harness), and a review confirms that
+every write and delete went through it. This replaces the snapshot step in handoff-v0.04.md,
+"Reviewing a pull request", step 3, which auto mode refused a subagent in v0.05-T02.
+
 ## Watching a measurement
 
 **A running `agentspace-sample` MUST be watched for liveness by whoever started it, from its start

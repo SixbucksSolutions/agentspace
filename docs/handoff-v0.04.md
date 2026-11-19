@@ -164,7 +164,9 @@ report.
    `C:\t40`: some fixtures exceed Windows' 260-character limit under the scratchpad.
 2. **Run the touched suites yourself**, in full. A run cut short by a timeout has not passed. The
    keeper suite takes about 7 to 8 minutes.
-3. **For anything that runs the prototype, snapshot Terry's real files before and after**, and
+3. **Replaced on 2026-11-19 (Terry: "isolation is enough"; AGENTS.md, Terry's real files in a
+   review): no review lists, reads or hashes Terry's real files any more.** It was:
+   **For anything that runs the prototype, snapshot Terry's real files before and after**, and
    they MUST come out identical. **Hash only files that hold no secret:** `leases.json`, the
    keeper's record, the push stamp and `~/.ssh/config`. **Compare the rest by size and time only,
    never reading them:** the leases folder, the CA folder, the rest of `~/.ssh` (Terry's private
