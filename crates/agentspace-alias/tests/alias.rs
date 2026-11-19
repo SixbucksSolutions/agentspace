@@ -17,7 +17,43 @@ fn sample<'a>(proxy: &'a str, key: &'a str, cert: &'a str) -> AliasFile<'a> {
     }
 }
 
-// ---------- alias name and rule ----------
+// ---------- Alias name and rule ----------
+
+#[test]
+fn alias_name_uses_project_and_id_as_given() {
+    // Callers pass normalized values (architect, 2026-11-19), so nothing is normalized here.
+    assert_eq!(
+        alias_name("SwimCoach", "3F2A9C1E-5B7D-4A60-8C11-0D2E4F6A8B90"),
+        "agentspace-SwimCoach-3F2A9C1E"
+    );
+}
+
+#[test]
+fn alias_file_bytes_refuses_an_alias_that_breaks_the_alias_rule() {
+    for alias in ["-x", "a b", "a;b", ""] {
+        let mut f = sample("\"C:/agentspace.exe\" x", "k", "c");
+        f.alias = alias;
+        assert!(
+            alias_file_bytes(&f).is_err(),
+            "alias {alias:?} was accepted"
+        );
+    }
+}
+
+#[test]
+fn default_proxy_command_refuses_an_alias_that_breaks_the_alias_rule() {
+    for alias in ["-x", "a b", "a;b", ""] {
+        for program in [
+            "C:\\bin\\agentspace-ssh-proxy.cmd",
+            "C:\\bin\\agentspace.exe",
+        ] {
+            assert!(
+                default_proxy_command(program, alias, Some("C:\\Windows")).is_err(),
+                "alias {alias:?} with {program} was accepted"
+            );
+        }
+    }
+}
 
 #[test]
 fn alias_name_is_project_and_first_eight_hex() {
@@ -62,7 +98,7 @@ fn alias_rule_refuses_other_characters() {
     }
 }
 
-// ---------- lease_file_text ----------
+// ---------- `lease_file_text` ----------
 
 #[test]
 fn lease_file_text_windows_home() {
@@ -128,7 +164,7 @@ fn lease_file_text_keeps_spaces_and_case() {
     );
 }
 
-// ---------- the alias file's bytes ----------
+// ---------- The alias file's bytes ----------
 
 const BLOCK: &str = "\
 # agentspace lease 3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90; Written by agentspace. Do not edit.
@@ -291,7 +327,7 @@ fn alias_error_message_names_no_path() {
     assert!(!e.0.contains('\n'));
 }
 
-// ---------- default ProxyCommand ----------
+// ---------- Default ProxyCommand ----------
 
 #[test]
 fn proxy_exe_form() {
@@ -386,7 +422,7 @@ fn proxy_error_message_names_no_path() {
     assert!(!e.0.contains("secret"), "{}", e.0);
 }
 
-// ---------- owner mark ----------
+// ---------- Owner mark ----------
 
 #[test]
 fn owner_mark_exact_form() {
@@ -730,7 +766,7 @@ fn insert_when_line_is_only_in_a_comment_and_no_blocks() {
     );
 }
 
-// ---------- the doc's block, read at test time ----------
+// ---------- The doc's block, read at test time ----------
 
 #[test]
 fn state_md_block_is_what_the_test_transcribes() {

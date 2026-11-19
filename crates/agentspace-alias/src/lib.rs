@@ -56,23 +56,14 @@ fn path_text(s: &str) -> String {
 /// The path of `<home>\.agentspace\leases\<id>\<file>` in the alias file's form (state.md, the
 /// `<key path>` row, gap FA-05). `home_full` is the home folder already made full.
 ///
-/// The home folder's trailing `\` or `/` is dropped, unless it is all that follows the drive, then
-/// the rest is appended after one `\`. Every `\` is then written `/` and every `%` as `%%`.
+/// The home folder's trailing `\` and `/` are dropped, and the rest is appended after one `\`.
+/// Every `\` is then written `/` and every `%` as `%%`.
 pub fn lease_file_text(home_full: &str, id: &str, file: &str) -> String {
+    // Trailing separators are dropped and one `\` is added, so a home that already ends in a
+    // separator gets no further one: "C:\" gives "C:/.agentspace/..." (state.md, the
+    // `<key path>` row; architect, 2026-11-19).
     let trimmed = home_full.trim_end_matches(['\\', '/']);
-    let dropped = &home_full[trimmed.len()..];
-    let b = trimmed.as_bytes();
-    let bare_drive = b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
-    let joined = if bare_drive && !dropped.is_empty() {
-        // A home that already ends in a separator gets no further one, so "C:\" gives
-        // "C:/.agentspace/..." (state.md, the `<key path>` row; architect, 2026-11-19).
-        format!(
-            "{trimmed}{}.agentspace\\leases\\{id}\\{file}",
-            &dropped[..1]
-        )
-    } else {
-        format!("{trimmed}\\.agentspace\\leases\\{id}\\{file}")
-    };
+    let joined = format!("{trimmed}\\.agentspace\\leases\\{id}\\{file}");
     path_text(&joined)
 }
 

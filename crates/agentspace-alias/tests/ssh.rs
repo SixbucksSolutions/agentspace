@@ -3,6 +3,10 @@
 //! real `~/.ssh`. The scratch config sits in HOME's `.ssh` and holds the relative `Include` line, as
 //! OpenSSH resolves a relative `Include` against the user's own `~/.ssh` (state.md, The `Include`
 //! line).
+//!
+//! Unix only: Windows OpenSSH may take `~` from the user's profile rather than `HOME`, which would
+//! reach the real `~/.ssh`. The card runs this check on the box.
+#![cfg(unix)]
 
 use agentspace_alias::*;
 use std::fs;
