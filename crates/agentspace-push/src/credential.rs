@@ -166,9 +166,10 @@ pub fn parse_credential_blob(bytes: &[u8]) -> Option<Vec<u8>> {
                 continue;
             };
             if name.eq_ignore_ascii_case("UserName") {
-                // The `UserName` text MUST be present: an `S` with no text is refused. The text
-                // itself is not used.
-                if !is(&member, "S") || text_of(&member).is_empty() {
+                // The `UserName` element MUST be present; nothing reads its text, so an empty one
+                // (`<S N="UserName"></S>` or `<S N="UserName"/>`) is accepted (architect,
+                // 2026-11-19, for E0.06-T01-S04).
+                if !is(&member, "S") {
                     return None;
                 }
                 user_names += 1;
@@ -276,6 +277,20 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_user_name_is_accepted() {
+        // The `UserName` element MUST be present; its text is not read (architect, 2026-11-19,
+        // for E0.06-T01-S04).
+        for user_name in [r#"<S N="UserName"></S>"#, r#"<S N="UserName"/>"#] {
+            let props = format!(r#"{user_name}<SS N="Password">0a</SS>"#);
+            assert_eq!(
+                parse_credential_blob(doc(&props).as_bytes()),
+                Some(vec![0x0a]),
+                "{user_name}"
+            );
+        }
+    }
+
+    #[test]
     fn refusals() {
         let cases = [
             doc(r#"<S N="UserName">bot</S>"#),
@@ -283,8 +298,6 @@ mod tests {
             doc(r#"<S N="UserName">bot</S><S N="Password">plain</S>"#),
             doc(r#"<S N="UserName">bot</S><SS N="Password">0a</SS><SS N="password">0a</SS>"#),
             doc(r#"<S N="UserName">bot</S><S N="USERNAME">b</S><SS N="Password">0a</SS>"#),
-            doc(r#"<S N="UserName"></S><SS N="Password">0a</SS>"#),
-            doc(r#"<S N="UserName"/><SS N="Password">0a</SS>"#),
             doc(r#"<S N="UserName">bot</S><SS N="Password"></SS>"#),
             doc(r#"<S N="UserName">bot</S><SS N="Password">0a0</SS>"#),
             doc(r#"<S N="UserName">bot</S><SS N="Password"> 0a</SS>"#),

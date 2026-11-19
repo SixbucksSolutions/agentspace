@@ -483,8 +483,8 @@ fn a_stamp_that_cannot_be_written_warns_could_not_send() {
 #[test]
 fn a_bad_alias_warns_and_sends_nothing() {
     // By ruling (architect, 2026-11-19, for E0.06-T01-S04): an alias that breaks `-Alias`'s rule
-    // is "any other failure" if one ever reaches the push: no `Sending` line, the one "Could not
-    // send" warning, and nothing read before the check.
+    // and still reaches the push warns its own fixed text and skips: no `Sending` line, the one
+    // warning, and nothing read before the check.
     let env = Env::new();
     for alias in [
         "",
@@ -511,7 +511,7 @@ fn a_bad_alias_warns_and_sends_nothing() {
             );
             assert_eq!(
                 r.printed,
-                expected_printed(mode, &[Item::Warn(W_COULD_NOT_SEND)]),
+                expected_printed(mode, &[Item::Warn(W_BAD_ALIAS)]),
                 "{alias:?} {mode:?}: no Sending line, and the one warning"
             );
         }
@@ -524,7 +524,7 @@ fn a_bad_alias_warns_and_sends_nothing() {
     s.credential = Slot::Absent;
     let r = env.run(&s);
     assert!(!r.pushed());
-    assert_eq!(r.printed, vec![W_COULD_NOT_SEND.to_string()]);
+    assert_eq!(r.printed, vec![W_BAD_ALIAS.to_string()]);
 }
 
 #[test]

@@ -48,6 +48,7 @@ pub const W_NO_ZONE: &str =
 pub const W_TIMED_OUT: &str = "agentspace: Sending the localswim token took over 20 seconds and was stopped; the board will not work on the box this session.";
 pub const W_NOT_CONFIRMED: &str = "agentspace: The instance did not confirm the localswim token; the board will not work on the box this session.";
 pub const W_COULD_NOT_SEND: &str = "agentspace: Could not send the localswim token; the board will not work on the box this session.";
+pub const W_BAD_ALIAS: &str = "agentspace: The SSH host alias for the localswim token is not valid; the board will not work on the box this session.";
 
 pub fn w_zone_not_taken(zone: &str) -> String {
     format!(

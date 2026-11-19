@@ -398,9 +398,9 @@ fn a_nested_up_reads_nothing_and_prints_nothing() {
 }
 
 #[test]
-fn a_bad_alias_is_any_other_failure_and_reads_nothing() {
-    // By ruling (architect, 2026-11-19, for E0.06-T01-S04): no `Sending` line, the one "Could
-    // not send" warning, and the alias is checked before anything is read.
+fn a_bad_alias_warns_and_reads_nothing() {
+    // By ruling (architect, 2026-11-19, for E0.06-T01-S04): no `Sending` line, the one bad-alias
+    // warning, and the alias is checked before anything is read.
     for (mode, forced) in [
         (Mode::Person, false),
         (Mode::Person, true),
@@ -416,8 +416,8 @@ fn a_bad_alias_is_any_other_failure_and_reads_nothing() {
             "-oProxyCommand=x",
             forced,
         );
-        assert_eq!(r.outcome, Outcome::CouldNotSend);
-        assert_eq!(r.said, [COULD_NOT_SEND]);
+        assert_eq!(r.outcome, Outcome::BadAlias);
+        assert_eq!(r.said, [BAD_ALIAS]);
         assert!(r.ssh.is_empty());
         assert!(r.writes.is_empty());
         assert!(disk.reads.borrow().is_empty(), "Nothing is read");

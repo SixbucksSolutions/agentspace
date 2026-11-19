@@ -23,8 +23,8 @@
 //!   [`parse_stamp_file`] and [`stamp_file_bytes`]; [`alias_is_valid`], [`remote_command`] and
 //!   [`ssh_args`].
 //! - The warnings' texts, as a person's command prints them: [`COULD_NOT_READ`], [`NO_ZONE`],
-//!   [`TIMED_OUT`], [`NOT_CONFIRMED`], [`zone_not_taken`] and [`COULD_NOT_SEND`]; and the
-//!   progress line [`SENDING`]. In caller mode, [`Say`] rewrites `the instance`.
+//!   [`TIMED_OUT`], [`NOT_CONFIRMED`], [`zone_not_taken`], [`COULD_NOT_SEND`] and [`BAD_ALIAS`];
+//!   and the progress line [`SENDING`]. In caller mode, [`Say`] rewrites `the instance`.
 //!
 //! The zone is `agentspace-zone`'s: [`Seams::zone`] gives it already mapped and checked, and this
 //! crate only guards it again before it goes on a command line.
@@ -73,10 +73,11 @@ pub const NO_ZONE: &str =
 pub const TIMED_OUT: &str = "agentspace: Sending the localswim token took over 20 seconds and was stopped; the board will not work on the box this session.";
 /// A non-zero exit, or no first hash line carrying the expected hash.
 pub const NOT_CONFIRMED: &str = "agentspace: The instance did not confirm the localswim token; the board will not work on the box this session.";
-/// Any other failure: an ssh that cannot be started, a stamp that cannot be written, or an alias
-/// that breaks `-Alias`'s rule and still reached the push (architect, 2026-11-19, for
-/// E0.06-T01-S04).
+/// Any other failure: an ssh that cannot be started, or a stamp that cannot be written.
 pub const COULD_NOT_SEND: &str = "agentspace: Could not send the localswim token; the board will not work on the box this session.";
+/// An alias that breaks `-Alias`'s rule and still reached the push, by any path but the command
+/// line (architect, 2026-11-19, for E0.06-T01-S04).
+pub const BAD_ALIAS: &str = "agentspace: The SSH host alias for the localswim token is not valid; the board will not work on the box this session.";
 
 /// The warning for a zone the box did not take.
 pub fn zone_not_taken(zone: &str) -> String {
@@ -297,8 +298,9 @@ pub enum Outcome {
     CouldNotRead,
     /// The stored stamp matches: nothing sent, nothing printed.
     NotDue,
-    /// [`COULD_NOT_SEND`]: an alias that breaks `-Alias`'s rule (nothing read, no [`SENDING`]
-    /// line), an ssh that could not be started, or a stamp that could not be written.
+    /// [`BAD_ALIAS`]: an alias that breaks `-Alias`'s rule. Nothing read, no [`SENDING`] line.
+    BadAlias,
+    /// [`COULD_NOT_SEND`]: an ssh that could not be started, or a stamp that could not be written.
     CouldNotSend,
     /// [`TIMED_OUT`].
     TimedOut,
@@ -395,10 +397,10 @@ pub fn push_with(
     if ctx.nested && !forced {
         return Outcome::Nested;
     }
-    // An alias that breaks `-Alias`'s rule is "any other failure" if one ever reaches the push:
-    // no `Sending` line, and the one "Could not send" warning (the same ruling).
+    // An alias that breaks `-Alias`'s rule, if one ever reaches the push, warns its own fixed
+    // text, with no `Sending` line, and skips (the same ruling).
     if !alias_is_valid(alias) {
-        return warn(COULD_NOT_SEND, Outcome::CouldNotSend);
+        return warn(BAD_ALIAS, Outcome::BadAlias);
     }
 
     // What the laptop reads, in its order: the receipt, the credential, then the zone.

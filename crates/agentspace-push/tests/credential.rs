@@ -324,6 +324,29 @@ fn props_needs_one_username_s_and_one_password_ss() {
 }
 
 #[test]
+fn an_empty_user_name_is_accepted_and_the_push_runs() {
+    // The `UserName` element MUST be present, and nothing reads its text: an empty one, written
+    // either way XML allows, is accepted, and the token reaches the ssh (architect, 2026-11-19,
+    // for E0.06-T01-S04).
+    let env = Env::new();
+    let h = hex();
+    for user_name in ["<S N=\"UserName\"></S>", "<S N=\"UserName\" />"] {
+        let p = format!("{user_name}<SS N=\"Password\">{h}</SS>");
+        for mode in MODES {
+            let mut s = env.scenario();
+            s.mode = mode;
+            let r = accepted(&env, s, doc(Some("1.1.0.1"), &[PSCRED], &p));
+            assert_eq!(
+                r.printed,
+                expected_printed(mode, &[Item::Sending]),
+                "{user_name} {mode:?}: a push like any other, with no warning"
+            );
+            assert!(r.stamp_after.is_some(), "{user_name} {mode:?}: recorded");
+        }
+    }
+}
+
+#[test]
 fn the_n_attribute_is_in_no_namespace() {
     let env = Env::new();
     let h = hex();
