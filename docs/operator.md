@@ -270,6 +270,19 @@ the table gives, as in the prototype; the rewrite MAY build them from `ProgramFi
 value is `C:\Program Files` on every machine seen. A ProxyCommand line, which no shell expands, is
 written as [state.md, The alias file](state.md#the-alias-file) says.
 
+**When a default program cannot be run** (architect, 2026-11-19, for E0.06-T01-S02), the command
+fails, exit 1, with exactly:
+- `agentspace: <path> is missing; install the Windows OpenSSH client.` for a missing `ssh.exe` or
+  `scp.exe`, the words of `ca`'s step 1;
+- `agentspace: The AWS CLI is not installed: <path> is missing and no aws is on PATH.` for an AWS
+  CLI found neither way (the tunnel's has no fallback, and says `<path> is missing.` alone);
+- `agentspace: Could not run <path>.` for a program that exists but cannot be started.
+
+`<path>` is the full path the default names. In caller mode each is the "Could not reach the host"
+line. **A remote command that breaks gap FA-15's rule is a defect of the operator's own, never
+sent**, and fails with `agentspace: The remote command cannot be sent: <reason>.`, without the
+command, and caller mode's "Could not reach the host".
+
 **A test MAY name the AWS CLI, `ssh` and `scp` that the operator runs in place of the ones above**,
 through three environment variables, and nothing else MAY ([The test seam](#the-test-seam)). The
 table is what runs when none is set, and the full-path rule above binds that default alone.
@@ -292,7 +305,11 @@ requirement.**
   it catches every form of the CLI's expired-login error is [Q26](#open-questions).
 - **Any other failure of a call whose output the operator reads MUST fail with `agentspace: `
   followed by the CLI's own error text**, trimmed, and never with a runtime's error record or stack
-  in its place.
+  in its place. **The error text is the CLI's stderr; when that is empty, its stdout; and when
+  both are, `The AWS CLI failed with exit code <n>.`** (architect, 2026-11-19, for
+  E0.06-T01-S02). **A call whose JSON answer does not parse fails with
+  `agentspace: Unexpected answer from <service> <operation>: not JSON.`**, the form of FB-08's
+  message.
 - **Inside the ProxyCommand the sign-in message MUST print exactly as above**, so that
   `ssh agentspace`, `ssh <lease alias>` and the Claude desktop app show it, not a raw error, before
   ssh's own `Connection closed by UNKNOWN port 65535`. **Every other AWS failure there prints the
