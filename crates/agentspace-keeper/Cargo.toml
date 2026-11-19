@@ -1,0 +1,27 @@
+[package]
+name = "agentspace-keeper"
+version = "0.6.0"
+edition.workspace = true
+description = "The keeper's front and its pass (docs/keeper.md; D42)"
+publish = false
+
+[lib]
+name = "agentspace_keeper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentspace-keeper"
+path = "src/main.rs"
+
+[dependencies]
+agentspace-keeper-api = { path = "../agentspace-keeper-api" }
+# The lease state file, read as the lease commands read it (state.md, The lease state file), and
+# the contract's time form.
+agentspace-state = { path = "../agentspace-state" }
+
+# The test author owns [dev-dependencies]. Both versions are already in Cargo.lock.
+[dev-dependencies]
+# Throwaway folders; the version agentspace-state's tests use.
+tempfile = { version = "=3.23.0", default-features = false }
+# Lease state fixtures, built as JSON.
+serde_json = "=1.0.154"
