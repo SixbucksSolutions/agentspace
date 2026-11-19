@@ -75,6 +75,7 @@ line's text after `Status:`, without its full stop.
 - [D35. The keeper's contract, settled in the clean-room review](#d35-the-keepers-contract-settled-in-the-clean-room-review): Decided
 - [D36. The operator never reports a false success](#d36-the-operator-never-reports-a-false-success): Decided
 - [D37. The rewrite is seven files in one install folder, and carries what the checkout held](#d37-the-rewrite-is-seven-files-in-one-install-folder-and-carries-what-the-checkout-held): Decided
+- [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
 
 ## The interface
 
@@ -2476,6 +2477,70 @@ time. They do not conflict:
 - **A first ruling the same day, that the rewrite writes its own template and box files, was
   withdrawn** before it was written down: it contradicted D28, and the package specifies the box
   only as the laptop sees it, so it would have left the box unbuildable from the specs.
+
+### D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install
+
+**Decided, architect, 2026-11-19, when Terry had v0.05 (#0054) broken into stories.** It sets how
+the Rust lease CLI is laid out and built, and what "replaces the PowerShell one" means while the
+prototype's operator and keeper still run (D37).
+
+- **One Cargo workspace at the repository's root**, `Cargo.toml` with `members = ["crates/*"]`,
+  edition 2024, `rust-toolchain.toml` pinning the toolchain the laptop has (1.99), and
+  `Cargo.lock` committed. The architect commits that root before v0.05-T01 starts, and nothing
+  else of the code.
+- **One crate per area, so the stories of a turn own disjoint folders:**
+
+  | Crate | What | Built in |
+  |---|---|---|
+  | `agentspace-cli` | The program, `agentspace.exe`: the command line, help, errors and output; then the five commands | T01, T03 |
+  | `agentspace-values` | Every value's accepted forms, normalization and messages ([lease-api.md, Values](lease-api.md#values)) | T01 |
+  | `agentspace-state` | The lease state file: its model, schema checks and bytes; then the home folder, the lock and the atomic replace | T01, T02 |
+  | `agentspace-credential` | The lease's key and certificate, and the CA's checks; then their files and access rules | T01, T02 |
+  | `agentspace-alias` | The alias file's bytes, the `Include` line and the ProxyCommand line; then their files | T01, T02 |
+  | `xtask` | `cargo xtask dist`: the build output folder ([operator.md, The install folder](operator.md#the-install-folder)) | T02 |
+  | `agentspace-driver-api` | The driver boundary as a Rust trait ([driver.md](driver.md)), committed by the architect before T03 from the pin on its cards | Before T03 |
+  | `agentspace-driver-ec2` | The one v0 driver ([driver.md, The EC2 driver](driver.md#the-ec2-driver)) | T03 |
+
+  The crates of v0.06 join the same workspace.
+- **A crate's T01 half is portable, and its T02 half is Windows.** T01's code builds and is tested
+  on Linux as on Windows; the Windows file layer (the lock's share mode, `ReplaceFile`, access
+  rules) comes in T02, behind `cfg(windows)`. So T01 can run on the box.
+- **The lease's key and certificate are made in the program's own code** (the `ssh-key` crate),
+  never by running `ssh-keygen`; state.md allows any tool that writes OpenSSH's formats. The program
+  then sets the private key's access rules itself, exactly as
+  [state.md, The lease folder](state.md#the-lease-folder) says, and checks them before it signs.
+  - **Why:** no other program's output can reach an error document (#0041, point 1;
+    [driver.md Q17](driver.md#open-questions)); no program start is held under the lease state
+    lock ([lease-api.md Q11](lease-api.md#open-questions)); and the certificate's exact fields can
+    be tested on Linux in T01.
+- **Schemas are embedded at build time** from `schemas/` (D37: carried inside the programs that
+  check against them), and checked with a draft 2020-12 validator that fetches no remote
+  reference. The program checks what it prints against the output schemas, as
+  [lease-api.md, Output](lease-api.md#output) requires.
+- **Help texts are tested against the blocks in lease-api.md, read from the doc at test time**, as
+  the conformance suite's `test-help.ps1` reads them, so the two never drift.
+- **v0.05-T01 runs on the box and is measured** (D33, #0049): it is the first turn that compiles,
+  and v0.09 MUST measure one before it sets a size. The architect runs `agentspace-sample` around
+  the turn, from before its dev lead starts to after its last subagent ends, and E0.05-T02-S04
+  writes the run record.
+- **The cutover is D37's, by install, and deletes no prototype file.** v0.05's install puts
+  `agentspace.exe`, the `agentspace` wrapper and the forwarder `agentspace-ssh-proxy.cmd` in
+  `%USERPROFILE%\.agentspace\bin`, and that folder goes on the user's `PATH` with Terry's yes
+  ([operator.md, Until v0.06 retires the prototype's entry points](operator.md#until-v006-retires-the-prototypes-entry-points)).
+  - **The prototype's lease CLI files stay until v0.06 (#0055) removes every PowerShell file.**
+    The `bin\` shims MUST keep running the prototype (D37), the conformance suite runs it through
+    them by default, and the prototype's keeper loads `scripts\lease-state.ps1`.
+  - **This amends #0054's done-when**, which said the PowerShell lease CLI files are deleted in
+    v0.05. It now says that `agentspace` on the user's `PATH` runs the Rust program, installed.
+- **Interop with the prototype is a conformance check with a second program**,
+  `AGENTSPACE_PEER_CMD`, whose default is the prototype's lease CLI in
+  `conformance/prototype/defaults.ps1`. It drives one lease through both programs, each way
+  ([conformance.md, Naming the program under test](conformance.md#naming-the-program-under-test)).
+- **The lease CLI's minor gaps from the final clean-room pass** (docs/runs/e0.04-t06-s01.md) were
+  answered by the architect in the owning docs before any builder started, each marked with its
+  gap's ID: driver.md (FA-01, FA-02, FA-03, FA-22), lease-api.md (FA-04, FA-08, FA-09, FB-03,
+  FB-04, FB-22) and state.md (FA-05, FA-06, FA-07, FA-10, FB-20, FB-21). A builder who meets
+  another gap MUST ask the architect, never read the prototype (D20).
 
 ## Keys
 

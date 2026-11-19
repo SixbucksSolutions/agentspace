@@ -121,9 +121,12 @@ driver supports it (D5), and how a lease on one logs in is still open
 ([lease-api.md](lease-api.md#exit-codes-and-errors)). A driver MUST NOT produce another code:
 `not_found`, `invalid_state`, `usage`, `invalid_value` and `out_of_range` are the CLI's, and are
 decided before any driver is asked.
-- **A lease error that a driver throws directly, or wraps inside a failure, is printed with its
-  own code, in the failure's place.** That is what the prototype does, and it is why a driver MUST
-  NOT produce one. The CLI MUST NOT look inside the cause for an error of its own.
+- **The CLI MUST print every driver failure as `internal`, whatever the failure holds, and MUST
+  NOT look inside the cause for an error of its own** (architect, 2026-11-19, gap FA-22). A driver
+  MUST NOT produce a lease error, so a conforming driver never puts this rule to the test.
+  - Note on where this came from: the prototype prints a lease error that a driver throws
+    directly, or wraps inside a failure, with that error's own code, in the failure's place. No
+    driver of the prototype's does either, so nothing a caller has seen differs.
 
 **The CLI puts the failure's message in the error document, and nothing else about it.** The error
 document's message is `agentspace lease <sub> failed: ` followed by the failure's message
@@ -205,12 +208,12 @@ it has recorded the outcome** ([state.md](state.md#the-lease-state-file) owns th
 
 **A failure of the driver ends the command at once, with the records untouched.** A failure after
 a lease was placed `ready`, in recording it, is different: the CLI then asks the driver to release
-the lease it just placed, ignores any failure of that release, and reports the first failure
-(lease-api.md, "A failed `create` MUST leave no lease record, no key, no certificate and no alias
-behind"). So **a driver's release MUST work for a lease that has just been placed and has no
+the lease it just placed, and reports the first failure, naming in it whatever that release could not
+remove ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity), whose
+wording binds; gap FA-02). So **a driver's release MUST work for a lease that has just been placed and has no
 record**, given only the driver's name, the lease ID, the project and the ssh folder override.
-A release that fails there is told to no one, and the files it could not remove stay
-([Q8](#open-questions)).
+A release that fails there does not replace the first failure; the files it could not remove stay,
+and the first failure's message names them ([Q8](#open-questions), closed).
 
 **A renew or a release whose driver step succeeded, and whose recording then failed, is a failed
 renew or release** ([lease-api.md](lease-api.md#concurrency-and-atomicity), #0041). The prototype
@@ -363,7 +366,7 @@ says what today's driver leaves, which is nothing except in the alias row.
 | Failure | When | Left behind |
 |---|---|---|
 | The CA is missing or unusable | The CA check fails: no CA, a half-made one, or a mismatched or loosened one, by the five checks of [state.md](state.md#its-checks) and no others. The CA folder's place is `ca`'s to check, not the driver's. A driver MUST NOT create the CA ([lease-api.md](lease-api.md#the-credential), #0029) | Nothing |
-| The credential could not be issued | Making the key, checking that it has no passphrase, or signing fails | Nothing from the credential, and the lease's folder is removed only if this call made it. A key made in a folder that already existed stays, which no CLI call can reach |
+| The credential could not be issued | Making the key, checking that it has no passphrase, or signing fails | Nothing from the credential: every file this call made is removed, and the lease's folder too if this call made it. A folder that already existed, and held neither key nor certificate, stays (gap FA-01) |
 | The lease ID already has a credential | A key or certificate for this ID exists. A driver MUST refuse, and MUST NOT overwrite or remove it | The existing files, untouched |
 | The alias could not be set up | The caller's OpenSSH configuration cannot take it, an alias file for this alias belongs to another lease or to no lease, the transport cannot be found, the transport or a path holds a line break, the alias is not a valid name, or a write fails | The credential is removed, and a foreign file at the alias's place is kept. See below for what the alias step itself can leave |
 | Anything else | A file cannot be written | Nothing |
@@ -615,12 +618,15 @@ driver never answers `no_capacity` or `pending`.
    - Note on where this came from: the prototype runs the operator's `ca` as a separate program,
      under Windows PowerShell 5.1, and reads only its exit code, so on a laptop with no CA its
      place creates one and goes on to sign. That is a difference the spec drops.
-3. **Makes a new key pair for the lease and checks that it has no passphrase,** with `ssh-keygen`
-   from Windows OpenSSH, by full path ([operator.md](operator.md#programs-it-starts)). The key's
+3. **Makes a new key pair for the lease and checks that it has no passphrase,** with any tool
+   that writes OpenSSH's formats ([state.md, The key](state.md#the-key); gap FA-03). The key's
    type, place and checks, and the refusal of a lease ID that already has a key, are
    [state.md](state.md#a-leases-credential)'s and
    [lease-api.md](lease-api.md#the-credential)'s.
-4. **Signs the key's public half with the CA's private key,** by the same `ssh-keygen`. The
+   - Note on where this came from: the prototype runs `ssh-keygen` from Windows OpenSSH, by full
+     path, for this step and the next. v0.05's build makes the key and the certificate in its own
+     code (D38).
+4. **Signs the key's public half with the CA's private key.** The
    certificate's principal is `ubuntu`. Its key ID, validity and options are
    [state.md](state.md#a-leases-credential)'s and [lease-api.md](lease-api.md#the-credential)'s.
    The valid-after time SHOULD be back-dated there; the prototype's is the issue time itself,
@@ -635,9 +641,14 @@ driver never answers `no_capacity` or `pending`.
      difference the spec drops (D21), and never behavior to copy.
 6. **Answers `ready`,** with the alias, the user `ubuntu`, and the certificate's valid-before time.
 
-**If step 3 or 4 fails partway, the lease's folder is removed, but only if this call made it,** so
-that a key with no certificate is never left. **A key made in a folder that already existed stays,
-and no call from the CLI reaches that.** Another lease's files are never touched. **If step 5
+**If step 3 or 4 fails partway, every file this call made is removed, and the lease's folder too,
+but only if this call made it,** so that a key with no certificate is never left. **A key made in a
+folder that already existed is removed like any other file this call made** (architect,
+2026-11-19, gap FA-01): lease-api.md's rule that a failed `create` removes every file it made
+binds, and the folder itself stays. Another lease's files are never touched.
+- Note on where this came from: the prototype keeps a key it made in a folder that already
+  existed. No call from the CLI reaches that case, since a new ID's folder never exists before
+  place, and it is not behavior to copy. **If step 5
 fails, the credential is removed:** the driver first releases the lease as release does, and, if
 that is refused (for example because a foreign file sits at the alias), removes the lease's own
 folder directly. It keeps the foreign file. The failure it reports is a message of its own with the

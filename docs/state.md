@@ -285,6 +285,11 @@ differences:
 - **Every time is a string in the contract's form, `YYYY-MM-DDTHH:MM:SSZ`**
   ([lease-api.md](lease-api.md#times)), and a reader MUST keep it as that string, not reparse and
   rewrite it.
+- **A time that matches the pattern but names no real instant**, such as `2026-02-30T00:00:00Z` or
+  an hour of 24, **makes the file not valid**, as one that fails its schema does (architect,
+  2026-11-19, gap FA-10). Every lease command then fails with `internal`, "could not be read", and
+  changes nothing. A leap second, `:60`, is not a real instant in UTC as agentspace counts it, and
+  is refused the same way.
 
 **What each stored state carries** (the schema checks each):
 
@@ -357,6 +362,12 @@ point (2026-11-18):
   file that does not validate makes every lease command fail with `internal` and change nothing,
   and a change that would not validate is not written
   ([lease-api.md](lease-api.md#exit-codes-and-errors)).
+
+**Something at `leases.json` that is not a file, such as a folder, or a file that cannot be
+opened, is not a missing file** (architect, 2026-11-19, gap FB-21). Every lease command, `get` and
+`list` included, fails with `internal`, "could not be read" with its own `<why>`
+([lease-api.md](lease-api.md#messages)), and changes nothing. A changing command finds that before
+it asks any driver anything.
 
 **A missing file means no leases.** The first command that changes leases creates the state
 folder, if needed, and the file. No command deletes the file, and no command forgets a lease in v0
@@ -514,7 +525,7 @@ Host <alias>
 | `<id>` | The normalized lease ID |
 | `<comment>` | Any text without a line break. It SHOULD say that agentspace wrote the file and that it MUST NOT be edited |
 | `<user>` | The lease's `ssh.user`; `ubuntu` on today's box |
-| `<key path>` | The private key's full path, with every `\` written as `/` and every `%` as `%%`, and nothing else changed: the drive letter and its `:` stay, as in `C:/Users/<user name>/.agentspace/leases/<id>/id_ed25519`. The path is the home folder as [The home folder](#the-home-folder) gives it, made full if it is relative, joined as text with `.agentspace\leases\<id>\id_ed25519`. A writer MUST NOT otherwise change it: it MUST NOT expand a short (8.3) name, resolve a link, change case or add a `\\?\` prefix |
+| `<key path>` | The private key's full path, with every `\` written as `/` and every `%` as `%%`, and nothing else changed: the drive letter and its `:` stay, as in `C:/Users/<user name>/.agentspace/leases/<id>/id_ed25519`. The path is the home folder as [The home folder](#the-home-folder) gives it, made full if it is relative, joined as text with `.agentspace\leases\<id>\id_ed25519`. **"Joined as text"** means: a relative home folder is first made full against the working folder; then any `\` or `/` at its end is dropped, unless it is all that follows the drive (`C:\` stays `C:\`); then one `\` and the rest are appended. A `/` inside the home folder's value is kept as given, and becomes `/` like every `\` (architect, 2026-11-19, gap FA-05). A writer MUST NOT otherwise change it: it MUST NOT expand a short (8.3) name, resolve a link, change case or add a `\\?\` prefix |
 | `<certificate path>` | The certificate's full path, written the same way |
 | `<proxy command>` | The ProxyCommand, with every `%` written as `%%` and nothing else changed: its `\` stay as they are |
 
@@ -540,7 +551,7 @@ Host <alias>
   | Placeholder | Value |
   |---|---|
   | `<program>` | The full path of agentspace's ProxyCommand program, with backslashes. **The lease CLI finds the program in the folder its own executable runs from** (D8), so a CLI that is one compiled program needs no checkout. The program is `agentspace-ssh-proxy.exe` there, or, when that file is not there, `agentspace-ssh-proxy.cmd` ([operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others)). Its extension is compared without regard to case |
-  | `<system folder>` | Windows' `System32` folder as a full path: `%SystemRoot%\System32`, with the value of `SystemRoot` written out, which is `C:\Windows\System32` on every machine seen. The text `%SystemRoot%` itself MUST NOT be written: ssh reads `%` as its own token, and Windows expands no variable in a ProxyCommand |
+  | `<system folder>` | Windows' `System32` folder as a full path: `%SystemRoot%\System32`, with the value of `SystemRoot` written out, which is `C:\Windows\System32` on every machine seen. The text `%SystemRoot%` itself MUST NOT be written: ssh reads `%` as its own token, and Windows expands no variable in a ProxyCommand. **When `SystemRoot` is unset or empty and the interpreter form is needed, `create` MUST fail with `internal`**, as when the program is not found, saying in agentspace's own words that the lease's way to reach its host cannot be found because Windows' system folder is not known, and MUST NOT guess a folder (architect, 2026-11-19, gaps FA-06 and FB-20). The program's own form needs no `SystemRoot` |
   | `<alias>` | The lease's alias, written literally |
 
 - **If the program is not in that folder, `create` MUST fail with `internal`**, as for any alias
@@ -784,7 +795,9 @@ go before the lease folder, so that an alias never points at a key that is gone.
 **The order that meets it, which the rewrite SHOULD follow**, all under the lease state lock:
 1. **Check the alias file's owner mark**, if the file exists. If it names another lease, or it has
    none, `release` MUST fail with `internal` and change nothing, the record and the lease folder
-   included.
+   included. **Something at the alias's path that is not a file, such as a folder, is treated as a
+   file with no owner mark**: `release` fails the same way and deletes nothing (architect,
+   2026-11-19, gap FA-07).
 2. **Write the record as `released`**, unless it is already ([The lease state file](#the-lease-state-file)).
 3. **Delete the alias file, then the lease folder**, as above.
 

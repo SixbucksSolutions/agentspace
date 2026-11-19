@@ -138,6 +138,13 @@ covers form only:
 - **Every check MUST match the whole value (#0029).** A check that lets a trailing line feed through
   after trimming, as a regular expression's `$` does in several engines, is a defect. Letters and
   digits in a value are ASCII letters and digits only, and "any case" means ASCII case.
+- **An argument that is not valid Unicode**, such as one holding an unpaired UTF-16 surrogate,
+  which Windows can pass, is read as written and never converted with a replacement character
+  (architect, 2026-11-19, gap FA-09). As a flag's value or a lease ID it is refused with
+  `invalid_value` for that field; as a command, subcommand or option it is the `usage` error that
+  any other unknown word is. **Where a message quotes it, each unpaired surrogate is written as
+  `\u` and four lowercase hex digits**, as a control character is
+  ([Exit codes and errors](#exit-codes-and-errors)), so the message stays valid UTF-8.
 
 ### Command lines
 
@@ -234,6 +241,9 @@ covers form only:
       leftover file, and is named in its home-relative form, as `~/.agentspace/leases/<id>/id_ed25519` (the
       [`internal` message rule](#exit-codes-and-errors) forbids an absolute path). A folder that
       still holds a leftover file need not be named, since the file's name says where it is.
+    - **A leftover that is not under the home folder**, such as an alias file in an
+      `AGENTSPACE_SSH_DIR` elsewhere, **is named by what it is and its own name, with no folder**:
+      `the host alias file <alias>` (architect, 2026-11-19, gap FA-04).
     - **What it MAY leave in the OpenSSH client configuration** is the line that pulls aliases in,
       a dated backup of the configuration from before that line was added, and the folder of alias
       files. None of them is a lease's, and each stays ([docs/state.md](state.md#creation-in-order)).
@@ -409,7 +419,11 @@ how they are made and removed, are [docs/state.md](state.md)'s.
   so that `ssh <host_alias>` works with no other options. What it adds to that configuration, and
   how, is [docs/state.md](state.md)'s, and nothing else in it is changed.
 - **If the calling user's OpenSSH configuration cannot take the alias as it stands, `create` MUST
-  fail with `internal`**, change nothing, and say what a person has to fix ([Messages](#messages)).
+  fail with `internal`**, record no lease and leave no key, certificate or alias, and say what a
+  person has to fix ([Messages](#messages)). What it MAY leave in that configuration, and when
+  `agentspace.d` is made, are [Concurrency and atomicity](#concurrency-and-atomicity)'s and
+  [docs/state.md, The `Include` line](state.md#the-include-line)'s (architect, 2026-11-19, gap
+  FB-04).
   The prototype's message says only that the alias could not be set up; that is a defect, not
   behavior to copy.
 - **A connection through the alias reaches the lease's host as `ssh.user`**, and how it gets there
@@ -899,6 +913,10 @@ agentspace lease release <id>
 
 - **Release is idempotent:** releasing a lease again succeeds and prints the same lease, so a
   caller MAY retry it freely.
+  - **The help's "Releasing a released or unsatisfiable lease changes nothing" means that its
+    record does not change** (architect, 2026-11-19, gap FB-03). The table above binds: a second
+    `release` of a `released` lease still deletes what a failed one left. The help text stays as
+    it is, since the conformance suite compares it with this page byte for byte.
   - Note on where this came from: the prototype's `release` of a `released` lease touches no
     files. It never needs to, because it deletes the files before it records `released`; that
     order is #0041's defect, and the rule above is what lets an implementation record first.
@@ -1033,7 +1051,14 @@ the error codes beside it, and every failure that fits none of the others is `in
    [Command lines](#command-lines) says.
 2. **`invalid_value` or `out_of_range`**, for the first bad value in the order of the command's
    argument and flag table, so `field` names the first bad one.
-3. **`internal`, when the lease records cannot be read or are busy.**
+3. **`internal`, when the lease records cannot be read or are busy**, and the no-home `internal`
+   ([Messages](#messages)), which belongs here when the state folder is the default one under the
+   home (architect, 2026-11-19, gap FB-22). **A command fails with no home only when it needs a
+   path under the home folder, and at the first point it needs one:** with `AGENTSPACE_STATE_DIR`
+   set, `get` and `list` need none and run, and `create`, `renew` and `release` read their records
+   first, so a `not_found` or `invalid_state` comes before the no-home failure, and a `release` of
+   a `pending` or `unsatisfiable` lease, which touches no file, succeeds
+   ([docs/state.md](state.md#the-home-folder)).
 4. **`not_found`**, from looking the lease up.
 5. **`invalid_state`**, from the lease's state.
 6. **Any other `internal`.**
@@ -1086,6 +1111,14 @@ recorded; try again.` is the shape meant.
 `state` are what a program reads. An implementation SHOULD word its messages as below, and MAY word
 them differently where this page does not say MUST.
 
+**Which template fits the cases the table does not spell out** (architect, 2026-11-19, gap FA-08):
+- **A TTL of only whitespace** is a value, not an empty one ([Command lines](#command-lines)), and
+  takes the TTL's "anything else" template.
+- **An ISO form whose `M` comes before any `T`**, such as `P8M`, means months, and takes the "uses
+  'M'" template, since its trimmed value ends in a digit and an uppercase `M`.
+- **A read of the state file that fails for a reason other than its content**, such as access
+  denied or a folder at its path, takes the "Records unreadable" template with its own `<why>`.
+
 **In each template:**
 - **`'<value>'` is the value as given, untrimmed, in single quotes**, with control characters
   escaped as above. For an unknown option, an unknown command or subcommand, or an unexpected
@@ -1123,14 +1156,15 @@ them differently where this page does not say MUST.
 | `out_of_range` | `ttl` | `TTL '<value>' is outside the allowed range. Give from 1m to 24h; it is never clamped.` |
 | `not_found` | Any subcommand | `No lease has ID '<id>'.` The prototype's `renew` and `release` say `No lease has the ID '<id>'.` |
 | `invalid_state` | `renew` | `Lease '<id>' is <state>, and only a ready lease can be renewed. <advice>`, where `<advice>` is `Create a new lease.` for `expired`, `Wait for it to be ready.` for `pending`, and `The <state> state is final.` for `released` and `unsatisfiable` |
-| `internal` | Records unreadable | `The lease records could not be read: the state file is not valid. Nothing was changed.` |
+| `internal` | Records unreadable | `The lease records could not be read: <why>. Nothing was changed.`, where `<why>` is `the state file is not valid` for a file that does not validate, and otherwise says what kept it from being read, as in `the state file could not be opened` (gap FA-08) |
+| `internal` | Key missing (`renew`) | `agentspace lease renew failed: The lease's key could not be found, so no certificate can be issued. Nothing was changed.` (gap FA-08) |
 | `internal` | Records busy | `The lease records are busy: another agentspace lease command held them for 30 seconds. Try again.` |
 | `internal` | Records unwritable | `The lease records could not be written: <why>. Nothing was changed.`, where `<why>` is, for example, `two records share an ID` or `the change is not valid` |
 | `internal` | No CA (`create`, `renew`) | `agentspace lease <sub> failed: agentspace's certificate authority has not been set up, so no certificate can be issued. Nothing was changed; the operator sets it up.` |
 | `internal` | Alias cannot be set up (`create`) | `agentspace lease create failed: The host alias could not be added to the OpenSSH client configuration: <why>. No lease was recorded.`, where `<why>` says what a person has to fix, as in `its Include line for agentspace is inside a Host block, and has to move to the top of the file`. It does not say that nothing was changed, since the line that pulls aliases in MAY have been added ([Concurrency and atomicity](#concurrency-and-atomicity)) |
 | `internal` | CA not usable (`create`, `renew`) | `agentspace lease <sub> failed: agentspace's certificate authority is not usable. Nothing was changed; the operator's ca command says why.` It never carries the check's own output ([docs/state.md](state.md#creation-in-order)) |
 | `internal` | Way to reach the host not found (`create`) | `agentspace lease create failed: The lease's way to reach its host cannot be found: agentspace's ProxyCommand program is not installed beside this program. No lease was recorded.` ([docs/state.md](state.md#the-alias-file)) |
-| `internal` | No home folder | `agentspace lease <sub> failed: The home folder is not set (USERPROFILE is empty), so agentspace cannot find its files. Nothing was changed.` ([docs/state.md](state.md#the-home-folder)) |
+| `internal` | No home folder | `agentspace lease <sub> failed: The home folder is not set (USERPROFILE is unset or empty), so agentspace cannot find its files. Nothing was changed.`, for unset and empty alike (gap FA-08) ([docs/state.md](state.md#the-home-folder)) |
 | `internal` | Records cannot be locked | `The lease records could not be locked: <why>. Nothing was changed.`, for a failure to open the lock that is not another command holding it ([docs/state.md](state.md#the-lease-state-lock)) |
 | `internal` | No driver (`create`) | `agentspace lease create failed: No lease driver is available. Nothing was recorded.` |
 | `internal` | Unknown stored driver (`renew`, `release`) | `agentspace lease <sub> failed: The lease was placed by a driver this agentspace does not have. Nothing was changed.` It never names the driver ([docs/driver.md](driver.md#the-drivers-name)) |
