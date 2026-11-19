@@ -19,8 +19,9 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 - **What a lease is, its states and its fields** are [lease-api.md](lease-api.md#the-lease)'s.
 - **The ProxyCommand, which every holder's connection runs**, and the token push it may make, are
   [operator.md](operator.md#the-proxycommand)'s.
-- **Why the board's forwards need a holder at all**, and why only one connection on a host can
-  hold them, is D12 and the README's "The localswim board on the box".
+- **Why only one connection on a host can hold the board's forwards** is D12. Why they need a
+  holder at all is stated here, in [The board's forwards](#the-boards-forwards), and the decision
+  to keep one is D30.
 
 ## Contents
 
@@ -48,7 +49,8 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
   is marked "observed" or sits in a note, and names the run it came from. The observations are: the
   restart 37 seconds after a kill, the task results `0x800710E0` and `0xFFFFFFFF`, a trigger that
   keeps firing across reboot, the board outages measured with and without the release grace, the
-  holder that survived only when WMI created it, the claim trials, and the launcher's compile time.
+  holder that survived only when WMI created it, the claim trials, the launcher's compile time, and
+  the desktop app's ssh clearing every forward.
   None binds a rewrite; a check MUST NOT assert one.
 - **Today's box's sshd bound (about 90 seconds) is a property of that box, not of the contract.**
   The requirement built on it is the default of `-ReleaseGraceSeconds`, 95, which a conforming
@@ -79,14 +81,15 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 |---|---|
 | Holder | The ssh client process the keeper starts to hold the board's forwards: `<ssh> -N -o ExitOnForwardFailure=yes <alias>` ([The holder command](#the-holder-command)). |
 | Pass | One look at the leases and the holder, and at most one action to make them agree ([A pass](#a-pass)). |
-| Keeper | The program, or by default one running with `-Watch`: a pass every interval, for the life of the process ([Watching](#watching)). The installed task runs one. |
+| Keeper | The keeper's program. "A keeper", where this page says one does something, is a run of that program with `-Watch`: a pass every interval, for the life of the process ([Watching](#watching)). `-Watch` is off unless it is given, and the installed task gives it. |
 | One-pass run | The keeper's program run without `-Watch`: one pass, then exit. |
 | Record | The keeper's record of the holder it started, `board-holder.json` ([docs/state.md](state.md#the-keepers-files)). |
 | Ready lease | A lease whose stored state is `ready` and whose `expires_at` is after the pass time ([Which leases are ready](#which-leases-are-ready)). |
 | Trusted holder | A process that the record names and that passes every identity check ([Trusting the record](#trusting-the-record)). |
-| Tracked holder | The holder a keeper watches between passes: one it started, or one it adopted when a pass logged `kept` for it. |
+| Tracked holder | The holder a keeper watches between passes: one it started, or one it adopted when a pass logged `kept` for it. The keeper holds its PID, creation time, lease ID and alias in its own process. |
+| Launcher | The process a start has created, outside the pass's job, to create the holder and answer the pass ([Starting a holder](#starting-a-holder)). |
 | Proven | A tracked holder seen alive by a look at least `-FastFailureSeconds` (60) after the keeper began to track it, or one the keeper adopted, whose age is unknown. A keeper begins to track a holder it started when the pass that started it ends, not when the holder started. |
-| Fast failure | A start that did not give a live holder, or a tracked holder found dead before it was proven. |
+| Fast failure | A start that did not give a live holder, or a tracked holder that a look found gone, or that a pass logged `lost` for, before it was proven. |
 | State folder | `AGENTSPACE_STATE_DIR` when it is set and not empty, else `%USERPROFILE%\.agentspace` (D21; [docs/state.md](state.md#the-keepers-files)). |
 
 ### What the keeper does with its files
@@ -102,7 +105,7 @@ share modes and access rules. This table says only what the keeper does with it.
 | `board-holder-ssh.log`, `board-holder-ssh.log.1` | Gives the holder the first as its stdout and stderr, and rotates it to the second ([The holder's log](#the-holders-log)). |
 | `board-holder.lock` | Holds it for the length of a pass ([Locks](#locks)). |
 | `board-holder-keeper.lock` | A keeper holds it for its whole life ([Locks](#locks)). |
-| `board-holder-launch.<guid>.json`, `.claim`, `.result.json` | The launch request, its claim and its result, which exist only while a holder is being started ([Starting a holder](#starting-a-holder)). |
+| `board-holder-launch.<hex>.json`, `.claim`, `.result.json` | The launch request, its claim and its result. Every start writes them, and they exist only while a holder is being started ([Starting a holder](#starting-a-holder)). `<hex>` is the token [docs/state.md](state.md#a-holders-launch-files) defines, new for each start and shared by its three files. |
 | `board-holder-launcher-errors.log` | Written by the task's launcher, never by the keeper ([The task's launcher](#the-tasks-launcher)). |
 
 **Every JSON file the keeper writes is replaced atomically
@@ -110,23 +113,49 @@ share modes and access rules. This table says only what the keeper does with it.
 
 ### Times
 
-- **Every time in a log line is UTC, in the form `YYYY-MM-DDTHH:MM:SSZ`**, truncated to the whole
-  second. These are machine-readable and keep that form.
+- **Every time in a line of `board-holder.log` is UTC, in the form `YYYY-MM-DDTHH:MM:SSZ`**,
+  truncated to the whole second. These are machine-readable and keep that form. The task
+  launcher's error log is not the keeper's, and has its own form
+  ([The launcher's error log](#the-launchers-error-log)).
 - **Durations on this page are in seconds, and MUST NOT be measured on local time**, so a change
   of the laptop's time zone moves nothing.
-- **Which clock, today.** The 60-second proof of a holder, the launch deadline and every bounded
-  retry are measured on the UTC clock. The waits (the interval, the backoff and the grace) are
-  relative waits, which on Windows may not count time the laptop spends asleep or hibernated; that
-  has not been observed. If they do not, a wait that spans a laptop sleep ends later than its
-  seconds say, and never earlier. Which clock a conforming keeper MUST use across a laptop
-  sleep is [Q17](#open-questions).
+- **Which clock (D35; B-40; [Q17](#open-questions), closed).**
+  - **The launcher's deadline is a UTC time**, written into the launch request and compared with
+    the UTC clock by the launcher, since two processes read it
+    ([The handshake](#the-handshake)).
+  - **Every other duration is measured on one clock that local time and the time zone never
+    move.** That covers the 60-second proof of a holder, the waits for a lock and for a launch
+    result, the 10-second bound on a create call, the interval, the backoff and the grace. That
+    clock MAY be the UTC clock or a monotonic clock. It SHOULD count the time the laptop spends
+    asleep or hibernated, because the box's sshd drops a dead session on the box's own time, so the
+    grace is about time that passed on the box.
+  - **Across a laptop sleep, a wait MAY end at once on waking, or run on for its remaining
+    seconds.** Neither breaks a rule here: no wait ends before its seconds have passed on the clock
+    it uses, and the pass after it starts a holder if a lease is ready. A check MUST NOT depend on
+    which.
+  - **A step of the UTC clock, set by hand or by a time sync, MAY end a duration measured on it
+    early or late, by the size of the step.** A build that measures on a monotonic clock is not
+    moved by one, and a build MAY measure on either. No guarantee on this page rests on a clock:
+    - **A start still gives at most one holder, recorded or reported**, because the claim file
+      decides that, never a time ([The handshake](#the-handshake)).
+    - **A launcher that reads its deadline as passed, rightly or not, starts nothing**, and the
+      start fails and is tried again by a later pass.
+    - **A grace or a backoff cut short costs at most one holder that fails on
+      `ExitOnForwardFailure`**, which the backoff then spaces out. One that runs long delays the
+      next start by the size of the step, and no longer.
+    - **A check MUST NOT step the clock**, and MUST NOT depend on what a step does.
+  - **Today:** the proof, the deadline and every bounded retry are on the UTC clock. The interval,
+    the backoff and the grace are relative waits, which on Windows may not count sleep (not
+    observed).
 
 ## What the keeper does
 
 **A desktop-app session on a lease needs the board, and the app's own connection never carries the
-board's forwards** (card #0042; README, "Use a lease from a project", step 4). The keeper supplies
-them: while a lease is ready, it keeps one holder running through that lease's alias
-([The board's forwards](#the-boards-forwards)).
+board's forwards** (card #0042). The Claude desktop app was observed to start its ssh with
+`-o ClearAllForwardings=yes` (D12, E3.03), so a lease alias's forwards never apply to its
+connection, and an agent in a desktop-app session reaches the board only while some other
+connection on the laptop holds them. The keeper supplies them: while a lease is ready, it keeps
+one holder running through that lease's alias ([The board's forwards](#the-boards-forwards)).
 
 - **It holds through the ready lease that expires last**, ties going to the lowest lease ID, so the
   holder lives as long as any ready lease does and is moved as rarely as possible
@@ -188,7 +217,7 @@ rewrite's entry point is called is open ([Q3](#open-questions)); its messages MU
 
 | Argument | Value | Default | Applies to | Meaning |
 |---|---|---|---|---|
-| `-SshExe` | A full path | `C:\Windows\System32\OpenSSH\ssh.exe` | Both | The ssh client the holder runs. It MAY be a `.cmd` or `.bat`, which a check uses as a stub ([Checking the keeper](#checking-the-keeper)). A pass MUST be run with the same `-SshExe` as the pass that started the holder, or the holder is untrusted ([Trusting the record](#trusting-the-record)). |
+| `-SshExe` | A full path | `%SystemRoot%\System32\OpenSSH\ssh.exe`, with the value of `SystemRoot` written out (D35, A-24; below) | Both | The ssh client the holder runs. It MAY be a `.cmd` or `.bat`, which a check uses as a stub ([Checking the keeper](#checking-the-keeper)). A pass MUST be run with the same `-SshExe` as the pass that started the holder, or the holder is untrusted ([Trusting the record](#trusting-the-record)). |
 | `-Now` | `YYYY-MM-DDTHH:MM:SSZ` | The current second | One pass | The pass time: which leases are ready, and the time on the pass's line. For checks. |
 | `-Watch` | None | Off | | Run as a keeper ([Watching](#watching)). |
 | `-IntervalSeconds` | 1 to 86400 | `30` | `-Watch` | The wait after each pass, and the floor under every wait. |
@@ -201,9 +230,32 @@ rewrite's entry point is called is open ([Q3](#open-questions)); its messages MU
 **A number is a whole number from 1 to 86400**, written in decimal digits only: no sign, no
 blanks, no separators. Leading zeros are allowed.
 
+**`-SshExe`'s default is the value of the `SystemRoot` variable in the keeper's own environment,
+then `\System32\OpenSSH\ssh.exe`** (D35). That one variable is its only source, the same one the
+lease CLI reads for the system folder ([docs/state.md](state.md#the-alias-file)).
+- **It is `C:\Windows\System32\OpenSSH\ssh.exe` on every machine seen.**
+- **When `-SshExe` is not given, the default is checked like a value that was**
+  ([Usage errors](#usage-errors), check 5). So with `SystemRoot` missing or empty, the default is
+  not a full path, and the run ends with that usage error.
+- **This is not the `<System32>` of [The holder command](#the-holder-command)**, which is the
+  system folder as Windows reports it, and is not read from the environment. The two name the same
+  folder unless the keeper's environment was changed.
+- **Note on where this came from:** the prototype's default is the fixed text
+  `C:\Windows\System32\OpenSSH\ssh.exe`, which differs only on a machine whose Windows folder is
+  elsewhere
+  ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
+
 **The prototype also accepts a hidden `-Launch <request path>`**, which runs it as the launcher of
-[Starting a holder](#starting-a-holder), and exits 0 when it has answered. It is internal. Nothing outside the keeper MUST
-call it, a conformance check included (D30), and the rewrite MAY start its holder another way.
+[Starting a holder](#starting-a-holder), and exits 0 when it has answered. It is internal: nothing
+outside the keeper MUST call it, a conformance check included (D30). The rewrite MUST start every
+holder through a launcher and the launch files ([Starting a holder](#starting-a-holder)), and MAY
+make its launcher another program, or tell it the request's path another way.
+- **`-Launch` is not part of the interface, in the prototype or in a rewrite.** A build whose
+  keeper program is also its launcher MAY accept it, or any other hidden argument of its own, and
+  what that argument does with a bad value is the build's.
+- **A build that does not use it MUST treat it as any unknown argument**
+  ([Usage errors](#usage-errors), check 1). A check MUST NOT pass `-Launch` at all, so it sees
+  neither case.
 
 ### Usage errors
 
@@ -224,7 +276,7 @@ and `<path>` are what the caller gave.
 | 1 | An argument that is not a known name, taken left to right | `Unknown argument '<raw>'.` |
 | 1 | A name given twice, `-Watch` included | `-<Name> is given twice.` |
 | 1 | A name with no value | `-<Name> needs a value.` |
-| 2 | A `-Watch`-only number without `-Watch`, checked in the table's order | `-<Name> is for -Watch.` |
+| 2 | A `-Watch`-only number given without `-Watch` | `-<Name> is for -Watch.` |
 | 2 | A number that is not a whole number from 1 to 86400 | `-<Name> '<value>' is not a whole number from 1 to 86400.` |
 | 3 | `-Now` with `-Watch` | `-Now is not allowed with -Watch.` |
 | 4 | `-BackoffMaxSeconds` less than `-BackoffBaseSeconds`, defaults included | `-BackoffMaxSeconds is less than -BackoffBaseSeconds.` |
@@ -232,6 +284,20 @@ and `<path>` are what the caller gave.
 | 5 | `-SshExe` holding a `"` | `SshExe '<path>' holds a quote.` |
 | 5 | `-SshExe` a `.cmd` or `.bat` whose path holds a `%` | `SshExe '<path>' is a batch whose path holds a percent sign.` |
 | 6 | `-Now` not exactly `YYYY-MM-DDTHH:MM:SSZ`, or not a real time | `-Now '<value>' is not a time in the form YYYY-MM-DDTHH:MM:SSZ.` |
+
+**Check 1 is one scan of the arguments, left to right, which ends at the first failure.** At each
+argument it asks, in this order: is it a known name, was that name given before, and, for every
+name but `-Watch`, is the next argument a value. A value is then skipped, and is never read as a
+name. So `-Watch -Watch -Bogus` gives `-Watch is given twice.`, and `-IntervalSeconds abc -Bogus`
+gives `Unknown argument '-Bogus'.`, since check 1 ends before check 2 begins.
+
+**Check 2 takes the numbers one at a time, in the argument table's order** (`-IntervalSeconds`,
+`-MaxPasses`, `-BackoffBaseSeconds`, `-BackoffMaxSeconds`, `-ReleaseGraceSeconds`,
+`-FastFailureSeconds`), skipping any not given (B-45). For each, without `-Watch` it reports `is
+for -Watch`, and with `-Watch` it checks the value. The first failure is reported. So
+`-IntervalSeconds abc` without `-Watch` gives `-IntervalSeconds is for -Watch.`, and
+`-Watch -MaxPasses abc -IntervalSeconds 0` gives `-IntervalSeconds '0' is not a whole number from 1
+to 86400.`
 
 **Whether `-SshExe` exists is not a usage error**; it is the pass's concern, and fails a start
 ([Starting a holder](#starting-a-holder)). A `"` or a batch's `%` is refused rather than escaped,
@@ -265,12 +331,28 @@ pass ran and logged what happened; the next pass tries again.
 - **`AGENTSPACE_STATE_DIR`**, when set and not empty, names the state folder; a check MUST set it
   to a throwaway folder ([Checking the keeper](#checking-the-keeper)). The keeper creates the state
   folder if it is missing.
-- **`USERPROFILE`** names the holder's working folder and, with `AGENTSPACE_STATE_DIR` unset, the
-  state folder.
-- **The holder does not get the keeper's environment.** Today it is started with the user's logon
-  environment, as any process Windows Management Instrumentation (WMI) creates is, so a variable
-  set only for the keeper never reaches the holder or its ProxyCommand. Nothing MUST depend on the
-  holder seeing the keeper's variables ([Q4](#open-questions)).
+- **`USERPROFILE`**, as the keeper's own environment has it, names the holder's working folder
+  and, with `AGENTSPACE_STATE_DIR` unset, the state folder. The pass writes that folder's path
+  into the launch request, so the holder starts in the keeper's `%USERPROFILE%` even when the
+  logon environment's differs, as under a check. The path is all that reaches the holder: the
+  `USERPROFILE` variable the holder itself sees is the logon environment's, below.
+- **The holder MUST run with the user's logon environment, never with the keeper's** (D35; B-41;
+  [Q4](#open-questions), closed). So MUST the launcher that creates it
+  ([Starting a holder](#starting-a-holder)).
+  - **The logon environment is the one Windows builds for the user's own logon session**: the
+    system's variables and the user's, as a new process the user starts from the desktop gets
+    them. A process created by Windows Management Instrumentation's (WMI's) `Win32_Process.Create`
+    gets it.
+  - **A variable set only in the keeper's environment MUST NOT reach the holder or its
+    ProxyCommand.** `AGENTSPACE_STATE_DIR` and a changed `USERPROFILE` are two such variables, and
+    so is any test seam ([operator.md](operator.md#the-test-seam)). This rule is about variables:
+    the holder's working folder and its log are paths the pass passes on, and are the keeper's.
+  - **Why:** the holder outlives whatever started the keeper, an agent's tool call or a check
+    included, and MUST behave as the user's own ssh would. A check's or an agent's variables
+    MUST NOT reach the real ProxyCommand. The launch request carries full paths for the same reason
+    ([docs/state.md](state.md#a-holders-launch-files)).
+  - **A check can see this**: its stub holder can write its environment to
+    `board-holder-ssh.log` under a keeper given a variable of the check's own.
 
 ## A pass
 
@@ -297,18 +379,24 @@ agree**, and logs one line for it. A one-pass run is one pass; a keeper runs one
 |---|---|---|---|
 | Trusted, and its lease is ready under the recorded alias | Any | Keep it | `kept` |
 | Trusted, and its lease is not ready, or its alias changed | Any | Stop it, and start nothing this pass | `stopped`, or `failed` |
-| None trusted, in a keeper that tracks a holder (card #0068, [Release grace](#release-grace)) | Any | Nothing | One line, never `started` ([Q6](#open-questions)) |
+| None trusted, in a keeper that tracks a holder (card #0068, [Release grace](#release-grace)) | Any | Nothing | `lost`, naming the tracked holder |
 | None trusted | None ready | Nothing | `idle` |
 | None trusted | One or more ready | Start one through the chosen lease | `started`, or `failed` |
 
 8. **Release `board-holder.lock`.**
 
+**The rows are taken in order, so a trusted holder in the record wins over the #0068 row** (A-09,
+B-38; [Q6](#open-questions), closed). When a keeper tracks one holder and the record now names
+another that is trusted (one a one-pass run started, say), the pass keeps it (`kept`) when its
+lease is ready under its alias, and the keeper adopts it with no grace, since the pass starts
+nothing; or it stops it (`stopped` or `failed`) when its lease is not, and the grace follows that
+stop as after any other ([Release grace](#release-grace)).
+
 **The pass time is fixed when the pass begins**, before the lock is taken: `-Now` when given, else
 the current UTC second. Every line of the pass carries it, so a `started` line can carry a time up
 to about 95 seconds before it is written, plus the pass's wait for `board-holder.lock` (up to 10
-seconds) and any time one create call takes beyond that ([Timings](#timings-of-a-start)). A
-`skipped` line likewise carries the pass time, and is written about 10 seconds later, when the
-lock wait ends.
+seconds) ([Timings](#timings-of-a-start)). A `skipped` line likewise carries the pass time, and
+is written about 10 seconds later, when the lock wait ends.
 
 ### Which leases are ready
 
@@ -341,10 +429,13 @@ that lease's `ssh.host_alias`. The choice is stable: the same leases always give
    the matcher in [The holder command](#the-holder-command).
 
 **A record that fails any of these is removed, and the process it names, if any, MUST be left
-running and untouched.** The removal has no log line of its own: the pass then goes on as with no
-holder, logs `idle` or starts one if a lease is ready, and that line is the only sign that a holder
-was lost. So a holder started with another `-SshExe` is orphaned, and a holder started for it then
-most likely fails on `ExitOnForwardFailure` while the orphan holds the ports.
+running and untouched.** The removal has no log line of its own. In a keeper that tracks a holder,
+the pass logs `lost` for the tracked holder and starts nothing (card #0068,
+[Release grace](#release-grace)). Otherwise, in a one-pass run or in a keeper that tracks none,
+the pass goes on as with no holder, logs `idle` or starts one if a lease is ready, and that line
+is the only sign that a holder was lost. So a holder started with another `-SshExe` is orphaned,
+and a holder started for it then most likely fails on `ExitOnForwardFailure` while the orphan
+holds the ports.
 
 - **A process that runs but cannot be opened to query it fails item 2 the same way**: its record is
   removed and it is left running. Whether such a record SHOULD be kept instead, as a stop keeps
@@ -374,8 +465,16 @@ The trust check and the stop's re-check MUST use this one rule:
    program, runs to the next `"` when the line starts with one (or to the end if there is none),
    and otherwise to the next space or tab, with no escapes. Every later token follows the argument
    rules: a space or tab outside quotes ends it; 2n backslashes before a `"` give n backslashes and
-   the `"` opens or closes quoting; 2n+1 give n backslashes and a literal `"`; backslashes before
-   anything else are literal; and in a run of quotes inside a token, every third is literal.
+   the `"` opens or closes quoting; 2n+1 give n backslashes and a literal `"`; and backslashes
+   before anything else are literal.
+   - **Quotes that follow one another directly are read as one run, by a count.** The count starts
+     at 1 when the run begins inside quoting, and at 0 outside it. Each quote of the run adds one.
+     A quote that brings the count to 3 is literal, and sets the count back to 0. When the run
+     ends, quoting is on if the count is 1, and off otherwise.
+   - **So inside quoting**, `""` gives one literal `"` and ends the quoting, and `"""` gives one
+     literal `"` and keeps it.
+   - **And outside quoting**, `""` is an empty quoted text and leaves quoting off, and `"""` gives
+     one literal `"` and leaves quoting off.
 2. **The program matches `-SshExe` when both are fully qualified paths that name the same file as
    Windows compares them**: each normalized as a full path (separators, `.` and `..` resolved),
    then compared without regard to case. A path that is not fully qualified matches nothing.
@@ -468,14 +567,22 @@ comes up to about one interval after expiry.
 | The holder still runs after it was terminated | Kept | `failed`, reason `The holder is still running after it was stopped.` |
 | The holder stopped, but some of its tree did not | Removed | `failed`, reason `The holder stopped, but these processes of its tree did not: <pid>,<pid>.` |
 
-**`stopped` MUST be logged only when the recorded holder is gone**, and the record MUST be kept
-while it still runs, so that the next pass tries again (D30). A pass that stops a holder, or tries
-to, MUST NOT start one; the next pass does.
+**`stopped` MUST be logged only when the pass no longer finds the recorded holder**: the stop ended
+it, or a new look finds no trusted process under the record. The record MUST be kept while a look
+still finds the recorded holder running, so that the next pass tries again (D30). A pass that
+stops a holder, or tries to, MUST NOT start one; the next pass does.
 
-**The new look is the trust check's query** ([Trusting the record](#trusting-the-record), item 2).
-So when the stop could not open the holder to terminate it and the new look cannot open it either,
-the pass logs `stopped` and removes the record although the process may still run; it is then an
-orphan, as in [Trusting the record](#trusting-the-record).
+**The new look is the trust check of [Trusting the record](#trusting-the-record), items 2 to
+4.** It does not find the recorded holder when the process is gone, is no longer the recorded
+one, or cannot be opened to query it.
+- **The last of those is the one case where `stopped` is logged for a process that may still
+  run.** When the stop could not open the holder to terminate it and the new look cannot open it
+  even to query it, the pass logs `stopped` and removes the record. The process is then an orphan,
+  as when a pass drops such a record ([Trusting the record](#trusting-the-record);
+  [Q16](#open-questions)).
+- **So `stopped` says the keeper has let go of the holder**, which in every other case means the
+  holder ended. That case needs a holder the pass's user cannot open at all, such as one started
+  with other rights.
 
 > **Note.** The prototype's "for another reason" text names an internal outcome of its stop routine
 > in place of `<why>` (`StopTree found NotRunning`, `IdentityDiffers` or `Matched`). The rewrite
@@ -484,7 +591,9 @@ orphan, as in [Trusting the record](#trusting-the-record).
 ### Idle
 
 **With no trusted holder and no ready lease, the pass logs `idle lease=- alias=- pid=-`** and
-changes nothing. An idle line never names a holder.
+changes nothing. An idle line never names a holder. The one exception is a keeper's pass while the
+keeper tracks a holder, which logs `lost` for that holder instead
+([The order of a pass](#the-order-of-a-pass)).
 
 ## Starting a holder
 
@@ -499,8 +608,11 @@ changes nothing. An idle line never names a holder.
    shell's own `>>` redirection does not share writing; it MUST NOT be used.
 3. **It inherits no handle but those two.** In particular it MUST NOT inherit
    `board-holder-keeper.lock` or `board-holder.lock` ([Locks](#locks)).
-4. **It has no window, starts in a new process group, and its working folder is `%USERPROFILE%`**,
-   so that it never holds a worktree or a checkout open.
+4. **It has no window, starts in a new process group, and its working folder is `%USERPROFILE%`**
+   as the pass's own environment has it, so that it never holds a worktree or a checkout open.
+   Its environment is the user's logon environment, never the keeper's, so when the two
+   `USERPROFILE` values differ the holder starts in the keeper's folder and sees the logon
+   environment's variable ([Streams and environment](#streams-and-environment)).
 5. **Beyond item 1, it SHOULD be outside any job.** The process that creates it asks to leave
    that process's own job, if it is in one. Where Windows refuses, the holder MAY be started in
    that job, but only when item 1 still holds: the job MUST NOT be one that the asking pass, the
@@ -518,10 +630,24 @@ changes nothing. An idle line never names a holder.
 > `Win32_Process.Create` survived (D30). The prototype's `>>` failure in item 2 was observed the
 > same way: a second holder failed at once while any earlier process held the log.
 
-**The prototype meets these with a launch handshake through files in the state folder.** The
-rewrite MAY meet them another way ([Q5](#open-questions)); if it uses these files, they MUST behave
-as below. The files' names, fields and access rules are
-[docs/state.md](state.md#the-keepers-files)'s.
+**Every start MUST meet these through the launch handshake below, with its three files in the
+state folder** (D35; A-07, B-37; [Q5](#open-questions), closed). The files are part of contract
+v0: a check sees them appear, reads them, and sees them removed. Their names, fields, bytes and
+access rules are [docs/state.md](state.md#a-holders-launch-files)'s.
+- **What a build MUST do:** the pass writes the request; a launcher, a process other than the pass,
+  claims it and answers with the result; the pass withdraws an unanswered request by claiming it;
+  and the pass removes all three, in the steps and bounds below.
+- **What the build chooses:** which program the launcher is, and how it is told the request's
+  path. The prototype's is its own script with the hidden `-Launch` ([Command line](#command-line)).
+- **Why it is required:**
+  - The prototype writes the files.
+  - The claim file is what makes a start yield at most one holder (item 6), and never leave a
+    holder unrecorded without a `failed` line (item 7), as [The handshake](#the-handshake) shows
+    step by step.
+  - The only start seen to outlive the asking process's job is a second process created through
+    WMI. Whether a compiled keeper can break away from the task's job directly has never been run.
+- **A later contract MAY drop the files** for a mechanism a run on the laptop has shown to meet
+  items 1 to 7.
 
 ### Before the start
 
@@ -540,19 +666,36 @@ order; the first that fails is reported.
 
 ### The handshake
 
-1. **The pass writes a launch request**, `board-holder-launch.<guid>.json`, naming the program, the
+1. **The pass writes a launch request**, `board-holder-launch.<hex>.json`, naming the program, the
    command line, the holder's log, its working folder, the result file, and a deadline 30 seconds
-   from now ([docs/state.md](state.md#the-keepers-files) has its fields). The deadline is taken
-   just before the request is written, and every later bound of the start counts from it.
-2. **The pass has WMI create a launcher process**: the keeper's own program again, given the
-   request's path, with no window and `%USERPROFILE%` as its working folder. WMI creates it
-   outside the pass's job, which is what lets the holder outlive the pass. WMI can be slow just
-   after logon, so a create call that throws is tried up to 3 times, 2 seconds apart, and never
-   more (D14). A create that returns a non-zero code is not retried.
-   - **A create call that threw may still have made a launcher.** So a failed create is not the
-     end: the pass withdraws the request (step 5), and waits for a launcher that claimed it.
+   from now ([docs/state.md](state.md#a-holders-launch-files) has its fields). The deadline is
+   taken just before the request is written, and every later bound of the start counts from it.
+2. **The pass has a launcher process created**, told the request's path, with no window and the
+   pass's `%USERPROFILE%` as its working folder. **It MUST be created outside the pass's job and
+   every job above it, and with the user's logon environment**
+   ([Streams and environment](#streams-and-environment)), which is what lets the holder outlive the
+   pass. The prototype has it created by WMI's `Win32_Process.Create`, which gives both, and is
+   the only means a run has shown to give them. A build MAY use any means that gives both.
+   - **Each create call MUST be bounded at 10 seconds** (D35; A-25, B-39; [Q15](#open-questions),
+     closed). A call that has not returned by then is abandoned and counts as a call that threw,
+     with the error `The call did not return within 10 seconds.` The pass does not wait for it
+     again, and uses nothing it returns later.
+   - **A create call that throws, or reaches its bound, is tried up to 3 times, 2 seconds apart,
+     and never more (D14).** WMI can be slow just after logon. A create that returns a non-zero
+     code is not retried. Three bounded tries and two gaps take at most 34 seconds, so the create
+     has succeeded or failed before the 35 seconds of step 5 are up.
+   - **A try that returns late leaves its launcher little or no time.** The deadline is 30 seconds
+     from the request, so a launcher made by a third try that took most of its 10 seconds claims
+     the request after the deadline and starts nothing (step 4), or finds it withdrawn (step 5).
+     The start then fails, and a later pass tries again.
+   - **A create call that threw, or was abandoned, may still have made a launcher, or still make
+     one later.** So a failed create is not the end: the pass withdraws the request (step 5), and
+     waits for a launcher that claimed it. A launcher made after the pass withdrew the request, or
+     removed it, starts nothing (step 3).
 3. **The launcher claims the request before it does anything else**, by creating its claim file,
-   `board-holder-launch.<guid>.claim`, in create-new mode, which exactly one process can do.
+   `board-holder-launch.<hex>.claim`, in create-new mode, which exactly one process can do. Its
+   content, `launcher <pid>` with the launcher's own PID, is
+   [docs/state.md](state.md#a-holders-launch-files)'s.
    - **A launcher that cannot claim it starts nothing, writes nothing, and exits.** So a second
      launcher, from a create retry after a call that threw but had made one, starts nothing.
    - **A rename MUST NOT be used to claim**, because the loser's rename of a file already given
@@ -562,7 +705,7 @@ order; the first that fails is reported.
    - **A launcher that claims the request and then cannot read it** (the pass has removed it)
      removes its claim and exits, starting nothing.
 4. **The launcher starts the holder and answers**, by writing the result file,
-   `board-holder-launch.<guid>.result.json`: the holder's PID, its creation time to the
+   `board-holder-launch.<hex>.result.json`: the holder's PID, its creation time to the
    millisecond and its command line as read back from the new process, or an error.
    - **A launcher that claims the request after its deadline starts nothing**, and answers with
      the error `The launcher reached its deadline before it started the holder, so it started
@@ -574,8 +717,10 @@ order; the first that fails is reported.
      exits non-zero, and its pass sees no answer (step 5). It logs nothing. The holder runs on with
      no parent.
 5. **The pass waits for the result**, looking every 100 ms, until 5 seconds past the deadline (35
-   seconds from the request), or not at all when the create failed. **Then it withdraws the request
-   by claiming it itself**, in the same create-new mode:
+   seconds from the request). **When the create failed, it does not wait**: it looks once, at
+   once, which is at most about 34 seconds from the request after three tries, and sooner after a
+   non-zero code. **With no result by then, the pass withdraws the request by claiming it
+   itself**, in the same create-new mode, with the content `abandoned`:
    - **If the pass's claim wins**, no launcher can claim the request, none starts a holder, and the
      start fails with `<why> Its request was withdrawn, so no holder was started.`
    - **If a launcher claimed it first**, that launcher may still start a holder. The pass waits on
@@ -583,8 +728,9 @@ order; the first that fails is reported.
      start fails with `<why> A launcher claimed the request, or it could not be withdrawn, and no
      answer came in 60 more seconds, so a holder may be running unrecorded.`
    - **`<why>`** is `The launcher did not answer within 35 seconds.`, or the create's failure:
-     `Win32_Process.Create could not be called: <error>` after three throws, or
-     `Win32_Process.Create returned <code>.`
+     `Win32_Process.Create could not be called: <error>` after three tries that threw or reached
+     the bound, with the last try's error, or `Win32_Process.Create returned <code>.` A build that
+     creates its launcher by another means names that means in place of `Win32_Process.Create`.
 6. **The pass reads the result.** An error in it fails the start with that error as the reason.
 7. **The pass checks, once and with no wait, that the holder is still running** and is the one the
    result names, by PID, creation time and command line
@@ -600,8 +746,8 @@ order; the first that fails is reported.
      pass trusts it, none stops it, and while it holds the forwards every later start fails on
      `ExitOnForwardFailure`. The same holds for a pass killed after the result and before the
      record ([A pass that is killed](#a-pass-that-is-killed)).
-9. **The pass writes the record** for the holder, and logs `started lease=<id> alias=<alias>
-   pid=<pid>`.
+9. **The pass writes the record** for the holder, and only then logs `started lease=<id>
+   alias=<alias> pid=<pid>`, so a `started` line always follows its record.
 
 **If the record cannot be written, the pass stops the holder at once**, since an unrecorded holder
 could never be stopped later, and logs `failed` with the holder's PID:
@@ -621,20 +767,22 @@ holder could not be started: <reason>`.
 
 | Step | Bound |
 |---|---|
-| Create retries | 3 tries, 2 seconds apart |
+| One create call | 10 seconds, then it is abandoned and counts as a call that threw |
+| Create retries | 3 tries, 2 seconds apart: at most 34 seconds in all |
 | Launcher deadline | 30 seconds after it is taken, just before the request is written |
-| The pass's wait for the result | 35 seconds after the request, then the withdrawal |
-| The wait after a launcher claimed first | 60 more seconds |
-| The longest a start can hold its pass | 35 seconds after the request (the create's tries count inside it), then up to 60 more: about 95 seconds, plus any time a single create call takes beyond that |
+| The pass's wait for the result, when the create succeeded | Until 35 seconds after the request, then the withdrawal |
+| The pass's wait for the result, when the create failed | None: the withdrawal comes at once, at most about 34 seconds after the request |
+| The wait after a launcher claimed first | 60 more seconds, counted from the first try to withdraw |
+| The longest a start can hold its pass, and so `board-holder.lock` | The withdrawal comes at most 35 seconds after the request, whether the create succeeded or failed, then up to 60 more: about 95 seconds |
+| A start whose create failed, and whose withdrawal wins | The time of its create calls only: at most about 34 seconds after three tries, and the time of one call when that call returns a non-zero code |
 | Polling of the result file | Every 100 ms |
 
 **Nothing in a start is retried in a loop (D14).** A start that fails is retried by a later pass,
 under a keeper's backoff.
 
-**Each create call MUST be bounded.** The prototype sets no bound on it, so one call that hangs
-holds the pass, and `board-holder.lock`, for as long as it hangs
-([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet);
-the bound is [Q15](#open-questions)).
+**The bound on each create call keeps a start inside its 95 seconds.** The prototype sets no bound
+on a create call, so one call that hangs holds the pass, and `board-holder.lock`, for as long as it
+hangs ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
 
 > **Note.** In the prototype the launcher is the keeper's own script, run as
 > `pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script> -Launch <request>`
@@ -681,9 +829,9 @@ the bound is [Q15](#open-questions)).
 | The pass | Then |
 |---|---|
 | `started` a holder | The keeper tracks it, unproven, from the end of this pass |
-| `kept` a holder it does not already track (by PID and creation time) | The keeper adopts it: tracks it from the end of this pass, proven, since its age is unknown. The count is unchanged |
+| `kept` a holder it does not already track (by PID and creation time) | The keeper adopts it: tracks it from the end of this pass, proven, since its age is unknown, in place of any holder it tracked before. The count is unchanged, and no grace follows |
 | `kept` the holder it tracks | Nothing changes |
-| Did not find the holder the keeper tracks trusted (card #0068) | No holder is tracked. If it was never proven, that is a fast failure and the count goes up by one ([Release grace](#release-grace)) |
+| `lost` the holder the keeper tracks (card #0068) | No holder is tracked. If it was never proven, that is a fast failure and the count goes up by one ([Release grace](#release-grace)) |
 | Decided to start, and failed (any `failed` line from [Starting a holder](#starting-a-holder)) | No holder is tracked; the count of fast failures goes up by one |
 | Stopped a holder, or tried to (`stopped`, or a `failed` stop) | No holder is tracked; the count goes to 0 |
 | Anything else (`idle`, `skipped`, a pass that failed before deciding) | Nothing changes |
@@ -695,7 +843,7 @@ the bound is [Q15](#open-questions)).
 |---|---|---|
 | A failed start | The backoff for the count, at least `-IntervalSeconds` | `backoff seconds=<n>` |
 | A stop, or a tried stop | The release grace, at least `-IntervalSeconds` | `grace seconds=<n>` |
-| A pass that did not find the tracked holder trusted (card #0068) | The release grace, or the longer backoff if the holder was unproven, at least `-IntervalSeconds` | `grace seconds=<n>` or `backoff seconds=<n>` |
+| A pass that logged `lost` (card #0068) | The release grace, or the longer backoff if the holder was unproven, at least `-IntervalSeconds` | `grace seconds=<n>` or `backoff seconds=<n>` |
 | Anything else | `-IntervalSeconds` | None |
 
 **One iteration can wait twice**: once after the look, when the look found the tracked holder gone,
@@ -717,8 +865,9 @@ its first pass adopts the holder the record names, if it is trusted.
 ### Fast failures and backoff
 
 **A fast failure is a start that did not give a live holder, or a tracked holder found gone before
-it was proven.** A holder found gone that was never proven is a fast failure however long ago it
-started, because it may have died at any time since the look before.
+it was proven**, by a look, or by a pass that logged `lost` for it. A holder found gone that was
+never proven is a fast failure however long ago it started, because it may have died at any time
+since the look before.
 
 - **Only proof of life resets the count**: a look that finds the tracked holder alive at least 60
   seconds after tracking began. A stop, or a tried stop, also resets it. An idle pass does not.
@@ -741,7 +890,7 @@ time out.
   after the holder ended. The wait comes before that iteration's pass.
 - **A holder the keeper stopped, or tried to:** from the end of the pass that stopped it. The wait
   comes after that pass.
-- **A tracked holder that a pass did not find trusted (card #0068, below):** from the end of that
+- **A tracked holder that a pass logged `lost` for (card #0068, below):** from the end of that
   pass. The wait comes after that pass.
 
 > **Note, observed.** Before the grace, a killed holder left the board down for 2 minutes 49
@@ -777,22 +926,29 @@ time out.
   (`grace`), 120 (`backoff`), 240 (`backoff`), then 300 (`backoff`) seconds before each next start.
 
 **Card #0068 (a holder that dies mid-pass skips the grace) is carried in here as a requirement.**
-- **When the keeper tracks a holder and its pass does not find that holder trusted** (its process
-  gone, no longer the same process, or the record missing or naming another), **the pass MUST NOT
-  start a holder.** The keeper then stops tracking it, counts a fast failure if it was never
-  proven, and waits after that pass: the release grace, or the longer backoff if the holder was
-  unproven, and at least `-IntervalSeconds`, logged `grace seconds=<n>` or `backoff seconds=<n>`
-  as for any other wait. The pass after the wait starts the next holder if a lease is ready.
+- **When the keeper tracks a holder and its pass finds no trusted holder** (the tracked one's
+  process gone or no longer the same process, the record missing, or the record naming a process
+  that is not trusted), **the pass MUST NOT start a holder, and logs `lost`** for the tracked
+  holder. A record that names another holder that is trusted is kept or stopped instead
+  ([The order of a pass](#the-order-of-a-pass)). The keeper then stops tracking it, counts a fast
+  failure if it was never proven, and waits after that pass: the release grace, or the longer
+  backoff if the holder was unproven, and at least `-IntervalSeconds`, logged `grace seconds=<n>`
+  or `backoff seconds=<n>` as for any other wait. The pass after the wait starts the next holder
+  if a lease is ready.
 - **The grace counts from the end of that pass**, as after a stop. So the next start comes one
   wait after the pass that found the holder gone, never in that pass.
-- **What the pass needs from the keeper is the tracked holder's identity**: its PID, creation time
-  and alias, which the keeper holds in its own process from the look before. The pass compares the
-  record's trusted holder, if any, with it. No file carries it. A one-pass run tracks nothing, so
-  this rule never applies to one ([Locks](#locks)).
-- **The pass logs exactly one action line, and it MUST NOT be `started`.** Which action word it is
-  (`idle`, or a new one) is [Q6](#open-questions). Until Q6 is settled, a check MUST NOT depend on
-  that word, only on there being no `started` line in that pass and on the `grace` or `backoff`
-  line after it.
+- **What the pass needs from the keeper is the tracked holder's identity**: its PID, creation time,
+  lease ID and alias, which the keeper holds in its own process from the look before. No file
+  carries it. A one-pass run tracks nothing, so this rule never applies to one ([Locks](#locks)).
+- **The pass logs exactly one action line, `lost lease=<id> alias=<alias> pid=<pid>`**, naming
+  the tracked holder from the keeper's own identity of it (D35; A-09, B-38;
+  [Q6](#open-questions), closed). It is logged whether or not a lease is ready. `lost` says the
+  keeper no longer has the holder it tracked, whether that process ended or only its record did;
+  the process, if it still runs, is left alone ([Trusting the record](#trusting-the-record)). A
+  check MAY depend on the word.
+  - **Why a new word:** `idle` says no lease is ready and names no holder, and `started`, `kept`
+    and `stopped` each say something that did not happen. A new word lets a person see why the
+    grace line after it is there.
 - **The window is the time between the look and the pass's trust check**, usually a few seconds,
   but it includes the wait for `board-holder.lock`.
 - **This closes #0068 once the rewrite meets it**: its done-when is a check with a stub holder that
@@ -802,8 +958,9 @@ time out.
   dead session holds the ports, and only then does the grace apply. The cost is one failed holder,
   one more session for the box to time out, and up to about a minute more with no board
   ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
-  When that pass finds no lease ready, it logs `idle`, the holder stays tracked, and the next look
-  applies the grace, so the gap opens only while a lease is ready.
+  When that pass finds no lease ready, the prototype logs `idle`, the holder stays tracked, and
+  the next look applies the grace, so the gap opens only while a lease is ready. It never logs
+  `lost`.
 
 ### What a keeper does over time
 
@@ -815,6 +972,7 @@ time out.
 | Logon or restart with a running, recorded holder | `kept` on the first pass, with no new holder and no new login on the box |
 | The lease is released or expires | `stopped`, then `grace seconds=95`, then `idle` (or `started` for another ready lease) |
 | The holder is killed | Within about 30 seconds, `grace seconds=95`; then `started` |
+| The holder ends between a look and its pass, or its record is removed | `lost` for it, then `grace seconds=95`; then `started` if a lease is ready |
 | A holder that exits at once (the ports still held) | `failed ... reason=The holder could not be started: The holder exited at once; ...`, then `backoff seconds=30` |
 | Another connection holds the forwards | `failed ... reason=The holder could not be started: The holder exited at once; ...` after each start, with `backoff` waits growing to `backoff seconds=300` |
 | A second keeper starts | One `another keeper is running pid=<n>` line, from the second keeper, which exits |
@@ -842,9 +1000,8 @@ runs beside the real one, and neither lock sees the other.
   never both start a holder (one holder per host, D30), and never act on one record at once.
 - **Who takes it:** every pass, as its first step, before it looks at anything. It is created if
   missing, and held as [docs/state.md](state.md#the-keepers-files) says.
-- **For how long:** the whole pass, up to about 95 seconds when it starts a holder, plus any time
-  one create call takes beyond that ([Timings of a start](#timings-of-a-start)), and released when
-  the pass ends, whatever happened.
+- **For how long:** the whole pass, up to about 95 seconds when it starts a holder
+  ([Timings of a start](#timings-of-a-start)), and released when the pass ends, whatever happened.
 - **A second taker** tries again every 100 ms for up to 10 seconds. One that still cannot take it
   logs `skipped lease=- alias=- pid=- reason=locked`, never `idle`, does nothing else, and its run
   exits 0; a keeper goes on to its usual wait.
@@ -893,6 +1050,22 @@ there, as two separate steps. The prototype may not meet this
 Nothing parses the file but checks and people. `board-holder.log` is never rotated
 ([Q7](#open-questions)).
 
+**A line that still cannot be written after the 5 tries is dropped, and nothing is undone for
+it:**
+- **What the pass did stands.** A holder it started stays started and recorded, and one it stopped
+  stays stopped. A keeper tracks by what its pass did, never by the line.
+- **A pass whose own line was dropped ends as a pass that met an error**: it tries once to log
+  `failed lease=- alias=- pid=- reason=The pass stopped on an error: <error>` in its place, which
+  is dropped too if the log still cannot be written, and a one-pass run exits 1
+  ([Exit codes](#exit-codes)). A `skipped` line is a pass's own line. A `rotated` line is not: a
+  dropped one changes nothing.
+- **A keeper's own line that is dropped ends nothing.** A wait whose line was dropped still waits
+  its full time, a dropped `failed` line leaves the loop running, and a second keeper whose
+  `another keeper is running` line was dropped still exits 0 ([Watching](#watching),
+  [Locks](#locks)).
+- **A dropped line is not written to stdout either, today.** A check MUST NOT depend on whether
+  one reaches stdout.
+
 ### A pass's line
 
 ```
@@ -900,10 +1073,12 @@ Nothing parses the file but checks and people. `board-holder.log` is never rotat
 ```
 
 - **`<time>`** is the pass time ([The order of a pass](#the-order-of-a-pass)).
-- **`<action>`** is one of `started`, `kept`, `stopped`, `idle`, `failed`, `skipped` and
-  `rotated`, in lowercase.
-- **`lease`, `alias` and `pid`** name the holder the action concerns: the one started, kept or
-  stopped, or for `failed` the one being started or stopped. A field with nothing to name is `-`.
+- **`<action>`** is one of `started`, `kept`, `stopped`, `lost`, `idle`, `failed`, `skipped` and
+  `rotated`, in lowercase. `lost` is logged only by a keeper's pass (card #0068,
+  [Release grace](#release-grace)).
+- **`lease`, `alias` and `pid`** name the holder the action concerns: the one started, kept,
+  stopped or lost, or for `failed` the one being started or stopped. A field with nothing to name
+  is `-`.
   Any whitespace character inside a value is written `_`.
 - **`reason`** is written for `failed` and `skipped` only, is the last field, and runs to the end of
   the line. Each run of control characters (U+0000 to U+001F, and U+007F) in it is written as one
@@ -915,6 +1090,7 @@ Nothing parses the file but checks and people. `board-holder.log` is never rotat
 | `started` | The chosen lease | Its alias | The holder's | None |
 | `kept` | The record's | The record's | The record's | None |
 | `stopped` | The record's | The record's | The record's | None |
+| `lost` | The tracked holder's, as the keeper holds it | The same | The same | None |
 | `idle` | `-` | `-` | `-` | None |
 | `skipped` | `-` | `-` | `-` | Always `locked` |
 | `rotated` | `-` | `-` | `-` | None |
@@ -930,6 +1106,7 @@ Nothing parses the file but checks and people. `board-holder.log` is never rotat
 2026-11-18T06:00:01Z stopped lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112
 2026-11-18T06:01:36Z idle lease=- alias=- pid=-
 2026-11-18T06:02:06Z skipped lease=- alias=- pid=- reason=locked
+2026-11-18T07:12:30Z lost lease=7d2e9a40-3c5b-4e1f-8a6d-1b9c0f2e4a77 alias=agentspace-swimcoach-7d2e9a40 pid=25160
 ```
 
 ### A keeper's own lines
@@ -1182,7 +1359,8 @@ error.
 1. **End the task** (Task Scheduler's End, or `Stop-ScheduledTask`). Today that stops only the
    launcher.
 2. **Stop the keeper's process by its PID, after checking that its command line runs the keeper
-   with `-Watch`.** Never by name: another PowerShell may be running.
+   with `-Watch`.** Never by name: another keeper process may be running, such as a check's keeper
+   with its own state folder, or a one-pass run.
 3. **To keep it stopped, also disable the task, or remove it with `-Uninstall`.** Otherwise the
    repeating trigger starts a keeper again within a minute. A later real install enables a disabled
    task again and starts it.
@@ -1222,6 +1400,13 @@ page documents:
 - **It controls time with `-Now`** for a one-pass run, and with `-IntervalSeconds`,
   `-BackoffBaseSeconds`, `-BackoffMaxSeconds`, `-ReleaseGraceSeconds`, `-MaxPasses` and the hidden
   `-FastFailureSeconds` for a keeper.
+- **It MAY watch the state folder for the launch files** while a holder is started, and hold them
+  to [docs/state.md](state.md#a-holders-launch-files) and [The handshake](#the-handshake): that
+  each start writes a request, a claim and a result under one `<hex>`, and that the pass removes
+  all three. They are part of the contract ([Starting a holder](#starting-a-holder)).
+- **It MAY see the holder's environment through its stub**, which can write it to
+  `board-holder-ssh.log`, to show that a variable set only for the keeper does not reach the
+  holder ([Streams and environment](#streams-and-environment)).
 - **It MUST NOT call the hidden `-Launch`**, and MUST NOT run the installer for real, touch the real
   task, or touch the user's real state folder or `~/.ssh`.
 - **It MUST stop every stub holder it started**, by its checked PID.
@@ -1255,39 +1440,44 @@ this table.**
 
 | Requirement | The prototype | Card or question |
 |---|---|---|
-| When a keeper tracks a holder and its pass does not find that holder trusted, the pass starts nothing, and the grace (or the longer backoff) follows that pass | Removes the record and starts a holder at once; the grace applies only after that holder fails | #0068 |
+| When a keeper tracks a holder and its pass finds no trusted holder, the pass starts nothing and logs `lost` for it, and the grace (or the longer backoff) follows that pass | Removes the record and starts a holder at once; the grace applies only after that holder fails. With no lease ready it logs `idle`. It never logs `lost` | #0068; D35; [Q6](#open-questions) |
 | The keeper's checks wait on what they check, never a fixed sleep, and pass 5 times in a row beside two other copies of the suite | The "Watch locked" case assumes a pass ends within a fixed time | #0066 |
 | `-DryRun` changes nothing, whatever else is given | `-DryRun -Uninstall` uninstalls, since `-Uninstall` is checked first | [Q10](#open-questions) |
 | A stop's failure reason says in words why nothing was stopped | Names an internal outcome of its stop routine | [Stopping a holder](#stopping-a-holder) |
 | An error taking `board-holder.lock` other than the file being in use fails the pass with exit 1 | Retries every I/O error for 10 seconds and logs `skipped ... reason=locked`, exit 0; only access denied fails the pass | [Locks](#locks) |
 | Each line of `board-holder.log` lands whole at the end of the file, even with two writers at once | Finds the end of the file when it opens the log, then writes there, so two writers may overwrite each other's line (not verified by a run) | [Log lines](#log-lines) |
-| Each create call of a start is bounded | Sets no bound on a create call | [Q15](#open-questions) |
+| Each create call of a start is bounded at 10 seconds, and one that reaches the bound counts as a call that threw | Sets no bound on a create call, so one that hangs holds the pass and `board-holder.lock` for as long as it hangs | D35; [Q15](#open-questions) |
+| `-SshExe`'s default is the value of `SystemRoot`, then `\System32\OpenSSH\ssh.exe` | Uses the fixed text `C:\Windows\System32\OpenSSH\ssh.exe`. The two differ only on a machine whose Windows folder is elsewhere, so no check on a machine seen so far fails on it | D35; [Command line](#command-line) |
 
 ## Open questions
 
-**What reading the code and the docs could not settle.** The clean-room review (E0.04-T03-S01)
-closes them. Several need a run on the laptop, which the writer of this page did not make (D34).
+**What reading the code and the docs could not settle.** After the clean-room review
+(E0.04-T04-S01, #0080) and E0.04-T05-S04 (#0091), every question here but Q3, Q8 and Q10 is
+either closed or marked "Later, not blocking", with the reason in its last cell, and none of
+those blocks building a drop-in of contract v0. Q3, Q8 and Q10 are about the entry point, the
+task's launcher and the installer, and are settled with those sections
+([The installed task](#the-installed-task)).
 
 | | Question | Settled by |
 |---|---|---|
-| **Q1** | **Is a keeper for a laptop that is not Windows in scope?** Everything here is Windows: Job Objects, WMI, Task Scheduler, `cmd.exe`. D4 makes the host's platform a parameter, but says nothing of the laptop's. | The architect |
-| **Q2** | **One holder per host, or one in all?** D30 says one per host; today every lease is on one host, so the keeper runs one in all and picks across every ready lease. With a host per project (v0.07, #0047), the choice, the record (one holder today) and the locks need a per-host form. | v0.07 (#0047) |
+| **Q1** | **Later, not blocking:** **Is a keeper for a laptop that is not Windows in scope?** Everything here is Windows: Job Objects, WMI, Task Scheduler, `cmd.exe`. D4 makes the host's platform a parameter, but says nothing of the laptop's. | Contract v0's caller runs on Windows (D8; [lease-api.md](lease-api.md#the-program)), and this page specifies a Windows keeper in full, so a drop-in has nothing to guess. Later: the architect, with the lease CLI's Linux and macOS callers |
+| **Q2** | **Later, not blocking:** **One holder per host, or one in all?** D30 says one per host; today every lease is on one host, so the keeper runs one in all and picks across every ready lease. With a host per project (v0.07, #0047), the choice, the record (one holder today) and the locks need a per-host form. | Every lease is on one host until v0.07, so one in all is one per host, and this page states it ([What the keeper does](#what-the-keeper-does)). Later: v0.07 (#0047) |
 | **Q3** | **What is the rewrite's keeper entry point called**, and does it keep PowerShell-style arguments (`-Watch`, `-SshExe`)? The task's action and every check name it. | v0.06 (#0055) |
-| **Q4** | **MUST the holder get the user's logon environment rather than the keeper's?** Today it does, as a side effect of WMI. A rewrite that creates the holder directly would pass the keeper's own, which a check could then see. | The architect |
-| **Q5** | **Are the launch request, claim and result files part of the contract**, or only the prototype's way to meet [Starting a holder](#starting-a-holder)'s guarantees? A compiled keeper MAY be able to create the holder outside its job directly, if Windows lets it break away; whether the keeper's own job (the task's) allows breakaway is unobserved. docs/state.md documents the files either way. | The architect; a run on the laptop |
-| **Q6** | **What does the pass log when #0068's case happens?** [Release grace](#release-grace) fixes everything but the action word: one line, never `started`, then the keeper's `grace` or `backoff` line. No action in today's grammar fits: the holder was neither kept, stopped by the keeper, nor started. Candidates are a new action, such as `ended lease=<id> alias=<alias> pid=<pid>`, or `idle`. A new action changes the grammar that state.md and checks cite. Also open: when the record now names another trusted holder (a one-pass run's), whether that pass keeps and adopts it with no grace, or waits the grace for the tracked holder all the same. | The architect |
-| **Q7** | **Should `board-holder.log` be rotated?** It grows without bound: about 90 KB a day with an orphaned keeper, and a line per pass (about 2,900 a day at the default interval) otherwise. | The architect |
+| **Q4** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-26, B-41): the holder, and the launcher that creates it, MUST run with the user's logon environment, never with the keeper's**, and a variable set only for the keeper MUST NOT reach the holder or its ProxyCommand ([Streams and environment](#streams-and-environment)). The prototype meets it: its launcher is created by WMI. | Closed |
+| **Q5** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-07, B-37, A-26): the launch request, claim and result files are part of contract v0.** Every start MUST go through the handshake with them; which program the launcher is, and how it is told the request's path, are the build's ([Starting a holder](#starting-a-holder)). Whether a compiled keeper could break away from the task's job directly is still unobserved, and a later contract MAY drop the files once a run on the laptop shows another mechanism meets the start's guarantees. | Closed |
+| **Q6** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-09, B-38): the pass logs `lost lease=<id> alias=<alias> pid=<pid>` for the tracked holder**, a new action in the grammar ([Log lines](#log-lines)), whether or not a lease is ready, then the keeper's `grace` or `backoff` line ([Release grace](#release-grace)). When the record names another holder that is trusted, the table's earlier rows win: the pass keeps it and the keeper adopts it with no grace, since nothing is started, or the pass stops it and the grace follows the stop ([The order of a pass](#the-order-of-a-pass)). | Closed |
+| **Q7** | **Later, not blocking:** **Should `board-holder.log` be rotated?** It grows without bound: about 90 KB a day with an orphaned keeper, and a line per pass (about 2,900 a day at the default interval) otherwise. | This page states the rule to build, that it is never rotated ([Log lines](#log-lines)), and nothing reads it but people and checks. Later: the architect |
 | **Q8** | **Does the rewrite need a separate task launcher?** The launcher exists so the task shows no window, and so End stops only it. A keeper built as a Windows (no-console) program could be the task's action itself; End would then stop the keeper, which changes [Stopping and starting the keeper](#stopping-and-starting-the-keeper) and the installer's refusal. Today nothing ends the keeper when the launcher ends: it is not in a job that is closed with the launcher. | The architect |
 | **Q9** | **Closed (E0.04-T03-S02).** ~~How does a check make a stub holder exit inside the window between a keeper's look and its pass, without a fixed sleep?~~ The check holds `board-holder.lock`, waits for the keeper's `skipped ... reason=locked` line, which shows a pass waiting on the lock, stops the stub while that pass waits, and then releases the lock. The keeper logs nothing between its look and its lock wait, so the stop is one bounded wait after that line, 6 seconds, in the middle of a window that is nominally 5 seconds from each edge and nearer 3 under load, which the retry covers. An attempt that the log shows missed the window is not a result, and is run again, up to 3 times ([docs/conformance.md](conformance.md#the-files-that-are-expected-to-fail)) | E0.04-T03-S02 |
 | **Q10** | **What MUST the installer do when given both `-DryRun` and `-Uninstall`?** This page requires that it changes nothing; whether it refuses with a usage error or prints what it would remove is open. The installer's usage errors and their exit code are also unspecified, since PowerShell's binder answers them today. | The architect |
-| **Q11** | **Should a keeper that starts with a record whose holder is already gone wait the grace?** [Release grace](#release-grace) says a keeper that has had no holder, such as one that starts with no holder recorded, starts its first holder at once. With a stale record, the holder may have died just before the keeper started, as when both died together, and its session may still hold the forwards. Today it starts at once. | The architect |
-| **Q12** | **Should the installer's refusal be more than a partial guard?** It matches only this checkout's script path, compared with case, and finds no keeper when the process list cannot be read. A keeper it misses holds `board-holder-keeper.lock`, so the new task's keeper exits on it rather than running beside it, and the board stays held; but a missed keeper launched by the old task also holds the launcher exe, and the build then fails. A rewrite could ask the keeper lock instead of the process list. | The architect |
-| **Q13** | **What MUST be done about a holder, and launch files, left by a pass that was killed mid-start?** Nothing removes the files today, so they collect in the state folder; removing one that a live pass still uses would break its handshake, so an age bound would be needed. A leftover `.result.json` names the holder's PID, creation time and command line: should the next pass check it as it checks a record, and adopt or stop the holder? Today such a holder, like one whose record was dropped ([Trusting the record](#trusting-the-record)), is never found again, keeps its host up and makes every start fail. | The architect |
-| **Q14** | **Should a real install keep a task that was disabled by hand disabled?** It registers with Task Scheduler's defaults, so it enables the task again and starts it, though disabling is the README's way to keep the keeper stopped. This follows from the defaults and has not been observed. | The architect; a run on the laptop |
-| **Q15** | **What bound MUST a create call of a start have, and what does the pass log when it is reached?** [Timings of a start](#timings-of-a-start) requires one; the prototype has none. A call that timed out may still have made a launcher, so it would be treated like a call that threw. | The architect |
-| **Q16** | **Should a record whose process runs but cannot be opened to query it be kept, rather than removed?** Today it is removed and the process left running, which orphans a live holder; a stop in the same case keeps the record. | The architect; a run on the laptop |
-| **Q17** | **Which clock MUST the interval, the backoff, the grace and the 60-second proof use across a laptop sleep?** Today the proof is on the UTC clock and the waits are relative waits that may not count sleep. The box's sshd timeout runs while the laptop sleeps, so wall-clock time fits the grace best. | The architect; a run on the laptop |
-| **Q18** | **What does logoff do to the keeper and to a holder created outside the keeper's job?** Both run as the user in the user's session, so logoff would end them; the box's session then waits out sshd's bound. Unobserved. | A run on the laptop |
-| **Q19** | **Where does a keeper get the release grace for a host other than today's box?** The default is today's box's bound. With hosts of other platforms (D4) or keepalive settings, it is a property of the host, which the lease or its driver would have to give. | The architect |
-| **Q20** | **Does a holder's ProxyCommand end when the holder ends by itself?** A stop ends the holder's tree; a holder that dies or is killed by something else leaves its children untraceable by parent, and the keeper never looks for them. | A run on the laptop |
-| **Q21** | **Should `-Uninstall` wait for the launcher to exit before it deletes the exe?** It can fail on a launcher still exiting ([The installer](#the-installer)). Unobserved. | The architect; a run on the laptop |
+| **Q11** | **Later, not blocking:** **Should a keeper that starts with a record whose holder is already gone wait the grace?** [Release grace](#release-grace) says a keeper that has had no holder, such as one that starts with no holder recorded, starts its first holder at once. With a stale record, the holder may have died just before the keeper started, as when both died together, and its session may still hold the forwards. Today it starts at once. | This page states the rule to build, that it starts at once ([A pass that is killed](#a-pass-that-is-killed)). The cost of being wrong is one holder that fails on `ExitOnForwardFailure`, which the backoff then spaces out. Later: the architect |
+| **Q12** | **Later, not blocking:** **Should the installer's refusal be more than a partial guard?** It matches only this checkout's script path, compared with case, and finds no keeper when the process list cannot be read. A keeper it misses holds `board-holder-keeper.lock`, so the new task's keeper exits on it rather than running beside it, and the board stays held; but a missed keeper launched by the old task also holds the launcher exe, and the build then fails. A rewrite could ask the keeper lock instead of the process list. | A keeper the refusal misses still cannot run beside another, because of `board-holder-keeper.lock` ([Locks](#locks)), and the worst case is a failed install that leaves the old task in place. How the rewrite's installer finds a running keeper is stated with the installer ([The installer](#the-installer)): by `board-holder-keeper.lock`, not by the process list, which leaves this question to the prototype's guard alone. Later: the architect |
+| **Q13** | **Later, not blocking:** **What MUST be done about a holder, and launch files, left by a pass that was killed mid-start?** Nothing removes the files today, so they collect in the state folder; removing one that a live pass still uses would break its handshake, so an age bound would be needed. A leftover `.result.json` names the holder's PID, creation time and command line: should the next pass check it as it checks a record, and adopt or stop the holder? Today such a holder, like one whose record was dropped ([Trusting the record](#trusting-the-record)), is never found again, keeps its host up and makes every start fail. | This page states the rule to build, that nothing removes or reads the leftovers ([A pass that is killed](#a-pass-that-is-killed)), and only a killed pass leaves them. Recovering such a holder is an addition no other behavior waits on. Later: the architect; [state.md Q4](state.md#open-questions) for the files |
+| **Q14** | **Later, not blocking:** **Should a real install keep a task that was disabled by hand disabled?** It registers with Task Scheduler's defaults, so it enables the task again and starts it, though disabling the task is how [Stopping and starting the keeper](#stopping-and-starting-the-keeper) keeps the keeper stopped. This follows from the defaults and has not been observed. | This page states the rule to build, Task Scheduler's defaults, and says a later install enables the task again ([Stopping and starting the keeper](#stopping-and-starting-the-keeper)). An install is a step taken on purpose, with Terry's yes. Later: the architect; a run on the laptop |
+| **Q15** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-25, B-39): each create call is bounded at 10 seconds.** A call that reaches the bound is abandoned and counts as a call that threw, with the error `The call did not return within 10 seconds.`: it is tried again up to 3 tries in all, 2 seconds apart, and then the request is withdrawn as after any failed create, since the call may still make a launcher ([The handshake](#the-handshake)). Three bounded tries take at most 34 seconds, so the withdrawal comes within 35 seconds of the request whether the create succeeded or failed, and a start holds its pass for about 95 seconds at most. The line a pass logs for it is the start's `failed` line, with the reason `The holder could not be started: Win32_Process.Create could not be called: The call did not return within 10 seconds.` and what became of the request after it. The prototype sets no bound ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)). | Closed |
+| **Q16** | **Later, not blocking:** **Should a record whose process runs but cannot be opened to query it be kept, rather than removed?** Today it is removed and the process left running, which orphans a live holder; a stop in the same case keeps the record. | This page states the rule to build, that it is removed and the process left alone ([Trusting the record](#trusting-the-record)). The holder's own user can always open it, so the case needs a holder started with other rights. Later: the architect; a run on the laptop |
+| **Q17** | **Closed (E0.04-T05-S04, 2026-11-18; D35; B-40, A-25).** The launcher's deadline is a UTC time. Every other duration is measured on one clock that local time never moves, the UTC clock or a monotonic one, which SHOULD count the time the laptop sleeps. A wait that spans a sleep MAY end at once on waking or run on, a step of the UTC clock MAY end one measured on it early or late, and a check MUST NOT depend on either ([Times](#times)). | Closed |
+| **Q18** | **Later, not blocking:** **What does logoff do to the keeper and to a holder created outside the keeper's job?** Both run as the user in the user's session, so logoff would end them; the box's session then waits out sshd's bound. Unobserved. | Nothing on this page depends on it: the next logon's trigger starts a keeper, which finds the record untrusted if the holder is gone and starts one ([The installed task](#the-installed-task)). Later: a run on the laptop |
+| **Q19** | **Later, not blocking:** **Where does a keeper get the release grace for a host other than today's box?** The default is today's box's bound. With hosts of other platforms (D4) or keepalive settings, it is a property of the host, which the lease or its driver would have to give. | Every lease is on today's box until v0.07, and `-ReleaseGraceSeconds` sets the grace for any other ([Release grace](#release-grace)). Later: the architect, with v0.07 (#0047) |
+| **Q20** | **Later, not blocking:** **Does a holder's ProxyCommand end when the holder ends by itself?** A stop ends the holder's tree; a holder that dies or is killed by something else leaves its children untraceable by parent, and the keeper never looks for them. | This page states the rule to build, that the keeper never looks for them ([Stopping a holder](#stopping-a-holder)), and what the ProxyCommand does is [operator.md](operator.md#the-proxycommand)'s. Later: a run on the laptop |
+| **Q21** | **Later, not blocking:** **Should `-Uninstall` wait for the launcher to exit before it deletes the exe?** It can fail on a launcher still exiting ([The installer](#the-installer)). Unobserved. | The installer's `-Uninstall` is stated as it is, and running it again removes the exe. Whether a compiled keeper keeps a launcher at all goes with the installer ([Q8](#open-questions)); where it keeps none, this concerns only a launcher that a prototype install left behind. Later: the architect; a run on the laptop |
