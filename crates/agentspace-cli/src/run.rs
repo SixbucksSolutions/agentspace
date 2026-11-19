@@ -24,6 +24,8 @@ pub struct Outcome {
     pub stdout: Vec<u8>,
     /// What goes to stderr: one error document and a line feed on failure; nothing on success.
     pub stderr: Vec<u8>,
+    /// The subcommand the run reached, which a failure to write stdout names in its message.
+    pub sub: Option<Sub>,
 }
 
 /// What a run that did not fail printed.
@@ -112,11 +114,12 @@ fn error_document(error: &LeaseError) -> Vec<u8> {
     bytes
 }
 
-fn failure(error: &LeaseError) -> Outcome {
+fn failure(error: &LeaseError, sub: Option<Sub>) -> Outcome {
     Outcome {
         exit_code: error.code.exit_code(),
         stdout: Vec::new(),
         stderr: error_document(error),
+        sub,
     }
 }
 
@@ -138,6 +141,7 @@ fn execute_with(args: &[OsString], own_exe: &Path, runner: Runner<'_>) -> Outcom
             exit_code: 0,
             stdout: text.as_bytes().to_vec(),
             stderr: Vec::new(),
+            sub: None,
         },
         Ok(Ok(Printed::Document(value))) => {
             let mut stdout = value.to_string().into_bytes();
@@ -146,21 +150,25 @@ fn execute_with(args: &[OsString], own_exe: &Path, runner: Runner<'_>) -> Outcom
                 exit_code: 0,
                 stdout,
                 stderr: Vec::new(),
+                sub: sub.get(),
             }
         }
-        Ok(Err(error)) => failure(&error),
+        Ok(Err(error)) => failure(&error, sub.get()),
         Err(_) => {
             let place = match sub.get() {
                 Some(sub) => format!("agentspace lease {} failed", sub.name()),
                 None => "agentspace lease failed".to_owned(),
             };
-            failure(&LeaseError {
-                code: ErrorCode::Internal,
-                message: format!("{place}: An unexpected failure stopped the command."),
-                field: None,
-                lease_id: None,
-                state: None,
-            })
+            failure(
+                &LeaseError {
+                    code: ErrorCode::Internal,
+                    message: format!("{place}: An unexpected failure stopped the command."),
+                    field: None,
+                    lease_id: None,
+                    state: None,
+                },
+                sub.get(),
+            )
         }
     }
 }
@@ -170,18 +178,45 @@ fn execute_with(args: &[OsString], own_exe: &Path, runner: Runner<'_>) -> Outcom
 /// never from the first argument.
 pub fn main_with(args: Vec<OsString>, own_exe: PathBuf) -> ExitCode {
     let outcome = execute(&args, &own_exe);
-    // A write that fails (a closed pipe, say) has nowhere to be reported, and changes no exit code.
-    if !outcome.stdout.is_empty() {
-        let mut out = std::io::stdout().lock();
-        let _ = out.write_all(&outcome.stdout);
-        let _ = out.flush();
+    let code = deliver(
+        outcome,
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr().lock(),
+    );
+    ExitCode::from(code)
+}
+
+/// Writes `data` and flushes, so a failure at either step is a failed write.
+fn write_all(out: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
+    out.write_all(data)?;
+    out.flush()
+}
+
+/// Writes an outcome to the two streams and returns the exit code. A write to stdout that fails,
+/// at the write or at the flush, is a failure whatever the run's result was: 0 MUST mean done
+/// (lease-api.md, Output; D36), so the caller gets one `internal` error document on stderr and
+/// exit 1. When stderr cannot be written either, the exit code is still 1.
+fn deliver(outcome: Outcome, out: &mut dyn Write, err: &mut dyn Write) -> u8 {
+    // An empty stdout is never written, so a run that failed has nothing to fail at.
+    let wrote = outcome.stdout.is_empty() || write_all(out, &outcome.stdout).is_ok();
+    if !wrote {
+        let place = match outcome.sub {
+            Some(sub) => format!("agentspace lease {} failed", sub.name()),
+            None => "agentspace lease failed".to_owned(),
+        };
+        let failed = failure(
+            &LeaseError::internal(format!("{place}: The document could not be written.")),
+            outcome.sub,
+        );
+        let _ = write_all(err, &failed.stderr);
+        return failed.exit_code;
     }
     if !outcome.stderr.is_empty() {
-        let mut err = std::io::stderr().lock();
-        let _ = err.write_all(&outcome.stderr);
-        let _ = err.flush();
+        // The error document is the only report of the failure, and the exit code carries it when
+        // this write fails.
+        let _ = write_all(err, &outcome.stderr);
     }
-    ExitCode::from(outcome.exit_code)
+    outcome.exit_code
 }
 
 #[cfg(test)]
@@ -271,5 +306,117 @@ mod tests {
             String::from_utf8(out.stderr).unwrap(),
             "{\"code\":\"internal\",\"message\":\"agentspace lease list failed: This build does not have the command yet.\"}\n"
         );
+    }
+
+    /// A writer that fails at the write, or at the flush only.
+    struct Broken {
+        fail_write: bool,
+        fail_flush: bool,
+        got: Vec<u8>,
+    }
+
+    impl Broken {
+        fn new(fail_write: bool, fail_flush: bool) -> Broken {
+            Broken {
+                fail_write,
+                fail_flush,
+                got: Vec::new(),
+            }
+        }
+    }
+
+    impl Write for Broken {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write {
+                return Err(std::io::Error::other("no space"));
+            }
+            self.got.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_flush {
+                Err(std::io::Error::other("no space"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn good_outcome(sub: Option<Sub>) -> Outcome {
+        Outcome {
+            exit_code: 0,
+            stdout: b"{\"a\":1}\n".to_vec(),
+            stderr: Vec::new(),
+            sub,
+        }
+    }
+
+    const FAILED_WRITE: &str = "{\"code\":\"internal\",\"message\":\"agentspace lease failed: The document could not be written.\"}\n";
+
+    #[test]
+    fn a_stdout_write_that_fails_is_one_internal_document_on_stderr_and_exit_1() {
+        let mut out = Broken::new(true, false);
+        let mut err = Broken::new(false, false);
+        assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 1);
+        assert_eq!(String::from_utf8(err.got).unwrap(), FAILED_WRITE);
+        assert!(out.got.is_empty());
+    }
+
+    #[test]
+    fn a_stdout_flush_that_fails_is_a_failed_write() {
+        let mut out = Broken::new(false, true);
+        let mut err = Broken::new(false, false);
+        assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 1);
+        assert_eq!(String::from_utf8(err.got).unwrap(), FAILED_WRITE);
+    }
+
+    #[test]
+    fn a_failed_write_after_a_subcommand_names_it() {
+        let mut out = Broken::new(true, false);
+        let mut err = Broken::new(false, false);
+        assert_eq!(
+            deliver(good_outcome(Some(Sub::Create)), &mut out, &mut err),
+            1
+        );
+        assert_eq!(
+            String::from_utf8(err.got).unwrap(),
+            "{\"code\":\"internal\",\"message\":\"agentspace lease create failed: The document could not be written.\"}\n"
+        );
+    }
+
+    #[test]
+    fn exit_1_stands_when_stderr_cannot_be_written_either() {
+        for (fail_write, fail_flush) in [(true, false), (false, true)] {
+            let mut out = Broken::new(true, false);
+            let mut err = Broken::new(fail_write, fail_flush);
+            assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 1);
+        }
+    }
+
+    #[test]
+    fn a_stdout_that_works_leaves_the_exit_code_alone() {
+        let mut out = Broken::new(false, false);
+        let mut err = Broken::new(false, false);
+        assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 0);
+        assert_eq!(out.got, b"{\"a\":1}\n");
+        assert!(err.got.is_empty());
+    }
+
+    #[test]
+    fn a_failed_run_keeps_its_own_exit_code_when_stderr_cannot_be_written() {
+        let outcome = failure(
+            &LeaseError {
+                code: ErrorCode::NotFound,
+                message: "x".to_owned(),
+                field: None,
+                lease_id: None,
+                state: None,
+            },
+            Some(Sub::Get),
+        );
+        let mut out = Broken::new(true, false);
+        let mut err = Broken::new(true, false);
+        assert_eq!(deliver(outcome, &mut out, &mut err), 3);
     }
 }
