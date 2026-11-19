@@ -74,6 +74,7 @@ line's text after `Status:`, without its full stop.
 - [D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype](#d34-v004s-spec-package-one-reference-per-interface-and-a-conformance-suite-kept-apart-from-the-prototype): Decided
 - [D35. The keeper's contract, settled in the clean-room review](#d35-the-keepers-contract-settled-in-the-clean-room-review): Decided
 - [D36. The operator never reports a false success](#d36-the-operator-never-reports-a-false-success): Decided
+- [D37. The rewrite is seven files in one install folder, and carries what the checkout held](#d37-the-rewrite-is-seven-files-in-one-install-folder-and-carries-what-the-checkout-held): Decided
 
 ## The interface
 
@@ -2394,6 +2395,67 @@ prototype under "Requirements the prototype does not meet yet".
 
 **Why:** a drop-in copies what the prototype does on purpose, never a silent false success. A
 caller, or an agent reading the exit code, has to be able to trust that 0 means done.
+
+### D37. The rewrite is seven files in one install folder, and carries what the checkout held
+
+**Decided, architect, 2026-11-18, accepting E0.04-T05-S02's (#0089) proposal.** Settles
+operator.md's Q10 and keeper.md's Q3, Q8 and Q10, and the gaps A-02, A-10, B-04, B-21, B-29, B-30,
+B-42 and B-43. The facts live in operator.md, "Programs and install layout"; keeper.md, "The
+installed task"; and state.md, "Files in the checkout".
+
+- **Seven files, fixed names:** `agentspace.exe` (the lease CLI), an `agentspace` `sh` wrapper for
+  Git Bash, `agentspace-operator.exe`, `agentspace-ssh-proxy.exe` (the ProxyCommand),
+  `agentspace-keeper.exe`, `agentspace-keeper-task.exe` (the task's launcher, a Windows program
+  with no console) and `agentspace-keeper-install.exe`. A build MAY make several one binary that
+  selects its role by its own file name. The command callers type stays `agentspace`.
+- **One install folder, `%USERPROFILE%\.agentspace\bin`.** It MUST NOT be under AppData (D21) and
+  MUST NOT need administrator rights. It SHOULD be on the user's `PATH`, which is persistent
+  configuration on Terry's laptop and so takes his yes. An install MUST NOT stop a running program
+  to replace it, and SHOULD rename a running program's file aside.
+- **Every program finds the others in the folder of its own executable**, never through `PATH`, a
+  variable or a checkout. This is D8's note, applied to every program. The lease CLI looks for
+  `agentspace-ssh-proxy.exe`, then `agentspace-ssh-proxy.cmd`.
+- **Nothing reads a checkout at run time.** The CloudFormation template and `box\system` are carried
+  inside the operator program and written out at use under `%USERPROFILE%\.agentspace\operator`.
+  The state schemas are carried inside the programs that check against them. `local.parameters`
+  moves to `%USERPROFILE%\.agentspace\local.parameters`, and the localswim build to the operator's
+  folder.
+- **`ca` refuses a CA folder inside any git working tree**, found by a `.git` entry in the folder or
+  any folder above it, in place of "inside the checkout". It is wider than the prototype's refusal,
+  and keeps the CA's key out of every repository.
+- **Every command line keeps its style (B-04):** `--name` for the lease CLI; single-dash names,
+  matched without regard to case, for the operator, the keeper, the installer and the launcher.
+- **Help, usage lines and messages print the command name** (`agentspace-operator`,
+  `agentspace-keeper`, `agentspace-keeper-install`); the ProxyCommand's refusal prints its file
+  name, `agentspace-ssh-proxy.exe`. A check MUST NOT depend on the name printed.
+- **The keeper's task runs `<install>\agentspace-keeper-task.exe -Watch` in `%USERPROFILE%`**, and
+  the launcher runs the keeper beside it. Whether End also ends the keeper is not required.
+- **The installer runs only from the install folder**, refuses `-DryRun -Uninstall` and every other
+  usage error with exit 2, finds a running keeper by the task's state or `board-holder-keeper.lock`,
+  never deletes a program of the install, and removes the prototype's `BoardHolderLauncher.exe`.
+- **Until v0.06 (#0055) retires them, the checkout's entry points keep running the prototype**, and
+  the `bin\` shims MUST NOT be pointed at an install. v0.05's install carries a forwarder,
+  `agentspace-ssh-proxy.cmd`, to the checkout's `scripts\ssh-proxy.cmd`; v0.06 points it at the
+  `.exe`. A ProxyCommand line's program MUST keep working while the user's `agentspace` entry or a
+  `ready` lease's alias file names it, so `scripts\ssh-proxy.cmd` SHOULD become a forwarder to the
+  installed program at v0.06 rather than be deleted.
+
+**Why:**
+- **Separate files per role keep every spec's command line, and the conformance suite, unchanged.**
+  The four command lines collide in one program, and a file per role needs no wrapper. The lease
+  contract's top level stays `lease` and `--help`.
+- **`%USERPROFILE%\.agentspace\bin` is the one place that is neither redirected for the Claude app
+  (D21) nor protected (Program Files)**, so an install made by an agent is the one Terry's terminal,
+  ssh and Task Scheduler see.
+- **Carried, not installed beside:** the template and the box's files are the far half of the
+  operator's contract with the box. Carried in the operator, they always match it, and an install
+  of whole programs cannot be half-copied.
+- **The keeper stays a console program**, because a person and the checks run it from a shell. So
+  the task still needs a launcher with no console.
+- **The keeper lock finds a running keeper whoever started it**, the prototype's included.
+- **ProxyCommand lines outlive the program that wrote them:** alias files are never rewritten, and
+  the user's entry is the user's. Forwarders keep them working across v0.05 and v0.06 with no edit
+  to any file agentspace does not own.
 
 ## Keys
 
