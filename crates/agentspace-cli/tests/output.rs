@@ -198,19 +198,19 @@ fn a_usage_error_carries_a_code_and_a_message_and_a_field_only_in_the_five_cases
 
 #[test]
 fn an_internal_error_carries_only_a_code_and_a_message() {
-    // A create with no driver, in the throwaway home of `command`, fails `internal`.
+    // A create with no CA, in the throwaway home of `command`, fails `internal`.
     let run = run_str(&["lease", "create", "--project", "x"]);
     let doc = doc_of(&run);
     assert_eq!(doc.as_object().map(|o| o.len()), Some(2));
     assert_eq!(doc["code"], "internal");
-    assert_eq!(doc["message"], MSG_NO_DRIVER);
+    assert_eq!(doc["message"], MSG_NO_CA);
 }
 
 #[test]
 fn the_subcommand_in_an_internal_message_is_lowercase() {
     let run = run_str(&["LEASE", "CREATE", "--project", "x"]);
     let doc = doc_of(&run);
-    assert_eq!(doc["message"], MSG_NO_DRIVER);
+    assert_eq!(doc["message"], MSG_NO_CA);
 }
 
 #[test]
@@ -434,6 +434,7 @@ fn a_run_reads_nothing_from_standard_input() {
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    let home = run_home_of(&cmd);
     let mut child = cmd.spawn().expect("The binary starts");
     let (tx, rx) = std::sync::mpsc::channel();
     let held = child.stdin.take();
@@ -445,6 +446,7 @@ fn a_run_reads_nothing_from_standard_input() {
         .expect("The binary ends without input")
         .expect("Output");
     drop(held);
+    remove_run_home(home);
     // A get of an ID that names no lease, in the throwaway home: `not_found`, exit 3.
     assert_eq!(out.status.code(), Some(3));
 }

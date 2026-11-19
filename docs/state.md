@@ -29,6 +29,19 @@ D34), where they touch the files; the rest of #0041, and #0029, are
 [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
 lists every requirement here that the prototype misses.
 
+**What v0.05's Rust build shows (E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)):**
+the conformance file for each of these points passes against it. The last column of
+[the table below](#requirements-the-prototype-does-not-meet-yet) says it row by row.
+- **#0041, second point (a record without its driver):**
+  `conformance/lease-cli/test-unmet-record-no-driver.ps1`.
+- **#0041, third point (the order of renew's and release's writes):**
+  `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1`,
+  `test-unmet-release-partial.ps1` and `test-unmet-release-released.ps1`.
+- **#0029, third point (`create` and `renew` never create the CA):**
+  `conformance/lease-cli/test-unmet-no-ca.ps1`.
+- **The home folder that both programs share:** `conformance/lease-cli/test-interop.ps1`, each way
+  round, with the prototype as the peer.
+
 ## Contents
 
 - [Conventions](#conventions): [the home folder](#the-home-folder),
@@ -1351,25 +1364,31 @@ folder, the `Include` line and the alias file all happens under it. Each first c
 the prototype is expected to fail here.** **The rewrite MUST NOT copy the prototype's behavior in
 this table.**
 
-| Requirement | The prototype | Card or question |
-|---|---|---|
-| A stored `ready` record with no `driver` is renewed and released, by the v0 default driver | Fails with `internal` | #0041, point 2 ([The lease state file](#the-lease-state-file)) |
-| A record whose `driver` names no known driver fails with `internal`, and the message does not name the driver | The message names the stored driver | #0041, point 2; D1 |
-| `create` and `renew` check the CA and never create it | Run the operator's `ca`, which creates a CA when there is none | #0029, point 3 ([The CA](#its-checks)) |
-| The CA check compares the public key's two words exactly | Compares them without regard to case | [The CA](#its-checks) |
-| A failed `renew` leaves the previous certificate in place | Leaves the new certificate when the record cannot be written | #0041, point 3 ([Renewal](#renewal)) |
-| A failed `release` never leaves a `ready` record with its alias, key or certificate gone | Deletes the alias, then the folder, then writes the record, so a failure to delete the folder leaves a `ready` record with no alias | #0041, point 3 ([Release, and what it leaves](#release-and-what-it-leaves)) |
-| `release` of a `released` record removes the files a failed release left | Returns the record unchanged and touches no file | #0041, point 3 |
-| The certificate's valid-after time is 5 minutes before its issue time (SHOULD) | It is the issue time | #0029, point 1 ([The certificate](#the-certificate)) |
-| Every part of agentspace finds the home folder through `USERPROFILE` | The task launcher uses the operating system's profile folder; `deploy` and `sync` use the shell's home variable | [Q2](#open-questions) |
-| Every path written into a file is a full path | Writes a relative `USERPROFILE`, `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` into the alias file and a launch request as given | [The home folder](#the-home-folder) |
-| Readers of the keeper's JSON files share read, write and delete (SHOULD) | They share read only; the writer's 5-second retry covers it | [The keeper's files](#the-keepers-files) |
-| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) |
-| `local.parameters` and the operator's folder are under `%USERPROFILE%\.agentspace` | Reads `infra\local.parameters` from the checkout, and builds the localswim CLI into the checkout's `.build` | [Files in the checkout](#files-in-the-checkout) |
-| `create` never reads or needs the instance-ID cache, with or without `AGENTSPACE_PROXY_COMMAND` | Without the override, refuses to write the alias, and so fails `create`, when its checkout holds no `.instance-id` | D21 ([The alias file](#the-alias-file); [driver.md](driver.md#how-it-is-reached)) |
-| A state file in which two records share an `id` is read as not valid by every lease command | `get` and `list` read it; a changing command refuses it only when it writes, after the driver has acted | [The lease state file](#the-lease-state-file) |
-| The push stamp is replaced atomically (SHOULD) | Overwrites it in place | [The push stamp](#the-push-stamp) |
-| The push stamp is readable by the user alone (SHOULD) | It inherits `SYSTEM` and `Administrators` as well | [The push stamp](#the-push-stamp); [operator.md Q27](operator.md#open-questions) |
+**The last column is what v0.05's Rust build shows (E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)).**
+The rows stay, because they describe the prototype, which runs through `bin\` until v0.06 (#0055) retires it
+(D37, D38; architect, 2026-11-19). A row is marked yes only where the conformance file it names checks that
+row's MUST, and "Not shown" says that no file does. "Not a lease CLI row" is a row of the operator or the
+keeper, which the Rust build does not have yet.
+
+| Requirement | The prototype | Card or question | Met by v0.05's Rust build |
+|---|---|---|---|
+| A stored `ready` record with no `driver` is renewed and released, by the v0 default driver | Fails with `internal` | #0041, point 2 ([The lease state file](#the-lease-state-file)) | Yes: `conformance/lease-cli/test-unmet-record-no-driver.ps1` |
+| A record whose `driver` names no known driver fails with `internal`, and the message does not name the driver | The message names the stored driver | #0041, point 2; D1 | Not shown: no conformance file checks it (#0110) |
+| `create` and `renew` check the CA and never create it | Run the operator's `ca`, which creates a CA when there is none | #0029, point 3 ([The CA](#its-checks)) | Yes: `conformance/lease-cli/test-unmet-no-ca.ps1` |
+| The CA check compares the public key's two words exactly | Compares them without regard to case | [The CA](#its-checks) | Not shown: no conformance file checks it (#0110) |
+| A failed `renew` leaves the previous certificate in place | Leaves the new certificate when the record cannot be written | #0041, point 3 ([Renewal](#renewal)) | Yes: `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1` |
+| A failed `release` never leaves a `ready` record with its alias, key or certificate gone | Deletes the alias, then the folder, then writes the record, so a failure to delete the folder leaves a `ready` record with no alias | #0041, point 3 ([Release, and what it leaves](#release-and-what-it-leaves)) | Yes: `conformance/lease-cli/test-unmet-release-partial.ps1` |
+| `release` of a `released` record removes the files a failed release left | Returns the record unchanged and touches no file | #0041, point 3 | Yes: `conformance/lease-cli/test-unmet-release-released.ps1` |
+| The certificate's valid-after time is 5 minutes before its issue time (SHOULD) | It is the issue time | #0029, point 1 ([The certificate](#the-certificate)) | Not shown: no conformance file checks it (#0110) |
+| Every part of agentspace finds the home folder through `USERPROFILE` | The task launcher uses the operating system's profile folder; `deploy` and `sync` use the shell's home variable | [Q2](#open-questions) | Not shown: no conformance file checks it (#0110) |
+| Every path written into a file is a full path | Writes a relative `USERPROFILE`, `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` into the alias file and a launch request as given | [The home folder](#the-home-folder) | Not shown: no conformance file checks it (#0110) |
+| Readers of the keeper's JSON files share read, write and delete (SHOULD) | They share read only; the writer's 5-second retry covers it | [The keeper's files](#the-keepers-files) | Not a lease CLI row |
+| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) | Not shown: no conformance file checks it (#0110) |
+| `local.parameters` and the operator's folder are under `%USERPROFILE%\.agentspace` | Reads `infra\local.parameters` from the checkout, and builds the localswim CLI into the checkout's `.build` | [Files in the checkout](#files-in-the-checkout) | Not a lease CLI row |
+| `create` never reads or needs the instance-ID cache, with or without `AGENTSPACE_PROXY_COMMAND` | Without the override, refuses to write the alias, and so fails `create`, when its checkout holds no `.instance-id` | D21 ([The alias file](#the-alias-file); [driver.md](driver.md#how-it-is-reached)) | Yes, in part: `conformance/lease-cli/test-unmet-default-transport-no-cache.ps1` shows that a ready `create` succeeds with `AGENTSPACE_PROXY_COMMAND` unset and no cache in the home. That `create` never reads a cache is not shown: no conformance file checks it (#0110) |
+| A state file in which two records share an `id` is read as not valid by every lease command | `get` and `list` read it; a changing command refuses it only when it writes, after the driver has acted | [The lease state file](#the-lease-state-file) | Not shown: no conformance file checks it (#0110) |
+| The push stamp is replaced atomically (SHOULD) | Overwrites it in place | [The push stamp](#the-push-stamp) | Not a lease CLI row |
+| The push stamp is readable by the user alone (SHOULD) | It inherits `SYSTEM` and `Administrators` as well | [The push stamp](#the-push-stamp); [operator.md Q27](operator.md#open-questions) | Not a lease CLI row |
 
 ## Open questions
 

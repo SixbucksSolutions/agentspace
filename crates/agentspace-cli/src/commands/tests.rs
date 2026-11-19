@@ -794,3 +794,11 @@ fn release_of_a_ready_lease_with_no_home_fails_with_no_home() {
     );
     assert_eq!(env.records()[0].state, "ready");
 }
+
+/// The build holds the EC2 driver, and only it (E0.05-T04-S01): without the registration, no
+/// command can place a lease.
+#[test]
+fn the_build_holds_the_ec2_driver() {
+    let names: Vec<&str> = super::drivers().iter().map(|d| d.name()).collect();
+    assert_eq!(names, vec!["ec2"]);
+}
