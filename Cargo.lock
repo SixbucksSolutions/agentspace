@@ -11,6 +11,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-box"
+version = "0.6.0"
+dependencies = [
+ "agentspace-operator-api",
+ "serde_json",
+]
+
+[[package]]
 name = "agentspace-cli"
 version = "0.5.0"
 dependencies = [
