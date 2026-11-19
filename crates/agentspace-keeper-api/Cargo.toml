@@ -1,0 +1,8 @@
+[package]
+name = "agentspace-keeper-api"
+version = "0.6.0"
+edition.workspace = true
+description = "The pinned boundary of the keeper's crates (docs/keeper.md; D42)"
+publish = false
+
+[dependencies]

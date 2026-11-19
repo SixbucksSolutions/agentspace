@@ -48,6 +48,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-keeper-api"
+version = "0.6.0"
+
+[[package]]
+name = "agentspace-operator-api"
+version = "0.6.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "agentspace-state"
 version = "0.5.0"
 dependencies = [

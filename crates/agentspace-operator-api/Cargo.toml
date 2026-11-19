@@ -1,0 +1,10 @@
+[package]
+name = "agentspace-operator-api"
+version = "0.6.0"
+edition.workspace = true
+description = "The pinned boundary of the operator's crates (docs/operator.md; D42)"
+publish = false
+
+[dependencies]
+# The version already in Cargo.lock, which agentspace-state uses.
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
