@@ -72,6 +72,7 @@ line's text after `Status:`, without its full stop.
 - [D32. A lease's box runs in the laptop's time zone](#d32-a-leases-box-runs-in-the-laptops-time-zone): Decided
 - [D33. v0.03 measures each agent session's process tree, split into the session and its tool calls](#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls): Decided
 - [D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype](#d34-v004s-spec-package-one-reference-per-interface-and-a-conformance-suite-kept-apart-from-the-prototype): Decided
+- [D35. The keeper's contract, settled in the clean-room review](#d35-the-keepers-contract-settled-in-the-clean-room-review): Decided
 
 ## The interface
 
@@ -2353,6 +2354,27 @@ lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D3
 **Why:** the rewrite is a drop-in built from documents alone (D19, D20). A fact stated in two
 docs drifts into two answers, and a test that loads the prototype's functions teaches the
 rewrite the prototype's structure, which D20 exists to keep out.
+
+### D35. The keeper's contract, settled in the clean-room review
+
+**Decided, architect, 2026-11-18, accepting the rulings E0.04-T05-S04 (#0091) wrote into
+keeper.md.** Each settles a gap the review found (docs/runs/e0.04-t04-s01.md); keeper.md and
+state.md state them as behavior.
+- **The launch request, claim and result files are part of the keeper's contract v0** (A-07,
+  B-37, Q5). Every holder start MUST go through them. A check can see them, the claim is what
+  gives at most one holder per start, and starting a holder any other way was never run. A later
+  decision MAY replace them. Their token is 32 lowercase hex digits (A-08, B-46).
+- **A tracked holder that turns out untrusted logs `lost lease=<id> alias=<alias> pid=<pid>`**,
+  whether or not a lease is ready, and its release grace applies (#0068, Q6). Another trusted
+  holder in the record is adopted with no grace.
+- **One process-create call is bounded at 10 seconds**, then counts as a call that threw: three
+  tries, 2 seconds apart, 34 seconds at most, inside the 35-second wait (Q15, B-39).
+- **Durations are measured on the UTC clock or a monotonic one, never local time.** A wait that
+  spans a sleep MAY end on waking or run on, and a check MUST NOT depend on which (Q17, B-40).
+- **The holder and its launcher MUST run in the user's logon environment**, never the keeper's
+  own (Q4, B-41).
+- **The default ssh is `%SystemRoot%\System32\OpenSSH\ssh.exe`**, written with the variable, not
+  the prototype's fixed `C:\Windows` path (A-24).
 
 ## Keys
 
