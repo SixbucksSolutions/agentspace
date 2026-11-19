@@ -351,7 +351,8 @@ This table says only which command reads or writes it.
 | `<checkout>\box\system\` | `sync` | Never | The box's system files, sent whole |
 | `<checkout>\.build\localswim-linux-arm64` | `sync` | `sync` | The localswim CLI built for today's box |
 | `C:\Projects\localswim` | `sync` | Never | The localswim checkout the CLI is built from |
-| `%LOCALAPPDATA%\localswim-v2\service.json` and the `bot.xml` it points to | `up`, `sync` | Never | The localswim service's receipt and its DPAPI-protected Bot credential ([The token push](#the-token-push)) |
+| `%LOCALAPPDATA%\localswim-v2\service.json` | `up` and `sync`, each time they consider a push | Never | The localswim service's receipt: the service's base URL and its credential folder. Its format, as agentspace relies on it, is [The receipt](#the-receipt)'s |
+| `bot.xml` in the folder the receipt names | `up` and `sync`, after the receipt | Never | The localswim Bot credential, which holds the Bot token protected with DPAPI. Its format is [The Bot credential](#the-bot-credential)'s |
 
 **The token is never in any of the operator's own files** ([Secrecy](#secrecy)).
 
@@ -986,21 +987,188 @@ sends only when something has changed.
 **Every time it considers a push, due or not, the laptop reads these, in this order**, because the
 stamp covers the token and so cannot be computed without it:
 
-1. **localswim's service receipt**, found only through `LOCALAPPDATA`
-   (`%LOCALAPPDATA%\localswim-v2\service.json`; docs/state.md). When it does not exist, the push is
-   skipped without a message: localswim is not set up on this laptop ([Q19](#open-questions)).
-2. **From the receipt, the service's base URL** (its `base` member) **and the folder of its
-   credentials** (its `credential_directory` member), **and from that folder the Bot credential,
-   `bot.xml`.** `bot.xml` is a PowerShell CLIXML-serialized `PSCredential` (`Export-Clixml`). The
-   token is its password, a SecureString protected with DPAPI for the current user, which
-   `Import-Clixml` by that user reverses. The receipt's format and `bot.xml`'s are localswim's, and
-   nothing in this repo specifies them ([Q28](#open-questions)).
+1. **localswim's service receipt**, and from it the service's base URL and the folder of its
+   credentials ([The receipt](#the-receipt)).
+2. **The Bot credential, `bot.xml` in that folder, and from it the Bot token**
+   ([The Bot credential](#the-bot-credential)).
 3. **The laptop's time zone**, as an IANA name ([The time zone](#the-time-zone)).
+
+**Both files are localswim's, and agentspace never writes, moves or deletes them**
+([docs/state.md](state.md#files-agentspace-reads-and-never-writes), which owns that rule).
+localswim documents where they are and how the credential is made, and not their formats in full. Each rule below says where
+localswim's own documentation defines it; **every rule that cites no localswim document is what
+agentspace relies on without localswim having documented it**, observed on throwaway files with a
+dummy secret (Windows PowerShell 5.1 and PowerShell 7.6, 2026-11-18). The token's own secrecy
+rules are [Secrecy](#secrecy)'s, and apply from the moment the token is decrypted.
+
+**Both files MUST be read afresh each time a push is considered, and the operator MUST NOT keep
+anything read from them for a later push.** localswim's procedure makes new tokens in a new
+credential folder at every cold start (`docs/windows-operations.md`, "Provision the launch
+credentials"), so a folder or a token remembered from an earlier read can be stale.
+
+#### The receipt
+
+- **It is the file `%LOCALAPPDATA%\localswim-v2\service.json`**, where `%LOCALAPPDATA%` is the
+  value of the `LOCALAPPDATA` environment variable when the operator starts. localswim names this
+  location in its `AGENTS.md`, "Production state", as "the service receipt".
+  - **The operator MUST NOT look for the receipt anywhere else.** In particular it never reads
+    `runtime\service.json` in the localswim checkout, where the receipt lived until 2026-11-15, and
+    which other readers of the receipt still try. So `LOCALAPPDATA` alone decides which receipt,
+    and so which token, the push reads ([Secrecy](#secrecy)).
+  - **`LOCALAPPDATA` unset, empty or only whitespace means there is no receipt**, and the push is
+    skipped as when the receipt is missing. It MUST NOT fail any command.
+  - **A relative value is resolved against the operator's working folder.**
+  - **The path, and every path below, is taken literally:** no character in it is a wildcard or a
+    pattern.
+- **When nothing exists at that path, neither a file nor a folder, the push is skipped without a
+  message**: localswim is not set up on this laptop ([Q19](#open-questions)). **Anything else that
+  cannot be read as a file**, such as a folder at that path, a file the user may not read, or one
+  another process holds without sharing read access, gives the "Could not read" warning below.
+- **Its encoding is chosen by a byte order mark:** the bytes `EF BB BF` mean UTF-8, `FF FE`
+  UTF-16LE and `FE FF` UTF-16BE, and the mark is not part of the text. **A file with no mark is
+  read as UTF-8.** Bytes that are not valid in the encoding are refused, rather than replaced, since
+  a replaced byte would change the URL or the path (D20).
+- **Its text MUST be one JSON value (RFC 8259) that is an object.** Whitespace is accepted wherever
+  JSON allows it (D20). An empty file, text that is not JSON, and any other JSON value, such as an
+  array or a string, are refused. Text that is not JSON includes a trailing comma, a comment, a
+  single-quoted string and an unquoted member name: D20's tolerance covers JSON's own forms, not
+  other syntaxes.
+- **agentspace uses two of its members, matched by name in any ASCII case** (D20), as the prototype
+  matches them:
+
+  | Member | JSON type | What it is | What the push does with it |
+  |---|---|---|---|
+  | `base` | String | The service's base URL, such as `http://127.0.0.1:8811` | Sends its value, after JSON unescaping, as `LOCALSWIM_URL`, with nothing added or removed. What form it MUST have is [Q9](#open-questions) |
+  | `credential_directory` | String, not empty | The folder that holds the service's launch credentials, `human.xml` and `bot.xml` | Reads `bot.xml` in it ([The Bot credential](#the-bot-credential)) |
+
+  - **Every other member is ignored**, whatever it holds. The receipt carries others (localswim's
+    `AGENTS.md` says it names the service's executable), and agentspace relies on none of them.
+  - **Two names that differ only in ASCII case are the same member**, so `base` and `BASE` in one
+    receipt are one member given twice.
+- **Refused, with the "Could not read" warning:** `credential_directory` missing, not a string, or
+  empty; `base` present but not a string (`null` included); or either member given more than once,
+  in any case, which could mean two different things (D20). A `base` that is missing or empty is
+  refused below, with the token's own checks.
+
+#### The Bot credential
+
+- **It is the file `bot.xml` in the folder that `credential_directory` names**: that path, then a
+  `\` unless it already ends in `\` or `/`, then `bot.xml`. A `/` in the path is a separator, as
+  `\` is. A relative path is resolved against the operator's working folder. localswim's procedure
+  makes the folder `%LOCALAPPDATA%\localswim-v2\credentials\<GUID>` and the file `bot.xml` in it
+  (`docs/windows-operations.md`, "Provision the launch credentials"); agentspace relies only on
+  the receipt's member and the file's name, never on the folder's form.
+- **A `bot.xml` that is missing, is a folder, or cannot be read is refused.**
+- **What it is:** PowerShell's CLIXML serialization of one `PSCredential` object, as `Export-Clixml`
+  writes it, whose password is the Bot token protected with Windows DPAPI for the Windows user who
+  wrote it. localswim's procedure makes it that way, and says it can be decrypted "by the same
+  Windows user on the same PC" (`docs/windows-operations.md`, "Provision the launch credentials").
+  That is all localswim documents. The CLIXML element structure is Microsoft's, in the PowerShell
+  Remoting Protocol specification ([MS-PSRP], its serialization section, which also defines the
+  `SS` element for a secure string). The password's content, the hex of a DPAPI blob, is what
+  PowerShell's `ConvertFrom-SecureString` writes when given no key, which Microsoft documents only
+  as using DPAPI. The byte-level rules below are therefore agentspace's own statement.
+- **It is an XML 1.0 document, and its encoding is detected as XML 1.0 detects it** (its
+  Appendix F). Windows PowerShell 5.1 writes it in UTF-16LE with the mark `FF FE`; PowerShell 7
+  writes it in UTF-8 with no mark. **A reader MUST accept both, and UTF-8 with the mark
+  `EF BB BF`**, with or without an XML declaration. Line ends and the whitespace between elements
+  carry no meaning. Comments, processing instructions, CDATA sections and character references
+  mean what XML 1.0 says they mean. **A document type declaration (`<!DOCTYPE ...>`) is refused**,
+  as the prototype refuses it, so no entity is ever expanded.
+- **Its structure,** as both runtimes write it (the hex shortened here):
+
+  ```xml
+  <Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+    <Obj RefId="0">
+      <TN RefId="0">
+        <T>System.Management.Automation.PSCredential</T>
+        <T>System.Object</T>
+      </TN>
+      <ToString>System.Management.Automation.PSCredential</ToString>
+      <Props>
+        <S N="UserName">bot</S>
+        <SS N="Password">01000000d08c9ddf0115d1118c7a00c04fc297eb01000000...</SS>
+      </Props>
+    </Obj>
+  </Objs>
+  ```
+
+  **Every element is in the namespace `http://schemas.microsoft.com/powershell/2004/04`**, whether
+  it is the default namespace, as written above, or bound to a prefix. **The `N` and `Version`
+  attributes are in no namespace.** The reader MUST find all of these, and refuses the file
+  otherwise:
+  1. **The root element is `Objs`.** When it has a `Version` attribute, its value, with whitespace
+     around it ignored, MUST be two to four decimal numbers joined by `.` whose first number is 1,
+     such as `1.1.0.1`; any other value, an empty one included, is refused, as the prototype
+     refuses it. An `Objs` with no `Version` is accepted.
+  2. **`Objs` has exactly one child element `Obj`.** Two or more could mean two credentials, and
+     are refused (D20).
+  3. **That `Obj` has a `TN` element with a `T` child whose text is exactly
+     `System.Management.Automation.PSCredential`**, in any position among its `T` children, as the
+     prototype accepts it.
+  4. **That `Obj` has a `Props` element holding exactly one `S` element whose `N` attribute is
+     `UserName`, and exactly one `SS` element whose `N` attribute is `Password`.** The two `N`
+     values are matched in any ASCII case (D20), as the prototype matches them, and a second
+     element of either, in any case, could mean two things and is refused (D20). The `UserName`
+     text is the credential's user name, `bot` in localswim's procedure; it MUST be present, and
+     agentspace does not use it.
+
+  Every other element and attribute (`RefId`, `ToString`, any other `T`, any other member of
+  `Props`) is ignored. A password in an `S` element, as plain text, is refused, since it is not
+  protected.
+- **The `SS` element's text becomes bytes:** the text is exactly an even number of hex digits, at
+  least two (`0-9`, `a-f`, `A-F`; `Export-Clixml` writes lowercase), with nothing around them. Each
+  pair of digits, in order, is one byte, the first digit its high four bits. Text that is empty,
+  of odd length, or holds whitespace or any other character is refused.
+- **Those bytes are a DPAPI blob**, which begins `01 00 00 00` and then the DPAPI provider's GUID
+  `D0 8C 9D DF 01 15 D1 11 8C 7A 00 C0 4F C2 97 EB`. A reader MAY refuse a blob that does not begin
+  with them; the call below refuses one whose first four bytes differ, and does not check the
+  GUID. **The reader
+  decrypts it with the Win32 call `CryptUnprotectData` (`crypt32.dll`)**, run in the operator's own
+  process, as the Windows user the operator runs as:
+
+  | Argument | Value |
+  |---|---|
+  | `pDataIn` | The blob's bytes |
+  | `ppszDataDescr` | `NULL`: the description is not wanted |
+  | `pOptionalEntropy` | `NULL`: no entropy was used |
+  | `pvReserved`, `pPromptStruct` | `NULL` |
+  | `dwFlags` | `CRYPTPROTECT_UI_FORBIDDEN` (`0x1`), so it never shows a prompt |
+  | `pDataOut` | Receives the plaintext, which the reader frees with `LocalFree` |
+
+  The blob is protected in user scope, without `CRYPTPROTECT_LOCAL_MACHINE`, so only the same
+  Windows user on the same computer can decrypt it. .NET's
+  `ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser)` is the same call. **A
+  call that fails is refused**: a blob written by another user or on another computer, a
+  corrupted one, or a profile whose DPAPI keys are not available.
+- **The plaintext is the token's text in UTF-16LE**, with no byte order mark and no terminating
+  NUL. A byte count that is odd is refused, as the prototype refuses it. Text that is not valid
+  UTF-16 (an unpaired surrogate) is refused, since it has no UTF-8 form to send (D20). The token is
+  that text, and the content carries it in UTF-8 (below).
+- **localswim's procedure makes each token from 32 random bytes, written as base64url with no
+  padding** (`docs/windows-operations.md`, "Provision the launch credentials"), which is 43
+  characters. agentspace relies on none of that, and checks only what the list below says
+  ([Q9](#open-questions)).
+- **A test writes a credential for itself the same way in reverse** ([The test seam](#the-test-seam)):
+  `CryptProtectData` on the dummy token's UTF-16LE bytes, with no entropy and
+  `CRYPTPROTECT_UI_FORBIDDEN`, as the user that runs the operator; the blob in lowercase hex as the
+  `SS` element's text, in the structure above, in UTF-8. PowerShell's `Export-Clixml` of a
+  `PSCredential` writes the same. Its token is a dummy, as [Secrecy](#secrecy) requires of a check
+  that stands in for `ssh`.
+
+Note on where this came from: the prototype (`scripts/agentspace.ps1`, run by Windows PowerShell
+5.1) reads the receipt and deserializes `bot.xml` with PowerShell's own cmdlets. The rules above
+match what those cmdlets accepted and refused on throwaway files under Windows PowerShell 5.1
+(the credential's cases also under PowerShell 7.6, which gave the same answers but cut a token at
+its first NUL), except where
+[Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
+lists a difference.
 
 **The push MUST warn `agentspace: Could not read the localswim Bot token; the board will not work
 on the box this session.`, and send nothing, when any of these holds:**
-- The receipt cannot be read or parsed, or names no credential folder.
-- `bot.xml` cannot be read or decrypted.
+- The receipt exists and cannot be read, or is refused by [The receipt](#the-receipt)'s rules.
+- `bot.xml` cannot be read, or is refused by [The Bot credential](#the-bot-credential)'s rules, a
+  failed decryption included.
 - The base URL or the token is missing or empty.
 - The base URL or the token holds a CR, an LF or a NUL. Any of them would break the content's
   two-line framing, or make the box install a value other than the one sent.
@@ -1448,6 +1616,11 @@ behavior in this table.**
 | `sync` with `ssh-keygen.exe` missing fails with `ca`'s step 1 message | No check; another error | [sync](#sync) |
 | A program that needs no input gets an empty or closed stdin | The AWS CLI inherits `up`'s stdin, the SSH client's stream | [Streams](#streams) |
 | An empty or missing URL or token, or one with a CR, LF or NUL, warns "Could not read" and sends nothing | Sends it. The box refuses an empty value, so the laptop warns "did not confirm"; with an LF the box installs the first two lines, a cut token, and the laptop warns "did not confirm"; a CR is removed by the box and the push is confirmed | [What the laptop reads](#what-the-laptop-reads) |
+| `LOCALAPPDATA` unset or empty skips the push as a missing receipt does, and fails no command | Every command, `ca` included, most likely fails at start with its runtime's error: building the receipt's path from an unset or empty variable throws, and the script stops on any error | [The receipt](#the-receipt) |
+| A receipt that could mean two things, or holds the wrong type, is refused: a JSON value that is not an object, `base` or `credential_directory` given twice under the same name, or a `base` or `credential_directory` that is not a string | Reads a one-element array as its element, takes the last of a member repeated under the same name, sends a number's text as the URL and an array's items joined by spaces, and reads an array of one string as the credential folder | [The receipt](#the-receipt); D20 |
+| A receipt with no byte order mark is read as UTF-8, and every path is taken literally | Reads it in the system's ANSI code page, so non-ASCII text in it differs; takes `*`, `?`, `[` and `]` in the receipt's path and the credential folder as wildcards | [The receipt](#the-receipt), [The Bot credential](#the-bot-credential) |
+| A receipt with bytes not valid in its encoding, or with text that is not JSON (a single-quoted string, an unquoted member name), is refused | Replaces each bad byte with U+FFFD and reads on; accepts single-quoted strings and unquoted member names | [The receipt](#the-receipt); D20 |
+| A `bot.xml` that could mean two things is refused: two or more `Obj` elements, or a second `UserName` or `Password` element; so is plaintext that is not valid UTF-16 | Reads every `Obj` and sends their tokens joined by a space; takes the last of a repeated `Password`; accepts an unpaired surrogate in the token | [The Bot credential](#the-bot-credential); D20 |
 | An empty or unreadable stamp makes the push due | Warns "Could not send" and pushes nothing, at every `up` until a `sync` | [The stamp](#the-stamp) |
 | The push's 20 seconds cover the write to ssh's stdin | Starts the clock after the write; the content fits in a pipe's buffer, so a blocked write has not been seen | [What the laptop sends](#what-the-laptop-sends) |
 | The AWS CLI, `ssh` and `scp` can be named by `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`, and the push's zone by `AGENTSPACE_TIMEZONE`; a name that cannot be run fails, and never falls back | Reads none of them. It runs the AWS CLI and `ssh` by fixed paths, and its zone override can be reached only by loading its code | [The test seam](#the-test-seam); Q11 and Q12, closed |
@@ -1491,6 +1664,6 @@ closes them. Several need a run on the laptop, which the writer of this page cou
 | **Q25** | **What does a failed removal of the box's staging folder lead to in `sync`?** The prototype does not check it. A leftover folder would make the recursive copy nest `system` inside it, and the install would then fail; that the failure message then names the install rather than the copy is unverified. | A run on the laptop |
 | **Q26** | **Does the sign-in test catch every form of the AWS CLI's expired-login error?** The prototype matches `expired`, `aws login` or `Unable to locate credentials`. The exact text of the CLI's error after an `aws login` session expires was not recorded with #0034. | A run on the laptop with an expired sign-in |
 | **Q27** | **SHOULD the stamp stay an unsalted hash that covers the token?** It is kept on the laptop, and anyone who can read it can test a guessed token against it. A keyed digest would hide that, but the stamp MUST still change whenever the instance, the zone, the URL or the token does. Its storage is docs/state.md's. | The architect; docs/state.md |
-| **Q28** | **Where is the format of localswim's receipt and `bot.xml` specified, so the rewrite can read the token without PowerShell?** This page says what the prototype relies on ([What the laptop reads](#what-the-laptop-reads)), but the formats are localswim's. | localswim's docs; the architect |
+| **Q28** | **Closed by [What the laptop reads](#what-the-laptop-reads) (E0.04-T05-S01, #0088, 2026-11-18).** It specifies the receipt and `bot.xml` to the byte: where each is, its encoding, the receipt's two members, the CLIXML elements down to the `SS` element that holds the token, the hex, the `CryptUnprotectData` call, and the UTF-16LE plaintext, with what each failure does. It cites localswim's docs where they define a part, and says that the rest is what agentspace relies on without localswim documenting it, observed on throwaway files with a dummy secret. | Closed |
 | **Q29** | **Does D1 at connect time cover #0034's sign-in message?** The message names AWS and its login command ([AWS failures](#aws-failures)), and a lease's caller who sees it through the ProxyCommand learns the backend ([What a caller sees](#what-a-caller-sees-d1-card-0087)). This page keeps it as the one exception, since the person who can act on it is the laptop's owner. Whether it MUST be reworded inside the ProxyCommand, with the AWS text behind `AGENTSPACE_DIAGNOSTIC`, is the architect's call. | The architect |
 | **Q30** | **SHOULD the seam also cover `go`, `ssh-keygen`, `icacls` and `taskkill`?** Without it, a check cannot run `sync`'s build step or `ca`'s lockdown against a stand-in; `sync` runs its build when `go` and the localswim checkout are present, and skips it otherwise. | The architect |
