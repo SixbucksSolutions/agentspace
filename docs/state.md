@@ -356,6 +356,11 @@ point (2026-11-18):
   a reader MUST NOT depend on member order.
 - **Read tolerantly (D20):** a reader MUST accept a leading UTF-8 byte order mark and any amount of
   JSON whitespace. Bytes that are not valid UTF-8 make the file invalid.
+- **An object that names one member twice**, such as a record with two `id` members, **makes the
+  file not valid**, whichever value a JSON parser would keep (architect, 2026-11-19, for
+  E0.05-T01-S03): it could mean two things, and tolerance covers form, never meaning (D20). A
+  number written with a fraction of zero, such as `3600.0` for an integer member, is form only:
+  it is accepted, and written back as `3600`.
 - **Replaced atomically** ([Replacing a file](#replacing-a-file)), through a temporary file named
   `leases.json.<hex>.tmp` in the same folder, written through to the disk and flushed before the
   rename. A command that changes it MUST hold [the lease state lock](#the-lease-state-lock) from
