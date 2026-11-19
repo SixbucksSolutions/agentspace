@@ -96,6 +96,13 @@ its requirement, or says why it is declined.
   E0.05-T01-S01; the reasoning is D36's: 0 MUST mean done). When a write to stdout fails, help
   included, because it is closed, full or broken, the command MUST write one `internal` error
   document to stderr and exit 1; when stderr cannot be written either, it still exits 1.
+  - **On Windows, a stdout the program was started without** (no handle, or an invalid one)
+    **MUST count as a failed write**, even where a runtime would report its writes as done.
+  - **On a system other than Windows, a stdout the caller closed MAY read as one that discards
+    its output** (architect, 2026-11-19, from E0.05-T01-S01's review): Rust's runtime, for one,
+    opens a closed standard stream on `/dev/null` before the program starts, so the program cannot
+    tell the two apart in safe code. Contract v0's caller is Windows (D8), and a full or broken
+    stdout still fails there.
   - **A change the command already recorded stays recorded.** A `create`, `renew` or `release`
     whose record was written before its document failed to reach stdout has made its change, and
     is not undone, which is the one exception to [Concurrency and atomicity](#concurrency-and-atomicity)'s
