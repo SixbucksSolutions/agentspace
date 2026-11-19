@@ -19,7 +19,7 @@ fn main() -> ExitCode {
             proxy_checkout,
         }) => dist(release, proxy_checkout),
         Err(message) => {
-            eprintln!("agentspace: {message}");
+            eprintln!("xtask: {message}");
             eprint!("{}", xtask::USAGE);
             ExitCode::from(2)
         }
@@ -36,27 +36,24 @@ fn workspace_root() -> Option<PathBuf> {
 
 fn dist(release: bool, proxy_checkout: Option<PathBuf>) -> ExitCode {
     let Some(root) = workspace_root() else {
-        eprintln!("agentspace: The workspace's folder was not found.");
+        eprintln!("xtask: The workspace's folder was not found.");
         return ExitCode::FAILURE;
     };
-    let checkout = match proxy_checkout {
-        Some(given) => match std::path::absolute(&given) {
-            Ok(full) => full,
-            Err(_) => {
-                eprintln!("agentspace: The proxy checkout's path cannot be read.");
-                return ExitCode::FAILURE;
-            }
-        },
-        None => root.clone(),
+    let checkout = match xtask::choose_checkout(proxy_checkout.as_deref(), &root) {
+        Ok(checkout) => checkout,
+        Err(error) => {
+            eprintln!("xtask: {error}");
+            return ExitCode::FAILURE;
+        }
     };
     // Refuse before the build, so that a missing target costs nothing and touches nothing.
     if let Err(error) = xtask::proxy_target(&checkout) {
-        eprintln!("agentspace: {error}");
+        eprintln!("xtask: {error}");
         return ExitCode::FAILURE;
     }
 
     let target_dir = root.join("target");
-    let profile = if release { "release" } else { "debug" };
+    let profile = xtask::choose_profile(release);
     for (package, binary) in PROGRAMS {
         let mut build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
         build
@@ -71,7 +68,7 @@ fn dist(release: bool, proxy_checkout: Option<PathBuf>) -> ExitCode {
         match build.status() {
             Ok(status) if status.success() => {}
             _ => {
-                eprintln!("agentspace: The build of {package} failed.");
+                eprintln!("xtask: The build of {package} failed.");
                 return ExitCode::FAILURE;
             }
         }
@@ -89,7 +86,7 @@ fn dist(release: bool, proxy_checkout: Option<PathBuf>) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("agentspace: {error}");
+            eprintln!("xtask: {error}");
             ExitCode::FAILURE
         }
     }

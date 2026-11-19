@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use xtask::{
-    DIST_FILES, DistError, FORWARDER_FILE, PROGRAM_FILE, Request, WRAPPER_FILE, forwarder_bytes,
-    parse_args, wrapper_bytes, write_dist,
+    DIST_FILES, DistError, FORWARDER_FILE, PROGRAM_FILE, Request, WRAPPER_FILE, choose_checkout,
+    choose_profile, forwarder_bytes, parse_args, wrapper_bytes, write_dist,
 };
 
 /// A throwaway folder that removes itself.
@@ -94,16 +94,33 @@ fn wrapper_runs_the_program_from_its_own_folder_with_arguments_unchanged() {
 
 /// The sh to run the wrapper with, when the machine has one.
 fn find_sh() -> Option<PathBuf> {
-    let candidates = [
+    let mut candidates = vec![
         PathBuf::from(r"C:\Program Files\Git\bin\sh.exe"),
+        PathBuf::from(r"C:\Program Files\Git\usr\bin\sh.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\Git\bin\sh.exe"),
         PathBuf::from("/bin/sh"),
     ];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local).join(r"Programs\Git\bin\sh.exe"));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for folder in std::env::split_paths(&path) {
+            candidates.push(folder.join("sh.exe"));
+        }
+    }
     candidates.into_iter().find(|c| c.is_file())
 }
 
 #[test]
 fn wrapper_passes_arguments_and_the_exit_code_through_a_real_sh() {
     let Some(sh) = find_sh() else {
+        // Git for Windows is expected on the laptop, so a missing sh there is a failure, not a pass.
+        if cfg!(windows) {
+            panic!(
+                "No sh was found: Git for Windows is expected on this machine, so the wrapper \
+                 could not be run."
+            );
+        }
         eprintln!("No sh was found, so the wrapper was not run.");
         return;
     };
@@ -186,6 +203,105 @@ fn forwarder_refuses_a_path_it_cannot_quote() {
         Err(DistError::ProxyPathUnusable)
     );
     assert_eq!(forwarder_bytes(""), Err(DistError::ProxyPathUnusable));
+}
+
+#[test]
+fn forwarder_refuses_a_path_with_a_character_outside_ascii() {
+    // cmd reads a batch file in the console's code page, so it cannot follow such a path.
+    for target in [
+        "C:\\Projets\\caf\u{e9}\\scripts\\ssh-proxy.cmd",
+        "C:\\\u{4e2d}\\scripts\\ssh-proxy.cmd",
+        "C:\\a\u{200b}b\\scripts\\ssh-proxy.cmd",
+    ] {
+        assert_eq!(
+            forwarder_bytes(target),
+            Err(DistError::ProxyPathUnusable),
+            "{target:?}"
+        );
+    }
+    // The same path in ASCII is fine.
+    assert!(forwarder_bytes("C:\\Projets\\cafe\\scripts\\ssh-proxy.cmd").is_ok());
+}
+
+#[test]
+fn forwarder_refuses_a_path_in_the_extended_length_form() {
+    assert_eq!(
+        forwarder_bytes(r"\\?\C:\c\scripts\ssh-proxy.cmd"),
+        Err(DistError::ProxyPathUnusable)
+    );
+    assert_eq!(
+        forwarder_bytes(r"\\?\UNC\server\share\scripts\ssh-proxy.cmd"),
+        Err(DistError::ProxyPathUnusable)
+    );
+    // An ordinary UNC path is not that form.
+    assert!(forwarder_bytes(r"\\server\share\scripts\ssh-proxy.cmd").is_ok());
+}
+
+#[test]
+fn a_checkout_with_a_non_ascii_path_writes_no_forwarder() {
+    let scratch = Scratch::new("non-ascii");
+    let program = fake_program(&scratch);
+    let checkout = checkout_with_target(&scratch, "caf\u{e9}");
+    let dist = scratch.path().join("dist");
+    assert_eq!(
+        write_dist(&dist, &program, &checkout),
+        Err(DistError::ProxyPathUnusable)
+    );
+    assert!(!dist.exists());
+}
+
+/// A generated forwarder, run the way a ProxyCommand runs it, against a fake target.
+#[cfg(windows)]
+#[test]
+fn forwarder_carries_arguments_input_and_the_exit_code_through_cmd() {
+    use std::io::Write;
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+
+    let scratch = Scratch::new("forwarder-run");
+    // A space and a percent sign in the path, which a batch file reads specially.
+    let checkout = scratch.path().join("my checkout%PATH%x");
+    fs::create_dir_all(checkout.join("scripts")).unwrap();
+    fs::write(
+        checkout.join("scripts").join("ssh-proxy.cmd"),
+        "@echo off\r\necho args:[%*]\r\nset /p line=\r\necho line:[%line%]\r\nexit /b 7\r\n",
+    )
+    .unwrap();
+    let dist = scratch.path().join("dist");
+    write_dist(&dist, &fake_program(&scratch), &checkout).unwrap();
+    let forwarder = dist.join(FORWARDER_FILE);
+
+    // cmd /c with a line that starts with a quote: its outer pair of quotes is removed.
+    let mut child = Command::new("cmd.exe")
+        .args(["/d", "/c"])
+        .raw_arg(format!(
+            "\"\"{}\" i-0abc \"two words\" 22\"",
+            forwarder.display()
+        ))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"hello proxy\r\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains("args:[i-0abc \"two words\" 22]"),
+        "Arguments changed: {stdout} {stderr}"
+    );
+    assert!(
+        stdout.contains("line:[hello proxy]"),
+        "Input did not arrive: {stdout} {stderr}"
+    );
+    assert_eq!(out.status.code(), Some(7), "{stdout} {stderr}");
 }
 
 // The output folder.
@@ -326,6 +442,8 @@ fn the_command_line_reads_its_flags() {
     assert!(args(&["build"]).is_err());
     assert!(args(&["dist", "--bogus"]).is_err());
     assert!(args(&["dist", "--proxy-checkout"]).is_err());
+    assert!(args(&["dist", "--proxy-checkout="]).is_err());
+    assert!(args(&["dist", "--proxy-checkout", ""]).is_err());
     assert!(args(&["dist", "--proxy-checkout", "a", "--proxy-checkout", "b"]).is_err());
 }
 
@@ -342,7 +460,78 @@ fn the_program_refuses_a_checkout_without_the_target_with_its_own_words() {
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.starts_with("agentspace: The proxy checkout has no scripts\\ssh-proxy.cmd"));
+    assert!(stderr.starts_with("xtask: The proxy checkout has no scripts\\ssh-proxy.cmd"));
     // The message names no path of the machine.
     assert!(!stderr.contains(scratch.path().to_str().unwrap()));
+}
+
+#[test]
+fn the_program_names_itself_xtask_in_every_error() {
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("bogus")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.starts_with("xtask: Unknown command 'bogus'."),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("agentspace:"));
+}
+
+#[test]
+fn an_empty_proxy_checkout_is_a_usage_error_with_exit_2() {
+    for args in [
+        vec!["dist", "--proxy-checkout="],
+        vec!["dist", "--proxy-checkout", ""],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(out.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.starts_with("xtask: --proxy-checkout needs a folder."),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Usage:"));
+    }
+}
+
+// Choosing the checkout and the profile.
+
+#[test]
+fn the_checkout_is_the_workspace_root_when_none_is_given() {
+    let root = Path::new("workspace-root");
+    assert_eq!(choose_checkout(None, root), Ok(root.to_path_buf()));
+}
+
+#[test]
+fn a_given_checkout_wins_over_the_workspace_root_and_becomes_a_full_path() {
+    let scratch = Scratch::new("choose-checkout");
+    let given = scratch.path().join("main checkout");
+    let chosen = choose_checkout(Some(&given), Path::new("workspace-root")).unwrap();
+    assert_eq!(chosen, given);
+
+    let relative = choose_checkout(Some(Path::new("some-folder")), Path::new("workspace-root"));
+    let relative = relative.unwrap();
+    assert!(relative.is_absolute(), "{relative:?}");
+    assert!(relative.ends_with("some-folder"));
+}
+
+#[test]
+fn a_checkout_path_that_cannot_be_made_full_is_refused() {
+    assert_eq!(
+        choose_checkout(Some(Path::new("")), Path::new("workspace-root")),
+        Err(DistError::CheckoutPathUnreadable)
+    );
+}
+
+#[test]
+fn the_profile_is_debug_unless_release_is_asked_for() {
+    assert_eq!(choose_profile(false), "debug");
+    assert_eq!(choose_profile(true), "release");
 }

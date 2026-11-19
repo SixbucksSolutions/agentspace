@@ -30,6 +30,8 @@ pub enum DistError {
     ProxyTargetMissing,
     /// The checkout's path cannot be written into a batch file.
     ProxyPathUnusable,
+    /// The path given for the checkout cannot be turned into a full path.
+    CheckoutPathUnreadable,
     /// The built program is not where the build puts it.
     ProgramMissing,
     /// A file or folder of the output folder could not be written or removed.
@@ -47,6 +49,9 @@ impl fmt::Display for DistError {
                 "The proxy checkout's path cannot be written into a forwarder, so none was \
                  written.",
             ),
+            DistError::CheckoutPathUnreadable => {
+                f.write_str("The proxy checkout's path cannot be read.")
+            }
             DistError::ProgramMissing => {
                 f.write_str("The build did not produce agentspace.exe, so nothing was written.")
             }
@@ -83,13 +88,34 @@ exec \"$here/agentspace.exe\" \"$@\"
 /// arguments through and leaves standard input, output, error and the exit code alone. Each `%`
 /// of the path is doubled, since a batch file reads `%%` as one `%`. A path cannot hold a
 /// double quote on Windows, so quoting the whole path is enough for spaces and for `&`, `(`, `)`
-/// and `^`. A path with a double quote, or a line break, is refused.
+/// and `^`. A path with a double quote, or a line break, is refused. So is a path with a character
+/// outside ASCII, because cmd reads a batch file in the console's code page, which is the OEM page
+/// for a task without a console, and so cannot follow it. So is a path in the `\\?\` form, which
+/// cmd cannot run.
 pub fn forwarder_bytes(target: &str) -> Result<Vec<u8>, DistError> {
-    if target.is_empty() || target.contains(['"', '\r', '\n', '\0']) {
+    if target.is_empty()
+        || !target.is_ascii()
+        || target.contains(['"', '\r', '\n', '\0'])
+        || target.starts_with(r"\\?\")
+    {
         return Err(DistError::ProxyPathUnusable);
     }
     let escaped = target.replace('%', "%%");
     Ok(format!("@\"{escaped}\" %*\r\n").into_bytes())
+}
+
+/// The checkout the forwarder points into: the one given, made a full path, or else the
+/// workspace's own root.
+pub fn choose_checkout(given: Option<&Path>, workspace_root: &Path) -> Result<PathBuf, DistError> {
+    match given {
+        Some(folder) => std::path::absolute(folder).map_err(|_| DistError::CheckoutPathUnreadable),
+        None => Ok(workspace_root.to_path_buf()),
+    }
+}
+
+/// The build profile's folder name: `debug`, or `release` when asked for.
+pub fn choose_profile(release: bool) -> &'static str {
+    if release { "release" } else { "debug" }
 }
 
 /// The full path of `<checkout>\scripts\ssh-proxy.cmd`, when that file exists.
@@ -195,8 +221,10 @@ where
             }
             "--proxy-checkout" => args
                 .next()
+                .filter(|value| !value.is_empty())
                 .ok_or_else(|| "--proxy-checkout needs a folder.".to_string())?,
             other => match other.strip_prefix("--proxy-checkout=") {
+                Some("") => return Err("--proxy-checkout needs a folder.".to_string()),
                 Some(value) => value.to_string(),
                 None => return Err(format!("Unknown argument '{other}'.")),
             },

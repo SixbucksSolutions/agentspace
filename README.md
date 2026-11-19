@@ -499,8 +499,11 @@ cargo xtask dist [--release] [--proxy-checkout <folder>]
   build ran from. `dist` MUST fail, and write no forwarder, when that file does not exist.
 - **The output folder is for checks.** A lease that a CLI in it creates names that folder in its
   alias file, so a clean-up breaks the lease's connections. Real leases SHOULD come from the install
-  ([operator.md, The install folder](docs/operator.md#the-install-folder)), made from the main
-  checkout's build.
+  ([operator.md, The install folder](docs/operator.md#the-install-folder)).
+- **A build whose files are copied into the install MUST be run in the main checkout, or MUST pass
+  `--proxy-checkout` naming it.** An install's forwarder MUST NOT name a git worktree, which is
+  deleted after its branch merges
+  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
 
 ## Rules
 
