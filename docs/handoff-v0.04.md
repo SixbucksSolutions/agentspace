@@ -300,6 +300,16 @@ copying the main checkout's (untracked, never committed) runs it.
   Open questions are now split: blocking ones are answered, and later ones say "Later, not
   blocking: <reason>" in the doc. The final verdict runs alone, after the fixes, on what the
   rewrite will actually read.
+- **The final pass (T06, PR #47) said YES from both readers**, 22 and 27 minor gaps, with 37
+  distinct gaps left open in docs/runs/e0.04-t06-s01.md for v0.05's story planning to read.
+- **A ruling MUST be checked against the decisions before it is sent.** The architect first ruled
+  that the rewrite writes its own template and box files, which contradicted D28 ("Not product, so
+  not ported"); the dev lead caught it, and D37's addendum records the corrected rule.
+- **A reader subagent's tasking SHOULD ask for its report in its reply**, because the harness
+  refuses a subagent's write of a report file. **A reader launched from a checkout gets that
+  checkout's AGENTS.md in its context**, so its tasking MUST tell it to use only its export, and
+  its report SHOULD say whether it did; both T06 readers said they used neither AGENTS.md nor the
+  git status line.
 - **Decisions the review forced** are in D8 (contract v0's caller is Windows; the default
   ProxyCommand sits beside the CLI) and D21 (`lease create` does not depend on the instance-ID
   cache).
