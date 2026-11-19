@@ -1,9 +1,19 @@
 //! agentspace-state (docs/decisions.md, D38).
 //!
-//! The portable half of the lease state file: its model, schema checks and bytes. It does no file
-//! I/O. RFC 2119 keywords in this crate's comments, and the capitals are load-bearing.
+//! The lease state file: its model, schema checks and bytes, and its place on the disk: the
+//! folders (docs/state.md, The home folder), the lease state lock and the atomic replace. RFC 2119
+//! keywords in this crate's comments, and the capitals are load-bearing.
+//!
+//! A library crate: it never writes to stdout or stderr. The Windows half is behind `cfg(windows)`;
+//! on any other system the same interface builds with std's nearest equivalents, which are not the
+//! contract's (state.md, D8).
 
+#![deny(unsafe_code)]
+
+mod paths;
 mod schemas;
+mod store;
+mod sys;
 mod time;
 
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -11,6 +21,8 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::fmt;
 
+pub use paths::{Paths, resolve_paths};
+pub use store::{LockGuard, StoreError, lock, read, write};
 pub use time::{format_time, now, parse_time};
 
 /// One lease's `ssh` object.
