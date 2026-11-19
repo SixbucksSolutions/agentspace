@@ -2258,6 +2258,13 @@ code.
 | `cloudformation describe-stacks` | `Stacks[0].Outputs`: the element whose `OutputKey` is `InstanceId`, its `OutputValue` | The instance-ID cache. No such element is the "no `InstanceId` output" failure ([Laptop files](#laptop-files)) |
 | `ec2 describe-instances` | `Reservations[0].Instances[0]`: `State.Name`, `LaunchTime` (ISO 8601, compared in UTC), `InstanceType`, `RootDeviceName`, and in `BlockDeviceMappings` the element whose `DeviceName` equals `RootDeviceName`, its `Ebs.VolumeId` | The state, the 20-minute rule, `status`'s type, and the root volume's ID |
 | `ec2 describe-volumes` | `Volumes[0].Size` (GiB) | `status`'s size, and `grow`'s `<size>` |
+| `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
+| `ssm send-command` | `Command.CommandId` | The poll |
+| `ssm get-command-invocation` | `Status`, and once it is not `Pending`, `InProgress` or `Delayed`, `StandardOutputContent`, trimmed | The patch check's answer ([What up waits for](#what-up-waits-for)) |
+
+(The three `ssm` rows were split off below the rulings by an edit on 2026-11-19 and put back by
+the architect the same afternoon, found in E0.06-T01-S03's review.) **A member's path in a message
+is the whole path as this table writes it**, such as `InstanceInformationList[0].PingStatus`.
 
 **Which command reads which of `ec2 describe-instances`'s members** (architect, 2026-11-19, for
 v0.06, gap FB-08). Each reads only its own, and a member it does not read MUST NOT fail it, whether
@@ -2286,9 +2293,6 @@ for E0.06-T01-S03):
 - **The waits' timing:** the 5 seconds are a pause after each check; the 15-minute deadline is
   tested after each check that was not ready, and the last pause is cut short to end on it; the
   invocation is polled at once and then each second, at most 20 times.
-| `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
-| `ssm send-command` | `Command.CommandId` | The poll |
-| `ssm get-command-invocation` | `Status`, and once it is not `Pending`, `InProgress` or `Delayed`, `StandardOutputContent`, trimmed | The patch check's answer ([What up waits for](#what-up-waits-for)) |
 
 ## Requirements the prototype does not meet yet
 
