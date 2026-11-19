@@ -2329,6 +2329,10 @@ lease; the run record is [docs/runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md). D3
   for E0.04-T01-S03). A remote shell command, a script piped to a host, or a template's embedded
   script is specified by what it MUST do on the far side, step by step, and its text MUST NOT be
   carried into a spec, even though it can be seen in a process list. The rewrite writes its own.
+  - **A "template's embedded script" here means a script the prototype builds at run time, never
+    the repository's `infra\agentspace.yaml` or `box\system`** (architect, 2026-11-18, for
+    E0.04-T06-S01, FA-11). Those are maintained repository files, which the operator carries as
+    they are: see D37's addendum.
 - **A defect or hardening card against the prototype is carried in as a requirement on the
   behavior,** and the doc names the card it closes (D28). The prototype's defect is never
   specified as behavior to copy.
@@ -2457,6 +2461,22 @@ installed task"; and state.md, "Files in the checkout".
   the user's entry is the user's. Forwarders keep them working across v0.05 and v0.06 with no edit
   to any file agentspace does not own.
 
+**Addendum: what the operator carries is the repository's own (architect, 2026-11-18, for
+E0.04-T06-S01, FA-11).** The final clean-room pass asked whether the rewrite writes its own
+template and box files (D34) or carries the repository's (this decision). D34 decides who writes
+what the prototype builds and sends; this decision decides where the carried files live at run
+time. They do not conflict:
+- **The template and box files a v0.05 or v0.06 operator carries MUST be the repository's
+  maintained `infra\agentspace.yaml` and `box\system`, embedded in the program at build time.**
+  They are not the PowerShell prototype: they stay YAML and shell (D28, "Not product, so not
+  ported"), and they change only through the repository.
+- **What the prototype builds and sends at run time MUST be the rewrite's own,** written from
+  operator.md's steps on the box (D34): every ssh remote command line, the patch question and the
+  token push's remote script. Their text MUST NOT be copied from the prototype.
+- **A first ruling the same day, that the rewrite writes its own template and box files, was
+  withdrawn** before it was written down: it contradicted D28, and the package specifies the box
+  only as the laptop sees it, so it would have left the box unbuildable from the specs.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -2517,8 +2537,8 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 
 | | Question | Settled by |
 |---|---|---|
-| **Q1** | Where do the CA key and lease state live once the API is hosted? A KMS-backed signer? DynamoDB? | #0011 |
-| **Q2** | Where do per-project credentials (Claude Code, Codex, gh) live, so a fresh host or container needs no sign-in? Needs Terry. | #0009 |
-| **Q3** | How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
-| **Q4** | One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
+| **Q1** | **Later, not blocking:** card #0011 is after 1.0 (roadmap.md), and contract v0 keeps both on the laptop (D8, D17, D21). Where do the CA key and lease state live once the API is hosted? A KMS-backed signer? DynamoDB? | #0011 |
+| **Q2** | **Later, not blocking:** card #0009 is after 1.0 (roadmap.md), and contract v0 issues no per-project credential. Where do per-project credentials (Claude Code, Codex, gh) live, so a fresh host or container needs no sign-in? Needs Terry. | #0009 |
+| **Q3** | **Later, not blocking:** card #0008 is after 1.0 (roadmap.md), and contract v0's board access is D12's. How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
+| **Q4** | **Later, not blocking:** card #0016 is after 1.0 (roadmap.md), and contract v0 has one driver, whose reachability is D9's. One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
 | **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 for the MVP (D18), then Rust (D28). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |
