@@ -209,6 +209,14 @@ were checked afterwards through `agentspace lease list`, 15 leases, all released
 in-process entry now takes a throwaway home, and a guard test shows the suite creates nothing in
 the real one.
 
+**A test MUST NOT print, log or format the values of an environment it captured** (found in
+v0.06-T01, 2026-11-19). E0.06-T01-S04's harness recorded the whole environment a fake ssh saw and
+derived `Debug` on it, so one failing assertion printed every variable into a subagent's tool
+output on the box, among them the Claude session's own `CLAUDE_CODE_MESSAGING_TOKEN`. Nothing of
+agentspace's was in it, and nothing was committed, pushed or carded; on the laptop the same bug
+would have printed whatever the shell holds. A test asserts on the variables it names, and reports
+a mismatch by name or count, never by value.
+
 ## Watching a measurement
 
 **A running `agentspace-sample` MUST be watched for liveness by whoever started it, from its start
