@@ -157,10 +157,14 @@ report.
    `C:\t40`: some fixtures exceed Windows' 260-character limit under the scratchpad.
 2. **Run the touched suites yourself**, in full. A run cut short by a timeout has not passed. The
    keeper suite takes about 7 to 8 minutes.
-3. **For anything that runs the prototype, hash Terry's real files before and after**: the
-   leases folder, `leases.json`, the CA, the keeper's record, the push stamp, `~/.ssh` and
-   `%LOCALAPPDATA%\localswim-v2`. They MUST come out identical. The keeper log, the reporter's
-   state and the watchdog files are written by their own programs and change legitimately.
+3. **For anything that runs the prototype, snapshot Terry's real files before and after**, and
+   they MUST come out identical. **Hash only files that hold no secret:** `leases.json`, the
+   keeper's record, the push stamp and `~/.ssh/config`. **Compare the rest by size and time only,
+   never reading them:** the leases folder, the CA folder, the rest of `~/.ssh` (Terry's private
+   keys) and `%LOCALAPPDATA%\localswim-v2` (the Bot credential). Hashing a private key reads it,
+   which nothing needs; a verifier and the architect both did on 2026-11-18, printing nothing,
+   and the rule was narrowed the same night. The keeper log, the reporter's state and the
+   watchdog files are written by their own programs and change legitimately.
 4. **The identifier scan**, proved first on a planted copy:
    `i-0[0-9a-f]{8,16}\b|\b[0-9]{12}\b|ip-172-|172\.31\.|vpc-|subnet-|LOCALSWIM_TOKEN=[A-Za-z0-9_-]{20}|arn:aws|compute\.internal`,
    plus `$env:COMPUTERNAME` and `$env:USERNAME`, case-insensitive. A 12-digit hit inside a
