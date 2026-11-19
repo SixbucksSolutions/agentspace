@@ -52,6 +52,16 @@ name = "agentspace-keeper-api"
 version = "0.6.0"
 
 [[package]]
+name = "agentspace-keeper-files"
+version = "0.6.0"
+dependencies = [
+ "agentspace-keeper-api",
+ "jsonschema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agentspace-operator"
 version = "0.6.0"
 dependencies = [

@@ -10,6 +10,7 @@
 
 #![deny(unsafe_code)]
 
+mod atomic;
 mod paths;
 mod schemas;
 mod store;
@@ -21,6 +22,7 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::fmt;
 
+pub use atomic::write_atomically;
 pub use paths::{Paths, resolve_paths};
 pub use store::{LockGuard, StoreError, lock, read, write};
 pub use time::{format_time, now, parse_time};
