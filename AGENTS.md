@@ -174,6 +174,13 @@ least 4 GB of RAM."** D39 records it.
 - **Each use is sized for its own peak**, so the box goes back down when the next use needs fewer
   agents. A lease whose sessions run no agents on the box, such as a live check from the laptop,
   needs no change.
+- **Until v1.0, the box MUST be stopped as soon as a turn that used it is done** (Terry,
+  2026-11-19: "make sure we don't leave it burning money when done with its work for a dev
+  turn"): every PR of the turn merged to `main` and its cards in Ready For Review. The architect
+  fetches anything the turn left on the box (a sampler's record), releases the turn's lease, and
+  runs the operator's `down` at once, then confirms with `status` that it is `stopped`. It MUST
+  NOT wait for the idle stop (D11), which takes up to an hour. v0.05-T01's box was stopped at its
+  close, 3:00am Pacific.
 
 ## Terry's real files in a review
 
