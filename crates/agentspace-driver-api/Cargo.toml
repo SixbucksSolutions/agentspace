@@ -1,0 +1,8 @@
+[package]
+name = "agentspace-driver-api"
+version = "0.5.0"
+edition.workspace = true
+description = "The boundary between the lease CLI and a driver (docs/driver.md; D38)"
+publish = false
+
+[dependencies]
