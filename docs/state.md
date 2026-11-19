@@ -755,8 +755,10 @@ never the check's own output. The same holds for `renew`.
   record** (#0029; [lease-api.md](lease-api.md#concurrency-and-atomicity), which also says what
   `create` does when a removal fails). The lease folder is deleted only if this `create` made it,
   and the alias file only if its owner mark names this lease.
-- **An `Include` line, a config backup and `agentspace.d` that the failed `create` made stay, and
-  `create` MUST NOT remove them** (this settles [driver.md Q18](driver.md#open-questions)). The line
+- **An `Include` line, a config backup, `agentspace.d` and `%USERPROFILE%\.agentspace\leases\`
+  that the failed `create` made stay, and `create` MUST NOT remove them** (the folder of lease
+  folders is shared by every lease, as `agentspace.d` is; architect, 2026-11-19, from
+  E0.05-T02-S02) (this settles [driver.md Q18](driver.md#open-questions)). The line
   is meant to stay, and removing it would be a second edit of the user's config that could fail
   too; the backup is a person's record of the config before the line; and the folder holds nothing
   of the lease. None of them is a lease, a key, a certificate or an alias, so lease-api.md's rule
@@ -815,7 +817,10 @@ written, and put back if that write fails. `id_ed25519-cert.pub` MUST NOT ever b
 1. **The alias file, `<ssh folder>\agentspace.d\<alias>`**, if it exists and is a file. A missing
    alias file is not an error.
 2. **The lease folder, `%USERPROFILE%\.agentspace\leases\<id>\`**, with everything in it, if it
-   exists. A missing folder is not an error.
+   exists. A missing folder is not an error. **A file where the home folder, `.agentspace` or
+   `leases` has to be is**: it is never read as a missing lease folder, and `release` fails with
+   lease-api.md's "Credential or alias not deleted" message, its `<why>` "the folder for leases is
+   a file, not a folder" (architect, 2026-11-19, from E0.05-T02-S02).
 
 **What a failed `release` MUST leave (#0041, point 3):** never a record that is `ready` while its
 alias, key or certificate is gone ([lease-api.md](lease-api.md#concurrency-and-atomicity)). It
@@ -960,7 +965,9 @@ their access rules, and what a usable CA is. Signing leaves the laptop with card
 
 **A CA is usable when all of these hold**, checked in this order, the first failure ending the
 check:
-1. **Both files exist.**
+1. **Both files exist.** A file where the home folder, `.agentspace` or the CA's folder has to be
+   is not a missing CA but one that is not usable, so it gets lease-api.md's "CA not usable"
+   message, not "No CA" (architect, 2026-11-19, from E0.05-T02-S02).
 2. **The folder, then the private key, are owner-only.**
 3. **The private key loads with an empty passphrase**: it is unencrypted, as
    [the key](#the-key) defines it. The prototype runs `ssh-keygen -y` with an empty passphrase.
