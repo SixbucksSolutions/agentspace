@@ -114,6 +114,15 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   help wherever it stands, even where a value is expected. Such a command line gets help, whatever
   else it holds: the help of its command when the line names a known command, and the top level's
   otherwise. So `sync -Alias x --help` prints `sync`'s help and exits 0.
+  **Which argument is the command, for help** (architect, 2026-11-19, for v0.06, gap FB-11): the
+  line is read from left to right, the argument after `-GiB` or `-Alias` is that parameter's value
+  unless it is `-h` or `--help`, and the command is the first argument that is none of a
+  parameter, a parameter's value and help. A value never names a command, so `-Alias up -h`
+  prints the top level's help, and `-Alias -h up` prints `up`'s.
+- **Every help block on this page is exactly what the rewrite prints, byte for byte**, to stdout,
+  with a line feed after every line and no carriage return, the last line's included, and a change
+  to either MUST change both (architect, 2026-11-19, for v0.06, gap FA-13; as
+  [lease-api.md, Commands](lease-api.md#commands) rules for the lease CLI).
 - **Every other problem with the command line is a usage error**, which prints one of the messages
   below to stderr, writes nothing to stdout, starts no program and exits 1
   ([Exit codes](#exit-codes)). **The operator MUST NOT prompt for anything**, a missing command
@@ -238,7 +247,7 @@ exception text in place of that message.** The prototype does in some cases
 | `ssh-keygen.exe` | `%SystemRoot%\System32\OpenSSH\ssh-keygen.exe` | `ca`, and `sync`'s CA check |
 | AWS CLI v2 | `C:\Program Files\Amazon\AWSCLIV2\aws.exe`; when that file is missing, `aws` on `PATH`. The tunnel alone has no fallback ([The ProxyCommand](#the-proxycommand), step 6) | Every command but `ca`; the ProxyCommand's tunnel |
 | Session Manager plugin | Found by the AWS CLI on `PATH`; the ProxyCommand puts `C:\Program Files\Amazon\SessionManagerPlugin\bin` first | The ProxyCommand's tunnel |
-| `icacls.exe`, `taskkill.exe` | `%SystemRoot%\System32\`, by full path | `ca`; the token push's time limit |
+| `icacls.exe`, `taskkill.exe` | `%SystemRoot%\System32\`, by full path | `ca`; the token push's time limit. **The rewrite MAY reach either outcome through the Windows API instead, and starts neither then** (architect, 2026-11-19, for v0.06, gap FB-15): `ca`'s steps and the push's step 4 define the outcome, and this row only says how each is found when it is started |
 | `go` | On `PATH` | `sync`, to build the localswim CLI |
 | The operator, `agentspace-operator.exe` | In the ProxyCommand's own folder ([How each program finds the others](#how-each-program-finds-the-others)); a ProxyCommand that runs `up` in its own process starts none. The prototype's ProxyCommand runs `powershell.exe` (Windows PowerShell 5.1), found on `PATH`, with its `agentspace.ps1` | The ProxyCommand, to run `up` |
 
@@ -295,6 +304,11 @@ requirement.**
 whether or not its output is then read ([Calls by command](#calls-by-command)). The region is
 today's, and not configurable
 ([Q15](#open-questions)). The calls are listed per command in [The AWS side](#the-aws-side).
+**The order of the arguments MUST be:** the service, the operation, `--region us-west-2`, then
+`--output json` where it is passed, then the operation's own arguments in the order
+[Calls by command](#calls-by-command) gives them (architect, 2026-11-19, for v0.06, gap FB-07). The
+tunnel's line in [The ProxyCommand](#the-proxycommand), step 6, is that order. So a stand-in finds
+the service and the operation as its first two arguments.
 
 ### Environment variables
 
@@ -649,7 +663,8 @@ the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#depl
   builds and sends to the box at run time, every remote command line included, is the rewrite's
   own, written from the steps on this page (D34).
 - **A file the operator writes under `%USERPROFILE%\.agentspace\operator` that cannot be written
-  fails the command**, with an `agentspace: ` message naming it, before anything reads it.
+  fails the command** before anything reads it, with exactly `agentspace: Cannot write <path>.`,
+  where `<path>` is the file's or folder's full path (architect, 2026-11-19, for v0.06, gap FA-16).
 - **The localswim checkout that `sync` builds from, `C:\Projects\localswim`, is localswim's, not
   agentspace's**, and this section does not move it ([sync](#sync), step 7).
 
@@ -751,9 +766,13 @@ ProxyCommand and the keeper in v0.06 (#0055).** Until v0.06 removes them (D37):
   [state.md, The alias file](state.md#the-alias-file), naming the forwarder. **This forwarder is the
   only place an install reaches into a checkout, and it ends with v0.06.**
 - **v0.06's install adds the other programs.** The lease CLI then finds
-  `agentspace-ssh-proxy.exe` first. The install rewrites `agentspace-ssh-proxy.cmd` to run the
-  `.exe` beside it instead, and keeps it while a `ready` lease's alias file names it
-  ([above](#proxycommand-lines-already-on-the-laptop)).
+  `agentspace-ssh-proxy.exe` first. The install replaces `agentspace-ssh-proxy.cmd` with one that
+  runs the `.exe` beside it instead, and keeps it while a `ready` lease's alias file names it
+  ([above](#proxycommand-lines-already-on-the-laptop)). **v0.06's forwarder is one fixed line,
+  `@"%~dp0agentspace-ssh-proxy.exe" %*`, ended in CR LF**, which finds the `.exe` in its own
+  folder when it runs, so it names no path and a build writes it like any other file
+  (architect, 2026-11-19, for v0.06, gap FB-16). From v0.06 on, an install is a copy again: no
+  file it ships has a path written into it.
 - **The keeper's task is registered again by the rewrite's installer**, after the prototype's
   keeper is stopped as [keeper.md, Stopping and starting the keeper](keeper.md#stopping-and-starting-the-keeper)
   says. The new task replaces the old one of the same name, and the installer removes the
@@ -921,7 +940,11 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
 `agentspace` alias, with forwards cleared.
 
 1. **Checks the CA**, exactly as `ca` checks an existing one ([ca](#ca), the checks), and fails
-   with that check's message before the box is touched. A missing `ssh-keygen.exe` fails first,
+   with that check's message before the box is touched. **That is `ca`'s steps 1, 2, 3 and 5, in
+   that order, each with `ca`'s own message, and never step 4** (architect, 2026-11-19, for
+   v0.06, gaps FA-14 and FB-12): so a CA in a synced folder or a git working tree, or a half-made
+   one, fails `sync` as it fails `ca`, and a laptop with neither file fails at step 5's first
+   check, `agentspace: <key> does not exist; run ca.`, since `sync` never creates a CA. A missing `ssh-keygen.exe` fails first,
    with `ca`'s step 1 message; the prototype does not check for it, and fails with another
    error. A missing, half-made, mismatched or loosened CA never becomes a host's trusted CA
    (D17).
@@ -954,7 +977,12 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
      step 8. This is not a failure.
    - **Otherwise it prints `Building the localswim CLI for linux/arm64...`** and builds
      `./cmd/localswim` from `C:\Projects\localswim` for `linux/arm64` with cgo off, trimmed paths,
-     into `<checkout>\.build\localswim-linux-arm64`. A failed build fails with `agentspace:
+     into `<checkout>\.build\localswim-linux-arm64` (the rewrite's place is
+     `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64`). **The build is exactly
+     `go build -trimpath -o <out> ./cmd/localswim`**, run in `C:\Projects\localswim` with
+     `GOOS=linux`, `GOARCH=arm64` and `CGO_ENABLED=0` ([Environment variables](#environment-variables)),
+     where `<out>` is the output file's full path, and with no other flag (architect, 2026-11-19,
+     for v0.06, gap FB-14). A failed build fails with `agentspace:
      Building the localswim CLI failed.` `linux/arm64` is today's box's platform.
    - **Prints `Copying the localswim CLI to the instance...`**, copies the binary to the box's
      staging path (`/tmp/localswim` today), and fails with `agentspace: Copying the localswim CLI
@@ -1236,7 +1264,10 @@ operator grow [-GiB <n>] [-Quiet]
    4. Exit non-zero if step 2 or step 3 failed, and 0 otherwise.
 
    On today's box the root disk is the first NVMe device, and the root filesystem is ext4 on its
-   first partition. **A non-zero exit of the ssh, 255 for an ssh that could not connect included,
+   first partition. **Today's box has the tools for each step** (architect, 2026-11-19, for v0.06,
+   gap FB-13): `growpart` from Ubuntu's `cloud-guest-utils` for step 1, `resize2fs` for step 2 and
+   `df` for step 3, each in the Ubuntu cloud image the stack pins, run through `sudo` with no
+   password. A remote command for today's box MAY use them, and MUST NOT install anything. **A non-zero exit of the ssh, 255 for an ssh that could not connect included,
    MUST fail `grow` with `agentspace: Growing the filesystem online failed; the volume is already
    <new> GiB, and the filesystem grows on its own at next boot.`** (D36; [Q23](#open-questions),
    closed). The volume's change in step 2 stands. The prototype does not check the ssh's exit
@@ -1280,7 +1311,10 @@ Exit codes: 0 success, 1 failure.
      and is withheld in the ProxyCommand ([What a caller sees](#what-a-caller-sees-d1-card-0087)).
    - **Any other state** fails with `agentspace: Instance <id> is <state>.`
 2. **Decides whether to wait.** It waits unless the state read in step 1 was `running` and the
-   instance's launch time, read again now, is 20 minutes ago or more. EC2 resets the launch time at
+   instance's launch time, read again now, is 20 minutes ago or more. **The second
+   `ec2 describe-instances`, for the launch time, MUST run only when step 1 read `running`**; a box
+   that step 1 found in any other state waits without it (architect, 2026-11-19, for v0.06, gap
+   FB-09). EC2 resets the launch time at
    every start, and the patch unit's own time limit is 20 minutes, so such a box has finished its
    boot-time patch run, or failed it, long ago.
 3. **Waits**, for at most 15 minutes from the start of the wait, checking every 5 seconds:
@@ -1334,7 +1368,10 @@ CLI writes holds none ([state.md, The alias file](state.md#the-alias-file)).
    ProxyCommand program's file name, `agentspace-ssh-proxy.exe`
    ([The programs](#the-programs); the prototype prints `ssh-proxy.cmd`). An empty first argument
    (`""`) is an argument, and reaches step 3.
-2. **Puts the Session Manager plugin's folder and the AWS CLI's folder first on `PATH`.**
+2. **Puts the Session Manager plugin's folder and the AWS CLI's folder first on `PATH`**, in that
+   order: `C:\Program Files\Amazon\SessionManagerPlugin\bin;C:\Program Files\Amazon\AWSCLIV2;`
+   then `PATH` as it was (architect, 2026-11-19, for v0.06, gap FB-10). A check MAY still accept
+   either order, since no program it runs can tell them apart.
 3. **Runs `up`'s steps in caller mode** ([What a caller sees](#what-a-caller-sees-d1-card-0087)),
    with `-Alias <alias>` when it was given an alias, and with anything they write to stdout sent to
    stderr. They check the alias exactly ([Command line](#command-line)), so a bad one fails there
@@ -1800,6 +1837,15 @@ When the push is due, the laptop:
      command so that the C runtime's argument rules give it back to ssh as one argument.** A
      command that holds no double quote and does not end in a backslash MAY simply be wrapped in
      one pair of double quotes; any other MUST be quoted to those rules in full.
+   - **The remote command MUST hold no `%`, no double quote and no control character, and MUST NOT
+     end in a backslash** (architect, 2026-11-19, for v0.06, gap FA-15). Then one pair of double
+     quotes gives it back whole both to a program and to a `.cmd` stand-in
+     ([The test seam](#the-test-seam)), whose `cmd.exe` expands `%` even inside quotes and reads a
+     double quote as the end of the quoted part. Every other printable ASCII character survives,
+     `&`, `|`, `<`, `>`, `^` and `!` among them, since `cmd.exe` reads them as text inside
+     quotes and the operator's stand-ins never turn on delayed expansion. The patch question
+     ([What up waits for](#what-up-waits-for)) is under the same rule, as well as that section's
+     own.
    - The ssh gets a pipe for its stdin and one for its stdout; its stderr is the operator's
      stderr, so it carries its nested ProxyCommand's lines, `The host is ready.` among them
      ([What a caller sees](#what-a-caller-sees-d1-card-0087)). Its environment is
@@ -1953,7 +1999,11 @@ keyword, so a new sshd drop-in MUST NOT set a keyword that another drop-in alrea
 
 - **Fails at once if `agentspace_ca.pub` is missing or empty**, printing `install.sh:
   agentspace_ca.pub is missing; run agentspace-operator sync, which sends it` to stderr and
-  exiting 1. The prototype's box files name `scripts\agentspace.ps1` there.
+  exiting 1. The prototype's box files name `scripts\agentspace.ps1` there. **The repository's
+  `box\system\install.sh` is changed to this text by v0.06's cutover story, in the pull request
+  that removes `scripts\agentspace.ps1`** (architect, 2026-11-19, for v0.06, gap FA-12): under
+  D37's addendum the box's files change only through the repository, so the clean room's builders
+  do not edit it.
 - **Retires the project's first name, once.** On a box that still has `agentbox` units, it
   disables them, carries over this boot's patch marker and the last patch-reboot time, removes the
   old files, and prints `Retired the agentbox units and files`.
@@ -2126,7 +2176,7 @@ the rest are checked by their exit code alone. `<id>` is the cached instance ID.
 |---|---|
 | Any but `ca`, and the ProxyCommand, when the instance-ID cache is missing | `cloudformation describe-stacks --stack-name agentbox` (JSON) |
 | `deploy` | `cloudformation deploy --stack-name agentbox --template-file %USERPROFILE%\.agentspace\operator\agentspace.yaml --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags project=agentbox --parameter-overrides SshPublicKey=<key> <each Name=value line>` (output passed through); then `cloudformation describe-stacks --stack-name agentbox` (JSON); then `sync`'s |
-| `up`, `sync`: [start and wait](#starting-the-box-and-waiting-for-it) | `ec2 describe-instances --instance-ids <id>` (JSON); if stopped, `ec2 start-instances --instance-ids <id>` (JSON); if stopping, `ec2 wait instance-stopped --instance-ids <id>`, then `ec2 start-instances`; `ec2 describe-instances` again, for the launch time; while waiting, every 5 seconds, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON), and once that is `Online`, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace up: patch check" --parameters commands=<question>` (JSON) and up to 20 of `ssm get-command-invocation --command-id <command id> --instance-id <id>` (JSON) |
+| `up`, `sync`: [start and wait](#starting-the-box-and-waiting-for-it) | `ec2 describe-instances --instance-ids <id>` (JSON); if stopped, `ec2 start-instances --instance-ids <id>` (JSON); if stopping, `ec2 wait instance-stopped --instance-ids <id>`, then `ec2 start-instances`; `ec2 describe-instances` again, for the launch time, only if it was `running` (FB-09); while waiting, every 5 seconds, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON), and once that is `Online`, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace up: patch check" --parameters commands=<question>` (JSON) and up to 20 of `ssm get-command-invocation --command-id <command id> --instance-id <id>` (JSON) |
 | `sync` | The above, then nothing more from AWS: the rest goes over SSH, and each ssh or scp makes its own nested `up`'s calls and a tunnel |
 | `down` | `ec2 stop-instances --instance-ids <id>` (JSON) |
 | `status` | `ec2 describe-instances --instance-ids <id>` (JSON); `ec2 describe-volumes --volume-ids <vol>` (JSON); if running, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON) |
@@ -2150,6 +2200,20 @@ code.
 | `cloudformation describe-stacks` | `Stacks[0].Outputs`: the element whose `OutputKey` is `InstanceId`, its `OutputValue` | The instance-ID cache. No such element is the "no `InstanceId` output" failure ([Laptop files](#laptop-files)) |
 | `ec2 describe-instances` | `Reservations[0].Instances[0]`: `State.Name`, `LaunchTime` (ISO 8601, compared in UTC), `InstanceType`, `RootDeviceName`, and in `BlockDeviceMappings` the element whose `DeviceName` equals `RootDeviceName`, its `Ebs.VolumeId` | The state, the 20-minute rule, `status`'s type, and the root volume's ID |
 | `ec2 describe-volumes` | `Volumes[0].Size` (GiB) | `status`'s size, and `grow`'s `<size>` |
+
+**Which command reads which of `ec2 describe-instances`'s members** (architect, 2026-11-19, for
+v0.06, gap FB-08). Each reads only its own, and a member it does not read MUST NOT fail it, whether
+missing or of another form:
+
+| Reader | Members it reads |
+|---|---|
+| The start-and-wait step (`up`, `sync`, the ProxyCommand's `up`) | `State.Name` in its first call; `LaunchTime` in its second, which runs only for a `running` box (FB-09) |
+| `status` | `State.Name`, `InstanceType`, `RootDeviceName`, and the root volume's `Ebs.VolumeId` |
+| `grow` | `State.Name`, `RootDeviceName`, and the root volume's `Ebs.VolumeId` |
+
+A member a command reads that is missing, or not of the form above, fails the command with
+`agentspace: Unexpected answer from ec2 describe-instances: no <member>.`, where `<member>` is its
+path as this table writes it, such as `Reservations[0].Instances[0].LaunchTime`.
 | `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
 | `ssm send-command` | `Command.CommandId` | The poll |
 | `ssm get-command-invocation` | `Status`, and once it is not `Pending`, `InProgress` or `Delayed`, `StandardOutputContent`, trimmed | The patch check's answer ([What up waits for](#what-up-waits-for)) |

@@ -189,8 +189,8 @@ before it reads it: the first GO of v0.05-T01 was read only after the dev lead h
 | #0110, conformance hardening: the checks the suite lacks, among them #0029 points 1 and 2 and #0083 point 1 | Rides with v0.06 (roadmap.md) |
 | The prototype's lease CLI (`bin\agentspace.cmd`, `scripts\lease-cli.ps1`) and the install's forwarder into the checkout | Removed by v0.06 (D38) |
 | The box's Rust toolchain and gcc, installed by hand | A project host that builds Rust (v0.07, #0047; D38's note) |
-| D40's moves to JSON: `local.parameters`, the instance-ID cache, the push stamp | v0.06, as specs changed before its stories |
-| The operator's and the keeper's minor clean-room gaps, and FB-23 | v0.06 (runs/e0.04-t06-s01.md) |
+| D40's moves to JSON: `local.parameters`, the instance-ID cache, the push stamp | Specified 2026-11-19 (D40; state.md); built by v0.06 |
+| The operator's and the keeper's minor clean-room gaps, and FB-23 | Answered 2026-11-19 in the owning docs (runs/e0.04-t06-s01.md); built by v0.06 |
 | #0027, #0034, #0066, #0068, #0087 | Met by v0.06 |
 | #0064, #0043, #0082, and the rows after 1.0 | handoff-v0.04.md, "What is open" |
 
@@ -209,6 +209,10 @@ word (AGENTS.md, "The board").
   (D39) and plan the sampler's watch. Settled: it is (D33).
 - **Plan the cutover of the keeper's task**, which is persistent configuration on Terry's laptop
   and takes his yes (D30, D37).
+
+**Done on 2026-11-19, after v0.05 closed:** the clean-room gaps are answered in their docs, D40's
+moves are specified with their schemas, the measured turn is settled, and D41 plans the cutover
+and the measured turn's setup. What waits is Terry's word to lay out the stories.
 
 **The road after v0.06 changed during v0.05** (Terry, 2026-11-19; D26, roadmap.md). The v0.04
 handoff's order no longer holds past v0.10:

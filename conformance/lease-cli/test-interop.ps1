@@ -127,7 +127,7 @@ function Test-InteropState([string]$Name) {
 # is the lease's ID (state.md, "Renewal"). SKIPPED when no ssh-keygen is on the machine.
 function Test-InteropCertificate([string]$Name, $State, [string]$ExpiresAt) {
   if (-not $script:haveKeygen) {
-    Write-ConformanceResult -Name $Name -Status SKIPPED -Reason 'No ssh-keygen is on the PATH, so the certificate cannot be read.'
+    Write-ConformanceResult -Name $Name -Status SKIPPED -Reason 'No ssh-keygen was found in System32\OpenSSH or on the PATH, so the certificate cannot be read.'
     return
   }
   Test-Cc $Name {

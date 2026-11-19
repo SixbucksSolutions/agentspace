@@ -342,7 +342,11 @@ pass ran and logged what happened; the next pass tries again.
   to a throwaway folder ([Checking the keeper](#checking-the-keeper)). The keeper creates the state
   folder if it is missing.
 - **`USERPROFILE`**, as the keeper's own environment has it, names the holder's working folder
-  and, with `AGENTSPACE_STATE_DIR` unset, the state folder. The pass writes that folder's path
+  and, with `AGENTSPACE_STATE_DIR` unset, the state folder. **When it is unset or empty, the keeper
+  MUST end before its first pass, whether or not `AGENTSPACE_STATE_DIR` is set**, since a holder
+  needs its working folder: exit 1, nothing logged, and the one line
+  `agentspace-keeper: USERPROFILE is not set, so there is no home folder.` on stderr, after the
+  usage checks (architect, 2026-11-19, for v0.06, gaps FA-18 and FB-19). The pass writes that folder's path
   into the launch request, so the holder starts in the keeper's `%USERPROFILE%` even when the
   logon environment's differs, as under a check. The path is all that reaches the holder: the
   `USERPROFILE` variable the holder itself sees is the logon environment's, below.
@@ -417,6 +421,10 @@ is written about 10 seconds later, when the lock wait ends.
   file as it was before or after any one write, never part of one
   ([docs/state.md](state.md#concurrency)).
 - **A state file that does not pass its schema cannot be read**, and fails the pass as in step 4.
+- **Nor can one that passes its schema but holds two records with one `id`**: the keeper reads it
+  as the lease commands do, as a file that is not valid ([docs/state.md](state.md#the-lease-state-file)),
+  and fails the pass as in step 4, with `<error>` `the state file is not valid` (architect,
+  2026-11-19, for v0.06, gaps FA-19 and FB-18). It never picks a lease from such a file.
 
 ### Which lease
 
@@ -1357,9 +1365,25 @@ Mode: dry run; nothing was registered or started.
   expanded.
 - **The `Warning:` line appears only when `<folder>` is not `<install>`**, compared as full paths
   without regard to case.
-- **`StopAtDurationEnd`** appears when the repetition reports that field.
+- **`StopAtDurationEnd`** appears when the repetition reports that field. **The rewrite's
+  definition sets it, to `False`, so its dry run always prints ` StopAtDurationEnd=False`**
+  (architect, 2026-11-19, for v0.06, gaps FA-17 and FB-17).
 - **`StartBoundary` is the time the dry run built its definition**, so a later real install
   registers a later one.
+- **The rest of FA-17 and FB-17, ruled by the architect on 2026-11-19 for v0.06:**
+  - **Every line of a dry run goes to stdout**, the `Warning:` line included, and nothing to
+    stderr.
+  - **`<registration time>` is the laptop's local time with its offset, to the whole second:**
+    `YYYY-MM-DDTHH:MM:SS+HH:MM` (or `-HH:MM`), the form Task Scheduler stores a boundary in.
+  - **`<DOMAIN>\<user>` is the current user's account as Windows names it**, the form of `ca`'s
+    `<owner>` ([operator.md, ca](operator.md#ca)): for a local account, the computer's name, a
+    backslash and the user name. Like an instance ID, it MUST be withheld from anything committed
+    or reported, since the repository is public.
+  - **A real install's read-back lines (step 6) are the dry run's `Trigger 1:`, `Trigger 2:` and
+    `Repetition 2:` lines, in the same forms**, read from the task as Task Scheduler registered it,
+    on stdout. Its `Removed` line and its final line go to stdout too, and its warnings to stderr.
+  - **No check runs the installer** (conformance.md, [FB-25](conformance.md#coverage-of-the-operator-and-the-keeper)),
+    so these lines are shown only by v0.06's cutover, when the real task is registered.
 - **A trigger of another kind** prints `Trigger <n>: <its kind>`, and a repetition line is printed
   for any trigger that has an interval, with `Duration=indefinite` when it has no duration.
 - Note on where this came from: the prototype's `Warning:` line says that `<checkout>` is a git
@@ -1407,6 +1431,10 @@ Mode: dry run; nothing was registered or started.
    `board-holder.ps1` and `-Watch` on its command line. A running process's PID is not reused, so
    no other match on a command line is needed. The PID alone is not enough: something other than
    a keeper can hold the file, and the PID in it can then be stale ([Locks](#locks)).
+   **This paragraph binds a person, not the installer** (architect, 2026-11-19, for v0.06, gap
+   FB-27): the installer finds a keeper by the lock and the task's state alone, and MUST NOT match
+   a process's command line, the prototype's script name included. The prototype's names here are
+   for v0.06's change-over, and leave this page with the prototype.
 4. **It registers the task, replacing any task of that name with no prompt, and starts it at
    once.** A failure to register or start ends the install with exit 1.
 5. **It removes the prototype's launcher, `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`, if

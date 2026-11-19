@@ -533,6 +533,12 @@ content MUST be exactly this:
 file per lease, holding one `Host` block. The alias MUST match `^[A-Za-z0-9._-]+\z`, case-sensitively,
 and MUST NOT start with `-`, because the ProxyCommand puts it on a command line
 ([operator.md](operator.md#the-proxycommand)); every alias `create` generates does.
+**Three rules check an alias, and they stay three** (architect, 2026-11-19, for v0.06, gap FB-23):
+this one; the operator's `-Alias` check, which is the same pattern
+([operator.md, Command line](operator.md#command-line)); and the holder record's, which is stricter,
+a letter or digit first and at most 128 characters ([The holder record](#the-holder-record)). Each
+guards its own input. Every alias `create` generates passes all three, so they differ only for an
+alias a person writes by hand, which reaches the operator alone, never the keeper's record.
 
 **Its bytes, exactly:** UTF-8 without a byte order mark, each line ending in one LF, the last
 included, and every line after the second indented by two spaces:
@@ -1110,7 +1116,8 @@ strict, as a writer MUST write it.
   keeper.md's.
 - **A reader MUST treat a record that cannot be read or parsed, or whose members do not have these
   forms, as no record.** Like the prototype, it MAY accept a `lease_id` that is any 8-4-4-4-12 hex
-  UUID in any case, and an `alias` that matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`.
+  UUID in any case. Its `alias` MUST match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`, and a record
+  whose alias does not is no record (architect, 2026-11-19, for v0.06, gap FB-23).
 - **The PID and the start time together are the holder's identity**; the record never names a
   process by its PID alone.
 

@@ -135,8 +135,10 @@ arguments.
 
 - **Stubs MUST stand only for programs outside agentspace** (`ssh`, `aws`), as D34 says. A stub
   of one of agentspace's own programs is prototype code in disguise. The keeper suite's `ssh`
-  stub, `scripts\test-board-holder-stub.cmd`, is the model: it prints one line, runs for about 20
-  minutes unless stopped, and connects nowhere.
+  stub, `conformance/keeper/ssh-stub.cmd`, is the model: it prints one line, runs for about 20
+  minutes unless stopped, and connects nowhere. (Until 2026-11-19 this named the prototype's stub,
+  `scripts\test-board-holder-stub.cmd`, which is outside a clean-room export; architect, for
+  v0.06, gap FB-26.)
   - **A stub MUST NOT receive the real token** ([docs/operator.md](operator.md#secrecy)).
 - **A check MUST work in throwaway folders only.** Each folder is made under `%TEMP%` and removed
   when the check ends, in a `finally`.
@@ -1185,6 +1187,20 @@ a check for it can be added by a later story without changing a spec.
 The numbers in "Checked by" are the results of each file, run against the prototype or against a
 stand-in of a conforming build, as [The operator and the token push](#the-operator-and-the-token-push)
 says.
+
+**Which of these rows v0.06 closes** (architect, 2026-11-19, for v0.06, gap FB-25). Each "Later"
+above was later because no build met the seam; v0.06's Rust operator will. **v0.06's stories MUST
+write the checks that the seam lets a check make from outside, each in the story that builds what
+it checks:** `down`, `status` and `grow` (its failed online grow included); the operator's usage
+errors and help texts; the stopped and stopping start paths and the patch question, with a
+stand-in `aws` whose answers change from call to call; and the keeper's logon environment (D35).
+**These stay later after v0.06, each for the reason its row gives:** `deploy` and `sync`, until
+operator.md Q30 stands in for `go` and `ssh-keygen`; the box's half of the push; the Windows zone
+conversion; `ca`'s elevated refusal and loosened key; the console-mode repair; and the installed
+task, its launcher and the installer, which a throwaway home cannot isolate. #0110's points ride
+with the same release (roadmap.md).
+- **The skip reason that FA-20 found is fixed:** `test-interop.ps1` now says that no `ssh-keygen`
+  was found in `System32\OpenSSH` or on `PATH`, the two places it looks.
 
 ## The remaining work
 

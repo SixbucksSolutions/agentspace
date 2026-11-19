@@ -78,6 +78,7 @@ line's text after `Status:`, without its full stop.
 - [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
 - [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease
 - [D40. By v1.0, agentspace's own files are JSON where feasible](#d40-by-v10-agentspaces-own-files-are-json-where-feasible): Direction, Terry, 2026-11-19, to be met by v1.0 (#0053)
+- [D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration](#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration): Decided
 
 ## The interface
 
@@ -2640,6 +2641,68 @@ owns each format; operator.md owns what the commands do with them). Each is
   `test-unmet-push.ps1` write `instance-id` and `localswim-pushed.sha256` in the old forms today.
 - **Contract v0's files are already JSON** (the lease state file, the keeper's records, every
   document the CLI prints) and change nothing.
+
+### D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration
+
+**Status: Decided, architect, 2026-11-19, before v0.06 (#0055) is broken into stories.** It plans
+the cutover that the v0.05 handoff asks to be planned before the stories, and that D30 and D37 say
+takes Terry's yes.
+
+**What changes on the laptop, and whose it is:**
+
+| Change | Whose | Reversible by |
+|---|---|---|
+| v0.06's seven files copied into `%USERPROFILE%\.agentspace\bin`, the forwarder replaced ([operator.md](operator.md#until-v006-retires-the-prototypes-entry-points)) | agentspace's install folder | Copying v0.05's files back |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` written from `<checkout>\infra\local.parameters` (D40) | agentspace's file, holding the account's values | Deleting it |
+| The user's `agentspace` entry in `~\.ssh\config` pointed at `<install>\agentspace-ssh-proxy.exe` ([operator.md](operator.md#proxycommand-lines-already-on-the-laptop)) | **Terry's file** | Restoring the old `ProxyCommand` line |
+| The keeper task registered again by `agentspace-keeper-install`, which removes the prototype's launcher ([keeper.md](keeper.md#the-installer)) | **Terry's Task Scheduler** (D30) | Running the prototype's installer from a checkout of v0.05 |
+
+**In order, as the release's last story, once every other v0.06 pull request is merged:**
+1. **No lease is ready.** The architect checks `agentspace lease list` and releases what is ready,
+   with Terry's yes for any lease it did not create. So no alias file names a forwarder the
+   cutover replaces, and no holder runs, so stopping the prototype's keeper strands nothing.
+2. **The architect asks Terry once, for the two changes that are his**, naming each with its
+   reversal as the table gives it. Nothing below that is his happens before his yes.
+3. **Stop the prototype's keeper** as [keeper.md, Stopping and starting the keeper](keeper.md#stopping-and-starting-the-keeper)
+   says, and disable its task, so the repeating trigger cannot start it before step 6.
+4. **Install v0.06's files** from one build of `main`, and write `stack-parameters.json`. Its
+   values are the account's: they MUST NOT be printed into a transcript, a commit or a card.
+5. **Point Terry's `agentspace` entry at the Rust ProxyCommand**, or have Terry do it.
+6. **Run `agentspace-keeper-install` from the install folder.** Its read-back lines (keeper.md, FA-17)
+   are the check that the task is registered.
+7. **Live checks, with the box stopped at the start:** `ssh agentspace` through the Rust
+   ProxyCommand starts the box and connects (#0055's first done-when); `localswim-pushed.json`
+   appears and the box's `bot.env` changes, which shows the push (#0055's second); a lease
+   created by the installed CLI connects through its alias, and the new keeper starts a holder for
+   it and logs `started`; `agentspace-operator status` and `down` work. A `deploy` is run only if
+   Terry wants the stack touched.
+8. **Remove the prototype from the repository**, in the same story's pull request: every
+   PowerShell and `cmd` file in the product, `bin\` shims included (#0055's third done-when, D28);
+   `infra\local.parameters.example`, replaced by `infra\stack-parameters.example.json`; and
+   `box\system\install.sh`'s message changed to name `agentspace-operator sync` (FA-12). The
+   architect's process tools stay (D28). The conformance suite's default programs, which name the
+   prototype today ([conformance.md](conformance.md#naming-the-program-under-test)), move to the
+   install folder's in the same pull request.
+9. **README and AGENTS.md follow**, in the same pull request: every command they give runs the
+   Rust programs, and AGENTS.md's box-sizing rule names `stack-parameters.json`.
+
+**Why this order:**
+- **No lease ready makes every forwarder and alias question moot.** The rules for keeping
+  `scripts\ssh-proxy.cmd` while something names it
+  ([operator.md](operator.md#proxycommand-lines-already-on-the-laptop)) exist for a cutover under
+  load; this one has none, and leases last at most 24 hours (D24), so waiting is cheap.
+- **The keeper is stopped before the install**, as operator.md's install rules ask, so no keeper
+  runs a program the install renamed aside.
+- **The repository changes last**, after the live checks, so a failed check leaves the prototype
+  in `main` to fall back on.
+
+**v0.06's first turn on the box is measured (D33, Terry, 2026-11-19).** Before it starts, the
+architect sizes the box for its peak (D39), with the vCPU count from the turn's staffing plans;
+grows the root disk ahead of its builds, under AGENTS.md's 60% floor, since five crates' builds
+filled the 8 GiB disk in v0.05-T01; and arms one Monitor, before the dev lead starts, that
+prints a line when the sampler's samples stop rising, when it is not running, or when the root
+filesystem passes 80% used (AGENTS.md, "Watching a measurement"). The Monitor's script is written
+and proven against a stopped sampler before it is trusted.
 
 ## Keys
 
