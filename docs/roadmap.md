@@ -88,6 +88,9 @@ when Terry says so (D14).
 - #0064 (a release leaves the lease's open connections up, found in E0.02-T03-S01) is met by v0.08.
 - #0109 (the sampler dies silently when its disk fills, found in v0.05-T01) is met before v0.09's
   measurement (#0049), which needs a complete record of a turn that compiles.
+- #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite
+  lacks, among them #0029 point 2 and #0083 point 1) rides with v0.06 (#0055), which leans on the
+  same harness.
 
 ## After 1.0
 
