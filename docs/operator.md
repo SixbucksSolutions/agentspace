@@ -1695,7 +1695,8 @@ credentials"), so a folder or a token remembered from an earlier read can be sta
      values are matched in any ASCII case (D20), as the prototype matches them, and a second
      element of either, in any case, could mean two things and is refused (D20). The `UserName`
      text is the credential's user name, `bot` in localswim's procedure; it MUST be present, and
-     agentspace does not use it.
+     agentspace does not use it. "Present" means the element: an empty `UserName` text is accepted
+     (architect, 2026-11-19, for E0.06-T01-S04), since nothing reads it.
 
   Every other element and attribute (`RefId`, `ToString`, any other `T`, any other member of
   `Props`) is ignored. A password in an `S` element, as plain text, is refused, since it is not
@@ -2008,8 +2009,10 @@ warnings with the rest ([Messages](#messages); [Q21](#open-questions)).
   goes on a command line, and holds no copy of the legacy table.
 - **`AGENTSPACE_NESTED` stops `up`'s push alone**; `sync`'s forced push runs whatever it says.
 - **A stamp file that is not UTF-8**, such as one in UTF-16, cannot be parsed, so a push is due.
-- **An alias that breaks `-Alias`'s rule**, which the command line refuses before any push, is
-  "any other failure" if one ever reaches the push: no `Sending` line, and the warning above.
+- **An alias that breaks `-Alias`'s rule**, which the command line refuses before any push, gets
+  the bad-alias warning below if one ever reaches the push, and no `Sending` line. (This bullet
+  first said "the warning above", the generic one, and overlooked the specific warning v0.04 had
+  already given; corrected by the architect the same afternoon, found in E0.06-T01-S04's review.)
   The push checks the alias, and `AGENTSPACE_NESTED` unless forced, before it reads anything.
 - **The box's last stdout line counts as a line even with no LF after it**, so a hash line that
   ends the output is still read. A line cut short by the 10-second bound is not 64 hex digits, so
