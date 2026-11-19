@@ -457,7 +457,7 @@ fn a_digit_only_value_of_non_ascii_digits_is_not_a_bare_number() {
 #[test]
 fn m_templates_for_an_uppercase_m_after_a_digit() {
     for v in [
-        "8M", "8 M", "8M ", " 8M", "1h30M", "8M30s", "8M 30s", "  8 M  ",
+        "8M", "8 M", "8M ", " 8M", "1h30M", "8M30s", "8M 30s", "  8 M  ", "1M30s",
     ] {
         let m = ttl_invalid(v);
         assert_eq!(m, msg_m(&format!("'{}'", escape(v))), "{v:?}");
@@ -602,7 +602,7 @@ fn units_out_of_order_are_refused_even_when_the_sum_is_out_of_range() {
 
 #[test]
 fn empty_and_whitespace_only_are_refused() {
-    ttl_invalid("");
+    assert_eq!(ttl_invalid(""), msg_not_duration("''"));
     assert_eq!(ttl_invalid(" "), msg_not_duration("' '"));
     assert_eq!(ttl_invalid("\t"), msg_not_duration("'\\u0009'"));
     assert_eq!(

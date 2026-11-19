@@ -23,6 +23,17 @@ fn st_bad(occurrences: &[&str]) -> String {
 // ---------------------------------------------------------------- states
 
 #[test]
+fn no_state_flag_at_all_is_no_filter() {
+    // Architect, 2026-11-19: an empty list of occurrences means `--state` was not given.
+    assert!(matches!(states(&[]), Ok(v) if v.is_empty()));
+}
+
+#[test]
+fn a_state_name_is_quoted_trimmed() {
+    assert_eq!(st_bad(&[" Foo "]), msg_state("'Foo'"));
+}
+
+#[test]
 fn one_state_name_each() {
     for name in ALL {
         assert_eq!(st(&[name]), vec![name]);
