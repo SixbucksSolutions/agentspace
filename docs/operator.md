@@ -639,6 +639,11 @@ the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#depl
 | `<checkout>`, the task's working folder | The keeper's task | `%USERPROFILE%` ([keeper.md, The task's fields](keeper.md#the-tasks-fields)) |
 | `<checkout>`, the main checkout the installer runs from | The keeper's installer | The install folder ([keeper.md, The installer](keeper.md#the-installer)) |
 
+- **The template and `box\system` the operator carries MUST be the repository's own files,
+  embedded as they are at build time, and MUST NOT be re-authored from this page** (D37's
+  addendum, FA-11). They are maintained YAML and shell, not the prototype (D28). What the operator
+  builds and sends to the box at run time, every remote command line included, is the rewrite's
+  own, written from the steps on this page (D34).
 - **A file the operator writes under `%USERPROFILE%\.agentspace\operator` that cannot be written
   fails the command**, with an `agentspace: ` message naming it, before anything reads it.
 - **The localswim checkout that `sync` builds from, `C:\Projects\localswim`, is localswim's, not
