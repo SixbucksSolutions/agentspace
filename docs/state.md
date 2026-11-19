@@ -107,7 +107,9 @@ starts; unset or empty means the default. What each means to the lease CLI is
   finds `%USERPROFILE%\.aws` through the same variable. Such a check MUST NOT expect a connection
   to reach the box.
 - **The OpenSSH client does not read `USERPROFILE` or `AGENTSPACE_SSH_DIR`.** An alias written into
-  a moved `<ssh folder>` is usable only by an ssh pointed at that folder's `config` with `-F`.
+  a moved `<ssh folder>` is usable only by an ssh pointed at the alias file itself with `-F`, or
+  at a config of its own whose `Include` names that `agentspace.d` by its full path, since a
+  relative `Include` resolves against the user's own `~/.ssh` ([The `Include` line](#the-include-line)).
 - Note on where this came from: in the prototype, every lease and operator script reads
   `$env:USERPROFILE`, and the CA check it starts inherits the variable. The operator's `deploy` and
   `sync` find the user's public key and `CLAUDE.md` through the shell's home variable instead, and
@@ -525,7 +527,7 @@ Host <alias>
 | `<id>` | The normalized lease ID |
 | `<comment>` | Any text without a line break. It SHOULD say that agentspace wrote the file and that it MUST NOT be edited |
 | `<user>` | The lease's `ssh.user`; `ubuntu` on today's box |
-| `<key path>` | The private key's full path, with every `\` written as `/` and every `%` as `%%`, and nothing else changed: the drive letter and its `:` stay, as in `C:/Users/<user name>/.agentspace/leases/<id>/id_ed25519`. The path is the home folder as [The home folder](#the-home-folder) gives it, made full if it is relative, joined as text with `.agentspace\leases\<id>\id_ed25519`. **"Joined as text"** means: a relative home folder is first made full against the working folder; then any `\` or `/` at its end is dropped, unless it is all that follows the drive (`C:\` stays `C:\`); then one `\` and the rest are appended. A `/` inside the home folder's value is kept as given, and becomes `/` like every `\` (architect, 2026-11-19, gap FA-05). A writer MUST NOT otherwise change it: it MUST NOT expand a short (8.3) name, resolve a link, change case or add a `\\?\` prefix |
+| `<key path>` | The private key's full path, with every `\` written as `/` and every `%` as `%%`, and nothing else changed: the drive letter and its `:` stay, as in `C:/Users/<user name>/.agentspace/leases/<id>/id_ed25519`. The path is the home folder as [The home folder](#the-home-folder) gives it, made full if it is relative, joined as text with `.agentspace\leases\<id>\id_ed25519`. **"Joined as text"** means: a relative home folder is first made full against the working folder; then any `\` or `/` at its end is dropped, unless it is all that follows the drive (`C:\` stays `C:\`); then the rest is appended after one `\`, which is not added when the home folder already ends in one, so a home of `C:\` gives `C:/.agentspace/...` (architect, 2026-11-19, for E0.05-T01-S05). A `/` inside the home folder's value is kept as given, and becomes `/` like every `\` (architect, 2026-11-19, gap FA-05). A writer MUST NOT otherwise change it: it MUST NOT expand a short (8.3) name, resolve a link, change case or add a `\\?\` prefix |
 | `<certificate path>` | The certificate's full path, written the same way |
 | `<proxy command>` | The ProxyCommand, with every `%` written as `%%` and nothing else changed: its `\` stay as they are |
 
@@ -551,7 +553,7 @@ Host <alias>
   | Placeholder | Value |
   |---|---|
   | `<program>` | The full path of agentspace's ProxyCommand program, with backslashes. **The lease CLI finds the program in the folder its own executable runs from** (D8), so a CLI that is one compiled program needs no checkout. The program is `agentspace-ssh-proxy.exe` there, or, when that file is not there, `agentspace-ssh-proxy.cmd` ([operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others)). Its extension is compared without regard to case |
-  | `<system folder>` | Windows' `System32` folder as a full path: `%SystemRoot%\System32`, with the value of `SystemRoot` written out, which is `C:\Windows\System32` on every machine seen. The text `%SystemRoot%` itself MUST NOT be written: ssh reads `%` as its own token, and Windows expands no variable in a ProxyCommand. **When `SystemRoot` is unset or empty and the interpreter form is needed, `create` MUST fail with `internal`**, as when the program is not found, saying in agentspace's own words that the lease's way to reach its host cannot be found because Windows' system folder is not known, and MUST NOT guess a folder (architect, 2026-11-19, gaps FA-06 and FB-20). The program's own form needs no `SystemRoot` |
+  | `<system folder>` | Windows' `System32` folder as a full path: `%SystemRoot%\System32`, with the value of `SystemRoot` written out, which is `C:\Windows\System32` on every machine seen. A `\` or `/` at the end of `SystemRoot`'s value is dropped first, so `C:\Windows\` gives `C:\Windows\System32` (architect, 2026-11-19, for E0.05-T01-S05). The text `%SystemRoot%` itself MUST NOT be written: ssh reads `%` as its own token, and Windows expands no variable in a ProxyCommand. **When `SystemRoot` is unset or empty and the interpreter form is needed, `create` MUST fail with `internal`**, as when the program is not found, saying in agentspace's own words that the lease's way to reach its host cannot be found because Windows' system folder is not known, and MUST NOT guess a folder (architect, 2026-11-19, gaps FA-06 and FB-20). The program's own form needs no `SystemRoot` |
   | `<alias>` | The lease's alias, written literally |
 
 - **If the program is not in that folder, `create` MUST fail with `internal`**, as for any alias
@@ -583,7 +585,9 @@ Host <alias>
   start of the line, and compares both the prefix and the ID without regard to case; a reader MUST
   accept at least the exact form.
 - **A path or ProxyCommand that holds a CR or LF MUST be refused**, writing nothing, because a line
-  break would add directives to the block. ssh expands `%` tokens in these values, which is why a
+  break would add directives to the block. **So MUST any other value the file holds** (the ID, the
+  comment, the alias and the user), since each sits on one line (architect, 2026-11-19, for
+  E0.05-T01-S05). ssh expands `%` tokens in these values, which is why a
   literal `%` is doubled.
 - **The ProxyCommand MUST name the alias literally, never as ssh's `%n`** (card #0057; operator.md,
   [The ProxyCommand](operator.md#the-proxycommand)).
@@ -621,7 +625,12 @@ never removes:**
 Include agentspace.d/*
 ```
 
-The ssh client resolves the relative path against the folder of the `config` file. The line MUST be
+**OpenSSH resolves the relative path against the user's own `~/.ssh` folder**, for any user
+configuration file, one named with `-F` included; for the user's own `~\.ssh\config` that is the
+config's folder (corrected by the architect, 2026-11-19, from E0.05-T01-S05's run on the box,
+which found that a relative `Include` in a `-F` config elsewhere did not reach its own
+`agentspace.d`). So in a moved `<ssh folder>` the line is written the same, and only ssh pointed
+there reads it as that folder's ([What moves which files](#what-moves-which-files)). The line MUST be
 above the config's first `Host` or `Match` line, because an `Include` after one belongs to that
 block.
 
