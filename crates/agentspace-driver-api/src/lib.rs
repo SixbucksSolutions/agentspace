@@ -26,6 +26,11 @@ pub struct Context {
     pub ssh_dir: PathBuf,
     /// `AGENTSPACE_PROXY_COMMAND` when set and not empty (lease-api.md, Environment).
     pub proxy_override: Option<String>,
+    /// `SystemRoot` when set and not empty, for the `cmd.exe /d /c` form of the default
+    /// ProxyCommand (docs/state.md, The alias file, the `<system folder>` row). Added by the
+    /// architect, 2026-11-19, for E0.05-T03-S01: the pin had left it out, and a driver reads no
+    /// environment variable.
+    pub system_root: Option<String>,
     /// The running program's own file, a full path, never its first argument (operator.md, How
     /// each program finds the others).
     pub own_exe: PathBuf,
