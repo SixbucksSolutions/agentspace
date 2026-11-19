@@ -155,6 +155,12 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
   allows one change per volume every 6 hours, so a step MUST be planned for the next 6 hours.
 - **The first step**, the same day during v0.05-T01: 8 to 11 GiB at 2:41am Pacific, which left
   the filesystem at 9.7G, 5.9G used (62%). It had filled at 6.8G with five crates' builds (D38).
+- **The second step, ahead of a measured turn, by Terry's word:** before v0.06-T01 the root
+  filesystem was 62% used, so the 60% floor allowed no grow, and seven crates' builds would fill
+  it. Terry, 2026-11-19: "you're free to resize as needed after the cleaning pass". The architect
+  removed the box's old 2.1.325 Claude CLI copies, apt's cache and most of the journal (5.9G to
+  5.3G used), then grew 11 to 20 GiB at 2:39pm Pacific: 19G, 5.3G used (29%). **A grow below the
+  floor needs Terry's word each time**, and a cleaning pass comes first.
 
 ## Sizing the box before it runs agents
 
