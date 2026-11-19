@@ -770,23 +770,21 @@ NOT create the CA. The prototype does not meet the third point yet; see
 [How it places a lease](#how-it-places-a-lease). Its first point (clock skew) is the back-dating
 that [Place a lease](#place-a-lease) asks of a driver.
 
-**Shown by, in the Rust build (v0.05, E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)):**
-the EC2 driver is registered in the program, and the conformance files below pass against it, each
-named for the point it holds.
-- **#0041, first point (credential errors unwrapped):**
-  `conformance/lease-cli/test-unmet-internal-no-path.ps1`, and `test-lease-driver-outcomes.ps1` for
-  the failure of an alias step.
-- **#0041, second point (a `ready` record without its driver):**
-  `conformance/lease-cli/test-unmet-record-no-driver.ps1`.
-- **#0041, third point (release and renew order):**
-  `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1`,
-  `test-unmet-release-partial.ps1` and `test-unmet-release-released.ps1`.
-- **#0029, third point (the driver never creates the CA):**
-  `conformance/lease-cli/test-unmet-no-ca.ps1`.
-- **#0029, fourth point (a failed place leaves nothing):**
-  `conformance/lease-cli/test-unmet-failed-create-cleanup.ps1`.
-- **#0029, first point (clock skew)** is the SHOULD no check enforces, and **#0087** is the
-  ProxyCommand's, which the Rust build does not have yet (v0.06, #0055).
+**What v0.05's Rust build shows (E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)).**
+The EC2 driver is registered in the program. The prototype does not meet the points below, and the rows
+stay because they describe it, which runs through `bin\` until v0.06 (#0055) retires it (D37, D38;
+architect, 2026-11-19). A point is marked yes only where the conformance file it names checks the
+point's MUST.
+
+| Point | The prototype | Met by v0.05's Rust build |
+|---|---|---|
+| #0041, first point (credential errors unwrapped) | Lets some underlying errors through, with laptop paths | Yes: `conformance/lease-cli/test-unmet-internal-no-path.ps1`, and `test-lease-driver-outcomes.ps1` for the failure of an alias step |
+| #0041, second point (a `ready` record without its driver) | Fails `renew` and `release` of it with `internal` | Yes: `conformance/lease-cli/test-unmet-record-no-driver.ps1` |
+| #0041, third point (release and renew order) | Deletes before it writes the record, and moves the new certificate before the record | Yes: `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1`, `test-unmet-release-partial.ps1` and `test-unmet-release-released.ps1` |
+| #0029, first point (clock skew) | The valid-after time is the issue time, where a SHOULD asks for 5 minutes before it | Not shown: no conformance file checks it (#0110) |
+| #0029, third point (the driver never creates the CA) | Runs the operator's `ca`, which creates a CA when there is none | Yes: `conformance/lease-cli/test-unmet-no-ca.ps1` |
+| #0029, fourth point (a failed place leaves nothing) | Names no leftover in its home-relative form | Yes: `conformance/lease-cli/test-unmet-failed-create-cleanup.ps1`, and `test-lease-driver-outcomes.ps1` for a failed alias step, which leaves nothing and does not block a later `create` |
+| #0087 (the transport names the backend) | Names it while a lease connects | Not a lease CLI row: the ProxyCommand is the operator's, which the Rust build does not have yet (v0.06, #0055) |
 
 **Card #0087: the transport names the backend while a lease connects.** Carried in as the
 requirement in [Reachability](#reachability) that what the transport prints MUST NOT name the
