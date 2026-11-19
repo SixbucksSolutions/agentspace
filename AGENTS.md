@@ -12,8 +12,9 @@ one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md))
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
 - **Where it stands:** [docs/handoff-v0.04.md](docs/handoff-v0.04.md), the architect's handoff
-  after v0.04, for the architect who starts v0.05. **It is a draft until v0.04 closes**; its "At
-  finalize" list says what remains. An agent picking agentspace up SHOULD read it first. The
+  after v0.04, for the architect who starts v0.05. It is final (2026-11-18), and its "When Terry
+  approves v0.04" section says what is left once Terry approves #0030. An agent picking agentspace
+  up SHOULD read it first. The
   earlier handoffs, [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and
   [docs/handoff-mvp.md](docs/handoff-mvp.md), stay for their pieces and lessons.
 - **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.01, and releases v0.02 to v1.0

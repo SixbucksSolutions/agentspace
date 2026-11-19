@@ -2,11 +2,11 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **DRAFT, written by the architect at 2:43pm Pacific on 2026-11-18, while v0.04-T04 (#0080, the
-> clean-room review) runs.** It MUST be finalized before it is relied on: once T04 is merged, its
-> dev lead archived and #0030 in Completed. Every place that waits on that says **At finalize**,
-> and the checklist at the end lists them. Terry will `/clear` the architect after v0.04 closes,
-> so this file is how the next architect learns everything that is not in AGENTS.md.
+> **Final, written by the architect at 11:46pm Pacific on 2026-11-18, once every v0.04 pull request
+> was merged and every dev lead archived.** One step remains, and it is Terry's: approving #0030
+> into Completed. "When Terry approves v0.04" at the end says what the architect does then. Terry
+> `/clear`s the architect after v0.04 closes, so this file is how the next architect learns
+> everything that is not in AGENTS.md.
 
 **Written for a fresh architect who has read nothing yet.** Read in this order:
 
@@ -15,7 +15,7 @@ RFC 2119 keywords; the capitals are load-bearing.
    disagree, AGENTS.md wins, and the disagreement is a bug to fix in this file.
 3. [vision.md](vision.md), for what agentspace is for, then [roadmap.md](roadmap.md), for the
    releases.
-4. [decisions.md](decisions.md): its index first, then D20 and D25 to D34 in full. Read the rest as
+4. [decisions.md](decisions.md): its index first, then D20 and D25 to D37 in full. Read the rest as
    you need it.
 5. [handoff-v0.02.md](handoff-v0.02.md) and [handoff-mvp.md](handoff-mvp.md) for the keeper and
    the MVP's pieces. This file does not repeat them.
@@ -28,23 +28,29 @@ duties" below).
 - **v0.03 (#0046, "Measure what an agent uses") is done:** four stories in three turns, all
   merged and approved, and the epic is in Completed (Terry, 2026-11-18). Its table is
   [footprint.md](footprint.md), its measured run [runs/e0.03-t02-s01.md](runs/e0.03-t02-s01.md).
-- **v0.04 (#0030, "Clean-room spec package") is in its last turns.** T01 to T03 are merged and
-  their ten stories approved. T04 (#0080) ran the first clean-room pass at 2:43pm: both readers
-  said NO (A: 32 gaps, B: 54), so T04 closes the lease CLI's gaps and records every gap's
-  disposition in docs/runs/e0.04-t04-s01.md. Terry approved T05 (#0088 to #0092, five fix stories
-  by owning doc), and the final verdict, #0030's done-when, is T06 (#0093). **At finalize:** state
-  T05's and T06's outcomes and PRs.
-- **The repo:** `main` only, no worktrees, no open PR besides T04's. **At finalize:** confirm.
+- **v0.04 (#0030, "Clean-room spec package") is done, and waits only on Terry's approval.** All
+  six turns and seventeen stories are merged, and #0030 and its last story are in Ready For Review.
+  - T04 (#0080, PR #41) ran the first clean-room pass: both readers said NO (A: 32 gaps, B: 54).
+    T04 closed the lease CLI's gaps, and docs/runs/e0.04-t04-s01.md records every gap's
+    disposition.
+  - T05 (#0088 to #0092, PRs #42 to #46) closed the rest, one story per owning doc, and added
+    D35 (the keeper's contract), D36 (the operator never reports false success) and D37 (seven
+    programs in `%USERPROFILE%\.agentspace\bin`).
+  - T06 (#0093, PR #47, 2026-11-18) ran the final pass on a fresh export of `main`: **both readers
+    said YES**, A (Opus 5.5/high) with 22 minor gaps and B (Fable 5.2/high) with 27. That met
+    #0030's done-when. The 37 distinct gaps left open are listed in docs/runs/e0.04-t06-s01.md,
+    grouped by owning doc, for v0.05's story planning to read. A builder MUST ask the architect
+    about one, never read the prototype.
+- **The repo:** `main` only, with no worktrees, no other branches and no open pull requests.
 - **No lease is live.** `bin\agentspace.cmd lease list` shows 14 leases, all `released`.
 - **The keeper runs on the laptop, idle,** as pwsh 24588 (started 1:06am on 2026-11-18), logging
   `idle lease=- alias=- pid=-` every 30 seconds. The scheduled task `agentspace board holder`
   restarts it if it dies; a later PID is not a fault.
 - **The box** runs only when something connects. Its installed tools match `main`:
   `agentspace-sample`, `agentspace-footprint` and `agentspace-agents` (synced after PR #35).
-- **Swimcoach** reports `v0.04` and `v0.04-T04`, from the reporter pwsh 49144 (started 1:38am).
-  **At finalize:** both are stopped and `milestones.json` is empty.
-- **Every dev lead session of v0.03 and v0.04 is archived** except T04's. **At finalize:** T04's
-  too.
+- **Swimcoach reports `v0.04` only**, from the reporter pwsh 9964 (started 8:30pm on 2026-11-18).
+  Every turn's milestone is stopped. `v0.04` stays until Terry approves #0030.
+- **Every dev lead session of v0.03 and v0.04 is archived.**
 
 ## The architect's standing duties
 
@@ -233,9 +239,9 @@ broken into stories until every v0.04 card is in Completed, and then only on Ter
 | v0.04-T03 | E0.04-T03-S01 | #0084 | #38 | `conformance/lease-cli/`'s harness, and create, get and list |
 | v0.04-T03 | E0.04-T03-S02 | #0085 | #39 | Keeper, schemas and operator conformance, and the test seam in operator.md |
 | v0.04-T03 | E0.04-T03-S03 | #0086 | #40 | The rest of the lease CLI's conformance, and the unmet checks |
-| v0.04-T04 | E0.04-T04-S01 | #0080 | **At finalize** | The first clean-room pass, and the lease CLI's gaps closed |
-| v0.04-T05 | E0.04-T05-S01 to S05 | #0088 to #0092 | **At finalize** | The operator's, keeper's, conformance and vision gaps, by owning doc |
-| v0.04-T06 | E0.04-T06-S01 | #0093 | **At finalize** | The final clean-room pass: v0.04's done-when |
+| v0.04-T04 | E0.04-T04-S01 | #0080 | #41 | The first clean-room pass, and the lease CLI's gaps closed |
+| v0.04-T05 | E0.04-T05-S01 to S05 | #0088 to #0092 | #42 to #46 | The operator's, keeper's, conformance and vision gaps, by owning doc; D35 to D37 |
+| v0.04-T06 | E0.04-T06-S01 | #0093 | #47 | The final clean-room pass, both YES: v0.04's done-when; D37's addendum |
 
 **What a measured turn showed (v0.04-T01, spec writing, footprint.md):** the session's own
 process was about half a GiB whatever it did, each working agent's tool calls were small (0.11
@@ -343,7 +349,9 @@ copying the main checkout's (untracked, never committed) runs it.
 | #0005 to #0017, #0032 | After 1.0 | roadmap.md, "After 1.0" |
 | localswim #0611 to #0614 | localswim does not document the receipt, `credential_directory`'s meaning, `bot.xml`'s bytes or its name, which the token push relies on (operator.md, "What the laptop reads") | On the localswim V2 Dev board, in Ready For Work (2026-11-18). When they close, operator.md SHOULD cite localswim's docs in place of its own description |
 
-**At finalize:** add any cards #0080 opened, and any open questions it carried rather than closed.
+**The clean-room passes opened no other agentspace cards.** Their fixes were T05's and T06's
+stories. decisions.md's Q1 to Q4 are marked "Later, not blocking", each tied to its card after
+1.0. The 37 minor gaps above have no cards, by design.
 
 ## Rules that are easy to break
 
@@ -357,13 +365,17 @@ copying the main checkout's (untracked, never committed) runs it.
 - **Times shown to Terry are `h:mm` with am or pm in the laptop's current zone**, read from the
   system each time. The laptop was on Pacific time through v0.04.
 
-## At finalize
+## When Terry approves v0.04
 
-**The architect who finishes v0.04 MUST do each of these before Terry's `/clear`:**
+**When a board event shows #0030 moved to Completed, the architect MUST, in this order:**
 
-1. Fill every **At finalize** above: T04's outcome and PR, the repo and session state, and any new
-   cards or open questions.
-2. Remove the DRAFT box at the top, and change the opening line's time to the time of
-   finalizing, read from the clock.
-3. Point AGENTS.md's "Where it stands" at this file as the current handoff.
-4. Commit and push, and tell Terry it is final.
+1. Remove the `v0.04` block from `scripts/milestones.json`, which leaves the list empty. Commit
+   and push.
+2. `C:\Projects\swimcoach\bin\swimcoach.cmd stop --project agentspace --milestone v0.04`.
+3. Mark v0.04 done in roadmap.md's table, with what it produced: the spec package (vision.md,
+   lease-api.md and `schemas/`, operator.md, state.md, driver.md, keeper.md, conformance.md and
+   `conformance/`), passed by two clean-room readers.
+4. **Stop the reporter**, since no milestone is left, and start it again only when v0.05's
+   stories are laid out.
+5. **Wait for Terry's word before breaking v0.05 (#0054) into stories** (D14; "The scope ahead").
+   Story planning starts from roadmap.md's v0.05 row, the specs, and T06's open-gap list.
