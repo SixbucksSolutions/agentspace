@@ -73,7 +73,9 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 - **The prototype is `scripts/board-holder.ps1`, run by PowerShell 7, with its installer
   `scripts/install-board-holder.ps1` and its task launcher `scripts/BoardHolderLauncher.cs`.**
   They are named here only where a note says where a requirement came from. The rewrite replaces
-  all three in v0.06 (#0055, D28).
+  all three in v0.06 (#0055, D28) with `agentspace-keeper.exe`, `agentspace-keeper-install.exe`
+  and `agentspace-keeper-task.exe`, installed with agentspace's other programs as
+  [operator.md, Programs and install layout](operator.md#programs-and-install-layout) says.
 
 ### Words used here
 
@@ -205,9 +207,15 @@ nobody tracking it, and neither can stop it when a lease expires.
          [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>] [-ReleaseGraceSeconds <n>]
 ```
 
-**`<keeper>` stands for the keeper's entry point.** Today that is `pwsh -NoProfile -File
-<checkout>\scripts\board-holder.ps1`, and its messages name it `board-holder.ps1`. What the
-rewrite's entry point is called is open ([Q3](#open-questions)); its messages MUST name its own.
+**`<keeper>` stands for the keeper's program, `agentspace-keeper.exe`, a console program in the
+install folder** ([operator.md, Programs and install layout](operator.md#the-programs)), which a
+person runs as `agentspace-keeper`. Its usage lines and messages name it `agentspace-keeper`,
+whatever path started it. It keeps the single-dash arguments below
+([operator.md, Argument style](operator.md#argument-style)). It has no help: `-h`, `--help` and
+`-?` are unknown arguments ([Usage errors](#usage-errors)). Note on where this came from: the
+prototype's entry point is `pwsh -NoProfile -File <checkout>\scripts\board-holder.ps1`, and its
+messages name it `board-holder.ps1`. A check MUST NOT depend on which of the two names a message
+prints.
 
 - **Argument names are matched exactly, without regard to case.** The prototype also ignores one
   `:` at the end of a name (`-Watch:`); the rewrite MAY, and a caller MUST NOT depend on it.
@@ -259,13 +267,15 @@ make its launcher another program, or tell it the request's path another way.
 
 ### Usage errors
 
-**A usage error writes three lines to stderr, logs nothing, and exits 2:** `board-holder.ps1:
+**A usage error writes three lines to stderr, logs nothing, and exits 2:** `agentspace-keeper:
 <message>`, then the two usage lines:
 
 ```
-Usage: board-holder.ps1 [-SshExe <full path>] [-Now <YYYY-MM-DDTHH:MM:SSZ>]
-       board-holder.ps1 -Watch [-SshExe <full path>] [-IntervalSeconds <n>] [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>] [-ReleaseGraceSeconds <n>]
+Usage: agentspace-keeper [-SshExe <full path>] [-Now <YYYY-MM-DDTHH:MM:SSZ>]
+       agentspace-keeper -Watch [-SshExe <full path>] [-IntervalSeconds <n>] [-MaxPasses <n>] [-BackoffBaseSeconds <n>] [-BackoffMaxSeconds <n>] [-ReleaseGraceSeconds <n>]
 ```
+
+The prototype writes `board-holder.ps1` in place of `agentspace-keeper`, in all three lines.
 
 **Checks run in this order, and the first that fails is the one reported.** `<Name>` is the
 argument's name as this page spells it (`-SshExe`, not the caller's spelling); `<raw>`, `<value>`
@@ -658,7 +668,7 @@ could not be started: <why>`, when:**
 |---|---|
 | `-SshExe` is not a file | `SshExe '<path>' does not exist.` |
 | The state folder's path holds a `"` | `The state folder '<path>' holds a quote.` |
-| The keeper's own program path holds a `"` | `This script's path '<path>' holds a quote.` |
+| The keeper's own program path holds a `"` | `This program's path '<path>' holds a quote.` The prototype says `This script's path`. |
 | The alias does not match `\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`, case-sensitively | `Alias '<alias>' is not a host alias.` |
 
 The form checks of [Usage errors](#usage-errors) row 5 come first, then this table's rows in
@@ -1179,6 +1189,11 @@ to it.
 his yes (E0.02-T03-S01; vision.md). The installer itself asks for nothing; the yes is the caller's
 to get.
 
+**The task runs the installed programs**: the task's launcher, `agentspace-keeper-task.exe`, which
+runs the keeper, `agentspace-keeper.exe`. Both are in the install folder, written `<install>` on
+this page: `%USERPROFILE%\.agentspace\bin`, with `USERPROFILE`'s value written out (D37;
+[operator.md, Programs and install layout](operator.md#programs-and-install-layout)).
+
 ### The task's fields
 
 | Field | Value | Why |
@@ -1195,16 +1210,23 @@ to get.
 | Stop on going to batteries | No | |
 | Restart count | 3 | Kept, though it was observed not to restart a keeper (below) |
 | Restart interval | `PT1M` | |
-| Action | The task's launcher, given the PowerShell 7 executable's full path, the keeper script's full path and `-Watch`, each quoted: `"<pwsh>" "<checkout>\scripts\board-holder.ps1" -Watch` | |
-| Action's working folder | `<checkout>`, the folder of the agentspace repository the installer ran from | |
+| Action | The task's launcher by full path, `<install>\agentspace-keeper-task.exe`, with the one argument `-Watch` | The launcher passes `-Watch` to the keeper ([The task's launcher](#the-tasks-launcher)) |
+| Action's working folder | `%USERPROFILE%`, with its value written out | So the task holds open neither the install folder nor a checkout, as the holder does not ([Starting a holder](#starting-a-holder), item 4) |
 
 **Every other setting is Task Scheduler's default for a new task**, among them that the task is
 enabled and is not hidden in Task Scheduler's library. So a registration over a task that was
 disabled by hand enables it again ([Q14](#open-questions)).
 
-**`<checkout>` MUST be the main checkout, never a git worktree**, since a worktree is deleted after
-its branch merges and the task would then point at nothing. The rewrite's action names its own
-keeper program; whether it still needs a separate launcher is [Q8](#open-questions).
+**The action MUST name the programs in the install folder, never in a build's output folder or a
+checkout**, since a build's folder can be cleaned and a git worktree is deleted after its branch
+merges, and the task would then point at nothing. The installer enforces it
+([The installer](#the-installer)).
+
+> **Note.** The prototype's task runs `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe` with the
+> arguments `"<pwsh>" "<checkout>\scripts\board-holder.ps1" -Watch`, each quoted, where `<pwsh>` is
+> PowerShell 7's full path, in the working folder `<checkout>`, the main checkout of the repository
+> it was installed from. The rewrite's installer replaces that task
+> ([operator.md, Until v0.06 retires the prototype's entry points](operator.md#until-v006-retires-the-prototypes-entry-points)).
 
 **What Task Scheduler does with this task, as observed on today's laptop.** These are observations,
 not requirements; a check MUST NOT assert them:
@@ -1216,7 +1238,7 @@ not requirements; a check MUST NOT assert them:
   `kept`.
 - **A firing ignored because the keeper runs set the task's last result to `0x800710E0`**, which
   is IgnoreNew at work, not a failure.
-- **A killed keeper's task ended with last result `0xFFFFFFFF`**, the launcher passing on the
+- **A killed keeper's task ended with last result `0xFFFFFFFF`**, the task's launcher passing on the
   killed process's exit code.
 - **A trigger with a past start and no duration kept firing across reboot and logon** (D30, from
   22 such tasks on the laptop).
@@ -1229,50 +1251,83 @@ untrusted if the holder is gone, and starts a holder at once.
 
 ### The task's launcher
 
-**A no-window program that runs the keeper and waits for it**, so the task shows nothing on
-screen. It is built at install time from `<checkout>\scripts\BoardHolderLauncher.cs` by the .NET
-Framework's C# compiler, as a Windows (not console) program, to the path
-[docs/state.md](state.md#the-keepers-files) gives, never into the repository.
+**`agentspace-keeper-task.exe` is a Windows program, with no console, that runs the keeper and
+waits for it**, so the task shows nothing on screen. It ships in the install folder with the other
+programs, built with them, and is never built at install
+([operator.md, The programs](operator.md#the-programs)).
 
-- **Arguments:** the full path of the PowerShell 7 executable, the full path of the keeper script,
-  then the keeper's arguments (`-Watch`).
-- **It runs** `<pwsh> -NoProfile -NonInteractive -File "<script>" "<argument>"...`, each keeper
-  argument quoted as it is, with no window, in its own working folder (the task's), and waits.
+**Why a separate launcher (D37, which settles [Q8](#open-questions)).** The keeper MUST be a console program:
+a person and the checks run it from a shell and read its stdout, stderr and exit code, and a shell
+neither waits for a program with no console nor gives it its own. A console program that the task
+ran itself would open a console window at every logon and every firing. So the task runs a launcher
+with no console, which runs the keeper with no window.
+
+- **Arguments:** the keeper's arguments (`-Watch`), passed on unchanged.
+- **It runs `agentspace-keeper.exe`, found in its own folder**
+  ([operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others)),
+  with those arguments, with no console window, in its own working folder (the task's), and waits.
 - **It exits with the keeper's exit code**, so a keeper that ends with an error is a failed run of
   the task.
-- **It refuses with exit 2**, logging why, fewer than 2 arguments (`Refused: the launcher needs the
-  path of pwsh.exe and of board-holder.ps1, and got <n> argument(s).`), or a keeper argument that
-  holds a `"` or ends in `\` (`Refused: argument <n> holds a quote or ends in a backslash; only
-  plain arguments such as -Watch are passed on.`), since quoting would split or join it. `<n>`
-  counts from 1 over all of the launcher's arguments, so the first keeper argument is 3.
+- **It refuses with exit 2**, logging why, a keeper argument that holds a `"` or ends in `\`
+  (`Refused: argument <n> holds a quote or ends in a backslash; only plain arguments such as -Watch
+  are passed on.`), since quoting would split or join it. `<n>` counts the launcher's arguments
+  from 1.
 - **It exits 1, logging the error's kind and message, when the keeper could not be started or
-  waited for.**
+  waited for**, a missing `agentspace-keeper.exe` included.
 - **It passes its own environment to the keeper unchanged**, and redirects none of the keeper's
   streams. The keeper runs with no window, so its stdout and stderr reach no one.
 - **Its log** is `board-holder-launcher-errors.log`, in the folder
   [docs/state.md](state.md#the-keepers-files) gives for it. A failure to write it is ignored.
-- **End in Task Scheduler stops only the launcher**, and leaves the keeper running (E0.02-T04-S03's
-  live check, D30). See [Stopping and starting the keeper](#stopping-and-starting-the-keeper).
+- **End in Task Scheduler ends the launcher.** Whether it also ends the keeper is not required:
+  the prototype's End leaves the keeper running (E0.02-T04-S03's live check, D30), and
+  [Stopping and starting the keeper](#stopping-and-starting-the-keeper) works either way.
+
+> **Note.** The prototype's launcher is built at install time from
+> `<checkout>\scripts\BoardHolderLauncher.cs` by the .NET Framework's C# compiler, as a Windows
+> program, to `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`. Its first two arguments are
+> PowerShell 7's full path and the keeper script's, before the keeper's arguments, so `<n>` of its
+> quote refusal is 3 for the first keeper argument. It runs
+> `<pwsh> -NoProfile -NonInteractive -File "<script>" "<argument>"...`, and refuses fewer than 2
+> arguments with exit 2 (`Refused: the launcher needs the path of pwsh.exe and of
+> board-holder.ps1, and got <n> argument(s).`).
 
 ### The installer
 
 ```
-<installer> [-DryRun] [-Uninstall]
+<installer> [-DryRun | -Uninstall]
 ```
 
-**`<installer>` is `pwsh -NoProfile -File <checkout>\scripts\install-board-holder.ps1` today.** It
-MUST be run from the main checkout.
+**`<installer>` is `agentspace-keeper-install.exe`, in the install folder**, which a person runs as
+`agentspace-keeper-install` ([operator.md, The programs](operator.md#the-programs)). A real install
+MUST be run from the install folder. Note on where this came from: the prototype's is
+`pwsh -NoProfile -File <checkout>\scripts\install-board-holder.ps1`, run from the main checkout.
 
-**The PowerShell 7 executable named in the action is found on `PATH` when the installer runs, and
-stored as a full path.** If it cannot be found, `-DryRun` and a real install fail with exit 1.
-`-Uninstall` does not look for it.
+**Its arguments** are `-DryRun` and `-Uninstall`, each a switch that takes no value, matched
+exactly and without regard to case ([operator.md, Argument style](operator.md#argument-style)).
+There are no positional arguments, and there is no help: `-h`, `--help` and `-?` are unknown
+arguments.
+
+**Usage errors (D37, which settles [Q10](#open-questions)).** A usage error writes two lines to stderr,
+`agentspace-keeper-install: <message>` and then `Usage: agentspace-keeper-install [-DryRun |
+-Uninstall]`, changes nothing, and exits 2. The checks run in this order, and the first that fails
+is the one reported:
+
+| # | When | Message |
+|---|---|---|
+| 1 | An argument that is neither name, taken left to right | `Unknown argument '<raw>'.` |
+| 1 | A name given twice | `-<Name> is given twice.` |
+| 2 | `-DryRun` with `-Uninstall` | `-DryRun and -Uninstall cannot be given together.` |
+
+`<Name>` is the argument's name as this page spells it; `<raw>` is what the caller gave. So
+`-DryRun -Uninstall` changes nothing, as a dry run never does.
 
 **`-DryRun` builds the task's definition and prints the fields the installer sets, and changes
-nothing**: no build, no registration, no start. It does not look for a running keeper. It exits 0.
-Its output, one `Label: value` line each, in this order:
+nothing**: no registration, no start, no removal. It does not look for a running keeper, and it
+does not check that the programs exist. It exits 0. Its output, one `Label: value` line each, in
+this order:
 
 ```
-Warning: <checkout> is a git worktree, not the main checkout. A real install from here is refused, because the folder is deleted after its branch merges.
+Warning: <folder> is not the install folder <install>. A real install from here is refused, because the task would run programs that a cleanup can remove.
 Name: agentspace board holder
 Description: Keeps the agentspace board holder running while a lease is ready (D30).
 Trigger 1: AtLogOn user=<DOMAIN>\<user>
@@ -1288,78 +1343,113 @@ DisallowStartIfOnBatteries: False
 StopIfGoingOnBatteries: False
 RestartCount: 3
 RestartInterval: PT1M
-Action Execute: %USERPROFILE%\.agentspace\BoardHolderLauncher.exe
-Arguments: "<pwsh>" "<checkout>\scripts\board-holder.ps1" -Watch
-WorkingDirectory: <checkout>
-Runs: <pwsh> -NoProfile -NonInteractive -File <checkout>\scripts\board-holder.ps1 -Watch
+Action Execute: <folder>\agentspace-keeper-task.exe
+Arguments: -Watch
+WorkingDirectory: <profile>
+Runs: <folder>\agentspace-keeper.exe -Watch
 Window: hidden
-LauncherSource: <checkout>\scripts\BoardHolderLauncher.cs
 Start: a real install starts the task immediately after registering it.
-Mode: dry run; nothing was built, registered or started.
+Mode: dry run; nothing was registered or started.
 ```
 
-- **The `Warning:` line appears only when `<checkout>` is a git worktree.** `<checkout>` is a
-  worktree when its path holds a `.claude\worktrees\` segment (either slash), or when git reports a
-  git folder for it that differs from its common git folder.
-- **`StopAtDurationEnd`** appears when the repetition reports that field. Paths are printed
+- **`<folder>` is the folder of the installer's own executable**, `<install>` is
+  `%USERPROFILE%\.agentspace\bin`, and `<profile>` is `%USERPROFILE%`. Every path is printed
   expanded.
+- **The `Warning:` line appears only when `<folder>` is not `<install>`**, compared as full paths
+  without regard to case.
+- **`StopAtDurationEnd`** appears when the repetition reports that field.
 - **`StartBoundary` is the time the dry run built its definition**, so a later real install
   registers a later one.
 - **A trigger of another kind** prints `Trigger <n>: <its kind>`, and a repetition line is printed
   for any trigger that has an interval, with `Duration=indefinite` when it has no duration.
+- Note on where this came from: the prototype's `Warning:` line says that `<checkout>` is a git
+  worktree, not the main checkout. Its `Action Execute:`, `Arguments:`, `WorkingDirectory:` and
+  `Runs:` lines name its own task ([The task's fields](#the-tasks-fields), the note), it prints a
+  `LauncherSource:` line before `Start:`, and its last line ends `nothing was built, registered or
+  started.`
 
 **A real install, in this order:**
-1. **From a worktree, it refuses**, with `install-board-holder.ps1: <checkout> is a git worktree,
-   not the main checkout. The task MUST point at the main checkout, because a worktree is deleted
-   after its branch merges. Run this from the main checkout.` on stderr, and exit 2.
-2. **It creates `%USERPROFILE%\.agentspace`** if it is missing.
-3. **While a keeper runs, it refuses**, with exit 2 and nothing changed, stopped or killed. A keeper
-   runs when the task's state is Running, or when a `pwsh.exe` process's command line holds this
-   checkout's full `scripts\board-holder.ps1` path, compared with case, and `-Watch` after a blank
-   or a `"`, without regard to case. A process list that cannot be read finds no keeper, so the
-   check then rests on the task's state alone ([Q12](#open-questions)). The message, on stderr:
+1. **Outside the install folder, it refuses**, with `agentspace-keeper-install: <folder> is not the
+   install folder <install>. The task MUST run the installed keeper, because a build's folder can
+   be cleaned or deleted. Install the programs, then run this from <install>.` on stderr, and exit
+   2.
+2. **It checks that `agentspace-keeper.exe` and `agentspace-keeper-task.exe` are in its folder.**
+   A missing one fails with `agentspace-keeper-install: <path> is missing; install the programs
+   again.` and exit 1.
+3. **While a keeper runs, it refuses**, with exit 2 and nothing changed, stopped or killed. **A
+   keeper runs when the task's state is Running, or when `board-holder-keeper.lock` in
+   `%USERPROFILE%\.agentspace` is held** ([Locks](#locks)). **The installer MUST NOT read
+   `AGENTSPACE_STATE_DIR` for this.** That variable is a check's and a worktree's, set in the shell
+   the installer may be run from ([docs/state.md](state.md#what-moves-which-files)), so following it
+   would look for the task's keeper in a throwaway folder. The task's keeper runs with the user's
+   logon environment, which SHOULD NOT set it, and so uses `%USERPROFILE%\.agentspace`. Where the
+   logon environment does set it, the check misses that keeper, and the outcome is the one this
+   step's Why gives for any missed keeper. The lock is held when the file
+   exists and opening it as a keeper does (for reading and writing, sharing read only, never
+   creating it) fails because another process has it open; an open that succeeds is closed at once.
+   The keeper's PID is then read from the file as a second keeper reads it. The message, on stderr:
 
    ```
-   install-board-holder.ps1: A keeper is running (task state: <state>; keeper pwsh PID: <pid>, <pid>). Stop it first: End the task in Task Scheduler (Stop-ScheduledTask), then stop each keeper pwsh by its PID after checking its command line runs <checkout>\scripts\board-holder.ps1 -Watch. Its holder keeps running, and the keeper this install starts adopts it.
+   agentspace-keeper-install: A keeper is running (task state: <state>; keeper PID: <pid>). Stop it first: End the task in Task Scheduler (Stop-ScheduledTask), then stop the keeper's process by the PID above, once the keeper lock still gives that PID and that process runs the keeper. Its holder keeps running, and the keeper this install starts adopts it.
    ```
 
-   `<state>` is `not registered` with no task, and the PID list is `none found` when only the
-   task's state refused. **Why:** the build overwrites the launcher that a running task holds
-   open, which fails, and ending the task stops only the launcher, so a registration then would
-   start a second keeper beside the old one (D30, card #0067). The `"` case matters because the
-   launcher quotes each argument, so a real keeper's command line ends `board-holder.ps1" "-Watch"`
-   (E0.02-T04-S02's live run).
-4. **It builds the launcher.** A build that fails ends the install with an error and exit 1.
-5. **It registers the task, replacing any task of that name with no prompt, and starts it at
+   `<state>` is `not registered` with no task. `<pid>` is the PID the lock file gives, `-` when the
+   lock is held and the file gives none, and `none found` when only the task's state refused.
+   **Why:** a registration while a keeper runs would leave that keeper running its old program,
+   and the new task's keeper would find the keeper lock held and exit; ending the task may stop only
+   the task's launcher, so the keeper MUST be stopped by its PID (D30, card #0067). The lock finds a keeper
+   whoever started it, the prototype's included, which a match on a process's command line does not
+   ([Q12](#open-questions)).
+
+   **Which process is the keeper, for that stop:** the one whose PID `board-holder-keeper.lock`
+   gives while the lock is held, checked just before the stop to still be so, and whose program is
+   the keeper: `agentspace-keeper.exe`, or, for the prototype's keeper, `pwsh.exe` with
+   `board-holder.ps1` and `-Watch` on its command line. A running process's PID is not reused, so
+   no other match on a command line is needed. The PID alone is not enough: something other than
+   a keeper can hold the file, and the PID in it can then be stale ([Locks](#locks)).
+4. **It registers the task, replacing any task of that name with no prompt, and starts it at
    once.** A failure to register or start ends the install with exit 1.
+5. **It removes the prototype's launcher, `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`, if
+   that file exists**, which the new task does not use, and prints `Removed <path>.` A failure to
+   remove it prints `Warning: <path> could not be removed: <error>` to stderr, and does not change
+   the exit code.
 6. **It prints the registered task's trigger lines, read back, then** `Registered and started
    'agentspace board holder'. Log: %USERPROFILE%\.agentspace\board-holder.log` (the path expanded),
    and exits 0.
 
+> **Note.** Where steps 1 to 3 came from: the prototype refuses from a git worktree, rather than
+> from outside an install folder; it builds the task's launcher where the rewrite checks for it, and that
+> build fails while the task runs the launcher; and it finds a running keeper by a `pwsh.exe`
+> process whose command line holds its checkout's `scripts\board-holder.ps1` path, compared with
+> case, and `-Watch` after a blank or a `"`. Its refusal names `install-board-holder.ps1` and that
+> path.
+
 **`-Uninstall`** ends the task if it is registered, unregisters it and prints `Unregistered
 'agentspace board holder'.`, or prints `No task 'agentspace board holder' to remove.` It then
-deletes the launcher exe, if present, and prints `Removed <path>.` It exits 0, or 1 when the
-unregistration or the deletion fails. It leaves `%USERPROFILE%\.agentspace` and every file in it.
-It is not refused from a worktree, and it does not stop the keeper: ending the task stops only the
-launcher, so the keeper's process MUST still be stopped by its checked PID (D30). A failure to end
-the task is ignored.
+removes the prototype's launcher, `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`, if present,
+and prints `Removed <path>.` It exits 0, or 1 when the unregistration or that removal fails.
+**It never removes a program from the install folder**, which the lease CLI and the operator share,
+and it leaves `%USERPROFILE%\.agentspace` and every other file in it. It is not refused outside the
+install folder, and it does not stop the keeper: ending the task may stop only the task's launcher, so the
+keeper's process MUST still be stopped by its PID, checked as step 3 of a real install says (D30). A failure to end the task is
+ignored.
 
-**`-Uninstall` can fail on the launcher it has just ended (unobserved).** It deletes the launcher
-exe right after it ends the task, without waiting for the launcher's process to exit; a launcher
-still exiting holds its exe, and the deletion then fails with exit 1, with the task already
-unregistered. Running `-Uninstall` again then removes the exe ([Q21](#open-questions)).
+**A removal of the prototype's launcher can fail on a launcher still exiting (unobserved).** The
+installer removes it right after it ends the task, without waiting for the launcher's process to
+exit, and a launcher still exiting holds its file. Running `-Uninstall` again then removes it
+([Q21](#open-questions)). The prototype's own `-Uninstall` deletes its launcher the same way.
 
-**Any other error ends the installer with exit 1.** In the prototype that is PowerShell's own error
-record, and its arguments are bound by PowerShell, so an unknown argument is also PowerShell's
-error.
+**Any other error ends the installer with exit 1**, with one line on stderr that starts
+`agentspace-keeper-install: `. The prototype prints PowerShell's own error record then, and its
+arguments are bound by PowerShell, so an unknown argument there is PowerShell's error, with exit 1.
 
 ## Stopping and starting the keeper
 
 **To stop the keeper:**
 1. **End the task** (Task Scheduler's End, or `Stop-ScheduledTask`). Today that stops only the
    launcher.
-2. **Stop the keeper's process by its PID, after checking that its command line runs the keeper
-   with `-Watch`.** Never by name: another keeper process may be running, such as a check's keeper
+2. **Stop the keeper's process by its PID, the process [The installer](#the-installer), step 3,
+   defines as the keeper.** Never by name: another keeper process may be running, such as a check's keeper
    with its own state folder, or a one-pass run.
 3. **To keep it stopped, also disable the task, or remove it with `-Uninstall`.** Otherwise the
    repeating trigger starts a keeper again within a minute. A later real install enables a disabled
@@ -1382,8 +1472,8 @@ its program once, when it started, and a merge does not reach it. A re-registrat
 install) is refused while a keeper runs, so it, too, comes after the keeper is stopped.
 
 **Before a re-install, the task SHOULD be disabled as well, or the install run within the minute.**
-A keeper started by the repeating trigger between the installer's check and its build makes the
-build fail with exit 1, and leaves the old task registered. A real install enables the task again
+A keeper started by the repeating trigger between the installer's check and its registration
+keeps running the old program, and the new task's keeper finds the keeper lock held and exits. A real install enables the task again
 ([Q14](#open-questions)).
 
 ## Checking the keeper
@@ -1448,28 +1538,28 @@ this table.**
 | Each line of `board-holder.log` lands whole at the end of the file, even with two writers at once | Finds the end of the file when it opens the log, then writes there, so two writers may overwrite each other's line (not verified by a run) | [Log lines](#log-lines) |
 | Each create call of a start is bounded at 10 seconds, and one that reaches the bound counts as a call that threw | Sets no bound on a create call, so one that hangs holds the pass and `board-holder.lock` for as long as it hangs | D35; [Q15](#open-questions) |
 | `-SshExe`'s default is the value of `SystemRoot`, then `\System32\OpenSSH\ssh.exe` | Uses the fixed text `C:\Windows\System32\OpenSSH\ssh.exe`. The two differ only on a machine whose Windows folder is elsewhere, so no check on a machine seen so far fails on it | D35; [Command line](#command-line) |
+| The installer's usage errors are its own: two lines on stderr, nothing changed, exit 2 | PowerShell's binder answers an unknown argument with its own error record and exit 1 | [The installer](#the-installer); [Q10](#open-questions) |
+| The installer finds a running keeper by the task's state or `board-holder-keeper.lock` | Matches a `pwsh.exe` process's command line against its own checkout's script path, and finds none when the process list cannot be read | [The installer](#the-installer); [Q12](#open-questions) |
 
 ## Open questions
 
 **What reading the code and the docs could not settle.** After the clean-room review
-(E0.04-T04-S01, #0080) and E0.04-T05-S04 (#0091), every question here but Q3, Q8 and Q10 is
+(E0.04-T04-S01, #0080), E0.04-T05-S04 (#0091) and E0.04-T05-S02 (#0089), every question here is
 either closed or marked "Later, not blocking", with the reason in its last cell, and none of
-those blocks building a drop-in of contract v0. Q3, Q8 and Q10 are about the entry point, the
-task's launcher and the installer, and are settled with those sections
-([The installed task](#the-installed-task)).
+those blocks building a drop-in of contract v0.
 
 | | Question | Settled by |
 |---|---|---|
 | **Q1** | **Later, not blocking:** **Is a keeper for a laptop that is not Windows in scope?** Everything here is Windows: Job Objects, WMI, Task Scheduler, `cmd.exe`. D4 makes the host's platform a parameter, but says nothing of the laptop's. | Contract v0's caller runs on Windows (D8; [lease-api.md](lease-api.md#the-program)), and this page specifies a Windows keeper in full, so a drop-in has nothing to guess. Later: the architect, with the lease CLI's Linux and macOS callers |
 | **Q2** | **Later, not blocking:** **One holder per host, or one in all?** D30 says one per host; today every lease is on one host, so the keeper runs one in all and picks across every ready lease. With a host per project (v0.07, #0047), the choice, the record (one holder today) and the locks need a per-host form. | Every lease is on one host until v0.07, so one in all is one per host, and this page states it ([What the keeper does](#what-the-keeper-does)). Later: v0.07 (#0047) |
-| **Q3** | **What is the rewrite's keeper entry point called**, and does it keep PowerShell-style arguments (`-Watch`, `-SshExe`)? The task's action and every check name it. | v0.06 (#0055) |
+| **Q3** | **Closed by D37 (architect, 2026-11-18).** ~~What is the rewrite's keeper entry point called, and does it keep PowerShell-style arguments (`-Watch`, `-SshExe`)?~~ It is `agentspace-keeper.exe`, a console program in the install folder, and its usage lines and messages name it `agentspace-keeper` ([Command line](#command-line); [operator.md, Programs and install layout](operator.md#programs-and-install-layout)). It keeps the single-dash arguments this page gives ([operator.md, Argument style](operator.md#argument-style)). | Closed |
 | **Q4** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-26, B-41): the holder, and the launcher that creates it, MUST run with the user's logon environment, never with the keeper's**, and a variable set only for the keeper MUST NOT reach the holder or its ProxyCommand ([Streams and environment](#streams-and-environment)). The prototype meets it: its launcher is created by WMI. | Closed |
 | **Q5** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-07, B-37, A-26): the launch request, claim and result files are part of contract v0.** Every start MUST go through the handshake with them; which program the launcher is, and how it is told the request's path, are the build's ([Starting a holder](#starting-a-holder)). Whether a compiled keeper could break away from the task's job directly is still unobserved, and a later contract MAY drop the files once a run on the laptop shows another mechanism meets the start's guarantees. | Closed |
 | **Q6** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-09, B-38): the pass logs `lost lease=<id> alias=<alias> pid=<pid>` for the tracked holder**, a new action in the grammar ([Log lines](#log-lines)), whether or not a lease is ready, then the keeper's `grace` or `backoff` line ([Release grace](#release-grace)). When the record names another holder that is trusted, the table's earlier rows win: the pass keeps it and the keeper adopts it with no grace, since nothing is started, or the pass stops it and the grace follows the stop ([The order of a pass](#the-order-of-a-pass)). | Closed |
 | **Q7** | **Later, not blocking:** **Should `board-holder.log` be rotated?** It grows without bound: about 90 KB a day with an orphaned keeper, and a line per pass (about 2,900 a day at the default interval) otherwise. | This page states the rule to build, that it is never rotated ([Log lines](#log-lines)), and nothing reads it but people and checks. Later: the architect |
-| **Q8** | **Does the rewrite need a separate task launcher?** The launcher exists so the task shows no window, and so End stops only it. A keeper built as a Windows (no-console) program could be the task's action itself; End would then stop the keeper, which changes [Stopping and starting the keeper](#stopping-and-starting-the-keeper) and the installer's refusal. Today nothing ends the keeper when the launcher ends: it is not in a job that is closed with the launcher. | The architect |
+| **Q8** | **Closed by D37 (architect, 2026-11-18).** ~~Does the rewrite need a separate task launcher?~~ Yes: `agentspace-keeper-task.exe`, a program with no console that ships in the install folder. The keeper stays a console program, because a person and the checks run it from a shell, and the task runs the launcher so that no console window opens ([The task's launcher](#the-tasks-launcher)). Whether End also ends the keeper is not required, and [Stopping and starting the keeper](#stopping-and-starting-the-keeper) works either way. | Closed |
 | **Q9** | **Closed (E0.04-T03-S02).** ~~How does a check make a stub holder exit inside the window between a keeper's look and its pass, without a fixed sleep?~~ The check holds `board-holder.lock`, waits for the keeper's `skipped ... reason=locked` line, which shows a pass waiting on the lock, stops the stub while that pass waits, and then releases the lock. The keeper logs nothing between its look and its lock wait, so the stop is one bounded wait after that line, 6 seconds, in the middle of a window that is nominally 5 seconds from each edge and nearer 3 under load, which the retry covers. An attempt that the log shows missed the window is not a result, and is run again, up to 3 times ([docs/conformance.md](conformance.md#the-files-that-are-expected-to-fail)) | E0.04-T03-S02 |
-| **Q10** | **What MUST the installer do when given both `-DryRun` and `-Uninstall`?** This page requires that it changes nothing; whether it refuses with a usage error or prints what it would remove is open. The installer's usage errors and their exit code are also unspecified, since PowerShell's binder answers them today. | The architect |
+| **Q10** | **Closed by D37 (architect, 2026-11-18).** ~~What MUST the installer do when given both `-DryRun` and `-Uninstall`?~~ It refuses them as a usage error, changing nothing. Its usage errors are its own: two lines on stderr and exit 2 ([The installer](#the-installer)). | Closed |
 | **Q11** | **Later, not blocking:** **Should a keeper that starts with a record whose holder is already gone wait the grace?** [Release grace](#release-grace) says a keeper that has had no holder, such as one that starts with no holder recorded, starts its first holder at once. With a stale record, the holder may have died just before the keeper started, as when both died together, and its session may still hold the forwards. Today it starts at once. | This page states the rule to build, that it starts at once ([A pass that is killed](#a-pass-that-is-killed)). The cost of being wrong is one holder that fails on `ExitOnForwardFailure`, which the backoff then spaces out. Later: the architect |
 | **Q12** | **Later, not blocking:** **Should the installer's refusal be more than a partial guard?** It matches only this checkout's script path, compared with case, and finds no keeper when the process list cannot be read. A keeper it misses holds `board-holder-keeper.lock`, so the new task's keeper exits on it rather than running beside it, and the board stays held; but a missed keeper launched by the old task also holds the launcher exe, and the build then fails. A rewrite could ask the keeper lock instead of the process list. | A keeper the refusal misses still cannot run beside another, because of `board-holder-keeper.lock` ([Locks](#locks)), and the worst case is a failed install that leaves the old task in place. How the rewrite's installer finds a running keeper is stated with the installer ([The installer](#the-installer)): by `board-holder-keeper.lock`, not by the process list, which leaves this question to the prototype's guard alone. Later: the architect |
 | **Q13** | **Later, not blocking:** **What MUST be done about a holder, and launch files, left by a pass that was killed mid-start?** Nothing removes the files today, so they collect in the state folder; removing one that a live pass still uses would break its handshake, so an age bound would be needed. A leftover `.result.json` names the holder's PID, creation time and command line: should the next pass check it as it checks a record, and adopt or stop the holder? Today such a holder, like one whose record was dropped ([Trusting the record](#trusting-the-record)), is never found again, keeps its host up and makes every start fail. | This page states the rule to build, that nothing removes or reads the leftovers ([A pass that is killed](#a-pass-that-is-killed)), and only a killed pass leaves them. Recovering such a holder is an addition no other behavior waits on. Later: the architect; [state.md Q4](state.md#open-questions) for the files |
