@@ -19,7 +19,7 @@ jsonschema = { version = "=0.60.2", default-features = false }
 # only unsafe calls. The version is
 # the one already in Cargo.lock (published 2025-10-06).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"] }
 
 [dev-dependencies]
 # Throwaway folders for the on-disk tests; the version agentspace-credential already uses.

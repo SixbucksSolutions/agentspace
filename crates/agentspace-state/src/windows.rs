@@ -21,11 +21,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     FileRenameInfoEx, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     SetFileInformationByHandle,
 };
-
-/// `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`, which windows-sys does not define.
-const RENAME_REPLACE_IF_EXISTS: u32 = 0x1;
-/// `FILE_RENAME_FLAG_POSIX_SEMANTICS`, which windows-sys does not define.
-const RENAME_POSIX_SEMANTICS: u32 = 0x2;
+use windows_sys::Win32::System::WindowsProgramming::{
+    FILE_RENAME_FLAG_POSIX_SEMANTICS, FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
+};
 
 fn is_held(e: &io::Error) -> bool {
     matches!(
@@ -73,10 +71,21 @@ pub fn create_temp_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// What a Windows error code from a rename says: another process holds a file without sharing
-/// delete (access denied, a sharing violation or a lock violation) and the caller tries again, or
-/// anything else, which fails at once.
-fn classify(code: Option<u32>) -> ReplaceFailure {
+/// What a Windows error code from the POSIX rename says: another process holds the target without
+/// sharing delete (a sharing violation or a lock violation) and the caller tries again, or anything
+/// else, which fails at once. The POSIX rename never reports a held target as access denied, so
+/// access denied here is a real refusal, such as a read-only target, and waiting does not change it.
+fn classify_posix(code: u32) -> ReplaceFailure {
+    match code {
+        ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => ReplaceFailure::Held,
+        _ => ReplaceFailure::Other,
+    }
+}
+
+/// What a Windows error code from `MoveFileExW` says. Its classic rename semantics report a target
+/// that another process holds without sharing delete as access denied as well as a sharing or lock
+/// violation, so all three are tried again.
+fn classify_move_file_ex(code: Option<u32>) -> ReplaceFailure {
     match code {
         Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION) => {
             ReplaceFailure::Held
@@ -95,21 +104,24 @@ fn posix_rename(temp: &File, to: &Path) -> Result<(), u32> {
     }
     let name_bytes = name.len() * 2;
     let offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
-    // The variable-length FileName follows the fixed part, with room for its NUL. The buffer is made
-    // of u64 so that it is aligned for the struct, which holds a pointer-sized handle.
-    let total = offset + name_bytes + 2;
+    // The buffer is sized as Microsoft documents: the struct, whose FileName already holds one
+    // UTF-16 unit (the room for a NUL), plus FileNameLength. It is made of u64 so that it is aligned
+    // for the struct, which holds a pointer-sized handle.
+    let total = std::mem::size_of::<FILE_RENAME_INFO>() + name_bytes;
     let Ok(total_u32) = u32::try_from(total) else {
         return Err(ERROR_BAD_PATHNAME);
     };
     let mut buf = vec![0u64; total.div_ceil(8)];
     let base = buf.as_mut_ptr().cast::<u8>();
     // SAFETY: `buf` is zeroed, 8-byte aligned and at least `total` bytes, which holds the fixed part
-    // of FILE_RENAME_INFO at `offset` bytes and then the name's UTF-16 units and a NUL. `temp`'s
+    // of FILE_RENAME_INFO at `offset` bytes and then the name's UTF-16 units (the struct's own
+    // FileName unit covers the NUL). `temp`'s
     // handle is open for the whole call. The name's length in bytes excludes the NUL, as the call
     // asks.
     let done = unsafe {
         let info = base.cast::<FILE_RENAME_INFO>();
-        (*info).Anonymous.Flags = RENAME_REPLACE_IF_EXISTS | RENAME_POSIX_SEMANTICS;
+        (*info).Anonymous.Flags =
+            FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
         (*info).RootDirectory = std::ptr::null_mut();
         (*info).FileNameLength = name_bytes as u32;
         std::ptr::copy_nonoverlapping(name.as_ptr(), base.add(offset).cast::<u16>(), name.len());
@@ -154,7 +166,7 @@ fn move_file_ex(from: &Path, to: &Path) -> Result<(), ReplaceFailure> {
     if moved != 0 {
         return Ok(());
     }
-    Err(classify(
+    Err(classify_move_file_ex(
         io::Error::last_os_error().raw_os_error().map(|c| c as u32),
     ))
 }
@@ -168,11 +180,12 @@ fn move_file_ex(from: &Path, to: &Path) -> Result<(), ReplaceFailure> {
 /// Replacing a file). Only where the file system refuses POSIX semantics (`ERROR_INVALID_PARAMETER`
 /// or `ERROR_NOT_SUPPORTED`) is it `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` and
 /// `MOVEFILE_WRITE_THROUGH`. A failure that says another process holds a file without sharing
-/// delete is `Held`, and the caller tries again.
+/// delete is `Held`, and the caller tries again: a sharing or lock violation from the POSIX rename,
+/// and also access denied from `MoveFileExW`. Access denied from the POSIX rename fails at once.
 pub fn replace(temp: &File, from: &Path, to: &Path) -> Result<(), ReplaceFailure> {
     match posix_rename(temp, to) {
         Ok(()) => Ok(()),
         Err(ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED) => move_file_ex(from, to),
-        Err(code) => Err(classify(Some(code))),
+        Err(code) => Err(classify_posix(code)),
     }
 }

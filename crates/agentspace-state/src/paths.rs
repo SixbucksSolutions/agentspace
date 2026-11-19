@@ -2,7 +2,7 @@
 
 use crate::store::StoreError;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The folders the lease CLI works in, each a full path. A folder that needs the home folder and
 /// has none is `None`.
@@ -23,12 +23,21 @@ fn non_empty(var: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<PathB
 
 /// A relative value is made full against the working folder, so that a file written later and read
 /// by a program in another folder still names the same place (state.md, The home folder).
+///
+/// A value with a drive prefix or a root but not both (`C:rel`, `\rel`) is not absolute, and joining
+/// it to `cwd` would drop `cwd` and leave it relative, so the system completes it with
+/// `std::path::absolute` instead.
 fn full(path: PathBuf, cwd: &Path) -> PathBuf {
     if path.is_absolute() {
-        path
-    } else {
-        cwd.join(path)
+        return path;
     }
+    let has_prefix = matches!(path.components().next(), Some(Component::Prefix(_)));
+    if (has_prefix || path.has_root())
+        && let Ok(done) = std::path::absolute(&path)
+    {
+        return done;
+    }
+    cwd.join(path)
 }
 
 /// Finds the folders from the environment (state.md, The home folder; What moves which files).
@@ -119,6 +128,23 @@ mod tests {
         assert_eq!(q.home, None);
         assert_eq!(q.state_dir, Some(t.path().join("rel-state")));
         assert_eq!(q.ssh_dir, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_relative_or_root_relative_value_comes_out_full() {
+        let t = TempDir::new();
+        for value in ["C:rel", r"\rel"] {
+            let p = resolve_paths(
+                &env(&[("USERPROFILE", value), ("AGENTSPACE_SSH_DIR", value)]),
+                t.path(),
+            )
+            .unwrap();
+            let home = p.home.unwrap();
+            assert!(home.is_absolute(), "{value} came out as {home:?}");
+            assert!(p.ssh_dir.unwrap().is_absolute());
+            assert!(p.state_dir.unwrap().is_absolute());
+        }
     }
 
     #[test]

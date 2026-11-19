@@ -462,11 +462,33 @@ mod tests {
     #[test]
     fn a_write_creates_the_state_folder() {
         let t = TempDir::new();
-        let dir = t.path().join("made");
-        let guard = lock_with(&dir, short()).unwrap();
-        fs::remove_file(dir.join("leases.lock")).ok();
+        // The guard is on one folder and the write goes to another, which does not exist, so only
+        // the write's own create_dir_all can make it (the guard is not checked against the folder).
+        let guard = lock_with(&t.path().join("locked"), short()).unwrap();
+        let dir = t.path().join("made").join("deeper");
+        assert!(!dir.exists());
         write_with(&dir, &file_of(&[ID_A]), &guard, short()).unwrap();
+        assert!(dir.is_dir());
         assert_eq!(read(&dir).unwrap().leases.len(), 1);
+    }
+
+    #[test]
+    fn a_state_folder_that_cannot_be_made_cannot_be_locked_or_written() {
+        let t = TempDir::new();
+        let guard = lock_with(&t.path().join("locked"), short()).unwrap();
+        let f = t.path().join("a-file");
+        fs::write(&f, b"x").unwrap();
+        // A path under a file: nothing is at it, and no folder can be made there.
+        let under = f.join("x");
+        assert_eq!(
+            lock_with(&under, short()).unwrap_err(),
+            StoreError::CannotLock(WHY_LOCK_FOLDER.to_string())
+        );
+        assert_eq!(
+            write_with(&under, &file_of(&[ID_A]), &guard, short()).unwrap_err(),
+            StoreError::Unwritable(WHY_WRITE_FOLDER.to_string())
+        );
+        assert_eq!(fs::read(&f).unwrap(), b"x");
     }
 
     #[test]

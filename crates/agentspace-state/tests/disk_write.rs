@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use agentspace_state::{StoreError, lock, read, write};
 use common::*;
-use disk_support::{hold, open_sharing_everything, sandbox, state_of, temp_files_in};
+use disk_support::{Deny, hold, open_sharing_everything, sandbox, state_of, temp_files_in};
 
 fn describe<T>(r: &Result<T, StoreError>) -> String {
     match r {
@@ -108,6 +108,23 @@ fn read_opens_with_every_share_so_a_writer_is_never_blocked_by_it() {
     read(t.path()).unwrap();
     let g = lock(t.path()).unwrap();
     write(t.path(), &state_of(vec![]), &g).expect("A replace must follow a read");
+}
+
+#[test]
+fn a_file_that_cannot_be_opened_is_unreadable_and_is_not_no_leases() {
+    let t = sandbox();
+    let path = t.path().join("leases.json");
+    std::fs::write(&path, bytes_of(vec![ready(ID_A, "demo")])).unwrap();
+    let _deny = Deny::on(&path);
+    let r = read(t.path());
+    assert_eq!(
+        r.as_ref().err(),
+        Some(&StoreError::Unreadable(
+            "the state file could not be opened".to_string()
+        )),
+        "Got {}",
+        describe(&r)
+    );
 }
 
 #[test]
@@ -259,6 +276,60 @@ fn a_holder_that_lets_go_during_the_retry_lets_write_succeed() {
     );
     assert_eq!(read(t.path()).unwrap().leases[0].id, ID_B);
     assert!(temp_files_in(t.path()).is_empty());
+}
+
+/// Sets the read-only attribute on a file and clears it again on drop, so the throwaway folder can
+/// be deleted.
+struct ReadOnly(std::path::PathBuf);
+
+impl ReadOnly {
+    fn on(path: &std::path::Path) -> ReadOnly {
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(path, perms).unwrap();
+        ReadOnly(path.to_path_buf())
+    }
+}
+
+impl Drop for ReadOnly {
+    // This file builds on Windows only, where clearing the attribute opens no file to others.
+    #[allow(clippy::permissions_set_readonly_false)]
+    fn drop(&mut self) {
+        if let Ok(m) = std::fs::metadata(&self.0) {
+            let mut perms = m.permissions();
+            perms.set_readonly(false);
+            let _ = std::fs::set_permissions(&self.0, perms);
+        }
+    }
+}
+
+#[test]
+fn a_read_only_file_fails_write_at_once_as_unwritable_with_no_temporary_file() {
+    // The POSIX rename reports a held target as a sharing violation, never as access denied, so
+    // access denied is a real refusal that waiting does not change: it is not tried again.
+    let t = sandbox();
+    let path = t.path().join("leases.json");
+    let original = bytes_of(vec![ready(ID_A, "demo")]);
+    std::fs::write(&path, &original).unwrap();
+    let _read_only = ReadOnly::on(&path);
+    let g = lock(t.path()).unwrap();
+    let started = Instant::now();
+    let r = write(t.path(), &state_of(vec![pending(ID_B, "other")]), &g);
+    let waited = started.elapsed();
+    assert!(
+        matches!(r, Err(StoreError::Unwritable(_))),
+        "Got {}",
+        describe(&r)
+    );
+    assert!(
+        waited < Duration::from_secs(2),
+        "Failed only after {waited:?}, expected at once"
+    );
+    assert!(
+        temp_files_in(t.path()).is_empty(),
+        "A temporary file was left behind"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original, "The file changed");
 }
 
 #[test]
