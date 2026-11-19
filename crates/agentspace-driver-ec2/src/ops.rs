@@ -17,8 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentspace_alias::{
     AliasFailure, AliasFailureKind, AliasFile, alias_file_bytes, alias_name, check_alias_owner,
-    default_proxy_command, ensure_include, find_proxy_program, lease_file_text, remove_alias,
-    write_alias,
+    default_proxy_command, ensure_include, find_proxy_program, is_valid_alias, lease_file_text,
+    remove_alias, write_alias,
 };
 use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
@@ -68,6 +68,10 @@ fn cred_failure(f: CredFailure) -> Failure {
 /// The lease's ProxyCommand: the override when there is one, and else the default line from the
 /// program beside the running program, which is never read for the instance-ID cache (D21).
 fn proxy_command(ctx: &Context, alias: &str, system_root: Option<&str>) -> Result<String, String> {
+    // An alias that is not a valid name is an alias failure (driver.md), not a transport one.
+    if !is_valid_alias(alias) {
+        return Err(alias_setup_failed("the host alias is not a valid name"));
+    }
     if let Some(command) = ctx.proxy_override.as_deref().filter(|c| !c.is_empty()) {
         return Ok(command.to_string());
     }

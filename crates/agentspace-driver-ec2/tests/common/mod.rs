@@ -527,7 +527,12 @@ impl Drop for Deny {
 // ---- Certificates, read with ssh-keygen -L in UTC ----
 
 pub fn ssh_keygen(args: &[&str]) -> (bool, String, String) {
-    let out = run_out(Command::new("ssh-keygen").args(args).env("TZ", "UTC"));
+    // Windows' own OpenSSH, as `ssh_g` uses, so the UTC reading never depends on PATH.
+    let keygen = Path::new(&system_root())
+        .join("System32")
+        .join("OpenSSH")
+        .join("ssh-keygen.exe");
+    let out = run_out(Command::new(keygen).args(args).env("TZ", "UTC"));
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).into_owned(),

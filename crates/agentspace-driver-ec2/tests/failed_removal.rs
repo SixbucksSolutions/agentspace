@@ -27,6 +27,7 @@ fn a_failed_cleanup_after_a_failed_place_names_each_leftover_home_relative() {
             l.starts_with(&format!("~/.agentspace/leases/{ID}")),
             "Unexpected leftover {l}"
         );
+        assert_eq!(f.message.matches(l.as_str()).count(), 1, "{}", f.message);
     }
     assert_eq!(fs::read(fx.alias_dir()).unwrap(), b"mine\n");
     deny.lift();

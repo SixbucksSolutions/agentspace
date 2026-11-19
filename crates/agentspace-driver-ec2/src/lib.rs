@@ -6,9 +6,9 @@
 //!
 //! - **The driver MUST NOT read an environment variable, write to stdout or stderr, or prompt.**
 //!   Everything it needs comes in the [`Context`](agentspace_driver_api::Context).
-//! - **No message MUST name the driver, its backend, or a path** (D1), except a home-relative
+//! - **A message MUST NOT name the driver, its backend, or a path** (D1), except a home-relative
 //!   leftover, or an alias file outside the home folder named as `the host alias file <alias>`.
-//! - **No function MUST panic on any input.**
+//! - **A function MUST NOT panic on any input.**
 //! - **Place MUST follow state.md's "Creation, in order"**, and a failed place MUST remove what it
 //!   made and keep the `Include` line, any backup and `agentspace.d`.
 

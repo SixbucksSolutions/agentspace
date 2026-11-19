@@ -15,7 +15,6 @@ agentspace-credential = { path = "../agentspace-credential" }
 agentspace-alias = { path = "../agentspace-alias" }
 
 [dev-dependencies]
-# For the integration tests (the test author's): throwaway folders, at the version
-# agentspace-credential and agentspace-state already use, and the state crate's paths.
+# For the integration tests: throwaway folders, at the version agentspace-credential and
+# agentspace-state already use.
 tempfile = { version = "=3.23.0", default-features = false }
-agentspace-state = { path = "../agentspace-state" }
