@@ -547,8 +547,10 @@ the following, and a pass whose matcher gives any wrong answer MUST trust nothin
 
 ### Keeping a holder
 
-**A trusted holder whose record's lease is ready, by ID compared exactly, and whose ready lease's
-`ssh.host_alias` equals the recorded alias exactly, is kept.** The pass logs `kept lease=<id>
+**A trusted holder whose record's lease is ready, by ID compared without regard to ASCII case,
+and whose ready lease's `ssh.host_alias` equals the recorded alias exactly, is kept.** (The ID
+was "compared exactly" until 2026-11-19, when the architect ruled for E0.06-T01-S07 that a reader
+keeps a record's `lease_id` as stored, which state.md's MAY lets be in any case.) The pass logs `kept lease=<id>
 alias=<alias> pid=<pid>` and changes nothing. A keeper that did not start that holder adopts it
 ([Watching](#watching)).
 
