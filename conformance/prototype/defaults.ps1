@@ -5,6 +5,7 @@
 # This file and the shims beside it are the only files in conformance/ that name the prototype.
 # The harness (conformance/lease-cli/harness.ps1) reads it, and only for a variable that is unset or
 # empty. Each value is a path, relative to this folder, to the program the variable names.
+# AGENTSPACE_CMD and AGENTSPACE_PEER_CMD are one role, so they MAY name one program, as they do here.
 # A story that adds a default for another variable MUST add its line here, and nowhere else.
 @{
   AGENTSPACE_CMD          = '..\..\bin\agentspace.cmd'

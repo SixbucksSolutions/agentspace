@@ -106,10 +106,13 @@ exactly those arguments, and adds none of its own. The variable holds a program'
 arguments.
 - **A rewrite that ships one binary sets each variable to a program that selects the role**, such
   as a small wrapper per role that runs the binary with an argument naming the role and then the
-  check's arguments unchanged. It MUST NOT set two variables to one program that cannot tell them
-  apart, because the four command lines collide: with no argument the lease CLI MUST fail with a
-  usage error, the keeper MUST run one pass, and the ProxyCommand MUST run `up` and its tunnel; and
-  one word is an unknown command to the lease CLI and an alias to the ProxyCommand.
+  check's arguments unchanged. It MUST NOT set two variables of different roles to one program that
+  cannot tell them apart, because the four command lines collide: with no argument the lease CLI
+  MUST fail with a usage error, the keeper MUST run one pass, and the ProxyCommand MUST run `up` and
+  its tunnel; and one word is an unknown command to the lease CLI and an alias to the ProxyCommand.
+  **`AGENTSPACE_CMD` and `AGENTSPACE_PEER_CMD` are one role, so they MAY name one program**:
+  `conformance/prototype/defaults.ps1` gives both the prototype's lease CLI, and a rewrite run against
+  itself names its own lease CLI in both.
 - **A rewrite's variables name its installed programs** ([operator.md, Programs and install layout](operator.md#programs-and-install-layout);
   D37): each is the full path of one program in the install folder, such as
   `agentspace-ssh-proxy.exe` for `AGENTSPACE_SSH_PROXY_CMD`. A check never names the file itself.
@@ -291,47 +294,6 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 S01's five, and `conformance/lease-cli/lease-check-support.ps1` serves the next five, which are
 E0.04-T03-S03's, and `test-interop.ps1` (E0.05-T02-S05, #0103).
 
-#### `test-interop.ps1`: one lease through two programs
-
-**This check enforces [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite)**
-(#0054, D38): the prototype and the rewrite MUST be able to share one home folder and one state
-folder. RFC 2119 keywords again.
-- **It runs two lease CLIs, A and B, in one throwaway home with one state folder.** A is the program
-  `AGENTSPACE_CMD` names and B is the program `AGENTSPACE_PEER_CMD` names, each started by the
-  harness's `Invoke-ConformanceProgram` as a separate process. **Each variable that is unset or empty
-  takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**, so a run with both
-  unset runs the prototype against itself, and a run of the rewrite against the prototype sets one
-  variable. The check names no prototype path and loads no prototype code.
-- **It runs two rounds, A then B and B then A.** In a round, the first program creates and the other
-  program checks, in this order:
-  1. The first program creates a ready lease, and the lease has its folder, its key and its alias file.
-  2. The other program's `get` prints that lease with the same values, compared parsed.
-  3. The other program's `list` holds that lease once, with the same values, compared parsed.
-  4. The other program renews it with `--ttl 90m`. The first program's `get` shows the new `expires_at`
-     and `ttl_seconds`, and the certificate on disk is a new one, valid until that `expires_at`.
-  5. The first program renews it again, without `--ttl`, and the other program's `get` shows that
-     renewal the same way.
-  6. The other program releases it. The first program's `get` shows it `released`, with the other
-     program's `released_at`, and its alias file and lease folder are gone.
-  7. The first program releases it again, after the clock has passed that `released_at`. It exits 0
-     and prints the same document.
-  8. An unsatisfiable lease that the first program created reads the same in the other, by `get` and by `list`.
-- **After every step, the state file validates against its schema** (`schemas/state/leases.state.schema.json`),
-  **and every lease either program has printed is in it exactly once.** A lease counts as printed once
-  a document that passed its schema has carried its ID.
-- **It checks MUSTs only, and a reason never quotes a program's output**: a reason names what
-  differs, with the exit code and whether each stream was empty.
-- **It follows the rule for an untrusted program** ([below](#the-program-under-test-is-untrusted)): a
-  path is built from a lease ID or a host alias only after the document passed its schema, and then
-  only through `Get-CcLeaseDir` and `Get-CcAliasPath`. It writes and deletes nothing itself.
-- **Set either variable to a program that prints nothing and exits 0, and the run MUST fail.** A
-  program that cannot create fails step 1 of its own round, and one that cannot read fails step 2 of
-  the other round, so neither variable can be left unread. Shown on 2026-11-19 against the prototype:
-  36 passed, 0 failed, 0 skipped, exit 0, in about 40 seconds; with `AGENTSPACE_CMD` naming such a
-  program, 9 passed and 27 failed, exit 1; and with `AGENTSPACE_PEER_CMD` naming it, 17 passed and 19
-  failed, exit 1. The results that still pass then are mostly the state file's, which hold when a
-  program printed nothing for them to find.
-
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
   enforces, as in `lease-api.md#agentspace-lease-get: ...`. The summary is `<n> passed, <n> failed,
@@ -370,10 +332,67 @@ folder. RFC 2119 keywords again.
   [What the specs require of the suite](#what-the-specs-require-of-the-suite)'s**: a machine whose
   zone is not UTC, run by the agent or person who runs the suite for the build.
 - **A check takes from about 20 seconds to about 2 minutes against the prototype, and the ten about
-  10 minutes** (`test-interop.ps1` about 40 seconds, on top), most of it starting programs: about 0.5 seconds for a run that issues no credential,
-  and a few seconds for a ready `create`. `test-lease-concurrency.ps1` is the longest, because
+  10 minutes** (`test-interop.ps1` about 40 seconds, on top), most of it starting programs: about
+  0.5 seconds for a run that issues no credential, and a few seconds for a ready `create`. `test-lease-concurrency.ps1` is the longest, because
   round F waits out the lock's 30 seconds. Against a program that prints nothing, all ten take
   about a minute.
+
+### `test-interop.ps1`: one lease through two programs
+
+**This check enforces [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite)**
+(#0054, D38): the prototype and the rewrite MUST be able to share one home folder and one state
+folder. RFC 2119 keywords again.
+- **It runs two lease CLIs, A and B, in one throwaway home with one state folder.** A is the program
+  `AGENTSPACE_CMD` names and B is the program `AGENTSPACE_PEER_CMD` names, each started by the
+  harness's `Invoke-ConformanceProgram` as a separate process. **Each variable that is unset or empty
+  takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**, so a run with both
+  unset runs the prototype against itself, and a run of the rewrite against the prototype sets one
+  variable. The check names no prototype path and loads no prototype code.
+- **It runs two rounds, A then B and B then A.** In a round, the first program creates and the other
+  program checks, in this order:
+  1. The first program creates a ready lease, and the lease has its folder, its key pair and its alias
+     file, whose first line starts `# agentspace lease <id>;` (state.md's checklist for the other
+     program).
+  2. The other program's `get` prints that lease with the same values, compared parsed.
+  3. The other program's `list` holds that lease once, with the same values, compared parsed.
+  4. The other program renews it with `--ttl 90m`. The renew prints the lease asked for, unchanged
+     on every field but `expires_at` and `ttl_seconds`. The first program's `get` prints the same
+     document, and the certificate on disk is a new one, valid until that `expires_at`.
+  5. The first program renews it again, without `--ttl`, and the other program's `get` shows that
+     renewal the same way.
+  6. The other program releases it. The release prints the lease asked for, unchanged on every
+     field but `state`, `ssh` and `released_at`. The first program's `get` prints the same document,
+     `released`, with the other program's `released_at`, and its alias file and lease folder are gone.
+  7. The first program releases it again, after the clock has passed that `released_at`. It exits 0
+     and prints the same document.
+  8. An unsatisfiable lease that the first program created reads the same in the other, by `get` and by `list`.
+- **A document a program prints MUST be the lease that was asked for.** Each `renew` and `release`
+  document, and each `get` after one, carries the lease's `id`, compared exactly. A `get` is compared
+  in full, parsed, with the document the other program just printed, since both are the lease as it
+  stands, seconds apart. A `renew` is compared with the document before it on every field except
+  `expires_at` and `ttl_seconds`, and a `release` with the last `renew` on every field except
+  `state`, `ssh` and `released_at` ([lease-api.md, renew](lease-api.md#agentspace-lease-renew), [release](lease-api.md#agentspace-lease-release)).
+  Without that, a program that printed some other lease, or changed `created_at`, would pass on the
+  fields the steps look at.
+- **After every step, the state file validates against its schema** (`schemas/state/leases.state.schema.json`),
+  **and every lease either program has printed is in it exactly once.** A lease counts as printed once
+  a document that passed its schema has carried its ID.
+- **It checks MUSTs only, and a reason never quotes a program's output**: a reason names what
+  differs, with the exit code and whether each stream was empty.
+- **It follows the rule for an untrusted program** ([below](#the-program-under-test-is-untrusted)): a
+  path is built from a lease ID or a host alias only after the document passed its schema, and then
+  only through `Get-CcLeaseDir` and `Get-CcAliasPath`. It writes and deletes nothing itself.
+- **Set either variable to a program that prints nothing and exits 0, and the run MUST fail.** A
+  program that cannot create fails step 1 of its own round, and one that cannot read fails step 2 of
+  the other round, so neither variable can be left unread. Shown on 2026-11-19 against the prototype:
+  36 passed, 0 failed, 0 skipped, exit 0, in about 40 seconds; with `AGENTSPACE_CMD` naming such a
+  program, 9 passed and 27 failed, exit 1; and with `AGENTSPACE_PEER_CMD` naming it, 17 passed and 19
+  failed, exit 1. The results that still pass then are mostly the state file's, which hold when a
+  program printed nothing for them to find.
+  **A program that prints the wrong lease is caught too.** Shown the same day with a wrapper around
+  the prototype's command line, as `AGENTSPACE_PEER_CMD`, that changed one behavior: a `renew` that
+  printed another lease's `id` failed 4 results (32 passed), a `renew` that changed `created_at`
+  failed 10 (26 passed), and the wrapper changing nothing passed all 36.
 
 ### The harness
 

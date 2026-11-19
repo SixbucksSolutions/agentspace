@@ -15,6 +15,10 @@
 #   again and prints the same document; and an unsatisfiable lease made by the first reads the same in
 #   the other. After EVERY step the state file validates against its schema, and every lease either
 #   program printed is in it exactly once.
+# - A document a program printed MUST be the lease that was asked for: its id is compared exactly, a get is
+#   compared in full with the document the writer printed, a renew with the document before it on every
+#   field except expires_at and ttl_seconds, and a release with the last renew on every field except
+#   state, ssh and released_at (lease-api.md, "renew" and "release").
 # - It drives each program only as a separate process, through the harness (Invoke-ConformanceProgram),
 #   in a throwaway home with a throwaway CA. It reads no real folder, loads no prototype code and names no
 #   prototype path: a variable that is unset or empty takes its default from
@@ -77,6 +81,25 @@ function Get-InteropIssue($Doc) {
   try { (ConvertFrom-CcTime $Doc['expires_at']).AddSeconds(-[double]$Doc['ttl_seconds']) } catch { [DateTime]::UtcNow }
 }
 
+# A time a program printed, parsed, or $null when it is not a valid time. The schema's pattern admits
+# dates that do not exist (a 30th of February), and a parse failure's text would quote the program's
+# output, so the failure is caught here and a reason says it in a fixed sentence.
+function Get-InteropTime($Text) {
+  try { ConvertFrom-CcTime ([string]$Text) } catch { $null }
+}
+
+# True when two lease documents are equal, parsed and canonical, on every field except the named ones.
+# A field that is present in one and absent in the other counts as a difference, unless it is named.
+function Test-InteropSameExcept($A, $B, [string[]]$Except) {
+  $strip = {
+    param($Doc)
+    $c = @{}
+    foreach ($k in $Doc.Keys) { if ($Except -cnotcontains [string]$k) { $c[$k] = $Doc[$k] } }
+    $c
+  }
+  (ConvertTo-CcCanonical (& $strip $A)) -ceq (ConvertTo-CcCanonical (& $strip $B))
+}
+
 # Waits until the clock is past the given whole second, so that two certificates cannot share an issue
 # time (each renew sets a new expiry from its own time), and a second release could not re-stamp
 # released_at unseen. Bounded to 5 seconds, because a time a program printed is untrusted.
@@ -109,6 +132,7 @@ function Test-InteropCertificate([string]$Name, $State, [string]$ExpiresAt) {
   }
   Test-Cc $Name {
     if (-not $State.Id) { return 'Setup: no lease was made.' }
+    if (-not $ExpiresAt) { return 'Setup: the step before made no renewal, so there is no expires_at to compare the certificate with.' }
     $c = Get-CcCertificate (Join-Path $State.Dir 'id_ed25519-cert.pub')
     if (-not $c.To) { return 'The certificate could not be read.' }
     if ((ConvertTo-CcTime $c.To) -cne $ExpiresAt) { return 'The certificate valid-before time differs from the expires_at the lease shows.' }
@@ -133,7 +157,11 @@ function Invoke-InteropRound {
     $s.Alias = Get-CcAliasPath $script:lab ([string]$doc['ssh']['host_alias'])
     if (-not (Test-Path -LiteralPath (Join-Path $s.Dir 'id_ed25519') -PathType Leaf)) { return 'The lease has no key in its folder.' }
     if (-not (Test-Path -LiteralPath (Join-Path $s.Dir 'id_ed25519-cert.pub') -PathType Leaf)) { return 'The lease has no certificate in its folder.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $s.Dir 'id_ed25519.pub') -PathType Leaf)) { return 'The lease has no public key in its folder.' }
     if (-not (Test-Path -LiteralPath $s.Alias -PathType Leaf)) { return 'The lease has no alias file.' }
+    # state.md, "The alias file": the first line starts `# agentspace lease <id>;`, the owner mark the other program relies on.
+    $first = ([IO.File]::ReadAllText($s.Alias, [Text.UTF8Encoding]::new($false)) -split "`n")[0]
+    if (-not $first.StartsWith("# agentspace lease $($s.Id);", [StringComparison]::Ordinal)) { return 'The first line of the alias file is not the lease owner mark.' }
     $s.Cert0 = Get-CcFileHash (Join-Path $s.Dir 'id_ed25519-cert.pub')
     $true
   }
@@ -170,13 +198,17 @@ function Invoke-InteropRound {
     $rn = Invoke-Interop $Second @('renew', $s.Id, '--ttl', '90m')
     $rd = Get-InteropDoc $rn
     if (-not $rd -or $rd['state'] -cne 'ready') { return "The renew was not a valid ready lease: $(Get-InteropNote $rn)." }
+    if ($rd['id'] -cne $s.Id) { return 'The renew printed a different lease from the one asked for.' }
     if ($rd['ttl_seconds'] -ne $script:ttlRenewed) { return 'The renew did not set ttl_seconds to 5400.' }
     if ($rd['expires_at'] -ceq $s.Doc['expires_at']) { return 'The renew did not change expires_at.' }
+    if (-not (Test-InteropSameExcept $rd $s.Doc @('expires_at', 'ttl_seconds'))) { return 'The renew changed a field other than expires_at and ttl_seconds (lease-api.md, renew: the key, alias, user, ID and created_at do not change).' }
     $s.Renew1 = $rd
     $g = Invoke-Interop $First @('get', $s.Id)
     $gd = Get-InteropDoc $g
     if (-not $gd) { return "The get was not a valid lease document: $(Get-InteropNote $g)." }
+    if ($gd['id'] -cne $s.Id) { return 'The get printed a different lease from the one asked for.' }
     if ($gd['state'] -cne 'ready') { return 'The get after the renew did not show a ready lease.' }
+    if ((ConvertTo-CcCanonical $gd) -cne (ConvertTo-CcCanonical $rd)) { return 'The document the get printed differs, parsed, from the one the renew printed.' }
     if ($gd['expires_at'] -cne $rd['expires_at']) { return "The get's expires_at is not the one the renew printed." }
     if ($gd['ttl_seconds'] -ne $rd['ttl_seconds']) { return "The get's ttl_seconds is not the one the renew printed." }
     $rec = Get-CcRecord $script:lab $s.Id
@@ -196,11 +228,17 @@ function Invoke-InteropRound {
     $rd = Get-InteropDoc $rn
     if (-not $rd -or $rd['state'] -cne 'ready') { return "The renew was not a valid ready lease: $(Get-InteropNote $rn)." }
     if ($rd['ttl_seconds'] -ne $script:ttlRenewed) { return 'The renew without --ttl did not reuse the lease ttl_seconds.' }
-    if ((ConvertFrom-CcTime $rd['expires_at']) -le (ConvertFrom-CcTime $s.Renew1['expires_at'])) { return 'The second renew did not give a later expires_at.' }
+    if ($rd['id'] -cne $s.Id) { return 'The renew printed a different lease from the one asked for.' }
+    $t2 = Get-InteropTime $rd['expires_at']; $t1 = Get-InteropTime $s.Renew1['expires_at']
+    if ($null -eq $t2 -or $null -eq $t1) { return 'An expires_at is not a valid time.' }
+    if ($t2 -le $t1) { return 'The second renew did not give a later expires_at.' }
+    if (-not (Test-InteropSameExcept $rd $s.Renew1 @('expires_at', 'ttl_seconds'))) { return 'The renew changed a field other than expires_at and ttl_seconds (lease-api.md, renew: the key, alias, user, ID and created_at do not change).' }
     $s.Renew2 = $rd
     $g = Invoke-Interop $Second @('get', $s.Id)
     $gd = Get-InteropDoc $g
     if (-not $gd) { return "The get was not a valid lease document: $(Get-InteropNote $g)." }
+    if ($gd['id'] -cne $s.Id) { return 'The get printed a different lease from the one asked for.' }
+    if ((ConvertTo-CcCanonical $gd) -cne (ConvertTo-CcCanonical $rd)) { return 'The document the get printed differs, parsed, from the one the renew printed.' }
     if ($gd['state'] -cne 'ready' -or $gd['expires_at'] -cne $rd['expires_at'] -or $gd['ttl_seconds'] -ne $rd['ttl_seconds']) { return "The get does not show the renew's expires_at and ttl_seconds on a ready lease." }
     $cert2 = Get-CcFileHash (Join-Path $s.Dir 'id_ed25519-cert.pub')
     if ($cert2 -eq 'absent' -or $cert2 -eq $s.Cert1) { return 'The certificate on disk is not a new one.' }
@@ -215,10 +253,14 @@ function Invoke-InteropRound {
     $rl = Invoke-Interop $Second @('release', $s.Id)
     $rd = Get-InteropDoc $rl
     if (-not $rd -or $rd['state'] -cne 'released' -or -not $rd['released_at']) { return "The release was not a valid released lease: $(Get-InteropNote $rl)." }
+    if ($rd['id'] -cne $s.Id) { return 'The release printed a different lease from the one asked for.' }
+    if (-not (Test-InteropSameExcept $rd $s.Renew2 @('state', 'ssh', 'released_at'))) { return 'The release changed a field other than state, ssh and released_at (lease-api.md, release: it drops ssh, keeps expires_at and sets released_at).' }
     $s.Released = $rd
     $g = Invoke-Interop $First @('get', $s.Id)
     $gd = Get-InteropDoc $g
     if (-not $gd) { return "The get was not a valid lease document: $(Get-InteropNote $g)." }
+    if ($gd['id'] -cne $s.Id) { return 'The get printed a different lease from the one asked for.' }
+    if ((ConvertTo-CcCanonical $gd) -cne (ConvertTo-CcCanonical $rd)) { return 'The document the get printed differs, parsed, from the one the release printed.' }
     if ($gd['state'] -cne 'released') { return 'The get after the release did not show a released lease.' }
     if ($gd['released_at'] -cne $rd['released_at']) { return "The get's released_at is not the one the release printed." }
     if ($gd.ContainsKey('ssh')) { return 'The released lease still shows ssh.' }
@@ -232,10 +274,13 @@ function Invoke-InteropRound {
   # Step 7: the first program releases it again: exit 0 and the same document.
   Test-Cc "$sec`: $tag, step 7: $First releases it again, exits 0 and prints the same released_at" {
     if (-not $s.Released) { return 'Setup: step 6 made no release.' }
-    Wait-InteropPast (ConvertFrom-CcTime $s.Released['released_at'])
+    $ra = Get-InteropTime $s.Released['released_at']
+    if ($null -eq $ra) { return 'The released_at the first release printed is not a valid time.' }
+    Wait-InteropPast $ra
     $rl = Invoke-Interop $First @('release', $s.Id)
     $rd = Get-InteropDoc $rl
     if (-not $rd) { return "The second release was not a valid lease document: $(Get-InteropNote $rl)." }
+    if ($rd['id'] -cne $s.Id) { return 'The second release printed a different lease from the one asked for.' }
     if ($rd['state'] -cne 'released' -or $rd['released_at'] -cne $s.Released['released_at']) { return 'The second release did not print the first released_at.' }
     if ((ConvertTo-CcCanonical $rd) -cne (ConvertTo-CcCanonical $s.Released)) { return 'The second release printed a different document from the first.' }
     if ((Test-Path -LiteralPath $s.Alias) -or (Test-Path -LiteralPath $s.Dir)) { return 'The alias file or the lease folder came back.' }
