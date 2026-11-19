@@ -235,18 +235,20 @@ fn help_after_an_unknown_command_or_subcommand_is_never_read() {
 
 #[test]
 fn an_equals_form_makes_help_a_value_and_not_a_request_for_help() {
-    // The line is valid, so it reaches the commands, which end `internal` in this story.
+    // The line has no usage error, so it reaches the command, which checks the value `--help` or
+    // `-h` as a TTL or a project name and refuses it: `invalid_value`, never help (exit 0).
     for flag in ["--ttl=--help", "--ttl=-h", "--ttl=-H", "--TTL=--HELP"] {
         let line = args(&["lease", "create", "--project", "x", flag]);
         let run = run_bin(&line);
-        let p = failure_problems(&run, "internal", None, Some(&msg_stub("create")));
+        let p = failure_problems(&run, "invalid_value", Some("ttl"), None);
         assert!(p.is_empty(), "{}: {}", show(&line), p.join("; "));
-        assert_eq!(in_process(&line), 1, "{} in process", show(&line));
+        assert_eq!(in_process(&line), 2, "{} in process", show(&line));
     }
     let line = args(&["lease", "list", "--project=--help"]);
     let run = run_bin(&line);
-    let p = failure_problems(&run, "internal", None, Some(&msg_stub("list")));
+    let p = failure_problems(&run, "invalid_value", Some("project"), None);
     assert!(p.is_empty(), "{}: {}", show(&line), p.join("; "));
+    assert_eq!(in_process(&line), 2, "{} in process", show(&line));
 }
 
 #[test]

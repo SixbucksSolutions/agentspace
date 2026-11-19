@@ -13,8 +13,20 @@ name = "agentspace"
 path = "src/main.rs"
 
 [dependencies]
+agentspace-driver-api = { path = "../agentspace-driver-api" }
+agentspace-state = { path = "../agentspace-state" }
+agentspace-values = { path = "../agentspace-values" }
+# The OS's random source, for a new lease ID (the architect's conditions on the seam, 2026-11-19).
+# The version already in Cargo.lock.
+getrandom = { version = "=0.3.4", default-features = false }
 # The lock holds itoa at 1.0.18, because 1.0.19 (2026-11-09) is under two weeks old at 2026-11-19,
 # so a re-lock MUST keep it.
 serde_json = { version = "=1.0.154", default-features = false, features = ["std", "preserve_order"] }
 
 [dev-dependencies]
+# Throwaway folders under the temp folder for the commands' unit tests; the version the other
+# crates already use.
+tempfile = { version = "=3.23.0", default-features = false }
+# The integration tests' own check of a printed document against its schema; the version and
+# features agentspace-state uses, so no reference is ever fetched.
+jsonschema = { version = "=0.60.2", default-features = false }

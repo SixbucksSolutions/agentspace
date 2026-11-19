@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Once;
 
+use agentspace_driver_api::Driver;
 use serde_json::{Map, Value};
 
 use crate::parse::{Parsed, parse};
@@ -76,11 +77,30 @@ impl Drop for Silence {
     }
 }
 
-type Runner<'a> = &'a dyn Fn(ParsedCommand, &Path) -> Result<Value, LeaseError>;
+/// Everything a run reads from the world, so a test can supply its own. In the product only
+/// `execute` builds one, from the real process (the architect's conditions on the seam,
+/// 2026-11-19).
+pub struct World<'a> {
+    /// Looks up an environment variable; `None` when it is unset. It is the only way the commands
+    /// read the environment.
+    pub var: &'a dyn Fn(&str) -> Option<OsString>,
+    /// The current folder, against which a relative path in a variable is made full.
+    pub cwd: &'a Path,
+    /// The running program's own file, a full path.
+    pub own_exe: &'a Path,
+    /// The time now, in whole seconds since the Unix epoch, UTC. A command reads it once.
+    pub now: &'a dyn Fn() -> i64,
+    /// Draws a new lease ID: a random lowercase hyphenated UUIDv4.
+    pub new_id: &'a dyn Fn() -> String,
+    /// The drivers this run can use, found by `Driver::name()`.
+    pub drivers: &'a [Box<dyn Driver>],
+}
+
+type Runner<'a> = &'a dyn Fn(ParsedCommand, &World<'_>) -> Result<Value, LeaseError>;
 
 fn work(
     args: &[OsString],
-    own_exe: &Path,
+    world: &World<'_>,
     sub: &Cell<Option<Sub>>,
     runner: Runner<'_>,
 ) -> Result<Printed, LeaseError> {
@@ -92,7 +112,7 @@ fn work(
         Parsed::Error(error) => Err(error),
         Parsed::Command(cmd) => {
             sub.set(Some(cmd.sub));
-            runner(cmd, own_exe).map(Printed::Document)
+            runner(cmd, world).map(Printed::Document)
         }
     }
 }
@@ -134,16 +154,62 @@ fn failure(error: &LeaseError, sub: Option<Sub>) -> Outcome {
 
 /// Runs the program on `args`, which are the arguments after the program's name, and returns what
 /// it would print. A panic anywhere in the run ends as one `internal` error document and exit 1.
+///
+/// The world is the real process's: its environment, its working folder, `own_exe`, the system
+/// clock in UTC, a UUIDv4 from the operating system's random source, and `commands::drivers()`.
 pub fn execute(args: &[OsString], own_exe: &Path) -> Outcome {
-    execute_with(args, own_exe, &commands::run)
+    let var = |name: &str| std::env::var_os(name);
+    // A working folder the system cannot name leaves a relative variable relative; nothing else
+    // depends on it.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let drivers = commands::drivers();
+    let world = World {
+        var: &var,
+        cwd: &cwd,
+        own_exe,
+        now: &agentspace_state::now,
+        new_id: &random_uuid_v4,
+        drivers: &drivers,
+    };
+    execute_in(args, &world)
 }
 
-fn execute_with(args: &[OsString], own_exe: &Path, runner: Runner<'_>) -> Outcome {
+/// Runs the program on `args` (the arguments after the program's name) in `world`, and returns
+/// what it would print. Exactly what `execute` does, with the world given.
+pub fn execute_in(args: &[OsString], world: &World<'_>) -> Outcome {
+    execute_with(args, world, &commands::run)
+}
+
+/// A random UUIDv4, lowercase and hyphenated, from the operating system's random source. When the
+/// source fails, the empty string, which `create` refuses as a drawn ID (`internal`).
+fn random_uuid_v4() -> String {
+    let mut b = [0u8; 16];
+    if getrandom::fill(&mut b).is_err() {
+        return String::new();
+    }
+    uuid_v4_from(b)
+}
+
+/// The UUIDv4 text of 16 random bytes: the version nibble set to 4 and the variant bits to `10`.
+fn uuid_v4_from(mut b: [u8; 16]) -> String {
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let mut out = String::with_capacity(36);
+    for (i, byte) in b.iter().enumerate() {
+        if matches!(i, 4 | 6 | 8 | 10) {
+            out.push('-');
+        }
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn execute_with(args: &[OsString], world: &World<'_>, runner: Runner<'_>) -> Outcome {
     install_hook();
     let sub = Cell::new(None);
     let result = {
         let _quiet = Silence::begin();
-        catch_unwind(AssertUnwindSafe(|| work(args, own_exe, &sub, runner)))
+        catch_unwind(AssertUnwindSafe(|| work(args, world, &sub, runner)))
     };
     match result {
         Ok(Ok(Printed::Help(text))) => Outcome {
@@ -216,6 +282,26 @@ fn stdout_is_missing(_stdout: &std::io::StdoutLock<'_>) -> bool {
     false
 }
 
+/// The change a run made, when it made one and its document is on the way to stdout: a `create`,
+/// `renew` or `release` that succeeded has recorded its change, which stays recorded when the
+/// document cannot be written (lease-api.md, Output). A `release` whose lease is not `released`
+/// (an `unsatisfiable` one) changed nothing, and help, which is not a lease document, records
+/// nothing.
+fn recorded_change(outcome: &Outcome) -> Option<&'static str> {
+    if outcome.exit_code != 0 {
+        return None;
+    }
+    let done = match outcome.sub? {
+        Sub::Create => "recorded",
+        Sub::Renew => "renewed",
+        Sub::Release => "released",
+        Sub::Get | Sub::List => return None,
+    };
+    let doc: Value = serde_json::from_slice(&outcome.stdout).ok()?;
+    let state = doc.get("state")?.as_str()?;
+    (done != "released" || state == "released").then_some(done)
+}
+
 /// Writes `data` and flushes, so a failure at either step is a failed write.
 fn write_all(out: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
     out.write_all(data)?;
@@ -236,8 +322,15 @@ fn deliver(outcome: Outcome, out: Option<&mut dyn Write>, err: &mut dyn Write) -
             Some(sub) => format!("agentspace lease {} failed", sub.name()),
             None => "agentspace lease failed".to_owned(),
         };
+        let what = match recorded_change(&outcome) {
+            Some(done) => format!(
+                "The lease was {done}, but its document could not be written. Run 'agentspace \
+                 lease list' to see it."
+            ),
+            None => "The document could not be written.".to_owned(),
+        };
         let failed = failure(
-            &LeaseError::internal(format!("{place}: The document could not be written.")),
+            &LeaseError::internal(format!("{place}: {what}")),
             outcome.sub,
         );
         let _ = write_all(err, &failed.stderr);
@@ -259,9 +352,29 @@ mod tests {
         list.iter().map(OsString::from).collect()
     }
 
+    /// A world with no environment at all, no drivers and a fixed clock.
+    fn bare_world<R>(f: impl FnOnce(&World<'_>) -> R) -> R {
+        let var = |_: &str| None;
+        let now = || 1_800_000_000;
+        let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_owned();
+        let world = World {
+            var: &var,
+            cwd: Path::new(""),
+            own_exe: Path::new(""),
+            now: &now,
+            new_id: &new_id,
+            drivers: &[],
+        };
+        f(&world)
+    }
+
+    fn run_with(list: &[&str], runner: Runner<'_>) -> Outcome {
+        bare_world(|world| execute_with(&args(list), world, runner))
+    }
+
     #[test]
     fn a_panic_in_a_command_is_one_internal_document_and_exit_1() {
-        let out = execute_with(&args(&["lease", "get", "x"]), Path::new(""), &|_, _| {
+        let out = run_with(&["lease", "get", "x"], &|_, _| {
             panic!("a path /home/someone/secret")
         });
         assert_eq!(out.exit_code, 1);
@@ -275,9 +388,7 @@ mod tests {
     #[test]
     fn success_is_one_compact_document_and_a_line_feed_in_the_given_order() {
         let value: Value = serde_json::from_str(r#"{"id":"1","state":"ready","a":1}"#).unwrap();
-        let out = execute_with(&args(&["lease", "list"]), Path::new(""), &move |_, _| {
-            Ok(value.clone())
-        });
+        let out = run_with(&["lease", "list"], &move |_, _| Ok(value.clone()));
         assert_eq!(out.exit_code, 0);
         assert_eq!(out.stdout, b"{\"id\":\"1\",\"state\":\"ready\",\"a\":1}\n");
         assert!(out.stderr.is_empty());
@@ -285,7 +396,7 @@ mod tests {
 
     #[test]
     fn an_error_document_carries_its_fields_and_the_codes_exit_code() {
-        let out = execute_with(&args(&["lease", "get", "x"]), Path::new(""), &|_, _| {
+        let out = run_with(&["lease", "get", "x"], &|_, _| {
             Err(LeaseError {
                 code: ErrorCode::InvalidState,
                 message: "Lease is ready.".to_owned(),
@@ -331,12 +442,75 @@ mod tests {
     }
 
     #[test]
-    fn this_build_answers_every_subcommand_with_internal() {
-        let out = execute(&args(&["lease", "list"]), Path::new(""));
+    fn execute_in_runs_the_commands_in_the_world_given() {
+        // No home and no state folder: list needs the default state folder, so it is the no-home
+        // failure, and nothing on this machine is read.
+        let out = bare_world(|world| execute_in(&args(&["lease", "list"]), world));
         assert_eq!(out.exit_code, 1);
         assert_eq!(
             String::from_utf8(out.stderr).unwrap(),
-            "{\"code\":\"internal\",\"message\":\"agentspace lease list failed: This build does not have the command yet.\"}\n"
+            "{\"code\":\"internal\",\"message\":\"agentspace lease list failed: The home folder is not set (USERPROFILE is unset or empty), so agentspace cannot find its files. Nothing was changed.\"}\n"
+        );
+    }
+
+    #[test]
+    fn a_drawn_id_is_a_lowercase_uuid_v4() {
+        assert_eq!(
+            uuid_v4_from([0xff; 16]),
+            "ffffffff-ffff-4fff-bfff-ffffffffffff"
+        );
+        assert_eq!(
+            uuid_v4_from([0; 16]),
+            "00000000-0000-4000-8000-000000000000"
+        );
+        let drawn = random_uuid_v4();
+        assert_eq!(
+            agentspace_values::lease_id(&drawn).as_deref(),
+            Ok(drawn.as_str())
+        );
+        assert_ne!(drawn, random_uuid_v4());
+    }
+
+    #[test]
+    fn a_recorded_change_whose_document_fails_says_it_was_made() {
+        let failed = |sub: Sub, doc: &str| {
+            let outcome = Outcome {
+                exit_code: 0,
+                stdout: format!("{doc}\n").into_bytes(),
+                stderr: Vec::new(),
+                sub: Some(sub),
+            };
+            let mut out = Broken::new(true, false);
+            let mut err = Broken::new(false, false);
+            assert_eq!(deliver(outcome, Some(&mut out), &mut err), 1);
+            let value: Value = serde_json::from_slice(&err.got).unwrap();
+            value["message"].as_str().unwrap().to_owned()
+        };
+        let made = |sub: &str, done: &str| {
+            format!(
+                "agentspace lease {sub} failed: The lease was {done}, but its document could not \
+                 be written. Run 'agentspace lease list' to see it."
+            )
+        };
+        assert_eq!(
+            failed(Sub::Create, r#"{"state":"ready"}"#),
+            made("create", "recorded")
+        );
+        assert_eq!(
+            failed(Sub::Renew, r#"{"state":"ready"}"#),
+            made("renew", "renewed")
+        );
+        assert_eq!(
+            failed(Sub::Release, r#"{"state":"released"}"#),
+            made("release", "released")
+        );
+        assert_eq!(
+            failed(Sub::Release, r#"{"state":"unsatisfiable"}"#),
+            "agentspace lease release failed: The document could not be written."
+        );
+        assert_eq!(
+            failed(Sub::Get, r#"{"state":"ready"}"#),
+            "agentspace lease get failed: The document could not be written."
         );
     }
 
@@ -470,11 +644,14 @@ mod tests {
         );
     }
 
-    const NO_RUNNER: Runner<'static> = &|_, _| panic!("help never reaches a command");
+    fn no_runner(_: ParsedCommand, _: &World<'_>) -> Result<Value, LeaseError> {
+        panic!("help never reaches a command")
+    }
+    const NO_RUNNER: Runner<'static> = &no_runner;
 
     #[test]
     fn help_names_the_subcommand_only_when_read_before_the_first_help_request() {
-        let at = |list: &[&str]| execute_with(&args(list), Path::new(""), NO_RUNNER).sub;
+        let at = |list: &[&str]| run_with(list, NO_RUNNER).sub;
         assert_eq!(at(&["lease", "create", "--help"]), Some(Sub::Create));
         assert_eq!(at(&["lease", "--help", "create"]), None);
         assert_eq!(at(&["--help", "lease", "create"]), None);
@@ -484,7 +661,7 @@ mod tests {
     #[test]
     fn a_failed_write_of_help_names_the_subcommand_read_before_the_help_request() {
         let failed = |list: &[&str]| {
-            let outcome = execute_with(&args(list), Path::new(""), NO_RUNNER);
+            let outcome = run_with(list, NO_RUNNER);
             assert_eq!(outcome.exit_code, 0);
             let mut out = Broken::new(true, false);
             let mut err = Broken::new(false, false);
@@ -515,9 +692,7 @@ mod tests {
             REPORTED.with(|n| n.set(n.get() + 1));
         })));
 
-        let out = execute_with(&args(&["lease", "get", "x"]), Path::new(""), &|_, _| {
-            panic!("inside a run")
-        });
+        let out = run_with(&["lease", "get", "x"], &|_, _| panic!("inside a run"));
         assert_eq!(out.exit_code, 1);
         let inside = REPORTED.with(Cell::get);
 
@@ -532,9 +707,7 @@ mod tests {
 
     #[test]
     fn a_run_installs_the_hook_that_keeps_a_panic_report_off_stderr() {
-        execute_with(&args(&["lease", "get", "x"]), Path::new(""), &|_, _| {
-            panic!("inside a run")
-        });
+        run_with(&["lease", "get", "x"], &|_, _| panic!("inside a run"));
         assert!(HOOK.is_completed());
     }
 }

@@ -241,43 +241,60 @@ mod unix {
 
     #[test]
     fn a_non_utf8_value_or_lease_id_is_read_as_written_and_the_line_goes_on_to_the_commands() {
-        // This story's commands end `internal`; the value's own check, invalid_value for that
-        // field, is E0.05-T03-S02's. What MUST NOT happen is a usage error or a panic.
-        let lines: Vec<Vec<OsString>> = vec![
-            vec![os("lease"), os("create"), os("--project"), bytes(b"x\xff")],
-            vec![os("lease"), os("create"), bytes(b"--project=x\xff")],
-            vec![
-                os("lease"),
-                os("create"),
-                os("--project"),
-                os("x"),
-                os("--ttl"),
-                bytes(b"\xff"),
-            ],
-            vec![
-                os("lease"),
-                os("create"),
-                os("--project"),
-                os("x"),
-                bytes(b"--ttl=\xed\xa0\x80"),
-            ],
-            vec![os("lease"), os("get"), bytes(b"\xff")],
-            vec![
-                os("lease"),
-                os("renew"),
-                bytes(b"\xff"),
-                os("--ttl"),
-                os("8h"),
-            ],
-            vec![os("lease"), os("release"), bytes(b"3f2a\x80")],
-            vec![os("lease"), os("list"), os("--state"), bytes(b"re\xffady")],
+        // lease-api.md, Input tolerance (gap FA-09): as a flag's value or a lease ID it is refused
+        // with invalid_value for that field. What MUST NOT happen is a usage error or a panic.
+        let lines: Vec<(Vec<OsString>, &str)> = vec![
+            (
+                vec![os("lease"), os("create"), os("--project"), bytes(b"x\xff")],
+                "project",
+            ),
+            (
+                vec![os("lease"), os("create"), bytes(b"--project=x\xff")],
+                "project",
+            ),
+            (
+                vec![
+                    os("lease"),
+                    os("create"),
+                    os("--project"),
+                    os("x"),
+                    os("--ttl"),
+                    bytes(b"\xff"),
+                ],
+                "ttl",
+            ),
+            (
+                vec![
+                    os("lease"),
+                    os("create"),
+                    os("--project"),
+                    os("x"),
+                    bytes(b"--ttl=\xed\xa0\x80"),
+                ],
+                "ttl",
+            ),
+            (vec![os("lease"), os("get"), bytes(b"\xff")], "id"),
+            (
+                vec![
+                    os("lease"),
+                    os("renew"),
+                    bytes(b"\xff"),
+                    os("--ttl"),
+                    os("8h"),
+                ],
+                "id",
+            ),
+            (vec![os("lease"), os("release"), bytes(b"3f2a\x80")], "id"),
+            (
+                vec![os("lease"), os("list"), os("--state"), bytes(b"re\xffady")],
+                "state",
+            ),
         ];
-        for line in lines {
-            let sub = line[1].to_string_lossy().into_owned();
+        for (line, field) in lines {
             let run = run_bin(&line);
-            let p = failure_problems(&run, "internal", None, Some(&msg_stub(&sub)));
+            let p = failure_problems(&run, "invalid_value", Some(field), None);
             assert!(p.is_empty(), "{}: {}", show(&line), p.join("; "));
-            assert_eq!(in_process(&line), 1, "{} in process", show(&line));
+            assert_eq!(in_process(&line), 2, "{} in process", show(&line));
         }
     }
 
@@ -335,9 +352,14 @@ mod windows {
     }
 
     #[test]
-    fn an_unpaired_surrogate_as_a_value_or_lease_id_goes_on_to_the_commands() {
+    fn an_unpaired_surrogate_as_a_value_or_lease_id_is_invalid_value_for_that_field() {
         let run = run_bin(&[os("lease"), os("get"), wide(&[0x61, 0xd800])]);
-        let p = failure_problems(&run, "internal", None, Some(&msg_stub("get")));
+        let p = failure_problems(
+            &run,
+            "invalid_value",
+            Some("id"),
+            Some("Lease ID 'a\\ud800' is not a UUIDv4. Give the id that create printed."),
+        );
         assert!(p.is_empty(), "{}", p.join("; "));
         let run = run_bin(&[
             os("lease"),
@@ -347,7 +369,9 @@ mod windows {
             os("--ttl"),
             wide(&[0xdfff]),
         ]);
-        let p = failure_problems(&run, "internal", None, Some(&msg_stub("create")));
+        let p = failure_problems(&run, "invalid_value", Some("ttl"), None);
         assert!(p.is_empty(), "{}", p.join("; "));
+        let message = String::from_utf8_lossy(&run.stderr);
+        assert!(message.contains("'\\\\udfff'"), "{message}");
     }
 }

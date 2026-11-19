@@ -4,7 +4,7 @@
 //!
 //! RFC 2119 keywords in these comments; the capitals are load-bearing. Each case runs through the
 //! built binary, which MUST end with exit 2, nothing on stdout and one error document on stderr, and
-//! through `main_with`, which MUST return exit 2. The messages are the wording of the Messages
+//! through `execute_in` in a throwaway world, which MUST return exit 2. The messages are the wording of the Messages
 //! table, which an implementation SHOULD use; the code, the exit code and `field` are MUST.
 
 mod common;
@@ -814,33 +814,57 @@ fn only_the_five_usage_cases_carry_field() {
     ]);
 }
 
-// ---- Lines that are valid, and so end `internal` while `commands::run` is the story's stub ------
+// ---- Lines with no usage error: they reach the commands ----------------------------------------
 
-fn assert_stub(line: &[&str], sub: &str) {
+/// A line with no usage error reaches its command, and gets that command's own answer, which MAY
+/// be an error about a value (`invalid_value`, `out_of_range`) but is never a usage error. The run
+/// through the binary and the run in process, each in a throwaway home with no driver, agree.
+fn assert_reaches(line: &[&str], _sub: &str) {
     let line = args(line);
     let run = run_bin(&line);
-    let p = failure_problems(&run, "internal", None, Some(&msg_stub(sub)));
+    let p = reaches_command_problems(&run);
     assert!(p.is_empty(), "{}: {}", show(&line), p.join("; "));
-    assert_eq!(in_process(&line), 1, "{} in process", show(&line));
+    assert_eq!(
+        in_process(&line),
+        run.status.expect("An exit code"),
+        "{} in process",
+        show(&line)
+    );
+}
+
+/// A line whose values are all valid gets the answer of an empty throwaway home with no driver:
+/// `create` fails `internal` ("No lease driver is available"), `list` prints the empty list, and
+/// `get`, `renew` and `release` are `not_found` (`id` is the lease ID, normalized).
+fn assert_answer(line: &[&str], sub: &str, id: &str) {
+    let line = args(line);
+    let run = run_bin(&line);
+    let p = answer_problems(&run, sub, id);
+    assert!(p.is_empty(), "{}: {}", show(&line), p.join("; "));
+    assert_eq!(
+        in_process(&line),
+        answer_exit(sub),
+        "{} in process",
+        show(&line)
+    );
 }
 
 #[test]
-fn every_subcommand_with_a_valid_line_ends_internal_with_exit_1() {
-    assert_stub(&["lease", "create", "--project", "x"], "create");
-    assert_stub(&["lease", "get", ID], "get");
-    assert_stub(&["lease", "renew", ID], "renew");
-    assert_stub(&["lease", "renew", ID, "--ttl", "8h"], "renew");
-    assert_stub(&["lease", "release", ID], "release");
-    assert_stub(&["lease", "list"], "list");
-    assert_stub(&["lease", "list", "--project", "x"], "list");
-    assert_stub(&["lease", "list", "--state", "ready"], "list");
+fn every_subcommand_with_a_valid_line_gets_its_commands_answer() {
+    assert_answer(&["lease", "create", "--project", "x"], "create", ID);
+    assert_answer(&["lease", "get", ID], "get", ID);
+    assert_answer(&["lease", "renew", ID], "renew", ID);
+    assert_answer(&["lease", "renew", ID, "--ttl", "8h"], "renew", ID);
+    assert_answer(&["lease", "release", ID], "release", ID);
+    assert_answer(&["lease", "list"], "list", ID);
+    assert_answer(&["lease", "list", "--project", "x"], "list", ID);
+    assert_answer(&["lease", "list", "--state", "ready"], "list", ID);
 }
 
 #[test]
 fn a_command_subcommand_and_flag_match_without_regard_to_ascii_case() {
-    assert_stub(&["Lease", "CREATE", "--Project", "x"], "create");
-    assert_stub(&["LEASE", "create", "--PROJECT=x", "--TtL", "8h"], "create");
-    assert_stub(
+    assert_reaches(&["Lease", "CREATE", "--Project", "x"], "create");
+    assert_reaches(&["LEASE", "create", "--PROJECT=x", "--TtL", "8h"], "create");
+    assert_reaches(
         &[
             "lease",
             "Create",
@@ -854,10 +878,10 @@ fn a_command_subcommand_and_flag_match_without_regard_to_ascii_case() {
         ],
         "create",
     );
-    assert_stub(&["LEASE", "GET", ID], "get");
-    assert_stub(&["lease", "Renew", ID, "--TTL", "8h"], "renew");
-    assert_stub(&["lease", "RELEASE", ID], "release");
-    assert_stub(
+    assert_reaches(&["LEASE", "GET", ID], "get");
+    assert_reaches(&["lease", "Renew", ID, "--TTL", "8h"], "renew");
+    assert_reaches(&["lease", "RELEASE", ID], "release");
+    assert_reaches(
         &["LEASE", "LIST", "--STATE", "READY", "--Project=x"],
         "list",
     );
@@ -865,52 +889,52 @@ fn a_command_subcommand_and_flag_match_without_regard_to_ascii_case() {
 
 #[test]
 fn a_flags_value_takes_the_equals_form_and_the_next_argument_form_alike() {
-    assert_stub(&["lease", "create", "--project=x", "--ttl=8h"], "create");
-    assert_stub(
+    assert_reaches(&["lease", "create", "--project=x", "--ttl=8h"], "create");
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "8h"],
         "create",
     );
     // Everything after the first `=` is the value, even one that starts with `-` or holds `=`.
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl=a=b"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl=--bogus"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl=-5m"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project=--size", "--ttl", "8h"],
         "create",
     );
     // A single dash starts a value, and so does a lone `-`.
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "-5m"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "-"],
         "create",
     );
-    assert_stub(&["lease", "create", "--project", "-x-"], "create");
-    assert_stub(
+    assert_reaches(&["lease", "create", "--project", "-x-"], "create");
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "-hx"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "-help"],
         "create",
     );
     // A value MAY hold spaces when the shell passes it as one argument.
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "1h 30m"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl=1h 30m"],
         "create",
     );
@@ -918,34 +942,34 @@ fn a_flags_value_takes_the_equals_form_and_the_next_argument_form_alike() {
 
 #[test]
 fn a_value_of_only_whitespace_is_not_an_empty_value() {
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", " "],
         "create",
     );
-    assert_stub(&["lease", "create", "--project", "x", "--ttl= "], "create");
-    assert_stub(
+    assert_reaches(&["lease", "create", "--project", "x", "--ttl= "], "create");
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "\t"],
         "create",
     );
-    assert_stub(&["lease", "list", "--state", " "], "list");
-    assert_stub(&["lease", "list", "--state=\u{3000}"], "list");
+    assert_reaches(&["lease", "list", "--state", " "], "list");
+    assert_reaches(&["lease", "list", "--state=\u{3000}"], "list");
 }
 
 #[test]
 fn the_two_value_forms_agree_for_a_value_with_a_line_feed() {
     // The prototype read `--project=<a value with a line feed>` as an unknown option (#0083).
-    assert_stub(&["lease", "create", "--project=a\nb"], "create");
-    assert_stub(&["lease", "create", "--project", "a\nb"], "create");
-    assert_stub(
+    assert_reaches(&["lease", "create", "--project=a\nb"], "create");
+    assert_reaches(&["lease", "create", "--project", "a\nb"], "create");
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl=8h\n"],
         "create",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "create", "--project", "x", "--ttl", "8h\n"],
         "create",
     );
-    assert_stub(&["lease", "create", "--project=\n"], "create");
-    assert_stub(
+    assert_reaches(&["lease", "create", "--project=\n"], "create");
+    assert_reaches(
         &["lease", "create", "--project", "x", "--size=\r\n"],
         "create",
     );
@@ -953,29 +977,29 @@ fn the_two_value_forms_agree_for_a_value_with_a_line_feed() {
 
 #[test]
 fn the_lease_id_is_positional_anywhere_among_the_flags_and_an_empty_one_counts() {
-    assert_stub(&["lease", "renew", "--ttl", "8h", ID], "renew");
-    assert_stub(&["lease", "renew", "--ttl=8h", ID], "renew");
-    assert_stub(&["lease", "renew", ID, "--ttl", "8h"], "renew");
-    assert_stub(&["lease", "get", ""], "get");
-    assert_stub(&["lease", "get", "not-a-uuid"], "get");
-    assert_stub(&["lease", "release", "/x"], "release");
-    assert_stub(&["lease", "release", " "], "release");
-    assert_stub(&["lease", "renew", "", "--ttl", "8h"], "renew");
+    assert_reaches(&["lease", "renew", "--ttl", "8h", ID], "renew");
+    assert_reaches(&["lease", "renew", "--ttl=8h", ID], "renew");
+    assert_reaches(&["lease", "renew", ID, "--ttl", "8h"], "renew");
+    assert_reaches(&["lease", "get", ""], "get");
+    assert_reaches(&["lease", "get", "not-a-uuid"], "get");
+    assert_reaches(&["lease", "release", "/x"], "release");
+    assert_reaches(&["lease", "release", " "], "release");
+    assert_reaches(&["lease", "renew", "", "--ttl", "8h"], "renew");
 }
 
 #[test]
 fn list_state_may_be_repeated_and_no_other_flag_may() {
-    assert_stub(
+    assert_reaches(
         &["lease", "list", "--state", "ready", "--state", "pending"],
         "list",
     );
-    assert_stub(
+    assert_reaches(
         &["lease", "list", "--state=ready", "--STATE", "pending"],
         "list",
     );
-    assert_stub(&["lease", "list", "--state", "ready,pending"], "list");
-    assert_stub(&["lease", "list", "--state", "ready,,pending"], "list");
-    assert_stub(
+    assert_reaches(&["lease", "list", "--state", "ready,pending"], "list");
+    assert_reaches(&["lease", "list", "--state", "ready,,pending"], "list");
+    assert_reaches(
         &[
             "lease",
             "list",
@@ -992,20 +1016,24 @@ fn list_state_may_be_repeated_and_no_other_flag_may() {
 
 #[test]
 fn a_help_like_value_after_an_equals_is_a_value_and_does_not_end_the_line() {
-    assert_stub(&["lease", "create", "--project=-h"], "create");
-    assert_stub(&["lease", "create", "--project=--help"], "create");
-    assert_stub(&["lease", "list", "--state=--help"], "list");
-    assert_stub(&["lease", "renew", ID, "--ttl=--HELP"], "renew");
+    assert_reaches(&["lease", "create", "--project=-h"], "create");
+    assert_reaches(&["lease", "create", "--project=--help"], "create");
+    assert_reaches(&["lease", "list", "--state=--help"], "list");
+    assert_reaches(&["lease", "renew", ID, "--ttl=--HELP"], "renew");
 }
 
 #[test]
-fn a_valid_line_never_prints_help_or_json_on_stdout() {
+fn a_valid_line_never_prints_help_and_a_failed_one_prints_nothing_on_stdout() {
     for line in [
         args(&["lease", "create", "--project", "x"]),
         args(&["lease", "get", ID]),
-        args(&["lease", "list"]),
+        args(&["lease", "renew", ID]),
+        args(&["lease", "release", ID]),
     ] {
         let run = run_bin(&line);
         assert!(run.stdout.is_empty(), "{}: nothing on stdout", show(&line));
     }
+    // A list succeeds in the throwaway home: one JSON document, never help.
+    let run = run_bin(&args(&["lease", "list"]));
+    assert_eq!(run.stdout, b"{\"leases\":[]}\n");
 }

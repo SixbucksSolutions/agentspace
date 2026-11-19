@@ -1,17 +1,44 @@
-//! The five lease commands. In this story every one of them answers `internal`; E0.05-T03-S02
-//! (#0106) replaces that.
+//! The five lease commands (lease-api.md, Commands; driver.md, Ordering and concurrency;
+//! docs/state.md, The lease state file and The lease state lock).
+//!
+//! RFC 2119 keywords; the capitals are load-bearing.
+//!
+//! - **The world's `var` MUST be the only way these commands read the environment**, and nothing
+//!   here calls `std::env` (the architect's conditions on the seam, 2026-11-19).
+//! - **`create`, `renew` and `release` take the lease state lock before they read the records, and
+//!   hold it until the outcome is recorded; `get` and `list` MUST NOT take it.**
+//! - **Each command checks its values in its table's order, after the parser's usage errors, and
+//!   reports errors in lease-api.md's order** (Exit codes and errors): the values, then the records
+//!   or the no-home failure, then `not_found`, then `invalid_state`, then any other `internal`.
+//! - **Every document is checked against its output schema before it is printed**, and before the
+//!   change it reports is made where the document is known first.
 
-use std::path::Path;
+mod create;
+mod release;
+mod renew;
+mod show;
+mod support;
 
-use crate::{LeaseError, ParsedCommand};
+#[cfg(test)]
+mod tests;
 
-/// Runs a parsed command line and returns the document to print.
-///
-/// `own_exe` is the program's own executable, as a full path, from the operating system.
-pub fn run(cmd: ParsedCommand, own_exe: &Path) -> Result<serde_json::Value, LeaseError> {
-    let _ = own_exe;
-    Err(LeaseError::internal(format!(
-        "agentspace lease {} failed: This build does not have the command yet.",
-        cmd.sub.name()
-    )))
+use agentspace_driver_api::Driver;
+use serde_json::Value;
+
+use crate::{LeaseError, ParsedCommand, Sub, World};
+
+/// The drivers this build has. Empty in E0.05-T03-S02; E0.05-T04-S01 adds the EC2 driver.
+pub fn drivers() -> Vec<Box<dyn Driver>> {
+    Vec::new()
+}
+
+/// Runs a parsed command line in `world` and returns the document to print.
+pub fn run(cmd: ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> {
+    match cmd.sub {
+        Sub::Create => create::create(&cmd, world),
+        Sub::Get => show::get(&cmd, world),
+        Sub::Renew => renew::renew(&cmd, world),
+        Sub::Release => release::release(&cmd, world),
+        Sub::List => show::list(&cmd, world),
+    }
 }

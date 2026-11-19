@@ -3,9 +3,9 @@
 //! only, messages with no control character, a quoted value escaped, and a run that ends in an
 //! unexpected failure still ending in one `internal` document.
 //!
-//! RFC 2119 keywords in these comments; the capitals are load-bearing. A success document cannot be
-//! tested here, because every subcommand answers `internal` in this story (E0.05-T03-S02, #0106,
-//! replaces that); help is the one success output, and `help.rs` checks it.
+//! RFC 2119 keywords in these comments; the capitals are load-bearing. The commands' success
+//! documents are checked by the `lease_*.rs` tests (E0.05-T03-S02, #0106); help is the other
+//! success output, and `help.rs` checks it.
 
 mod common;
 
@@ -29,7 +29,7 @@ fn a_failure_writes_nothing_to_stdout_and_one_compact_document_and_line_feed_to_
         args(&["lease", "get", ID]),
         args(&["lease", "renew", ID]),
         args(&["lease", "release", ID]),
-        args(&["lease", "list"]),
+        // `list` succeeds in the throwaway home, so it is not a failure to check.
     ];
     let mut failures = Vec::new();
     for line in &lines {
@@ -198,25 +198,27 @@ fn a_usage_error_carries_a_code_and_a_message_and_a_field_only_in_the_five_cases
 
 #[test]
 fn an_internal_error_carries_only_a_code_and_a_message() {
-    let run = run_str(&["lease", "get", ID]);
+    // A create with no driver, in the throwaway home of `command`, fails `internal`.
+    let run = run_str(&["lease", "create", "--project", "x"]);
     let doc = doc_of(&run);
     assert_eq!(doc.as_object().map(|o| o.len()), Some(2));
     assert_eq!(doc["code"], "internal");
-    assert_eq!(doc["message"], msg_stub("get").as_str());
+    assert_eq!(doc["message"], MSG_NO_DRIVER);
 }
 
 #[test]
 fn the_subcommand_in_an_internal_message_is_lowercase() {
-    let run = run_str(&["LEASE", "RELEASE", ID]);
+    let run = run_str(&["LEASE", "CREATE", "--project", "x"]);
     let doc = doc_of(&run);
-    assert_eq!(doc["message"], msg_stub("release").as_str());
+    assert_eq!(doc["message"], MSG_NO_DRIVER);
 }
 
 #[test]
 fn a_message_is_in_agentspaces_own_words_with_no_path_and_no_other_programs_text() {
     for line in [
         args(&["lease", "get", ID]),
-        args(&["lease", "list"]),
+        args(&["lease", "release", ID]),
+        args(&["lease", "renew", ID]),
         args(&["lease", "create", "--project", "x"]),
     ] {
         let run = run_bin(&line);
@@ -443,7 +445,8 @@ fn a_run_reads_nothing_from_standard_input() {
         .expect("The binary ends without input")
         .expect("Output");
     drop(held);
-    assert_eq!(out.status.code(), Some(1));
+    // A get of an ID that names no lease, in the throwaway home: `not_found`, exit 3.
+    assert_eq!(out.status.code(), Some(3));
 }
 
 #[cfg(unix)]
@@ -458,7 +461,7 @@ fn the_program_name_is_never_read_as_an_argument() {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         let run = run_command(cmd);
-        let p = failure_problems(&run, "internal", None, Some(&msg_stub("get")));
+        let p = answer_problems(&run, "get", ID);
         assert!(p.is_empty(), "argv[0] {name:?}: {}", p.join("; "));
     }
 }

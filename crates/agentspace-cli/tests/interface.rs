@@ -52,15 +52,37 @@ fn command_for(sub: Sub) -> ParsedCommand {
     ParsedCommand { sub, flags, id }
 }
 
+/// Runs `f` with an empty world (E0.05-T03-S02): no variable is set, the working folder is a
+/// throwaway folder under the temp folder, the clock and the IDs are fixed, and there is no driver.
+/// It never reads the process's environment, so it never reads a real home.
+fn with_empty_world<T>(own_exe: &Path, f: impl FnOnce(&agentspace_cli::World) -> T) -> T {
+    let cwd = scratch_dir();
+    let var = |_: &str| None;
+    let now = || 1_800_000_000_i64;
+    let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_string();
+    let world = agentspace_cli::World {
+        var: &var,
+        cwd: &cwd,
+        own_exe,
+        now: &now,
+        new_id: &new_id,
+        drivers: &[],
+    };
+    f(&world)
+}
+
 #[test]
-fn run_answers_every_subcommand_with_internal_and_the_not_yet_message() {
+fn run_answers_every_subcommand_with_internal_when_no_home_is_set() {
     // The own executable is a made-up path that holds a folder name no message may carry.
     let own_exe = Path::new("/nonexistent-folder-secret/agentspace");
     for sub in [Sub::Create, Sub::Get, Sub::Renew, Sub::Release, Sub::List] {
-        let expected = msg_stub(name(&sub));
-        let result = commands::run(command_for(sub), own_exe);
+        let expected = format!(
+            "agentspace lease {} failed: The home folder is not set (USERPROFILE is unset or empty), so agentspace cannot find its files. Nothing was changed.",
+            name(&sub)
+        );
+        let result = with_empty_world(own_exe, |w| commands::run(command_for(sub), w));
         let Err(error) = result else {
-            panic!("{expected}: run answered Ok, and this build has no command yet");
+            panic!("{expected}: run answered Ok, with no home folder");
         };
         assert_eq!(code_name(&error.code), "internal", "{expected}");
         assert_eq!(error.message, expected);
@@ -85,7 +107,9 @@ fn run_never_panics_on_a_command_with_no_flags_or_an_odd_id() {
             flags: vec![],
             id: Some(os("")),
         };
-        let result = std::panic::catch_unwind(|| commands::run(cmd, own_exe).is_err());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_empty_world(own_exe, |w| commands::run(cmd, w).is_err())
+        }));
         assert_eq!(result.ok(), Some(true), "{label}");
     }
 }
@@ -133,9 +157,10 @@ fn error_codes_are_the_six_of_the_table() {
 
 #[test]
 fn main_with_returns_the_exit_code_of_the_error_code_for_each_line() {
-    let cases: [(&[&str], i32); 8] = [
+    let cases: [(&[&str], i32); 9] = [
         (&["lease", "create", "--project", "x"], 1),
-        (&["lease", "list"], 1),
+        (&["lease", "list"], 0),
+        (&["lease", "get", ID], 3),
         (&[], 2),
         (&["lease", "get"], 2),
         (&["frob"], 2),
@@ -151,10 +176,9 @@ fn main_with_returns_the_exit_code_of_the_error_code_for_each_line() {
 #[test]
 fn main_with_ignores_the_own_executable_it_is_given_when_reading_the_line() {
     for exe in ["", "-h", "--bogus", "lease", "/nonexistent/agentspace"] {
-        let code = exit_number(agentspace_cli::main_with(
-            args(&["lease", "list"]),
-            std::path::PathBuf::from(exe),
-        ));
-        assert_eq!(code, 1, "own_exe {exe:?}");
+        // An empty world has no home, so a list fails `internal`, whatever the own file is.
+        let line = args(&["lease", "list"]);
+        let out = with_empty_world(Path::new(exe), |w| agentspace_cli::execute_in(&line, w));
+        assert_eq!(i32::from(out.exit_code), 1, "own_exe {exe:?}");
     }
 }
