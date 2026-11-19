@@ -1,0 +1,3 @@
+# The alias for the build-output tool, `cargo xtask dist` (D38).
+[alias]
+xtask = "run --package xtask --"
