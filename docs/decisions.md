@@ -77,6 +77,7 @@ line's text after `Status:`, without its full stop.
 - [D37. The rewrite is seven files in one install folder, and carries what the checkout held](#d37-the-rewrite-is-seven-files-in-one-install-folder-and-carries-what-the-checkout-held): Decided
 - [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
 - [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease
+- [D40. By v1.0, agentspace's own files are JSON where feasible](#d40-by-v10-agentspaces-own-files-are-json-where-feasible): Direction, Terry, 2026-11-19, to be met by v1.0 (#0053)
 
 ## The interface
 
@@ -2566,6 +2567,38 @@ agents".
 cores (E0.05-T02-S04's run record; #0102). D27 sizes by concurrency, and this applies it by hand
 until v0.09 measures a compiling turn and makes sizes a lease's to ask for. It does not set D27's
 per-agent footprint, which still MUST come from measurement.
+
+### D40. By v1.0, agentspace's own files are JSON where feasible
+
+**Status: Direction, Terry, 2026-11-19, to be met by v1.0 (#0053).**
+
+**Terry: "by v1.0, I'd like all file formats moved to JSON *where feasible*. It's not a mandate,
+just a very strong preference. If there's a strong case for non-JSON, I delegate that call to
+you."**
+- **Every file whose format agentspace owns SHOULD be JSON by v1.0**, with a draft 2020-12 schema
+  (D20). A line-per-record file, such as a log or the sampler's record, MAY be JSON Lines.
+- **The architect decides each exception, and records it here with its case.** A strong case is
+  one where another program owns the format, or where JSON would cost a person or a program
+  something real. These are exceptions now:
+
+  | Format | Why it stays |
+  |---|---|
+  | OpenSSH's files: keys, certificates, `config`, alias files, `known_hosts` | OpenSSH reads them, in its own formats |
+  | `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | Cargo's own formats |
+  | `box/`: shell scripts and systemd units | The host runs them (D28: not product, so not ported) |
+  | Markdown docs | Written for people |
+  | localswim's receipt and `bot.xml` | localswim's files, which agentspace only reads ([operator.md](operator.md#the-bot-credential)); a change there is localswim's |
+
+- **Where it bites, all the operator's or the keeper's, and so for v0.06 (#0055) to decide as it
+  rebuilds them**, each a change to its spec before that release's stories start:
+  - `local.parameters`, `KEY=VALUE` lines today ([state.md](state.md#files-in-the-checkout)).
+  - The instance-ID cache and the push stamp, one line of text each.
+  - The keeper's logs, lines of text that people read ([keeper.md](keeper.md#log-lines)): JSON
+    Lines, or an exception, is v0.06's call.
+  - The CloudFormation template, YAML today and maintained by hand (D37's addendum): CloudFormation
+    takes JSON too, so moving it is possible; YAML's comments are its case to stay.
+- **Contract v0's files are already JSON** (the lease state file, the keeper's records, every
+  document the CLI prints) and change nothing.
 
 ## Keys
 
