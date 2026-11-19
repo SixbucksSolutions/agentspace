@@ -187,7 +187,7 @@ try {
         'exit /b 255')
       $r = Invoke-Proxy $awsSignIn @($alias)
       $signLines = @($r.Stderr -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
-      $signIn = "agentspace: AWS sign-in has expired. Run 'aws login' in a fresh Incognito window, then retry."
+      $signIn = "agentspace: AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry."
       $p = Get-Problems $r 1
       if ($signLines.Count -eq 0 -or $signLines[-1] -cne $signIn) { $p.Add('The last line on stderr is not exactly the sign-in message') }
       if ($r.Stdout.Length -gt 0) { $p.Add('Stdout is not empty') }

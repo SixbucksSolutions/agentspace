@@ -55,7 +55,7 @@ $seamSection = 'operator.md#the-test-seam'
 # A made-up instance ID, built here so that no ID is written into this file.
 $fakeId = 'i-' + ('0' * 17)
 $marker = 'standin-backend-detail'
-$signIn = "agentspace: AWS sign-in has expired. Run 'aws login' in a fresh Incognito window, then retry."
+$signIn = "agentspace: AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry."
 $couldNotReach = 'agentspace: Could not reach the host. Set AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.'
 
 $backend = [ordered]@{

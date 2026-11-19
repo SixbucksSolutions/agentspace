@@ -124,7 +124,7 @@ function Invoke-Aws {
   if ($LASTEXITCODE -ne 0) {
     $msg = ($out | Out-String).Trim()
     if ($msg -match 'expired|aws login|Unable to locate credentials') {
-      Fail "AWS sign-in has expired. Run 'aws login' in a fresh Incognito window, then retry."
+      Fail "AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry."
     }
     Fail $msg
   }

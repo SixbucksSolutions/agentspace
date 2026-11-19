@@ -263,7 +263,7 @@ requirement.**
   fail with exactly:**
 
   ```
-  agentspace: AWS sign-in has expired. Run 'aws login' in a fresh Incognito window, then retry.
+  agentspace: AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry.
   ```
 
   A failure is a sign-in failure when the CLI's error text matches `expired`, `aws login` or

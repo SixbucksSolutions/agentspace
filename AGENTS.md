@@ -111,6 +111,12 @@ its subagents.
   It relays his answer back.
 - **A card waiting on Terry still goes to Needs Terry**, so it reaches his phone, but the request
   itself comes to him from the architect.
+- **When the AWS sign-in has expired, the request MUST name `aws login --remote`, and say to paste
+  the link it prints into a fresh Incognito window**, with every other Incognito window closed
+  first (Terry, 2026-11-19: "We've had this fail before"). Plain `aws login` opens the default
+  browser, whose other AWS session fails the sign-in with a 400 (README, "AWS"). The architect
+  asked for plain `aws login` at the start of v0.05-T01, and Terry corrected it; the operator's
+  sign-in message now names `--remote` too (operator.md, AWS failures).
 
 ### The architect's watchdog on a dev lead
 
