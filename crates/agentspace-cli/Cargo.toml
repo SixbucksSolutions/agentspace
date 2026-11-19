@@ -1,0 +1,18 @@
+[package]
+name = "agentspace-cli"
+version = "0.5.0"
+edition.workspace = true
+publish = false
+
+[lib]
+name = "agentspace_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentspace"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { version = "=1.0.154", default-features = false, features = ["std", "preserve_order"] }
+
+[dev-dependencies]
