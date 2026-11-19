@@ -73,6 +73,7 @@ line's text after `Status:`, without its full stop.
 - [D33. v0.03 measures each agent session's process tree, split into the session and its tool calls](#d33-v003-measures-each-agent-sessions-process-tree-split-into-the-session-and-its-tool-calls): Decided
 - [D34. v0.04's spec package: one reference per interface, and a conformance suite kept apart from the prototype](#d34-v004s-spec-package-one-reference-per-interface-and-a-conformance-suite-kept-apart-from-the-prototype): Decided
 - [D35. The keeper's contract, settled in the clean-room review](#d35-the-keepers-contract-settled-in-the-clean-room-review): Decided
+- [D36. The operator never reports a false success](#d36-the-operator-never-reports-a-false-success): Decided
 
 ## The interface
 
@@ -2375,6 +2376,24 @@ state.md state them as behavior.
   own (Q4, B-41).
 - **The default ssh is `%SystemRoot%\System32\OpenSSH\ssh.exe`**, written with the variable, not
   the prototype's fixed `C:\Windows` path (A-24).
+
+### D36. The operator never reports a false success
+
+**Decided, architect, 2026-11-18, accepting E0.04-T05-S03's (#0090) rulings in operator.md.**
+Where the prototype's operator reports success over a step that failed, or does something the
+caller asked it not to, the spec requires the honest behavior, and operator.md lists the
+prototype under "Requirements the prototype does not meet yet".
+- **`deploy -Quiet` passes `-Quiet` to the `sync` it runs** (Q4). `-Quiet` applies to every step
+  of a command, and the prototype's quiet `deploy` ran a loud `sync`.
+- **`grow` exits 1 when the box's online filesystem grow fails**, saying that the volume is
+  already larger and the filesystem grows at the next boot (Q23). The prototype exited 0 with no
+  line of its own.
+- **`sync` fails before it copies when it cannot remove the box's old staging folder** (Q25). The
+  prototype never checked, so a surviving folder could install stale files and still report
+  success.
+
+**Why:** a drop-in copies what the prototype does on purpose, never a silent false success. A
+caller, or an agent reading the exit code, has to be able to trust that 0 means done.
 
 ## Keys
 
