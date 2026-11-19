@@ -194,6 +194,16 @@ home and refuses any write outside it (conformance.md, The harness), and a revie
 every write and delete went through it. This replaces the snapshot step in handoff-v0.04.md,
 "Reviewing a pull request", step 3, which auto mode refused a subagent in v0.05-T02.
 
+**When a story turns a stub into code that reaches real state, every test that runs the program
+in process MUST be found and pointed at a throwaway home before any test runs** (found in
+v0.05-T03, 2026-11-19). T01's `agentspace-cli` tests ran command lines in process with the real
+environment, which was harmless while the commands were stubs. Once E0.05-T03-S02 built them,
+two test runs before 8:28am Pacific read Terry's real `leases.json` and briefly opened his real
+`leases.lock`. Nothing was written: with no driver, no record could be, and the lease records
+were checked afterwards through `agentspace lease list`, 15 leases, all released, as before. The
+in-process entry now takes a throwaway home, and a guard test shows the suite creates nothing in
+the real one.
+
 ## Watching a measurement
 
 **A running `agentspace-sample` MUST be watched for liveness by whoever started it, from its start
