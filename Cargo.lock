@@ -74,6 +74,13 @@ name = "agentspace-values"
 version = "0.5.0"
 
 [[package]]
+name = "agentspace-zone"
+version = "0.6.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,17 @@
+[package]
+name = "agentspace-zone"
+version = "0.6.0"
+edition.workspace = true
+description = "The laptop's time zone as an IANA name, and the zone check (docs/operator.md, The time zone; D42)"
+publish = false
+
+[lib]
+name = "agentspace_zone"
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+# Already in the workspace's Cargo.lock; tests/zone_check_property.rs compiles the spec's pattern
+# with it, to compare the hand-written check against.
+regex = "=1.13.1"
