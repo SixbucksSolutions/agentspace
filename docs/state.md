@@ -1124,7 +1124,10 @@ strict, as a writer MUST write it.
   UUID in any case. Its `alias` MUST match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`, and a record
   whose alias does not is no record (architect, 2026-11-19, for v0.06, gap FB-23). A reader MUST
   NOT require the line ending a writer puts after the document, and accepts whitespace JSON
-  allows (architect, 2026-11-19, for E0.06-T01-S07).
+  allows (architect, 2026-11-19, for E0.06-T01-S07). It also accepts a UTF-8 byte order mark and a
+  member the schema does not name, which it ignores; it keeps `lease_id` as stored, and the keeper
+  compares it with a lease's ID without regard to ASCII case. In the keeper lock's PID line,
+  "blanks" are ASCII whitespace: space, tab, CR, LF and form feed.
 - **The PID and the start time together are the holder's identity**; the record never names a
   process by its PID alone.
 

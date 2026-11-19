@@ -200,7 +200,9 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   `sync` and `grow`: the AWS CLI's `cloudformation deploy` output, `go build`'s, the box's
   `install.sh` lines and `grow`'s `df` table reach the operator's stdout or stderr as those
   programs wrote them. A caller MUST NOT parse that output; it is for a person.
-- **Help goes to stdout**, with exit 0.
+- **Help goes to stdout**, with exit 0. **Help that cannot be written**, to a full or closed
+  stdout, fails with `agentspace: Could not write the help to stdout.` on stderr and exit 1
+  (architect, 2026-11-19, for E0.06-T01-S01).
 
 ### Exit codes
 
@@ -281,7 +283,8 @@ fails, exit 1, with exactly:
 - `agentspace: Could not run <path>.` for a program that exists but cannot be started.
 
 `<path>` is the full path the default names. In caller mode each is the "Could not reach the host"
-line. **A remote command that breaks gap FA-15's rule is a defect of the operator's own, never
+line. The `PATH` search finds only a file the system can run, so an `aws` there that is not
+executable is passed over, and the answer is "not installed". **A remote command that breaks gap FA-15's rule is a defect of the operator's own, never
 sent**, and fails with `agentspace: The remote command cannot be sent: <reason>.`, without the
 command, and caller mode's "Could not reach the host".
 
@@ -1787,7 +1790,8 @@ as to any converted name.
    `territory="001"` rows of CLDR's `windowsZones.xml`, from the newest CLDR release published at
    least two weeks before the build's story, as a table generated into `agentspace-zone` with that
    release's number beside it. It calls neither .NET nor ICU, so the mapping is the same on every
-   laptop and testable on Linux. This page holds no copy of the table; CLDR is its source, and a
+   laptop and testable on Linux. A Windows ID is matched case-sensitively, whole and untrimmed,
+   as ICU matches it. This page holds no copy of the table; CLDR is its source, and a
    new release is taken by regenerating it in a story of its own.
 2. **Seven legacy names are mapped to their current ones**, because CLDR gives them and today's
    box's `tzdata`, without `tzdata-legacy`, refuses them. Every other name is kept as it is:
@@ -1997,6 +2001,15 @@ written, warns `agentspace: Could not send the localswim token; the board will n
 this session.` and records nothing. **A push never fails the command**: every outcome here is a
 warning, and `up` and `sync` go on as if the push had succeeded. `-Quiet` suppresses these
 warnings with the rest ([Messages](#messages); [Q21](#open-questions)).
+
+**Rulings for the rewrite's push** (architect, 2026-11-19, for E0.06-T01-S04):
+- **The zone comes from `agentspace-zone`**, already mapped and checked (steps 1 to 3 of
+  [The time zone](#the-time-zone)); the push checks step 3 again only as a guard before the zone
+  goes on a command line, and holds no copy of the legacy table.
+- **`AGENTSPACE_NESTED` stops `up`'s push alone**; `sync`'s forced push runs whatever it says.
+- **A stamp file that is not UTF-8**, such as one in UTF-16, cannot be parsed, so a push is due.
+- **An alias that breaks `-Alias`'s rule**, which the command line refuses before any push, is
+  "any other failure" if one ever reaches the push: no `Sending` line, and the warning above.
 
 **A push handed a bad alias by any path but the command line** warns `agentspace: The SSH host
 alias for the localswim token is not valid; the board will not work on the box this session.` and
