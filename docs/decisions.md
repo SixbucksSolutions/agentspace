@@ -1240,7 +1240,7 @@ Times are UTC.
 ### D13. arm64 is the default platform
 
 **Decided.** When a request names no platform, it gets `linux/arm64`, because Graviton costs less
-for the same agent work. `linux/amd64` is the planned second platform (v0.11, #0051, which folded
+for the same agent work. `linux/amd64` is the planned second platform (v0.12, #0051, which folded
 in card #0013), not a fallback.
 
 ## How the work is run
@@ -1646,6 +1646,11 @@ the releases are taken in order.
 - **The plan was first written with one digit** (v0.2 to v0.12). Docs and cards were rewritten to
   two digits the same day, except the swimcoach milestones `v0.2` and `v0.2-T1`, which keep the
   names they were first reported under (D29).
+- **Plan from the board comes before `linux/amd64`** (Terry, 2026-11-19: "I'd like to be feature
+  'complete' before switching focus to other lease platforms"). The two swapped numbers and kept
+  their epics: #0052 is v0.11, and #0051 is v0.12. Neither depends on the other: reading a plan
+  from an epic names no platform, and sizes it as v0.10 does. The platforms now run back to back,
+  v0.12 then v0.13, so Windows builds directly on the driver that first serves two platforms.
 
 | Release | Epic | What |
 |---|---|---|
@@ -1658,8 +1663,8 @@ the releases are taken in order.
 | v0.08 | #0048 | Host lifecycle and cost guard |
 | v0.09 | #0049 | Size classes |
 | v0.10 | #0050 | Plan-sized leases; contract v1 (D27) |
-| v0.11 | #0051 | `linux/amd64` platform |
-| v0.12 | #0052 | Plan from the board |
+| v0.11 | #0052 | Plan from the board |
+| v0.12 | #0051 | `linux/amd64` platform |
 | v0.13 | #0081 | `windows/amd64` platform (D4; added by Terry, 2026-11-18) |
 | v1.0 | #0053 | A real project runs an epic on a plan-sized host |
 

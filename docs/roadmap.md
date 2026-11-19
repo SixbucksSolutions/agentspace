@@ -61,8 +61,8 @@ when Terry says so (D14).
 | **v0.08** | #0048 | **Host lifecycle and cost guard.** A host runs only while its project holds a live lease | The last release stops the host, and no host can run unnoticed |
 | **v0.09** | #0049 | **Size classes.** `s` to `xl`, set by resizing a stopped host | `--size l` gets a bigger host, sized from a footprint measured again on a v0.05 turn |
 | **v0.10** | #0050 | **Plan-sized leases; contract v1.** Peak concurrency times footprint picks the size (D27) | Two plans of different peak concurrency get different sizes |
-| **v0.11** | #0051 | **`linux/amd64`** as a second platform (D13) | `--platform linux/amd64` gives a ready lease |
-| **v0.12** | #0052 | **Plan from the board.** The plan is read from the project's localswim epic | Naming an epic is enough to get a sized lease |
+| **v0.11** | #0052 | **Plan from the board.** The plan is read from the project's localswim epic | Naming an epic is enough to get a sized lease |
+| **v0.12** | #0051 | **`linux/amd64`** as a second platform (D13) | `--platform linux/amd64` gives a ready lease |
 | **v0.13** | #0081 | **`windows/amd64`** as a platform: a Windows host, its lease identity and its host agent (D4) | `--platform windows/amd64` gives a ready lease where an agent works a card |
 | **v1.0** | #0053 | **A real project runs an epic on a plan-sized host** | A real project other than agentspace works a multi-turn epic through it |
 
@@ -74,7 +74,10 @@ when Terry says so (D14).
   rewrites the driver, and doing that in PowerShell first would mean writing it twice (D28).
 - **A host per project comes before sizes and plans,** because a size means nothing until a project
   has a host of its own to size.
-- **Windows comes after `linux/amd64`,** because v0.11 makes the driver serve more than one
+- **Plan from the board comes before `linux/amd64`** (Terry, 2026-11-19, D26), so agentspace is
+  feature complete on one platform before it turns to others. Neither needs the other: a plan read
+  from an epic names no platform.
+- **Windows comes after `linux/amd64`,** because v0.12 makes the driver serve more than one
   platform, and a Windows host is a third. Terry placed it before 1.0 on 2026-11-18: agentspace is
   a multi-platform service (D4). It is v0.13 so that no release before it is renumbered.
 
@@ -117,7 +120,7 @@ up.
 - **GPU sizes**, for when an agent needs to run a model rather than call one.
 - **Requests that state what an agent needs, not only a profile's name**, such as a libc of
   `glibc`, `musl` or `any` matched against what each profile has (D4).
-- **Board-driven leases.** v0.12 reads a plan from the board; this goes further: moving an epic to
+- **Board-driven leases.** v0.11 reads a plan from the board; this goes further: moving an epic to
   In Progress asks for its lease, and closing it releases the lease.
 - **Sub-leases.** An agent on a lease asks for more compute for its own helpers.
 - **Per-project budgets.** What each project's host costs, and a cap that turns into
