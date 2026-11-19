@@ -736,7 +736,11 @@ ProxyCommand and the keeper in v0.06 (#0055).** Until v0.06 removes them (D37):
   entry names ([ProxyCommand lines already on the laptop](#proxycommand-lines-already-on-the-laptop)),
   or, where that entry names none, the one the person installing gives. The install writes that
   `scripts\ssh-proxy.cmd`'s full path into the forwarder, and MUST NOT write a forwarder whose
-  target does not exist.
+  target does not exist. **Nor one whose target's path holds a character outside ASCII, a `"`, a
+  line break, or the `\\?\` prefix** (architect, 2026-11-19, from E0.05-T02-S06): cmd reads a
+  batch file in the console's code page, the OEM page for a task with no console, so it cannot
+  follow such a path, and it cannot run a `\\?\` one. The forwarder is the one line
+  `@"<target>" %*`, each `%` in the path written `%%`, ended in CR LF.
   v0.05's build output folder holds a forwarder of the same name, to the checkout it was built
   from, so a check of the default line can run from it. The lease CLI's default line is then the interpreter form of
   [state.md, The alias file](state.md#the-alias-file), naming the forwarder. **This forwarder is the
