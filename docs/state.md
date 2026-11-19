@@ -29,6 +29,18 @@ D34), where they touch the files; the rest of #0041, and #0029, are
 [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
 lists every requirement here that the prototype misses.
 
+**Shown by, in the Rust build (v0.05, E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)):**
+the conformance file for each of these points passes against it.
+- **#0041, second point (a record without its driver):**
+  `conformance/lease-cli/test-unmet-record-no-driver.ps1`.
+- **#0041, third point (the order of renew's and release's writes):**
+  `conformance/lease-cli/test-unmet-renew-keeps-certificate.ps1`,
+  `test-unmet-release-partial.ps1` and `test-unmet-release-released.ps1`.
+- **#0029, third point (`create` and `renew` never create the CA):**
+  `conformance/lease-cli/test-unmet-no-ca.ps1`.
+- **The home folder that both programs share:** `conformance/lease-cli/test-interop.ps1`, each way
+  round, with the prototype as the peer.
+
 ## Contents
 
 - [Conventions](#conventions): [the home folder](#the-home-folder),
