@@ -2010,6 +2010,14 @@ warnings with the rest ([Messages](#messages); [Q21](#open-questions)).
 - **A stamp file that is not UTF-8**, such as one in UTF-16, cannot be parsed, so a push is due.
 - **An alias that breaks `-Alias`'s rule**, which the command line refuses before any push, is
   "any other failure" if one ever reaches the push: no `Sending` line, and the warning above.
+  The push checks the alias, and `AGENTSPACE_NESTED` unless forced, before it reads anything.
+- **The box's last stdout line counts as a line even with no LF after it**, so a hash line that
+  ends the output is still read. A line cut short by the 10-second bound is not 64 hex digits, so
+  it is no hash line.
+- **The Bot credential's reader:** an XML declaration that names an encoding other than the
+  bytes' own (UTF-8, or UTF-16 by its byte order mark) is refused; `Objs`'s `Version` is read as
+  numbers that each fit a 32-bit signed integer, leading zeros allowed, the first MUST be 1; a
+  second `UserName` or `Password` anywhere among the `Props` elements is refused.
 
 **A push handed a bad alias by any path but the command line** warns `agentspace: The SSH host
 alias for the localswim token is not valid; the board will not work on the box this session.` and
