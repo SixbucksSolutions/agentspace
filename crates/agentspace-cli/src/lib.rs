@@ -14,7 +14,7 @@ mod run;
 use std::ffi::OsString;
 
 pub use quote::quote_os;
-pub use run::{Outcome, execute, main_with};
+pub use run::{Outcome, World, execute, execute_in, main_with};
 
 /// The five lease subcommands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -36,6 +36,27 @@ pub fn args(list: &[&str]) -> Vec<OsString> {
     list.iter().map(|a| os(a)).collect()
 }
 
+/// `before`, a value that is not valid Unicode (an unpaired surrogate on Windows, a byte that
+/// starts no UTF-8 character elsewhere), then `after`.
+pub fn not_unicode(before: &str, after: &str) -> OsString {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = before.encode_utf16().collect();
+        wide.push(0xD800);
+        wide.extend(after.encode_utf16());
+        OsString::from_wide(&wide)
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = before.as_bytes().to_vec();
+        bytes.push(0xff);
+        bytes.extend(after.as_bytes());
+        OsString::from_vec(bytes)
+    }
+}
+
 /// A throwaway folder under the temp folder, used as the working folder and the home of every run.
 pub fn scratch_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("agentspace-cli-tests");
@@ -100,9 +121,37 @@ pub fn exit_number(code: ExitCode) -> i32 {
         .unwrap_or_else(|_| panic!("No number in the exit code's debug text '{text}'"))
 }
 
-/// Runs the program in this process through `main_with`, with the arguments after the program's name.
+/// Runs the program in this process through `execute_in`, with the arguments after the program's
+/// name, in a world of its own (E0.05-T03-S02): `USERPROFILE` is a fresh throwaway folder under the
+/// temp folder and no other variable is set, the working folder is that folder, the clock and the IDs
+/// are fixed, and there is no driver. It never builds a world from the real process, so it never
+/// reads or writes a real home.
+pub fn in_process_outcome(line: &[OsString]) -> agentspace_cli::Outcome {
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let home = scratch_dir().join(format!("in-process-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&home).expect("The throwaway home can be made");
+    let home_var = home.clone().into_os_string();
+    let var = move |k: &str| (k == "USERPROFILE").then(|| home_var.clone());
+    let now = || 1_800_000_000_i64;
+    let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_string();
+    let own_exe = PathBuf::from(BIN);
+    let world = agentspace_cli::World {
+        var: &var,
+        cwd: Some(&home),
+        own_exe: &own_exe,
+        now: &now,
+        new_id: &new_id,
+        drivers: &[],
+    };
+    let out = agentspace_cli::execute_in(line, &world);
+    let _ = std::fs::remove_dir_all(&home);
+    out
+}
+
+/// The exit code of `in_process_outcome`.
 pub fn in_process(line: &[OsString]) -> i32 {
-    exit_number(agentspace_cli::main_with(line.to_vec(), PathBuf::from(BIN)))
+    i32::from(in_process_outcome(line).exit_code)
 }
 
 /// The exit code that each error code MUST come with (lease-api.md, Exit codes and errors).
@@ -448,7 +497,8 @@ pub fn show(line: &[OsString]) -> String {
     format!("agentspace {line:?}")
 }
 
-/// Runs each case through the binary and through `main_with`, and fails once with every problem.
+/// Runs each case through the binary and in process through `execute_in` (`in_process`), and fails
+/// once with every problem.
 pub fn check_usage_cases(cases: Vec<Case>) {
     let mut failures = Vec::new();
     for c in &cases {
@@ -517,7 +567,80 @@ pub fn msg_no_id(sub: &str) -> String {
 pub const MSG_NO_PROJECT: &str =
     "Option --project is required. Run 'agentspace lease create --help'.";
 
-/// What a subcommand's line ends in while `commands::run` is the story's stub.
-pub fn msg_stub(sub: &str) -> String {
-    format!("agentspace lease {sub} failed: This build does not have the command yet.")
+pub const MSG_NO_DRIVER: &str =
+    "agentspace lease create failed: No lease driver is available. Nothing was recorded.";
+
+pub fn msg_not_found(id: &str) -> String {
+    format!("No lease has ID '{id}'.")
+}
+
+/// The exit code a valid line to `sub` gets in an empty throwaway home with no driver: `create`
+/// fails `internal` (no driver), `list` prints the empty list, and `get`, `renew` and `release` of
+/// an ID that names no lease are `not_found`.
+pub fn answer_exit(sub: &str) -> i32 {
+    match sub {
+        "create" => 1,
+        "list" => 0,
+        _ => 3,
+    }
+}
+
+/// The problems with a run of a valid line to `sub`, for the lease `id` (normalized) when the line
+/// has one, in an empty throwaway home with no driver (see `answer_exit`).
+pub fn answer_problems(run: &Run, sub: &str, id: &str) -> Vec<String> {
+    match sub {
+        "create" => failure_problems(run, "internal", None, Some(MSG_NO_DRIVER)),
+        "list" => {
+            let mut p = Vec::new();
+            if run.status != Some(0) {
+                p.push(format!("Exit {:?}, not 0", run.status));
+            }
+            if !run.stderr.is_empty() {
+                p.push(format!("Stderr holds {} bytes", run.stderr.len()));
+            }
+            if run.stdout != b"{\"leases\":[]}\n" {
+                p.push(format!(
+                    "Stdout is {:?}, not the empty list",
+                    String::from_utf8_lossy(&run.stdout)
+                ));
+            }
+            p
+        }
+        _ => {
+            let mut p = failure_problems(run, "not_found", None, Some(&msg_not_found(id)));
+            if let Ok(doc) = serde_json::from_slice::<Value>(&run.stderr)
+                && doc["lease_id"] != id
+            {
+                p.push(format!("lease_id is {}, not '{id}'", doc["lease_id"]));
+            }
+            p
+        }
+    }
+}
+
+/// The problems with a run of a line that reaches a command but may hold a value the command
+/// refuses: not a usage error, and a well-formed answer of whatever kind it is.
+pub fn reaches_command_problems(run: &Run) -> Vec<String> {
+    if run.status == Some(0) {
+        let ok = std::str::from_utf8(&run.stdout)
+            .ok()
+            .and_then(|t| t.strip_suffix('\n'))
+            .is_some_and(|b| serde_json::from_str::<Value>(b).is_ok() && run.stderr.is_empty());
+        return if ok {
+            Vec::new()
+        } else {
+            vec!["Exit 0 without one JSON document".to_string()]
+        };
+    }
+    let doc: Value = serde_json::from_slice(&run.stderr).unwrap_or(Value::Null);
+    let Some(code) = doc["code"].as_str() else {
+        return vec![format!(
+            "No error document: {:?}",
+            String::from_utf8_lossy(&run.stderr)
+        )];
+    };
+    if code == "usage" {
+        return vec![format!("A usage error: {}", doc["message"])];
+    }
+    failure_problems(run, code, doc["field"].as_str(), None)
 }

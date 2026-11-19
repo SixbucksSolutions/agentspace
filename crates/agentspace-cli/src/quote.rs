@@ -27,7 +27,13 @@ fn push_escape(out: &mut String, code: u32) {
 /// Quotes a value for a message: `'<value>'`, as given, in single quotes. Each control character
 /// and each unpaired surrogate is written as `\u` and four lowercase hex digits, so the message is
 /// valid UTF-8 and holds no control character.
+///
+/// Text is quoted by the values crate's `quote`, and only an argument that is not valid Unicode is
+/// quoted here (gap FA-09).
 pub fn quote_os(value: &OsStr) -> String {
+    if let Some(text) = value.to_str() {
+        return agentspace_values::quote(text);
+    }
     let mut out = String::from("'");
     for piece in pieces(value) {
         match piece {
