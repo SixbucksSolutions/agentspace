@@ -170,7 +170,7 @@ impl Standin {
                  for /f \"delims==\" %%a in ('set') do @>>\"%D%allnames.txt\" echo(%%a\r\n\
                  findstr /e /c:\"{suffix}\" \"%D%allnames.txt\" > \"%D%fdnames.txt\"\r\n\
                  del \"%D%allnames.txt\"\r\n\
-                 more > \"%D%stdin.txt\"\r\n\
+                 findstr \"^\" > \"%D%stdin.txt\"\r\n\
                  type \"%D%out.txt\"\r\n\
                  type \"%D%err.txt\" 1>&2\r\n\
                  exit /b {code}\r\n",
