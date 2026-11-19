@@ -331,6 +331,7 @@ copying the main checkout's (untracked, never committed) runs it.
 | #0043 | The CloudWatch backstop stops a box under open SSH sessions | Replaced by v0.08 |
 | #0082 | The sampler misses work a session orphans | For v0.09's re-measure, if its tripwire trips |
 | #0005 to #0017, #0032 | After 1.0 | roadmap.md, "After 1.0" |
+| localswim #0611 to #0614 | localswim does not document the receipt, `credential_directory`'s meaning, `bot.xml`'s bytes or its name, which the token push relies on (operator.md, "What the laptop reads") | On the localswim V2 Dev board, in Ready For Work (2026-11-18). When they close, operator.md SHOULD cite localswim's docs in place of its own description |
 
 **At finalize:** add any cards #0080 opened, and any open questions it carried rather than closed.
 
