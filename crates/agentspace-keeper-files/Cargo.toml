@@ -1,0 +1,20 @@
+[package]
+name = "agentspace-keeper-files"
+version = "0.6.0"
+edition.workspace = true
+description = "The keeper's files and the holder command's matcher (docs/state.md; docs/keeper.md; D42)"
+publish = false
+
+[lib]
+name = "agentspace_keeper_files"
+path = "src/lib.rs"
+
+[dependencies]
+agentspace-keeper-api = { path = "../agentspace-keeper-api" }
+# The versions and features agentspace-state uses (Cargo.lock): preserve_order keeps a file's
+# members in the order state.md lists them, and jsonschema has no default features, so its
+# validator never fetches a reference (D38).
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+# Only the Visitor and DeserializeSeed traits, for the duplicate-member check.
+serde = { version = "=1.0.229", default-features = false }
+jsonschema = { version = "=0.60.2", default-features = false }
