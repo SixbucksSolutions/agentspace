@@ -176,9 +176,11 @@ has been observed there.
 - **An alias file's temporary file is in `<ssh folder>`, not in `agentspace.d` beside it**, and is
   moved into `agentspace.d`. The `Include` line reads every file in `agentspace.d`, so a temporary
   file there would be read by ssh as configuration ([The alias file](#the-alias-file)).
-- **`config` is replaced in a way that keeps its own owner and access rules** (`ReplaceFile` on
-  Windows), not by a plain rename, which would give it the temporary file's rules. Windows OpenSSH
-  checks those rules ([The `Include` line](#the-include-line)).
+- **`config` is replaced in a way that keeps its own access rules** (`ReplaceFile` on Windows),
+  not by a plain rename, which would give it the temporary file's rules. Windows OpenSSH checks
+  those rules ([The `Include` line](#the-include-line)). Its owner becomes the user running
+  `create`, which OpenSSH accepts (corrected by the architect, 2026-11-19, from E0.05-T02-S03:
+  `ReplaceFile` keeps the access list, not the owner).
 
 **A reader of the lease state file MUST open it sharing read, write and delete access**, so that it
 never blocks a POSIX rename (step 2), and so sees the old file or the new one, never part of either.
@@ -628,7 +630,9 @@ Host <alias>
   alias of a record ([lease-api.md](lease-api.md#fields)). This settles the second half of
   [Q9](#open-questions); the prototype does the same.
 - **Something at that path that is not a file**, such as a folder, makes the write fail, and
-  `create` fails with `internal`.
+  `create` fails with `internal`. **A symbolic link or other reparse point there is never
+  followed, replaced or removed**: `create`, and `release`'s step 1, treat it as a foreign file
+  (architect, 2026-11-19, from E0.05-T02-S03).
 
 ### The `Include` line
 
@@ -658,7 +662,9 @@ tabs and CRs from both ends of each line, and looks at the lines in order:
 - **A `Host` or `Match` line** is a line whose first word is `Host` or `Match`, in any ASCII case,
   followed by a space, a tab, `=` or the end of the line. A commented line (`#...`) is neither.
 - **If the line is not found above the first block, but appears below it,** `create` MUST fail,
-  change nothing, and say that a person has to move the line to the top of the file. The message is
+  change nothing in the config, and say that a person has to move the line to the top of the file.
+  `agentspace.d`, made first, MAY stay, as for any failed `create` (gap FB-04; architect,
+  2026-11-19, from E0.05-T02-S03). The message is
   [lease-api.md](lease-api.md#messages)'s.
 - **If it is found nowhere, it is added as the first line**, after the byte order mark if there is
   one. So a line that is not equal, such as `Include agentspace.d/* # aliases`, gets a second,
@@ -677,9 +683,11 @@ tabs and CRs from both ends of each line, and looks at the lines in order:
      and an empty config (0 bytes, or only a BOM) becomes the line and one LF, after its BOM if it
      had one.
   3. **It replaces the config atomically**, through `<ssh folder>\config.agentspace-tmp-<hex>`, in
-     one attempt. **The replace MUST keep the config's own owner and access rules**, because
-     Windows OpenSSH checks them, and a user's config MAY have rules other than its folder's;
-     `ReplaceFile` on Windows does this. If the replace fails part way and the config is gone, the
+     one attempt. **The replace MUST keep the config's own access rules**, because Windows
+     OpenSSH checks them, and a user's config MAY have rules other than its folder's;
+     `ReplaceFile` on Windows does this. It does not keep the owner, which becomes the user
+     running `create`; that is OpenSSH-safe, and no check needs an elevated process to show it
+     (architect, 2026-11-19, from E0.05-T02-S03). If the replace fails part way and the config is gone, the
      temporary file is the only new copy, and MUST be kept.
 - **If there is no config at all,** it is created holding exactly the line and one LF, with
   inherited access rules, and `<ssh folder>` and `agentspace.d` are created as needed. No backup is
@@ -820,7 +828,10 @@ go before the lease folder, so that an alias never points at a key that is gone.
    none, `release` MUST fail with `internal` and change nothing, the record and the lease folder
    included. **Something at the alias's path that is not a file, such as a folder, is treated as a
    file with no owner mark**: `release` fails the same way and deletes nothing (architect,
-   2026-11-19, gap FA-07).
+   2026-11-19, gap FA-07). **So does a file where `<ssh folder>` or its `agentspace.d` has to be**:
+   it is never read as a missing alias file, and `release` fails with `internal` and deletes
+   nothing, its message saying which folder is a file (architect, 2026-11-19, from
+   E0.05-T02-S03).
 2. **Write the record as `released`**, unless it is already ([The lease state file](#the-lease-state-file)).
 3. **Delete the alias file, then the lease folder**, as above.
 
