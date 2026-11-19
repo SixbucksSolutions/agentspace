@@ -76,6 +76,7 @@ line's text after `Status:`, without its full stop.
 - [D36. The operator never reports a false success](#d36-the-operator-never-reports-a-false-success): Decided
 - [D37. The rewrite is seven files in one install folder, and carries what the checkout held](#d37-the-rewrite-is-seven-files-in-one-install-folder-and-carries-what-the-checkout-held): Decided
 - [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
+- [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease
 
 ## The interface
 
@@ -2546,6 +2547,25 @@ prototype's operator and keeper still run (D37).
   gap's ID: driver.md (FA-01, FA-02, FA-03, FA-22), lease-api.md (FA-04, FA-08, FA-09, FB-03,
   FB-04, FB-22) and state.md (FA-05, FA-06, FA-07, FA-10, FB-20, FB-21). A builder who meets
   another gap MUST ask the architect, never read the prototype (D20).
+
+### D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent
+
+**Status: MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease.**
+
+**Decided, Terry, 2026-11-19:** "before launching the EC2, make sure it's an M class instance with
+vCPU count >= max number of parallel agents. I want each agent to have its own vCPU and at least 4
+GB of RAM." The working rule is in [AGENTS.md](../AGENTS.md), "Sizing the box before it runs
+agents".
+- **Before the box is started for agent work, it MUST be an M-class instance with at least one
+  vCPU per agent working at once**, counted as D27 counts them (the stories' plan peaks plus 1 for
+  the dev lead), and so at least 4 GiB of memory per agent. The smallest such size is used.
+- **It is changed through the stack's `InstanceType` parameter and `deploy`**, never by hand, so
+  the stack and the instance agree.
+
+**Why:** v0.05-T01 ran 11 agents on 4 vCPUs, and its first compile burst took the box to 3.83 of 4
+cores (E0.05-T02-S04's run record; #0102). D27 sizes by concurrency, and this applies it by hand
+until v0.09 measures a compiling turn and makes sizes a lease's to ask for. It does not set D27's
+per-agent footprint, which still MUST come from measurement.
 
 ## Keys
 

@@ -13,7 +13,7 @@ The plan is in [docs/roadmap.md](docs/roadmap.md), and the reasoning in
 
 | Piece | What |
 |---|---|
-| Instance | m9g.xlarge (4 Graviton cores, 16 GiB), Ubuntu 26.04 LTS arm64 |
+| Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; `m9g.xlarge` (4 vCPUs, 16 GiB) by default, sized for each use with a vCPU per agent ([D39](docs/decisions.md#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent)) |
 | Disk | 8 GiB gp3, encrypted; grown on demand, never shrunk |
 | Access | Session Manager only: no inbound ports, no key pair, no Elastic IP |
 | Patching | Every boot: `apt-get dist-upgrade` (phased updates included) and `snap refresh`, then one reboot if the kernel or another package needs it; then the newest Node LTS, Codex and uv |

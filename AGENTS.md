@@ -155,6 +155,26 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
 - **The first step**, the same day during v0.05-T01: 8 to 11 GiB at 2:41am Pacific, which left
   the filesystem at 9.7G, 5.9G used (62%). It had filled at 6.8G with five crates' builds (D38).
 
+## Sizing the box before it runs agents
+
+**Terry, 2026-11-19, standing order: "before launching the EC2, make sure it's an M class instance
+with vCPU count >= max number of parallel agents. I want each agent to have its own vCPU and at
+least 4 GB of RAM."** D39 records it.
+- **Before the box is started for agent work, it MUST be an M-class instance whose vCPU count is
+  at least the most agents that will work on it at once**, counted as D27 counts them: the sum of
+  the turn's stories' staffing-plan peaks, plus 1 for its dev lead. An M class instance has 4 GiB
+  per vCPU, so the memory rule follows from the vCPU rule.
+- **The smallest such size is used**, on the box's own family (`m9g`: `xlarge` 4 vCPUs, `2xlarge`
+  8, `4xlarge` 16, `8xlarge` 32, `12xlarge` 48, `16xlarge` 64). v0.05-T01's 10 subagents and its
+  dev lead, 11 agents, would have needed an `m9g.4xlarge`; it ran on an `m9g.xlarge`.
+- **The size is set through the stack, never by hand in EC2**: `InstanceType=<type>` in
+  `infra\local.parameters`, then the operator's `deploy`, while the box is stopped. CloudFormation
+  stops and starts the instance to change it, and keeps the disk (operator.md, the template's
+  parameters).
+- **Each use is sized for its own peak**, so the box goes back down when the next use needs fewer
+  agents. A lease whose sessions run no agents on the box, such as a live check from the laptop,
+  needs no change.
+
 ## Terry's real files in a review
 
 **Terry, 2026-11-19: "isolation is enough".** A review or a check MUST NOT list, read or hash
