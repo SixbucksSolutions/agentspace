@@ -1,0 +1,4 @@
+# The toolchain the laptop has (D38), so the box and the laptop build with the same one.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
