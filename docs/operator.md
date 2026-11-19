@@ -2251,6 +2251,20 @@ missing or of another form:
 A member a command reads that is missing, or not of the form above, fails the command with
 `agentspace: Unexpected answer from ec2 describe-instances: no <member>.`, where `<member>` is its
 path as this table writes it, such as `Reservations[0].Instances[0].LaunchTime`.
+
+**The same form holds for every call's members, with these exceptions** (architect, 2026-11-19,
+for E0.06-T01-S03):
+- **`cloudformation describe-stacks`:** a missing `Stacks[0]` or `Outputs`, or an `InstanceId`
+  output whose value is not a string matching the instance-ID cache's schema, is the "no
+  `InstanceId` output" failure, and no cache is written.
+- **`ssm get-command-invocation`:** an answer with no string `Status` is not readable yet, and is
+  polled again; one that has ended with no `StandardOutputContent` is the empty answer, which
+  counts as ready ([Q6](#open-questions)).
+- **`LaunchTime` with no UTC offset** is a member not of its form. A launch time in the future is
+  less than 20 minutes ago, so the box is waited for.
+- **The waits' timing:** the 5 seconds are a pause after each check; the 15-minute deadline is
+  tested after each check that was not ready, and the last pause is cut short to end on it; the
+  invocation is polled at once and then each second, at most 20 times.
 | `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
 | `ssm send-command` | `Command.CommandId` | The poll |
 | `ssm get-command-invocation` | `Status`, and once it is not `Pending`, `InProgress` or `Delayed`, `StandardOutputContent`, trimmed | The patch check's answer ([What up waits for](#what-up-waits-for)) |
