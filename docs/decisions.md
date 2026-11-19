@@ -2588,15 +2588,13 @@ you."**
   | `box/`: shell scripts and systemd units | The host runs them (D28: not product, so not ported) |
   | Markdown docs | Written for people |
   | localswim's receipt and `bot.xml` | localswim's files, which agentspace only reads ([operator.md](operator.md#the-bot-credential)); a change there is localswim's |
+  | The keeper's logs ([keeper.md](keeper.md#log-lines)) | Lines of text that people read, and that the keeper's checks match line by line (Terry, 2026-11-19, agreeing) |
+  | The CloudFormation template, `infra\agentspace.yaml` | Maintained by hand (D37's addendum), and YAML keeps its comments (Terry, 2026-11-19, agreeing) |
 
-- **Where it bites, all the operator's or the keeper's, and so for v0.06 (#0055) to decide as it
-  rebuilds them**, each a change to its spec before that release's stories start:
+- **Where it bites, all the operator's, and so for v0.06 (#0055) to move as it rebuilds the
+  operator**, each a change to its spec before that release's stories start:
   - `local.parameters`, `KEY=VALUE` lines today ([state.md](state.md#files-in-the-checkout)).
   - The instance-ID cache and the push stamp, one line of text each.
-  - The keeper's logs, lines of text that people read ([keeper.md](keeper.md#log-lines)): JSON
-    Lines, or an exception, is v0.06's call.
-  - The CloudFormation template, YAML today and maintained by hand (D37's addendum): CloudFormation
-    takes JSON too, so moving it is possible; YAML's comments are its case to stay.
 - **Contract v0's files are already JSON** (the lease state file, the keeper's records, every
   document the CLI prints) and change nothing.
 
