@@ -154,24 +154,25 @@ impl Standin {
             format!(
                 "@echo off\r\n\
                  setlocal DisableDelayedExpansion\r\n\
-                 type nul > \"%~dp0args.txt\"\r\n\
+                 set \"D=%~dp0\"\r\n\
+                 type nul > \"%D%args.txt\"\r\n\
                  set n=0\r\n\
                  :loop\r\n\
                  if \"%~1\"==\"\" goto done\r\n\
-                 >>\"%~dp0args.txt\" echo(%1\r\n\
+                 >>\"%D%args.txt\" echo(%1\r\n\
                  set /a n+=1\r\n\
                  shift\r\n\
                  goto loop\r\n\
                  :done\r\n\
-                 >\"%~dp0argc.txt\" echo %n%\r\n\
-                 type nul > \"%~dp0env.txt\"\r\n\
+                 >\"%D%argc.txt\" echo %n%\r\n\
+                 type nul > \"%D%env.txt\"\r\n\
                  {win_named}\
-                 for /f \"delims==\" %%a in ('set') do @echo %%a>> \"%~dp0allnames.txt\"\r\n\
-                 findstr /e /c:\"{suffix}\" \"%~dp0allnames.txt\" > \"%~dp0fdnames.txt\"\r\n\
-                 del \"%~dp0allnames.txt\"\r\n\
-                 more > \"%~dp0stdin.txt\"\r\n\
-                 type \"%~dp0out.txt\"\r\n\
-                 type \"%~dp0err.txt\" 1>&2\r\n\
+                 for /f \"delims==\" %%a in ('set') do @>>\"%D%allnames.txt\" echo(%%a\r\n\
+                 findstr /e /c:\"{suffix}\" \"%D%allnames.txt\" > \"%D%fdnames.txt\"\r\n\
+                 del \"%D%allnames.txt\"\r\n\
+                 more > \"%D%stdin.txt\"\r\n\
+                 type \"%D%out.txt\"\r\n\
+                 type \"%D%err.txt\" 1>&2\r\n\
                  exit /b {code}\r\n",
                 win_named = recorded_script(true),
                 suffix = FD_STATE_SUFFIX,
@@ -265,7 +266,7 @@ fn recorded_script(windows: bool) -> String {
     for name in RECORDED {
         if windows {
             // `set NAME` prints every variable that starts with NAME and no others.
-            out.push_str(&format!("set {name} 2>nul >> \"%~dp0env.txt\"\r\n"));
+            out.push_str(&format!("set {name} 2>nul >> \"%D%env.txt\"\r\n"));
         } else {
             out.push_str(&format!(
                 "[ \"${{{name}+x}}\" ] && printf '%s=%s\\n' {name} \"${{{name}}}\" >> \"$d/env.txt\"\n"
