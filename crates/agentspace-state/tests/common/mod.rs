@@ -96,7 +96,7 @@ pub fn with(mut rec: Value, key: &str, val: Option<Value>) -> Value {
             obj.insert(key.to_string(), v);
         }
         None => {
-            obj.remove(key);
+            obj.shift_remove(key);
         }
     }
     rec

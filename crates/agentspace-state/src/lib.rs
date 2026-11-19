@@ -425,7 +425,8 @@ pub fn lease_document(r: &Record, now: i64) -> Value {
     let mut o = base_members(r);
     if is_expired(r, now) {
         o.insert("state".into(), "expired".into());
-        o.remove("ssh");
+        // shift_remove keeps the other members in order; remove would swap the last one in.
+        o.shift_remove("ssh");
     }
     Value::Object(o)
 }

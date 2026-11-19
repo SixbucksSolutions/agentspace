@@ -4,7 +4,7 @@
 mod common;
 
 use agentspace_state::{
-    NotValid, OutputKind, StateFile, lease_document, list_document, parse, serialize,
+    NotValid, OutputKind, Record, Ssh, StateFile, lease_document, list_document, parse, serialize,
     validate_output,
 };
 use common::*;
@@ -157,6 +157,26 @@ fn a_schema_failure_is_not_valid() {
             ready(ID_A, "demo"),
             "ssh",
             Some(json!({"host_alias": "agentspace-demo-3f2a9c1e", "user": "Ubuntu"})),
+        ),
+        // One reason code twice.
+        with(
+            unsatisfiable(ID_A, "demo"),
+            "reasons",
+            Some(json!([
+                {"code": "unsupported_platform",
+                 "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."},
+                {"code": "unsupported_platform",
+                 "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."}
+            ])),
+        ),
+        // A reason whose message starts with a space.
+        with(
+            unsatisfiable(ID_A, "demo"),
+            "reasons",
+            Some(json!([
+                {"code": "unsupported_platform",
+                 "message": " Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."}
+            ])),
         ),
     ];
     for rec in bad {
@@ -810,4 +830,133 @@ fn messages_name_no_path_user_or_library() {
     let m = err(parse(br#"{"version":2,"leases":[]}"#));
     assert!(!m.contains('/') && !m.contains('\\'));
     assert!(!m.to_lowercase().contains("serde") && !m.to_lowercase().contains("expected"));
+}
+
+// ---- Ruling 4 (architect, 2026-11-19): a time that names no instant ----
+
+#[test]
+fn a_ready_record_with_an_impossible_expiry_is_expired_with_no_ssh() {
+    let record = Record {
+        id: ID_A.to_string(),
+        project: "demo".to_string(),
+        state: "ready".to_string(),
+        platform: "linux/arm64".to_string(),
+        profile: "agent-linux".to_string(),
+        size: "m".to_string(),
+        ttl_seconds: 3600,
+        created_at: CREATED.to_string(),
+        expires_at: Some("2026-02-30T00:00:00Z".to_string()),
+        released_at: None,
+        ssh: Some(Ssh {
+            host_alias: "agentspace-demo-3f2a9c1e".to_string(),
+            user: "ubuntu".to_string(),
+        }),
+        reasons: None,
+        driver: Some("ec2".to_string()),
+    };
+    // Whatever the clock says, the lease is not shown as ready.
+    for now in [0, EXPIRES_UNIX, i64::MAX] {
+        let d = lease_document(&record, now);
+        assert_eq!(d["state"], "expired", "now = {now}");
+        assert!(d.get("ssh").is_none(), "now = {now}");
+        assert_eq!(d["expires_at"], "2026-02-30T00:00:00Z");
+    }
+}
+
+// ---- Members appear in the order lease-api.md's Fields lists them ----
+
+/// The names of an object's members, in the order they stand in the text.
+fn member_names(v: &Value) -> Vec<String> {
+    v.as_object().unwrap().keys().cloned().collect()
+}
+
+fn names(extra: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = [
+        "id",
+        "project",
+        "state",
+        "platform",
+        "profile",
+        "size",
+        "ttl_seconds",
+        "created_at",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    v.extend(extra.iter().map(|s| s.to_string()));
+    v
+}
+
+#[test]
+fn a_lease_document_lists_its_members_in_fields_order() {
+    let f = parsed(vec![
+        ready(ID_A, "demo"),
+        pending(ID_B, "demo"),
+        released_from_ready(ID_C, "demo"),
+        unsatisfiable("ffffffff-0000-4000-8000-000000000000", "demo"),
+    ]);
+    let want = [
+        names(&["expires_at", "ssh"]),
+        names(&[]),
+        names(&["expires_at", "released_at"]),
+        names(&["reasons"]),
+    ];
+    for (r, want) in f.leases.iter().zip(want) {
+        let d = lease_document(r, EXPIRES_UNIX - 1);
+        let text = serde_json::to_string(&d).unwrap();
+        assert_eq!(member_names(&d), want, "{text}");
+    }
+    // The ssh object keeps host_alias before user.
+    let text = serde_json::to_string(&lease_document(&f.leases[0], EXPIRES_UNIX - 1)).unwrap();
+    assert!(
+        text.ends_with(r#""ssh":{"host_alias":"agentspace-demo-3f2a9c1e","user":"ubuntu"}}"#),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_expired_lease_document_keeps_the_order_without_ssh() {
+    let f = parsed(vec![ready(ID_A, "demo")]);
+    let d = lease_document(&f.leases[0], EXPIRES_UNIX);
+    assert_eq!(member_names(&d), names(&["expires_at"]));
+    assert_eq!(
+        serde_json::to_string(&d).unwrap(),
+        format!(
+            "{{\"id\":\"{ID_A}\",\"project\":\"demo\",\"state\":\"expired\",\
+             \"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\
+             \"ttl_seconds\":3600,\"created_at\":\"{CREATED}\",\"expires_at\":\"{EXPIRES}\"}}"
+        )
+    );
+}
+
+#[test]
+fn a_list_document_lists_its_leases_with_members_in_fields_order() {
+    let f = parsed(vec![ready(ID_A, "demo"), pending(ID_B, "demo")]);
+    // Both created at one second, so the ID order decides: ID_A (3f..) before ID_B (9b..).
+    let d = list_document(&f, None, &[], EXPIRES_UNIX);
+    assert_eq!(
+        serde_json::to_string(&d).unwrap(),
+        format!(
+            "{{\"leases\":[\
+             {{\"id\":\"{ID_A}\",\"project\":\"demo\",\"state\":\"expired\",\
+             \"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\
+             \"ttl_seconds\":3600,\"created_at\":\"{CREATED}\",\"expires_at\":\"{EXPIRES}\"}},\
+             {{\"id\":\"{ID_B}\",\"project\":\"demo\",\"state\":\"pending\",\
+             \"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\
+             \"ttl_seconds\":3600,\"created_at\":\"{CREATED}\"}}]}}"
+        )
+    );
+    // And with ssh present, before the lease expires.
+    let d = list_document(&f, None, &["ready"], EXPIRES_UNIX - 1);
+    assert_eq!(
+        serde_json::to_string(&d).unwrap(),
+        format!(
+            "{{\"leases\":[\
+             {{\"id\":\"{ID_A}\",\"project\":\"demo\",\"state\":\"ready\",\
+             \"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\
+             \"ttl_seconds\":3600,\"created_at\":\"{CREATED}\",\"expires_at\":\"{EXPIRES}\",\
+             \"ssh\":{{\"host_alias\":\"agentspace-demo-3f2a9c1e\",\"user\":\"ubuntu\"}}}}]}}"
+        )
+    );
 }

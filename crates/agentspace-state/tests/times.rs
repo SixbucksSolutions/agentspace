@@ -117,3 +117,13 @@ fn now_is_utc_whole_seconds_truncated() {
     // Truncation, never rounding: now() never runs ahead of the whole second the clock shows.
     assert!(n >= before && n <= after, "{before} {n} {after}");
 }
+
+#[test]
+fn format_holds_a_time_outside_the_form_at_its_nearest_end() {
+    // Architect, 2026-11-19: the form runs from year 0000 to year 9999, and a time outside it is
+    // held at the nearest end.
+    assert_eq!(format_time(i64::MIN), "0000-01-01T00:00:00Z");
+    assert_eq!(format_time(i64::MIN + 1), "0000-01-01T00:00:00Z");
+    assert_eq!(format_time(i64::MAX), "9999-12-31T23:59:59Z");
+    assert_eq!(format_time(i64::MAX - 1), "9999-12-31T23:59:59Z");
+}

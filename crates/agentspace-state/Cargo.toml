@@ -5,7 +5,9 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-serde_json = "=1.0.154"
+# preserve_order keeps members in the order they are inserted, so a document's members appear in
+# the order lease-api.md lists them (Output).
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 # Only the Visitor and DeserializeSeed traits, for the duplicate-member check; this is the version
 # already in Cargo.lock (published 2026-07-18).
 serde = { version = "=1.0.229", default-features = false }

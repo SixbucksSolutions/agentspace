@@ -70,3 +70,36 @@ pub fn validate(name: &str, doc: &Value) -> Option<bool> {
     let (_, v) = validators().iter().find(|(n, _)| *n == name)?;
     Some(v.as_ref().is_some_and(|v| v.is_valid(doc)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A schema that failed to build would refuse every document, so each of the twelve MUST
+    /// build, the three board-holder schemas included.
+    #[test]
+    fn every_embedded_schema_builds_with_the_validator() {
+        assert_eq!(SCHEMAS.len(), 12);
+        for (name, text) in SCHEMAS {
+            assert!(build(text).is_some(), "Schema {name} must build");
+        }
+        for (name, built) in validators() {
+            assert!(built.is_some(), "Schema {name} must build");
+        }
+        for name in [
+            "board-holder.state",
+            "board-holder-launch.state",
+            "board-holder-launch-result.state",
+        ] {
+            assert!(SCHEMAS.iter().any(|(n, _)| *n == name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_twelve_names_are_distinct() {
+        let mut names: Vec<&str> = SCHEMAS.iter().map(|(n, _)| *n).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 12);
+    }
+}
