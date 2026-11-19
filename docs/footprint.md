@@ -10,8 +10,10 @@ Card #0072, story E0.03-T03-S01. A second measured turn, v0.05-T01's, which comp
 partly recorded, was added by card #0102 (E0.05-T02-S04): see
 ["The second measured turn"](#the-second-measured-turn-v005-t01-which-compiles-and-is-partial).
 
-- **Every number here MUST come from the measured run alone, never from an estimate** (D27). A
-  figure the run cannot give is left out, and the gap is said.
+- **Every footprint figure here MUST come from the measured run alone, never from an estimate**
+  (D27). A figure the run cannot give is left out, and the gap is said. The second turn's disk and
+  tmpfs sizes, which its record does not hold, are the one exception, and are marked with their
+  sources (the section "Sizing facts the record does not hold").
 - **Every per-agent figure comes from `agentspace-agents`,** the analysis step below, run over the
   turn's record and its transcripts. A figure that the script cannot give MUST be left out and the
   gap said, and MUST NOT be marked as pending.
@@ -304,7 +306,7 @@ among agents.
   3.67 cores of it the tool calls. A box with 4 cores cannot show more, so what a build wants beyond
   it is not seen, and the later builds are not in the record at all.
 - **The per-agent figures: none for this turn.** v0.04-T01's are 0.11, 0.01 and 0.00 cores and
-  46.17, 0.00 and 0.00 MiB. Nothing of v0.05-T01's MUST be put beside them, since the division by
+  46.17, 0.00 and 0.00 MiB. A v0.05-T01 figure MUST NOT be put beside them, since the division by
   working agents needs the transcripts.
 
 ### Which figures v0.09 reads
@@ -336,14 +338,13 @@ the run record marks each one's source.
 
 - **A 6.8G root disk did not fit the turn.** It filled to 100% between 2:29am and 2:33am with five
   `cargo` `target` folders at about 370 MB, and was grown to 11 GiB (a 9.7G filesystem) at 2:41am.
-  A project host that builds Rust (v0.07, #0047) MUST be sized for a build's output, and a
-  turn's build output is not in these figures.
+  This is a sizing fact for a project host that builds Rust (v0.07, #0047): a turn's build output
+  is not in these figures.
 - **The build output of five Rust stories passed 5 GB.** At 2:33am the targets moved to a tmpfs
   under `/tmp`, which holds them in RAM, and its 7.7G (half the box's memory) was full shortly
   before 2:53am: one story's target held 2.7 GB and the reviewers' scratch builds another 2.7 GB.
-  So a RAM-backed `/tmp` on a 15.27 GiB box can take half of its memory, and v0.09 SHOULD size the
-  host's memory with that in view. Counting the build output in the host and in no session's PSS
-  means the sessions' PSS figures cannot show it.
+  So a RAM-backed `/tmp` on a 15.27 GiB box can take half of its memory. The build output counts
+  in the host's memory and in no session's PSS, so the sessions' PSS figures cannot show it.
 - **D33's compiling turn is still owed,** and whether a v0.06 turn is measured again is Terry's
   open call.
 
