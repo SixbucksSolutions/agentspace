@@ -53,6 +53,12 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
     `gh pr merge <n> --squash --match-head-commit <sha>`. Without it, a commit the dev lead
     pushes during the review is merged unread. In v0.03-T01, 2026-11-18, PR #28 merged a README
     commit pushed after the review's fetch; it was read after the merge and was sound.
+  - **The branch MUST be deleted only after the merge succeeded**, in a command that stops when
+    the merge fails (found in v0.05-T01, 2026-11-19). Deleting a pull request's branch closes the
+    pull request. PR #50's merge was refused because the dev lead had pushed a rebase after the
+    review's fetch, and the architect's next line still deleted the branch. The branch was pushed
+    back from `refs/pull/50/head`, the PR reopened, and the rebase checked with `git range-diff`
+    to change only `Cargo.lock` before the merge.
   - **The architect MUST archive a dev lead's session once every one of its pull requests is
     merged to `main`** (Terry, 2026-11-18), and then remove any worktree folder it left. An open
     session can hold its last worktree folder locked, so the folder goes after the archive.
