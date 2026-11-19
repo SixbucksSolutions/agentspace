@@ -5,5 +5,13 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+# Both versions are the ones Cargo.lock already holds, published well over two weeks before
+# 2026-11-19. sha2 hashes a config's backup (state.md, The `Include` line).
+sha2 = { version = "=0.10.9", default-features = false }
+
+# The two Windows calls the alias file's disk half needs: ReplaceFileW, which keeps a config's own
+# owner and access rules, and BCryptGenRandom, for the temporary files' names.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]

@@ -1,9 +1,23 @@
 //! agentspace-alias (docs/decisions.md, D38): the alias file, the `Include` line and the
-//! ProxyCommand line, as text and bytes. No file is read or written here, and no environment
-//! variable is read.
+//! ProxyCommand line, as text and bytes, and the files they live in. The text half (this file) reads
+//! and writes no file and reads no environment variable. The disk half ([`ensure_include`],
+//! [`write_alias`], [`check_alias_owner`], [`remove_alias`] and [`find_proxy_program`]) is on
+//! Windows the contract's; on another system it builds with std equivalents that are NOT the
+//! contract's.
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. The rules are docs/state.md's, "The alias
 //! file" and "The `Include` line".
+
+#![deny(unsafe_code)]
+
+mod disk;
+// The only module that calls Windows, and so the only one that may hold `unsafe`.
+mod windows;
+
+pub use disk::{
+    AliasFailure, AliasFailureKind, check_alias_owner, ensure_include, find_proxy_program,
+    remove_alias, write_alias,
+};
 
 use std::fmt;
 
