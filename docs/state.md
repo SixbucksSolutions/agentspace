@@ -952,6 +952,11 @@ check:
 5. **The public key's fingerprint can be read**: the file parses as an OpenSSH public key. The
    prototype runs `ssh-keygen -l -f`.
 
+- **The order of checks 3 to 5 is not observable once both files exist**, since every failure
+  among them gives the same "not usable" message ([lease-api.md](lease-api.md#messages)). A build
+  MAY check that the public key parses before it compares the words, and MAY treat a public key
+  of fewer than two words, or a private key that is not ed25519, as any of those checks' failures
+  (architect, 2026-11-19, for E0.05-T01-S04).
 - **Who checks it:** `ca` after every run, `sync` before it sends the public key to a host, and
   `create` and `renew` before they sign (D17; [operator.md](operator.md#ca)). `release` never
   checks it.
