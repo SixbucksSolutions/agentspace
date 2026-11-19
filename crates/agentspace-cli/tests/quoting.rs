@@ -3,11 +3,10 @@
 //! unpaired surrogate written as `\u` and four lowercase hex digits, and never with a replacement
 //! character.
 //!
-//! RFC 2119 keywords in these comments; the capitals are load-bearing. GAP: the spec says
-//! `'<value>'` and does not say whether `quote_os` returns the quotes or only what is inside them;
-//! these tests read the pinned "the quoting above" as returning the quotes. On Linux, an invalid
-//! byte has no code point, so what it is written as is not fixed; these tests only require that it
-//! is never U+FFFD and that the message stays valid UTF-8 with no control character.
+//! RFC 2119 keywords in these comments; the capitals are load-bearing. `quote_os` returns the
+//! quotes as well as what is inside them (architect, 2026-11-19). On Unix, a byte that is not
+//! UTF-8 is written as `\udc` and the byte's two lowercase hex digits, so 0xff is `\udcff`
+//! (architect, 2026-11-19), and these tests assert that form exactly.
 
 mod common;
 
@@ -127,6 +126,20 @@ mod unix {
                 "{b:?} gave {out:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_byte_that_is_not_utf8_is_written_as_backslash_udc_and_its_two_hex_digits() {
+        assert_eq!(quote_os(&bytes(b"\xff")), "'\\udcff'");
+        assert_eq!(quote_os(&bytes(b"fr\xffob")), "'fr\\udcffob'");
+        assert_eq!(quote_os(&bytes(b"a\x80b")), "'a\\udc80b'");
+        assert_eq!(quote_os(&bytes(b"\xc3")), "'\\udcc3'");
+        // Each byte of a cut-off character is its own unit.
+        assert_eq!(quote_os(&bytes(b"\xe2\x82")), "'\\udce2\\udc82'");
+        // A surrogate encoded in UTF-8 is three bad bytes, not one unit.
+        assert_eq!(quote_os(&bytes(b"\xed\xa0\x80")), "'\\udced\\udca0\\udc80'");
+        assert_eq!(quote_os(&bytes(b"a\nb\xff")), "'a\\u000ab\\udcff'");
+        assert_eq!(quote_os(&bytes(b"ok\xc3\x28")), "'ok\\udcc3('");
     }
 
     #[test]

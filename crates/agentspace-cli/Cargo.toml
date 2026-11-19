@@ -13,6 +13,8 @@ name = "agentspace"
 path = "src/main.rs"
 
 [dependencies]
+# The lock holds itoa at 1.0.18, because 1.0.19 (2026-11-09) is under two weeks old at 2026-11-19,
+# so a re-lock MUST keep it.
 serde_json = { version = "=1.0.154", default-features = false, features = ["std", "preserve_order"] }
 
 [dev-dependencies]

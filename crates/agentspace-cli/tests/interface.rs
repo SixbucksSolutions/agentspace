@@ -1,11 +1,11 @@
 //! The interface that E0.05-T03-S02 (#0106) builds the commands on, as the card pins it: `Sub`,
 //! `ParsedCommand`, `ErrorCode`, `LeaseError`, `commands::run` and `main_with`.
 //!
-//! RFC 2119 keywords in these comments; the capitals are load-bearing. GAP: the card pins the names
-//! and shapes and not their module paths, so these tests read them from the crate's root, and
-//! `commands::run` from the `commands` module of the crate's root. `main_with` is read as taking the
-//! arguments after the program's own name (`lease create ...`), since the program's executable comes
-//! from `current_exe` and never from the first argument.
+//! RFC 2119 keywords in these comments; the capitals are load-bearing. The card pins the names and
+//! shapes and not their module paths, so these tests read them from the crate's root, and
+//! `commands::run` from the `commands` module of the crate's root. `main_with` takes the arguments
+//! after the program's own name (`lease create ...`), since the program's executable comes from
+//! `current_exe` and never from the first argument (architect, 2026-11-19).
 
 mod common;
 

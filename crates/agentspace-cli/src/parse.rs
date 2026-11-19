@@ -11,8 +11,9 @@ use crate::{ErrorCode, LeaseError, ParsedCommand, Sub};
 /// What a command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
-    /// Help text to print on stdout, exit 0.
-    Help(&'static str),
+    /// Help text to print on stdout, exit 0, and the subcommand when help was asked for at the
+    /// subcommand's level, which a failed write of it names (lease-api.md, Output).
+    Help(&'static str, Option<Sub>),
     /// A line with no usage error.
     Command(ParsedCommand),
     /// The usage error to report.
@@ -280,15 +281,20 @@ pub fn parse(args: &[OsString]) -> Parsed {
 
     // 1. Help anywhere before an unknown command or subcommand, whatever else is on the line.
     if let Some(at) = help_level {
-        return Parsed::Help(match at {
-            Level::Top => help::TOP,
-            Level::Lease => help::LEASE,
-            Level::Sub(Sub::Create) => help::CREATE,
-            Level::Sub(Sub::Get) => help::GET,
-            Level::Sub(Sub::Renew) => help::RENEW,
-            Level::Sub(Sub::Release) => help::RELEASE,
-            Level::Sub(Sub::List) => help::LIST,
-        });
+        return match at {
+            Level::Top => Parsed::Help(help::TOP, None),
+            Level::Lease => Parsed::Help(help::LEASE, None),
+            Level::Sub(sub) => Parsed::Help(
+                match sub {
+                    Sub::Create => help::CREATE,
+                    Sub::Get => help::GET,
+                    Sub::Renew => help::RENEW,
+                    Sub::Release => help::RELEASE,
+                    Sub::List => help::LIST,
+                },
+                Some(sub),
+            ),
+        };
     }
     // 2. An unknown command or subcommand, as soon as it was read.
     if let Some(error) = unknown_word {
@@ -348,18 +354,29 @@ mod tests {
 
     #[test]
     fn help_levels() {
-        assert_eq!(run(&["--help"]), Parsed::Help(help::TOP));
-        assert_eq!(run(&["--help", "lease"]), Parsed::Help(help::TOP));
-        assert_eq!(run(&["Lease", "-H"]), Parsed::Help(help::LEASE));
+        assert_eq!(run(&["--help"]), Parsed::Help(help::TOP, None));
+        assert_eq!(run(&["--help", "lease"]), Parsed::Help(help::TOP, None));
+        assert_eq!(run(&["Lease", "-H"]), Parsed::Help(help::LEASE, None));
         assert_eq!(
             run(&["lease", "create", "--ttl", "-h"]),
-            Parsed::Help(help::CREATE)
+            Parsed::Help(help::CREATE, Some(Sub::Create))
         );
         assert_eq!(
             run(&["lease", "list", "--bogus", "--HELP"]),
-            Parsed::Help(help::LIST)
+            Parsed::Help(help::LIST, Some(Sub::List))
         );
-        assert_eq!(run(&["lease", "--help", "frob"]), Parsed::Help(help::LEASE));
+        assert_eq!(
+            run(&["lease", "--help", "frob"]),
+            Parsed::Help(help::LEASE, None)
+        );
+        assert_eq!(
+            run(&["lease", "--help", "create"]),
+            Parsed::Help(help::LEASE, None)
+        );
+        assert_eq!(
+            run(&["lease", "get", "x", "--help"]),
+            Parsed::Help(help::GET, Some(Sub::Get))
+        );
     }
 
     #[test]

@@ -339,11 +339,27 @@ fn an_unknown_option_is_quoted_whole_with_its_equals_value() {
 #[test]
 fn a_failure_to_write_stdout_still_ends_in_one_internal_error_document_and_exit_1() {
     // /dev/full fails every write with ENOSPC, which is an unexpected failure that no caller caused.
+    // A closed stdout is not tested: on Unix, Rust's runtime reopens it on /dev/null before `main`,
+    // so it MAY read as one that discards output (lease-api.md, Output; 49dbaca). A full or broken
+    // stdout still MUST fail.
     let full = std::fs::OpenOptions::new()
         .write(true)
         .open("/dev/full")
         .expect("/dev/full opens");
-    for line in [args(&["--help"]), args(&["lease", "create", "--help"])] {
+    // The message names the subcommand exactly when it was read before the first help request
+    // (lease-api.md, Output; architect, 2026-11-19).
+    let cases = [
+        (args(&["--help"]), "agentspace lease failed:"),
+        (
+            args(&["lease", "--help", "create"]),
+            "agentspace lease failed:",
+        ),
+        (
+            args(&["lease", "create", "--help"]),
+            "agentspace lease create failed:",
+        ),
+    ];
+    for (line, prefix) in cases {
         let full = full.try_clone().expect("The handle clones");
         let mut cmd = command(&line);
         cmd.stdout(full).stderr(std::process::Stdio::piped());
@@ -353,9 +369,10 @@ fn a_failure_to_write_stdout_still_ends_in_one_internal_error_document_and_exit_
         assert!(p.is_empty(), "{}: {}", show(&line), p.join("; "));
         let doc = doc_of(&run);
         let message = doc["message"].as_str().expect("A message");
-        assert!(
-            message.starts_with("agentspace lease"),
-            "{}: the message names agentspace lease: {message:?}",
+        assert_eq!(
+            message,
+            format!("{prefix} The document could not be written."),
+            "{}",
             show(&line)
         );
         assert!(!message.contains("panicked"), "{message:?}");

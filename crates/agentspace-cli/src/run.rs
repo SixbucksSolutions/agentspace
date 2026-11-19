@@ -41,16 +41,22 @@ thread_local! {
 
 static HOOK: Once = Once::new();
 
+type Hook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+/// A hook that passes a panic to `previous` unless a run is under way on this thread.
+fn silenced_during_a_run(previous: Hook) -> Hook {
+    Box::new(move |info| {
+        if !SILENT.with(Cell::get) {
+            previous(info);
+        }
+    })
+}
+
 /// Keeps the default panic report away from stderr while a run is under way, and leaves it alone
 /// for every other panic in the process.
 fn install_hook() {
     HOOK.call_once(|| {
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            if !SILENT.with(Cell::get) {
-                previous(info);
-            }
-        }));
+        std::panic::set_hook(silenced_during_a_run(std::panic::take_hook()));
     });
 }
 
@@ -79,7 +85,10 @@ fn work(
     runner: Runner<'_>,
 ) -> Result<Printed, LeaseError> {
     match parse(args) {
-        Parsed::Help(text) => Ok(Printed::Help(text)),
+        Parsed::Help(text, at) => {
+            sub.set(at);
+            Ok(Printed::Help(text))
+        }
         Parsed::Error(error) => Err(error),
         Parsed::Command(cmd) => {
             sub.set(Some(cmd.sub));
@@ -141,7 +150,7 @@ fn execute_with(args: &[OsString], own_exe: &Path, runner: Runner<'_>) -> Outcom
             exit_code: 0,
             stdout: text.as_bytes().to_vec(),
             stderr: Vec::new(),
-            sub: None,
+            sub: sub.get(),
         },
         Ok(Ok(Printed::Document(value))) => {
             let mut stdout = value.to_string().into_bytes();
@@ -178,12 +187,33 @@ fn execute_with(args: &[OsString], own_exe: &Path, runner: Runner<'_>) -> Outcom
 /// never from the first argument.
 pub fn main_with(args: Vec<OsString>, own_exe: PathBuf) -> ExitCode {
     let outcome = execute(&args, &own_exe);
-    let code = deliver(
-        outcome,
-        &mut std::io::stdout().lock(),
-        &mut std::io::stderr().lock(),
-    );
+    let mut stdout = std::io::stdout().lock();
+    let out: Option<&mut dyn Write> = if stdout_is_missing(&stdout) {
+        None
+    } else {
+        Some(&mut stdout)
+    };
+    let code = deliver(outcome, out, &mut std::io::stderr().lock());
     ExitCode::from(code)
+}
+
+/// Whether the program was started without a stdout. On Windows, `std` reports a write to a missing
+/// handle (none, or an invalid one) as done, so the handle is looked at here (lease-api.md, Output;
+/// architect, 2026-11-19).
+#[cfg(windows)]
+fn stdout_is_missing(stdout: &std::io::StdoutLock<'_>) -> bool {
+    use std::os::windows::io::{AsRawHandle, RawHandle};
+    let handle = stdout.as_raw_handle();
+    handle.is_null() || handle == (-1isize) as RawHandle
+}
+
+/// Whether the program was started without a stdout. On a system other than Windows, a closed
+/// stdout MAY read as one that discards its output, because Rust's runtime reopens it on
+/// `/dev/null` before `main`, so there is nothing to see (lease-api.md, Output; architect,
+/// 2026-11-19).
+#[cfg(not(windows))]
+fn stdout_is_missing(_stdout: &std::io::StdoutLock<'_>) -> bool {
+    false
 }
 
 /// Writes `data` and flushes, so a failure at either step is a failed write.
@@ -195,10 +225,12 @@ fn write_all(out: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
 /// Writes an outcome to the two streams and returns the exit code. A write to stdout that fails,
 /// at the write or at the flush, is a failure whatever the run's result was: 0 MUST mean done
 /// (lease-api.md, Output; D36), so the caller gets one `internal` error document on stderr and
-/// exit 1. When stderr cannot be written either, the exit code is still 1.
-fn deliver(outcome: Outcome, out: &mut dyn Write, err: &mut dyn Write) -> u8 {
+/// exit 1. When stderr cannot be written either, the exit code is still 1. `out` is `None` when
+/// the program has no stdout at all, which counts as a failed write.
+fn deliver(outcome: Outcome, out: Option<&mut dyn Write>, err: &mut dyn Write) -> u8 {
     // An empty stdout is never written, so a run that failed has nothing to fail at.
-    let wrote = outcome.stdout.is_empty() || write_all(out, &outcome.stdout).is_ok();
+    let wrote =
+        outcome.stdout.is_empty() || out.is_some_and(|out| write_all(out, &outcome.stdout).is_ok());
     if !wrote {
         let place = match outcome.sub {
             Some(sub) => format!("agentspace lease {} failed", sub.name()),
@@ -358,7 +390,7 @@ mod tests {
     fn a_stdout_write_that_fails_is_one_internal_document_on_stderr_and_exit_1() {
         let mut out = Broken::new(true, false);
         let mut err = Broken::new(false, false);
-        assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 1);
+        assert_eq!(deliver(good_outcome(None), Some(&mut out), &mut err), 1);
         assert_eq!(String::from_utf8(err.got).unwrap(), FAILED_WRITE);
         assert!(out.got.is_empty());
     }
@@ -367,7 +399,7 @@ mod tests {
     fn a_stdout_flush_that_fails_is_a_failed_write() {
         let mut out = Broken::new(false, true);
         let mut err = Broken::new(false, false);
-        assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 1);
+        assert_eq!(deliver(good_outcome(None), Some(&mut out), &mut err), 1);
         assert_eq!(String::from_utf8(err.got).unwrap(), FAILED_WRITE);
     }
 
@@ -376,7 +408,7 @@ mod tests {
         let mut out = Broken::new(true, false);
         let mut err = Broken::new(false, false);
         assert_eq!(
-            deliver(good_outcome(Some(Sub::Create)), &mut out, &mut err),
+            deliver(good_outcome(Some(Sub::Create)), Some(&mut out), &mut err),
             1
         );
         assert_eq!(
@@ -390,7 +422,7 @@ mod tests {
         for (fail_write, fail_flush) in [(true, false), (false, true)] {
             let mut out = Broken::new(true, false);
             let mut err = Broken::new(fail_write, fail_flush);
-            assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 1);
+            assert_eq!(deliver(good_outcome(None), Some(&mut out), &mut err), 1);
         }
     }
 
@@ -398,7 +430,7 @@ mod tests {
     fn a_stdout_that_works_leaves_the_exit_code_alone() {
         let mut out = Broken::new(false, false);
         let mut err = Broken::new(false, false);
-        assert_eq!(deliver(good_outcome(None), &mut out, &mut err), 0);
+        assert_eq!(deliver(good_outcome(None), Some(&mut out), &mut err), 0);
         assert_eq!(out.got, b"{\"a\":1}\n");
         assert!(err.got.is_empty());
     }
@@ -417,6 +449,92 @@ mod tests {
         );
         let mut out = Broken::new(true, false);
         let mut err = Broken::new(true, false);
-        assert_eq!(deliver(outcome, &mut out, &mut err), 3);
+        assert_eq!(deliver(outcome, Some(&mut out), &mut err), 3);
+    }
+
+    #[test]
+    fn no_stdout_at_all_is_a_failed_write() {
+        let mut err = Broken::new(false, false);
+        assert_eq!(deliver(good_outcome(None), None, &mut err), 1);
+        assert_eq!(String::from_utf8(err.got).unwrap(), FAILED_WRITE);
+    }
+
+    #[test]
+    fn no_stdout_at_all_leaves_a_run_with_nothing_to_write_alone() {
+        let outcome = failure(&LeaseError::internal("x"), None);
+        let mut err = Broken::new(false, false);
+        assert_eq!(deliver(outcome, None, &mut err), 1);
+        assert_eq!(
+            String::from_utf8(err.got).unwrap(),
+            "{\"code\":\"internal\",\"message\":\"x\"}\n"
+        );
+    }
+
+    const NO_RUNNER: Runner<'static> = &|_, _| panic!("help never reaches a command");
+
+    #[test]
+    fn help_names_the_subcommand_only_when_read_before_the_first_help_request() {
+        let at = |list: &[&str]| execute_with(&args(list), Path::new(""), NO_RUNNER).sub;
+        assert_eq!(at(&["lease", "create", "--help"]), Some(Sub::Create));
+        assert_eq!(at(&["lease", "--help", "create"]), None);
+        assert_eq!(at(&["--help", "lease", "create"]), None);
+        assert_eq!(at(&["--help"]), None);
+    }
+
+    #[test]
+    fn a_failed_write_of_help_names_the_subcommand_read_before_the_help_request() {
+        let failed = |list: &[&str]| {
+            let outcome = execute_with(&args(list), Path::new(""), NO_RUNNER);
+            assert_eq!(outcome.exit_code, 0);
+            let mut out = Broken::new(true, false);
+            let mut err = Broken::new(false, false);
+            assert_eq!(deliver(outcome, Some(&mut out), &mut err), 1);
+            String::from_utf8(err.got).unwrap()
+        };
+        assert_eq!(
+            failed(&["lease", "create", "--help"]),
+            "{\"code\":\"internal\",\"message\":\"agentspace lease create failed: The document could not be written.\"}\n"
+        );
+        assert_eq!(failed(&["lease", "--help", "create"]), FAILED_WRITE);
+        assert_eq!(failed(&["--help", "lease", "create"]), FAILED_WRITE);
+    }
+
+    thread_local! {
+        /// How many panics the recording hook was handed on this thread.
+        static REPORTED: Cell<u32> = const { Cell::new(0) };
+    }
+
+    #[test]
+    fn a_panic_in_a_run_is_not_reported_and_one_outside_a_run_is() {
+        // Puts a recording hook under the same wrapping, so this test sees what the wrapping hands
+        // on. A panic on another thread reaches the recording hook but is counted on that thread
+        // only. This test MUST NOT call `install_hook` itself: the next test needs to see that a
+        // run does.
+        let installed = std::panic::take_hook();
+        std::panic::set_hook(silenced_during_a_run(Box::new(|_| {
+            REPORTED.with(|n| n.set(n.get() + 1));
+        })));
+
+        let out = execute_with(&args(&["lease", "get", "x"]), Path::new(""), &|_, _| {
+            panic!("inside a run")
+        });
+        assert_eq!(out.exit_code, 1);
+        let inside = REPORTED.with(Cell::get);
+
+        let outside = catch_unwind(|| panic!("outside a run"));
+        assert!(outside.is_err());
+        let after = REPORTED.with(Cell::get);
+
+        std::panic::set_hook(installed);
+        assert_eq!(inside, 0, "A panic in a run MUST NOT be reported");
+        assert_eq!(after, 1, "A panic outside a run MUST be reported");
+    }
+
+    #[test]
+    fn a_run_installs_the_hook_that_keeps_a_panic_report_off_stderr() {
+        execute_with(&args(&["lease", "get", "x"]), Path::new(""), &|_, _| {
+            panic!("inside a run")
+        });
+        assert!(HOOK.is_completed());
     }
 }

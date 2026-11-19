@@ -63,8 +63,9 @@ pub fn pieces(value: &OsStr) -> Vec<Piece> {
                     out.extend(text.chars().map(Piece::Char));
                 }
                 let len = e.error_len().unwrap_or(bad.len()).max(1);
-                // GAP: lease-api.md names only unpaired surrogates. A byte that is not UTF-8 is
-                // written as the surrogate that Python's "surrogateescape" gives it, U+DC00 + byte.
+                // lease-api.md names only unpaired surrogates. A byte that is not UTF-8 is written
+                // as the surrogate that Python's "surrogateescape" gives it, U+DC00 + byte, so
+                // byte 0xff is `\udcff` (architect, 2026-11-19).
                 out.extend(
                     bad[..len]
                         .iter()
