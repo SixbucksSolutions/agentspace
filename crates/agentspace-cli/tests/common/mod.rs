@@ -91,16 +91,28 @@ pub fn command(line: &[OsString]) -> Command {
     cmd
 }
 
-/// Runs a prepared command to its end, and fails the test when it takes more than a minute.
-pub fn run_command(mut cmd: Command) -> Run {
-    let home = cmd
-        .get_current_dir()
+/// The throwaway home that `command` made for a command, or `None` for a command that runs
+/// anywhere else. It is the only folder `remove_run_home` ever removes.
+pub fn run_home_of(cmd: &Command) -> Option<PathBuf> {
+    cmd.get_current_dir()
         .filter(|d| {
             d.parent() == Some(scratch_dir().as_path())
                 && d.file_name()
                     .is_some_and(|n| n.to_string_lossy().starts_with(RUN_HOME_PREFIX))
         })
-        .map(Path::to_path_buf);
+        .map(Path::to_path_buf)
+}
+
+/// Removes a run's throwaway home, as `run_home_of` named it.
+pub fn remove_run_home(home: Option<PathBuf>) {
+    if let Some(home) = home {
+        let _ = std::fs::remove_dir_all(home);
+    }
+}
+
+/// Runs a prepared command to its end, and fails the test when it takes more than a minute.
+pub fn run_command(mut cmd: Command) -> Run {
+    let home = run_home_of(&cmd);
     let child = cmd.spawn().expect("The binary starts");
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -110,9 +122,7 @@ pub fn run_command(mut cmd: Command) -> Run {
         .recv_timeout(Duration::from_secs(60))
         .expect("The binary ends within a minute")
         .expect("The binary's output can be read");
-    if let Some(home) = home {
-        let _ = std::fs::remove_dir_all(home);
-    }
+    remove_run_home(home);
     Run {
         status: out.status.code(),
         stdout: out.stdout,
@@ -142,9 +152,10 @@ pub fn exit_number(code: ExitCode) -> i32 {
 
 /// Runs the program in this process through `execute_in`, with the arguments after the program's
 /// name, in a world of its own (E0.05-T03-S02): `USERPROFILE` is a fresh throwaway folder under the
-/// temp folder and no other variable is set, the working folder is that folder, the clock and the IDs
-/// are fixed, and the driver is the build's own, the EC2 driver. It never builds a world from the real process, so it never
-/// reads or writes a real home.
+/// temp folder and no other variable is set, the working folder is that folder, the clock and the
+/// IDs are fixed, and the drivers are the build's own (`agentspace_cli::commands::drivers()`, so
+/// that this run and the binary cannot drift). It never builds a world from the real process, so it
+/// never reads or writes a real home.
 pub fn in_process_outcome(line: &[OsString]) -> agentspace_cli::Outcome {
     static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -155,8 +166,7 @@ pub fn in_process_outcome(line: &[OsString]) -> agentspace_cli::Outcome {
     let now = || 1_800_000_000_i64;
     let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_string();
     let own_exe = PathBuf::from(BIN);
-    let drivers: Vec<Box<dyn agentspace_driver_api::Driver>> =
-        vec![Box::new(agentspace_driver_ec2::Ec2Driver::new())];
+    let drivers = agentspace_cli::commands::drivers();
     let world = agentspace_cli::World {
         var: &var,
         cwd: Some(&home),

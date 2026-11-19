@@ -434,6 +434,7 @@ fn a_run_reads_nothing_from_standard_input() {
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    let home = run_home_of(&cmd);
     let mut child = cmd.spawn().expect("The binary starts");
     let (tx, rx) = std::sync::mpsc::channel();
     let held = child.stdin.take();
@@ -445,6 +446,7 @@ fn a_run_reads_nothing_from_standard_input() {
         .expect("The binary ends without input")
         .expect("Output");
     drop(held);
+    remove_run_home(home);
     // A get of an ID that names no lease, in the throwaway home: `not_found`, exit 3.
     assert_eq!(out.status.code(), Some(3));
 }
