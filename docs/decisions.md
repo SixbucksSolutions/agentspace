@@ -2523,6 +2523,11 @@ prototype's operator and keeper still run (D37).
   and v0.09 MUST measure one before it sets a size. The architect runs `agentspace-sample` around
   the turn, from before its dev lead starts to after its last subagent ends, and E0.05-T02-S04
   writes the run record.
+  - **The box had no C toolchain and no Rust.** On 2026-11-19, before T01, the architect installed
+    Ubuntu's `build-essential` (gcc 15.2, for linking) and rustup with Rust 1.99.0, rustfmt and
+    clippy in `ubuntu`'s home, with links in `~/.local/bin`. Neither is in `box/` or the
+    `agent-linux` profile's promise (lease-api.md, Profiles), so a host made fresh lacks them; a
+    project host that builds Rust (v0.07, #0047) has to get them some way that release decides.
 - **The cutover is D37's, by install, and deletes no prototype file.** v0.05's install puts
   `agentspace.exe`, the `agentspace` wrapper and the forwarder `agentspace-ssh-proxy.cmd` in
   `%USERPROFILE%\.agentspace\bin`, and that folder goes on the user's `PATH` with Terry's yes
