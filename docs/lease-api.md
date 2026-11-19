@@ -92,6 +92,16 @@ its requirement, or says why it is declined.
   document to stderr**, followed by one line feed ([Exit codes and errors](#exit-codes-and-errors)).
 - **Output JSON MUST be compact:** no whitespace outside strings, UTF-8 with no byte order mark,
   and a line feed (never a carriage return) after the document.
+- **A command that cannot write its stdout has failed** (architect, 2026-11-19, for
+  E0.05-T01-S01; the reasoning is D36's: 0 MUST mean done). When a write to stdout fails, help
+  included, because it is closed, full or broken, the command MUST write one `internal` error
+  document to stderr and exit 1; when stderr cannot be written either, it still exits 1.
+  - **A change the command already recorded stays recorded.** A `create`, `renew` or `release`
+    whose record was written before its document failed to reach stdout has made its change, and
+    is not undone, which is the one exception to [Concurrency and atomicity](#concurrency-and-atomicity)'s
+    rule for a failed command. Its message MUST say that the change was made and that `get` or
+    `list` shows it, as in `agentspace lease create failed: The lease was recorded, but its
+    document could not be written. Run 'agentspace lease list' to see it.`
 - **Members appear in the order this page lists them**, but a caller MUST NOT depend on the order.
 - **A string MAY use any escape that JSON allows**, and MUST escape what JSON requires. A caller
   MUST compare parsed values, never bytes.
