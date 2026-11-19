@@ -86,6 +86,8 @@ when Terry says so (D14).
 - #0027, #0034, #0066 and #0068 (the operator's) are carried into v0.04's specs and met by v0.06.
 - #0043 (the CloudWatch backstop) is replaced by v0.08's lease-based stop.
 - #0064 (a release leaves the lease's open connections up, found in E0.02-T03-S01) is met by v0.08.
+- #0109 (the sampler dies silently when its disk fills, found in v0.05-T01) is met before v0.09's
+  measurement (#0049), which needs a complete record of a turn that compiles.
 
 ## After 1.0
 
