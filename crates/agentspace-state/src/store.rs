@@ -3,7 +3,7 @@
 
 use crate::sys::{self, OpenFailure, ReplaceFailure};
 use crate::{StateFile, parse, serialize};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -27,6 +27,9 @@ pub enum StoreError {
     Unwritable(String),
 }
 
+/// A file where the state folder belongs, as `read`, `lock` and `write` each report it (architect,
+/// 2026-11-19: each folder is checked where it is used).
+const WHY_STATE_FOLDER_FILE: &str = "the state folder is a file";
 const WHY_LOCK_FOLDER: &str = "the state folder could not be made";
 const WHY_LOCK_OPEN: &str = "the lock file could not be opened";
 const WHY_OPEN: &str = "the state file could not be opened";
@@ -92,7 +95,16 @@ pub fn lock(state_dir: &Path) -> Result<LockGuard, StoreError> {
     lock_with(state_dir, CONTRACT)
 }
 
+/// Whether something that is not a folder is at the state folder's path. A missing path, or one
+/// that cannot be inspected, is not.
+fn state_folder_is_a_file(state_dir: &Path) -> bool {
+    fs::metadata(state_dir).is_ok_and(|m| !m.is_dir())
+}
+
 fn lock_with(state_dir: &Path, timing: Timing) -> Result<LockGuard, StoreError> {
+    if state_folder_is_a_file(state_dir) {
+        return Err(StoreError::CannotLock(WHY_STATE_FOLDER_FILE.to_string()));
+    }
     fs::create_dir_all(state_dir)
         .map_err(|_| StoreError::CannotLock(WHY_LOCK_FOLDER.to_string()))?;
     let path = lock_path(state_dir);
@@ -117,17 +129,16 @@ fn lock_with(state_dir: &Path, timing: Timing) -> Result<LockGuard, StoreError> 
 /// its path, or a file that cannot be opened or read, is `Unreadable` (gap FB-21), and a file that
 /// does not validate is `NotValid`. It takes no lock.
 pub fn read(state_dir: &Path) -> Result<StateFile, StoreError> {
+    // A file where the state folder belongs is not a missing folder.
+    if state_folder_is_a_file(state_dir) {
+        return Err(StoreError::Unreadable(WHY_STATE_FOLDER_FILE.to_string()));
+    }
     let path = state_path(state_dir);
     let mut file = match sys::open_read(&path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // A missing file is no leases, and so is a missing folder. A file where the state
-            // folder belongs is not a missing folder.
-            return if fs::metadata(state_dir).is_ok_and(|m| !m.is_dir()) {
-                Err(StoreError::Unreadable(WHY_OPEN.to_string()))
-            } else {
-                Ok(StateFile { leases: Vec::new() })
-            };
+            // A missing file is no leases, and so is a missing folder.
+            return Ok(StateFile { leases: Vec::new() });
         }
         Err(_) => {
             let why = if path.is_dir() {
@@ -173,7 +184,7 @@ fn random_bits() -> u128 {
 fn create_temp(state_dir: &Path) -> Option<(PathBuf, File)> {
     for _ in 0..8 {
         let path = state_dir.join(format!("leases.json.{:032x}.tmp", random_bits()));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
+        match sys::create_temp_file(&path) {
             Ok(f) => return Some((path, f)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(_) => return None,
@@ -183,8 +194,8 @@ fn create_temp(state_dir: &Path) -> Option<(PathBuf, File)> {
 }
 
 /// Writes the state file: the bytes of `file` go into a temporary file in the same folder, are
-/// flushed to the disk, and are moved over `leases.json` in one rename (MoveFileExW with
-/// REPLACE_EXISTING and WRITE_THROUGH). A rename that fails because another process holds the file
+/// flushed to the disk, and are moved over `leases.json` in one rename (on Windows a POSIX rename
+/// through the temporary file's handle; see `sys::replace`). A rename that fails because another process holds the file
 /// without sharing delete is tried again for up to 10 seconds, within the time the caller holds
 /// the lock. The temporary file is deleted if anything fails before the move, and a failed
 /// rename leaves none either. A change that would not validate, or that repeats an ID, is refused
@@ -201,6 +212,9 @@ fn write_with(
     timing: Timing,
 ) -> Result<(), StoreError> {
     let bytes = serialize(file).map_err(|e| StoreError::Unwritable(e.0))?;
+    if state_folder_is_a_file(state_dir) {
+        return Err(StoreError::Unwritable(WHY_STATE_FOLDER_FILE.to_string()));
+    }
     fs::create_dir_all(state_dir)
         .map_err(|_| StoreError::Unwritable(WHY_WRITE_FOLDER.to_string()))?;
     let unwritable = |why: &str| StoreError::Unwritable(why.to_string());
@@ -210,28 +224,30 @@ fn write_with(
     let remove_temp = || {
         let _ = fs::remove_file(&temp);
     };
-    // Written, then flushed to the disk, then closed, so nothing holds the new file at the move.
+    // Written and flushed to the disk (FlushFileBuffers). The handle stays open for the rename,
+    // which Windows does through it, and is closed before the temporary file is deleted.
     if handle.write_all(&bytes).is_err() || handle.sync_all().is_err() {
         drop(handle);
         remove_temp();
         return Err(unwritable(WHY_WRITE_TEMP));
     }
-    drop(handle);
 
     let target = state_path(state_dir);
     let start = Instant::now();
     loop {
-        match sys::replace(&temp, &target) {
+        match sys::replace(&handle, &temp, &target) {
             Ok(()) => return Ok(()),
             Err(failure) => {
                 // A folder at the path is not a held file, and waiting does not change it.
                 if target.is_dir() {
+                    drop(handle);
                     remove_temp();
                     return Err(unwritable(WHY_NOT_A_FILE));
                 }
                 if failure == ReplaceFailure::Other
                     || !pause(start, timing.replace_wait, timing.retry_every)
                 {
+                    drop(handle);
                     remove_temp();
                     return Err(unwritable(WHY_REPLACE));
                 }
@@ -370,7 +386,7 @@ mod tests {
         let f = t.path().join("a-file");
         fs::write(&f, b"x").unwrap();
         let e = lock_with(&f, short()).unwrap_err();
-        assert!(matches!(e, StoreError::CannotLock(_)), "{e:?}");
+        assert_eq!(e, StoreError::CannotLock(WHY_STATE_FOLDER_FILE.to_string()));
     }
 
     #[test]
@@ -393,7 +409,21 @@ mod tests {
         let t = TempDir::new();
         let f = t.path().join("a-file");
         fs::write(&f, b"x").unwrap();
-        assert!(matches!(read(&f), Err(StoreError::Unreadable(_))));
+        assert_eq!(
+            read(&f).unwrap_err(),
+            StoreError::Unreadable(WHY_STATE_FOLDER_FILE.to_string())
+        );
+    }
+
+    #[test]
+    fn a_file_at_the_state_folder_cannot_be_written() {
+        let t = TempDir::new();
+        let guard = lock_with(t.path(), short()).unwrap();
+        let f = t.path().join("a-file");
+        fs::write(&f, b"x").unwrap();
+        let e = write_with(&f, &file_of(&[ID_A]), &guard, short()).unwrap_err();
+        assert_eq!(e, StoreError::Unwritable(WHY_STATE_FOLDER_FILE.to_string()));
+        assert_eq!(fs::read(&f).unwrap(), b"x");
     }
 
     #[test]
@@ -493,6 +523,7 @@ mod tests {
     /// Opens `path` the way a process that shares only read would, which blocks a rename over it.
     #[cfg(windows)]
     fn hold_sharing_read(path: &Path) -> File {
+        use std::fs::OpenOptions;
         use std::os::windows::fs::OpenOptionsExt;
         OpenOptions::new()
             .read(true)

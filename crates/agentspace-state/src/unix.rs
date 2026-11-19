@@ -29,8 +29,13 @@ pub fn open_read(path: &Path) -> io::Result<File> {
     File::open(path)
 }
 
-/// Renames `from` over `to`, which is atomic on these systems. It is one attempt, since nothing
-/// here holds a file against a rename.
-pub fn replace(from: &Path, to: &Path) -> Result<(), ReplaceFailure> {
+/// Makes a new temporary file, failing if it exists.
+pub fn create_temp_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// Renames `from` over `to`, which is atomic on these systems; `temp` is not needed. It is one
+/// attempt, since nothing here holds a file against a rename.
+pub fn replace(_temp: &File, from: &Path, to: &Path) -> Result<(), ReplaceFailure> {
     fs::rename(from, to).map_err(|_| ReplaceFailure::Other)
 }

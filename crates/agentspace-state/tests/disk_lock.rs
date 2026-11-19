@@ -136,7 +136,10 @@ fn a_file_where_the_state_folder_must_be_fails_at_once_as_cannot_lock() {
     std::fs::write(&f, b"x").unwrap();
     let started = Instant::now();
     let r = lock(&f);
-    assert!(matches!(r, Err(StoreError::CannotLock(_))));
+    assert_eq!(
+        r.unwrap_err(),
+        StoreError::CannotLock("the state folder is a file".to_string())
+    );
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 

@@ -69,6 +69,16 @@ pub fn hold(path: &Path, mode: &str, access: &str, share: &str, seconds: u32) ->
     holder
 }
 
+/// Opens `path` for reading, sharing read, write and delete, as a reader of the state file does.
+pub fn open_sharing_everything(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(7)
+        .open(path)
+        .expect("The file must open")
+}
+
 /// Every `leases.json.*.tmp` left in the folder.
 pub fn temp_files_in(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)

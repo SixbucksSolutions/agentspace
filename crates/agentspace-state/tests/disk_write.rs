@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use agentspace_state::{StoreError, lock, read, write};
 use common::*;
-use disk_support::{hold, sandbox, state_of, temp_files_in};
+use disk_support::{hold, open_sharing_everything, sandbox, state_of, temp_files_in};
 
 fn describe<T>(r: &Result<T, StoreError>) -> String {
     match r {
@@ -110,7 +110,54 @@ fn read_opens_with_every_share_so_a_writer_is_never_blocked_by_it() {
     write(t.path(), &state_of(vec![]), &g).expect("A replace must follow a read");
 }
 
+#[test]
+fn a_file_where_the_state_folder_must_be_is_unreadable_with_its_why() {
+    let t = sandbox();
+    let f = t.path().join("a-file");
+    std::fs::write(&f, b"x").unwrap();
+    assert_eq!(
+        read(&f).unwrap_err(),
+        StoreError::Unreadable("the state folder is a file".to_string())
+    );
+}
+
 // ---- write ----
+
+#[test]
+fn a_file_where_the_state_folder_must_be_is_unwritable_with_its_why() {
+    let t = sandbox();
+    let g = lock(t.path()).unwrap();
+    let f = t.path().join("a-file");
+    std::fs::write(&f, b"x").unwrap();
+    assert_eq!(
+        write(&f, &state_of(vec![]), &g).unwrap_err(),
+        StoreError::Unwritable("the state folder is a file".to_string())
+    );
+    assert_eq!(std::fs::read(&f).unwrap(), b"x");
+}
+
+#[test]
+fn a_reader_that_opened_the_old_file_before_the_write_still_reads_it_whole_after_the_rename() {
+    use std::io::Read;
+    let t = sandbox();
+    let path = t.path().join("leases.json");
+    let old = bytes_of(vec![ready(ID_A, "demo")]);
+    std::fs::write(&path, &old).unwrap();
+    // A reader sharing read, write and delete, opened before the write and kept open across it.
+    let mut reader = open_sharing_everything(&path);
+    let g = lock(t.path()).unwrap();
+    write(t.path(), &state_of(vec![pending(ID_B, "other")]), &g)
+        .expect("A reader sharing delete must not stop the rename");
+    // A fresh read gets the new bytes.
+    let fresh = read(t.path()).unwrap();
+    assert_eq!(fresh.leases.len(), 1);
+    assert_eq!(fresh.leases[0].id, ID_B);
+    // The reader that held the old file open still reads the old bytes, whole.
+    let mut seen = Vec::new();
+    reader.read_to_end(&mut seen).unwrap();
+    assert_eq!(seen, old);
+    assert!(temp_files_in(t.path()).is_empty());
+}
 
 #[test]
 fn write_then_read_round_trips() {

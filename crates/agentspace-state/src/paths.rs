@@ -31,27 +31,13 @@ fn full(path: PathBuf, cwd: &Path) -> PathBuf {
     }
 }
 
-/// Whether something that is not a folder is at the path. A missing path, or one that cannot be
-/// inspected, is not: a missing folder is created when first needed, and an unreadable one fails
-/// when it is used.
-fn is_a_file(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| !m.is_dir())
-}
-
-// ARCHITECT-QUESTION: Which StoreError variant is "a value that names an existing file, not a
-// folder" (state.md, The home folder)? The pinned enum has no variant for it, and lease-api.md
-// says only `internal`. Unreadable is used here, with its own why; a variant of its own would
-// change the pinned interface.
-const WHY_HOME_FILE: &str = "the home folder is a file, not a folder";
-const WHY_STATE_FILE: &str = "the state folder is a file, not a folder";
-const WHY_SSH_FILE: &str = "the OpenSSH client's folder is a file, not a folder";
-
 /// Finds the folders from the environment (state.md, The home folder; What moves which files).
 ///
 /// `var` reads one environment variable, and `cwd` is the process's working folder. The home
 /// folder is `USERPROFILE` alone, never the operating system's own idea of the profile. A relative
-/// value is made full against `cwd`. A folder that names an existing file is refused, since every
-/// command that needs it fails with `internal`.
+/// value is made full against `cwd`. Nothing is checked on the disk: a file where a folder must be
+/// is reported where the folder is used (architect, 2026-11-19), by `read`, `lock` and `write` for
+/// the state folder.
 pub fn resolve_paths(
     var: &dyn Fn(&str) -> Option<OsString>,
     cwd: &Path,
@@ -65,18 +51,6 @@ pub fn resolve_paths(
         Some(p) => Some(full(p, cwd)),
         None => home.as_ref().map(|h| h.join(".ssh")),
     };
-    // The lease folders, the CA and more live under the home folder whatever the overrides say, so
-    // a file there is refused too.
-    let checks = [
-        (&home, WHY_HOME_FILE),
-        (&state_dir, WHY_STATE_FILE),
-        (&ssh_dir, WHY_SSH_FILE),
-    ];
-    for (folder, why) in checks {
-        if folder.as_deref().is_some_and(is_a_file) {
-            return Err(StoreError::Unreadable(why.to_string()));
-        }
-    }
     Ok(Paths {
         home,
         state_dir,
@@ -186,30 +160,31 @@ mod tests {
     }
 
     #[test]
-    fn a_file_where_a_folder_has_to_be_is_refused() {
+    fn a_file_where_a_folder_has_to_be_is_not_checked_here() {
         let t = TempDir::new();
         let file = t.path().join("a-file");
         std::fs::write(&file, b"x").unwrap();
         let f = file.to_str().unwrap();
         let home = t.path().join("h");
         let h = home.to_str().unwrap();
-        for pairs in [
-            vec![("USERPROFILE", f)],
-            vec![("USERPROFILE", h), ("AGENTSPACE_STATE_DIR", f)],
-            vec![("USERPROFILE", h), ("AGENTSPACE_SSH_DIR", f)],
-            vec![("AGENTSPACE_STATE_DIR", f)],
-        ] {
-            let r = resolve_paths(&env(&pairs), t.path());
-            assert!(matches!(r, Err(StoreError::Unreadable(_))), "{pairs:?}");
-        }
-        // A file at the default `.agentspace` is the state folder being a file too.
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(home.join(".agentspace"), b"x").unwrap();
-        assert!(resolve_paths(&env(&[("USERPROFILE", h)]), t.path()).is_err());
+        let p = resolve_paths(&env(&[("USERPROFILE", f)]), t.path()).unwrap();
+        assert_eq!(p.home, Some(file.clone()));
+        let p = resolve_paths(
+            &env(&[("USERPROFILE", h), ("AGENTSPACE_STATE_DIR", f)]),
+            t.path(),
+        )
+        .unwrap();
+        assert_eq!(p.state_dir, Some(file.clone()));
+        let p = resolve_paths(
+            &env(&[("USERPROFILE", h), ("AGENTSPACE_SSH_DIR", f)]),
+            t.path(),
+        )
+        .unwrap();
+        assert_eq!(p.ssh_dir, Some(file));
     }
 
     #[test]
-    fn a_missing_folder_is_not_refused() {
+    fn a_missing_folder_is_not_an_error() {
         let t = TempDir::new();
         let missing = t.path().join("not-yet");
         let r = resolve_paths(

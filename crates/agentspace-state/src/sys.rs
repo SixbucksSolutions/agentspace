@@ -9,7 +9,7 @@ mod imp;
 #[path = "unix.rs"]
 mod imp;
 
-pub use imp::{open_lock, open_read, replace};
+pub use imp::{create_temp_file, open_lock, open_read, replace};
 
 /// Why the lock file could not be opened.
 #[derive(Debug, PartialEq, Eq)]

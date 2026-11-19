@@ -30,10 +30,6 @@ fn ok(vars: &[(&str, &str)], cwd: &Path) -> Paths {
     resolve(vars, cwd).0.expect("Paths must resolve")
 }
 
-fn is_err(vars: &[(&str, &str)], cwd: &Path) -> bool {
-    resolve(vars, cwd).0.is_err()
-}
-
 fn s(p: &Path) -> String {
     p.to_str().unwrap().to_string()
 }
@@ -214,59 +210,50 @@ fn relative_overrides_are_made_full_against_the_working_folder() {
     assert_eq!(p.ssh_dir, Some(t.path().join("rel-ssh")));
 }
 
+/// A file at a path that must be a folder is not this function's to report: the folder's own users
+/// do (architect, 2026-11-19), so the paths still resolve.
 #[test]
-fn a_file_where_the_home_must_be_is_refused() {
+fn a_file_where_a_folder_must_be_does_not_stop_the_paths_resolving() {
     let t = sandbox();
     let f = t.path().join("a-file");
     std::fs::write(&f, b"x").unwrap();
-    assert!(is_err(&[("USERPROFILE", &s(&f))], t.path()));
+    let home = t.path().join("home");
+
+    let p = ok(&[("USERPROFILE", &s(&f))], t.path());
+    assert_eq!(p.home, Some(f.clone()));
+    assert_eq!(p.state_dir, Some(f.join(".agentspace")));
+    assert_eq!(p.ssh_dir, Some(f.join(".ssh")));
+
+    let p = ok(
+        &[("USERPROFILE", &s(&home)), ("AGENTSPACE_STATE_DIR", &s(&f))],
+        t.path(),
+    );
+    assert_eq!(p.state_dir, Some(f.clone()));
+
+    let p = ok(
+        &[("USERPROFILE", &s(&home)), ("AGENTSPACE_SSH_DIR", &s(&f))],
+        t.path(),
+    );
+    assert_eq!(p.ssh_dir, Some(f.clone()));
+
+    let p = ok(&[("AGENTSPACE_STATE_DIR", &s(&f))], t.path());
+    assert_eq!(p.state_dir, Some(f));
 }
 
 #[test]
-fn a_file_where_the_state_folder_must_be_is_refused() {
-    let t = sandbox();
-    let f = t.path().join("a-file");
-    std::fs::write(&f, b"x").unwrap();
-    assert!(is_err(&[("AGENTSPACE_STATE_DIR", &s(&f))], t.path()));
-}
-
-#[test]
-fn a_file_where_the_ssh_folder_must_be_is_refused() {
-    let t = sandbox();
-    let f = t.path().join("a-file");
-    std::fs::write(&f, b"x").unwrap();
-    assert!(is_err(&[("AGENTSPACE_SSH_DIR", &s(&f))], t.path()));
-}
-
-#[test]
-fn a_file_at_the_default_state_folder_is_refused() {
+fn a_file_at_the_default_state_folder_still_resolves() {
     let t = sandbox();
     let home = t.path().join("home");
     std::fs::create_dir(&home).unwrap();
     std::fs::write(home.join(".agentspace"), b"x").unwrap();
-    assert!(is_err(&[("USERPROFILE", &s(&home))], t.path()));
+    let p = ok(&[("USERPROFILE", &s(&home))], t.path());
+    assert_eq!(p.state_dir, Some(home.join(".agentspace")));
 }
 
 #[test]
-fn a_file_at_a_relative_override_is_refused_after_it_is_made_full() {
+fn a_file_at_a_relative_override_still_resolves_made_full() {
     let t = sandbox();
     std::fs::write(t.path().join("rel-file"), b"x").unwrap();
-    assert!(is_err(&[("AGENTSPACE_STATE_DIR", "rel-file")], t.path()));
-}
-
-#[test]
-fn a_refusal_names_no_absolute_path() {
-    let t = sandbox();
-    let f = t.path().join("a-file");
-    std::fs::write(&f, b"x").unwrap();
-    let (r, _) = resolve(&[("AGENTSPACE_STATE_DIR", &s(&f))], t.path());
-    let text = match r {
-        Err(StoreError::Unreadable(m))
-        | Err(StoreError::CannotLock(m))
-        | Err(StoreError::NotValid(m))
-        | Err(StoreError::Unwritable(m)) => m,
-        Err(StoreError::Busy) => String::new(),
-        Ok(_) => panic!("Must be refused"),
-    };
-    assert!(!text.contains(&s(t.path())), "Message was: {text}");
+    let p = ok(&[("AGENTSPACE_STATE_DIR", "rel-file")], t.path());
+    assert_eq!(p.state_dir, Some(t.path().join("rel-file")));
 }
