@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "agentspace-alias"
 version = "0.5.0"
+
+[[package]]
+name = "agentspace-values"
+version = "0.5.0"
