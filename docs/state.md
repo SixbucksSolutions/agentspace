@@ -107,7 +107,7 @@ starts; unset or empty means the default. What each means to the lease CLI is
 | Variable | Moves | Does not move |
 |---|---|---|
 | `USERPROFILE` | Everything on this page under `%USERPROFILE%`: `.agentspace` and all in it, and `.ssh`; and `.aws`, which the AWS CLI reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | The checkout; `%LOCALAPPDATA%`; and where a program finds agentspace's other programs, which is its own folder ([operator.md](operator.md#how-each-program-finds-the-others)) |
-| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)) | The lease folders, the CA, the push stamp, the instance-ID cache, `local.parameters`, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
+| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)) | The lease folders, the CA, the push stamp, the instance-ID cache, the stack parameters file, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
 | `AGENTSPACE_SSH_DIR` | `config`, its backups, `agentspace.d` and the alias files, for `create` and `release` | `known_hosts`, and the user's own key; ssh itself reads neither variable |
 | `LOCALAPPDATA` | The localswim receipt, which the operator reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | Anything agentspace writes |
 
@@ -246,9 +246,11 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `%USERPROFILE%\.ssh\known_hosts` | [The host key](#the-host-key) | `ssh`, never agentspace | `ssh` | Never |
 | `%USERPROFILE%\.agentspace\ca\` | [The CA](#the-ca)'s folder | `ca`, once | `ca`, `sync`, `create`, `renew` | Never |
 | `...\ca\agentspace_ca`, `agentspace_ca.pub` | The CA's key pair | `ca`, once | The same | Never |
-| `%USERPROFILE%\.agentspace\localswim-pushed.sha256` | [The push stamp](#the-push-stamp) | `up`, `sync` | `up` | Never |
-| `%USERPROFILE%\.agentspace\instance-id` | [The instance-ID cache](#files-in-the-checkout), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. Never the lease CLI (D21) | By `deploy`, which writes it again |
-| `%USERPROFILE%\.agentspace\local.parameters` | [The stack's parameters](#files-in-the-checkout), which the prototype keeps in the checkout | A person | `deploy` | Never |
+| `%USERPROFILE%\.agentspace\localswim-pushed.json` | [The push stamp](#the-push-stamp) (D40; the prototype's is `localswim-pushed.sha256`) | `up`, `sync` | `up` | Never |
+| `%USERPROFILE%\.agentspace\localswim-pushed.json.<hex>.tmp` | The push stamp's temporary file | `up`, `sync` | None | At once |
+| `%USERPROFILE%\.agentspace\instance-id.json` | [The instance-ID cache](#files-in-the-checkout) (D40), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. Never the lease CLI (D21) | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\instance-id.json.<hex>.tmp` | The instance-ID cache's temporary file | The same as the cache | None | At once |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` | [The stack parameters file](#files-in-the-checkout) (D40), which the prototype keeps in the checkout as `infra\local.parameters` | A person | `deploy` | Never |
 | `%USERPROFILE%\.agentspace\operator\` and what is in it | [The operator's folder](#files-in-the-checkout): the template, the box's files and the localswim CLI, written out for the programs that read them | `deploy`, `sync` | The AWS CLI, `scp` | Never; each file is replaced at its next use |
 | `<state folder>\board-holder.json` | [The holder record](#the-holder-record) | The keeper | The keeper | The keeper |
 | `<state folder>\board-holder.json.<hex>.tmp` | The holder record's temporary file | The keeper | None | At once |
@@ -1027,21 +1029,27 @@ and re-issues every live lease's certificate.
 
 ## The push stamp
 
-**`%USERPROFILE%\.agentspace\localswim-pushed.sha256` records the last token push the box
+**`%USERPROFILE%\.agentspace\localswim-pushed.json` records the last token push the box
 confirmed** (D9, D32). What it is the hash of, when a push is due, and when it is written are
 operator.md's ([The stamp](operator.md#the-stamp)); this section owns how it is stored.
 
-- **Its content is the stamp as 64 hex digits, with nothing else:** no line ending, no byte order
-  mark, no whitespace. The prototype writes the digits in uppercase. A writer SHOULD write
-  uppercase, so a file written by either is byte-identical; a reader compares without regard to
-  case and ignores surrounding whitespace ([operator.md](operator.md#the-stamp)).
-- **Its bytes are ASCII**, whatever encoding the writer's runtime defaults to.
+- **It is JSON (D40, architect, 2026-11-19, for v0.06):** `{"version":0,"stamp":"<64 hex>"}`,
+  where the stamp's digits are uppercase. Its schema is
+  [`schemas/state/localswim-pushed.state.schema.json`](../schemas/state/localswim-pushed.state.schema.json),
+  carried inside the operator. It is written as UTF-8 with no byte order mark, as compact JSON with
+  no line ending. A reader MUST accept a byte order mark and whitespace that JSON allows.
+- **A file that cannot be parsed, or does not match the schema, is a stamp that "cannot be read"**
+  under operator.md's rule, so the next push is due ([operator.md](operator.md#the-stamp)).
+- **The prototype's stamp is `localswim-pushed.sha256`, the 64 hex digits alone**, with no line
+  ending. The rewrite MUST NOT read, write or remove that file. So the first `up` after the
+  change-over finds no stamp and pushes once, which changes nothing on the box. A person MAY
+  delete the old file once the prototype is gone.
 - **Written by:** `up` and `sync`, only after the box confirms the push, creating
   `%USERPROFILE%\.agentspace` if needed. **Read by:** `up`, to decide whether a push is due.
-- **It SHOULD be replaced atomically** ([Replacing a file](#replacing-a-file)), through
-  `localswim-pushed.sha256.<hex>.tmp`. The prototype overwrites it in place, so a reader can see it
-  empty or part written, which under operator.md's rule makes the next push due; the prototype
-  itself warns and pushes nothing then ([operator.md](operator.md#the-stamp)).
+- **It MUST be replaced atomically** ([Replacing a file](#replacing-a-file)), through
+  `localswim-pushed.json.<hex>.tmp`. The prototype overwrites its own file in place, so a reader
+  can see it empty or part written; the prototype itself warns and pushes nothing then
+  ([operator.md](operator.md#the-stamp)).
 - **`AGENTSPACE_STATE_DIR` does not move it.**
 - **Access rules:** inherited. It covers the token, so it SHOULD be readable by the user alone; the
   prototype's inherits `SYSTEM` and `Administrators` as well
@@ -1263,29 +1271,55 @@ format. None is committed.
 
 | Path | The prototype's | Format | Written by | Read by | Removed |
 |---|---|---|---|---|---|
-| `%USERPROFILE%\.agentspace\instance-id` | `<checkout>\.instance-id` | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. The lease CLI MUST NOT read or need it ([driver.md](driver.md#how-it-is-reached), D21) | By `deploy`, which writes it again |
-| `%USERPROFILE%\.agentspace\local.parameters` | `<checkout>\infra\local.parameters` | Text lines; see below | A person | `deploy` | Never |
+| `%USERPROFILE%\.agentspace\instance-id.json` | `<checkout>\.instance-id`, the ID alone in ASCII | JSON; see below | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. The lease CLI MUST NOT read or need it ([driver.md](driver.md#how-it-is-reached), D21) | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | JSON; see below | A person | `deploy` | Never |
 | `%USERPROFILE%\.agentspace\operator\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, just before the call that reads it | The AWS CLI's `cloudformation deploy` | Never; replaced by each `deploy` |
 | `%USERPROFILE%\.agentspace\operator\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, just before the copy, after removing whatever the folder held | `scp`, which copies the folder to the box | Never; emptied and written again by each `sync` |
 | `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box | `sync`'s build | `scp` | Never; replaced by each build |
 
 - **The operator's folder, `%USERPROFILE%\.agentspace\operator`, is created by the first command
-  that writes in it.** `AGENTSPACE_STATE_DIR` does not move it or `local.parameters`
+  that writes in it.** `AGENTSPACE_STATE_DIR` does not move it or the stack parameters file
   ([What moves which files](#what-moves-which-files)). Access rules: inherited.
 - **Nothing reads the files in the operator's folder but the programs the operator starts**, at
   the step that wrote them. A file a person changes there is replaced at its next use, so the box
   and the stack are changed only through the repository and a new build.
 
-- **The cache's file name, `instance-id`, is this page's choice** ([Q14](#open-questions)): D21
-  says only that it lives under `%USERPROFILE%\.agentspace`. It is moved by `USERPROFILE` and by no
-  other variable ([What moves which files](#what-moves-which-files)).
-- **The instance-ID cache is read trimmed of surrounding whitespace**, and the ProxyCommand reads
-  its first line. What an empty cache means is [operator.md](operator.md#laptop-files)'s.
-- **`local.parameters`** holds the account's stack parameters, so it MUST NOT be committed.
-  Each line that matches `^\s*[A-Za-z]+=\S` is one parameter, `<Name>=<value>`, taken with its
-  surrounding whitespace trimmed and passed to CloudFormation as it is; every other line, such as a
-  comment or a blank line, is skipped. The repository's `infra\local.parameters.example`, which is
-  committed, shows the form.
+- **The cache's file name, `instance-id.json`, is this page's choice** ([Q14](#open-questions)):
+  D21 says only that it lives under `%USERPROFILE%\.agentspace`, and D40 makes it JSON. It is
+  moved by `USERPROFILE` and by no other variable ([What moves which files](#what-moves-which-files)).
+- **The instance-ID cache is JSON (D40, architect, 2026-11-19, for v0.06):**
+  `{"version":0,"instance_id":"<id>"}`, with the ID exactly as the stack's `InstanceId` output
+  gives it. Its schema is
+  [`schemas/state/instance-id.state.schema.json`](../schemas/state/instance-id.state.schema.json),
+  carried inside the operator and the ProxyCommand.
+  - **It is written as UTF-8 with no byte order mark, as compact JSON with no line ending, and
+    replaced atomically** ([Replacing a file](#replacing-a-file)), through
+    `instance-id.json.<hex>.tmp`. A reader MUST accept a byte order mark and whitespace that JSON
+    allows.
+  - **A file that is empty, cannot be parsed, or does not match the schema MUST be treated as
+    missing**, so the command rebuilds it from the stack. A file that cannot be opened, such as one
+    access is denied to or a folder at its path, fails as operator.md says
+    ([Laptop files](operator.md#laptop-files)).
+  - **The rewrite MUST NOT read the prototype's caches**, `<checkout>\.instance-id` or a plain
+    `instance-id` under `%USERPROFILE%\.agentspace`. It is only a cache, so the rewrite's first
+    command rebuilds its own from the stack, and needs no migration.
+- **The stack parameters file, `stack-parameters.json`, holds the account's stack parameters, so it
+  MUST NOT be committed** (D40, architect, 2026-11-19, for v0.06; the prototype's is
+  `<checkout>\infra\local.parameters`).
+  - **Its form is `{"version":0,"parameters":{"<Name>":"<value>", ...}}`**, with its schema in
+    [`schemas/state/stack-parameters.state.schema.json`](../schemas/state/stack-parameters.state.schema.json),
+    carried inside the operator. Each member of `parameters` is passed to CloudFormation as it is,
+    and every value is a string, a `Number` parameter's included, as CloudFormation takes it. The
+    repository's `infra\stack-parameters.example.json`, which is committed, shows the form.
+  - **A person writes it, so a reader MUST accept a UTF-8 byte order mark, and whitespace and line
+    endings that JSON allows.** agentspace never writes it.
+  - **A file that cannot be parsed, or does not match the schema, fails `deploy` before it calls
+    AWS**, with the message operator.md gives ([deploy](operator.md#deploy)). Nothing is skipped
+    silently, unlike the prototype's lines, where any line not of the form `<Name>=<value>` is
+    skipped.
+  - **The rewrite MUST NOT read `infra\local.parameters`.** Moving its values into
+    `stack-parameters.json` is a one-time step of v0.06's cutover, and no agentspace program
+    converts it.
 
 ## Project tooling
 
@@ -1383,11 +1417,11 @@ keeper, which the Rust build does not have yet.
 | Every part of agentspace finds the home folder through `USERPROFILE` | The task launcher uses the operating system's profile folder; `deploy` and `sync` use the shell's home variable | [Q2](#open-questions) | Not shown: no conformance file checks it (#0110) |
 | Every path written into a file is a full path | Writes a relative `USERPROFILE`, `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` into the alias file and a launch request as given | [The home folder](#the-home-folder) | Not shown: no conformance file checks it (#0110) |
 | Readers of the keeper's JSON files share read, write and delete (SHOULD) | They share read only; the writer's 5-second retry covers it | [The keeper's files](#the-keepers-files) | Not a lease CLI row |
-| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) | Not shown: no conformance file checks it (#0110) |
-| `local.parameters` and the operator's folder are under `%USERPROFILE%\.agentspace` | Reads `infra\local.parameters` from the checkout, and builds the localswim CLI into the checkout's `.build` | [Files in the checkout](#files-in-the-checkout) | Not a lease CLI row |
+| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id.json`, in JSON (D40) | `.instance-id` in the checkout, the ID alone | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) | Not shown: no conformance file checks it (#0110) |
+| The stack parameters file, `stack-parameters.json` in JSON (D40), and the operator's folder are under `%USERPROFILE%\.agentspace` | Reads `KEY=VALUE` lines from `infra\local.parameters` in the checkout, and builds the localswim CLI into the checkout's `.build` | [Files in the checkout](#files-in-the-checkout) | Not a lease CLI row |
 | `create` never reads or needs the instance-ID cache, with or without `AGENTSPACE_PROXY_COMMAND` | Without the override, refuses to write the alias, and so fails `create`, when its checkout holds no `.instance-id` | D21 ([The alias file](#the-alias-file); [driver.md](driver.md#how-it-is-reached)) | Yes, in part: `conformance/lease-cli/test-unmet-default-transport-no-cache.ps1` shows that a ready `create` succeeds with `AGENTSPACE_PROXY_COMMAND` unset and no cache in the home. That `create` never reads a cache is not shown: no conformance file checks it (#0110) |
 | A state file in which two records share an `id` is read as not valid by every lease command | `get` and `list` read it; a changing command refuses it only when it writes, after the driver has acted | [The lease state file](#the-lease-state-file) | Not shown: no conformance file checks it (#0110) |
-| The push stamp is replaced atomically (SHOULD) | Overwrites it in place | [The push stamp](#the-push-stamp) | Not a lease CLI row |
+| The push stamp is `localswim-pushed.json`, in JSON (D40), and is replaced atomically | Writes `localswim-pushed.sha256`, the hex alone, and overwrites it in place | [The push stamp](#the-push-stamp) | Not a lease CLI row |
 | The push stamp is readable by the user alone (SHOULD) | It inherits `SYSTEM` and `Administrators` as well | [The push stamp](#the-push-stamp); [operator.md Q27](operator.md#open-questions) | Not a lease CLI row |
 
 ## Open questions
@@ -1411,4 +1445,4 @@ none blocks building a drop-in of contract v0.
 | **Q11** | **Later, not blocking:** **What SHOULD a `renew` killed between moving the new certificate into place and writing the record leave?** The certificate then outlives or falls short of the recorded `expires_at` until the next `renew` or `release`. Writing the record first moves the window rather than closing it. lease-api.md's atomicity covers a failed command, and says nothing of a killed one. | lease-api.md's atomicity covers a failed command and not a killed one, and the next `renew` or `release` puts the certificate and the record back in step, so a drop-in can be built without the answer. Later: the architect |
 | **Q12** | **Closed (E0.04-T04-S01, 2026-11-18): when the line has to be added to a `config` that is a symbolic link, another reparse point, or read-only, `create` fails with `internal` before it backs the config up, and writes nothing through the link** ([The `Include` line](#the-include-line)). Whether the prototype meets that is unobserved; a run on the laptop shows it. | Closed |
 | **Q13** | **Closed (E0.04-T03-S02, 2026-11-18): the keeper suite checks the keeper's JSON files against their schemas.** The case "The files a keeper run writes match the state schemas" (`conformance/keeper/test-keeper.ps1`) is described in [docs/conformance.md](conformance.md#the-keeper-suite), which owns what it checks. The prototype's schemas check (`scripts/test-schemas.ps1`, moved to `conformance/schemas/test-schemas.ps1`) still scans only the top level of `schemas/`, and no longer needs to look in `schemas/state/`. | Closed |
-| **Q14** | **Later, not blocking:** **Is `instance-id` the right name for the cache under `%USERPROFILE%\.agentspace`, and SHOULD `AGENTSPACE_STATE_DIR` move it?** D21 names the folder and no file. This page keeps the prototype's name without its dot, and leaves the cache where the stamp and the CA are, out of the state folder's reach, since the ProxyCommand and every lease alias's default ProxyCommand read it without any agentspace variable. | This page picks the name and leaves the cache out of `AGENTSPACE_STATE_DIR`'s reach ([What moves which files](#what-moves-which-files)), so a drop-in builds that. Later: the architect |
+| **Q14** | **Later, not blocking:** **Is `instance-id` the right name for the cache under `%USERPROFILE%\.agentspace`, and SHOULD `AGENTSPACE_STATE_DIR` move it?** D21 names the folder and no file. This page keeps the prototype's name without its dot, with `.json` since D40, and leaves the cache where the stamp and the CA are, out of the state folder's reach, since the ProxyCommand and every lease alias's default ProxyCommand read it without any agentspace variable. | This page picks the name and leaves the cache out of `AGENTSPACE_STATE_DIR`'s reach ([What moves which files](#what-moves-which-files)), so a drop-in builds that. Later: the architect |

@@ -1,0 +1,7 @@
+{
+  "version": 0,
+  "parameters": {
+    "VpcId": "vpc-xxxxxxxx",
+    "SubnetId": "subnet-xxxxxxxx"
+  }
+}

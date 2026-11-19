@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/instance-id.state.schema.json",
+  "title": "Instance-ID cache (laptop, internal)",
+  "description": "%USERPROFILE%\\.agentspace\\instance-id.json (D21, D40): the box's instance ID, cached from the stack's InstanceId output. Internal: written by deploy and by any operator command that finds it missing, read by every operator command but ca and by the ProxyCommand. A file that does not match this schema is treated as missing and rebuilt. Anchored patterns end with $(?!\\n). See docs/state.md, \"Files in the checkout\".",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "instance_id"],
+  "properties": {
+    "version": {
+      "description": "The format's version. 0 until a change that an older reader would misread.",
+      "const": 0
+    },
+    "instance_id": {
+      "description": "The instance ID exactly as the stack's InstanceId output gives it.",
+      "type": "string",
+      "pattern": "^i-([0-9a-f]{8}|[0-9a-f]{17})$(?!\\n)"
+    }
+  }
+}

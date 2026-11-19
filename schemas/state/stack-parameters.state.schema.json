@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/stack-parameters.state.schema.json",
+  "title": "Stack parameters (laptop, written by a person)",
+  "description": "%USERPROFILE%\\.agentspace\\stack-parameters.json (D40): the account's CloudFormation parameters, which deploy passes to the stack. Written by a person, read by the operator's deploy, never written or removed by agentspace, never committed. Replaces the prototype's KEY=VALUE file <checkout>\\infra\\local.parameters. Anchored patterns end with $(?!\\n). See docs/state.md, \"Files in the checkout\".",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "parameters"],
+  "properties": {
+    "version": {
+      "description": "The format's version. 0 until a change that an older reader would misread.",
+      "const": 0
+    },
+    "parameters": {
+      "description": "Each member is one stack parameter: its name as the template declares it, and its value as CloudFormation takes it, a string even for a Number parameter. Every member is passed; an empty object passes none.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9]{0,254}$(?!\\n)"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^\\S(.*\\S)?$(?!\\n)"
+      }
+    }
+  }
+}

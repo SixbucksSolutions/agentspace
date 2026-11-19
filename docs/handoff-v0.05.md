@@ -65,9 +65,9 @@ RFC 2119 keywords; the capitals are load-bearing.
 | Plan from the board (#0052) is v0.11 and comes before the new platforms, so agentspace is feature complete on one platform first | D26; roadmap.md; #0052 |
 | v0.13 is folded into v0.12 (#0051): `linux/amd64` and `windows/amd64` in one release, a shared multi-platform turn and then two tracks in parallel. #0081 is archived, v0.13 is not used, and v1.0 follows v0.12 | D26, D4; roadmap.md; #0051 |
 
-**One question is still Terry's:** whether D33's measured compiling turn, which v0.05-T01 owed and
-recorded only in part, is measured again in v0.06's first turn on the box. Nothing in v0.05 runs
-agents on the box again.
+**The one question that was still Terry's is answered** (Terry, 2026-11-19, 2:05pm Pacific, to the
+next architect): D33's measured compiling turn, which v0.05-T01 owed and recorded only in part, is
+measured in v0.06's first turn on the box (D33).
 
 ## The architect's standing duties
 
@@ -183,9 +183,9 @@ before it reads it: the first GO of v0.05-T01 was read only after the dev lead h
 
 | What | Where it goes |
 |---|---|
-| D33's measured compiling turn, still owed in full | Terry's call: v0.06's first turn on the box is the architect's proposal |
+| D33's measured compiling turn, still owed in full | v0.06's first turn on the box (Terry, 2026-11-19; D33) |
 | #0109, the sampler dies silently when its disk fills | Before v0.09's measurement (roadmap.md) |
-| #0029, #0041, #0083, the lease CLI's hardening | Proposed OBE with the evidence and caveats in a comment on each (runs/e0.05-t05-s01.md, "Proposal"); in Backlog until Terry's word |
+| #0029, #0041, #0083, the lease CLI's hardening | OBE, Terry's word, 2026-11-19, recorded in a comment on each (evidence: runs/e0.05-t05-s01.md, "Proposal"). Terry moves them to Completed. What they leave is #0110's and #0010's |
 | #0110, conformance hardening: the checks the suite lacks, among them #0029 points 1 and 2 and #0083 point 1 | Rides with v0.06 (roadmap.md) |
 | The prototype's lease CLI (`bin\agentspace.cmd`, `scripts\lease-cli.ps1`) and the install's forwarder into the checkout | Removed by v0.06 (D38) |
 | The box's Rust toolchain and gcc, installed by hand | A project host that builds Rust (v0.07, #0047; D38's note) |
@@ -206,7 +206,7 @@ word (AGENTS.md, "The board").
   the lease CLI's before its builders started (D38).
 - **Make D40's three moves to JSON in the specs**, with their schemas.
 - **Settle the measured turn with Terry**, and if it is v0.06's first turn, size the box for it
-  (D39) and plan the sampler's watch.
+  (D39) and plan the sampler's watch. Settled: it is (D33).
 - **Plan the cutover of the keeper's task**, which is persistent configuration on Terry's laptop
   and takes his yes (D30, D37).
 

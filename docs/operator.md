@@ -409,14 +409,14 @@ are the prototype's places;** where the rewrite keeps each is
 
 | File (as today's prototype has it) | Read by | Written by | What it is |
 |---|---|---|---|
-| `<checkout>\.instance-id` today; `%USERPROFILE%\.agentspace\instance-id` as D21 requires | Every command but `ca`; the ProxyCommand | `deploy`; any command that finds it missing | The instance ID, cached from the stack's output ([The instance-ID cache](#laptop-files) below) |
-| `%USERPROFILE%\.agentspace\localswim-pushed.sha256` | `up` | `up`, `sync` | The push stamp ([The stamp](#the-stamp)) |
+| `<checkout>\.instance-id` today; `%USERPROFILE%\.agentspace\instance-id.json` as D21 and D40 require | Every command but `ca`; the ProxyCommand | `deploy`; any command that finds it missing | The instance ID, cached from the stack's output ([The instance-ID cache](#laptop-files) below) |
+| `%USERPROFILE%\.agentspace\localswim-pushed.sha256` today; `localswim-pushed.json` beside it as D40 requires | `up` | `up`, `sync` | The push stamp ([The stamp](#the-stamp)) |
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca` | `ca`, `sync` | `ca`, once | The CA's private key (D17) |
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` | `ca`, `sync` | `ca`, once | The CA's public key, which `sync` sends to the box |
 | `%USERPROFILE%\.ssh\id_ed25519.pub` | `deploy` | Never | The user's own public key, passed to the stack as `SshPublicKey` |
 | `%USERPROFILE%\.ssh\config` | The ssh client, for the `agentspace` entry and lease aliases | Never | [The `agentspace` SSH entry](#the-agentspace-ssh-entry) |
 | `%USERPROFILE%\.claude\CLAUDE.md` | `sync` | Never | The user's global instructions for Claude Code, copied to the box |
-| `<checkout>\infra\local.parameters` | `deploy` | Never | The account-specific stack parameters, which are not committed |
+| `<checkout>\infra\local.parameters` today; `%USERPROFILE%\.agentspace\stack-parameters.json` as D37 and D40 require | `deploy` | Never | The account-specific stack parameters, which are not committed |
 | `<checkout>\infra\agentspace.yaml` | `deploy` | Never | The stack's template ([The stack](#the-stack)) |
 | `<checkout>\box\system\` | `sync` | Never | The box's system files, sent whole |
 | `<checkout>\.build\localswim-linux-arm64` | `sync` | `sync` | The localswim CLI built for today's box |
@@ -426,14 +426,17 @@ are the prototype's places;** where the rewrite keeps each is
 
 **The token is never in any of the operator's own files** ([Secrecy](#secrecy)).
 
-**The instance-ID cache.** **It MUST live under `%USERPROFILE%\.agentspace`**, as the file
-`instance-id`, and never in the checkout (D21, which settles [Q7](#open-questions); the file's
+**The instance-ID cache.** **It MUST live under `%USERPROFILE%\.agentspace`**, as the JSON file
+`instance-id.json` (D40), and never in the checkout (D21, which settles [Q7](#open-questions); the file's
 format and rules are docs/state.md's, at [Files in the checkout](state.md#files-in-the-checkout)).
 It is only a cache, rebuilt from the stack's output when it is missing, so a rewrite needs no
 migration from the checkout's copy. The prototype keeps `.instance-id` in the checkout
 ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
-A cache that is empty, or holds only whitespace, MUST be treated as
-missing. A cache that cannot be read fails with an `agentspace: ` message naming it. A stack with
+A cache that is empty, holds only whitespace, cannot be parsed as JSON, or does not match its
+schema MUST be treated as missing (state.md). A cache that cannot be opened, such as one access is
+denied to or a folder at its path, MUST fail the command with exactly
+`agentspace: Cannot read the instance-ID cache <path>; remove it and run the command again.`, where
+`<path>` is its full path (architect, 2026-11-19, for v0.06: FA-16). A stack with
 no `InstanceId` output MUST fail with `agentspace: Stack 'agentbox' has no InstanceId output.`, and
 write no cache. The prototype writes an empty cache then, and every later command fails with a
 runtime error until `deploy` deletes it ([Q24](#open-questions)).
@@ -631,9 +634,10 @@ the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#depl
 | `<checkout>\infra\agentspace.yaml`, the stack's template | `deploy` | Carried inside the operator program, built from the repository's `infra\agentspace.yaml`. `deploy` writes it to `%USERPROFILE%\.agentspace\operator\agentspace.yaml` just before the call that reads it, and names that file to the AWS CLI |
 | `<checkout>\box\system\`, the box's system files | `sync` | Carried inside the operator program, built from the repository's `box\system`. `sync` writes them to `%USERPROFILE%\.agentspace\operator\system\`, after removing whatever that folder held, just before the copy, and copies that folder |
 | `<checkout>\schemas\state\leases.state.schema.json` and the keeper's state schemas | The lease CLI and the keeper, to check the state files they read and write | Carried inside each program that checks a file against them |
-| `<checkout>\infra\local.parameters` | `deploy` | `%USERPROFILE%\.agentspace\local.parameters`, written by a person |
+| `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | `deploy` | `%USERPROFILE%\.agentspace\stack-parameters.json`, JSON written by a person (D40) |
 | `<checkout>\.build\localswim-linux-arm64` | `sync` | `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64` |
-| `<checkout>\.instance-id` | Every command but `ca`; the ProxyCommand | `%USERPROFILE%\.agentspace\instance-id` (D21) |
+| `<checkout>\.instance-id` | Every command but `ca`; the ProxyCommand | `%USERPROFILE%\.agentspace\instance-id.json` (D21, D40) |
+| `%USERPROFILE%\.agentspace\localswim-pushed.sha256`, not in the checkout | `up`, `sync` | `%USERPROFILE%\.agentspace\localswim-pushed.json` (D40) |
 | `<checkout>`, the folder the CA MUST NOT be inside | `ca`, step 2 | Any git working tree: `ca` fails when the CA's folder, or any folder above it, holds an entry named `.git`, a folder or the file a git worktree has (D37). `<folder>` in that step's message is the working tree's folder. So a home folder that is itself a git working tree, as a repository of the user's own settings files makes it, refuses every CA under it |
 | `<checkout>\scripts\ssh-proxy.cmd`, beside the CLI's code | The lease CLI's default ProxyCommand line | `agentspace-ssh-proxy.exe`, beside `agentspace.exe` (D8) |
 | `<checkout>`, the task's working folder | The keeper's task | `%USERPROFILE%` ([keeper.md, The task's fields](keeper.md#the-tasks-fields)) |
@@ -663,7 +667,8 @@ installed beside it as files:
 - **The AWS CLI and scp read files, not a program's memory**, so each is written out at use, and
   under `%USERPROFILE%\.agentspace`, never under AppData (D21).
 
-`local.parameters` is not carried: it is the account's, written by a person, and never committed.
+The stack parameters file is not carried: it is the account's, written by a person, and never
+committed.
 
 ### Argument style
 
@@ -812,13 +817,16 @@ operator deploy [-Quiet]
    unreadable or empty file MUST fail with an `agentspace: ` message naming it. The prototype fails
    with a runtime error for a missing or empty file, and passes an empty key on for a
    whitespace-only one.
-2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\local.parameters`** (D37;
-   [What the prototype took from its checkout](#programs-and-install-layout); the prototype reads
-   `<checkout>\infra\local.parameters`). A missing file fails with `agentspace: Missing
-   <path>; copy infra\local.parameters.example and fill it in.`, where `<path>` is the file's
-   full path. Each line of the form `<Name>=<value>` becomes a parameter override, and every
-   other line, such as a comment, is skipped (format: docs/state.md). Any stack parameter can be set
-   there, not only `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack
+2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\stack-parameters.json`** (D37,
+   D40; [What the prototype took from its checkout](#programs-and-install-layout); the prototype
+   reads `KEY=VALUE` lines from `<checkout>\infra\local.parameters`). A missing file fails with
+   `agentspace: Missing <path>; copy infra\stack-parameters.example.json and fill it in.`, where
+   `<path>` is the file's full path. A file that cannot be opened, cannot be parsed as JSON, or does
+   not match its schema fails with `agentspace: <path> is not a valid stack parameters file:
+   <reason>.`, where `<reason>` is one sentence fragment that names the first problem found and
+   holds no line break (architect, 2026-11-19, for v0.06). Each member of `parameters` becomes a
+   parameter override (format: docs/state.md). Any stack parameter can be set there, not only
+   `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack
    ([The stack](#the-stack)).
 3. **Prints `Deploying stack 'agentbox' in us-west-2...`.**
 4. **Runs `cloudformation deploy`** ([The AWS side](#calls-by-command)), with its output passed
@@ -849,8 +857,8 @@ stack](#the-stack)).
 Usage: agentspace-operator deploy [-Quiet]
 
 Creates or updates the CloudFormation stack 'agentbox' in us-west-2 from
-its template, with the parameters in ~/.agentspace/local.parameters and your
-~/.ssh/id_ed25519.pub, then runs sync.
+its template, with the parameters in ~/.agentspace/stack-parameters.json
+and your ~/.ssh/id_ed25519.pub, then runs sync.
 
 Never change the template's ImageId on a live stack: it replaces the instance
 and its disk.
@@ -1744,13 +1752,14 @@ checked zone or empty, and `<content>` is the two lines above with their LFs. So
 the instance, the zone, the URL or the token changes, and a stamp written by an operator that
 built its input differently never matches, so the first connection after such a change pushes once.
 
-- **The stamp is that hash written as hex.** The prototype writes it in uppercase. **A stored stamp
-  MUST be compared with the computed one without regard to case, and ignoring whitespace around
-  the stored one**, so that a stamp written by either the prototype or the rewrite matches. How it
-  is stored, and where, is docs/state.md's (`%USERPROFILE%\.agentspace\localswim-pushed.sha256`
-  today, the hex alone with no line end).
+- **The stamp is that hash written as uppercase hex.** How it is stored, and where, is
+  docs/state.md's: `%USERPROFILE%\.agentspace\localswim-pushed.json`, a JSON document (D40). The
+  prototype's is `localswim-pushed.sha256`, the hex alone with no line end, which the rewrite never
+  reads, so the first `up` after the change-over pushes once. A stored stamp that matches its
+  schema is compared with the computed one exactly.
 - **A push is due when it is forced (`sync`), when there is no stamp, when the stored stamp is
-  empty or cannot be read, or when it differs from the one just computed.** The prototype instead
+  empty, cannot be read, cannot be parsed or does not match its schema, or when it differs from
+  the one just computed.** The prototype instead
   warns "Could not send" and pushes nothing when the stamp file is empty or unreadable
   ([Requirements the prototype does not meet
   yet](#requirements-the-prototype-does-not-meet-yet)).
@@ -2060,7 +2069,7 @@ hours averaging under 1% CPU, whatever sessions are open ([The stack](#the-stack
 ## The AWS side
 
 **Nothing on this page names an account ID, a VPC, a subnet or an instance ID.** Account-specific
-values live in the stack parameters file, `%USERPROFILE%\.agentspace\local.parameters`, which is
+values live in the stack parameters file, `%USERPROFILE%\.agentspace\stack-parameters.json`, which is
 never committed (D37; docs/state.md).
 
 ### The stack
@@ -2171,7 +2180,7 @@ behavior in this table.**
 | The push's 20 seconds cover the write to ssh's stdin | Starts the clock after the write; the content fits in a pipe's buffer, so a blocked write has not been seen | [What the laptop sends](#what-the-laptop-sends) |
 | The AWS CLI, `ssh` and `scp` can be named by `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`, and the push's zone by `AGENTSPACE_TIMEZONE`; a name that cannot be run fails, and never falls back | Reads none of them. It runs the AWS CLI and `ssh` by fixed paths, and its zone override can be reached only by loading its code | [The test seam](#the-test-seam); Q11 and Q12, closed |
 | The ProxyCommand runs `up` in caller mode: the caller's progress lines and failure messages, nothing else on success, the tunnel's stderr withheld; backend detail only with `AGENTSPACE_DIAGNOSTIC`. A nested `up` prints `The host is ready.`, never `Ready: <id>` | Has no caller mode. Prints the instance ID (`Starting <id>...`, `Ready: <id>`, nested or not), EC2 states, Session Manager and patch messages, the push's progress line, and on a failure the AWS CLI's text inside a runtime's error record; passes the tunnel's stderr through | #0087; D1 ([What a caller sees](#what-a-caller-sees-d1-card-0087)) |
-| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; Q7, closed ([Laptop files](#laptop-files)) |
+| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id.json`, in JSON (D40) | `.instance-id` in the checkout, the ID alone | D21; Q7, closed ([Laptop files](#laptop-files)) |
 | Every usage error prints this page's `agentspace: ` message, and nothing prompts | Its shell's parameter binding answers each one with its own error record (exit 1, as required), which names the script's full path. With stdin closed it does not prompt for a missing command; at a console it was not run | [Q1](#open-questions), closed ([Command line](#command-line)) |
 | `deploy -Quiet` quiets its `sync` step | Runs `sync` without `-Quiet`, so `sync`'s messages print | D36; [Q4](#open-questions), closed ([deploy](#deploy)) |
 | `sync` fails when the box's staging folder cannot be removed, before the copy | Does not check the removal. A partly removed folder takes the copy one level down, and the install then runs whatever install script the removal left, so `sync` can succeed having installed the previous `box/system` | D36; [Q25](#open-questions), closed ([sync](#sync)) |
@@ -2179,7 +2188,7 @@ behavior in this table.**
 | A tunnel whose AWS CLI is missing fails with the caller's message and exit 1 | Its shell's own error, which names the path, and that shell's exit code | B-33 ([The ProxyCommand](#the-proxycommand), step 6) |
 | Help at every level | None of its own | [Q2](#open-questions) |
 | `ca` refuses a CA folder inside any git working tree | Refuses one inside its own checkout only | D37 ([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)) |
-| Nothing the operator, the ProxyCommand or the lease CLI reads at run time is in a checkout | Reads the template, the box's files, `local.parameters`, the schemas and the instance-ID cache from its checkout, and writes its build of the localswim CLI there | D37 ([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)) |
+| Nothing the operator, the ProxyCommand or the lease CLI reads at run time is in a checkout | Reads the template, the box's files, `infra\local.parameters`, the schemas and the instance-ID cache from its checkout, and writes its build of the localswim CLI there | D37 ([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)) |
 | The box's install names `agentspace-operator sync` when the CA's public key is missing | Names `scripts\agentspace.ps1 sync` | [What sync installs](#what-sync-installs) |
 
 ## Open questions

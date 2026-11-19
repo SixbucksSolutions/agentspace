@@ -692,7 +692,7 @@ prototype, Windows PowerShell 5.1 for `ca`, which is not behavior to copy
 ([How it places a lease](#how-it-places-a-lease)).
 
 **The default transport reads the operator's instance-ID cache when a connection is made, and
-place never reads it** (D21). The cache is `%USERPROFILE%\.agentspace\instance-id`
+place never reads it** (D21). The cache is `%USERPROFILE%\.agentspace\instance-id.json` (D40)
 ([state.md](state.md#files-in-the-checkout)), and what the ProxyCommand does when it is missing or
 stale is [operator.md](operator.md#laptop-files)'s. **`create` MUST NOT read it, check for it or
 depend on it:** a missing or stale cache fails the connection, never the `create`. So a check, or a

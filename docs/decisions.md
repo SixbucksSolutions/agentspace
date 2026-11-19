@@ -2252,6 +2252,11 @@ D27's per-agent footprint is measured.
   before it sets any size** (Terry, 2026-11-18). v0.04 writes specs and runs few builds, so its
   tool-call peaks understate a turn that compiles. v0.05's `cargo` builds and test suites are that
   load, and v0.03's tools are built to be rerun. The requirement is on #0049.
+  - **v0.05-T01's record covers only 7 minutes of a 31-minute turn** (runs/e0.05-t02-s04.md;
+    #0109), so the measurement is still owed. **Terry, 2026-11-19, after v0.05 closed: v0.06's
+    first turn on the box is measured.** It is sized for its peak (D39), its root disk is grown
+    ahead of its builds, and its sampler and disk are watched from start to stop (AGENTS.md,
+    "Watching a measurement").
 
 **Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
 or counts a shared library four times, sizes every host wrong.
@@ -2610,6 +2615,29 @@ you."**
   operator**, each a change to its spec before that release's stories start:
   - `local.parameters`, `KEY=VALUE` lines today ([state.md](state.md#files-in-the-checkout)).
   - The instance-ID cache and the push stamp, one line of text each.
+
+**The three moves, specified by the architect on 2026-11-19, before v0.06's stories** (state.md
+owns each format; operator.md owns what the commands do with them). Each is
+`{"version":0, ...}` with a schema under `schemas/state/`, carried inside the operator:
+
+| The prototype's file | The rewrite's | Schema |
+|---|---|---|
+| `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | `%USERPROFILE%\.agentspace\stack-parameters.json`, `{"version":0,"parameters":{...}}`, written by a person | `stack-parameters.state.schema.json` |
+| `<checkout>\.instance-id`, the ID alone | `%USERPROFILE%\.agentspace\instance-id.json`, `{"version":0,"instance_id":"..."}` | `instance-id.state.schema.json` |
+| `%USERPROFILE%\.agentspace\localswim-pushed.sha256`, the hex alone | `%USERPROFILE%\.agentspace\localswim-pushed.json`, `{"version":0,"stamp":"..."}` | `localswim-pushed.state.schema.json` |
+
+- **Each JSON file has a new name, and the rewrite MUST NOT read the prototype's file.** The two
+  caches need no migration: a missing cache is rebuilt from the stack, and a missing stamp makes
+  one push, which changes nothing on the box. The parameters are moved by hand, once, in v0.06's
+  cutover.
+- **The parameters file is renamed `stack-parameters.json`**, because "local" says nothing once
+  every file it sits beside is local too.
+- **A parameters file that is not valid fails `deploy` before it calls AWS.** The prototype skips
+  any line it does not understand, so a typo silently drops a parameter; a JSON reader has no
+  reason to skip.
+- **The conformance files that write the rewrite's cache or stamp change with it:**
+  `conformance/operator/test-unmet-proxy-connect-time.ps1`, `test-unmet-proxy-steps.ps1` and
+  `test-unmet-push.ps1` write `instance-id` and `localswim-pushed.sha256` in the old forms today.
 - **Contract v0's files are already JSON** (the lease state file, the keeper's records, every
   document the CLI prints) and change nothing.
 

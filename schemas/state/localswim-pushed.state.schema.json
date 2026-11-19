@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/localswim-pushed.state.schema.json",
+  "title": "Push stamp (laptop, internal)",
+  "description": "%USERPROFILE%\\.agentspace\\localswim-pushed.json (D9, D32, D40): the stamp of the last token push the box confirmed. Internal: written by up and sync after the box confirms a push, read by up to decide whether a push is due. A file that does not match this schema makes the next push due. It holds a hash that covers the token, never the token. Anchored patterns end with $(?!\\n). See docs/state.md, \"The push stamp\", and docs/operator.md, \"The stamp\".",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "stamp"],
+  "properties": {
+    "version": {
+      "description": "The format's version. 0 until a change that an older reader would misread.",
+      "const": 0
+    },
+    "stamp": {
+      "description": "The stamp, the SHA-256 that docs/operator.md \"The stamp\" defines, as 64 uppercase hex digits.",
+      "type": "string",
+      "pattern": "^[0-9A-F]{64}$(?!\\n)"
+    }
+  }
+}
