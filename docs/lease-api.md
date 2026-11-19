@@ -1124,8 +1124,11 @@ them differently where this page does not say MUST.
 **Which template fits the cases the table does not spell out** (architect, 2026-11-19, gap FA-08):
 - **A TTL of only whitespace** is a value, not an empty one ([Command lines](#command-lines)), and
   takes the TTL's "anything else" template.
-- **An ISO form whose `M` comes before any `T`**, such as `P8M`, means months, and takes the "uses
-  'M'" template, since its trimmed value ends in a digit and an uppercase `M`.
+- **An ISO form whose `M` comes before any `T`**, such as `P8M`, means months. It takes the "uses
+  'M'" template when its `M` is uppercase and ends the value or is followed by a character that is
+  not a letter, as the template's row says, so `P8M` and `P1M` take it, and `P1MT1H`, whose `M`
+  is followed by `T`, takes "not a duration" (corrected by the architect, 2026-11-19, from
+  E0.05-T01-S02's review).
 - **A read of the state file that fails for a reason other than its content**, such as access
   denied or a folder at its path, takes the "Records unreadable" template with its own `<why>`.
 
