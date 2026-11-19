@@ -616,12 +616,20 @@ fn a_ready_result_the_records_refuse_is_undone_with_a_release_and_reports_the_fi
         let (mut lab, h) = Lab::with_fake();
         lab.script_ids(&[ID1]);
         h.script_place(Ok(result));
+        #[cfg(windows)]
+        h.set_probe(lab::lock_probe(lab.lock_file()));
         lab.run(&["lease", "create", "--project", "swim"])
             .expect_error("internal", None, Some(MSG_NOT_VALID_UNDONE));
         assert_eq!(
             h.calls(),
             [default_place(ID1, "swim"), release_call(ID1, "swim")],
             "{what}"
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            h.probes(),
+            ["held", "held"],
+            "{what}: the lock is held at the place and still at the undo's release"
         );
         assert!(lab.records().is_empty(), "{what}: no lease is recorded");
     }
@@ -723,6 +731,7 @@ fn a_record_that_cannot_be_written_after_a_ready_place_is_undone_too() {
     lab.seed(&[Rec::released(ID2, "other")]);
     std::fs::write(lab.lock_file(), b"").unwrap();
     let before = lab.state_bytes();
+    h.set_probe(lab::lock_probe(lab.lock_file()));
     let _deny = lab::DenyWrite::new(&lab.state);
     let ran = lab.run(&["lease", "create", "--project", "swim"]);
     let text = ran.internal();
@@ -735,6 +744,11 @@ fn a_record_that_cannot_be_written_after_a_ready_place_is_undone_too() {
     assert_eq!(
         h.calls(),
         [default_place(ID1, "swim"), release_call(ID1, "swim")]
+    );
+    assert_eq!(
+        h.probes(),
+        ["held", "held"],
+        "The lock is held at the place and still at the undo's release"
     );
     assert_eq!(lab.state_bytes(), before);
 
@@ -807,13 +821,15 @@ fn an_alias_that_differs_in_project_or_in_its_first_8_digits_is_not_a_clash() {
     let ran = lab.run(&["lease", "create", "--project", "swim"]);
     assert_eq!(ran.lease_doc()["id"], same_prefix.as_str());
     assert_eq!(ran.draws, 1);
+    assert_eq!(h.calls(), [default_place(&same_prefix, "swim")]);
     // The same project, but other first 8 digits.
-    let (mut lab2, _h2) = Lab::with_fake();
+    let (mut lab2, h2) = Lab::with_fake();
     lab2.seed(&[Rec::ready(ID1, "swim")]);
     lab2.script_ids(&[ID2]);
     let ran = lab2.run(&["lease", "create", "--project", "swim"]);
+    assert_eq!(ran.lease_doc()["id"], ID2);
     assert_eq!(ran.draws, 1);
-    assert_eq!(h.calls().len(), 1);
+    assert_eq!(h2.calls(), [default_place(ID2, "swim")]);
 }
 
 #[test]
@@ -851,6 +867,24 @@ fn create_holds_the_state_lock_while_the_driver_places() {
     // It is released when the command ends.
     let after = lab::lock_probe(lab.lock_file());
     assert_eq!(after(&h.calls()[0]), "free");
+}
+
+#[cfg(windows)]
+#[test]
+fn create_reads_the_clock_once_it_holds_the_lock() {
+    // Read before the lock is taken, the clock says NOW; read once it is held, as after a wait on
+    // it, it says NOW + 5. The lease is created at the time read under the lock.
+    let (mut lab, h) = Lab::with_fake();
+    lab.script_ids(&[ID1]);
+    lab.seed(&[]);
+    std::fs::write(lab.lock_file(), b"").unwrap();
+    lab.clock_by_lock(NOW, NOW + 5);
+    let ran = lab.run(&["lease", "create", "--project", "swim"]);
+    let doc = ran.lease_doc();
+    assert_eq!(doc["created_at"], fmt_time(NOW + 5));
+    assert_eq!(lab.record_of(ID1).unwrap()["created_at"], fmt_time(NOW + 5));
+    assert_eq!(ran.now_calls, 1, "The clock is read once per command");
+    assert_eq!(h.calls(), [default_place(ID1, "swim")]);
 }
 
 #[test]

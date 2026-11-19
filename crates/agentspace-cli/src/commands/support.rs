@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use agentspace_driver_api::{Context, Driver, Failure};
-use agentspace_state::{OutputKind, Paths, Record, StoreError, validate_output};
+use agentspace_state::{OutputKind, Record, StoreError, validate_output};
 use agentspace_values::{ValueCode, ValueError};
 use serde_json::Value;
 
@@ -80,40 +80,50 @@ pub fn check_values<T>(
         return check(&texts).map_err(value_error);
     }
     let all: Vec<Vec<Piece>> = values.iter().map(|v| pieces(v)).collect();
-    let base = free_block(&all);
-    let lent: Vec<String> = all
+    // With no block free, nothing can stand in for a surrogate without a replacement character,
+    // which a value is never converted with (lease-api.md, Input tolerance), so the value is
+    // refused with the fallback message.
+    let Some(base) = free_block(&all) else {
+        return Err(not_text(values, field));
+    };
+    let lent: Option<Vec<String>> = all
         .iter()
         .map(|ps| {
             ps.iter()
                 .map(|p| match *p {
-                    Piece::Char(c) => c,
-                    Piece::Bad(code) => base
-                        .and_then(|b| char::from_u32(b + u32::from(code) - 0xD800))
-                        .unwrap_or('\u{FFFD}'),
+                    Piece::Char(c) => Some(c),
+                    Piece::Bad(code) => char::from_u32(base + u32::from(code) - 0xD800),
                 })
                 .collect()
         })
         .collect();
+    let Some(lent) = lent else {
+        return Err(not_text(values, field));
+    };
     let texts: Vec<&str> = lent.iter().map(String::as_str).collect();
     match check(&texts) {
         Err(mut e) => {
-            if let Some(b) = base {
-                e.message = give_back(&e.message, b);
-            }
+            e.message = give_back(&e.message, base);
             Err(value_error(e))
         }
         // No value with a character outside ASCII and the whitespace list is accepted, so this is
         // never reached; it is refused all the same.
-        Ok(_) => Err(LeaseError {
-            code: ErrorCode::InvalidValue,
-            message: format!(
-                "The value {} for {field} is not valid text.",
-                crate::quote::quote_os(values.first().copied().unwrap_or_default())
-            ),
-            field: Some(field.to_owned()),
-            lease_id: None,
-            state: None,
-        }),
+        Ok(_) => Err(not_text(values, field)),
+    }
+}
+
+/// The fallback refusal of values that are not valid Unicode, quoting the first with
+/// `quote_os`'s escapes.
+fn not_text(values: &[&OsStr], field: &'static str) -> LeaseError {
+    LeaseError {
+        code: ErrorCode::InvalidValue,
+        message: format!(
+            "The value {} for {field} is not valid text.",
+            crate::quote::quote_os(values.first().copied().unwrap_or_default())
+        ),
+        field: Some(field.to_owned()),
+        lease_id: None,
+        state: None,
     }
 }
 
@@ -213,16 +223,58 @@ pub fn not_found(id: &str) -> LeaseError {
     }
 }
 
+/// The folders of a run. Each is full, unless the working folder cannot be read and the folder's
+/// variable is relative, which fails only the command that needs that folder, at the first point
+/// it needs it (lease-api.md, Messages; Exit codes and errors, gap FB-22).
+pub struct Paths {
+    resolved: agentspace_state::Paths,
+    /// Whether the world's working folder could be read.
+    cwd_known: bool,
+}
+
+impl Paths {
+    /// A folder as a command uses it: `None` when its variable (or the home under it) is unset,
+    /// and the working-folder failure when it is relative and there is no working folder to make
+    /// it full against.
+    fn usable<'p>(
+        &self,
+        folder: &'p Option<PathBuf>,
+        sub: Sub,
+    ) -> Result<Option<&'p Path>, LeaseError> {
+        match folder.as_deref() {
+            Some(p) if !self.cwd_known && !p.is_absolute() => Err(no_cwd(sub)),
+            other => Ok(other),
+        }
+    }
+}
+
+/// The working-folder failure (lease-api.md, Messages, architect, 2026-11-19).
+pub fn no_cwd(sub: Sub) -> LeaseError {
+    failed(
+        sub,
+        "The working folder cannot be read, so a relative folder in the environment cannot be \
+         made a full path. Nothing was changed.",
+    )
+}
+
 /// The folders, from `USERPROFILE`, `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` through the
-/// world's `var`, made full against its working folder.
+/// world's `var`, made full against its working folder. With no working folder, a relative one is
+/// left relative here and refused where it is used.
 pub fn paths(world: &World<'_>) -> Result<Paths, LeaseError> {
-    agentspace_state::resolve_paths(world.var, world.cwd).map_err(store_error)
+    let resolved = agentspace_state::resolve_paths(world.var, world.cwd.unwrap_or(Path::new("")))
+        .map_err(store_error)?;
+    Ok(Paths {
+        resolved,
+        cwd_known: world.cwd.is_some(),
+    })
 }
 
 /// The state folder, or the no-home failure when it is the default one under a home that is not
-/// set (lease-api.md, Exit codes and errors, step 3, gap FB-22).
+/// set (lease-api.md, Exit codes and errors, step 3, gap FB-22), or the working-folder failure.
 pub fn state_dir(paths: &Paths, sub: Sub) -> Result<&Path, LeaseError> {
-    paths.state_dir.as_deref().ok_or_else(|| no_home(sub))
+    paths
+        .usable(&paths.resolved.state_dir, sub)?
+        .ok_or_else(|| no_home(sub))
 }
 
 /// A variable as text: unset or empty is `None`.
@@ -255,12 +307,15 @@ pub fn context(
     sub: Sub,
     purpose: Purpose,
 ) -> Result<Context, LeaseError> {
-    let home: PathBuf = paths.home.clone().ok_or_else(|| no_home(sub))?;
+    let home: PathBuf = paths
+        .usable(&paths.resolved.home, sub)?
+        .ok_or_else(|| no_home(sub))?
+        .to_path_buf();
     let ssh_dir = match purpose {
         Purpose::Renew => home.join(".ssh"),
-        Purpose::Place | Purpose::Release => {
-            paths.ssh_dir.clone().unwrap_or_else(|| home.join(".ssh"))
-        }
+        Purpose::Place | Purpose::Release => paths
+            .usable(&paths.resolved.ssh_dir, sub)?
+            .map_or_else(|| home.join(".ssh"), Path::to_path_buf),
     };
     let proxy_override = match purpose {
         Purpose::Place => match text_var(world, "AGENTSPACE_PROXY_COMMAND") {
@@ -421,6 +476,28 @@ mod tests {
                 "Size '{held}{ESCAPED}' is not a size. Use 1 to 8 letters and digits, as in 'm'."
             )
         );
+    }
+
+    #[test]
+    fn with_no_private_use_block_free_the_value_is_refused_without_a_replacement_character() {
+        // One character from each of the 64 blocks, so none is free to lend a surrogate.
+        let every: String = (0xF_0000..=0x10_F800_u32)
+            .step_by(0x800)
+            .map(|b| char::from_u32(b + 1).unwrap())
+            .collect();
+        let v = with_surrogate(&every, "");
+        let e = check_value(&v, "size", agentspace_values::size).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidValue);
+        assert_eq!(e.field.as_deref(), Some("size"));
+        assert!(!e.message.contains('\u{FFFD}'), "{}", e.message);
+        assert_eq!(
+            e.message,
+            format!(
+                "The value {} for size is not valid text.",
+                crate::quote::quote_os(&v)
+            )
+        );
+        assert!(e.message.contains(ESCAPED), "{}", e.message);
     }
 
     #[test]

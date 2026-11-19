@@ -36,6 +36,27 @@ pub fn args(list: &[&str]) -> Vec<OsString> {
     list.iter().map(|a| os(a)).collect()
 }
 
+/// `before`, a value that is not valid Unicode (an unpaired surrogate on Windows, a byte that
+/// starts no UTF-8 character elsewhere), then `after`.
+pub fn not_unicode(before: &str, after: &str) -> OsString {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = before.encode_utf16().collect();
+        wide.push(0xD800);
+        wide.extend(after.encode_utf16());
+        OsString::from_wide(&wide)
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = before.as_bytes().to_vec();
+        bytes.push(0xff);
+        bytes.extend(after.as_bytes());
+        OsString::from_vec(bytes)
+    }
+}
+
 /// A throwaway folder under the temp folder, used as the working folder and the home of every run.
 pub fn scratch_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("agentspace-cli-tests");
@@ -117,7 +138,7 @@ pub fn in_process_outcome(line: &[OsString]) -> agentspace_cli::Outcome {
     let own_exe = PathBuf::from(BIN);
     let world = agentspace_cli::World {
         var: &var,
-        cwd: &home,
+        cwd: Some(&home),
         own_exe: &own_exe,
         now: &now,
         new_id: &new_id,
@@ -476,7 +497,8 @@ pub fn show(line: &[OsString]) -> String {
     format!("agentspace {line:?}")
 }
 
-/// Runs each case through the binary and through `main_with`, and fails once with every problem.
+/// Runs each case through the binary and in process through `execute_in` (`in_process`), and fails
+/// once with every problem.
 pub fn check_usage_cases(cases: Vec<Case>) {
     let mut failures = Vec::new();
     for c in &cases {

@@ -382,7 +382,7 @@ fn a_failure_to_write_stdout_still_ends_in_one_internal_error_document_and_exit_
 }
 
 #[test]
-fn main_with_never_panics_on_any_arguments() {
+fn execute_in_never_panics_on_any_arguments() {
     let long = "a".repeat(200_000);
     let mut lines: Vec<Vec<OsString>> = vec![
         args(&[]),
@@ -422,7 +422,7 @@ fn main_with_never_panics_on_any_arguments() {
     for line in lines {
         let result = std::panic::catch_unwind(|| in_process(&line));
         let code =
-            result.unwrap_or_else(|_| panic!("main_with panicked on {} arguments", line.len()));
+            result.unwrap_or_else(|_| panic!("execute_in panicked on {} arguments", line.len()));
         assert!((0..=4).contains(&code), "Exit {code} is not in the table");
     }
 }

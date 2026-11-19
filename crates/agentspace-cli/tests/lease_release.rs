@@ -357,6 +357,43 @@ fn release_holds_the_state_lock_through_the_driver_calls() {
     assert_eq!(h.probes(), ["held", "held"]);
 }
 
+#[cfg(windows)]
+#[test]
+fn release_reads_the_clock_once_it_holds_the_lock() {
+    // Read before the lock is taken, the clock says NOW; read once it is held, as after a wait on
+    // it, it says NOW + 100. The lease is released at the time it was read under the lock.
+    let (mut lab, h) = Lab::with_fake();
+    lab.seed(&[Rec::ready(ID1, "swim")]);
+    std::fs::write(lab.lock_file(), b"").unwrap();
+    lab.clock_by_lock(NOW, NOW + 100);
+    let ran = lab.run(&["lease", "release", ID1]);
+    let doc = ran.lease_doc();
+    assert_eq!(doc["released_at"], fmt_time(NOW + 100));
+    assert_eq!(
+        lab.record_of(ID1).unwrap()["released_at"],
+        fmt_time(NOW + 100)
+    );
+    assert_eq!(ran.now_calls, 1, "The clock is read once per command");
+    assert_eq!(h.calls(), both(ID1));
+}
+
+#[test]
+fn release_succeeds_with_a_proxy_command_that_is_not_valid_text_and_passes_no_override() {
+    // lease-api.md, Environment: release does not read AGENTSPACE_PROXY_COMMAND.
+    let (mut lab, h) = Lab::with_fake();
+    lab.seed(&[Rec::ready(ID1, "swim")]);
+    lab.set_var(
+        "AGENTSPACE_PROXY_COMMAND",
+        common::not_unicode("ssh", "jump"),
+    );
+    let doc = lab.run(&["lease", "release", ID1]).lease_doc();
+    assert_eq!(doc["state"], "released");
+    assert_eq!(h.calls(), both(ID1));
+    for c in h.contexts() {
+        assert_eq!(c.proxy_override, None);
+    }
+}
+
 #[test]
 fn release_hands_the_driver_the_ssh_folder_it_was_given() {
     let (mut lab, h) = Lab::with_fake();

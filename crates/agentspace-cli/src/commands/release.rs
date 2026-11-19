@@ -22,10 +22,11 @@ use crate::{LeaseError, ParsedCommand, Sub, World};
 ///   leaves the record `released`, and a retry finishes the job.
 pub fn release(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> {
     let id = lease_id(cmd)?;
-    let now = (world.now)();
     let paths = paths(world)?;
     let dir = state_dir(&paths, Sub::Release)?;
     let held = lock(dir).map_err(store_error)?;
+    // The clock is read once the lock is held, never before a wait on it.
+    let now = (world.now)();
     let file = read(dir).map_err(store_error)?;
     let index = file
         .leases

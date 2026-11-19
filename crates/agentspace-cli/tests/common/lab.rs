@@ -224,6 +224,13 @@ enum Clock {
     Fixed(i64),
     /// Returns the next second on every call, so a command that reads the clock twice can be seen.
     Ticking(i64),
+    /// Answers `held` while the lease state lock is held and `free` while it is not, so a test can
+    /// see whether the clock was read before or after the command took the lock.
+    ByLock {
+        lock_file: PathBuf,
+        free: i64,
+        held: i64,
+    },
 }
 
 enum IdSource {
@@ -243,6 +250,8 @@ pub struct Lab {
     pub ssh: PathBuf,
     pub cwd: PathBuf,
     pub exe: PathBuf,
+    /// Whether the world's working folder can be read; `false` passes `cwd: None`.
+    cwd_known: bool,
     vars: BTreeMap<String, OsString>,
     clock: Mutex<Clock>,
     now_calls: AtomicUsize,
@@ -289,6 +298,7 @@ impl Lab {
             state,
             ssh,
             cwd,
+            cwd_known: true,
             vars,
             clock: Mutex::new(Clock::Fixed(NOW)),
             now_calls: AtomicUsize::new(0),
@@ -328,6 +338,21 @@ impl Lab {
     /// The clock answers `secs`, then `secs + 1`, and so on, one more for every read.
     pub fn tick_from(&mut self, secs: i64) {
         *self.clock.lock().unwrap() = Clock::Ticking(secs);
+    }
+
+    /// The clock answers `held` while `leases.lock` is held and `free` while it is not. The lock
+    /// file MUST exist before the run.
+    pub fn clock_by_lock(&mut self, free: i64, held: i64) {
+        *self.clock.lock().unwrap() = Clock::ByLock {
+            lock_file: self.lock_file(),
+            free,
+            held,
+        };
+    }
+
+    /// The world's working folder cannot be read: runs pass `cwd: None`.
+    pub fn lose_cwd(&mut self) {
+        self.cwd_known = false;
     }
 
     /// `new_id` answers these in order, then fresh IDs that collide with nothing.
@@ -406,6 +431,17 @@ impl Lab {
                     *t += 1;
                     v
                 }
+                Clock::ByLock {
+                    lock_file,
+                    free,
+                    held,
+                } => {
+                    if lock_is_held(lock_file) {
+                        *held
+                    } else {
+                        *free
+                    }
+                }
             }
         };
         let fresh = || uuid_n(self.next_id.fetch_add(1, Ordering::SeqCst) + 1000);
@@ -425,7 +461,7 @@ impl Lab {
         };
         let world = World {
             var: &var,
-            cwd: &self.cwd,
+            cwd: self.cwd_known.then_some(self.cwd.as_path()),
             own_exe: &self.exe,
             now: &now,
             new_id: &new_id,
@@ -707,23 +743,41 @@ impl LockHold {
     }
 }
 
+/// `held` when `leases.lock` cannot be opened because another handle holds it without sharing,
+/// `free` when it can be opened, and the error otherwise.
+#[cfg(windows)]
+fn lock_state(lock_file: &Path) -> String {
+    use std::os::windows::fs::OpenOptionsExt;
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(lock_file)
+    {
+        Ok(_) => "free".to_string(),
+        Err(e) if matches!(e.raw_os_error(), Some(32 | 33)) => "held".to_string(),
+        Err(e) => format!("error {e}"),
+    }
+}
+
+/// Whether `leases.lock` is held by another handle right now. Off Windows it is never seen held.
+fn lock_is_held(lock_file: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        lock_state(lock_file) == "held"
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = lock_file;
+        false
+    }
+}
+
 /// A probe that says `held` when `leases.lock` cannot be opened because another handle holds it
 /// without sharing, and `free` when it can be opened.
 #[cfg(windows)]
 pub fn lock_probe(lock_file: PathBuf) -> crate::fake_driver::Probe {
-    use std::os::windows::fs::OpenOptionsExt;
-    std::sync::Arc::new(move |_| {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .share_mode(0)
-            .open(&lock_file)
-        {
-            Ok(_) => "free".to_string(),
-            Err(e) if matches!(e.raw_os_error(), Some(32 | 33)) => "held".to_string(),
-            Err(e) => format!("error {e}"),
-        }
-    })
+    std::sync::Arc::new(move |_| lock_state(&lock_file))
 }
 
 // ---- Messages, as lease-api.md's Messages table words them -------------------------------------

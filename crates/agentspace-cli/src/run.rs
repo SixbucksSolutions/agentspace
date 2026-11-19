@@ -84,8 +84,10 @@ pub struct World<'a> {
     /// Looks up an environment variable; `None` when it is unset. It is the only way the commands
     /// read the environment.
     pub var: &'a dyn Fn(&str) -> Option<OsString>,
-    /// The current folder, against which a relative path in a variable is made full.
-    pub cwd: &'a Path,
+    /// The current folder, against which a relative path in a variable is made full. `None` when
+    /// the working folder cannot be read: a command that needs a folder whose variable is relative
+    /// then fails `internal`, and an absolute folder is unaffected.
+    pub cwd: Option<&'a Path>,
     /// The running program's own file, a full path.
     pub own_exe: &'a Path,
     /// The time now, in whole seconds since the Unix epoch, UTC. A command reads it once.
@@ -159,13 +161,12 @@ fn failure(error: &LeaseError, sub: Option<Sub>) -> Outcome {
 /// clock in UTC, a UUIDv4 from the operating system's random source, and `commands::drivers()`.
 pub fn execute(args: &[OsString], own_exe: &Path) -> Outcome {
     let var = |name: &str| std::env::var_os(name);
-    // A working folder the system cannot name leaves a relative variable relative; nothing else
-    // depends on it.
-    let cwd = std::env::current_dir().unwrap_or_default();
+    // A working folder the system cannot name is passed on as `None`, never as an empty path.
+    let cwd = std::env::current_dir().ok();
     let drivers = commands::drivers();
     let world = World {
         var: &var,
-        cwd: &cwd,
+        cwd: cwd.as_deref(),
         own_exe,
         now: &agentspace_state::now,
         new_id: &random_uuid_v4,
@@ -359,7 +360,7 @@ mod tests {
         let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_owned();
         let world = World {
             var: &var,
-            cwd: Path::new(""),
+            cwd: None,
             own_exe: Path::new(""),
             now: &now,
             new_id: &new_id,

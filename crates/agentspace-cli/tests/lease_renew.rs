@@ -371,6 +371,7 @@ fn a_record_that_cannot_be_written_rolls_the_renewal_back_and_never_commits() {
     lab.seed(&[Rec::ready(ID1, "swim")]);
     std::fs::write(lab.lock_file(), b"").unwrap();
     let before = lab.state_bytes();
+    h.set_probe(lab::lock_probe(lab.lock_file()));
     let _deny = lab::DenyWrite::new(&lab.state);
     let text = lab.run(&["lease", "renew", ID1]).internal();
     assert!(
@@ -379,6 +380,11 @@ fn a_record_that_cannot_be_written_rolls_the_renewal_back_and_never_commits() {
         "{text}"
     );
     assert_eq!(h.calls(), [renew_call(ID1, "swim", 3600), Call::Rollback]);
+    assert_eq!(
+        h.probes(),
+        ["held", "held"],
+        "The lock is held at renew and still at the rollback"
+    );
     assert_eq!(
         lab.state_bytes(),
         before,
@@ -394,6 +400,7 @@ fn a_rollback_that_fails_says_that_the_previous_certificate_was_not_put_back() {
     std::fs::write(lab.lock_file(), b"").unwrap();
     let before = lab.state_bytes();
     h.script_rollback(Err(fail("Rollback exploded.")));
+    h.set_probe(lab::lock_probe(lab.lock_file()));
     let _deny = lab::DenyWrite::new(&lab.state);
     let text = lab.run(&["lease", "renew", ID1]).internal();
     assert!(
@@ -408,6 +415,11 @@ fn a_rollback_that_fails_says_that_the_previous_certificate_was_not_put_back() {
         "The first failure is reported, not the rollback's"
     );
     assert_eq!(h.calls(), [renew_call(ID1, "swim", 3600), Call::Rollback]);
+    assert_eq!(
+        h.probes(),
+        ["held", "held"],
+        "The lock is held at renew and still at the failed rollback"
+    );
     assert_eq!(lab.state_bytes(), before);
 }
 
@@ -421,6 +433,29 @@ fn renew_holds_the_state_lock_while_the_driver_renews_and_until_it_commits() {
     assert_eq!(h.probes(), ["held", "held"], "Held at renew and at commit");
 }
 
+#[cfg(windows)]
+#[test]
+fn renew_reads_the_clock_once_it_holds_the_lock() {
+    // The lease expires at NOW + 1800. Read before the lock is taken, the clock says NOW and the
+    // lease is ready; read once it is held, as after a wait on it, the clock says NOW + 2000 and the
+    // lease has expired, so it cannot be renewed (lease-api.md, States; driver.md, Renew a lease).
+    let (mut lab, h) = Lab::with_fake();
+    lab.seed(&[Rec::ready(ID1, "swim")]);
+    std::fs::write(lab.lock_file(), b"").unwrap();
+    let before = lab.state_bytes();
+    lab.clock_by_lock(NOW, NOW + 2000);
+    let ran = lab.run(&["lease", "renew", ID1]);
+    ran.expect_lease_error(
+        "invalid_state",
+        ID1,
+        Some("expired"),
+        &msg_not_ready(ID1, "expired"),
+    );
+    assert_eq!(ran.now_calls, 1, "The clock is read once per command");
+    assert!(h.calls().is_empty(), "No driver is asked");
+    assert_eq!(lab.state_bytes(), before);
+}
+
 #[test]
 fn renew_hands_the_driver_the_home_and_the_programs_own_file() {
     let (lab, h) = Lab::with_fake();
@@ -429,6 +464,37 @@ fn renew_hands_the_driver_the_home_and_the_programs_own_file() {
     let c = h.contexts().remove(0);
     assert_eq!(c.home, lab.home);
     assert_eq!(c.own_exe, lab.exe);
+}
+
+#[test]
+fn renew_reads_neither_the_ssh_folder_nor_the_proxy_command() {
+    // lease-api.md, Environment: renew reads neither AGENTSPACE_SSH_DIR nor
+    // AGENTSPACE_PROXY_COMMAND, so the driver gets the home's own ssh folder and no override.
+    let (mut lab, h) = Lab::with_fake();
+    lab.seed(&[Rec::ready(ID1, "swim")]);
+    lab.set_var("AGENTSPACE_PROXY_COMMAND", "ssh -W %h:%p jump");
+    lab.run(&["lease", "renew", ID1]).lease_doc();
+    let c = h.contexts().remove(0);
+    assert_ne!(
+        lab.ssh,
+        lab.home.join(".ssh"),
+        "AGENTSPACE_SSH_DIR is set elsewhere"
+    );
+    assert_eq!(c.ssh_dir, lab.home.join(".ssh"));
+    assert_eq!(c.proxy_override, None);
+}
+
+#[test]
+fn renew_succeeds_with_a_proxy_command_that_is_not_valid_text() {
+    let (mut lab, h) = Lab::with_fake();
+    lab.seed(&[Rec::ready(ID1, "swim")]);
+    lab.set_var(
+        "AGENTSPACE_PROXY_COMMAND",
+        common::not_unicode("ssh", "jump"),
+    );
+    lab.run(&["lease", "renew", ID1]).lease_doc();
+    assert_eq!(h.calls(), renewed(ID1, 3600));
+    assert_eq!(h.contexts().remove(0).proxy_override, None);
 }
 
 #[test]

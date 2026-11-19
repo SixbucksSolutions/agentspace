@@ -202,7 +202,7 @@ impl Env {
         let new_id = || ids.borrow_mut().pop().unwrap_or_default();
         let world = World {
             var: &var,
-            cwd: self.dir.path(),
+            cwd: Some(self.dir.path()),
             own_exe: Path::new("agentspace"),
             now: &now,
             new_id: &new_id,
@@ -582,7 +582,7 @@ fn list_decides_every_state_at_one_instant() {
     let new_id = String::new;
     let world = World {
         var: &var,
-        cwd: env.dir.path(),
+        cwd: Some(env.dir.path()),
         own_exe: Path::new("agentspace"),
         now: &now,
         new_id: &new_id,

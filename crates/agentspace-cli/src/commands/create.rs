@@ -147,10 +147,11 @@ fn record_of(req: &Request, id: &str, now: i64, placed: Placed, driver: &str) ->
 /// context (or no home), then an ID, the place, the record, its document, and the write.
 pub fn create(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> {
     let req = request(cmd)?;
-    let now = (world.now)();
     let paths = paths(world)?;
     let dir = state_dir(&paths, Sub::Create)?;
     let held = lock(dir).map_err(store_error)?;
+    // The clock is read once the lock is held, never before a wait on it.
+    let now = (world.now)();
     let file = read(dir).map_err(store_error)?;
     // driver.md, Failure: "A CLI with no driver MUST fail `create` with `internal`, in words that
     // name no driver" (lease-api.md, Messages, "No driver"). Which driver of several places a

@@ -316,3 +316,89 @@ fn a_changing_commands_internal_messages_name_no_path_and_no_throwaway_folder() 
         );
     }
 }
+
+// ---- A working folder that cannot be read ------------------------------------------------------
+
+/// lease-api.md, Messages: a relative folder in the environment with no working folder to make it
+/// full against (architect, 2026-11-19).
+fn msg_no_cwd(sub: &str) -> String {
+    format!(
+        "agentspace lease {sub} failed: The working folder cannot be read, so a relative folder in the environment cannot be made a full path. Nothing was changed."
+    )
+}
+
+fn line_for(sub: &str) -> Vec<&str> {
+    match sub {
+        "create" => vec!["lease", "create", "--project", "swim"],
+        "list" => vec!["lease", "list"],
+        other => vec!["lease", other, ID1],
+    }
+}
+
+#[test]
+fn with_no_working_folder_a_relative_folder_that_is_needed_fails_and_writes_nothing() {
+    // A relative name no other test uses: with no working folder it MUST NOT be made anywhere.
+    let rel = format!("agentspace-no-cwd-test-{}", std::process::id());
+    // Which variable is relative, and which commands need its folder (the first point a command
+    // needs a folder, gap FB-22): the rest run.
+    let all = ["get", "list", "create", "renew", "release"];
+    let cases: [(&str, bool, &[&str]); 4] = [
+        ("AGENTSPACE_STATE_DIR", false, &all),
+        // With the state folder unset, the default one is under the relative home.
+        ("USERPROFILE", true, &all),
+        // Renew reads no AGENTSPACE_SSH_DIR (lease-api.md, Environment).
+        ("AGENTSPACE_SSH_DIR", false, &["create", "release"]),
+        // An absolute state folder: get and list need no home.
+        ("USERPROFILE", false, &["create", "renew", "release"]),
+    ];
+    for (var, unset_state, needed) in cases {
+        let mut lab = Lab::new();
+        let h = lab.fake("fake");
+        if var != "AGENTSPACE_STATE_DIR" {
+            lab.seed(&[Rec::ready(ID1, "swim")]);
+        }
+        lab.set_var(var, rel.as_str());
+        if unset_state {
+            lab.unset_var("AGENTSPACE_STATE_DIR");
+        }
+        lab.lose_cwd();
+        for sub in all {
+            let what = format!("{var} relative, {sub}");
+            let before = lab.state_bytes();
+            h.clear();
+            let ran = lab.run(&line_for(sub));
+            if needed.contains(&sub) {
+                ran.expect_error("internal", None, Some(&msg_no_cwd(sub)));
+                assert!(h.calls().is_empty(), "{what}: no driver is asked");
+                assert_eq!(lab.state_bytes(), before, "{what}: nothing is written");
+            } else {
+                assert_eq!(ran.code, 0, "{what}: {}", ran.stderr_text());
+            }
+        }
+        assert!(
+            !std::path::Path::new(&rel).exists(),
+            "{var}: the relative folder was made against some other folder"
+        );
+    }
+}
+
+#[test]
+fn with_no_working_folder_absolute_folders_still_run() {
+    let mut lab = Lab::new();
+    let h = lab.fake("fake");
+    lab.lose_cwd();
+    lab.script_ids(&[ID2]);
+    lab.seed(&[Rec::ready(ID1, "swim")]);
+    lab.run(&["lease", "create", "--project", "swim"])
+        .lease_doc();
+    lab.run(&["lease", "get", ID1]).lease_doc();
+    lab.run(&["lease", "list"]).list_doc();
+    lab.run(&["lease", "renew", ID1]).lease_doc();
+    let doc = lab.run(&["lease", "release", ID1]).lease_doc();
+    assert_eq!(doc["state"], "released");
+    assert_eq!(
+        h.contexts()[0].ssh_dir,
+        lab.ssh,
+        "The given ssh folder is used"
+    );
+}

@@ -62,7 +62,7 @@ fn with_empty_world<T>(own_exe: &Path, f: impl FnOnce(&agentspace_cli::World) ->
     let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_string();
     let world = agentspace_cli::World {
         var: &var,
-        cwd: &cwd,
+        cwd: Some(&cwd),
         own_exe,
         now: &now,
         new_id: &new_id,
@@ -156,7 +156,7 @@ fn error_codes_are_the_six_of_the_table() {
 }
 
 #[test]
-fn main_with_returns_the_exit_code_of_the_error_code_for_each_line() {
+fn execute_in_returns_the_exit_code_of_the_error_code_for_each_line() {
     let cases: [(&[&str], i32); 9] = [
         (&["lease", "create", "--project", "x"], 1),
         (&["lease", "list"], 0),
@@ -174,7 +174,7 @@ fn main_with_returns_the_exit_code_of_the_error_code_for_each_line() {
 }
 
 #[test]
-fn main_with_ignores_the_own_executable_it_is_given_when_reading_the_line() {
+fn execute_in_ignores_the_own_executable_it_is_given_when_reading_the_line() {
     for exe in ["", "-h", "--bogus", "lease", "/nonexistent/agentspace"] {
         // An empty world has no home, so a list fails `internal`, whatever the own file is.
         let line = args(&["lease", "list"]);

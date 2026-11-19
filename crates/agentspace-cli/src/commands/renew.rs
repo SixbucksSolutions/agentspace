@@ -37,10 +37,12 @@ pub fn renew(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError
     let ttl = flag(cmd, "ttl")
         .map(|v| check_value(v, "ttl", agentspace_values::ttl))
         .transpose()?;
-    let now = (world.now)();
     let paths = paths(world)?;
     let dir = state_dir(&paths, Sub::Renew)?;
     let held = lock(dir).map_err(store_error)?;
+    // The clock is read once the lock is held, so a renew that waited on it decides expiry with
+    // the time it reads the lease at (lease-api.md, States; driver.md, Renew a lease).
+    let now = (world.now)();
     let file = read(dir).map_err(store_error)?;
     let index = file
         .leases
