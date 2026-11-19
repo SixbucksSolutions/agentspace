@@ -527,9 +527,9 @@ try {
       try { $code = Invoke-Keeper $now } finally { $files = $cap.Stop() }
       foreach ($k in @($files.Keys)) { if (-not $caught.ContainsKey($k)) { $caught[$k] = $files[$k] } }
       $names = @($caught.Keys)
-      $haveAll = @($names | Where-Object { $_ -match '\Aboard-holder-launch\.[0-9a-fA-F-]+\.json\z' }).Count -ge 1 -and
-        @($names | Where-Object { $_ -match '\Aboard-holder-launch\.[0-9a-fA-F-]+\.result\.json\z' }).Count -ge 1 -and
-        @($names | Where-Object { $_ -match '\Aboard-holder-launch\.[0-9a-fA-F-]+\.claim\z' }).Count -ge 1
+      # The three files of one start share one token, 32 lowercase hex digits, matched case-sensitively
+      # (keeper.md, Starting a holder; D35).
+      $haveAll = $null -ne (Find-LaunchSet $names)
       if ($haveAll -or $script:mut) { break }
       # Missed: stop the holder and drop its record, so that the next pass starts one again.
       Stop-RunProcesses
@@ -545,9 +545,16 @@ try {
       Write-Result (Test-KeeperJsonBytes $recordBytes) 'The holder record is UTF-8 without a byte order mark, compact, with one line feed at the end'
     }
 
-    $reqName = @($caught.Keys | Where-Object { $_ -match '\Aboard-holder-launch\.[0-9a-fA-F-]+\.json\z' }) | Select-Object -First 1
-    $resName = @($caught.Keys | Where-Object { $_ -match '\Aboard-holder-launch\.[0-9a-fA-F-]+\.result\.json\z' }) | Select-Object -First 1
-    $claimName = @($caught.Keys | Where-Object { $_ -match '\Aboard-holder-launch\.[0-9a-fA-F-]+\.claim\z' }) | Select-Object -First 1
+    $set = Find-LaunchSet @($caught.Keys)
+    $reqName = $null; $resName = $null; $claimName = $null
+    if ($set) { $reqName = $set.Request; $resName = $set.Result; $claimName = $set.Claim }
+    else {
+      # No complete set: name what was seen, so each check below says which file is missing.
+      $reqName = @($caught.Keys | Where-Object { $_ -cmatch '\Aboard-holder-launch\.[0-9a-f]{32}\.json\z' }) | Select-Object -First 1
+      $resName = @($caught.Keys | Where-Object { $_ -cmatch '\Aboard-holder-launch\.[0-9a-f]{32}\.result\.json\z' }) | Select-Object -First 1
+      $claimName = @($caught.Keys | Where-Object { $_ -cmatch '\Aboard-holder-launch\.[0-9a-f]{32}\.claim\z' }) | Select-Object -First 1
+    }
+    Write-Result ([bool]$set) 'The request, claim and result of one start share one token of 32 lowercase hex digits' "Seen: $(@($caught.Keys) -join ', ')."
     Write-Result ([bool]$reqName) 'A launch request board-holder-launch.<id>.json was written while the holder was started' 'No launch request was seen in 4 passes.'
     Write-Result ([bool]$resName) 'A launch result board-holder-launch.<id>.result.json was written while the holder was started' 'No launch result was seen in 4 passes.'
     Write-Result ([bool]$claimName) 'A launch claim board-holder-launch.<id>.claim was written while the holder was started' 'No launch claim was seen in 4 passes.'
@@ -576,7 +583,7 @@ try {
     if ($claimName) {
       $claimBytes = $caught[$claimName]
       $claimText = [Text.UTF8Encoding]::new($false).GetString($claimBytes)
-      Write-Result ($claimBytes.Length -ge 3 -and -not ($claimBytes[0] -eq 0xEF -and $claimBytes[1] -eq 0xBB -and $claimBytes[2] -eq 0xBF) -and $claimText -cmatch '\A(launcher \d+|abandoned)\n\z') 'The launch claim is one line, "launcher <pid>", in UTF-8 without a byte order mark' "The claim is: $claimText"
+      Write-Result ($claimBytes.Length -ge 3 -and -not ($claimBytes[0] -eq 0xEF -and $claimBytes[1] -eq 0xBB -and $claimBytes[2] -eq 0xBF) -and $claimText -cmatch '\A(launcher \d+|abandoned)\n\z') 'The launch claim is one line, "launcher <pid>" or "abandoned", in UTF-8 without a byte order mark' "The claim is: $claimText"
     }
     if ($recordBytes) {
       $left = @(Get-ChildItem -LiteralPath $env:AGENTSPACE_STATE_DIR -Filter 'board-holder-launch.*' -Force -ErrorAction SilentlyContinue)
@@ -923,7 +930,7 @@ try {
         try { $lockText = [IO.StreamReader]::new($lf).ReadToEnd().Trim() } finally { $lf.Dispose() }
       } catch { }
       Write-Result ($lockText -cmatch '\A\d{1,10}\z' -and $firstPids -contains [int]$lockText) "Watch single: board-holder-keeper.lock holds the running keeper's PID (got '$lockText'; the first keeper runs as $($firstPids -join ', '))"
-      $passLines = @($log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ (started|kept|idle|skipped|stopped)(\s|\z)' })
+      $passLines = @($log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ (started|kept|idle|skipped|stopped|lost)(\s|\z)' })
       Write-Result ($passLines.Count -eq 1) "Watch single: The second keeper ran no pass, so only the first keeper's one pass line is there (got $($passLines.Count))"
       Write-Result ($null -ne $p1 -and -not $p1.HasExited) 'Watch single: The first keeper is still running'
     } finally { if ($p1) { Stop-Watch $p1 }; if ($p2) { Stop-Watch $p2 } }

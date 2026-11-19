@@ -223,9 +223,17 @@ covers form only:
   MAY wait too.
 - **A command that fails MUST leave every lease as it was before the command**, except as the
   bullets below allow.
-  - **A failed `create` MUST leave no lease record, no key, no certificate and no alias behind
-    (#0029),** a key whose certificate could not be signed included. A later `create` MUST NOT fail
-    because of anything an earlier failed one left.
+  - **A failed `create` MUST remove every file and folder it made for the lease** (its key, its
+    certificate, its alias file and its folder, a key whose certificate could not be signed
+    included), **and MUST leave no lease record (#0029).** A later `create` MUST NOT fail because
+    of anything an earlier failed one left.
+    - **A removal can fail too** (a file held open, a rule that forbids the delete). When one does,
+      `create` MUST name each file or folder it could not remove in its `internal` message, and
+      still MUST leave no lease record, so none that is `ready`. It MUST change nothing else: no
+      other lease, no file it did not make. A leftover is a file, or a folder that holds no
+      leftover file, and is named in its home-relative form, as `~/.agentspace/leases/<id>/id_ed25519` (the
+      [`internal` message rule](#exit-codes-and-errors) forbids an absolute path). A folder that
+      still holds a leftover file need not be named, since the file's name says where it is.
     - **What it MAY leave in the OpenSSH client configuration** is the line that pulls aliases in,
       a dated backup of the configuration from before that line was added, and the folder of alias
       files. None of them is a lease's, and each stays ([docs/state.md](state.md#creation-in-order)).
@@ -719,7 +727,7 @@ met is decided before anything is issued.
 | `usage` | None | An unknown option, or any positional argument. |
 | `invalid_value` | `project`, `platform`, `profile`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. |
 | `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
-| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, or the lease records could not be read, written or locked. No lease was recorded, and no key, certificate or alias was left behind ([Concurrency and atomicity](#concurrency-and-atomicity) says what the OpenSSH configuration MAY keep). |
+| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, or the lease records could not be read, written or locked. No lease was recorded. What a failed `create` removes, what it MAY keep in the OpenSSH configuration, and what its message MUST name when a removal fails are in [Concurrency and atomicity](#concurrency-and-atomicity). |
 
 **Help:**
 
@@ -1247,7 +1255,7 @@ operator's cards, #0027 and #0034, are [docs/operator.md](operator.md)'s.
 | 1. Clock skew: validity starts at the caller's now | The certificate's valid-after SHOULD be 5 minutes before its issue time, and `expires_at` stays the issue time plus the TTL (D24; [The credential](#the-credential)). |
 | 2. The lease ID check lets a trailing line feed and a trailing dot through | Every check matches the whole value ([Input tolerance](#input-tolerance)), and everything derived from a lease ID comes from its normalized form, which never ends in a dot ([Lease ID](#lease-id)). |
 | 3. The first lease on a fresh laptop creates a CA no host trusts | `create` and `renew` MUST NOT create the CA, and fail with `internal` when there is none ([The credential](#the-credential)). #0041 dropped its own copy of this point under D18, which was MVP only and is replaced by D28. |
-| 4. A failed signing leaves the key behind | A failed `create` leaves no key, certificate, alias or record, and never blocks a later `create` ([Concurrency and atomicity](#concurrency-and-atomicity)). |
+| 4. A failed signing leaves the key behind | A failed `create` MUST remove every file it made, and never blocks a later `create`. A removal that fails is named in the error ([Concurrency and atomicity](#concurrency-and-atomicity)). |
 | 5. PowerShell 7.0 to 7.2 drop an empty argument | Declined as a requirement on a runtime: the rewrite is Rust (D28), and the prototype's real minimum is PowerShell 7.5 anyway (D8). What it protects is required instead: the lease's key has no passphrase ([The credential](#the-credential)), and an empty argument reaches the parser as one ([The program](#the-program)). |
 | 6. Every certificate has serial 0 | Declined for v0: a serial is not part of this contract, and is decided with revocation, card #0010 ([The credential](#the-credential)). |
 | 7. Test gaps: the start time is not checked against the test's clock, and a UTC and local mix-up is unseen on a UTC machine | The conformance suite MUST check against its own clock, and run once in a zone other than UTC ([Times](#times)). |

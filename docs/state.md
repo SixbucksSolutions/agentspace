@@ -709,9 +709,10 @@ never the check's own output. The same holds for `renew`.
 
 - **An alias file MUST NOT exist without its lease's key and certificate**, so it is written last
   and, at release, removed first.
-- **A failure at any step MUST leave no lease folder, no alias file and no record behind**
-  (#0029; [lease-api.md](lease-api.md#concurrency-and-atomicity)). The lease folder is deleted only
-  if this `create` made it, and the alias file only if its owner mark names this lease.
+- **A failure at any step MUST remove every file and folder this `create` made, and MUST leave no
+  record** (#0029; [lease-api.md](lease-api.md#concurrency-and-atomicity), which also says what
+  `create` does when a removal fails). The lease folder is deleted only if this `create` made it,
+  and the alias file only if its owner mark names this lease.
 - **An `Include` line, a config backup and `agentspace.d` that the failed `create` made stay, and
   `create` MUST NOT remove them** (this settles [driver.md Q18](driver.md#open-questions)). The line
   is meant to stay, and removing it would be a second edit of the user's config that could fail

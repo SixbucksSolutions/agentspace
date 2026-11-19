@@ -112,8 +112,8 @@ What agentspace promises it, beyond what every caller gets:
 - **A host of its project's own, kept between leases**, with the project's checkout, sign-ins and
   caches still on it, and no other project's lease on it (D25, built in v0.07). Today every
   project shares one box (D3).
-- **Its checkout on that host** once hosts are per project (D3, a finding of story E3.03). Today
-  the project puts its own repo on the box.
+- **Its checkout on that host** once hosts are per project: the host's disk keeps it between
+  leases (D25, from v0.07). Today the project puts its own repo on the box.
 - **A size that fits its plan**, chosen from the plan's busiest turn and never from the models or
   effort levels it names (D27, built in v0.10).
 
@@ -147,8 +147,8 @@ How it uses it:
 - **It logs in with the lease's credential, as the user the lease names**, and reads that user from
   the lease rather than assuming it (lease-api.md, "Fields").
 - **Its duty when the board cannot be reached is to stop and report**, never to work without a
-  card. The host's board command refuses and tells it so (how-it-was-built.md, "Reaching the
-  laptop's localswim board").
+  card. The host's board command refuses and tells it so (operator.md, "The box's
+  files").
 
 What agentspace promises it:
 - **A credential of its own lease:** a key and a short-lived certificate, whose expiry is the
@@ -253,15 +253,20 @@ What comes after 1.0 is in roadmap.md, "After 1.0" and "Someday, maybe".
 
 ## Open questions
 
-**What reading could not settle.** The clean-room review (E0.04-T03-S01) closes them.
+**What reading could not settle, and what became of each.** This page's writer (E0.04-T01-S01)
+raised them, the clean-room review (E0.04-T04-S01) sorted them, and E0.04-T05-S05 (#0092) gave
+each a disposition. **Answered** cites where decisions.md settles it, and decisions.md keeps the
+fact (D34). **Later, not blocking** says why a drop-in rewrite of today's contract in v0.05 and
+v0.06 does not need the answer, and which release or card takes it up, where the roadmap names
+one. No question here is left unmarked.
 
-| | Question | Why reading could not settle it |
-|---|---|---|
-| **V1** | What does "one agent" mean in D2 once a lease carries a plan? | D2 makes a lease compute for one agent. D25 and D27 size a project's host for a plan's peak concurrency, and D33 counts a dev lead's subagents inside its one session. No decision says whether a turn takes one lease, for its dev lead, or one per agent session. |
-| **V2** | How does a lease on a Windows host log in? | D2 decides that a lease answers with a way to SSH in. D4 says the lease model today assumes a Linux user and an SSH certificate, and that v0.13 (#0081) builds a Windows host's lease identity. Whether a certificate login stays the way in, and what user a lease names there, is not decided. |
-| **V3** | Do the MVP-only decisions whose replacements come after 1.0 still bind through 1.0? | D8 (the control plane on the laptop), D10 (no revocation), D17 (the CA on the laptop) and D24's maximum TTL are marked MVP only, but what replaces them, #0010 and #0011, is after 1.0 in roadmap.md. This page assumes they hold until then. |
-| **V4** | Does work on a lease depend on the laptop being awake? | The board runs on the laptop and reaches a host only through a connection it holds (D12, D30), and the control plane and CA are on the laptop (D8, D17). Today an agent stops when the board goes away (how-it-was-built.md, "Reaching the laptop's localswim board"). No decision says whether that is meant to hold at 1.0. |
-| **V5** | Who starts a session on a lease? | A lease's caller creates it, and a dev lead connects through the alias (D9, D30). No decision says how a project's architect hands a lease to its dev lead, or whether adding the desktop app's SSH environment and starting the session there needs Terry's hand. |
-| **V6** | Does agentspace promise a time to ready? | No decision states how long a caller waits from asking for a lease to its first login, for a stopped host or for one created by that lease (D25). |
-| **V7** | How does agentspace learn which repo to check out on a project's host? | D3's E3.03 finding says v0.07 puts the checkout on the project's host. Neither a decision nor the lease contract says where agentspace gets the repo's location from. |
-| **V8** | Who may change a host's software? | The README alone says a project's agent does not; no decision does. |
+| | Question | Why reading could not settle it | Disposition |
+|---|---|---|---|
+| **V1** | What does "one agent" mean in D2 once a lease carries a plan? | D2 makes a lease compute for one agent. D25 and D27 size a project's host for a plan's peak concurrency, and D33 counts a dev lead's subagents inside its one session. No decision says whether a turn takes one lease, for its dev lead, or one per agent session. | **Later, not blocking:** contract v0 has no plan, and a lease there is one `create` call for one project, so the rewrite needs no meaning for "one agent" beyond that. A plan enters the contract with v0.10 (#0050, contract v1), which is where this is decided. D27 and D33 already fix how the host is sized, whichever way it is answered. |
+| **V2** | How does a lease on a Windows host log in? | D2 decides that a lease answers with a way to SSH in. D4 says the lease model today assumes a Linux user and an SSH certificate, and that v0.13 (#0081) builds a Windows host's lease identity. Whether a certificate login stays the way in, and what user a lease names there, is not decided. | **Later, not blocking:** no platform but `linux/arm64` is served until v0.11, so the rewrite never issues a Windows lease, and a request for one is `unsatisfiable` (D5). D4 gives the work to v0.13 (#0081). |
+| **V3** | Do the MVP-only decisions whose replacements come after 1.0 still bind through 1.0? | D8 (the control plane on the laptop), D10 (no revocation), D17 (the CA on the laptop) and D24's maximum TTL are marked MVP only, but what replaces them, #0010 and #0011, is after 1.0 in roadmap.md. This page assumes they hold until then. | **Answered: yes, they bind.** An MVP-only decision still describes today's prototype, and so the rewrite, until its replacement is built (decisions.md, "Statuses"). D8 and D17 are replaced by #0011, D10 is replaced by #0010, and D24's maximum is revisited by #0010, and roadmap.md, "After 1.0", places both cards after 1.0. |
+| **V4** | Does work on a lease depend on the laptop being awake? | The board runs on the laptop and reaches a host only through a connection it holds (D12, D30), and the control plane and CA are on the laptop (D8, D17). Today an agent stops when the board goes away: the host's board command refuses whenever no connection holds the board's forwards (operator.md, "The box's files"). No decision says whether that is meant to hold at 1.0. | **Later, not blocking:** the rewrite is held to today's observable behavior (D19, D20), and nothing in v0.05 to v0.06 moves the control plane or the board off the laptop. A hosted control plane (#0011, D8, D17, after 1.0) would move the control plane and the CA off the laptop, but the board itself runs on the laptop, and no card moves it: #0008 (D12) changes how many leases reach the board, not where it runs. No card takes the question up yet. |
+| **V5** | Who starts a session on a lease? | A lease's caller creates it, and a dev lead connects through the alias (D9, D30). No decision says how a project's architect hands a lease to its dev lead, or whether adding the desktop app's SSH environment and starting the session there needs Terry's hand. | **Later, not blocking:** the hand-off is between a project's agents and the Claude app, outside the lease contract, which ends at the alias (lease-api.md, "Fields"). The rewrite changes none of it. No card takes it up yet. |
+| **V6** | Does agentspace promise a time to ready? | No decision states how long a caller waits from asking for a lease to its first login, for a stopped host or for one created by that lease (D25). | **Later, not blocking:** contract v0 states no time, and a drop-in is held to the behavior it has, not to a promised duration. What a lease starts changes in v0.07 (#0047), where a first lease creates a host, and v0.08 (#0048), where a lease starts a stopped one (D25), so the question comes due there. No card takes it up yet. |
+| **V7** | How does agentspace learn which repo to check out on a project's host? | D25 keeps a project's checkout on its own host from v0.07. Neither a decision nor the lease contract says where agentspace gets the repo's location from. | **Later, not blocking:** today a project puts its own repo on the box, and nothing in the lease contract names a repo, so the rewrite needs no answer. It is an open matter for v0.07 (#0047), where a project's first lease creates its host (D25); no decision yet says whether the location comes through the lease contract or some other way. |
+| **V8** | Who may change a host's software? | No decision or spec doc says whether a project's agent may. | **Later, not blocking:** this page already states today's practice, in "Who runs agentspace", and the rewrite changes no host. A host's software is its profile's (D4), and replacing hosts instead of patching them is #0014, after 1.0 (roadmap.md, "After 1.0"). |

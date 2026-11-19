@@ -501,3 +501,20 @@ function Test-OtherKeeperPid([string]$Line, [int[]]$KeeperPids) {
   $Line -cmatch 'pid=(\d+|-)\z' -and ($Matches[1] -ceq '-' -or $KeeperPids -contains [int]$Matches[1])
 }
 
+
+# The launch files of one start (state.md, "A holder's launch files"): a request, a claim and a result
+# sharing one token of 32 lowercase hex digits, matched case-sensitively (D35). Returns the first
+# token for which all three names are in $Names, as an object with Token, Request, Claim and Result,
+# or $null when no token has all three.
+function Find-LaunchSet([string[]]$Names) {
+    foreach ($n in $Names) {
+        if ($n -cmatch '\Aboard-holder-launch\.([0-9a-f]{32})\.json\z') {
+            $t = $Matches[1]
+            $res = "board-holder-launch.$t.result.json"; $claim = "board-holder-launch.$t.claim"
+            if (($Names -ccontains $res) -and ($Names -ccontains $claim)) {
+                return [pscustomobject]@{ Token = $t; Request = $n; Claim = $claim; Result = $res }
+            }
+        }
+    }
+    return $null
+}

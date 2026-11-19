@@ -46,6 +46,9 @@ $statusName = 'operator.md#command-line: status -Alias x is refused, -Alias appl
 $h = New-ConformanceHome
 try {
   $program = Get-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD'
+  # The AWS CLI, ssh and scp are named as tripwires, so that no build that meets the test seam can
+  # reach a real one, and no real AWS CLI need exist on the machine (B-50).
+  $trip = Get-OperatorTripwireEnvironment -ConformanceHome $h
   $gate = Test-AwsUnreachable -ConformanceHome $h
   if (-not $gate.Unreachable) {
     foreach ($case in $cases) { Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason $gate.Reason }
@@ -58,7 +61,7 @@ try {
     foreach ($case in $cases) {
       switch ($case.Mode) {
         'run' {
-          $r = Invoke-QuotedCase -ConformanceHome $h -Wrapper $wrapper -Value $case.Value
+          $r = Invoke-QuotedCase -ConformanceHome $h -Wrapper $wrapper -Value $case.Value -Environment $trip
           Write-RefusalResult -Result $r -ExpectCode 1 -ExpectText $aliasText -Name $case.Name
         }
         'probe' {
@@ -67,7 +70,7 @@ try {
           $expected = (($case.Value.ToCharArray() | ForEach-Object { [int]$_ }) -join ',')
           $got = Get-ArgumentCodePoint -ConformanceHome $h -Value $case.Value
           if ($got -eq $expected) {
-            $r = Invoke-QuotedCase -ConformanceHome $h -Wrapper $wrapper -Value $case.Value
+            $r = Invoke-QuotedCase -ConformanceHome $h -Wrapper $wrapper -Value $case.Value -Environment $trip
             Write-RefusalResult -Result $r -ExpectCode 1 -ExpectText $aliasText -Name $case.Name
           } else {
             Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason "Windows PowerShell 5.1 did not pass the argument intact (code points received: $got). See docs/conformance.md, open question 2"
@@ -75,7 +78,7 @@ try {
         }
       }
     }
-    $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD' -ConformanceHome $h -Arguments @('status', '-Alias', 'x') -TimeoutSeconds 60
+    $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD' -ConformanceHome $h -Arguments @('status', '-Alias', 'x') -Environment $trip -TimeoutSeconds 60
     Write-RefusalResult -Result $r -ExpectCode 1 -ExpectText $appliesText -Name $statusName
   }
 } finally {

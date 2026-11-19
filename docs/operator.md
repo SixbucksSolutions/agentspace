@@ -1023,8 +1023,10 @@ nothing.
 **In order, it:**
 1. **Fails if `ssh-keygen.exe` is missing:** `agentspace: <path> is missing; install the Windows
    OpenSSH client.`
-2. **Fails if the CA's folder is inside a OneDrive folder or inside `<checkout>`**, compared as
-   paths without regard to case. The OneDrive folders are the values of `OneDrive`,
+2. **Fails if the CA's folder is inside a OneDrive folder or inside any git working tree** (D37;
+   the prototype checks only its own `<checkout>`), compared as paths without regard to case. A
+   git working tree is the one [What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)
+   defines. The OneDrive folders are the values of `OneDrive`,
    `OneDriveConsumer` and `OneDriveCommercial`, each one that is set and not empty
    ([Environment variables](#environment-variables)): `agentspace: <ca folder> is inside <folder>; the CA key MUST NOT
    live in a synced folder or in the repo.`
