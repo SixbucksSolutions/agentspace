@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Final, written by the architect at 11:46pm Pacific on 2026-11-18, once every v0.04 pull request
+> **Final, written by the architect at 11:45pm Pacific on 2026-11-18, once every v0.04 pull request
 > was merged and every dev lead archived.** One step remains, and it is Terry's: approving #0030
 > into Completed. "When Terry approves v0.04" at the end says what the architect does then. Terry
 > `/clear`s the architect after v0.04 closes, so this file is how the next architect learns
