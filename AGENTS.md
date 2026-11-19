@@ -136,6 +136,19 @@ on it:
 - **A dev lead, when nudged, MUST either finish its current work in that turn or reply
   `BLOCKED: <what it waits on>`.**
 
+## Growing the box's disk
+
+**Terry, 2026-11-19, standing order: the architect is authorized to grow the box's root EBS volume
+as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
+- **The volume MUST NOT be grown past 64 GiB** without Terry's word.
+- **A grow MUST NOT leave the root filesystem less than 60% used**, measured right after it: grow
+  in steps sized to the need, never far ahead of it, since a volume never shrinks.
+- **The architect SHOULD grow it when the root filesystem passes 80% used**, by the largest step
+  the 60% floor allows, with `scripts\agentspace.ps1 grow -GiB <n>` (operator.md, grow). EBS
+  allows one change per volume every 6 hours, so a step MUST be planned for the next 6 hours.
+- **The first step**, the same day during v0.05-T01: 8 to 11 GiB at 2:41am Pacific, which left
+  the filesystem at 9.7G, 5.9G used (62%). It had filled at 6.8G with five crates' builds (D38).
+
 ## Memory: git is a superset of it
 
 **Terry, 2026-11-16, standing order: every fact an agent keeps in its private memory MUST also be
