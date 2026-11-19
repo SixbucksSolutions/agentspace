@@ -220,6 +220,11 @@ reads them.
 one for the file it stands in for, and nothing in the prototype removes it later
 ([Q4](#open-questions)).
 
+**A replace never creates a folder** (architect, 2026-11-19, for E0.06-T01-S07). The writer
+creates the folder first where its section says it does (the state folder, `%USERPROFILE%\.agentspace`
+for the push stamp); a replace into a folder that is missing fails, and leaves nothing behind.
+`agentspace-state`'s `write_atomically` is that replace, for every file the rewrite writes this way.
+
 ## Every file at a glance
 
 **Every file and folder agentspace writes or reads under the home folder.** Each has its own
@@ -1117,7 +1122,9 @@ strict, as a writer MUST write it.
 - **A reader MUST treat a record that cannot be read or parsed, or whose members do not have these
   forms, as no record.** Like the prototype, it MAY accept a `lease_id` that is any 8-4-4-4-12 hex
   UUID in any case. Its `alias` MUST match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`, and a record
-  whose alias does not is no record (architect, 2026-11-19, for v0.06, gap FB-23).
+  whose alias does not is no record (architect, 2026-11-19, for v0.06, gap FB-23). A reader MUST
+  NOT require the line ending a writer puts after the document, and accepts whitespace JSON
+  allows (architect, 2026-11-19, for E0.06-T01-S07).
 - **The PID and the start time together are the holder's identity**; the record never names a
   process by its PID alone.
 
@@ -1166,7 +1173,9 @@ is one of two shapes:
 
 **Their lifetime.** The pass that wrote the request removes all three before it ends, whatever
 happened, in the order [keeper.md#starting-a-holder](keeper.md#starting-a-holder) gives. A
-launcher that claims a request it can no longer read removes its own claim. Two cases leave
+launcher that claims a request it can no longer read removes its own claim. **A request that
+does not match its schema, such as one with a relative path or a deadline with other than seven
+fraction digits, is one the launcher cannot read** (architect, 2026-11-19, for E0.06-T01-S07). Two cases leave
 files that nothing removes later ([Q4](#open-questions)):
 - **A keeper killed mid-pass** can leave any of the three, and a temporary file.
 - **A late launcher**, one that claimed the request and answers after the pass has stopped waiting
