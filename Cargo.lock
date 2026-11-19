@@ -95,6 +95,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-run"
+version = "0.6.0"
+dependencies = [
+ "agentspace-operator-api",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "agentspace-state"
 version = "0.5.0"
 dependencies = [
