@@ -118,7 +118,10 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   line is read from left to right, the argument after `-GiB` or `-Alias` is that parameter's value
   unless it is `-h` or `--help`, and the command is the first argument that is none of a
   parameter, a parameter's value and help. A value never names a command, so `-Alias up -h`
-  prints the top level's help, and `-Alias -h up` prints `up`'s.
+  prints the top level's help, and `-Alias -h up` prints `up`'s. **An argument that starts with
+  `-` and is not a parameter's value counts as a parameter, known or not** (architect,
+  2026-11-19, for E0.06-T01-S01), the same reading as the unknown-parameter row below, so
+  `-Foo up -h` prints `up`'s help: help is asked for, so the unknown parameter is never reported.
 - **Every help block on this page is exactly what the rewrite prints, byte for byte**, to stdout,
   with a line feed after every line and no carriage return, the last line's included, and a change
   to either MUST change both (architect, 2026-11-19, for v0.06, gap FA-13; as
@@ -145,7 +148,16 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 - **The checks run in this order, and the first failure ends the command:** help; then the
   arguments read from left to right, the first usage error found among them reported (a missing
   command is found only once the whole line is read); then the two `-Alias` checks below, in their
-  order. So `status -GiB abc -Alias bad!` reports the `-GiB` message.
+  order. So `status -GiB abc -Alias bad!` reports the `-GiB` message. **At each argument a
+  repeated name is found before a missing value** (architect, 2026-11-19, for E0.06-T01-S01, as
+  keeper.md's check 1 reads its own), so `status -GiB 1 -GiB` reports `agentspace: -GiB is given
+  more than once.`
+- **Then the home and the system folder, for every command** (architect, 2026-11-19, for
+  E0.06-T01-S01): when `USERPROFILE` is unset or empty the command fails with exactly
+  `agentspace: USERPROFILE is not set, so there is no home folder.`, and when `SystemRoot` is,
+  with `agentspace: SystemRoot is not set, so Windows' programs cannot be found.`, checked in that
+  order, before anything else runs and exit 1. Help and usage errors need neither. In caller mode
+  either is the "Could not reach the host" line ([What a caller sees](#what-a-caller-sees-d1-card-0087)).
 - **The alias check is part of the command line**, and runs before anything but help and the usage
   errors, as below.
 - Note on where this came from: the prototype's shell binds the command line before the script
@@ -1752,6 +1764,12 @@ as to any converted name.
    region both give, and the rewrite MAY use either. The prototype uses .NET's where its runtime
    has it, and otherwise the unversioned export of the `icu.dll` that Windows ships. A conversion
    that fails gives no zone.
+   **The rewrite embeds the mapping as data** (architect, 2026-11-19, for E0.06-T01-S05): the
+   `territory="001"` rows of CLDR's `windowsZones.xml`, from the newest CLDR release published at
+   least two weeks before the build's story, as a table generated into `agentspace-zone` with that
+   release's number beside it. It calls neither .NET nor ICU, so the mapping is the same on every
+   laptop and testable on Linux. This page holds no copy of the table; CLDR is its source, and a
+   new release is taken by regenerating it in a story of its own.
 2. **Seven legacy names are mapped to their current ones**, because CLDR gives them and today's
    box's `tzdata`, without `tzdata-legacy`, refuses them. Every other name is kept as it is:
 
