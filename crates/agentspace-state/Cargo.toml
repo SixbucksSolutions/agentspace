@@ -6,6 +6,9 @@ publish = false
 
 [dependencies]
 serde_json = "=1.0.154"
+# Only the Visitor and DeserializeSeed traits, for the duplicate-member check; this is the version
+# already in Cargo.lock (published 2026-07-18).
+serde = { version = "=1.0.229", default-features = false }
 # No default features: resolve-http and resolve-file stay off, so a validator never fetches a
 # reference (D38).
 jsonschema = { version = "=0.60.2", default-features = false }

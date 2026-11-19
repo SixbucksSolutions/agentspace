@@ -185,6 +185,138 @@ fn distinct_ids_with_the_same_start_are_valid() {
     ])));
 }
 
+/// A file's text with `from` (which must occur once) replaced by `to`.
+fn text_with(records: Vec<Value>, from: &str, to: &str) -> Vec<u8> {
+    let text = String::from_utf8(bytes_of(records)).unwrap();
+    assert_eq!(text.matches(from).count(), 1, "{from}");
+    text.replace(from, to).into_bytes()
+}
+
+#[test]
+fn a_member_named_twice_in_a_record_is_not_valid() {
+    // The same value twice, a different one, and either order: whichever a parser would keep.
+    let one = format!("\"id\":\"{ID_A}\"");
+    for to in [
+        format!("{one},{one}"),
+        format!("{one},\"id\":\"{ID_B}\""),
+        format!("\"id\":\"{ID_B}\",{one}"),
+    ] {
+        let doc = text_with(vec![ready(ID_A, "demo")], &one, &to);
+        assert_eq!(err(parse(&doc)), "the state file is not valid", "{to}");
+    }
+    let doc = text_with(
+        vec![ready(ID_A, "demo")],
+        "\"project\":\"demo\"",
+        "\"project\":\"demo\",\"project\":\"demo\"",
+    );
+    assert!(!is_valid(&doc));
+}
+
+#[test]
+fn a_member_named_twice_at_the_top_level_is_not_valid() {
+    let doc = text_with(
+        vec![ready(ID_A, "demo")],
+        "\"version\":0",
+        "\"version\":0,\"version\":0",
+    );
+    assert_eq!(err(parse(&doc)), "the state file is not valid");
+    let doc = text_with(
+        vec![ready(ID_A, "demo")],
+        "\"version\":0",
+        "\"version\":1,\"version\":0",
+    );
+    assert!(!is_valid(&doc));
+}
+
+#[test]
+fn a_member_named_twice_in_a_nested_object_is_not_valid() {
+    let doc = text_with(
+        vec![ready(ID_A, "demo")],
+        "\"user\":\"ubuntu\"",
+        "\"user\":\"ubuntu\",\"user\":\"root\"",
+    );
+    assert_eq!(err(parse(&doc)), "the state file is not valid");
+    let doc = text_with(
+        vec![unsatisfiable(ID_A, "demo")],
+        "\"code\":\"unsupported_platform\"",
+        "\"code\":\"unsupported_platform\",\"code\":\"other\"",
+    );
+    assert_eq!(err(parse(&doc)), "the state file is not valid");
+}
+
+#[test]
+fn a_member_named_twice_in_any_record_is_not_valid() {
+    // The second record of three, not the first.
+    let two = format!("\"id\":\"{ID_B}\"");
+    let doc = text_with(
+        vec![
+            ready(ID_A, "demo"),
+            pending(ID_B, "demo"),
+            pending(ID_C, "demo"),
+        ],
+        &two,
+        &format!("{two},{two}"),
+    );
+    assert!(!is_valid(&doc));
+}
+
+#[test]
+fn a_member_name_written_with_an_escape_still_repeats() {
+    let one = format!("\"id\":\"{ID_A}\"");
+    let doc = text_with(
+        vec![ready(ID_A, "demo")],
+        &one,
+        &format!("{one},\"\\u0069d\":\"{ID_A}\""),
+    );
+    assert!(!is_valid(&doc));
+}
+
+#[test]
+fn a_member_named_in_two_records_is_valid() {
+    // The same names in different objects are not a repeat.
+    let doc = bytes_of(vec![
+        ready(ID_A, "demo"),
+        ready(ID_B, "demo"),
+        unsatisfiable(ID_C, "demo"),
+    ]);
+    assert_eq!(parse(&doc).unwrap().leases.len(), 3);
+    let two_reasons = with(
+        unsatisfiable(ID_A, "demo"),
+        "reasons",
+        Some(json!([
+            {"code": "unsupported_platform", "message": "One."},
+            {"code": "no_capacity", "message": "Two."}
+        ])),
+    );
+    assert!(is_valid(&bytes_of(vec![two_reasons])));
+}
+
+#[test]
+fn very_deep_nesting_is_not_valid_and_does_not_overflow() {
+    let deep = format!("{}{}", "[".repeat(200_000), "]".repeat(200_000));
+    assert_eq!(err(parse(deep.as_bytes())), "the state file is not valid");
+    let deep = format!(
+        "{{\"version\":0,\"leases\":[],\"x\":{}{}}}",
+        "{\"a\":".repeat(100_000),
+        "}".repeat(100_000)
+    );
+    assert!(!is_valid(deep.as_bytes()));
+}
+
+#[test]
+fn an_integer_written_with_a_zero_fraction_is_accepted_and_written_as_an_integer() {
+    let doc = text_with(
+        vec![ready(ID_A, "demo")],
+        "\"ttl_seconds\":3600",
+        "\"ttl_seconds\":3600.0",
+    );
+    let f = parse(&doc).expect("3600.0 is form only");
+    assert_eq!(f.leases[0].ttl_seconds, 3600);
+    let out = String::from_utf8(serialize(&f).unwrap()).unwrap();
+    assert!(out.contains("\"ttl_seconds\":3600,"), "{out}");
+    assert!(!out.contains("3600.0"), "{out}");
+}
+
 #[test]
 fn an_impossible_date_is_not_valid() {
     // Gap FA-10: matches the pattern, names no real instant.
