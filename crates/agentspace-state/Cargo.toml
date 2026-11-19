@@ -15,4 +15,11 @@ serde = { version = "=1.0.229", default-features = false }
 # reference (D38).
 jsonschema = { version = "=0.60.2", default-features = false }
 
+# Only the Windows half uses it: MoveFileExW, the one unsafe call (src/windows.rs). The version is
+# the one already in Cargo.lock (published 2025-10-06).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
+# Throwaway folders for the on-disk tests; the version agentspace-credential already uses.
+tempfile = { version = "=3.23.0", default-features = false }
