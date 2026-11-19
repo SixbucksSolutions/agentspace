@@ -95,14 +95,35 @@ pub fn lock(state_dir: &Path) -> Result<LockGuard, StoreError> {
     lock_with(state_dir, CONTRACT)
 }
 
-/// Whether something that is not a folder is at the state folder's path. A missing path, or one
-/// that cannot be inspected, is not.
-fn state_folder_is_a_file(state_dir: &Path) -> bool {
-    fs::metadata(state_dir).is_ok_and(|m| !m.is_dir())
+/// Whether a file stands where the state folder, or a folder above it, belongs.
+///
+/// Walks up from the state folder (itself included) to its first existing ancestor, and says whether
+/// that is something other than a folder. Architect, 2026-11-19 (docs/state.md, The home folder: a
+/// value that names an existing file, not a folder, makes every command that needs that folder
+/// fail): `USERPROFILE` naming a file and `AGENTSPACE_STATE_DIR` under a file are both caught
+/// here, and "path not found" means no leases only when every existing ancestor is a folder.
+///
+/// A link is followed (`fs::metadata`), as the state folder MAY be a link to a folder; a link to a
+/// file is a file, and a link that leads nowhere is missing. A path that is missing, or under a
+/// file (the system's "not a directory"), moves the walk up one level; any other failure to inspect
+/// ends it with `false`, as nothing is known. The walk stops at the root and never panics.
+fn state_folder_is_blocked(state_dir: &Path) -> bool {
+    for ancestor in state_dir.ancestors() {
+        match fs::metadata(ancestor) {
+            Ok(m) => return !m.is_dir(),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 fn lock_with(state_dir: &Path, timing: Timing) -> Result<LockGuard, StoreError> {
-    if state_folder_is_a_file(state_dir) {
+    if state_folder_is_blocked(state_dir) {
         return Err(StoreError::CannotLock(WHY_STATE_FOLDER_FILE.to_string()));
     }
     fs::create_dir_all(state_dir)
@@ -129,8 +150,8 @@ fn lock_with(state_dir: &Path, timing: Timing) -> Result<LockGuard, StoreError> 
 /// its path, or a file that cannot be opened or read, is `Unreadable` (gap FB-21), and a file that
 /// does not validate is `NotValid`. It takes no lock.
 pub fn read(state_dir: &Path) -> Result<StateFile, StoreError> {
-    // A file where the state folder belongs is not a missing folder.
-    if state_folder_is_a_file(state_dir) {
+    // A file where the state folder, or a folder above it, belongs is not a missing folder.
+    if state_folder_is_blocked(state_dir) {
         return Err(StoreError::Unreadable(WHY_STATE_FOLDER_FILE.to_string()));
     }
     let path = state_path(state_dir);
@@ -212,7 +233,7 @@ fn write_with(
     timing: Timing,
 ) -> Result<(), StoreError> {
     let bytes = serialize(file).map_err(|e| StoreError::Unwritable(e.0))?;
-    if state_folder_is_a_file(state_dir) {
+    if state_folder_is_blocked(state_dir) {
         return Err(StoreError::Unwritable(WHY_STATE_FOLDER_FILE.to_string()));
     }
     fs::create_dir_all(state_dir)
@@ -472,23 +493,98 @@ mod tests {
         assert_eq!(read(&dir).unwrap().leases.len(), 1);
     }
 
-    #[test]
-    fn a_state_folder_that_cannot_be_made_cannot_be_locked_or_written() {
-        let t = TempDir::new();
-        let guard = lock_with(&t.path().join("locked"), short()).unwrap();
+    /// Where a state folder would be, under a file, in each shape the environment can give it:
+    /// `<file>\.agentspace` (the home names a file) and `<file>\sub` (`AGENTSPACE_STATE_DIR` is
+    /// under a file), and one deeper than that.
+    fn under_a_file(t: &TempDir) -> (PathBuf, Vec<PathBuf>) {
         let f = t.path().join("a-file");
         fs::write(&f, b"x").unwrap();
-        // A path under a file: nothing is at it, and no folder can be made there.
-        let under = f.join("x");
-        assert_eq!(
-            lock_with(&under, short()).unwrap_err(),
-            StoreError::CannotLock(WHY_LOCK_FOLDER.to_string())
-        );
-        assert_eq!(
-            write_with(&under, &file_of(&[ID_A]), &guard, short()).unwrap_err(),
-            StoreError::Unwritable(WHY_WRITE_FOLDER.to_string())
-        );
-        assert_eq!(fs::read(&f).unwrap(), b"x");
+        let dirs = vec![
+            f.join(".agentspace"),
+            f.join("sub"),
+            f.join("a").join("b").join("c"),
+        ];
+        (f, dirs)
+    }
+
+    /// The file is untouched and nothing was made under or beside it.
+    fn nothing_created(t: &TempDir, f: &Path, dirs: &[PathBuf]) {
+        assert_eq!(fs::read(f).unwrap(), b"x");
+        assert!(f.is_file());
+        for d in dirs {
+            assert!(!d.exists(), "{d:?} must not exist");
+        }
+        let names: Vec<_> = fs::read_dir(t.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "{names:?}");
+    }
+
+    // Architect, 2026-11-19 (docs/state.md, The home folder): read, lock and write each walk up to
+    // the first existing ancestor and fail when it is not a folder.
+
+    #[test]
+    fn a_state_folder_under_a_file_is_not_no_leases_and_nothing_is_created() {
+        let t = TempDir::new();
+        let (f, dirs) = under_a_file(&t);
+        for d in &dirs {
+            assert_eq!(
+                read(d).unwrap_err(),
+                StoreError::Unreadable(WHY_STATE_FOLDER_FILE.to_string()),
+                "{d:?}"
+            );
+        }
+        nothing_created(&t, &f, &dirs);
+    }
+
+    #[test]
+    fn a_state_folder_under_a_file_cannot_be_locked_and_nothing_is_created() {
+        let t = TempDir::new();
+        let (f, dirs) = under_a_file(&t);
+        for d in &dirs {
+            assert_eq!(
+                lock_with(d, short()).unwrap_err(),
+                StoreError::CannotLock(WHY_STATE_FOLDER_FILE.to_string()),
+                "{d:?}"
+            );
+        }
+        nothing_created(&t, &f, &dirs);
+    }
+
+    #[test]
+    fn a_state_folder_under_a_file_cannot_be_written_and_nothing_is_created() {
+        let t = TempDir::new();
+        let other = TempDir::new();
+        let guard = lock_with(other.path(), short()).unwrap();
+        let (f, dirs) = under_a_file(&t);
+        for d in &dirs {
+            assert_eq!(
+                write_with(d, &file_of(&[ID_A]), &guard, short()).unwrap_err(),
+                StoreError::Unwritable(WHY_STATE_FOLDER_FILE.to_string()),
+                "{d:?}"
+            );
+        }
+        nothing_created(&t, &f, &dirs);
+    }
+
+    #[test]
+    fn a_missing_state_folder_under_a_folder_is_no_leases_and_is_not_created() {
+        let t = TempDir::new();
+        let dir = t.path().join("a").join("b");
+        assert_eq!(read(&dir).unwrap().leases.len(), 0);
+        assert!(!t.path().join("a").exists());
+    }
+
+    #[test]
+    fn the_walk_stops_at_the_root_without_panicking() {
+        assert!(!state_folder_is_blocked(Path::new("")));
+        let root = std::env::temp_dir()
+            .ancestors()
+            .last()
+            .unwrap()
+            .to_path_buf();
+        assert!(!state_folder_is_blocked(&root));
     }
 
     #[test]
