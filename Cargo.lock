@@ -52,6 +52,14 @@ name = "agentspace-keeper-api"
 version = "0.6.0"
 
 [[package]]
+name = "agentspace-operator"
+version = "0.6.0"
+dependencies = [
+ "agentspace-operator-api",
+ "tempfile",
+]
+
+[[package]]
 name = "agentspace-operator-api"
 version = "0.6.0"
 dependencies = [
