@@ -329,7 +329,14 @@ pass ran and logged what happened; the next pass tries again.
 - **An error before the first pass, such as a state folder that cannot be created, ends any run
   with exit 1 and nothing logged**, since there may be nowhere to log. The prototype then prints its
   runtime's error record on stderr; the rewrite SHOULD print one line starting with its own name
-  instead.
+  instead. For a state folder that cannot be created it is
+  `agentspace-keeper: The state folder '<path>' could not be created: <error>` (architect,
+  2026-11-19, for E0.06-T01-S06).
+- **A record the pass cannot remove** (architect, 2026-11-19, for E0.06-T01-S06): one that failed
+  to be trusted ends the pass with `failed lease=- alias=- pid=- reason=The pass stopped on an
+  error: The record could not be removed: <error>` and exit 1; after a stop, the failed removal is
+  not reported, the line stays `stopped`, and the next pass removes the record, which then names
+  no running holder.
 
 ### Streams and environment
 
