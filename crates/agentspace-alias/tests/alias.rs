@@ -93,6 +93,18 @@ fn lease_file_text_keeps_drive_root_separator() {
 }
 
 #[test]
+fn lease_file_text_adds_no_second_separator_to_a_drive_root() {
+    // State.md, the `<key path>` row: a home that already ends in a separator gets no further `\`.
+    for home in ["C:\\", "C:/", "C:\\\\", "C:\\/"] {
+        assert_eq!(
+            lease_file_text(home, ID, "k"),
+            format!("C:/.agentspace/leases/{ID}/k"),
+            "{home}"
+        );
+    }
+}
+
+#[test]
 fn lease_file_text_slash_in_home_is_kept() {
     assert_eq!(
         lease_file_text("C:/Users/someone", ID, "id_ed25519-cert.pub"),
@@ -225,6 +237,53 @@ fn alias_file_refuses_cr_or_lf_in_paths_and_proxy() {
 }
 
 #[test]
+fn alias_file_refuses_cr_or_lf_in_id_comment_alias_and_user() {
+    // State.md, The alias file: every value on one line refuses a CR or LF.
+    for bad in ["a\nb", "a\rb", "a\r\nb", "\n", "x\n"] {
+        let mut f = sample("p", "/k", "/c");
+        f.id = bad;
+        assert!(alias_file_bytes(&f).is_err(), "id {bad:?}");
+        let mut f = sample("p", "/k", "/c");
+        f.comment = bad;
+        assert!(alias_file_bytes(&f).is_err(), "comment {bad:?}");
+        let mut f = sample("p", "/k", "/c");
+        f.alias = bad;
+        assert!(alias_file_bytes(&f).is_err(), "alias {bad:?}");
+        let mut f = sample("p", "/k", "/c");
+        f.user = bad;
+        assert!(alias_file_bytes(&f).is_err(), "user {bad:?}");
+    }
+}
+
+#[test]
+fn alias_file_accepts_a_comment_without_a_line_break() {
+    let mut f = sample("p", "/k", "/c");
+    f.comment = "Any text, even; with % and \\.";
+    assert!(alias_file_bytes(&f).is_ok());
+}
+
+#[test]
+fn alias_file_doubles_each_percent_in_the_proxy_command_exactly_once() {
+    let f = sample("a%b", "/k", "/c");
+    let text = String::from_utf8(alias_file_bytes(&f).unwrap()).unwrap();
+    assert!(text.contains("  ProxyCommand a%%b\n"), "{text}");
+    assert!(!text.contains("%%%%"), "{text}");
+}
+
+#[test]
+fn default_proxy_command_is_raw_and_the_file_doubles_its_percent_once() {
+    for prog in ["C:\\a%b\\p.exe", "C:\\a%b\\p.cmd"] {
+        let raw = default_proxy_command(prog, "al", Some("C:\\Windows")).unwrap();
+        assert!(raw.contains(&format!("{prog}\"")), "{raw}");
+        assert!(!raw.contains("%%"), "returned raw, not escaped: {raw}");
+        let text = String::from_utf8(alias_file_bytes(&sample(&raw, "/k", "/c")).unwrap()).unwrap();
+        let doubled = prog.replace('%', "%%");
+        assert!(text.contains(&format!("{doubled}\"")), "{text}");
+        assert!(!text.contains("%%%%"), "{text}");
+    }
+}
+
+#[test]
 fn alias_error_message_names_no_path() {
     let e = alias_file_bytes(&sample("p", "C:\\Users\\someone\nx", "/c")).unwrap_err();
     assert!(!e.0.is_empty());
@@ -287,6 +346,33 @@ fn proxy_interpreter_form_refuses_missing_or_empty_system_root() {
 }
 
 #[test]
+fn proxy_system_root_drops_one_or_more_separators_at_its_end() {
+    // State.md, the `<system folder>` row: `C:\Windows\` gives `C:\Windows\System32`.
+    for root in [
+        "C:\\Windows\\",
+        "C:\\Windows/",
+        "C:\\Windows\\\\",
+        "C:\\Windows/\\",
+    ] {
+        assert_eq!(
+            default_proxy_command("C:\\a\\p.cmd", "al", Some(root)).unwrap(),
+            "C:\\Windows\\System32\\cmd.exe /d /c \"C:\\a\\p.cmd\" al",
+            "{root}"
+        );
+    }
+}
+
+#[test]
+fn proxy_system_root_of_only_separators_is_refused() {
+    for root in ["\\", "/", "\\\\"] {
+        assert!(
+            default_proxy_command("C:\\a\\p.bat", "al", Some(root)).is_err(),
+            "{root}"
+        );
+    }
+}
+
+#[test]
 fn proxy_system_root_written_out_never_as_variable() {
     let s = default_proxy_command("C:\\a\\p.cmd", "al", Some("D:\\Win")).unwrap();
     assert_eq!(s, "D:\\Win\\System32\\cmd.exe /d /c \"C:\\a\\p.cmd\" al");
@@ -320,6 +406,22 @@ fn owner_mark_normalizes_id_to_lowercase() {
     let up = ID.to_uppercase();
     let b = format!("# agentspace lease {up}; c\n");
     assert_eq!(owner_mark(b.as_bytes()).as_deref(), Some(ID));
+}
+
+#[test]
+fn owner_mark_reads_a_mixed_case_prefix_and_lowercases_the_id() {
+    // State.md, the owner mark: the prefix and the ID are compared without regard to case.
+    let up = ID.to_uppercase();
+    for prefix in [
+        "# Agentspace Lease ",
+        "# AGENTSPACE LEASE ",
+        "# agentspace LEASE ",
+    ] {
+        for id in [ID.to_string(), up.clone()] {
+            let b = format!("{prefix}{id}; c\n");
+            assert_eq!(owner_mark(b.as_bytes()).as_deref(), Some(ID), "{b:?}");
+        }
+    }
 }
 
 #[test]

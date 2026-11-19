@@ -64,9 +64,8 @@ pub fn lease_file_text(home_full: &str, id: &str, file: &str) -> String {
     let b = trimmed.as_bytes();
     let bare_drive = b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
     let joined = if bare_drive && !dropped.is_empty() {
-        // GAP: "C:\" stays "C:\", and "one `\` and the rest are appended" read literally would
-        // give "C:\\.agentspace". The conservative choice is a single separator, so the drive
-        // root keeps its own and no second one is added.
+        // A home that already ends in a separator gets no further one, so "C:\" gives
+        // "C:/.agentspace/..." (state.md, the `<key path>` row; architect, 2026-11-19).
         format!(
             "{trimmed}{}.agentspace\\leases\\{id}\\{file}",
             &dropped[..1]
@@ -105,8 +104,8 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
     if has_line_break(f.proxy_command) {
         return Err(err("the ProxyCommand holds a line break"));
     }
-    // GAP: state.md names only the paths and the ProxyCommand for the line-break rule. The other
-    // values sit on one line each as well, so a break in one of them is refused the same way.
+    // Every value on one line refuses a CR or LF, not only the paths and the ProxyCommand
+    // (state.md, The alias file; architect, 2026-11-19).
     if has_line_break(f.id)
         || has_line_break(f.comment)
         || has_line_break(f.alias)
@@ -144,8 +143,9 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
 
 /// The default ProxyCommand line, not yet escaped for the alias file (`alias_file_bytes` doubles
 /// each `%`). The program is in double quotes; when its extension is `.cmd` or `.bat`, in any ASCII
-/// case, `<SystemRoot>\System32\cmd.exe /d /c` comes first. An unset or empty `system_root` is
-/// refused when that form is needed, and no folder is guessed (gaps FA-06 and FB-20).
+/// case, `<SystemRoot>\System32\cmd.exe /d /c` comes first. A `\` or `/` at the end of
+/// `system_root` is dropped first. An unset or empty `system_root` is refused when that form is
+/// needed, and no folder is guessed (state.md, the `<system folder>` row; gaps FA-06 and FB-20).
 pub fn default_proxy_command(
     program_full_path: &str,
     alias: &str,
@@ -165,7 +165,8 @@ pub fn default_proxy_command(
     if !needs_interpreter {
         return Ok(format!("\"{program_full_path}\" {alias}"));
     }
-    match system_root {
+    // A root that is nothing but separators leaves no folder, so it is refused like an empty one.
+    match system_root.map(|r| r.trim_end_matches(['\\', '/'])) {
         Some(root) if !root.is_empty() => Ok(format!(
             "{root}\\System32\\cmd.exe /d /c \"{program_full_path}\" {alias}"
         )),
@@ -176,8 +177,9 @@ pub fn default_proxy_command(
 }
 
 /// The normalized (lowercase) lease ID of an alias file's owner mark: its first line, up to the
-/// first LF, `# agentspace lease <id>;`. The prefix is read without regard to ASCII case, as the
-/// prototype does, and the ID is the non-white-space run up to the last `;` in it.
+/// first LF, `# agentspace lease <id>;`. The prefix is read without regard to ASCII case, and the
+/// ID is the non-white-space run up to the last `;` in it, returned lowercased so it matches its
+/// lease (state.md, The alias file, the owner mark).
 pub fn owner_mark(bytes: &[u8]) -> Option<String> {
     const PREFIX: &[u8] = b"# agentspace lease ";
     let line = bytes.split(|&b| b == b'\n').next()?;

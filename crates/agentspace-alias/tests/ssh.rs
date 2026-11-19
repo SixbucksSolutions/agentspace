@@ -1,6 +1,8 @@
 //! OpenSSH reads a generated alias file (docs/state.md, "The alias file" and "The `Include` line").
 //! The scratch folder is under the temp folder, and HOME points into it, so ssh never reads the
-//! real `~/.ssh`.
+//! real `~/.ssh`. The scratch config sits in HOME's `.ssh` and holds the relative `Include` line, as
+//! OpenSSH resolves a relative `Include` against the user's own `~/.ssh` (state.md, The `Include`
+//! line).
 
 use agentspace_alias::*;
 use std::fs;
