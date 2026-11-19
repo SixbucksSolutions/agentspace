@@ -2,11 +2,10 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Draft, started by the architect at 8:22am Pacific on 2026-11-19, during v0.05-T03, at Terry's
-> word.** It is finalized after every v0.05 pull request is merged to `main` and every v0.05 card
-> is in Completed (Terry, 2026-11-19): every section marked **[at close]** is filled or checked
-> then, and this note is replaced by the time it was finalized. Until then it MAY trail the live
-> state by a turn, and AGENTS.md and the board win.
+> **Final, as of 2:05pm Pacific on 2026-11-19.** v0.05 is closed: all fifteen of its pull
+> requests are merged to `main`, and Terry moved #0054 and every v0.05 card to Completed. Started
+> as a draft at 8:22am the same day, during v0.05-T03, at Terry's word. Where it and AGENTS.md or
+> the board disagree, they win.
 
 **Written for the architect who starts v0.06, after Terry `/clear`s this one.** Read in this order:
 
@@ -36,17 +35,18 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 ## Where things stand
 
-**As of 8:22am Pacific, 2026-11-19. [at close]: refresh every line.**
+**As of 2:05pm Pacific, 2026-11-19.**
 
 | What | State |
 |---|---|
-| v0.05 (#0054), the lease CLI in Rust | In Progress. Fifteen stories in five turns (D38). T01 and T02 merged, and their eleven cards are in Completed (Terry, 2026-11-19). T03 running. T04 and T05 to go |
-| v0.05-T03 | Dev lead running on the laptop: #0105 (the EC2 driver) and #0106 (the five commands), against `crates/agentspace-driver-api` (68f8e7f, with `system_root` added at 502c99c) |
-| `main` | 2fa3f8a. One Cargo workspace, crates `agentspace-cli`, `-values`, `-state`, `-credential`, `-alias`, `-driver-api` and `xtask`. It builds `--locked` on Windows |
-| The box | Stopped. `m9g.xlarge` (4 vCPUs, 16 GiB), root volume 11 GiB (a 9.7G filesystem, 62% used after the grow). Rust 1.99.0 with clippy and rustfmt, and gcc, installed by hand in `ubuntu`'s home (D38's note) |
+| v0.05 (#0054), the lease CLI in Rust | Done. Fifteen stories in five turns (D38), all merged, and every card in Completed (Terry, 2026-11-19) |
+| v0.06 (#0055), the operator in Rust | Ready For Work. Not broken into stories: that waits for Terry's word (AGENTS.md, "The board") |
+| The lease CLI | The Rust build, installed in `%USERPROFILE%\.agentspace\bin` and on Terry's user `PATH` (ExpandString, with his yes), so `agentspace` runs it from cmd, PowerShell and Git Bash. The checkout's `bin\agentspace.cmd` still runs the prototype until v0.06 (README, "The lease CLI") |
+| `main` | One Cargo workspace, crates `agentspace-cli`, `-values`, `-state`, `-credential`, `-alias`, `-driver-api`, `-driver-ec2` and `xtask`. It builds `--locked` on Windows |
+| The box | Stopped at 1:56pm, after T05's live checks. `m9g.xlarge` (4 vCPUs, 16 GiB), root volume 11 GiB (a 9.7G filesystem). Rust 1.99.0 with clippy and rustfmt, and gcc, installed by hand in `ubuntu`'s home (D38's note) |
 | Leases | None ready |
-| The keeper | Running, idle, as pwsh 24588 |
-| Swimcoach | The reporter runs as pwsh 47056, reporting `v0.05` and `v0.05-T03` |
+| The keeper | Running, idle, as pwsh 24588. In T05 it held a Rust-made lease as it holds a prototype one |
+| Swimcoach | Nothing reported: `milestones.json` is empty, and the reporter is stopped |
 | The app's SSH connection | `agentspace-inception`, whose host Terry points at each new lease's alias. The saved presets are gone; start a box dev lead with `target: "ssh"`, `host: "agentspace-inception"`, `cwd: "/home/ubuntu/agentspace"` |
 
 ## Terry's orders from v0.05
@@ -135,8 +135,6 @@ before it reads it: the first GO of v0.05-T01 was read only after the dev lead h
 
 ## What v0.05 built
 
-**[at close]: complete the T03 to T05 rows.**
-
 | Turn | Story | Card | PR | What |
 |---|---|---|---|---|
 | T01 | E0.05-T01-S01 | #0094 | #53 | `agentspace-cli`: command line, help, errors, output |
@@ -150,10 +148,10 @@ before it reads it: the first GO of v0.05-T01 was read only after the dev lead h
 | T02 | E0.05-T02-S04 | #0102 | #55 | v0.05-T01's run record, partial ([runs/e0.05-t02-s04.md](runs/e0.05-t02-s04.md)) |
 | T02 | E0.05-T02-S05 | #0103 | #57 | `test-interop.ps1` and `AGENTSPACE_PEER_CMD` |
 | T02 | E0.05-T02-S06 | #0104 | #54 | `cargo xtask dist`: the build output folder, wrapper and forwarder |
-| T03 | E0.05-T03-S01 | #0105 | | The EC2 driver |
-| T03 | E0.05-T03-S02 | #0106 | | The five lease commands |
-| T04 | E0.05-T04-S01 | #0107 | | The whole conformance suite against the Rust build |
-| T05 | E0.05-T05-S01 | #0108 | | The install, and the cutover |
+| T03 | E0.05-T03-S01 | #0105 | #60 | `agentspace-driver-ec2`: the EC2 driver behind `agentspace-driver-api` |
+| T03 | E0.05-T03-S02 | #0106 | #61 | The five lease commands, with in-process tests against a throwaway home (AGENTS.md, "Terry's real files in a review") |
+| T04 | E0.05-T04-S01 | #0107 | #62 | The whole conformance suite against the Rust build: 786 passed, 0 failed, 0 skipped ([runs/e0.05-t04-s01.md](runs/e0.05-t04-s01.md)) |
+| T05 | E0.05-T05-S01 | #0108 | #63 | The install and the cutover: create, connect, keeper, renew and release through the real box, and interop with the prototype both ways ([runs/e0.05-t05-s01.md](runs/e0.05-t05-s01.md)) |
 
 ## Lessons from v0.05
 
@@ -181,13 +179,15 @@ before it reads it: the first GO of v0.05-T01 was read only after the dev lead h
 
 ## What is open
 
-**[at close]: recheck every row.**
+**Rechecked at close, 2:05pm Pacific, 2026-11-19.**
 
 | What | Where it goes |
 |---|---|
 | D33's measured compiling turn, still owed in full | Terry's call: v0.06's first turn on the box is the architect's proposal |
 | #0109, the sampler dies silently when its disk fills | Before v0.09's measurement (roadmap.md) |
-| #0029, #0041, #0083, the lease CLI's hardening | Shown met by #0107, then OBE on Terry's word |
+| #0029, #0041, #0083, the lease CLI's hardening | Proposed OBE with the evidence and caveats in a comment on each (runs/e0.05-t05-s01.md, "Proposal"); in Backlog until Terry's word |
+| #0110, conformance hardening: the checks the suite lacks, among them #0029 points 1 and 2 and #0083 point 1 | Rides with v0.06 (roadmap.md) |
+| The prototype's lease CLI (`bin\agentspace.cmd`, `scripts\lease-cli.ps1`) and the install's forwarder into the checkout | Removed by v0.06 (D38) |
 | The box's Rust toolchain and gcc, installed by hand | A project host that builds Rust (v0.07, #0047; D38's note) |
 | D40's moves to JSON: `local.parameters`, the instance-ID cache, the push stamp | v0.06, as specs changed before its stories |
 | The operator's and the keeper's minor clean-room gaps, and FB-23 | v0.06 (runs/e0.04-t06-s01.md) |
@@ -224,8 +224,9 @@ handoff's order no longer holds past v0.10:
 
 ## When Terry approves v0.05
 
-**[at close]: once every v0.05 pull request is merged and a board event shows #0054 and every v0.05
-card in Completed, the architect MUST, in order:**
+**Done, 2026-11-19, between 1:59pm and 2:05pm Pacific**, after a board event showed #0054 and
+#0108 in Completed. Kept as the model for the next release's close. Once every pull request is
+merged and the board shows the epic and every card in Completed, the architect MUST, in order:
 1. Remove the `v0.05` block from `scripts/milestones.json`, commit and push.
 2. `C:\Projects\swimcoach\bin\swimcoach.cmd stop --project agentspace --milestone v0.05`.
 3. Mark v0.05 done in roadmap.md's table, with what it produced.
