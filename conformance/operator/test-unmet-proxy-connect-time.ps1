@@ -22,12 +22,17 @@
 #
 # When the seam is met, it asserts what the caller's ssh would see (operator.md, "What a caller
 # sees"):
-#   success: exit 0, nothing on stdout, no backend text on stderr, no runtime error record.
+#   success: exit 0, nothing on stdout, no backend text on stderr (the stand-in's tunnel writes the
+#            marker to its own stderr, which MUST be withheld), the caller's line `The host is ready.`,
+#            no `Sending ...` line (the push's progress line), no runtime error record.
 #   failure: a non-zero exit with nothing on stdout; the last line on stderr starts "agentspace: ";
 #            no backend text on stderr (an instance or volume ID, a region name, a machine type, a
 #            cloud state name, the words EC2, AWS, SSM, Session Manager, CloudFormation, the stack's
 #            name, or the stand-in's error text), except #0034's sign-in message, exactly as
-#            operator.md gives it (operator.md Q29); no runtime error record. With
+#            operator.md gives it (operator.md Q29); the last line is "agentspace: Could not reach the
+#            host. Set AGENTSPACE_DIAGNOSTIC=1 and connect again to see why." (every call of the
+#            stand-in fails, which is "any other failure"); no `Sending ...` line; no runtime error
+#            record. With
 #            AGENTSPACE_DIAGNOSTIC set, the exit code and stdout are the same.
 # It never reports the offending text, only which rule it broke, because the text may carry an ID.
 #
@@ -51,6 +56,7 @@ $seamSection = 'operator.md#the-test-seam'
 $fakeId = 'i-' + ('0' * 17)
 $marker = 'standin-backend-detail'
 $signIn = "agentspace: AWS sign-in has expired. Run 'aws login' in a fresh Incognito window, then retry."
+$couldNotReach = 'agentspace: Could not reach the host. Set AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.'
 
 $backend = [ordered]@{
   'an instance or volume ID' = '\b(i|vol)-[0-9a-f]{8,17}\b'
@@ -99,8 +105,11 @@ try {
     Set-Content -LiteralPath $awsOk -Encoding ascii -Value @(
       '@echo off',
       'echo %~1 %~2 >>"%~dp0aws-ok-calls.log"',
-      'if /i "%~1"=="ssm" if /i "%~2"=="start-session" exit /b 0',
+      'if /i "%~1"=="ssm" if /i "%~2"=="start-session" goto tunnel',
       'if /i "%~1"=="ec2" if /i "%~2"=="describe-instances" goto describe',
+      'exit /b 0',
+      ':tunnel',
+      "echo $marker tunnel text 1>&2",
       'exit /b 0',
       ':describe',
       'echo {"Reservations":[{"Instances":[{"State":{"Name":"running"},"LaunchTime":"2020-01-01T00:00:00+00:00"}]}]}',
@@ -149,7 +158,11 @@ try {
         if ($r.ExitCode -eq 0 -and $r.Stdout.Length -eq 0) { Write-ConformanceResult -Name $name -Status PASS }
         else { Write-ConformanceResult -Name $name -Status FAIL -Reason "Exit code $($r.ExitCode), $($r.Stdout.Length) bytes on stdout" }
 
-        $name = "${section}: a successful connect names no backend on stderr"
+        $name = "${section}: a successful connect prints the caller's line ""The host is ready."" and no ""Sending"" line"
+        if (($lines | Where-Object { $_.Trim() -ceq 'The host is ready.' }) -and -not ($lines | Where-Object { $_ -match '^\s*(agentspace: )?Sending\b' })) { Write-ConformanceResult -Name $name -Status PASS }
+        else { Write-ConformanceResult -Name $name -Status FAIL -Reason 'Stderr lacks the line "The host is ready.", or holds a "Sending ..." line' }
+
+        $name = "${section}: a successful connect names no backend on stderr, the tunnel's stderr withheld"
         $hits = @(Get-BackendHits -Lines $lines)
         if ($hits.Count -eq 0) { Write-ConformanceResult -Name $name -Status PASS }
         else { Write-ConformanceResult -Name $name -Status FAIL -Reason ('Stderr holds ' + ($hits -join ', ')) }
@@ -161,6 +174,10 @@ try {
         $name = "${section}: a failed connect ends with agentspace's own message"
         if ($lines.Count -gt 0 -and $lines[-1].StartsWith('agentspace: ')) { Write-ConformanceResult -Name $name -Status PASS }
         else { Write-ConformanceResult -Name $name -Status FAIL -Reason 'The last line on stderr does not start with "agentspace: "' }
+
+        $name = "${section}: a failed connect ends with the ""Could not reach the host"" message, and prints no ""Sending"" line"
+        if ($lines.Count -gt 0 -and $lines[-1].Trim() -ceq $couldNotReach -and -not ($lines | Where-Object { $_ -match '^\s*(agentspace: )?Sending\b' })) { Write-ConformanceResult -Name $name -Status PASS }
+        else { Write-ConformanceResult -Name $name -Status FAIL -Reason 'The last line on stderr is not the "Could not reach the host" message, or stderr holds a "Sending ..." line' }
 
         $name = "${section}: a failed connect names no backend on stderr"
         $hits = @(Get-BackendHits -Lines $lines -AllowSignIn)

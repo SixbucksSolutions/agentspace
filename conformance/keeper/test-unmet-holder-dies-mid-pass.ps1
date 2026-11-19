@@ -40,7 +40,8 @@
 #    while it holds the lock, and the log says whether the keeper's next pass came after it.
 #
 # What it checks, in both: the pass that does not find the tracked holder trusted logs no "started"
-# line (keeper.md, Q6: the check does not depend on the action word it logs instead); the next line is
+# line, and logs "lost lease=<id> alias=<alias> pid=<pid>" for the tracked holder (keeper.md, Q6,
+# closed; D35); the next line is
 # the keeper's wait, "grace seconds=<n>" with n about the grace (15); and the next "started" line
 # comes at least the grace after the check let the pass go.
 #
@@ -157,10 +158,11 @@ function Test-WindowMissed($After) {
 
 # The checks of a pass that did not find the tracked holder trusted. $After is the log after the point
 # the case marked, and $Released is when the case let the pass go.
-function Test-GraceFollows($Process, [int]$Index, $After, [DateTime]$Released) {
+function Test-GraceFollows($Process, [int]$Index, $After, [DateTime]$Released, [int]$TrackedPid) {
   $x = $After[0]
   $x2 = if ($After.Count -ge 2) { $After[1] } else { '' }
   Add-Check ($x -cnotmatch ' started ') 'The pass that does not find the tracked holder trusted starts no holder' "That pass logged '$x', which starts one at once."
+  Add-Check ($TrackedPid -gt 0 -and (Test-LogLine $x 'lost' (Get-TestId 'a') (Get-TestAlias 'a') $TrackedPid)) 'That pass logs "lost" for the tracked holder, with its lease, alias and PID' "That pass logged '$x', and the tracked holder's PID is $TrackedPid."
   $m = [regex]::Match($x2, ' grace seconds=(\d+)\z')
   Add-Check ($m.Success -and [int]$m.Groups[1].Value -ge ($grace - 2) -and [int]$m.Groups[1].Value -le $grace) "The wait after that pass is the release grace, ""grace seconds=$grace"" less rounding" "The line after it is '$x2'."
   $startedAgain = Wait-Until { @(Get-LinesAfter (Read-LogLines) $Index | Where-Object { $_ -cmatch ' started ' }).Count -ge 1 } ($grace + 60) $Process
@@ -184,8 +186,7 @@ try {
       try {
         $started = Wait-Until { @(Get-ActionTimes (Read-LogLines) 'started').Count -ge 1 } 60 $p
         if (-not $started) { Add-Check $false 'The keeper starts a holder for the ready lease' "No started line appeared, because the keeper ended or 60 seconds passed. The log ends: $((Read-LogLines | Select-Object -Last 3) -join ' | ')"; $concluded = $true; continue }
-        # The record is read only once the check holds the lock, which is after the pass has let it go:
-        # a keeper MAY log "started" before it writes the record (keeper.md, Q5).
+        # The record is read only once the check holds the lock, which is after the pass has let it go.
         $held = Lock-PassLock $p
         if (-not $held) { $missed = 'The check could not take board-holder.lock.'; continue }
         $rec = Read-Record
@@ -208,7 +209,7 @@ try {
         $after = Get-Outcome $p $index
         if (Test-WindowMissed $after) { $missed = "The pass was not the one that waited for the lock: the first line after the skipped one is '$(if ($after.Count) { $after[0] } else { 'nothing' })'."; continue }
         $concluded = $true
-        Test-GraceFollows $p $index $after $released
+        Test-GraceFollows $p $index $after $released $(if ($rec) { [int]$rec['pid'] } else { -1 })
       } finally {
         if ($held) { $held.Dispose() }
         if (-not $concluded -and $attempt -lt $attemptsAllowed) { Write-Missed $attempt $missed }
@@ -244,7 +245,7 @@ try {
         if (Test-WindowMissed $after) { $missed = "A pass ran before the record was removed: the first line after the started one is '$(if ($after.Count) { $after[0] } else { 'nothing' })'."; continue }
         $concluded = $true
         Add-Check ($holderPid -gt 0 -and (Test-Alive $holderPid)) 'The tracked holder was still running when the pass did not find it trusted' 'The holder had ended.'
-        Test-GraceFollows $p $index $after $released
+        Test-GraceFollows $p $index $after $released $holderPid
       } finally {
         if ($held) { $held.Dispose() }
         if (-not $concluded -and $attempt -lt $attemptsAllowed) { Write-Missed $attempt $missed }

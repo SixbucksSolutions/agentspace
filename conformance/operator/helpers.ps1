@@ -6,8 +6,9 @@
 # every default comes from conformance/prototype/defaults.ps1 and every child gets the harness's
 # isolation set. This file loads no prototype code, and no check names a shim path.
 #
-# Three things the harness does not cover are here: the AWS gate, a runner for a value that cmd.exe
-# needs quoted, and the code points a value arrives with.
+# What the harness does not cover is here: the AWS gate, the stand-ins for the programs outside
+# agentspace (aws, ssh, scp), a runner for a value that cmd.exe needs quoted, and the code points a
+# value arrives with.
 
 . (Join-Path $PSScriptRoot '..\lease-cli\harness.ps1')
 
@@ -25,21 +26,63 @@ function Get-OperatorAwsPrograms {
 
 # The gate every check that can reach `aws` MUST pass first (docs/conformance.md, "The harness").
 # Under the harness's environment for the home, `aws sts get-caller-identity` MUST fail for every
-# AWS CLI the operator can run. Returns Unreachable (true only then) and a Reason. A missing CLI is
-# reported as not confirmed, never as refused, so the check is SKIPPED.
+# AWS CLI the operator can run. Returns Unreachable, a Reason and NoCli.
+#   - When an AWS CLI exists, Unreachable is true only if every one fails the call. A call that
+#     succeeds, times out or cannot be run gives false, so the check is SKIPPED.
+#   - When NO AWS CLI exists on the machine there is nothing to call, and Unreachable is true (B-50).
+#     The harness removes every AWS credential and points the configuration at files that do not
+#     exist, and each check also sets AGENTSPACE_AWS_CMD to a stand-in that fails (New-OperatorStandIn),
+#     so a build that meets the seam never reaches a real CLI either. A machine with no AWS CLI is
+#     therefore a valid place to run every operator check, and no check needs a real one.
 function Test-AwsUnreachable {
   param([Parameter(Mandatory)]$ConformanceHome, [string[]]$Program = (Get-OperatorAwsPrograms))
   if (-not $Program -or $Program.Count -eq 0) {
-    return [pscustomobject]@{ Unreachable = $false; Reason = 'The AWS CLI was not found, so the check cannot confirm that no sign-in is reachable' }
+    return [pscustomobject]@{ Unreachable = $true; Reason = ''; NoCli = $true }
   }
   $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $ConformanceHome
   foreach ($p in $Program) {
     $r = Start-ConformanceProcess -FilePath $p -Arguments @('sts', 'get-caller-identity', '--region', 'us-west-2', '--output', 'json') -ChildEnvironment $childEnv -TimeoutSeconds 60
     if ($r.TimedOut -or $r.ExitCode -le 0) {
-      return [pscustomobject]@{ Unreachable = $false; Reason = 'aws sts get-caller-identity succeeded, timed out or could not be run under the isolated environment, so nothing was run' }
+      return [pscustomobject]@{ Unreachable = $false; Reason = 'aws sts get-caller-identity succeeded, timed out or could not be run under the isolated environment, so nothing was run'; NoCli = $false }
     }
   }
-  return [pscustomobject]@{ Unreachable = $true; Reason = '' }
+  return [pscustomobject]@{ Unreachable = $true; Reason = ''; NoCli = $false }
+}
+
+# Writes a stand-in .cmd for a program outside agentspace (aws, ssh or scp) into <home root>\standins
+# and returns its path. It logs each call (its first two arguments) to <name>-calls.log beside it,
+# and then runs $Body, the .cmd lines after the log line. With no $Body it is a tripwire for the AWS
+# CLI: it fails at once, as the CLI does with no sign-in, so a build that starts it reaches nothing.
+function New-OperatorStandIn {
+  param(
+    [Parameter(Mandatory)]$ConformanceHome,
+    [Parameter(Mandatory)][string]$Name,
+    [string[]]$Body = @('echo Unable to locate credentials. You can configure credentials by running "aws login". 1>&2', 'exit /b 255')
+  )
+  $dir = Join-Path $ConformanceHome.Root 'standins'
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $dir) | Out-Null
+  $path = Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Join-Path $dir "$Name.cmd")
+  Set-Content -LiteralPath $path -Encoding ascii -Value (@('@echo off', "echo %~1 %~2 >>`"%~dp0$Name-calls.log`"") + $Body)
+  return $path
+}
+
+# The environment that points the operator's three programs at tripwires, for a check that must not
+# reach AWS, ssh or scp whichever way the build under test was made. A build that does not meet the
+# seam ignores it, and the AWS gate and the harness's isolation then cover it.
+function Get-OperatorTripwireEnvironment {
+  param([Parameter(Mandatory)]$ConformanceHome)
+  @{
+    AGENTSPACE_AWS_CMD = New-OperatorStandIn -ConformanceHome $ConformanceHome -Name 'aws-tripwire'
+    AGENTSPACE_SSH_CMD = New-OperatorStandIn -ConformanceHome $ConformanceHome -Name 'ssh-tripwire' -Body @('exit /b 255')
+    AGENTSPACE_SCP_CMD = New-OperatorStandIn -ConformanceHome $ConformanceHome -Name 'scp-tripwire' -Body @('exit /b 255')
+  }
+}
+
+# The number of calls a stand-in logged, or 0 when it never ran.
+function Get-StandInCallCount {
+  param([Parameter(Mandatory)][string]$Log)
+  if (-not (Test-Path -LiteralPath $Log -PathType Leaf)) { return 0 }
+  return @(Get-Content -LiteralPath $Log | Where-Object { $_.Trim() -ne '' }).Count
 }
 
 # Reports one refusal: the exit code, an empty stdout, the expected text on stderr and no runtime
@@ -48,7 +91,8 @@ function Write-RefusalResult {
   param(
     [Parameter(Mandatory)]$Result,
     [Parameter(Mandatory)][int]$ExpectCode,
-    [Parameter(Mandatory)][string]$ExpectText,
+    [string]$ExpectText = '',
+    [string]$ExpectPattern = '',
     [Parameter(Mandatory)][string]$Name
   )
   $problems = [System.Collections.Generic.List[string]]::new()
@@ -56,7 +100,10 @@ function Write-RefusalResult {
   elseif ($Result.ExitCode -ne $ExpectCode) { $problems.Add("exit $($Result.ExitCode), expected $ExpectCode") }
   $outLength = $Result.Stdout.Trim().Length
   if ($outLength -gt 0) { $problems.Add("stdout had $outLength characters, expected none") }
-  if (-not $Result.Stderr.Contains($ExpectText)) { $problems.Add("stderr lacks '$ExpectText'") }
+  # A pattern, when given, is a regular expression matched case-sensitively, line by line, against stderr.
+  if ($ExpectPattern) {
+    if ($Result.Stderr -cnotmatch ('(?m)' + $ExpectPattern)) { $problems.Add("stderr lacks a line matching '$ExpectPattern'") }
+  } elseif (-not $Result.Stderr.Contains($ExpectText)) { $problems.Add("stderr lacks '$ExpectText'") }
   if ($Result.Stderr -match 'CategoryInfo|At line:|Exception') { $problems.Add('stderr shows a runtime error record') }
   if ($problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
   else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($problems -join '; ') }

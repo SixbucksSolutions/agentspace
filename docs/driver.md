@@ -354,9 +354,9 @@ third point). The check MUST NOT change anything on the caller's machine.
 | `pending` | Would record the lease `pending` with the driver's name, and print it. How the lease then leaves `pending` is not in the boundary ([Q3](#open-questions)) |
 | A failure | Records nothing, and ends the command with `internal`, exit 1 |
 
-**A failed place MUST leave nothing behind.** It MUST leave no key, certificate, alias or lease
-folder, and MUST NOT disturb anything that was there before it ran
-([lease-api.md](lease-api.md#concurrency-and-atomicity), #0029). A driver that fails after issuing
+**A failed place MUST remove every file and folder it made, and MUST NOT disturb anything that
+was there before it ran. When a removal fails, what it MUST do is
+[lease-api.md](lease-api.md#concurrency-and-atomicity)'s** (#0029). A driver that fails after issuing
 the credential MUST remove it before it fails, and MUST remove only what it made itself. The table
 says what today's driver leaves, which is nothing except in the alias row.
 
@@ -817,15 +817,12 @@ none blocks building a drop-in of contract v0.
    **Q7: Is the alias's host-key check the driver's?** Today's alias names the box's known-hosts
    entry and demands a match, which is true only of the one box (D9). A second host needs its own
    rule, and no decision says who supplies it.
-8. **Later, not blocking:** this page requires the first failure to be the one reported, and
-   [lease-api.md](lease-api.md#concurrency-and-atomicity) what a failed command MUST leave, so what is left open is whether the message also
-   says that files stayed, which is wording that no caller parses.
-   **Q8: What happens when cleanup fails?** In two cases the prototype lets a cleanup's error
-   replace the failure that began it, and the error is raw: a failed credential step whose folder
-   removal then fails, and a failed alias step whose direct folder removal fails. After a `create`
-   that fails in recording, the CLI releases the lease and ignores a failed release. This page
-   requires the first failure to be the one reported, but not what is done about files that could
-   not be removed, or whether the caller is told that some stayed.
+8. **Q8: Closed for a failed `create` by [lease-api.md](lease-api.md#concurrency-and-atomicity)
+   (E0.04-T05-S05, 2026-11-18): what happens when cleanup fails.** What a failed `create` MUST do
+   when a removal fails, and what its message MUST name, is lease-api.md's. The prototype
+   lets a cleanup's error replace the failure that began it in two cases, and the error is raw: a
+   failed credential step whose folder removal then fails, and a failed alias step whose direct
+   folder removal fails. This page requires the first failure to be the one reported.
 9. **Q9: Closed for contract v0 by [lease-api.md](lease-api.md#exit-codes-and-errors)
    (E0.04-T04-S01, 2026-11-18): where the cause of a failure goes.** Nowhere: the CLI MAY drop it,
    as the prototype does, and MUST NOT put it in any output, or in any file
