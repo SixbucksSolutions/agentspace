@@ -155,6 +155,19 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
 - **The first step**, the same day during v0.05-T01: 8 to 11 GiB at 2:41am Pacific, which left
   the filesystem at 9.7G, 5.9G used (62%). It had filled at 6.8G with five crates' builds (D38).
 
+## Watching a measurement
+
+**A running `agentspace-sample` MUST be watched for liveness by whoever started it, from its start
+to its `stop`** (found in v0.05-T01, 2026-11-19; Terry's global rule: silence is not success). In
+v0.05-T01 the turn's builds filled the box's root disk at 2:33am, the sampler's next write failed
+and it died, and nothing said so until `stop` at 2:58am: the record covers 7 minutes of a
+32-minute turn (#0109).
+- **Arm a Monitor on it**, under the Monitor tool, that runs `agentspace-sample status` over the
+  lease about once a minute and prints a line only when the samples stop rising or the sampler is
+  not running.
+- **Watch the box's root disk in the same Monitor**, and grow it under the standing order above
+  before it fills, since the record is on that disk until #0109 moves it.
+
 ## Memory: git is a superset of it
 
 **Terry, 2026-11-16, standing order: every fact an agent keeps in its private memory MUST also be
