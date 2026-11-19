@@ -203,6 +203,11 @@ fn renew_with_an_unusable_ca_fails_with_the_not_usable_message_and_changes_nothi
 fn a_renew_that_fails_at_signing_leaves_the_old_certificate_and_no_renew_file() {
     // ARCHITECT-QUESTION: As in disk_issue.rs, an empty principal is the input chosen to fail at
     // signing, since the spec names no other. Read: state.md, Renewal, steps 3 and 8.
+    //
+    // This test depends on `renew` checking the user at signing (step 3), after the renewal's
+    // copy of the public key is made: the unit test `a_renewal_that_fails_at_signing_changes_nothing`
+    // (src/lease/tests.rs) uses a user with a line break the same way. If the user were checked
+    // earlier, this test would still pass.
     let h = issued_home();
     let dir = h.lease_dir(ID);
     let before = folder_state(&dir);

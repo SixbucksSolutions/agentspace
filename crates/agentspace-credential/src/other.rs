@@ -9,19 +9,9 @@
 //!   private file is made. So `check_ca`, `issue` and `renew` refuse on such a platform, which is
 //!   the safe answer until a later release builds the Unix rules.
 
-use std::fs::File;
+use std::fs::{self, File};
+use std::io;
 use std::path::Path;
-
-/// Why `create_private_file` failed. The second variant is the Windows build's; it is kept so that
-/// the portable code compiles against the same type.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreateError {
-    /// No file of this call's making exists at the path.
-    NotCreated,
-    /// The file was made, and could not be removed again.
-    CreatedButFailed,
-}
 
 /// Not the contract's: nothing is owner-only on this platform.
 pub fn owner_only(_path: &Path) -> bool {
@@ -34,6 +24,16 @@ pub fn verify_private_key(_path: &Path) -> bool {
 }
 
 /// Not the contract's: no private file is made on this platform.
-pub fn create_private_file(_path: &Path) -> Result<File, CreateError> {
-    Err(CreateError::NotCreated)
+pub fn create_private_file(_path: &Path) -> Option<File> {
+    None
+}
+
+/// Whether `meta` (from `symlink_metadata`) is a link, which MUST NOT be entered or followed.
+pub fn is_link(meta: &fs::Metadata) -> bool {
+    meta.file_type().is_symlink()
+}
+
+/// Removes a link itself and nothing it points to.
+pub fn remove_link(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
 }

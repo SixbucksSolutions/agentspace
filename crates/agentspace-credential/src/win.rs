@@ -10,24 +10,34 @@
 //! - **A function here MUST NOT write to stdout or stderr, and MUST NOT panic on bad input.**
 
 use std::ffi::c_void;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
+use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::MetadataExt;
+use std::os::windows::io::FromRawHandle;
 use std::path::Path;
-use std::ptr::{null, null_mut};
+use std::ptr::null_mut;
 
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_SUCCESS, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-    ConvertStringSidToSidW, GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
-    SetNamedSecurityInfoW,
+    GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
 };
 use windows_sys::Win32::Security::{
     ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION, GetAce,
-    GetAclInformation, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-    GetTokenInformation, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    GetAclInformation, GetSecurityDescriptorControl, GetTokenInformation,
+    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+    TOKEN_USER, TokenUser,
 };
+use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+/// `FILE_ATTRIBUTE_DIRECTORY`.
+const ATTRIBUTE_DIRECTORY: u32 = 0x10;
+/// `FILE_ATTRIBUTE_REPARSE_POINT`: a symbolic link, a junction or another reparse point.
+const ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
 /// `SE_DACL_PROTECTED` in a security descriptor's control word.
 const SE_DACL_PROTECTED: u16 = 0x1000;
@@ -299,10 +309,19 @@ pub fn verify_private_key(path: &Path) -> bool {
         && mine & wanted == wanted
 }
 
-/// Sets a file's or a folder's DACL from SDDL entries, protected from inheritance, and its owner
-/// to `owner` when one is given.
-fn set_rules(path: &Path, owner: Option<&str>, sddl: &str) -> bool {
-    let sddl = wide_str(sddl);
+/// Makes a new, empty file at `path` that has the lease key's rules from the moment it exists:
+/// owner the user, a protected DACL, and three allow entries, `SYSTEM` and `Administrators` with
+/// full control and the user with full control. The descriptor goes in with the create call
+/// (`CreateFileW`, `CREATE_NEW`), so the file never exists with rules it inherited, and the
+/// caller writes the key's bytes through the returned handle. The handle is opened with no sharing,
+/// and it never replaces an existing file.
+///
+/// It returns `None` when no file was made; a file is never left behind by a failure here.
+pub fn create_private_file(path: &Path) -> Option<File> {
+    let user = user_sid()?;
+    let sddl = wide_str(&format!(
+        "O:{user}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{user})"
+    ));
     let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
     // SAFETY: `sddl` is NUL-ended, and `descriptor` receives a LocalAlloc'd descriptor.
     let ok = unsafe {
@@ -314,101 +333,165 @@ fn set_rules(path: &Path, owner: Option<&str>, sddl: &str) -> bool {
         )
     };
     if ok == 0 {
-        return false;
+        return None;
     }
     let _descriptor = LocalMem(descriptor);
 
-    let mut present: i32 = 0;
-    let mut defaulted: i32 = 0;
-    let mut dacl: *mut ACL = null_mut();
-    // SAFETY: `descriptor` is the valid descriptor just made.
-    let ok =
-        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) };
-    if ok == 0 || present == 0 || dacl.is_null() {
-        return false;
-    }
-
-    let mut owner_sid: PSID = null_mut();
-    let mut _owner_guard = LocalMem(null_mut());
-    let mut info = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
-    if let Some(owner) = owner {
-        let text = wide_str(owner);
-        // SAFETY: `text` is NUL-ended, and `owner_sid` receives a LocalAlloc'd SID.
-        if unsafe { ConvertStringSidToSidW(text.as_ptr(), &mut owner_sid) } == 0 {
-            return false;
-        }
-        _owner_guard = LocalMem(owner_sid);
-        info |= OWNER_SECURITY_INFORMATION;
-    }
-
-    let mut name = wide_path(path);
-    // SAFETY: `name` is NUL-ended; the owner is null or valid, and the DACL is valid.
-    let status = unsafe {
-        SetNamedSecurityInfoW(
-            name.as_mut_ptr(),
-            SE_FILE_OBJECT,
-            info,
-            owner_sid,
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor,
+        bInheritHandle: 0,
+    };
+    let name = wide_path(path);
+    // SAFETY: `name` is NUL-ended, and `attributes` and the descriptor it points to outlive the
+    // call.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_WRITE,
+            0,
+            &attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
             null_mut(),
-            dacl,
-            null(),
         )
     };
-    status == ERROR_SUCCESS
-}
-
-/// Why `create_private_file` failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreateError {
-    /// No file of this call's making exists at the path.
-    NotCreated,
-    /// The file was made, and could not be removed again after its rules failed to be set.
-    CreatedButFailed,
-}
-
-/// Makes a new, empty file at `path` and gives it the lease key's rules before it returns: owner
-/// the user, a protected DACL, and three allow entries, `SYSTEM` and `Administrators` with full
-/// control and the user with full control. The caller writes the key's bytes through the returned
-/// handle, so they never exist in a file with other rules. It never replaces an existing file.
-pub fn create_private_file(path: &Path) -> Result<File, CreateError> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|_| CreateError::NotCreated)?;
-    let done = user_sid().is_some_and(|user| {
-        let sddl = format!("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{user})");
-        set_rules(path, Some(&user), &sddl)
-    });
-    if done {
-        return Ok(file);
+    if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+        return None;
     }
-    drop(file);
-    match fs::remove_file(path) {
-        Ok(()) => Err(CreateError::NotCreated),
-        Err(_) => Err(CreateError::CreatedButFailed),
+    // SAFETY: `handle` is a valid, open file handle that nothing else owns.
+    Some(unsafe { File::from_raw_handle(handle) })
+}
+
+/// Whether `meta` (from `symlink_metadata`, which does not follow a link) is a link: a symbolic
+/// link, a junction or any other reparse point. A reparse point MUST NOT be entered or followed.
+pub fn is_link(meta: &fs::Metadata) -> bool {
+    meta.file_attributes() & ATTRIBUTE_REPARSE_POINT != 0
+}
+
+/// Removes a link itself and nothing it points to: a directory link or a junction with
+/// `remove_dir`, any other link with `remove_file`.
+pub fn remove_link(path: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.file_attributes() & ATTRIBUTE_DIRECTORY != 0 {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
     }
 }
 
-/// Makes `path` owner-only, as the CA's folder (inheritable by what is in it) or the CA's key
-/// (a single explicit entry). A test helper: the program never sets the CA's rules (D17).
 #[cfg(test)]
-pub fn make_owner_only(path: &Path, folder: bool) -> bool {
-    let Some(user) = user_sid() else {
-        return false;
+pub use testing::{
+    make_owner_only, protected_and_entries, set_owner_and_rules, set_sddl_rules, user_sid_for_tests,
+};
+
+/// Helpers that only the tests use, because the program never sets rules except through
+/// `create_private_file` (D17).
+#[cfg(test)]
+mod testing {
+    use std::path::Path;
+    use std::ptr::{null, null_mut};
+
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
+        SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
     };
-    let flags = if folder { "OICI" } else { "" };
-    set_rules(path, Some(&user), &format!("D:P(A;{flags};FA;;;{user})"))
-}
+    use windows_sys::Win32::Security::{
+        ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    };
 
-/// Replaces a file's or folder's DACL with an arbitrary SDDL list, protected. A test helper.
-#[cfg(test)]
-pub fn set_sddl_rules(path: &Path, sddl: &str) -> bool {
-    set_rules(path, None, sddl)
-}
+    use super::{LocalMem, read_rules, user_sid, wide_path, wide_str};
 
-/// The user SID, for tests that build an SDDL list.
-#[cfg(test)]
-pub fn user_sid_for_tests() -> Option<String> {
-    user_sid()
+    /// Sets a file's or a folder's DACL from SDDL entries, protected from inheritance, and its
+    /// owner to `owner` when one is given.
+    fn set_rules(path: &Path, owner: Option<&str>, sddl: &str) -> bool {
+        let sddl = wide_str(sddl);
+        let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: `sddl` is NUL-ended, and `descriptor` receives a LocalAlloc'd descriptor.
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                null_mut(),
+            )
+        };
+        if ok == 0 {
+            return false;
+        }
+        let _descriptor = LocalMem(descriptor);
+
+        let mut present: i32 = 0;
+        let mut defaulted: i32 = 0;
+        let mut dacl: *mut ACL = null_mut();
+        // SAFETY: `descriptor` is the valid descriptor just made.
+        let ok = unsafe {
+            GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)
+        };
+        if ok == 0 || present == 0 || dacl.is_null() {
+            return false;
+        }
+
+        let mut owner_sid: PSID = null_mut();
+        let mut _owner_guard = LocalMem(null_mut());
+        let mut info = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+        if let Some(owner) = owner {
+            let text = wide_str(owner);
+            // SAFETY: `text` is NUL-ended, and `owner_sid` receives a LocalAlloc'd SID.
+            if unsafe { ConvertStringSidToSidW(text.as_ptr(), &mut owner_sid) } == 0 {
+                return false;
+            }
+            _owner_guard = LocalMem(owner_sid);
+            info |= OWNER_SECURITY_INFORMATION;
+        }
+
+        let mut name = wide_path(path);
+        // SAFETY: `name` is NUL-ended; the owner is null or valid, and the DACL is valid.
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                name.as_mut_ptr(),
+                SE_FILE_OBJECT,
+                info,
+                owner_sid,
+                null_mut(),
+                dacl,
+                null(),
+            )
+        };
+        status == ERROR_SUCCESS
+    }
+
+    /// Makes `path` owner-only, as the CA's folder (inheritable by what is in it) or the CA's key
+    /// (a single explicit entry).
+    pub fn make_owner_only(path: &Path, folder: bool) -> bool {
+        let Some(user) = user_sid() else {
+            return false;
+        };
+        let flags = if folder { "OICI" } else { "" };
+        set_rules(path, Some(&user), &format!("D:P(A;{flags};FA;;;{user})"))
+    }
+
+    /// Replaces a file's or folder's DACL with an arbitrary SDDL list, protected.
+    pub fn set_sddl_rules(path: &Path, sddl: &str) -> bool {
+        set_rules(path, None, sddl)
+    }
+
+    /// Like `set_sddl_rules`, and sets the owner to the SID `owner` as well. It fails when the
+    /// process may not give that owner.
+    pub fn set_owner_and_rules(path: &Path, owner: &str, sddl: &str) -> bool {
+        set_rules(path, Some(owner), sddl)
+    }
+
+    /// Whether the DACL is protected, and how many entries it holds.
+    pub fn protected_and_entries(path: &Path) -> Option<(bool, usize)> {
+        let rules = read_rules(path)?;
+        Some((rules.protected, rules.aces.map_or(0, |aces| aces.len())))
+    }
+
+    /// The user SID, for tests that build an SDDL list.
+    pub fn user_sid_for_tests() -> Option<String> {
+        user_sid()
+    }
 }

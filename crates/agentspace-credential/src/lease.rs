@@ -7,7 +7,10 @@
 //!   caller reads `home` from `USERPROFILE` (state.md, "The home folder").
 //! - **A message MUST be in agentspace's own words:** no path, no user name, and no other program's
 //!   or library's error text. A file or a folder that could not be removed is named only in its
-//!   home-relative form, `~/.agentspace/leases/<id>/id_ed25519`, and only in `leftovers`.
+//!   home-relative form, `~/.agentspace/leases/<id>/id_ed25519`, in `leftovers` and, for a failed
+//!   `remove_lease_folder`, in its message too (the architect's ruling of 2026-11-19).
+//! - **No link is followed when a lease folder is deleted.** A junction or a symbolic link, at the
+//!   folder or inside it, is removed as the link it is, and what it points to is not touched.
 //! - **The CA is only read.** Nothing here creates, repairs, loosens or replaces it (D17).
 //! - **A function here MUST NOT write to stdout or stderr, and MUST NOT panic on bad input.**
 //! - **The caller holds the lease state lock** (state.md, "The lease state lock") around `issue`,
@@ -20,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ssh_key::rand_core::{OsRng, RngCore};
 
-use crate::platform::{self, CreateError};
+use crate::platform;
 use crate::{check_ca_keys, check_unencrypted, new_lease_key, sign_certificate};
 
 /// The private key's file name.
@@ -178,6 +181,15 @@ fn file_gone(path: &Path) -> bool {
     }
 }
 
+/// Removes a link (a junction, a symbolic link) and not what it points to, and says whether it is
+/// gone.
+fn link_gone(path: &Path) -> bool {
+    match platform::remove_link(path) {
+        Ok(()) => true,
+        Err(e) => e.kind() == ErrorKind::NotFound,
+    }
+}
+
 /// Removes an empty folder, and says whether it is gone.
 fn folder_gone(path: &Path) -> bool {
     match fs::remove_dir(path) {
@@ -212,7 +224,18 @@ const ISSUE_FAILED_LEFT: &str = "The lease's credential could not be issued, and
 const KEY_EXISTS: &str =
     "The lease already has a key, so a new credential cannot be issued. Nothing was changed.";
 const KEY_UNPROTECTED: &str = "The lease's private key could not be kept from other users, so no certificate was issued. Nothing was recorded.";
+const KEY_UNPROTECTED_LEFT: &str = "The lease's private key could not be kept from other users, no certificate was issued, and some of the files it made could not be deleted. Nothing was recorded.";
 const BAD_ID: &str = "The lease's ID cannot be used to name its folder. Nothing was changed.";
+
+/// The message of a failed `issue`: `message` as it is when the undo removed everything, and the
+/// same cause worded to say that some files stayed when `left` is true.
+fn issue_message(message: &'static str, left: bool) -> &'static str {
+    match (left, message) {
+        (false, message) => message,
+        (true, KEY_UNPROTECTED) => KEY_UNPROTECTED_LEFT,
+        (true, _) => ISSUE_FAILED_LEFT,
+    }
+}
 
 /// The steps of `issue` after the folder exists: the key, its rules, the public key, signing and
 /// the certificate. A failure carries its message.
@@ -225,15 +248,11 @@ fn build(
     let id = made.id.clone();
     let key = new_lease_key(&id).map_err(|_| ISSUE_FAILED)?;
 
-    // The private key's file is made with its rules in place before its bytes are written.
+    // The private key's file is made with its rules in place, and no byte is written before
+    // that. A failure to make it leaves no file of this call's.
     let key_path = made.dir.join(KEY_FILE);
-    let mut file = match platform::create_private_file(&key_path) {
-        Ok(file) => file,
-        Err(CreateError::NotCreated) => return Err(KEY_UNPROTECTED),
-        Err(CreateError::CreatedButFailed) => {
-            made.files.push((key_path, KEY_FILE.to_string()));
-            return Err(KEY_UNPROTECTED);
-        }
+    let Some(mut file) = platform::create_private_file(&key_path) else {
+        return Err(KEY_UNPROTECTED);
     };
     made.files.push((key_path.clone(), KEY_FILE.to_string()));
     file.write_all(key.private_openssh.as_bytes())
@@ -321,13 +340,8 @@ pub fn issue(home: &Path, id: &str, user: &str, ttl_seconds: u32) -> Result<Issu
         Ok(expires_at) => Ok(Issued { expires_at }),
         Err(message) => {
             let leftovers = made.undo();
-            let message = if leftovers.is_empty() || message != ISSUE_FAILED {
-                message
-            } else {
-                ISSUE_FAILED_LEFT
-            };
             Err(CredFailure {
-                message: message.to_string(),
+                message: issue_message(message, !leftovers.is_empty()).to_string(),
                 leftovers,
             })
         }
@@ -434,6 +448,14 @@ impl RenewGuard {
     }
 }
 
+/// Dropping a guard that was neither committed nor rolled back rolls it back (the architect's
+/// ruling of 2026-11-19).
+///
+/// **`drop` MUST NOT panic.** It calls only code that returns its failures (`roll_back` and the
+/// file operations under it; none unwraps, indexes or asserts), and a rollback that fails here is
+/// swallowed, since nothing can report it from a destructor: the renewal's files stay, and the
+/// next `renew` or `release` settles them (state.md, "Renewal"). A caller that needs to know
+/// whether the rollback worked calls [`RenewGuard::rollback`].
 impl Drop for RenewGuard {
     fn drop(&mut self) {
         if let Some(state) = self.state.take() {
@@ -485,7 +507,14 @@ pub fn renew(
     if !is_file(KEY_FILE) || !is_file(PUB_FILE) {
         return Err(fail(KEY_MISSING));
     }
-    let has_previous = fs::symlink_metadata(dir.join(CERT_FILE)).is_ok();
+    // A certificate that is not there is no previous one. A certificate that cannot be read, or
+    // that is not a plain file (a folder, a link), is a failure that changes nothing, never "none".
+    let has_previous = match fs::symlink_metadata(dir.join(CERT_FILE)) {
+        Ok(meta) if meta.is_file() => true,
+        Ok(_) => return Err(fail(RENEW_FAILED)),
+        Err(e) if e.kind() == ErrorKind::NotFound => false,
+        Err(_) => return Err(fail(RENEW_FAILED)),
+    };
 
     let hex = new_hex();
     let public_name = format!("renew-{hex}.pub");
@@ -590,11 +619,20 @@ fn remove_tree(path: &Path, shown: &str, leftovers: &mut Vec<String>) {
         };
         let child = entry.path();
         let child_shown = format!("{shown}/{}", entry.file_name().to_string_lossy());
-        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
-        if is_dir {
-            remove_tree(&child, &child_shown, leftovers);
-        } else if !file_gone(&child) {
-            leftovers.push(child_shown);
+        // `DirEntry::metadata` does not follow a link, so a link is seen as one.
+        match entry.metadata() {
+            Ok(meta) if platform::is_link(&meta) => {
+                if !link_gone(&child) {
+                    leftovers.push(child_shown);
+                }
+            }
+            Ok(meta) if meta.is_dir() => remove_tree(&child, &child_shown, leftovers),
+            Ok(_) => {
+                if !file_gone(&child) {
+                    leftovers.push(child_shown);
+                }
+            }
+            Err(_) => leftovers.push(child_shown),
         }
     }
     if leftovers.len() == before && !folder_gone(path) {
@@ -610,29 +648,42 @@ pub fn remove_lease_folder(home: &Path, id: &str) -> Result<(), CredFailure> {
         return Err(fail(BAD_ID));
     }
     let dir = lease_dir(home, id);
-    match fs::symlink_metadata(&dir) {
-        Ok(_) => {}
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(_) => {
-            return Err(CredFailure {
-                message: DELETE_FAILED.to_string(),
-                leftovers: vec![relative(id, None)],
-            });
-        }
-    }
     let mut leftovers = Vec::new();
-    remove_tree(&dir, &relative(id, None), &mut leftovers);
+    match fs::symlink_metadata(&dir) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(_) => leftovers.push(relative(id, None)),
+        // A link where the folder should be (a junction, a symbolic link) is removed as the link
+        // it is, and what it points to is left alone: this call MUST change nothing but the
+        // lease's own folder.
+        Ok(meta) if platform::is_link(&meta) => {
+            if !link_gone(&dir) {
+                leftovers.push(relative(id, None));
+            }
+        }
+        Ok(_) => remove_tree(&dir, &relative(id, None), &mut leftovers),
+    }
     if leftovers.is_empty() {
         Ok(())
     } else {
         Err(CredFailure {
-            message: DELETE_FAILED.to_string(),
+            message: delete_failure_why(&leftovers),
             leftovers,
         })
     }
 }
 
-const DELETE_FAILED: &str = "The lease's local key or certificate could not be deleted.";
+/// The `<why>` of lease-api.md's "Credential or alias not deleted (`release`)" message, `...could
+/// not be deleted: <why>. Run release again to finish.`: a phrase with no capital at its start and
+/// no full stop at its end, naming each leftover in its home-relative form. The CLI adds the rest.
+fn delete_failure_why(leftovers: &[String]) -> String {
+    let list = match leftovers {
+        [] => String::new(),
+        [only] => only.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    };
+    let verb = if leftovers.len() == 1 { "is" } else { "are" };
+    format!("{list} {verb} still there")
+}
 
 #[cfg(all(test, windows))]
 mod tests;

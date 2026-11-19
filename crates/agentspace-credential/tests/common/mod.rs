@@ -52,6 +52,20 @@ fn run_out(cmd: &mut Command) -> Output {
         .expect("A tool a test needs could not be started")
 }
 
+/// Windows PowerShell 5.1 by its full path, with the parent's `PSModulePath` removed. A parent
+/// under PowerShell 7 hands its module path down, and 5.1 then fails to load its own modules.
+fn windows_powershell() -> Command {
+    let root = std::env::var_os("SystemRoot").expect("SystemRoot MUST be set");
+    let exe = Path::new(&root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let mut cmd = Command::new(exe);
+    cmd.env_remove("PSModulePath");
+    cmd
+}
+
 /// A home with no CA.
 pub fn empty_home() -> Home {
     let tmp = tempfile::Builder::new()
@@ -197,7 +211,7 @@ pub fn acl(path: &Path) -> Acl {
         foreach ($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) { \
         'ACE ' + $r.IdentityReference.Value + ' ' + $r.AccessControlType + ' ' + [int]$r.FileSystemRights + ' ' + $r.IsInherited }";
     let out = run_out(
-        Command::new("powershell.exe")
+        windows_powershell()
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .env("ACLPATH", path),
     );
@@ -237,7 +251,7 @@ pub fn acl(path: &Path) -> Acl {
 
 pub fn sha256(path: &Path) -> String {
     let out = run_out(
-        Command::new("powershell.exe")
+        windows_powershell()
             .args([
                 "-NoProfile",
                 "-NonInteractive",

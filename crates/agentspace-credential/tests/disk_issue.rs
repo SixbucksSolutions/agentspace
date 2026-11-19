@@ -236,6 +236,12 @@ fn a_failed_signing_leaves_no_file_and_no_folder_it_made() {
     // ARCHITECT-QUESTION: Which input does the spec make fail at signing while the CA passes its
     // check? A certificate needs exactly one valid principal (state.md, The certificate), so an
     // empty principal is the choice here. Read: state.md, The certificate; Creation in order, 4.
+    //
+    // This test, and the one below it, depend on `issue` checking the user only at signing, which
+    // is after the key and the public key are made. If the user were checked before the key, they
+    // would still pass. That the failure comes after the key is shown by the unit test
+    // `a_failure_at_signing_comes_after_the_key_and_the_public_key_were_made` (src/lease/tests.rs),
+    // which sees the files `issue` made before it removes them.
     let h = home_with_ca();
     assert!(!h.lease_dir(ID).exists());
     let e = err_issue(issue(&h.home, ID, "", TTL));
@@ -253,6 +259,27 @@ fn a_failed_signing_leaves_no_file_and_no_folder_it_made() {
     if h.leases_dir().exists() {
         assert!(names(&h.leases_dir()).is_empty());
     }
+}
+
+#[test]
+fn a_failed_signing_in_a_folder_it_did_not_make_leaves_that_folder_empty() {
+    // As above, this depends on the user being checked at signing, after the key and the public
+    // key were made in the folder. The folder is not this call's, so it stays; the two files are
+    // this call's, so they go.
+    let h = home_with_ca();
+    let dir = h.lease_dir(ID);
+    fs::create_dir_all(&dir).unwrap();
+    let e = err_issue(issue(&h.home, ID, "", TTL));
+    assert!(
+        e.leftovers.is_empty(),
+        "Nothing was left: {:?}",
+        e.leftovers
+    );
+    assert!(dir.is_dir(), "A folder this call did not make MUST stay");
+    assert!(
+        names(&dir).is_empty(),
+        "The key and the public key it made MUST be gone"
+    );
 }
 
 #[test]

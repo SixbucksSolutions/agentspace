@@ -432,3 +432,384 @@ fn remove_lease_folder_names_what_it_could_not_delete() {
     remove_lease_folder(home.path(), ID).unwrap();
     assert!(!dir.exists());
 }
+
+// ---------------------------------------------------------------------------------------------
+// The delete failure's message is the `<why>` of lease-api.md's release template.
+// ---------------------------------------------------------------------------------------------
+
+/// Holds a file open without sharing, so that it cannot be deleted until the guard drops. This is
+/// what a child process that opens it with `FileShare.Read` and sleeps does too; a handle of this
+/// process is enough, since Windows refuses the delete either way.
+fn hold(path: &Path) -> fs::File {
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)
+        .unwrap()
+}
+
+/// The sentence the CLI builds around a delete failure's message (lease-api.md, "Credential or
+/// alias not deleted (`release`)").
+fn release_sentence(why: &str) -> String {
+    format!(
+        "The lease's local key, certificate or host alias could not be deleted: {why}. Run \
+         release again to finish."
+    )
+}
+
+#[test]
+fn a_delete_failure_reads_as_the_why_of_the_release_message() {
+    let home = throwaway();
+    make_ca(home.path());
+    issue(home.path(), ID, "ubuntu", 60).unwrap();
+    let dir = lease_dir(home.path(), ID);
+    let held = hold(&dir.join(KEY_FILE));
+    let failure = remove_lease_folder(home.path(), ID).unwrap_err();
+    // One leftover: the folder is not named, since the file's name says where it is.
+    assert_eq!(
+        failure.leftovers,
+        [format!("~/.agentspace/leases/{ID}/id_ed25519")]
+    );
+    assert_eq!(
+        failure.message,
+        format!("~/.agentspace/leases/{ID}/id_ed25519 is still there")
+    );
+    assert!(!failure.message.ends_with('.'));
+    assert!(!failure.message.chars().next().unwrap().is_uppercase());
+    assert_eq!(
+        release_sentence(&failure.message),
+        format!(
+            "The lease's local key, certificate or host alias could not be deleted: \
+             ~/.agentspace/leases/{ID}/id_ed25519 is still there. Run release again to finish."
+        )
+    );
+    // No absolute path and no user name.
+    let lower = failure.message.to_lowercase();
+    assert!(!lower.contains(&home.path().to_string_lossy().to_lowercase()));
+    assert!(!lower.contains('\\'));
+    drop(held);
+    remove_lease_folder(home.path(), ID).unwrap();
+}
+
+#[test]
+fn a_delete_failure_names_each_leftover_in_the_message() {
+    let home = throwaway();
+    make_ca(home.path());
+    issue(home.path(), ID, "ubuntu", 60).unwrap();
+    let dir = lease_dir(home.path(), ID);
+    let held = (hold(&dir.join(KEY_FILE)), hold(&dir.join(CERT_FILE)));
+    let failure = remove_lease_folder(home.path(), ID).unwrap_err();
+    let mut leftovers = failure.leftovers.clone();
+    leftovers.sort();
+    assert_eq!(
+        leftovers,
+        [
+            format!("~/.agentspace/leases/{ID}/id_ed25519"),
+            format!("~/.agentspace/leases/{ID}/id_ed25519-cert.pub"),
+        ]
+    );
+    assert_eq!(failure.message, delete_failure_why(&failure.leftovers));
+    assert!(failure.message.ends_with("are still there"), "{failure:?}");
+    for leftover in &failure.leftovers {
+        assert!(failure.message.contains(leftover.as_str()), "{failure:?}");
+    }
+    assert!(!failure.message.ends_with('.'));
+    drop(held);
+    assert!(remove_lease_folder(home.path(), ID).is_ok());
+}
+
+// ---------------------------------------------------------------------------------------------
+// A link is never followed when a lease folder is deleted.
+// ---------------------------------------------------------------------------------------------
+
+/// Makes a junction at `link` to `target`, with `mklink /J`, which needs no privilege.
+fn junction(link: &Path, target: &Path) {
+    let out = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "mklink /J failed");
+    assert!(
+        platform::is_link(&fs::symlink_metadata(link).unwrap()),
+        "the junction is a link"
+    );
+}
+
+/// A folder outside every lease, holding a file that nothing here may delete.
+fn outside_folder(home: &Path) -> PathBuf {
+    let outside = home.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("precious.txt"), b"not agentspace's").unwrap();
+    outside
+}
+
+fn assert_untouched(outside: &Path) {
+    assert!(outside.is_dir(), "the target folder MUST still exist");
+    assert_eq!(
+        fs::read(outside.join("precious.txt")).unwrap(),
+        b"not agentspace's",
+        "the target's file MUST still exist, unchanged"
+    );
+}
+
+#[test]
+fn a_junction_where_the_lease_folder_should_be_is_removed_and_not_followed() {
+    let home = throwaway();
+    let outside = outside_folder(home.path());
+    let leases = home.path().join(".agentspace").join("leases");
+    fs::create_dir_all(&leases).unwrap();
+    junction(&leases.join(ID), &outside);
+    remove_lease_folder(home.path(), ID).unwrap();
+    assert!(
+        fs::symlink_metadata(leases.join(ID)).is_err(),
+        "the link goes"
+    );
+    assert_untouched(&outside);
+}
+
+#[test]
+fn a_junction_inside_the_lease_folder_is_removed_and_not_followed() {
+    let home = throwaway();
+    let outside = outside_folder(home.path());
+    let dir = lease_dir(home.path(), ID);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(KEY_FILE), b"k").unwrap();
+    junction(&dir.join("inner"), &outside);
+    remove_lease_folder(home.path(), ID).unwrap();
+    assert!(!dir.exists(), "the lease's own folder goes, link and all");
+    assert_untouched(&outside);
+}
+
+#[test]
+fn a_directory_symlink_is_removed_and_not_followed() {
+    let home = throwaway();
+    let outside = outside_folder(home.path());
+    let leases = home.path().join(".agentspace").join("leases");
+    fs::create_dir_all(&leases).unwrap();
+    if std::os::windows::fs::symlink_dir(&outside, leases.join(ID)).is_err() {
+        // Creating a symbolic link needs a privilege (or Developer Mode) that this run lacks.
+        eprintln!("skipped: the process may not create symbolic links");
+        return;
+    }
+    let dir = lease_dir(home.path(), ID);
+    remove_lease_folder(home.path(), ID).unwrap();
+    assert!(fs::symlink_metadata(&dir).is_err());
+    assert_untouched(&outside);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The private key's rules are verified, and each departure is refused (state.md, "The lease
+// folder").
+// ---------------------------------------------------------------------------------------------
+
+/// A folder that hands nothing down to what is made in it: its one entry, for the user, is not
+/// inheritable. Inheritance switched on for a file in it adds no entry, so a test can tell the
+/// protected flag apart from the entries.
+fn bare_folder(home: &Path, name: &str) -> PathBuf {
+    let dir = home.join(name);
+    fs::create_dir_all(&dir).unwrap();
+    let grant = format!("*{}:F", platform::user_sid_for_tests().unwrap());
+    icacls(&[
+        dir.as_os_str(),
+        "/inheritance:r".as_ref(),
+        "/grant:r".as_ref(),
+        grant.as_ref(),
+    ]);
+    dir
+}
+
+#[test]
+fn a_private_key_made_by_the_program_has_exactly_the_rules() {
+    let home = throwaway();
+    let dir = bare_folder(home.path(), "keys");
+    let key = dir.join("id_ed25519");
+    let file = platform::create_private_file(&key).expect("the key's file is made");
+    // Before a byte is written: protected, with the three entries.
+    assert_eq!(platform::protected_and_entries(&key), Some((true, 3)));
+    assert!(platform::verify_private_key(&key));
+    drop(file);
+    // It never replaces a file.
+    fs::write(dir.join("other"), b"mine").unwrap();
+    assert!(platform::create_private_file(&dir.join("other")).is_none());
+    assert_eq!(fs::read(dir.join("other")).unwrap(), b"mine");
+}
+
+#[test]
+fn verify_private_key_refuses_each_departure_from_the_rules() {
+    let home = throwaway();
+    let dir = bare_folder(home.path(), "keys");
+    let key = dir.join("id_ed25519");
+    fs::write(&key, b"not a real key").unwrap();
+    let user = platform::user_sid_for_tests().unwrap();
+    let good = format!("(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{user})");
+    let set = |entries: &str| {
+        assert!(platform::set_sddl_rules(&key, &format!("D:P{entries}")));
+    };
+
+    // The control: the rules as the program makes them are accepted.
+    set(&good);
+    assert!(platform::verify_private_key(&key), "the control");
+
+    let refused = [
+        ("an extra Everyone read", format!("{good}(A;;FR;;;WD)")),
+        (
+            "an extra entry for another group",
+            format!("{good}(A;;FR;;;BU)"),
+        ),
+        ("a deny entry", format!("(D;;FR;;;WD){good}")),
+        (
+            "the user with read only",
+            "(A;;FA;;;SY)(A;;FA;;;BA)".to_string() + &format!("(A;;FR;;;{user})"),
+        ),
+        ("SYSTEM missing", format!("(A;;FA;;;BA)(A;;FA;;;{user})")),
+        (
+            "Administrators missing",
+            format!("(A;;FA;;;SY)(A;;FA;;;{user})"),
+        ),
+        (
+            "SYSTEM without full control",
+            format!("(A;;FR;;;SY)(A;;FA;;;BA)(A;;FA;;;{user})"),
+        ),
+        ("the user missing", "(A;;FA;;;SY)(A;;FA;;;BA)".to_string()),
+    ];
+    for (what, entries) in refused {
+        set(&entries);
+        assert!(!platform::verify_private_key(&key), "refused: {what}");
+        set(&good);
+        assert!(
+            platform::verify_private_key(&key),
+            "accepted again after {what}"
+        );
+    }
+
+    // Inheritance on (the DACL not protected) with the same three entries and nothing inherited.
+    icacls(&[key.as_os_str(), "/inheritance:e".as_ref()]);
+    assert_eq!(platform::protected_and_entries(&key), Some((false, 3)));
+    assert!(
+        !platform::verify_private_key(&key),
+        "refused: inheritance on"
+    );
+    set(&good);
+    assert!(platform::verify_private_key(&key));
+
+    // An owner that is not the user, when this process may give one.
+    if platform::set_owner_and_rules(&key, "S-1-5-32-544", &format!("D:P{good}")) {
+        assert!(
+            !platform::verify_private_key(&key),
+            "refused: the owner is not the user"
+        );
+    } else {
+        // Giving a file an owner other than the user needs a privilege that a process that is not
+        // elevated lacks, and no other file on this machine has such an owner to borrow.
+        eprintln!("skipped the owner case: the process may not give another owner");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The CA's "protected" check, alone (state.md, "The CA", "Its checks", 2).
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_ca_folder_that_is_unprotected_and_otherwise_perfect_is_not_usable() {
+    let home = throwaway();
+    let dir = make_ca(home.path());
+    assert_eq!(check_ca(home.path()), Ok(()), "the control");
+    // Nothing inheritable reaches below `.agentspace`, so turning inheritance on adds no entry.
+    let user = platform::user_sid_for_tests().unwrap();
+    let grant = format!("*{user}:F");
+    icacls(&[
+        home.path().join(".agentspace").as_os_str(),
+        "/inheritance:r".as_ref(),
+        "/grant:r".as_ref(),
+        grant.as_ref(),
+    ]);
+    icacls(&[dir.as_os_str(), "/inheritance:e".as_ref()]);
+    // Still one entry, for the user: only the protected flag is wrong.
+    assert_eq!(platform::protected_and_entries(&dir), Some((false, 1)));
+    assert_eq!(check_ca(home.path()), Err(CaFailure::NotUsable));
+}
+
+#[test]
+fn a_ca_key_that_is_unprotected_and_otherwise_perfect_is_not_usable() {
+    let home = throwaway();
+    let dir = make_ca(home.path());
+    // The folder's entry is made not inheritable, so the key inherits nothing, and the folder
+    // still passes its own check.
+    let user = platform::user_sid_for_tests().unwrap();
+    let mine = format!("D:P(A;;FA;;;{user})");
+    assert!(platform::set_sddl_rules(&dir, &mine));
+    // The public key had its entry from the folder, which the change took away: give it its own.
+    assert!(platform::set_sddl_rules(
+        &dir.join("agentspace_ca.pub"),
+        &mine
+    ));
+    let key = dir.join("agentspace_ca");
+    assert_eq!(check_ca(home.path()), Ok(()), "the control");
+    icacls(&[key.as_os_str(), "/inheritance:e".as_ref()]);
+    assert_eq!(platform::protected_and_entries(&key), Some((false, 1)));
+    assert_eq!(check_ca(home.path()), Err(CaFailure::NotUsable));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Renew, and the issue messages.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_renew_whose_certificate_cannot_be_taken_as_the_previous_one_changes_nothing() {
+    let home = throwaway();
+    make_ca(home.path());
+    issue(home.path(), ID, "ubuntu", 60).unwrap();
+    let dir = lease_dir(home.path(), ID);
+    // The certificate is replaced by a folder: it is there, and it is not a certificate.
+    fs::remove_file(dir.join(CERT_FILE)).unwrap();
+    fs::create_dir(dir.join(CERT_FILE)).unwrap();
+    fs::write(dir.join(CERT_FILE).join("inside"), b"x").unwrap();
+    let before = files_of(&dir);
+    let failure = renew(home.path(), ID, "ubuntu", 60).unwrap_err();
+    assert_eq!(failure.message, RENEW_FAILED);
+    assert!(failure.leftovers.is_empty());
+    assert_eq!(files_of(&dir), before, "no renew file was made");
+    assert!(dir.join(CERT_FILE).is_dir());
+}
+
+#[test]
+fn an_issue_failure_that_left_files_says_so_for_either_cause() {
+    assert_eq!(issue_message(ISSUE_FAILED, false), ISSUE_FAILED);
+    assert_eq!(issue_message(ISSUE_FAILED, true), ISSUE_FAILED_LEFT);
+    assert_eq!(issue_message(KEY_UNPROTECTED, false), KEY_UNPROTECTED);
+    assert_eq!(issue_message(KEY_UNPROTECTED, true), KEY_UNPROTECTED_LEFT);
+    for message in [KEY_UNPROTECTED_LEFT, ISSUE_FAILED_LEFT] {
+        assert!(!message.contains('\\') && !message.contains('~'));
+    }
+}
+
+#[test]
+fn a_failure_at_signing_comes_after_the_key_and_the_public_key_were_made() {
+    // This and the `bad\nuser` and empty-principal tests depend on `sign_certificate` checking the
+    // user (one line, not empty) at signing, the step after the key and the public key are made.
+    // If that check moved earlier, those tests would still pass; this one would not.
+    let home = throwaway();
+    make_ca(home.path());
+    let ca_private = fs::read(home.path().join(".agentspace/ca/agentspace_ca")).unwrap();
+    let dir = lease_dir(home.path(), ID);
+    fs::create_dir_all(&dir).unwrap();
+    for user in ["", "bad\nuser"] {
+        let mut made = Made {
+            id: ID.to_string(),
+            dir: dir.clone(),
+            folder: false,
+            files: Vec::new(),
+        };
+        let message = build(&mut made, &ca_private, user, 3600).unwrap_err();
+        assert_eq!(message, ISSUE_FAILED);
+        let names: Vec<&str> = made.files.iter().map(|(_, name)| name.as_str()).collect();
+        assert_eq!(names, [KEY_FILE, PUB_FILE], "failed after both were made");
+        assert!(dir.join(KEY_FILE).is_file() && dir.join(PUB_FILE).is_file());
+        assert!(!dir.join(CERT_FILE).exists());
+        assert_eq!(made.undo(), Vec::<String>::new());
+        assert!(files_of(&dir).is_empty());
+    }
+}
