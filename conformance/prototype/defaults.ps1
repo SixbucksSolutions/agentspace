@@ -8,6 +8,7 @@
 # A story that adds a default for another variable MUST add its line here, and nowhere else.
 @{
   AGENTSPACE_CMD          = '..\..\bin\agentspace.cmd'
+  AGENTSPACE_PEER_CMD     = '..\..\bin\agentspace.cmd'
   AGENTSPACE_OPERATOR_CMD = 'operator.cmd'
   AGENTSPACE_KEEPER_CMD   = 'keeper.cmd'
   AGENTSPACE_SSH_PROXY_CMD = 'ssh-proxy.cmd'

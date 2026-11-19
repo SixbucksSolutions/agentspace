@@ -72,28 +72,33 @@ code that loads the prototype.
 
 **A conformance check names the program it tests through one environment variable per program,
 so the same check runs against the prototype and against the rewrite (D34).** The variables
-below are **pinned** (the architect, 2026-11-18). The harness reads the first two
-(E0.04-T03-S01, #0084); the checks of E0.04-T03-S02 (#0085) read the other two, the operator's and
-ProxyCommand's by `Get-ConformanceProgram` too. **A variable that is unset or empty
+below are **pinned** (the architect, 2026-11-18; the fifth, `AGENTSPACE_PEER_CMD`, D38, 2026-11-19).
+The harness reads `AGENTSPACE_CMD` and `AGENTSPACE_OPERATOR_CMD` (E0.04-T03-S01, #0084); the checks
+of E0.04-T03-S02 (#0085) read the operator's and ProxyCommand's by `Get-ConformanceProgram` too, and
+`test-interop.ps1` (E0.05-T02-S05, #0103) reads the peer's. **A variable that is unset or empty
 takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**; a variable
 that is set always wins. **Every default is a path in that file, relative to its folder**, and
-each names a program in `conformance/prototype/`, except the first, which names the prototype's
+each names a program in `conformance/prototype/`, except the first two, which name the prototype's
 `bin\agentspace.cmd`.
 
 | Variable | Names | Default, as `conformance/prototype/defaults.ps1` gives it |
 |---|---|---|
 | `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | `..\..\bin\agentspace.cmd`, the prototype's lease CLI |
+| `AGENTSPACE_PEER_CMD` | A second lease CLI, run the same way as `AGENTSPACE_CMD`, and read only by the one check that drives one lease through two programs ([Running the suite](#running-the-suite); D38) | `..\..\bin\agentspace.cmd`, the prototype's lease CLI, given exactly as `AGENTSPACE_CMD`'s default is |
 | `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | `operator.cmd`, a shim that starts the prototype's operator under Windows PowerShell 5.1 |
 | `AGENTSPACE_KEEPER_CMD` | The keeper | `keeper.cmd`, a shim that starts the prototype's keeper under PowerShell 7 |
 | `AGENTSPACE_SSH_PROXY_CMD` | The ProxyCommand program | `ssh-proxy.cmd`, a shim that calls the prototype's `scripts\ssh-proxy.cmd` |
 
-**Why four and not one.** The story card asked for `AGENTSPACE_CMD` for the lease CLI and the
+**Why five and not one.** The story card asked for `AGENTSPACE_CMD` for the lease CLI and the
 operator. The prototype has them as two programs under two runtimes (the lease CLI under
 PowerShell 7, the operator under Windows PowerShell 5.1), and the keeper and the ProxyCommand are
-two more, so each needs a name.
+two more, so each needs a name. **The fifth is not another role**: `AGENTSPACE_PEER_CMD` is a second
+lease CLI, so that one check can run a lease through two builds, each way round (D38). **Every other
+check ignores it.** With both lease CLI variables unset, the two programs are the prototype's, and
+the check runs the prototype against itself.
 
 **Each variable names a program that runs its role with the command line its spec gives**
-(architect, 2026-11-18): `AGENTSPACE_CMD` with [lease-api.md](lease-api.md#command-lines)'s,
+(architect, 2026-11-18): `AGENTSPACE_CMD` and `AGENTSPACE_PEER_CMD` with [lease-api.md](lease-api.md#command-lines)'s,
 `AGENTSPACE_OPERATOR_CMD` with [operator.md](operator.md#command-line)'s, `AGENTSPACE_KEEPER_CMD`
 with [keeper.md](keeper.md#command-line)'s, and `AGENTSPACE_SSH_PROXY_CMD` with
 [operator.md](operator.md#the-proxycommand)'s. A check starts the program a variable names with
@@ -280,10 +285,52 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 | `test-lease-alias-file.ps1` | The alias file, read with `ssh -G`, and the `Include` line on each shape of config; a ProxyCommand with a CR or LF refused; the default ProxyCommand line as D8 makes it checkable ([state.md](state.md#the-alias-file), [The `Include` line](state.md#the-include-line), [lease-api.md](lease-api.md#environment)) | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when `create` fails under the default transport (see below) |
 | `test-lease-driver-outcomes.ps1` | The driver as a caller sees it: unsatisfiable requests, no driver name in any output, a failed alias step ([driver.md](driver.md#unsatisfiable-requests), [lease-api.md](lease-api.md#concurrency-and-atomicity)) | Only for the ready half. The unsatisfiable half runs without one |
 | `test-lease-concurrency.ps1` | Concurrent `create`s, `renew`s and `release`s, readers that never wait, the lease state lock and its 30 seconds ([lease-api.md](lease-api.md#concurrency-and-atomicity), [state.md](state.md#the-lease-state-lock)) | Yes. SKIPPED when no CA could be made |
+| `test-interop.ps1` | **One lease through two programs, `AGENTSPACE_CMD` and `AGENTSPACE_PEER_CMD`**, each way round: it enforces [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite), that the two MUST share one home folder and one state folder. See below | Yes. SKIPPED when no CA could be made, and four results are SKIPPED when no `ssh-keygen` is on the `PATH` |
 
 **The helpers the checks share are two files.** `conformance/lease-cli/lease-cli-common.ps1` serves
-S01's five, and `conformance/lease-cli/lease-check-support.ps1` serves the last five, which are
-E0.04-T03-S03's.
+S01's five, and `conformance/lease-cli/lease-check-support.ps1` serves the next five, which are
+E0.04-T03-S03's, and `test-interop.ps1` (E0.05-T02-S05, #0103).
+
+#### `test-interop.ps1`: one lease through two programs
+
+**This check enforces [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite)**
+(#0054, D38): the prototype and the rewrite MUST be able to share one home folder and one state
+folder. RFC 2119 keywords again.
+- **It runs two lease CLIs, A and B, in one throwaway home with one state folder.** A is the program
+  `AGENTSPACE_CMD` names and B is the program `AGENTSPACE_PEER_CMD` names, each started by the
+  harness's `Invoke-ConformanceProgram` as a separate process. **Each variable that is unset or empty
+  takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**, so a run with both
+  unset runs the prototype against itself, and a run of the rewrite against the prototype sets one
+  variable. The check names no prototype path and loads no prototype code.
+- **It runs two rounds, A then B and B then A.** In a round, the first program creates and the other
+  program checks, in this order:
+  1. The first program creates a ready lease, and the lease has its folder, its key and its alias file.
+  2. The other program's `get` prints that lease with the same values, compared parsed.
+  3. The other program's `list` holds that lease once, with the same values, compared parsed.
+  4. The other program renews it with `--ttl 90m`. The first program's `get` shows the new `expires_at`
+     and `ttl_seconds`, and the certificate on disk is a new one, valid until that `expires_at`.
+  5. The first program renews it again, without `--ttl`, and the other program's `get` shows that
+     renewal the same way.
+  6. The other program releases it. The first program's `get` shows it `released`, with the other
+     program's `released_at`, and its alias file and lease folder are gone.
+  7. The first program releases it again, after the clock has passed that `released_at`. It exits 0
+     and prints the same document.
+  8. An unsatisfiable lease that the first program created reads the same in the other, by `get` and by `list`.
+- **After every step, the state file validates against its schema** (`schemas/state/leases.state.schema.json`),
+  **and every lease either program has printed is in it exactly once.** A lease counts as printed once
+  a document that passed its schema has carried its ID.
+- **It checks MUSTs only, and a reason never quotes a program's output**: a reason names what
+  differs, with the exit code and whether each stream was empty.
+- **It follows the rule for an untrusted program** ([below](#the-program-under-test-is-untrusted)): a
+  path is built from a lease ID or a host alias only after the document passed its schema, and then
+  only through `Get-CcLeaseDir` and `Get-CcAliasPath`. It writes and deletes nothing itself.
+- **Set either variable to a program that prints nothing and exits 0, and the run MUST fail.** A
+  program that cannot create fails step 1 of its own round, and one that cannot read fails step 2 of
+  the other round, so neither variable can be left unread. Shown on 2026-11-19 against the prototype:
+  36 passed, 0 failed, 0 skipped, exit 0, in about 40 seconds; with `AGENTSPACE_CMD` naming such a
+  program, 9 passed and 27 failed, exit 1; and with `AGENTSPACE_PEER_CMD` naming it, 17 passed and 19
+  failed, exit 1. The results that still pass then are mostly the state file's, which hold when a
+  program printed nothing for them to find.
 
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
@@ -295,7 +342,8 @@ E0.04-T03-S03's.
   [What a conformance run needs](#what-a-conformance-run-needs)). The checks skip only for these
   reasons, and each reason says which:
   - **The harness could not make a throwaway CA** (any check that places a ready lease).
-  - **No `ssh-keygen` is on the `PATH`** (two checks of `test-create-get.ps1`).
+  - **No `ssh-keygen` is on the `PATH`** (two checks of `test-create-get.ps1`, and four results of
+    `test-interop.ps1`, which reads each renewed certificate with it).
   - **The local UTC offset is 0** (one check of `test-create-get.ps1` and one of
     `test-lease-certificate.ps1`).
   - **A `create` under the default transport fails with a valid `internal` error** (one check of
@@ -322,7 +370,7 @@ E0.04-T03-S03's.
   [What the specs require of the suite](#what-the-specs-require-of-the-suite)'s**: a machine whose
   zone is not UTC, run by the agent or person who runs the suite for the build.
 - **A check takes from about 20 seconds to about 2 minutes against the prototype, and the ten about
-  10 minutes**, most of it starting programs: about 0.5 seconds for a run that issues no credential,
+  10 minutes** (`test-interop.ps1` about 40 seconds, on top), most of it starting programs: about 0.5 seconds for a run that issues no credential,
   and a few seconds for a ready `create`. `test-lease-concurrency.ps1` is the longest, because
   round F waits out the lock's 30 seconds. Against a program that prints nothing, all ten take
   about a minute.
