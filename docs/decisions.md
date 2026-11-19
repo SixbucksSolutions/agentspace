@@ -78,7 +78,8 @@ line's text after `Status:`, without its full stop.
 - [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
 - [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease
 - [D40. By v1.0, agentspace's own files are JSON where feasible](#d40-by-v10-agentspaces-own-files-are-json-where-feasible): Direction, Terry, 2026-11-19, to be met by v1.0 (#0053)
-- [D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration](#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration): Decided
+- [D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration](#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration): Decided; step 8 changed by D42
+- [D42. v0.06 builds the operator and the keeper as crates around two pinned boundaries, in six turns](#d42-v006-builds-the-operator-and-the-keeper-as-crates-around-two-pinned-boundaries-in-six-turns): Decided
 
 ## The interface
 
@@ -2676,15 +2677,17 @@ takes Terry's yes.
    created by the installed CLI connects through its alias, and the new keeper starts a holder for
    it and logs `started`; `agentspace-operator status` and `down` work. A `deploy` is run only if
    Terry wants the stack touched.
-8. **Remove the prototype from the repository**, in the same story's pull request: every
+8. **Remove the prototype from the repository** (changed by D42, the same day: in the next turn's
+   own story, E0.06-T06-S01, not in the cutover's pull request, so each fits under 3 hours and
+   the live checks merge first): every
    PowerShell and `cmd` file in the product, `bin\` shims included (#0055's third done-when, D28);
    `infra\local.parameters.example`, replaced by `infra\stack-parameters.example.json`; and
    `box\system\install.sh`'s message changed to name `agentspace-operator sync` (FA-12). The
    architect's process tools stay (D28). The conformance suite's default programs, which name the
    prototype today ([conformance.md](conformance.md#naming-the-program-under-test)), move to the
    install folder's in the same pull request.
-9. **README and AGENTS.md follow**, in the same pull request: every command they give runs the
-   Rust programs, and AGENTS.md's box-sizing rule names `stack-parameters.json`.
+9. **README and AGENTS.md follow**, in the same pull request as step 8: every command they give
+   runs the Rust programs, and AGENTS.md's box-sizing rule names `stack-parameters.json`.
 
 **Why this order:**
 - **No lease ready makes every forwarder and alias question moot.** The rules for keeping
@@ -2703,6 +2706,54 @@ filled the 8 GiB disk in v0.05-T01; and arms one Monitor, before the dev lead st
 prints a line when the sampler's samples stop rising, when it is not running, or when the root
 filesystem passes 80% used (AGENTS.md, "Watching a measurement"). The Monitor's script is written
 and proven against a stopped sampler before it is trusted.
+
+### D42. v0.06 builds the operator and the keeper as crates around two pinned boundaries, in six turns
+
+**Decided, architect, 2026-11-19, when Terry had v0.06 (#0055) broken into stories.** It lays out
+v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
+
+- **The same workspace, with one crate per area, so a turn's stories own disjoint folders** (D38).
+  The new crates:
+
+  | Crate | What | Built in |
+  |---|---|---|
+  | `agentspace-operator-api` | The pinned boundary: `Context`, `Mode`, `Say`, `Failure`, the AWS CLI's `Aws` trait and the `Remote` trait for ssh and scp | The architect, before T01 |
+  | `agentspace-keeper-api` | The pinned boundary: the holder record, `Processes`, `Matcher`, `Starter`, `Locks`, `Clock` | The architect, before T01 |
+  | `agentspace-operator` | `agentspace-operator.exe`: command line, help, messages; then `up`, `down`, `status`, `grow` and `ca` | T01, T03 |
+  | `agentspace-run` | The programs the operator starts: the AWS CLI, ssh and scp, by full path or through the test seam | T01 |
+  | `agentspace-box` | Starting the box and waiting for it, the patch question, the instance-ID cache, the AWS answers' members | T01 |
+  | `agentspace-push` | The token push: its portable half, then its Windows half | T01, T02 |
+  | `agentspace-zone` | The laptop's time zone as an IANA name, and the zone check | T01 |
+  | `agentspace-keeper` | `agentspace-keeper.exe`: command line, the pass, log lines; then `-Watch`; then the real program | T01, T02, T03 |
+  | `agentspace-keeper-files` | The holder record, the launch files, the holder command's matcher; and `agentspace-state`'s public atomic write | T01 |
+  | `agentspace-ca` | The `ca` command and `sync`'s CA check | T02 |
+  | `agentspace-keeper-win` | `Processes` and `Locks` on Windows | T02 |
+  | `agentspace-launch` | `Starter`: the launch handshake, WMI and the launcher | T02 |
+  | `agentspace-keeper-install` | `agentspace-keeper-install.exe` | T02 |
+  | `agentspace-keeper-task` | `agentspace-keeper-task.exe`, a Windows program with no console | T02 |
+  | `agentspace-sync` | `sync` and `deploy`, with the template and `box\system` embedded as they are (D37's addendum) | Stub by the architect before T03; built in T03 |
+  | `agentspace-ssh-proxy` | `agentspace-ssh-proxy.exe` | Stub by the architect before T03; built in T03 |
+
+- **Two boundaries are pinned as code before T01**, exactly as their cards give them and nothing
+  else, because T01's stories meet at them in parallel: the operator's (how a command speaks, fails
+  and calls the AWS CLI, ssh and scp) and the keeper's (what the pass asks of Windows). **Before
+  T03, two stub crates** with pinned signatures, so `cargo xtask dist` can name every program
+  while they are built.
+- **T01 is portable and runs on the box, measured** (D33; D41). Every T01 crate builds and is
+  tested on Linux, with the Windows calls behind the pinned traits; the architect runs each
+  story's Windows check at review. **T02 is the Windows halves, T03 wires the programs, T04 runs
+  and extends the conformance suite, T05 cuts over on the laptop, and T06 removes the prototype**
+  (D41, as changed).
+- **The ProxyCommand runs `up` in its own process**, calling `agentspace-box` and
+  `agentspace-push` itself, in caller mode. operator.md allows it, and no private argument exists
+  to leak into help.
+- **The keeper's launcher is `agentspace-keeper.exe` itself**, started by WMI with a private
+  argument naming the request (keeper.md lets a build choose). It MUST NOT appear in a usage line.
+- **The holder's process tree is stopped through the Windows API, never `taskkill`**, and `ca`
+  sets access rules through the Windows API, never `icacls` (FB-15).
+- **T02-S08 writes v0.06-T01's run record**, as E0.05-T02-S04 wrote v0.05-T01's, for v0.09 (#0049).
+- **The cards carried in** are linked with `references`: #0027 and #0034 (the operator's), #0087
+  (the caller), #0066 and #0068 (the keeper's), and #0110 (conformance hardening).
 
 ## Keys
 

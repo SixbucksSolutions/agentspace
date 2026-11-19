@@ -40,13 +40,13 @@ RFC 2119 keywords; the capitals are load-bearing.
 | What | State |
 |---|---|
 | v0.05 (#0054), the lease CLI in Rust | Done. Fifteen stories in five turns (D38), all merged, and every card in Completed (Terry, 2026-11-19) |
-| v0.06 (#0055), the operator in Rust | Ready For Work. Not broken into stories: that waits for Terry's word (AGENTS.md, "The board") |
+| v0.06 (#0055), the operator in Rust | Ready For Work. Broken into 25 stories in six turns on Terry's word, 2026-11-19 (D42; #0111 to #0135, the plan by turn on #0055). No turn started yet |
 | The lease CLI | The Rust build, installed in `%USERPROFILE%\.agentspace\bin` and on Terry's user `PATH` (ExpandString, with his yes), so `agentspace` runs it from cmd, PowerShell and Git Bash. The checkout's `bin\agentspace.cmd` still runs the prototype until v0.06 (README, "The lease CLI") |
 | `main` | One Cargo workspace, crates `agentspace-cli`, `-values`, `-state`, `-credential`, `-alias`, `-driver-api`, `-driver-ec2` and `xtask`. It builds `--locked` on Windows |
 | The box | Stopped at 1:56pm, after T05's live checks. `m9g.xlarge` (4 vCPUs, 16 GiB), root volume 11 GiB (a 9.7G filesystem). Rust 1.99.0 with clippy and rustfmt, and gcc, installed by hand in `ubuntu`'s home (D38's note) |
 | Leases | None ready |
 | The keeper | Running, idle, as pwsh 24588. In T05 it held a Rust-made lease as it holds a prototype one |
-| Swimcoach | Nothing reported: `milestones.json` is empty, and the reporter is stopped |
+| Swimcoach | `v0.06` reported from 2:29pm Pacific, 2026-11-19, with the reporter running under `-Watch` |
 | The app's SSH connection | `agentspace-inception`, whose host Terry points at each new lease's alias. The saved presets are gone; start a box dev lead with `target: "ssh"`, `host: "agentspace-inception"`, `cwd: "/home/ubuntu/agentspace"` |
 
 ## Terry's orders from v0.05
