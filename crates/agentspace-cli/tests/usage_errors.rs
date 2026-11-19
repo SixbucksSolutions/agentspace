@@ -818,7 +818,7 @@ fn only_the_five_usage_cases_carry_field() {
 
 /// A line with no usage error reaches its command, and gets that command's own answer, which MAY
 /// be an error about a value (`invalid_value`, `out_of_range`) but is never a usage error. The run
-/// through the binary and the run in process, each in a throwaway home with no driver, agree.
+/// through the binary and the run in process, each in a throwaway home with no CA, agree.
 fn assert_reaches(line: &[&str], _sub: &str) {
     let line = args(line);
     let run = run_bin(&line);
@@ -832,8 +832,8 @@ fn assert_reaches(line: &[&str], _sub: &str) {
     );
 }
 
-/// A line whose values are all valid gets the answer of an empty throwaway home with no driver:
-/// `create` fails `internal` ("No lease driver is available"), `list` prints the empty list, and
+/// A line whose values are all valid gets the answer of an empty throwaway home with no CA:
+/// `create` fails `internal` (the CA has not been set up), `list` prints the empty list, and
 /// `get`, `renew` and `release` are `not_found` (`id` is the lease ID, normalized).
 fn assert_answer(line: &[&str], sub: &str, id: &str) {
     let line = args(line);

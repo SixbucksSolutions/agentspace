@@ -27,9 +27,10 @@ use serde_json::Value;
 
 use crate::{LeaseError, ParsedCommand, Sub, World};
 
-/// The drivers this build has. Empty in E0.05-T03-S02; E0.05-T04-S01 adds the EC2 driver.
+/// The drivers this build has: the EC2 driver, the one v0 driver (docs/driver.md, The EC2 driver;
+/// D38). It was empty in E0.05-T03-S02, and E0.05-T04-S01 registers the EC2 driver.
 pub fn drivers() -> Vec<Box<dyn Driver>> {
-    Vec::new()
+    vec![Box::new(agentspace_driver_ec2::Ec2Driver::new())]
 }
 
 /// Runs a parsed command line in `world` and returns the document to print.

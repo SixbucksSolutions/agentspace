@@ -57,7 +57,7 @@ pub fn not_unicode(before: &str, after: &str) -> OsString {
     }
 }
 
-/// A throwaway folder under the temp folder, used as the working folder and the home of every run.
+/// A throwaway folder under the temp folder, which holds the throwaway homes of the runs.
 pub fn scratch_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("agentspace-cli-tests");
     std::fs::create_dir_all(&dir).expect("The scratch folder can be made");
@@ -68,14 +68,22 @@ pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
-/// The binary's command, with a throwaway home and none of agentspace's own variables set.
+/// The prefix of a run's own throwaway home, which `run_command` removes after the run.
+const RUN_HOME_PREFIX: &str = "home-";
+
+/// The binary's command, with a throwaway home of its own (fresh for each run, so that the
+/// leases one run records are never seen by another, now that the build holds the EC2 driver) and
+/// none of agentspace's own variables set.
 pub fn command(line: &[OsString]) -> Command {
-    let scratch = scratch_dir();
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let home = scratch_dir().join(format!("{RUN_HOME_PREFIX}{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&home).expect("The throwaway home can be made");
     let mut cmd = Command::new(BIN);
     cmd.args(line)
-        .current_dir(&scratch)
-        .env("HOME", &scratch)
-        .env("USERPROFILE", &scratch)
+        .current_dir(&home)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .env_remove("AGENTSPACE_STATE_DIR")
         .env_remove("AGENTSPACE_SSH_DIR")
         .env_remove("AGENTSPACE_PROXY_COMMAND")
@@ -85,6 +93,14 @@ pub fn command(line: &[OsString]) -> Command {
 
 /// Runs a prepared command to its end, and fails the test when it takes more than a minute.
 pub fn run_command(mut cmd: Command) -> Run {
+    let home = cmd
+        .get_current_dir()
+        .filter(|d| {
+            d.parent() == Some(scratch_dir().as_path())
+                && d.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(RUN_HOME_PREFIX))
+        })
+        .map(Path::to_path_buf);
     let child = cmd.spawn().expect("The binary starts");
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -94,6 +110,9 @@ pub fn run_command(mut cmd: Command) -> Run {
         .recv_timeout(Duration::from_secs(60))
         .expect("The binary ends within a minute")
         .expect("The binary's output can be read");
+    if let Some(home) = home {
+        let _ = std::fs::remove_dir_all(home);
+    }
     Run {
         status: out.status.code(),
         stdout: out.stdout,
@@ -124,7 +143,7 @@ pub fn exit_number(code: ExitCode) -> i32 {
 /// Runs the program in this process through `execute_in`, with the arguments after the program's
 /// name, in a world of its own (E0.05-T03-S02): `USERPROFILE` is a fresh throwaway folder under the
 /// temp folder and no other variable is set, the working folder is that folder, the clock and the IDs
-/// are fixed, and there is no driver. It never builds a world from the real process, so it never
+/// are fixed, and the driver is the build's own, the EC2 driver. It never builds a world from the real process, so it never
 /// reads or writes a real home.
 pub fn in_process_outcome(line: &[OsString]) -> agentspace_cli::Outcome {
     static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -136,13 +155,15 @@ pub fn in_process_outcome(line: &[OsString]) -> agentspace_cli::Outcome {
     let now = || 1_800_000_000_i64;
     let new_id = || "3f2a9c1e-7b4d-4e6a-8c2f-0a1b2c3d4e5f".to_string();
     let own_exe = PathBuf::from(BIN);
+    let drivers: Vec<Box<dyn agentspace_driver_api::Driver>> =
+        vec![Box::new(agentspace_driver_ec2::Ec2Driver::new())];
     let world = agentspace_cli::World {
         var: &var,
         cwd: Some(&home),
         own_exe: &own_exe,
         now: &now,
         new_id: &new_id,
-        drivers: &[],
+        drivers: &drivers,
     };
     let out = agentspace_cli::execute_in(line, &world);
     let _ = std::fs::remove_dir_all(&home);
@@ -570,12 +591,16 @@ pub const MSG_NO_PROJECT: &str =
 pub const MSG_NO_DRIVER: &str =
     "agentspace lease create failed: No lease driver is available. Nothing was recorded.";
 
+/// What `create` says in a throwaway home that has no CA, which the build's EC2 driver reports
+/// (lease-api.md, Messages).
+pub const MSG_NO_CA: &str = "agentspace lease create failed: agentspace's certificate authority has not been set up, so no certificate can be issued. Nothing was changed; the operator sets it up.";
+
 pub fn msg_not_found(id: &str) -> String {
     format!("No lease has ID '{id}'.")
 }
 
-/// The exit code a valid line to `sub` gets in an empty throwaway home with no driver: `create`
-/// fails `internal` (no driver), `list` prints the empty list, and `get`, `renew` and `release` of
+/// The exit code a valid line to `sub` gets in an empty throwaway home with no CA: `create`
+/// fails `internal` (no CA), `list` prints the empty list, and `get`, `renew` and `release` of
 /// an ID that names no lease are `not_found`.
 pub fn answer_exit(sub: &str) -> i32 {
     match sub {
@@ -586,10 +611,10 @@ pub fn answer_exit(sub: &str) -> i32 {
 }
 
 /// The problems with a run of a valid line to `sub`, for the lease `id` (normalized) when the line
-/// has one, in an empty throwaway home with no driver (see `answer_exit`).
+/// has one, in an empty throwaway home with no CA (see `answer_exit`).
 pub fn answer_problems(run: &Run, sub: &str, id: &str) -> Vec<String> {
     match sub {
-        "create" => failure_problems(run, "internal", None, Some(MSG_NO_DRIVER)),
+        "create" => failure_problems(run, "internal", None, Some(MSG_NO_CA)),
         "list" => {
             let mut p = Vec::new();
             if run.status != Some(0) {
