@@ -2752,6 +2752,14 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
 - **The holder's process tree is stopped through the Windows API, never `taskkill`**, and `ca`
   sets access rules through the Windows API, never `icacls` (FB-15).
 - **T02-S08 writes v0.06-T01's run record**, as E0.05-T02-S04 wrote v0.05-T01's, for v0.09 (#0049).
+- **The holder record's file is a trait of the keeper's own** (architect, 2026-11-19, for
+  E0.06-T01-S06, asked by its dev lead before GO). The keeper pin has no seam for reading, writing
+  and removing `board-holder.json`, and its parser is E0.06-T01-S07's, built in parallel. So
+  `agentspace-keeper` defines a small trait of its own (read the record as
+  `Option<HolderRecord>`, with "a record that fails is no record" already applied; write it;
+  remove it), tests the pass against a fake, and does not depend on `agentspace-keeper-files` in
+  T01. E0.06-T03-S04 (#0129), which builds the real program, implements that trait over
+  `agentspace-keeper-files` and `agentspace-state`'s `write_atomically`.
 - **The cards carried in** are linked with `references`: #0027 and #0034 (the operator's), #0087
   (the caller), #0066 and #0068 (the keeper's), and #0110 (conformance hardening).
 
