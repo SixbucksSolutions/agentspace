@@ -1,0 +1,11 @@
+[package]
+name = "agentspace-credential"
+version = "0.5.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+ssh-key = { version = "=0.6.7", default-features = false, features = ["alloc", "ed25519", "rand_core", "getrandom"] }
+
+[dev-dependencies]
+tempfile = { version = "=3.23.0", default-features = false }
