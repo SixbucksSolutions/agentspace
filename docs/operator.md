@@ -230,7 +230,9 @@ exception text in place of that message.** The prototype does in some cases
   warns.
 - **A progress message has no prefix.**
 - **`-Quiet` suppresses progress messages and warnings.** Failures and `status`'s report always
-  print. Output passed through from other programs is not affected by `-Quiet`.
+  print. Output passed through from other programs is not affected by `-Quiet`. **Nor is the
+  detail `AGENTSPACE_DIAGNOSTIC` asks for** (architect, 2026-11-19, for E0.06-T01-S01): it prints
+  only in caller mode, which has no `-Quiet`, and a caller who sets the variable asked for it.
 - **Placeholders in this page's message texts:** `<id>` is the instance ID, `<vol>` a volume ID,
   `<fp>` a key fingerprint (`SHA256:...`), and `<user>` the Windows user name, as the value of
   `USERNAME`, with no domain. Other placeholders are named where they appear.
