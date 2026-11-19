@@ -57,8 +57,30 @@ fn restrict(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
-    #[cfg(not(unix))]
-    let _ = path;
+    #[cfg(windows)]
+    {
+        // Windows OpenSSH refuses a private key whose folder's inherited access rules reach other
+        // accounts, so the key keeps only an explicit grant to the current user.
+        let domain = std::env::var("USERDOMAIN")
+            .expect("USERDOMAIN MUST be set to restrict a key file's access");
+        let user = std::env::var("USERNAME")
+            .expect("USERNAME MUST be set to restrict a key file's access");
+        let out = Command::new("icacls")
+            .arg(path)
+            .arg("/inheritance:r")
+            .arg("/grant:r")
+            .arg(format!("{domain}\\{user}:F"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("icacls MUST be available to restrict a key file's access");
+        assert!(
+            out.status.success(),
+            "icacls could not restrict a key file: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 /// Makes a key pair with ssh-keygen. Returns (private path, public path).
