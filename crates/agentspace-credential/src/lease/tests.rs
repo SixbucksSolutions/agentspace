@@ -258,6 +258,10 @@ fn issue_that_fails_at_signing_leaves_no_file_and_no_folder_it_made() {
     let failure = issue(home.path(), ID, "bad\nuser", 3600).unwrap_err();
     assert!(failure.leftovers.is_empty());
     assert!(!lease_dir(home.path(), ID).exists());
+    // The folder of lease folders is shared, and this call made it: it MAY stay, and it is empty.
+    let leases = home.path().join(".agentspace").join("leases");
+    assert!(leases.is_dir(), "leases stays when this call made it");
+    assert!(files_of(&leases).is_empty());
     assert!(!failure.message.contains(home.path().to_str().unwrap()));
 }
 
@@ -812,4 +816,131 @@ fn a_failure_at_signing_comes_after_the_key_and_the_public_key_were_made() {
         assert_eq!(made.undo(), Vec::<String>::new());
         assert!(files_of(&dir).is_empty());
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A file where a folder has to be (architect, 2026-11-19; state.md, "The CA" and "Release").
+// ---------------------------------------------------------------------------------------------
+
+/// The three places a file can stand where a folder of the CA has to be, each as a home with the
+/// file there and nothing below it: the home folder itself, `.agentspace`, and the CA's folder.
+fn homes_with_a_file_for_the_ca() -> Vec<(&'static str, TempDir, PathBuf)> {
+    let mut homes = Vec::new();
+
+    // The home folder is a file: the "home" is a path to a file in a throwaway folder.
+    let outer = throwaway();
+    let home = outer.path().join("home-file");
+    fs::write(&home, b"not a folder").unwrap();
+    homes.push(("home", outer, home));
+
+    // `.agentspace` is a file.
+    let outer = throwaway();
+    let home = outer.path().to_path_buf();
+    fs::write(home.join(".agentspace"), b"not a folder").unwrap();
+    homes.push((".agentspace", outer, home));
+
+    // The CA's folder is a file.
+    let outer = throwaway();
+    let home = outer.path().to_path_buf();
+    fs::create_dir_all(home.join(".agentspace")).unwrap();
+    fs::write(home.join(".agentspace").join("ca"), b"not a folder").unwrap();
+    homes.push(("ca", outer, home));
+    homes
+}
+
+#[test]
+fn a_file_where_a_folder_of_the_ca_has_to_be_is_not_usable_and_not_missing() {
+    for (what, _outer, home) in homes_with_a_file_for_the_ca() {
+        assert_eq!(check_ca(&home), Err(CaFailure::NotUsable), "{what}");
+    }
+}
+
+#[test]
+fn issue_and_renew_with_a_file_in_the_cas_path_say_not_usable_and_make_nothing() {
+    for (what, _outer, home) in homes_with_a_file_for_the_ca() {
+        let issued = issue(&home, ID, "ubuntu", 60).unwrap_err();
+        assert_eq!(
+            issued.message,
+            ca_failure_message(CaFailure::NotUsable),
+            "{what}"
+        );
+        assert!(issued.leftovers.is_empty(), "{what}");
+        let renewed = renew(&home, ID, "ubuntu", 60).unwrap_err();
+        assert_eq!(
+            renewed.message,
+            ca_failure_message(CaFailure::NotUsable),
+            "{what}"
+        );
+        assert!(renewed.leftovers.is_empty(), "{what}");
+        // Nothing was created: the file is still a file, and no `leases` folder exists.
+        match what {
+            "home" => assert!(home.is_file(), "{what}"),
+            ".agentspace" => assert!(home.join(".agentspace").is_file(), "{what}"),
+            _ => {
+                assert!(home.join(".agentspace").join("ca").is_file(), "{what}");
+                assert!(!home.join(".agentspace").join("leases").exists(), "{what}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_missing_home_or_agentspace_is_still_a_missing_ca() {
+    let outer = throwaway();
+    assert_eq!(
+        check_ca(&outer.path().join("no-such-home")),
+        Err(CaFailure::Missing)
+    );
+    assert_eq!(check_ca(outer.path()), Err(CaFailure::Missing));
+    fs::create_dir_all(outer.path().join(".agentspace")).unwrap();
+    assert_eq!(check_ca(outer.path()), Err(CaFailure::Missing));
+}
+
+#[test]
+fn remove_lease_folder_fails_when_a_file_stands_where_a_folder_for_leases_has_to_be() {
+    // Each entry has a file where `<home>`, `.agentspace` or `leases` has to be.
+    let mut homes = Vec::new();
+    let outer = throwaway();
+    let home = outer.path().join("home-file");
+    fs::write(&home, b"keep me").unwrap();
+    homes.push((outer, home.clone(), home));
+
+    let outer = throwaway();
+    let home = outer.path().to_path_buf();
+    let file = home.join(".agentspace");
+    fs::write(&file, b"keep me").unwrap();
+    homes.push((outer, home, file));
+
+    let outer = throwaway();
+    let home = outer.path().to_path_buf();
+    fs::create_dir_all(home.join(".agentspace")).unwrap();
+    let file = home.join(".agentspace").join("leases");
+    fs::write(&file, b"keep me").unwrap();
+    homes.push((outer, home, file));
+
+    for (_outer, home, file) in homes {
+        let failure = remove_lease_folder(&home, ID).unwrap_err();
+        assert_eq!(
+            failure.message, "the folder for leases is a file, not a folder",
+            "{file:?}"
+        );
+        assert!(!failure.message.ends_with('.'));
+        assert!(!failure.message.chars().next().unwrap().is_uppercase());
+        assert_eq!(
+            release_sentence(&failure.message),
+            "The lease's local key, certificate or host alias could not be deleted: the folder \
+             for leases is a file, not a folder. Run release again to finish."
+        );
+        // Nothing was deleted: the file is still there, with what it held.
+        assert_eq!(fs::read(&file).unwrap(), b"keep me");
+    }
+}
+
+#[test]
+fn remove_lease_folder_still_treats_a_missing_leases_folder_as_nothing_to_delete() {
+    let outer = throwaway();
+    assert!(remove_lease_folder(&outer.path().join("no-such-home"), ID).is_ok());
+    assert!(remove_lease_folder(outer.path(), ID).is_ok());
+    fs::create_dir_all(outer.path().join(".agentspace")).unwrap();
+    assert!(remove_lease_folder(outer.path(), ID).is_ok());
 }

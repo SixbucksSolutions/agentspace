@@ -114,6 +114,25 @@ fn now_unix() -> Option<i64> {
     i64::try_from(seconds).ok()
 }
 
+/// What is at a path that has to be a folder, a link followed.
+enum Spot {
+    Folder,
+    Missing,
+    /// There is something there, and it is not a folder: a file.
+    NotFolder,
+    /// There is something there, and it cannot be read.
+    Unreadable,
+}
+
+fn spot(path: &Path) -> Spot {
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => Spot::Folder,
+        Ok(_) => Spot::NotFolder,
+        Err(e) if e.kind() == ErrorKind::NotFound => Spot::Missing,
+        Err(_) => Spot::Unreadable,
+    }
+}
+
 /// All five of state.md's checks of the CA, in order, the first failure ending the check. On
 /// success it returns the CA's private key, as it was read for the check.
 fn load_ca(home: &Path) -> Result<Vec<u8>, CaFailure> {
@@ -121,6 +140,16 @@ fn load_ca(home: &Path) -> Result<Vec<u8>, CaFailure> {
     let private_path = dir.join("agentspace_ca");
     let public_path = dir.join("agentspace_ca.pub");
 
+    // Check 1, first part: the folders on the way. A path through a file reads as "not found" on
+    // Windows, so each is looked at in turn, and a file where a folder has to be is not a missing
+    // CA but one that is not usable (architect, 2026-11-19; state.md, "The CA").
+    for folder in [home, &agentspace_dir(home), &dir] {
+        match spot(folder) {
+            Spot::Folder => {}
+            Spot::Missing => return Err(CaFailure::Missing),
+            Spot::NotFolder | Spot::Unreadable => return Err(CaFailure::NotUsable),
+        }
+    }
     // Check 1: both files exist.
     match (private_path.try_exists(), public_path.try_exists()) {
         (Ok(true), Ok(true)) => {}
@@ -297,7 +326,9 @@ fn build(
 ///    ending in LF.
 ///
 /// On any failure every file this call made is removed, and the folder if this call made it; what
-/// could not be removed is in `leftovers`. `user` is the certificate's one principal, and
+/// could not be removed is in `leftovers`. The folder of lease folders, `leases`, is shared by
+/// every lease, so a failed issue MAY leave it when this call made it: only the lease's own folder
+/// and its files are removed (architect, 2026-11-19; state.md, "Creation, in order"). `user` is the certificate's one principal, and
 /// `ttl_seconds` its lifetime. The caller holds the lease state lock.
 pub fn issue(home: &Path, id: &str, user: &str, ttl_seconds: u32) -> Result<Issued, CredFailure> {
     let ca_private = load_ca(home).map_err(ca_failure)?;
@@ -417,6 +448,12 @@ impl RenewState {
 /// A guard dropped without either rolls back, so that an early return cannot leave a new
 /// certificate under an old record. A process killed first leaves the renewal as it was when it
 /// died, and the next `renew` or `release` settles it (state.md, "Renewal").
+///
+/// **The caller MUST bind the guard to a name, write the record, and then commit or roll back the
+/// guard, all while it still holds the lease state lock.** It MUST NOT read `expires_at` through a
+/// temporary: `renew(..)?.expires_at()` drops the guard at once, which rolls the renewal back, and
+/// leaves the caller with a number for a certificate that is gone.
+#[must_use = "a renewal is rolled back when its guard is dropped: bind it, write the record, then               commit or roll back"]
 pub struct RenewGuard {
     expires_at: i64,
     state: Option<RenewState>,
@@ -492,6 +529,11 @@ fn new_hex() -> String {
 ///
 /// On a failure in steps 3 to 5 the temporary files are removed, what could not be removed is in
 /// `leftovers`, and the certificate is as it was. The caller holds the lease state lock.
+///
+/// **The caller MUST bind the returned guard, write the record, and commit or roll back the guard
+/// while still holding the lock, and MUST NOT read `expires_at` through a temporary:
+/// `renew(..)?.expires_at()` drops the guard at once, which rolls the renewal back.**
+#[must_use = "a renewal is rolled back when its guard is dropped: bind it, write the record, then               commit or roll back"]
 pub fn renew(
     home: &Path,
     id: &str,
@@ -640,12 +682,42 @@ fn remove_tree(path: &Path, shown: &str, leftovers: &mut Vec<String>) {
     }
 }
 
+/// The `<why>` when the home folder, `.agentspace` or `leases` is a file: a phrase with no capital
+/// at its start and no full stop at its end.
+const LEASES_IS_A_FILE: &str = "the folder for leases is a file, not a folder";
+
 /// Deletes a lease's folder with everything in it, a killed renewal's temporary files included. A
-/// missing folder is not a failure. What could not be deleted is named in `leftovers`,
+/// missing folder is not a failure. A file where the home folder, `.agentspace` or `leases` has to
+/// be is one: it fails, with the why "the folder for leases is a file, not a folder", and nothing
+/// is deleted. What could not be deleted is named in `leftovers`,
 /// home-relative; a retry finishes the job (state.md, "Release, and what it leaves").
 pub fn remove_lease_folder(home: &Path, id: &str) -> Result<(), CredFailure> {
     if !valid_id(id) {
         return Err(fail(BAD_ID));
+    }
+    // A file where the home folder, `.agentspace` or `leases` has to be is never read as a missing
+    // lease folder (architect, 2026-11-19; state.md, "Release, and what it leaves"). A path through
+    // a file reads as "not found" on Windows, so each is looked at in turn. Nothing is deleted.
+    let agentspace = agentspace_dir(home);
+    let leases = agentspace.join("leases");
+    for folder in [home, &agentspace, &leases] {
+        match spot(folder) {
+            Spot::Folder => {}
+            Spot::Missing => return Ok(()),
+            Spot::NotFolder => {
+                return Err(CredFailure {
+                    message: LEASES_IS_A_FILE.to_string(),
+                    leftovers: Vec::new(),
+                });
+            }
+            Spot::Unreadable => {
+                let leftovers = vec![relative(id, None)];
+                return Err(CredFailure {
+                    message: delete_failure_why(&leftovers),
+                    leftovers,
+                });
+            }
+        }
     }
     let dir = lease_dir(home, id);
     let mut leftovers = Vec::new();
