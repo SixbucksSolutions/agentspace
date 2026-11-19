@@ -483,6 +483,28 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   swimcoach's `scripts/localswim.sh` runs this wrapper on the box; its Windows twin,
   `scripts/localswim.ps1`, reads the laptop's receipt directly.
 
+## Build
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+```bat
+cargo xtask dist [--release] [--proxy-checkout <folder>]
+```
+
+- **`cargo xtask dist` builds the lease CLI and writes `target\dist\`**, which holds exactly three
+  files, and removes anything else there: `agentspace.exe`, the `agentspace` wrapper that Git Bash
+  and other POSIX shells find, and `agentspace-ssh-proxy.cmd`, v0.05's forwarder
+  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
+- **The forwarder runs `scripts\ssh-proxy.cmd` of `--proxy-checkout`**, or else of the checkout the
+  build ran from. `dist` MUST fail, and write no forwarder, when that file does not exist.
+- **The output folder is for checks.** A lease that a CLI in it creates names that folder in its
+  alias file, so a clean-up breaks the lease's connections. Real leases SHOULD come from the install
+  ([operator.md, The install folder](docs/operator.md#the-install-folder)).
+- **A build whose files are copied into the install MUST be run in the main checkout, or MUST pass
+  `--proxy-checkout` naming it.** An install's forwarder MUST NOT name a git worktree, which is
+  deleted after its branch merges
+  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
+
 ## Rules
 
 RFC 2119 keywords; the capitals are load-bearing.
