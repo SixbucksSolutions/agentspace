@@ -31,6 +31,17 @@ name = "agentspace-driver-api"
 version = "0.5.0"
 
 [[package]]
+name = "agentspace-driver-ec2"
+version = "0.5.0"
+dependencies = [
+ "agentspace-alias",
+ "agentspace-credential",
+ "agentspace-driver-api",
+ "agentspace-state",
+ "tempfile",
+]
+
+[[package]]
 name = "agentspace-state"
 version = "0.5.0"
 dependencies = [
