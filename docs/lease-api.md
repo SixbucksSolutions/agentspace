@@ -55,7 +55,9 @@ its requirement, or says why it is declined.
 ### The program
 
 - **The CLI is one program, run as `agentspace`.** How it is installed and put on the caller's
-  `PATH` is outside this contract, and so is its file name, such as `agentspace.exe`.
+  `PATH` is outside this contract, and so is its file name. agentspace's own install calls it
+  `agentspace.exe`, beside the other programs it needs
+  ([operator.md, Programs and install layout](operator.md#programs-and-install-layout)).
   - Note on where this came from: the prototype is `scripts/lease-cli.ps1`, started by
     `bin/agentspace.cmd` from cmd and PowerShell, and by `bin/agentspace` from Git Bash and other
     POSIX shells.
@@ -71,7 +73,8 @@ its requirement, or says why it is declined.
     the executable. Git Bash converts such an argument before a native program starts, so a build
     MAY ship a wrapper that Git Bash and other POSIX shells find as `agentspace`, which turns that
     conversion off (for example with `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL='*'`) and runs
-    the program with its arguments unchanged. The prototype's `bin/agentspace` is such a wrapper.
+    the program with its arguments unchanged. The prototype's `bin/agentspace` is such a wrapper,
+    and so is the `agentspace` file of agentspace's install.
   - The prototype breaks this in one known case, an argument such as `-:x`, which its runtime
     refuses before the CLI starts, with exit 1 and no error document. That is a defect, not
     behavior to copy (#0083).

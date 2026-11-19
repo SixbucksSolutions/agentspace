@@ -609,11 +609,12 @@ driver never answers `no_capacity` or `pending`.
 **Place makes no call to AWS and starts no host.** Every step is on the caller's machine:
 1. **Decides** whether the request is supported, and answers `unsatisfiable` with every reason
    when it is not. Nothing has been issued.
-2. **Checks the CA** by running the operator's `ca` ([operator.md](operator.md#ca)) as a separate
-   program, and reading only its exit code. On a laptop with no CA, `ca` creates one and exits 0,
-   so today's place creates the CA and goes on to sign. That is #0029's third point, and never
-   behavior to copy: a driver MUST check without creating, by the checks of
-   [state.md](state.md#its-checks) alone. The prototype starts Windows PowerShell 5.1 for it.
+2. **Checks the CA by the checks of [state.md, Its checks](state.md#its-checks), and those alone.**
+   A CA that fails one fails the place, and place MUST NOT create a missing CA (#0029, point 3).
+   It never runs the operator's `ca` ([operator.md](operator.md#ca)).
+   - Note on where this came from: the prototype runs the operator's `ca` as a separate program,
+     under Windows PowerShell 5.1, and reads only its exit code, so on a laptop with no CA its
+     place creates one and goes on to sign. That is a difference the spec drops.
 3. **Makes a new key pair for the lease and checks that it has no passphrase,** with `ssh-keygen`
    from Windows OpenSSH, by full path ([operator.md](operator.md#programs-it-starts)). The key's
    type, place and checks, and the refusal of a lease ID that already has a key, are

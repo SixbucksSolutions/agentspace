@@ -93,8 +93,8 @@ starts; unset or empty means the default. What each means to the lease CLI is
 
 | Variable | Moves | Does not move |
 |---|---|---|
-| `USERPROFILE` | Everything on this page under `%USERPROFILE%`: `.agentspace` and all in it, and `.ssh`; and `.aws`, which the AWS CLI reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | The checkout, and `%LOCALAPPDATA%` |
-| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but `BoardHolderLauncher.exe` | The lease folders, the CA, the push stamp, the instance-ID cache, `BoardHolderLauncher.exe` and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
+| `USERPROFILE` | Everything on this page under `%USERPROFILE%`: `.agentspace` and all in it, and `.ssh`; and `.aws`, which the AWS CLI reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | The checkout; `%LOCALAPPDATA%`; and where a program finds agentspace's other programs, which is its own folder ([operator.md](operator.md#how-each-program-finds-the-others)) |
+| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)) | The lease folders, the CA, the push stamp, the instance-ID cache, `local.parameters`, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
 | `AGENTSPACE_SSH_DIR` | `config`, its backups, `agentspace.d` and the alias files, for `create` and `release` | `known_hosts`, and the user's own key; ssh itself reads neither variable |
 | `LOCALAPPDATA` | The localswim receipt, which the operator reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | Anything agentspace writes |
 
@@ -222,6 +222,8 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `...\ca\agentspace_ca`, `agentspace_ca.pub` | The CA's key pair | `ca`, once | The same | Never |
 | `%USERPROFILE%\.agentspace\localswim-pushed.sha256` | [The push stamp](#the-push-stamp) | `up`, `sync` | `up` | Never |
 | `%USERPROFILE%\.agentspace\instance-id` | [The instance-ID cache](#files-in-the-checkout), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. Never the lease CLI (D21) | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\local.parameters` | [The stack's parameters](#files-in-the-checkout), which the prototype keeps in the checkout | A person | `deploy` | Never |
+| `%USERPROFILE%\.agentspace\operator\` and what is in it | [The operator's folder](#files-in-the-checkout): the template, the box's files and the localswim CLI, written out for the programs that read them | `deploy`, `sync` | The AWS CLI, `scp` | Never; each file is replaced at its next use |
 | `<state folder>\board-holder.json` | [The holder record](#the-holder-record) | The keeper | The keeper | The keeper |
 | `<state folder>\board-holder.json.<hex>.tmp` | The holder record's temporary file | The keeper | None | At once |
 | `<state folder>\board-holder.log` | [The keeper's log](#the-keepers-logs) | The keeper | People | Never |
@@ -229,8 +231,9 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `<state folder>\board-holder.lock`, `board-holder-keeper.lock` | [The keeper's lock files](#the-keepers-lock-files) | The keeper | The keeper | Never |
 | `<state folder>\board-holder-launch.<hex>.json`, `.claim`, `.result.json` | [A holder's launch files](#a-holders-launch-files) | The keeper and its launcher | The same | The keeper, in the same pass; a late launcher's result file never |
 | `<state folder>\board-holder-launch.<hex>.json.<hex>.tmp`, `board-holder-launch.<hex>.result.json.<hex>.tmp` | The launch request's and result's temporary files | The keeper and its launcher | None | At once |
-| `<state folder>\board-holder-launcher-errors.log` | [The task launcher's error log](#the-keepers-logs) | `BoardHolderLauncher.exe` | People | Never |
-| `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe` | [The keeper task's launcher](#the-keeper-tasks-launcher) | The keeper's install | Task Scheduler | The keeper's uninstall |
+| `<state folder>\board-holder-launcher-errors.log` | [The task launcher's error log](#the-keepers-logs) | The task's launcher | People | Never |
+| `%USERPROFILE%\.agentspace\bin\` and the programs in it | The install folder ([operator.md, Programs and install layout](operator.md#the-install-folder)), with [the keeper task's launcher](#the-keeper-tasks-launcher) | An install | Whatever runs a program; Task Scheduler, for the task | Never by agentspace, but for the `.old-` files an install renames aside and removes later ([operator.md](operator.md#the-install-folder)) |
+| `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe` | The prototype's task launcher, which the rewrite does not use ([The keeper task's launcher](#the-keeper-tasks-launcher)) | The prototype's keeper install | Task Scheduler, for the prototype's task | The prototype's `-Uninstall`; the rewrite's installer, a real install or `-Uninstall` |
 | `%USERPROFILE%\.ssh\id_ed25519.pub`, `~\.ssh\config`'s `agentspace` entry, `~\.claude\CLAUDE.md`, `~\.aws\`, localswim's receipt and `bot.xml` | [Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes) | The user, the AWS CLI, or localswim | The operator; ssh; the AWS CLI | Never |
 | `%USERPROFILE%\.agentspace\watchdog\`, `swimcoach-last.json`, `tmp-test-lease-alias-<time>\` | [Project tooling](#project-tooling), not the product | The project's scripts | The same | See there |
 
@@ -536,7 +539,7 @@ Host <alias>
 
   | Placeholder | Value |
   |---|---|
-  | `<program>` | The full path of agentspace's ProxyCommand program, with backslashes. **The lease CLI finds the program in the folder its own executable runs from** (D8), so a CLI that is one compiled program needs no checkout. The program's file name is the operator's ([operator.md Q10](operator.md#open-questions)). Its extension is compared without regard to case |
+  | `<program>` | The full path of agentspace's ProxyCommand program, with backslashes. **The lease CLI finds the program in the folder its own executable runs from** (D8), so a CLI that is one compiled program needs no checkout. The program is `agentspace-ssh-proxy.exe` there, or, when that file is not there, `agentspace-ssh-proxy.cmd` ([operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others)). Its extension is compared without regard to case |
   | `<system folder>` | Windows' `System32` folder as a full path: `%SystemRoot%\System32`, with the value of `SystemRoot` written out, which is `C:\Windows\System32` on every machine seen. The text `%SystemRoot%` itself MUST NOT be written: ssh reads `%` as its own token, and Windows expands no variable in a ProxyCommand |
   | `<alias>` | The lease's alias, written literally |
 
@@ -874,8 +877,9 @@ their access rules, and what a usable CA is. Signing leaves the laptop with card
 - **Neither `AGENTSPACE_STATE_DIR` nor any other agentspace variable moves it**; `USERPROFILE`
   does ([What moves which files](#what-moves-which-files)).
 - **The folder MUST NOT be inside a folder that OneDrive syncs** (the `OneDrive`,
-  `OneDriveConsumer` and `OneDriveCommercial` environment variables), **nor inside the checkout**,
-  compared as paths without regard to case (D17). The operator's `ca`, which creates the CA,
+  `OneDriveConsumer` and `OneDriveCommercial` environment variables), **nor inside any git
+  working tree**, compared as paths without regard to case (D17, D37; the prototype refuses only
+  its own checkout, [operator.md](operator.md#what-the-prototype-took-from-its-checkout)). The operator's `ca`, which creates the CA,
   enforces this ([operator.md](operator.md#ca)); it is not one of the checks that make a CA usable
   ([Its checks](#its-checks)), so the lease CLI does not make it.
 - **Both files MUST NOT be committed**, and the private key MUST NOT be copied anywhere else (D7,
@@ -924,8 +928,7 @@ check:
   `create` and `renew` before they sign (D17; [operator.md](operator.md#ca)). `release` never
   checks it.
 - **`create` and `renew` make these five checks and no others.** The folder's place, outside
-  OneDrive and the checkout ([Its files](#its-files)), is `ca`'s to check; a compiled lease CLI has
-  no checkout to compare with (D8). The prototype's `create` and `renew`, which run `ca`, also refuse
+  OneDrive and any git working tree ([Its files](#its-files)), is `ca`'s to check. The prototype's `create` and `renew`, which run `ca`, also refuse
   a CA in such a folder. That is a difference the spec drops, with the running of `ca` itself
   (#0029, point 3).
 - **`create` and `renew` MUST only check, and MUST NOT create a missing CA** (#0029, point 3;
@@ -1094,7 +1097,7 @@ read by agentspace.
 | `board-holder.log` | Every keeper pass and the `-Watch` loop | UTF-8 without a BOM, one line per entry, each ending in LF | Never rotated or removed |
 | `board-holder-ssh.log` | The holder, through the handle the launcher gives it (stdout and stderr together) | The holder's raw output, in the console's code page | Renamed to `.log.1` by the keeper's rotation ([keeper.md#log-lines](keeper.md#log-lines)) |
 | `board-holder-ssh.log.1` | The rotation | As above | Replaced by the next rotation |
-| `board-holder-launcher-errors.log` | `BoardHolderLauncher.exe`, only when it refuses its arguments or cannot start the keeper | UTF-8 without a BOM, one line per entry, each ending in CR LF | Never removed |
+| `board-holder-launcher-errors.log` | The task's launcher, only when it refuses its arguments or cannot start the keeper | UTF-8 without a BOM, one line per entry, each ending in CR LF | Never removed |
 
 **Share modes:**
 - **`board-holder.log` is opened for append, sharing read and write**, so two writers and any
@@ -1127,12 +1130,20 @@ long, and what a second taker does, is [keeper.md#locks](keeper.md#locks)'s.
 
 ### The keeper task's launcher
 
-**`%USERPROFILE%\.agentspace\BoardHolderLauncher.exe` is the no-window program the logon task runs
-to start the keeper** (D30; the task is [keeper.md#the-installed-task](keeper.md#the-installed-task)'s).
-- **Written by:** the keeper's install, which compiles it there, never into the checkout. An
-  install MUST NOT overwrite it while the task runs it. **Read by:** Task Scheduler, which runs it.
-  **Removed by:** the keeper's uninstall.
+**`%USERPROFILE%\.agentspace\bin\agentspace-keeper-task.exe` is the no-window program the logon
+task runs to start the keeper** (D30, D37; the task is [keeper.md#the-installed-task](keeper.md#the-installed-task)'s,
+and the install folder and its programs are
+[operator.md, Programs and install layout](operator.md#programs-and-install-layout)'s).
+- **Written by:** an install, with the other programs, never by the keeper's installer and never
+  into a checkout. An install MUST NOT overwrite it while the task runs it; operator.md's
+  [install folder](operator.md#the-install-folder) says how a running program's file is replaced.
+  **Read by:** Task Scheduler, which runs it. **Removed by:** nothing in agentspace. The keeper's
+  `-Uninstall` leaves it, since it belongs to the install.
 - **`AGENTSPACE_STATE_DIR` does not move it.** Access rules: inherited.
+- Note on where this came from: the prototype's launcher is
+  `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`, which its keeper install compiles there and
+  its `-Uninstall` deletes. The rewrite's installer removes that file
+  ([keeper.md, The installer](keeper.md#the-installer)).
 
 ## Files agentspace reads and never writes
 
@@ -1163,29 +1174,45 @@ process inside the app finds there proves nothing about the real files.
 
 ## Files in the checkout
 
-**The operator keeps three files in the checkout of agentspace that it runs from, not under the
-home folder** ([operator.md](operator.md#laptop-files)). None is committed. **Only the
-instance-ID cache is state, and D21 requires it under `%USERPROFILE%\.agentspace`** (architect,
-2026-11-18, which settles [Q1](#open-questions)); the prototype keeps it in the checkout, and
-[Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
-lists that. The build output is not state, and MAY stay in the checkout.
+**The rewrite keeps nothing in a checkout: no program of agentspace reads or writes one at run
+time** (D37; [operator.md, What the prototype took from its checkout](operator.md#what-the-prototype-took-from-its-checkout)).
+The prototype's operator keeps three files in the checkout it runs from, and the prototype's
+programs read the stack's template, the box's files and the state schemas from there too. This
+section gives each file's place in the rewrite, all under `%USERPROFILE%\.agentspace`, and its
+format. None is committed.
+- **Only the instance-ID cache is state, and D21 requires it under `%USERPROFILE%\.agentspace`**
+  (architect, 2026-11-18, which settles [Q1](#open-questions)); the prototype keeps it in the
+  checkout, and [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
+  lists that.
+- **D21 lets build output stay in a checkout, and the rewrite still keeps none there**, since a
+  compiled operator has no checkout to find. The operator's folder holds what it writes out for
+  the programs it starts.
 
-| Path | Format | Written by | Read by | Removed |
-|---|---|---|---|---|
-| `%USERPROFILE%\.agentspace\instance-id`, which is `<checkout>\.instance-id` in the prototype | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. The lease CLI MUST NOT read or need it ([driver.md](driver.md#how-it-is-reached), D21) | By `deploy`, which writes it again |
-| `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box | `sync` | `sync` | Never; replaced by each build |
-| `<checkout>\infra\local.parameters` | Text lines; see below | A person | `deploy` | Never |
+| Path | The prototype's | Format | Written by | Read by | Removed |
+|---|---|---|---|---|---|
+| `%USERPROFILE%\.agentspace\instance-id` | `<checkout>\.instance-id` | The instance ID, ASCII, with no line ending | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. The lease CLI MUST NOT read or need it ([driver.md](driver.md#how-it-is-reached), D21) | By `deploy`, which writes it again |
+| `%USERPROFILE%\.agentspace\local.parameters` | `<checkout>\infra\local.parameters` | Text lines; see below | A person | `deploy` | Never |
+| `%USERPROFILE%\.agentspace\operator\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, just before the call that reads it | The AWS CLI's `cloudformation deploy` | Never; replaced by each `deploy` |
+| `%USERPROFILE%\.agentspace\operator\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, just before the copy, after removing whatever the folder held | `scp`, which copies the folder to the box | Never; emptied and written again by each `sync` |
+| `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box | `sync`'s build | `scp` | Never; replaced by each build |
+
+- **The operator's folder, `%USERPROFILE%\.agentspace\operator`, is created by the first command
+  that writes in it.** `AGENTSPACE_STATE_DIR` does not move it or `local.parameters`
+  ([What moves which files](#what-moves-which-files)). Access rules: inherited.
+- **Nothing reads the files in the operator's folder but the programs the operator starts**, at
+  the step that wrote them. A file a person changes there is replaced at its next use, so the box
+  and the stack are changed only through the repository and a new build.
 
 - **The cache's file name, `instance-id`, is this page's choice** ([Q14](#open-questions)): D21
   says only that it lives under `%USERPROFILE%\.agentspace`. It is moved by `USERPROFILE` and by no
   other variable ([What moves which files](#what-moves-which-files)).
 - **The instance-ID cache is read trimmed of surrounding whitespace**, and the ProxyCommand reads
   its first line. What an empty cache means is [operator.md](operator.md#laptop-files)'s.
-- **`infra\local.parameters`** holds the account's stack parameters, so it MUST NOT be committed.
+- **`local.parameters`** holds the account's stack parameters, so it MUST NOT be committed.
   Each line that matches `^\s*[A-Za-z]+=\S` is one parameter, `<Name>=<value>`, taken with its
   surrounding whitespace trimmed and passed to CloudFormation as it is; every other line, such as a
-  comment or a blank line, is skipped. `infra\local.parameters.example`, which is committed, shows
-  the form.
+  comment or a blank line, is skipped. The repository's `infra\local.parameters.example`, which is
+  committed, shows the form.
 
 ## Project tooling
 
@@ -1278,6 +1305,7 @@ this table.**
 | Every path written into a file is a full path | Writes a relative `USERPROFILE`, `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` into the alias file and a launch request as given | [The home folder](#the-home-folder) |
 | Readers of the keeper's JSON files share read, write and delete (SHOULD) | They share read only; the writer's 5-second retry covers it | [The keeper's files](#the-keepers-files) |
 | The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id` | `.instance-id` in the checkout | D21; [Q1](#open-questions) ([Files in the checkout](#files-in-the-checkout)) |
+| `local.parameters` and the operator's folder are under `%USERPROFILE%\.agentspace` | Reads `infra\local.parameters` from the checkout, and builds the localswim CLI into the checkout's `.build` | [Files in the checkout](#files-in-the-checkout) |
 | `create` never reads or needs the instance-ID cache, with or without `AGENTSPACE_PROXY_COMMAND` | Without the override, refuses to write the alias, and so fails `create`, when its checkout holds no `.instance-id` | D21 ([The alias file](#the-alias-file); [driver.md](driver.md#how-it-is-reached)) |
 | A state file in which two records share an `id` is read as not valid by every lease command | `get` and `list` read it; a changing command refuses it only when it writes, after the driver has acted | [The lease state file](#the-lease-state-file) |
 | The push stamp is replaced atomically (SHOULD) | Overwrites it in place | [The push stamp](#the-push-stamp) |

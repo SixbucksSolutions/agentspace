@@ -44,6 +44,13 @@ that a lease's client sees, so D1 binds it, and everything it runs
   - [Laptop files](#laptop-files)
   - [The `agentspace` SSH entry](#the-agentspace-ssh-entry)
   - [Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)
+- [Programs and install layout](#programs-and-install-layout): [the programs](#the-programs),
+  [the install folder](#the-install-folder),
+  [how each program finds the others](#how-each-program-finds-the-others),
+  [what the prototype took from its checkout](#what-the-prototype-took-from-its-checkout),
+  [argument style](#argument-style),
+  [ProxyCommand lines already on the laptop](#proxycommand-lines-already-on-the-laptop),
+  [until v0.06 retires the prototype's entry points](#until-v006-retires-the-prototypes-entry-points)
 - [Commands](#commands): [the top level](#the-top-level), [`deploy`](#deploy), [`up`](#up),
   [`sync`](#sync), [`ca`](#ca), [`down`](#down), [`status`](#status), [`grow`](#grow)
 - [Starting the box and waiting for it](#starting-the-box-and-waiting-for-it)
@@ -70,7 +77,10 @@ that a lease's client sees, so D1 binds it, and everything it runs
   would answer the same questions in its own way.
 - **The prototype is `scripts/agentspace.ps1`, run by Windows PowerShell 5.1, and
   `scripts/ssh-proxy.cmd`.** They are named here only where a note says where a requirement came
-  from. The rewrite replaces both in v0.06 (#0055, D28).
+  from. The rewrite replaces both in v0.06 (#0055, D28) with `agentspace-operator.exe` and
+  `agentspace-ssh-proxy.exe`, installed as [Programs and install layout](#programs-and-install-layout)
+  says. Every path this page gives under `<checkout>` is the prototype's, and that section gives
+  the rewrite's place for each.
 
 ### Command line
 
@@ -80,10 +90,11 @@ operator -h | --help
 operator <command> -h | --help
 ```
 
-**`operator` stands for the operator's entry point.** Today that is `powershell -NoProfile -File
-<checkout>\scripts\agentspace.ps1`, to which the ProxyCommand adds `-ExecutionPolicy Bypass`, and
-the help texts below write it `agentspace.ps1`. What the rewrite's executable is called is open
-([Q10](#open-questions)).
+**`operator` stands for the operator's program, `agentspace-operator.exe`**, which a person runs
+as `agentspace-operator` and the help texts below name so
+([Programs and install layout](#programs-and-install-layout)). Note on where this came from: the
+prototype's entry point is `powershell -NoProfile -File <checkout>\scripts\agentspace.ps1`, to
+which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 
 - **`<command>` is the first positional argument** and MUST be one of `deploy`, `up`, `sync`,
   `ca`, `down`, `status` and `grow`, whole: it is matched without regard to case, and never as an
@@ -140,7 +151,7 @@ the help texts below write it `agentspace.ps1`. What the rewrite's executable is
 | `-GiB <n>` | Integer | `2` | `grow` | The GiB to add to the root volume. Every command checks its form ([Command line](#command-line)), so `status -GiB abc` is a usage error; every command but `grow` then ignores its value. No range is checked; AWS refuses a size that is not larger ([grow](#grow)). |
 | `-Alias <alias>` | SSH host alias | `agentspace` | `up` | The SSH host alias the token push connects with (D9, card #0057). Any other command given `-Alias` fails. |
 | `-Quiet` | Switch | Off | Every command | Suppresses every message that is not a failure and not `status`'s report, warnings included ([Messages](#messages)). |
-| `-h`, `--help` | Switch | | Every level | Prints the help of the level it is at to stdout and exits 0, doing nothing else. The prototype has no help of its own ([Q2](#open-questions)); the texts below are what the rewrite MUST print, with its own entry point's name in place of `agentspace.ps1` ([Q10](#open-questions)). |
+| `-h`, `--help` | Switch | | Every level | Prints the help of the level it is at to stdout and exits 0, doing nothing else. The prototype has no help of its own ([Q2](#open-questions)); the texts below are what the rewrite MUST print, naming the operator `agentspace-operator` ([Programs and install layout](#the-programs)). |
 
 **`-Alias` is checked before anything but help and the usage errors runs**, for every command:
 1. **Given with any command but `up`**, the operator fails with `agentspace: -Alias applies to up
@@ -229,7 +240,7 @@ exception text in place of that message.** The prototype does in some cases
 | Session Manager plugin | Found by the AWS CLI on `PATH`; the ProxyCommand puts `C:\Program Files\Amazon\SessionManagerPlugin\bin` first | The ProxyCommand's tunnel |
 | `icacls.exe`, `taskkill.exe` | `%SystemRoot%\System32\`, by full path | `ca`; the token push's time limit |
 | `go` | On `PATH` | `sync`, to build the localswim CLI |
-| `powershell.exe` (Windows PowerShell 5.1) | On `PATH` | The prototype's ProxyCommand, to run `up` |
+| The operator, `agentspace-operator.exe` | In the ProxyCommand's own folder ([How each program finds the others](#how-each-program-finds-the-others)); a ProxyCommand that runs `up` in its own process starts none. The prototype's ProxyCommand runs `powershell.exe` (Windows PowerShell 5.1), found on `PATH`, with its `agentspace.ps1` | The ProxyCommand, to run `up` |
 
 **How the paths are written (A-24):** a path that starts `%SystemRoot%` MUST be built from the value
 of `SystemRoot` as the operator finds it, never from the fixed text `C:\Windows`, which is that
@@ -392,7 +403,9 @@ by a real box.
 **Every file here is [docs/state.md](state.md)'s**: its exact location, format and access rules.
 This table says only which command reads or writes it. **The one exception is localswim's receipt
 and Bot credential:** their formats are this page's ([The receipt](#the-receipt),
-[The Bot credential](#the-bot-credential)), and state.md owns none of them.
+[The Bot credential](#the-bot-credential)), and state.md owns none of them. **The `<checkout>` rows
+are the prototype's places;** where the rewrite keeps each is
+[Programs and install layout](#programs-and-install-layout) (D37).
 
 | File (as today's prototype has it) | Read by | Written by | What it is |
 |---|---|---|---|
@@ -482,6 +495,259 @@ ssh or scp it starts, to stderr, and each one costs a Session Manager session.
 - **The nested `up` MUST NOT push the token** (`AGENTSPACE_NESTED`,
   [Environment variables](#environment-variables)).
 
+## Programs and install layout
+
+**The rewrite is seven files on the laptop, installed together in one folder: six programs and a
+wrapper for POSIX shells.** Each program finds the others, and everything the prototype took from
+its checkout, without a checkout of the repository. This section owns their file names, the
+install folder, how each program finds the others and those files, the argument style, and how
+the prototype's entry points behave until v0.06 (#0055) retires them. Its rules are D37's, which
+settles [Q10](#open-questions) here, and keeper.md's [Q3, Q8 and Q10](keeper.md#open-questions).
+
+### The programs
+
+| File | Role | Its spec | Kind | Conformance variable |
+|---|---|---|---|---|
+| `agentspace.exe` | The lease CLI, run as `agentspace` | [lease-api.md](lease-api.md) | Console program | `AGENTSPACE_CMD` |
+| `agentspace` | The lease CLI's wrapper for Git Bash and other POSIX shells: it runs `agentspace.exe` from its own folder with its arguments unchanged and MSYS path conversion off, as [lease-api.md, The program](lease-api.md#the-program) allows | lease-api.md | POSIX `sh` script, no extension, with LF line ends and `#!/bin/sh` as its first line, which is what makes Git Bash run a file with no extension | None |
+| `agentspace-operator.exe` | The operator: `deploy`, `up`, `sync`, `ca`, `down`, `status` and `grow` | [Command line](#command-line) | Console program | `AGENTSPACE_OPERATOR_CMD` |
+| `agentspace-ssh-proxy.exe` | The ProxyCommand | [The ProxyCommand](#the-proxycommand) | Console program | `AGENTSPACE_SSH_PROXY_CMD` |
+| `agentspace-keeper.exe` | The keeper | [keeper.md, Command line](keeper.md#command-line) | Console program | `AGENTSPACE_KEEPER_CMD` |
+| `agentspace-keeper-task.exe` | The keeper task's launcher, which the logon task runs | [keeper.md, The task's launcher](keeper.md#the-tasks-launcher) | Windows program, with no console | None |
+| `agentspace-keeper-install.exe` | The keeper task's installer | [keeper.md, The installer](keeper.md#the-installer) | Console program | None |
+
+- **These names are fixed.** One program finds another by its file name, and a person runs one by
+  its command name, which is the file name without `.exe`: `agentspace`, `agentspace-operator`,
+  `agentspace-keeper`, `agentspace-keeper-install`.
+- **Help, usage lines and a program's own messages print its command name**, whatever path or
+  wrapper started it: the operator's help says `Usage: agentspace-operator ...`
+  ([Commands](#commands)), and the keeper's and the installer's usage errors start
+  `agentspace-keeper: ` and `agentspace-keeper-install: `. **The ProxyCommand is the exception:** it
+  is never typed, only named by path in a ProxyCommand line, so its one message that names itself
+  prints its file name, `agentspace-ssh-proxy.exe` ([The ProxyCommand](#the-proxycommand), step 1).
+  The prototype's programs print their own names (`agentspace.ps1`, `ssh-proxy.cmd`,
+  `board-holder.ps1`, `install-board-holder.ps1`), so **a check MUST NOT depend on which name is
+  printed**, only on the rest of the text.
+- **Only the lease CLI and the operator have help** ([lease-api.md](lease-api.md); [The top
+  level](#the-top-level)). The keeper and the keeper's installer have none: `-h`, `--help` and
+  `-?` are unknown arguments to them, and so usage errors with exit 2
+  ([keeper.md, Usage errors](keeper.md#usage-errors); [keeper.md, The installer](keeper.md#the-installer)).
+  The task's launcher passes every argument on to the keeper, so it exits with the keeper's
+  usage error, 2. The ProxyCommand takes its one argument as the alias, so `-h` is an alias, which
+  `up`'s check refuses because it starts with `-`, and the ProxyCommand exits 1
+  ([The ProxyCommand](#the-proxycommand), steps 3 and 4).
+- **A build MAY make several of these one binary**, which selects its role by its own file name, so
+  long as each file runs its role with the command line its spec gives. `agentspace-keeper-task.exe`
+  cannot share a binary with a console program, since a program's kind is fixed when it is built.
+- **For a conformance run against an install or a build's output folder**, each conformance
+  variable names the program in that folder by full path. Each role is its own file, so the four
+  command lines never collide in one program, and no wrapper per role is needed
+  ([conformance.md, Naming the program under test](conformance.md#naming-the-program-under-test)).
+- **The programs are native Windows programs, written in Rust (D28).** The `agentspace` wrapper is
+  a few lines of `sh`, for the same reason the box's files stay shell: it configures the shell that
+  runs it.
+
+### The install folder
+
+- **An install puts every file it ships in one folder, `%USERPROFILE%\.agentspace\bin`.** Wherever a
+  path into it is stored (a lease's alias file, the keeper's task), `USERPROFILE`'s value is written
+  out. This page and keeper.md write the folder `<install>`.
+- **The install folder MUST NOT be under `%LOCALAPPDATA%` or `%APPDATA%` (D21).** An install made
+  by an agent inside the Claude app would land there in the app's package cache, where an ssh
+  started outside the app, and Task Scheduler, would never find the programs. It also MUST NOT need
+  administrator rights, so an install is never run elevated, as `ca` never is (D17, [ca](#ca)).
+- **`AGENTSPACE_STATE_DIR` does not move it**, and no program finds it through a variable: each
+  finds the others by its own folder ([below](#how-each-program-finds-the-others)). Only the keeper's
+  installer compares its own folder with `<install>` ([keeper.md](keeper.md#the-installer)).
+- **An install is a copy, and no agentspace program makes it** (D37). A person, or an agent at the
+  person's request, copies the files of one release from one build's output folder (the folder a
+  build of the repository writes these files to, under these names) into `<install>`, creating
+  `<install>` if it is missing. The keeper's installer only registers the task.
+- **An install is whole:** it copies every file its release ships, all from that one build, so
+  that the programs in `<install>` were built from one version of the repository. v0.05's are
+  `agentspace.exe`, the `agentspace` wrapper and the forwarder `agentspace-ssh-proxy.cmd`, and
+  v0.06's are the seven files, with the forwarder kept as
+  [Until v0.06 retires the prototype's entry points](#until-v006-retires-the-prototypes-entry-points)
+  says. An install whose copy fails part way SHOULD be run again before any program in the folder
+  is used, since its programs then come from two builds.
+- **An install MUST NOT stop a running program to replace its file.** Windows refuses to overwrite
+  or delete the file of a running program but lets it be renamed, and the ProxyCommand runs for as
+  long as any connection through it is open, the keeper's holder's included. So an install SHOULD
+  rename such a file aside in the install folder, as `<file>.old-<32 lowercase hex digits>`, copy
+  the new one in, and remove each `.old-` file it can on a later install. A running program keeps
+  its old code until it is started again; for the keeper, that is
+  [keeper.md, Stopping and starting the keeper](keeper.md#stopping-and-starting-the-keeper).
+- **An install SHOULD NOT replace `agentspace-keeper.exe` while a keeper runs, and SHOULD stop the
+  keeper first.** A keeper whose holder's launcher is its own program starts that launcher by its
+  own file's path ([below](#how-each-program-finds-the-others)), which after a rename aside holds
+  the new build, so a start would pair a keeper and a launcher of two builds.
+- **The install folder SHOULD be on the user's `PATH`**, so that `agentspace` runs `agentspace.exe`
+  from cmd and PowerShell, and the `agentspace` wrapper from Git Bash, which looks for the file with
+  no extension before `agentspace.exe` (seen with Git Bash on the laptop, 2026-11-18). Changing the
+  user's `PATH` is persistent configuration on Terry's laptop, and MUST be done only with his yes,
+  as the keeper's task is (D30).
+- **An install writes no state, registers no task and changes no SSH entry.** The task is the
+  installer's ([keeper.md, The installed task](keeper.md#the-installed-task)), and the user's
+  `agentspace` entry is the user's ([below](#proxycommand-lines-already-on-the-laptop)).
+- **A build's output folder holds the same files under the same names**, so the programs run from
+  it as from an install, and a check MAY name them there. A lease that a CLI in a build's folder
+  creates names that folder in its alias file ([state.md, The alias file](state.md#the-alias-file)),
+  which a cleanup can remove, so real leases SHOULD be created by the installed CLI. So does a
+  lease that a CLI run from a git worktree creates. Once that folder is gone, every connection
+  through the lease's alias fails, since ssh cannot start its ProxyCommand, until the lease is
+  released: nothing rewrites an alias file, `renew` included.
+
+### How each program finds the others
+
+**Every program finds another agentspace program in the folder its own executable runs from, by
+the file name in [the table](#the-programs), and never through `PATH`, the working folder, an
+environment variable or a checkout.** This is D8's rule for the ProxyCommand, applied to every
+program (D37).
+
+| Program | Finds | For |
+|---|---|---|
+| `agentspace.exe` | `agentspace-ssh-proxy.exe`; when that file is not there, `agentspace-ssh-proxy.cmd`, v0.05's forwarder ([below](#until-v006-retires-the-prototypes-entry-points)) | The default ProxyCommand line ([state.md, The alias file](state.md#the-alias-file)) |
+| `agentspace` (the wrapper) | `agentspace.exe` | Running the lease CLI |
+| `agentspace-ssh-proxy.exe` | `agentspace-operator.exe`, when it runs `up` as a separate program. It MAY instead run `up` in its own process, with the same result | [The ProxyCommand](#the-proxycommand), step 3 |
+| `agentspace-keeper.exe` | Its own file, when the holder's launcher is the keeper's own program again | [keeper.md, Starting a holder](keeper.md#starting-a-holder) |
+| `agentspace-keeper-task.exe` | `agentspace-keeper.exe` | Running the keeper ([keeper.md](keeper.md#the-tasks-launcher)) |
+| `agentspace-keeper-install.exe` | `agentspace-keeper.exe` and `agentspace-keeper-task.exe` | Checking both exist, and naming the launcher in the task by full path ([keeper.md](keeper.md#the-installer)) |
+
+- **A program's own executable is the file the operating system started, as a full path.** A
+  program MUST NOT take it from its first argument, which the process that started it chooses.
+- **A program that does not find a sibling it needs fails the step that needs it**, with its own
+  form of failure message, saying in agentspace's words which program is missing. The lease CLI's
+  case is [state.md, The alias file](state.md#the-alias-file)'s.
+
+### What the prototype took from its checkout
+
+**Wherever this page names a path under `<checkout>`, it is the prototype's, and the rewrite uses
+the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#deploy), [sync](#sync),
+[ca](#ca), [The AWS side](#the-aws-side)). The files' formats are [docs/state.md](state.md)'s, at
+[Files in the checkout](state.md#files-in-the-checkout).
+
+| The prototype's | Used by | The rewrite's |
+|---|---|---|
+| `<checkout>\infra\agentspace.yaml`, the stack's template | `deploy` | Carried inside the operator program, built from the repository's `infra\agentspace.yaml`. `deploy` writes it to `%USERPROFILE%\.agentspace\operator\agentspace.yaml` just before the call that reads it, and names that file to the AWS CLI |
+| `<checkout>\box\system\`, the box's system files | `sync` | Carried inside the operator program, built from the repository's `box\system`. `sync` writes them to `%USERPROFILE%\.agentspace\operator\system\`, after removing whatever that folder held, just before the copy, and copies that folder |
+| `<checkout>\schemas\state\leases.state.schema.json` and the keeper's state schemas | The lease CLI and the keeper, to check the state files they read and write | Carried inside each program that checks a file against them |
+| `<checkout>\infra\local.parameters` | `deploy` | `%USERPROFILE%\.agentspace\local.parameters`, written by a person |
+| `<checkout>\.build\localswim-linux-arm64` | `sync` | `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64` |
+| `<checkout>\.instance-id` | Every command but `ca`; the ProxyCommand | `%USERPROFILE%\.agentspace\instance-id` (D21) |
+| `<checkout>`, the folder the CA MUST NOT be inside | `ca`, step 2 | Any git working tree: `ca` fails when the CA's folder, or any folder above it, holds an entry named `.git`, a folder or the file a git worktree has (D37). `<folder>` in that step's message is the working tree's folder. So a home folder that is itself a git working tree, as a repository of the user's own settings files makes it, refuses every CA under it |
+| `<checkout>\scripts\ssh-proxy.cmd`, beside the CLI's code | The lease CLI's default ProxyCommand line | `agentspace-ssh-proxy.exe`, beside `agentspace.exe` (D8) |
+| `<checkout>`, the task's working folder | The keeper's task | `%USERPROFILE%` ([keeper.md, The task's fields](keeper.md#the-tasks-fields)) |
+| `<checkout>`, the main checkout the installer runs from | The keeper's installer | The install folder ([keeper.md, The installer](keeper.md#the-installer)) |
+
+- **A file the operator writes under `%USERPROFILE%\.agentspace\operator` that cannot be written
+  fails the command**, with an `agentspace: ` message naming it, before anything reads it.
+- **The localswim checkout that `sync` builds from, `C:\Projects\localswim`, is localswim's, not
+  agentspace's**, and this section does not move it ([sync](#sync), step 7).
+
+**Why the template and the box's files are carried inside the operator** (D37), rather than
+installed beside it as files:
+- **They are the far half of the operator's contract with the box:** the patch marker `up` waits
+  for, the token's file and the wrapper that reads it, and the CA the box trusts
+  ([The box as the laptop sees it](#the-box-as-the-laptop-sees-it)). Carried inside the operator,
+  they are always its own build's, so an operator can never install a box that answers it in
+  another version's terms.
+- **An install of whole programs cannot be half-copied**, and leaves nothing in the install folder
+  that a person might edit by hand. The box then changes only through the repository's
+  `box\system`, a new build and `sync` ([What sync installs](#what-sync-installs)), for an install
+  as for a checkout.
+- **The AWS CLI and scp read files, not a program's memory**, so each is written out at use, and
+  under `%USERPROFILE%\.agentspace`, never under AppData (D21).
+
+`local.parameters` is not carried: it is the account's, written by a person, and never committed.
+
+### Argument style
+
+**The rewrite keeps every command line exactly as the specs give it (D37, B-04).**
+- **The lease CLI keeps its `--name` flags** ([lease-api.md, Command lines](lease-api.md#command-lines)).
+- **The operator, the keeper, the keeper's installer and the task's launcher keep their single-dash
+  names** (`-GiB`, `-Alias`, `-Quiet`; `-Watch`, `-SshExe` and the rest; `-DryRun`, `-Uninstall`),
+  matched as each page says: exactly, without regard to case, with a value as the next argument.
+  The operator keeps `-h` and `--help`. The ProxyCommand keeps its one positional alias.
+- **A single-dash name is a syntax, not PowerShell.** A native program parses it by the rules on
+  its page. Spellings that PowerShell's binder also accepts, such as a unique prefix (`-Q`) or a
+  value after a colon (`-GiB:4`), MAY be accepted, and a caller MUST NOT depend on them
+  ([Command line](#command-line); [keeper.md, Command line](keeper.md#command-line)).
+- **Why:** the conformance suite passes these command lines as written, through the four
+  variables, and the keeper's task passes `-Watch`. Each page already defines its command line
+  exactly, so keeping it costs a native program nothing, and changing it would change every caller
+  and every check.
+
+### ProxyCommand lines already on the laptop
+
+**A ProxyCommand line names a program by its full path until the line is rewritten, so a program
+that a line names MUST keep working, or forward to one that does, for as long as that line can
+still make a connection (D37, B-30).** Three kinds of line exist:
+
+| Line | Written by | Names | Rewritten |
+|---|---|---|---|
+| The user's `agentspace` entry ([The `agentspace` SSH entry](#the-agentspace-ssh-entry)) | The user, never agentspace | Today, the checkout's `scripts\ssh-proxy.cmd` | By the user, by hand |
+| A lease's alias file, written by the prototype's lease CLI | `create` | The checkout's `scripts\ssh-proxy.cmd` | Never: `renew` does not rewrite it, and `release` removes it |
+| A lease's alias file, written by the rewrite's lease CLI | `create` | The ProxyCommand program beside that CLI | Never, likewise |
+
+- **Once the rewrite's ProxyCommand is installed, the user's `agentspace` entry SHOULD name it:**
+  its `ProxyCommand` is then `"<install>\agentspace-ssh-proxy.exe"`, the full path in double
+  quotes, with `USERPROFILE`'s value written out and no alias. ssh expands no environment variable
+  in a ProxyCommand.
+- **The checkout's `scripts\ssh-proxy.cmd` MUST NOT be removed, and MUST keep working, while the
+  user's entry or a `ready` lease's alias file names it.** When v0.06 retires the prototype, it
+  SHOULD become a forwarder that runs `<install>\agentspace-ssh-proxy.exe` by full path, with its
+  arguments, standard input, output and error, and exit code unchanged; it MAY then be removed once
+  nothing names it. An alias file of a lease that is no longer `ready` does not hold it back: its
+  certificate is no longer valid, so no connection is made through it.
+- **The same rule holds for v0.05's forwarder in the install folder**
+  ([below](#until-v006-retires-the-prototypes-entry-points)).
+- **A forwarder MUST read nothing more of itself once its target has started**: its whole work is
+  one line, which either hands control to a batch file target or runs a program target and ends
+  the forwarder within that same line. cmd reads a batch file by name, a line at a time, from the
+  offset where it stopped, so a forwarder rewritten while a connection runs through it would
+  otherwise go on in the new file's text when its target ends.
+- **The checkout's `scripts\ssh-proxy.cmd` SHOULD be made a forwarder only while no connection
+  runs through it**, the keeper's holder's included, for the same reason: it reads itself again
+  after its tunnel ends.
+
+### Until v0.06 retires the prototype's entry points
+
+**The rewrite arrives in two releases (D28): the lease CLI in v0.05 (#0054), and the operator, the
+ProxyCommand and the keeper in v0.06 (#0055).** Until v0.06 removes them (D37):
+- **The checkout's entry points keep running the prototype, unchanged:** `bin\agentspace.cmd` and
+  `bin\agentspace` run the prototype's lease CLI, and `scripts\agentspace.ps1`,
+  `scripts\ssh-proxy.cmd`, `scripts\board-holder.ps1` and `scripts\install-board-holder.ps1` are
+  the prototype's operator, ProxyCommand, keeper and installer. **The `bin\` shims MUST NOT be
+  pointed at an install:** the conformance suite runs the prototype through `bin\agentspace.cmd` by
+  default ([conformance.md](conformance.md#naming-the-program-under-test)). Which `agentspace` a
+  person gets is `PATH`'s choice, so once the install folder is on `PATH`, the checkout's `bin\`
+  SHOULD be taken off it.
+- **v0.05's install holds `agentspace.exe`, the `agentspace` wrapper, and a forwarder,
+  `agentspace-ssh-proxy.cmd`**, which runs the checkout's `scripts\ssh-proxy.cmd` by full path with
+  its arguments, standard input, output and error, and exit code unchanged, since the ProxyCommand
+  is still the prototype's. **An install's forwarder MUST name the main checkout, the one whose
+  `.instance-id` the prototype's ProxyCommand reads, and never a git worktree**, which is deleted
+  after its branch merges. It is the checkout whose `scripts\ssh-proxy.cmd` the user's `agentspace`
+  entry names ([ProxyCommand lines already on the laptop](#proxycommand-lines-already-on-the-laptop)),
+  or, where that entry names none, the one the person installing gives. The install writes that
+  `scripts\ssh-proxy.cmd`'s full path into the forwarder, and MUST NOT write a forwarder whose
+  target does not exist.
+  v0.05's build output folder holds a forwarder of the same name, to the checkout it was built
+  from, so a check of the default line can run from it. The lease CLI's default line is then the interpreter form of
+  [state.md, The alias file](state.md#the-alias-file), naming the forwarder. **This forwarder is the
+  only place an install reaches into a checkout, and it ends with v0.06.**
+- **v0.06's install adds the other programs.** The lease CLI then finds
+  `agentspace-ssh-proxy.exe` first. The install rewrites `agentspace-ssh-proxy.cmd` to run the
+  `.exe` beside it instead, and keeps it while a `ready` lease's alias file names it
+  ([above](#proxycommand-lines-already-on-the-laptop)).
+- **The keeper's task is registered again by the rewrite's installer**, after the prototype's
+  keeper is stopped as [keeper.md, Stopping and starting the keeper](keeper.md#stopping-and-starting-the-keeper)
+  says. The new task replaces the old one of the same name, and the installer removes the
+  prototype's launcher ([keeper.md, The installer](keeper.md#the-installer)).
+- **The rewrite and the prototype share one home folder and one state folder**, so a lease that
+  one made is the other's to renew and release ([state.md, Between the prototype and the
+  rewrite](state.md#between-the-prototype-and-the-rewrite)).
+
 ## Commands
 
 ### The top level
@@ -494,7 +760,7 @@ operator -h | --help
 **Help:**
 
 ```
-Usage: agentspace.ps1 <command> [-GiB <n>] [-Alias <alias>] [-Quiet] [--help]
+Usage: agentspace-operator <command> [-GiB <n>] [-Alias <alias>] [-Quiet] [--help]
 
 Manages the agentspace box from the laptop: its stack, its power, its system
 files, the SSH CA it trusts, and the localswim Bot token it uses.
@@ -537,7 +803,9 @@ operator deploy [-Quiet]
    unreadable or empty file MUST fail with an `agentspace: ` message naming it. The prototype fails
    with a runtime error for a missing or empty file, and passes an empty key on for a
    whitespace-only one.
-2. **Reads `<checkout>\infra\local.parameters`.** A missing file fails with `agentspace: Missing
+2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\local.parameters`** (D37;
+   [What the prototype took from its checkout](#programs-and-install-layout); the prototype reads
+   `<checkout>\infra\local.parameters`). A missing file fails with `agentspace: Missing
    <path>; copy infra\local.parameters.example and fill it in.`, where `<path>` is the file's
    full path. Each line of the form `<Name>=<value>` becomes a parameter override, and every
    other line, such as a comment, is skipped (format: docs/state.md). Any stack parameter can be set
@@ -569,10 +837,10 @@ stack](#the-stack)).
 **Help:**
 
 ```
-Usage: agentspace.ps1 deploy [-Quiet]
+Usage: agentspace-operator deploy [-Quiet]
 
 Creates or updates the CloudFormation stack 'agentbox' in us-west-2 from
-infra\agentspace.yaml, with the parameters in infra\local.parameters and your
+its template, with the parameters in ~/.agentspace/local.parameters and your
 ~/.ssh/id_ed25519.pub, then runs sync.
 
 Never change the template's ImageId on a live stack: it replaces the instance
@@ -609,7 +877,7 @@ that.
 **Help:**
 
 ```
-Usage: agentspace.ps1 up [-Alias <alias>] [-Quiet]
+Usage: agentspace-operator up [-Alias <alias>] [-Quiet]
 
 Starts the box if it is stopped, waits until its boot-time patch run has
 finished, and sends the localswim Bot token and the laptop's time zone if
@@ -721,7 +989,7 @@ box's localswim CLI is built from the same source as the service it talks to.
 **Help:**
 
 ```
-Usage: agentspace.ps1 sync [-Quiet]
+Usage: agentspace-operator sync [-Quiet]
 
 Checks the agentspace SSH CA, then installs box/system and the CA's public key
 on the box, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
@@ -846,7 +1114,7 @@ certificate (D17).
 **Help:**
 
 ```
-Usage: agentspace.ps1 ca [-Quiet]
+Usage: agentspace-operator ca [-Quiet]
 
 Creates the agentspace SSH CA (ed25519, no passphrase) in
 %USERPROFILE%\.agentspace\ca the first time, locked to the current user.
@@ -874,7 +1142,7 @@ instance succeeds. Open sessions on the box end with it.
 **Help:**
 
 ```
-Usage: agentspace.ps1 down [-Quiet]
+Usage: agentspace-operator down [-Quiet]
 
 Stops the box. Does not wait for it to stop. Open sessions on it end.
 The next ssh agentspace, or any lease connection, starts it again.
@@ -912,7 +1180,7 @@ SSM       <ssm>
 **Help:**
 
 ```
-Usage: agentspace.ps1 status [-Quiet]
+Usage: agentspace-operator status [-Quiet]
 
 Shows the instance's ID, state, type, root disk size and volume, and whether
 Session Manager can reach it. Never starts the box. Prints to stderr.
@@ -968,7 +1236,7 @@ ProxyCommand's lines, `The host is ready.` among them
 **Help:**
 
 ```
-Usage: agentspace.ps1 grow [-GiB <n>] [-Quiet]
+Usage: agentspace-operator grow [-GiB <n>] [-Quiet]
 
 Grows the box's root volume by -GiB (default 2) and, if the box is running,
 its filesystem online; a stopped box grows its filesystem at next boot.
@@ -1042,8 +1310,10 @@ on stdout: as a second argument in step 1, or at the alias check in step 3. Ever
 CLI writes holds none ([state.md, The alias file](state.md#the-alias-file)).
 
 **What it does, in order:**
-1. **Refuses a second argument** before anything starts: it prints `agentspace: ssh-proxy.cmd
-   takes at most one argument, the SSH host alias.` to stderr and exits 1. An empty first argument
+1. **Refuses a second argument** before anything starts: it prints `agentspace: <program>
+   takes at most one argument, the SSH host alias.` to stderr and exits 1, where `<program>` is the
+   ProxyCommand program's file name, `agentspace-ssh-proxy.exe`
+   ([The programs](#the-programs); the prototype prints `ssh-proxy.cmd`). An empty first argument
    (`""`) is an argument, and reaches step 3.
 2. **Puts the Session Manager plugin's folder and the AWS CLI's folder first on `PATH`.**
 3. **Runs `up`'s steps in caller mode** ([What a caller sees](#what-a-caller-sees-d1-card-0087)),
@@ -1662,8 +1932,8 @@ keyword, so a new sshd drop-in MUST NOT set a keyword that another drop-in alrea
 `agentspace_ca.pub`, and runs its `install.sh` as root from that folder. The install:
 
 - **Fails at once if `agentspace_ca.pub` is missing or empty**, printing `install.sh:
-  agentspace_ca.pub is missing; run scripts\agentspace.ps1 sync, which sends it` to stderr and
-  exiting 1.
+  agentspace_ca.pub is missing; run agentspace-operator sync, which sends it` to stderr and
+  exiting 1. The prototype's box files name `scripts\agentspace.ps1` there.
 - **Retires the project's first name, once.** On a box that still has `agentbox` units, it
   disables them, carries over this boot's patch marker and the last patch-reboot time, removes the
   old files, and prints `Retired the agentbox units and files`.
@@ -1779,7 +2049,8 @@ hours averaging under 1% CPU, whatever sessions are open ([The stack](#the-stack
 ## The AWS side
 
 **Nothing on this page names an account ID, a VPC, a subnet or an instance ID.** Account-specific
-values live in `infra\local.parameters`, which is not committed (docs/state.md).
+values live in the stack parameters file, `%USERPROFILE%\.agentspace\local.parameters`, which is
+never committed (D37; docs/state.md).
 
 ### The stack
 
@@ -1793,8 +2064,8 @@ operator MUST use that name.
 |---|---|---|---|---|
 | `InstanceType` | String | `m9g.xlarge` | The template | Changing it on an update stops and restarts the instance; the disk is kept. |
 | `ImageId` | EC2 image ID | A pinned Ubuntu 26.04 LTS arm64 image | The template | MUST NOT be changed on a live stack: it replaces the instance and destroys its disk. |
-| `SubnetId` | Subnet ID | None | `infra\local.parameters` | A subnet that assigns a public IPv4 address at launch, as a default VPC's do. |
-| `VpcId` | VPC ID | None | `infra\local.parameters` | The subnet's VPC. |
+| `SubnetId` | Subnet ID | None | The stack parameters file | A subnet that assigns a public IPv4 address at launch, as a default VPC's do. |
+| `VpcId` | VPC ID | None | The stack parameters file | The subnet's VPC. |
 | `RootVolumeGiB` | Number, at least 8 | `8` | The template | The image's minimum. Grown later with `grow`. |
 | `SshPublicKey` | String | None | `deploy`, from `%USERPROFILE%\.ssh\id_ed25519.pub` | Installed for the login user at first boot only ([Q13](#open-questions)). |
 
@@ -1834,7 +2105,7 @@ the rest are checked by their exit code alone. `<id>` is the cached instance ID.
 | Command | AWS CLI calls, in order |
 |---|---|
 | Any but `ca`, and the ProxyCommand, when the instance-ID cache is missing | `cloudformation describe-stacks --stack-name agentbox` (JSON) |
-| `deploy` | `cloudformation deploy --stack-name agentbox --template-file <checkout>\infra\agentspace.yaml --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags project=agentbox --parameter-overrides SshPublicKey=<key> <each Name=value line>` (output passed through); then `cloudformation describe-stacks --stack-name agentbox` (JSON); then `sync`'s |
+| `deploy` | `cloudformation deploy --stack-name agentbox --template-file %USERPROFILE%\.agentspace\operator\agentspace.yaml --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags project=agentbox --parameter-overrides SshPublicKey=<key> <each Name=value line>` (output passed through); then `cloudformation describe-stacks --stack-name agentbox` (JSON); then `sync`'s |
 | `up`, `sync`: [start and wait](#starting-the-box-and-waiting-for-it) | `ec2 describe-instances --instance-ids <id>` (JSON); if stopped, `ec2 start-instances --instance-ids <id>` (JSON); if stopping, `ec2 wait instance-stopped --instance-ids <id>`, then `ec2 start-instances`; `ec2 describe-instances` again, for the launch time; while waiting, every 5 seconds, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON), and once that is `Online`, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace up: patch check" --parameters commands=<question>` (JSON) and up to 20 of `ssm get-command-invocation --command-id <command id> --instance-id <id>` (JSON) |
 | `sync` | The above, then nothing more from AWS: the rest goes over SSH, and each ssh or scp makes its own nested `up`'s calls and a tunnel |
 | `down` | `ec2 stop-instances --instance-ids <id>` (JSON) |
@@ -1896,6 +2167,9 @@ behavior in this table.**
 | `grow` fails when the online filesystem step fails | Ignores the step's exit code and exits 0 | D36; [Q23](#open-questions), closed ([grow](#grow)) |
 | A tunnel whose AWS CLI is missing fails with the caller's message and exit 1 | Its shell's own error, which names the path, and that shell's exit code | B-33 ([The ProxyCommand](#the-proxycommand), step 6) |
 | Help at every level | None of its own | [Q2](#open-questions) |
+| `ca` refuses a CA folder inside any git working tree | Refuses one inside its own checkout only | D37 ([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)) |
+| Nothing the operator, the ProxyCommand or the lease CLI reads at run time is in a checkout | Reads the template, the box's files, `local.parameters`, the schemas and the instance-ID cache from its checkout, and writes its build of the localswim CLI there | D37 ([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)) |
+| The box's install names `agentspace-operator sync` when the CA's public key is missing | Names `scripts\agentspace.ps1 sync` | [What sync installs](#what-sync-installs) |
 
 ## Open questions
 
@@ -1915,7 +2189,7 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q7** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace` ([Laptop files](#laptop-files)); the prototype keeps it in the checkout, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. The localswim CLI's build output (`.build\`) is not state, and MAY stay in the checkout. | Closed |
 | **Q8** | **Closed by [docs/state.md](state.md#files-agentspace-reads-and-never-writes) (E0.04-T02-S01).** state.md lists the files the operator reads and agentspace never writes (localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry), and `infra\local.parameters` in [Files in the checkout](state.md#files-in-the-checkout); it owns none of their formats. | Closed |
 | **Q9** | **Later, not blocking:** **What characters can a localswim URL and Bot token contain, and what form MUST the URL have?** The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either would break or change it, and it finds the board's address by taking the URL as `http://<host>:<port>...`. The push refuses an empty value and a CR, LF or NUL, and checks nothing else. | The push's refusal is the rule to build. localswim's CLI accepts `LOCALSWIM_URL` only as `http://127.0.0.1:<port>` or `http://localhost:<port>`, with a port from 1 to 65535, and a token made by localswim's documented procedure is 43 base64url characters, so no value localswim makes today holds a character the wrapper's shell reading would change. Later: the architect, with localswim |
-| **Q10** | **What are the rewrite's entry points called, and does it keep PowerShell-style parameters (`-GiB`, `-Alias`, `-Quiet`)?** Lease alias files on the laptop name `<checkout>\scripts\ssh-proxy.cmd` in their ProxyCommand line, and the lease CLI runs `scripts\agentspace.ps1 ca`, so a renamed entry point changes those too. | v0.06 (#0055) |
+| **Q10** | **Closed by D37 (architect, 2026-11-18).** ~~What are the rewrite's entry points called, and does it keep PowerShell-style parameters (`-GiB`, `-Alias`, `-Quiet`)?~~ The operator is `agentspace-operator.exe` and the ProxyCommand `agentspace-ssh-proxy.exe`, installed with the lease CLI and the keeper in `%USERPROFILE%\.agentspace\bin` ([Programs and install layout](#programs-and-install-layout)). Every command line keeps the style this page gives ([Argument style](#argument-style)). The lease alias files on the laptop that name `<checkout>\scripts\ssh-proxy.cmd` keep working by [ProxyCommand lines already on the laptop](#proxycommand-lines-already-on-the-laptop). | Closed |
 | **Q11** | **Closed by [The test seam](#the-test-seam).** `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD` name the programs a check stands in for, and a stand-in gets the token only as the real `ssh` does. | Closed |
 | **Q12** | **Closed by [The test seam](#the-test-seam).** `AGENTSPACE_TIMEZONE` gives the push a zone. | Closed |
 | **Q13** | **Later, not blocking:** **What does `deploy` do when `id_ed25519.pub` has changed?** The key is in the instance's user data, which runs at first boot only, so the new key is never installed; and CloudFormation may stop and start the instance to change user data. | `deploy` passes the key as [deploy](#deploy) says, and what CloudFormation then does is AWS's behavior, not the operator's. Later: a deploy on the laptop, or AWS's documentation |
