@@ -1038,7 +1038,7 @@ strict, as a writer MUST write it.
 | File | Written by | Read by | Format |
 |---|---|---|---|
 | `board-holder-launch.<hex>.json` | The pass | The launcher | The launch request, below |
-| `board-holder-launch.<hex>.claim` | The launcher that claims the request, or the pass that withdraws it | Nobody | A claim, below |
+| `board-holder-launch.<hex>.claim` | The launcher that claims the request, or the pass that withdraws it | Nothing in agentspace (a conformance check does) | A claim, below |
 | `board-holder-launch.<hex>.result.json` | The launcher | The pass | The launch result, below |
 
 **The launch request**, schema
@@ -1053,13 +1053,16 @@ strict, as a writer MUST write it.
 | `not_after` | The launcher's deadline, UTC, as `YYYY-MM-DDTHH:MM:SS.fffffffZ` (seven fraction digits) |
 | `result` | The full path of the result file |
 
-The request carries full paths so that the launcher, which runs with the user's logon environment
-and not the pass's, never reads `AGENTSPACE_STATE_DIR`.
+The request carries full paths so that the launcher, which MUST run with the user's logon
+environment and not the pass's
+([keeper.md, "Streams and environment"](keeper.md#streams-and-environment)), never reads
+`AGENTSPACE_STATE_DIR`.
 
 **The claim** is created with create-new semantics (`CREATE_NEW`), which fails when the file
 exists; what holding it means is
 [keeper.md#starting-a-holder](keeper.md#starting-a-holder)'s. It is opened for writing, sharing
-read. Its content is informational and nothing reads it: UTF-8 without a byte order mark, one
+read. Nothing in agentspace reads its content, but the content is part of the contract, and a
+conformance check reads it: UTF-8 without a byte order mark, one
 line ending in LF, `launcher <pid>` from a launcher or `abandoned` from the pass.
 
 **The launch result**, schema
