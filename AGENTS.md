@@ -14,6 +14,8 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
 - **Where it stands:** [docs/handoff-v0.04.md](docs/handoff-v0.04.md), the architect's handoff
   after v0.04, for the architect who starts v0.05. It is final, and v0.04 is closed (2026-11-18). An agent picking agentspace
   up SHOULD read it first. The
+  [docs/handoff-v0.05.md](docs/handoff-v0.05.md) is v0.05's, a draft until every v0.05 PR is
+  merged and every v0.05 card is in Completed (Terry, 2026-11-19). The
   earlier handoffs, [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and
   [docs/handoff-mvp.md](docs/handoff-mvp.md), stay for their pieces and lessons.
 - **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.01, and releases v0.02 to v1.0
