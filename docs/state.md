@@ -161,8 +161,15 @@ has been observed there.
 **Where this page says a file is replaced atomically, the writer MUST:**
 1. Write the whole new content to a temporary file in the same folder, under the name the file's
    section gives. The name MUST be one the file's readers never mistake for the file.
-2. Move the temporary file over the file, replacing it in one rename (`MoveFileEx` with
-   `MOVEFILE_REPLACE_EXISTING`, or the same through any API).
+2. Move the temporary file over the file, replacing it in one rename. **On Windows the rename
+   MUST use POSIX semantics where the file system has them**: `SetFileInformationByHandle` with
+   `FileRenameInfoEx` and `FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS`,
+   after `FlushFileBuffers` on the temporary file, which is what Rust's `std::fs::rename` does on
+   current Windows. Only where the file system refuses those semantics MAY it fall back to
+   `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`. (Corrected by the architect, 2026-11-19, from
+   E0.05-T02-S01: classic `MoveFileEx` cannot replace a file that any process holds open, even one
+   that shares delete, so the rule below that such a reader "never blocks the rename" held only
+   for a POSIX rename. Checked on Windows 11 build 26300.)
 3. Delete the temporary file if anything failed before the move.
 
 **Two files are replaced differently, each for its own reason:**
@@ -174,7 +181,9 @@ has been observed there.
   checks those rules ([The `Include` line](#the-include-line)).
 
 **A reader of the lease state file MUST open it sharing read, write and delete access**, so that it
-never blocks the rename, and so sees the old file or the new one, never part of either. **A reader
+never blocks a POSIX rename (step 2), and so sees the old file or the new one, never part of either.
+A classic `MoveFileEx` writer, the prototype's among them, is still blocked by any open handle, and
+its retry below covers that. **A reader
 of any other file replaced this way SHOULD share the same**; the keeper's readers of its own JSON
 files share read only, and the writer's retry below covers them
 ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
