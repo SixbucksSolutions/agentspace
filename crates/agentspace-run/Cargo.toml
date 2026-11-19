@@ -1,0 +1,17 @@
+[package]
+name = "agentspace-run"
+version = "0.6.0"
+edition.workspace = true
+description = "The programs the operator starts: the AWS CLI, ssh and scp (docs/operator.md; D42)"
+publish = false
+
+[lib]
+name = "agentspace_run"
+path = "src/lib.rs"
+
+[dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+
+[dev-dependencies]
+tempfile = { version = "=3.23.0", default-features = false }
