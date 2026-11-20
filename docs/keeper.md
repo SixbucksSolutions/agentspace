@@ -1299,7 +1299,13 @@ with no console, which runs the keeper with no window.
   are passed on.`), since quoting would split or join it. `<n>` counts the launcher's arguments
   from 1.
 - **It exits 1, logging the error's kind and message, when the keeper could not be started or
-  waited for**, a missing `agentspace-keeper.exe` included.
+  waited for**, a missing `agentspace-keeper.exe` included. The message is
+  `Could not start <keeper's full path>: <kind>: <message>`, or `Could not wait for ...`, where
+  `<kind>` is the error kind's name, such as `NotFound` (architect, 2026-11-19, for
+  E0.06-T02-S07). A launcher that cannot learn its own path logs that and exits 1; it creates the
+  log's folder when missing before it appends; and with `AGENTSPACE_STATE_DIR` unset and
+  `USERPROFILE` unset or empty it has no log folder, logs nowhere, and never falls back to the
+  system's profile folder.
 - **It passes its own environment to the keeper unchanged**, and redirects none of the keeper's
   streams. The keeper runs with no window, so its stdout and stderr reach no one.
 - **Its log** is `board-holder-launcher-errors.log`, in the folder
