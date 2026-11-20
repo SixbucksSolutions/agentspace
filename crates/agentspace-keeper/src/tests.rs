@@ -191,7 +191,7 @@ impl Locks for World {
     }
     fn keeper(&self, _: &Path) -> Taken {
         self.call("keeper lock");
-        Taken::Failed("not in a pass".into())
+        Taken::Held(Box::new(Guard(self.calls.clone())))
     }
 }
 
@@ -1300,8 +1300,10 @@ fn the_default_ssh_comes_from_systemroot() {
     );
 }
 
+// Until E0.06-T02-S05 this test asserted that -Watch runs one pass; -Watch now loops, so it ends
+// at -MaxPasses, after taking the keeper lock once, before the first pass.
 #[test]
-fn watch_is_parsed_and_runs_one_pass_for_now() {
+fn watch_takes_the_keeper_lock_once_and_ends_at_max_passes() {
     let t = TempDir::new();
     let home = t.path().join("home");
     let w = World::new();
@@ -1314,4 +1316,8 @@ fn watch_is_parsed_and_runs_one_pass_for_now() {
     assert_eq!(f.code, 0);
     assert_eq!(f.stdout.lines().count(), 1);
     assert!(f.stdout.contains(" idle lease=- alias=- pid=-"));
+    let calls = w.calls();
+    assert_eq!(calls.iter().filter(|c| *c == "keeper lock").count(), 1);
+    assert_eq!(calls.first().map(String::as_str), Some("keeper lock"));
+    assert!(!calls.iter().any(|c| c.starts_with("sleep")));
 }

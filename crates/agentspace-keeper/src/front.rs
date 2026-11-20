@@ -4,6 +4,7 @@
 use crate::Deps;
 use crate::args::{PROGRAM, USAGE, parse_args};
 use crate::pass::{PassContext, run_pass};
+use crate::watch::{Keeping, watch};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
@@ -29,8 +30,9 @@ pub struct Env<'a> {
 /// the run before its first pass with one line on `stderr`, nothing logged, and 1. Otherwise one
 /// pass runs, and its lines go to `board-holder.log` and `stdout`.
 ///
-/// `-Watch` is parsed and checked here, and runs one pass; its loop is v0.06-T02's
-/// (E0.06-T02-S05).
+/// With `-Watch` the run is a keeper (keeper.md, Watching): it takes the keeper lock once, then
+/// runs passes in a loop until `-MaxPasses` have run, and never exits for an error once the loop
+/// has started.
 pub fn run(
     args: &[String],
     env: &Env,
@@ -79,6 +81,17 @@ pub fn run(
                 state_dir.display()
             ),
         );
+    }
+
+    if let Some(watch_options) = options.watch {
+        let keeping = Keeping {
+            state_dir: &state_dir,
+            profile: &profile,
+            ssh_exe: &options.ssh_exe,
+            own_exe: env.own_exe,
+            options: watch_options,
+        };
+        return watch(&keeping, deps, stdout);
     }
 
     let ctx = PassContext {
