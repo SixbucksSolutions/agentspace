@@ -50,8 +50,10 @@ $otherVol = 'vol-fedcba9876543210f'
 $signIn = "agentspace: AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry."
 $growWaitSeconds = 10
 
-# ---- The calls the spec gives (Calls by command), as the stand-in logs them. Every call passes
-# --region us-west-2 and, for the ones marked JSON, --output json, in the order the spec fixes. ----
+# ---- The calls the spec gives (Calls by command). Every call passes --region us-west-2 and, for the
+# ones marked JSON, --output json, in the order the spec fixes. Each is written here as its arguments
+# separated by one space, and is compared with the stand-in's logged argument list element by element
+# (none of the spec's arguments holds a space), so where an argument begins and ends counts. ----
 $cStack = 'cloudformation describe-stacks --region us-west-2 --output json --stack-name agentbox'
 $cDescribeInstances = "ec2 describe-instances --region us-west-2 --output json --instance-ids $id"
 $cDescribeVolumes = "ec2 describe-volumes --region us-west-2 --output json --volume-ids $vol"
@@ -72,6 +74,24 @@ $err = Join-Path $dir 'ans\ssh.err'
 $code = Join-Path $dir 'ans\ssh.code'
 if (Test-Path -LiteralPath $out) { [Console]::Out.Write([IO.File]::ReadAllText($out)); [Console]::Out.Flush() }
 if (Test-Path -LiteralPath $err) { [Console]::Error.Write([IO.File]::ReadAllText($err)); [Console]::Error.Flush() }
+if (Test-Path -LiteralPath $code) { exit ([int]([IO.File]::ReadAllText($code).Trim())) }
+exit 0
+'@
+
+# The aws stand-in: a PowerShell 7 script that a .cmd starts, so that it sees its arguments as a
+# program would. It logs each call as {"t": <UTC ticks at its start>, "a": [<one element per
+# argument>]}, then answers from files beside it, named for its first two arguments
+# (<service>-<operation>): standard output, standard error and an exit code. It never reads its stdin.
+$awsStandInScript = @'
+$dir = $PSScriptRoot
+$line = ConvertTo-Json -Compress -InputObject @{ t = [string][DateTime]::UtcNow.Ticks; a = @($args) }
+[IO.File]::AppendAllText((Join-Path $dir 'aws-args.log'), ($line + "`n"))
+$k = [string]$args[0] + '-' + [string]$args[1]
+$out = Join-Path $dir "ans\$k.out"
+$err = Join-Path $dir "ans\$k.err"
+$code = Join-Path $dir "ans\$k.code"
+if (Test-Path -LiteralPath $err) { [Console]::Error.Write([IO.File]::ReadAllText($err)); [Console]::Error.Flush() }
+if (Test-Path -LiteralPath $out) { [Console]::Out.Write([IO.File]::ReadAllText($out)); [Console]::Out.Flush() }
 if (Test-Path -LiteralPath $code) { exit ([int]([IO.File]::ReadAllText($code).Trim())) }
 exit 0
 '@
@@ -139,14 +159,10 @@ try {
     # ---- The throwaway home: the stand-ins and the instance-ID cache ----
     $pwshPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     $aws = New-OperatorStandIn -ConformanceHome $h -Name 'aws' -Body @(
-      '>>"%~dp0aws-full.log" echo %*',
-      'set "K=%~1-%~2"',
-      'if exist "%~dp0ans\%K%.err" type "%~dp0ans\%K%.err" 1>&2',
-      'if exist "%~dp0ans\%K%.out" type "%~dp0ans\%K%.out"',
-      'if not exist "%~dp0ans\%K%.code" exit /b 0',
-      'set /p C=<"%~dp0ans\%K%.code"',
-      'exit /b %C%')
+      ('"' + $pwshPath + '" -NoProfile -File "%~dp0aws-standin.ps1" %*'),
+      'exit /b %ERRORLEVEL%')
     $standins = Split-Path -Parent $aws
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standins 'aws-standin.ps1')), $awsStandInScript)
     $sshPs1 = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standins 'ssh-standin.ps1')
     [IO.File]::WriteAllText($sshPs1, $sshStandInScript)
     $ssh = New-OperatorStandIn -ConformanceHome $h -Name 'ssh' -Body @(
@@ -189,12 +205,17 @@ try {
       Set-Answer 'ec2-modify-volume' -Out $modifyDoc
       Set-Answer 'ssh' -Out '' -Err '' -Code 0
     }
-    # The AWS CLI calls the stand-in logged, one per element. A double quote is dropped, so that a build
-    # that quotes an argument that needs none is not failed for it: the arguments are the spec's.
+    # The AWS CLI calls the stand-in logged, in order: Args (one element per argument, as the stand-in
+    # received it), Text (the arguments joined by one space, for a message and a match) and Ticks (the
+    # UTC time the stand-in started).
     function Get-AwsCalls {
-      $log = Join-Path $standins 'aws-full.log'
+      $log = Join-Path $standins 'aws-args.log'
       if (-not (Test-Path -LiteralPath $log -PathType Leaf)) { return @() }
-      @(Get-Content -LiteralPath $log | Where-Object { $_.Trim() -ne '' } | ForEach-Object { ($_ -replace '"', '').Trim() })
+      @(Get-Content -LiteralPath $log | Where-Object { $_.Trim() -ne '' } | ForEach-Object {
+          $o = ConvertFrom-Json -InputObject $_
+          $a = @($o.a | ForEach-Object { [string]$_ })
+          [pscustomobject]@{ Args = $a; Text = ($a -join ' '); Ticks = [long]$o.t }
+        })
     }
     function Get-SshCalls {
       $log = Join-Path $standins 'run\ssh-args.log'
@@ -250,7 +271,11 @@ try {
           $want = @($Expect.Calls)
           if ($calls.Count -ne $want.Count) { $p.Add("The AWS CLI was called $($calls.Count) times, not $($want.Count)") }
           for ($i = 0; $i -lt [Math]::Min($calls.Count, $want.Count); $i++) {
-            if ($calls[$i] -cne $want[$i]) { $p.Add("AWS CLI call $($i + 1) is not '$($want[$i])'"); break }
+            # The argument lists are compared element by element: an argument split or joined differently fails.
+            $wantArgs = @($want[$i] -split ' ')
+            $same = ($calls[$i].Args.Count -eq $wantArgs.Count)
+            for ($j = 0; $same -and $j -lt $wantArgs.Count; $j++) { if ($calls[$i].Args[$j] -cne $wantArgs[$j]) { $same = $false } }
+            if (-not $same) { $p.Add("AWS CLI call $($i + 1) is not '$($want[$i])'"); break }
           }
         }
         $wantSsh = if ($Expect.ContainsKey('SshCalls')) { $Expect.SshCalls } else { 0 }
@@ -292,7 +317,7 @@ try {
         Set-Answer 'ec2-stop-instances' -Out 'not json at all'
       }
       Test-Case "${s}: starts no ssh, scp or start request" @('down') @{
-        Exit = 0; Calls = @($cStop); SshCalls = 0; Check = { param($r, $t) if ((@(Get-AwsCalls) | Where-Object { $_ -match 'start-instances|describe-' }).Count -gt 0) { 'A call other than the stop was made' } } }
+        Exit = 0; Calls = @($cStop); SshCalls = 0; Check = { param($r, $t) if ((@(Get-AwsCalls) | Where-Object { $_.Text -match 'start-instances|describe-' }).Count -gt 0) { 'A call other than the stop was made' } } }
       Test-Case "${s}: a failed stop prints no Stopping line, only the failure, exit 1 (AWS failures)" @('down') @{
         Exit = 1; Stderr = "agentspace: $otherAwsText`n"; Calls = @($cStop) } -Setup {
         Set-Healthy
@@ -431,7 +456,7 @@ try {
       Test-Case "${s}: -Quiet still prints the five lines" @('status', '-Quiet') @{
         Exit = 0; Stderr = (& $statusLines); Calls = $callsRunning }
       Test-Case "${s}: never starts the box, and starts no ssh" @('status') @{
-        Exit = 0; Calls = $callsRunning; Check = { param($r, $t) if ((@(Get-AwsCalls) | Where-Object { $_ -match 'start-instances|stop-instances|modify-volume' }).Count -gt 0) { 'A call that changes the box was made' } } }
+        Exit = 0; Calls = $callsRunning; Check = { param($r, $t) if ((@(Get-AwsCalls) | Where-Object { $_.Text -match 'start-instances|stop-instances|modify-volume' }).Count -gt 0) { 'A call that changes the box was made' } } }
       Test-Case "${s}: a launch time that is missing does not fail it, since it does not read LaunchTime (AWS side, FB-08)" @('status') @{
         Exit = 0; Stderr = (& $statusLines); Calls = $callsRunning } -Setup {
         Set-Healthy
@@ -444,6 +469,9 @@ try {
       }
 
       # ---- status: failures, in each call ----
+      # The five lines print only once every call they need has succeeded, and a failed call prints its
+      # failure line alone, never a partial report before it (operator.md#status, architect, 2026-11-19,
+      # for E0.06-T04-S02): so each of these cases expects the failure line as the whole of stderr.
       $sSignIn = 'operator.md#aws-failures: status'
       Test-Case "${sSignIn}, a sign-in failure of the first call prints exactly the sign-in message, exit 1, nothing on stdout" @('status') @{
         Exit = 1; Stderr = "$signIn`n"; Calls = @($cDescribeInstances) } -Setup {
@@ -544,7 +572,7 @@ try {
         Exit = 0; Stderr = (Join-Lines @((& $growMsg1), $boot)); Calls = (& $growCalls) } -Setup { Set-Healthy -State 'stopped' }
       Test-Case "${s}: a stopped box starts no ssh and does not start the box" @('grow') @{
         Exit = 0; Calls = (& $growCalls); SshCalls = 0
-        Check = { param($r, $t) if ((@(Get-AwsCalls) | Where-Object { $_ -match 'start-instances|ssm' }).Count -gt 0) { 'The box was started or asked about' } } } -Setup { Set-Healthy -State 'stopped' }
+        Check = { param($r, $t) if ((@(Get-AwsCalls) | Where-Object { $_.Text -match 'start-instances|ssm' }).Count -gt 0) { 'The box was started or asked about' } } } -Setup { Set-Healthy -State 'stopped' }
       Test-Case "${s}: -GiB 5 adds 5 to the size the volume has" @('grow', '-GiB', '5') @{
         Exit = 0; Stderr = (Join-Lines @((& $growMsg1 -To 25), $boot)); Calls = (& $growCalls -To 25) } -Setup { Set-Healthy -State 'stopped' }
       Test-Case "${s}: <new> is the volume's own size plus <n>, not a fixed size (a 31 GiB volume grows to 33)" @('grow') @{
@@ -569,10 +597,15 @@ try {
         Exit = 0; Stdout = $dfOut; Stderr = (Join-Lines @((& $growMsg1), $online, 'remote-step-stderr-line')); Calls = (& $growCalls); SshCalls = 1
         Check = {
           param($r, $t)
+          # The wait is measured between two times the stand-ins logged: the start of the modify-volume
+          # call and the start of the ssh. The operator waits after that call has returned, so a build
+          # that waits 10 seconds leaves at least 10 seconds between them.
           $times = @(Get-Content -LiteralPath (Join-Path $standins 'run\ssh-time.log') -ErrorAction SilentlyContinue | Where-Object { $_.Trim() -ne '' })
           if ($times.Count -ne 1) { return 'The ssh did not record one start time' }
-          $gap = ([DateTime]::new([long]$times[0], [DateTimeKind]::Utc) - $t).TotalSeconds
-          if ($gap -lt ($growWaitSeconds - 0.1)) { 'The ssh started less than 10 seconds after the operator did' }
+          $modify = @(Get-AwsCalls | Where-Object { $_.Args.Count -ge 2 -and $_.Args[0] -ceq 'ec2' -and $_.Args[1] -ceq 'modify-volume' })
+          if ($modify.Count -ne 1) { return 'The modify-volume call did not record one start time' }
+          $gap = ([DateTime]::new([long]$times[0], [DateTimeKind]::Utc) - [DateTime]::new($modify[0].Ticks, [DateTimeKind]::Utc)).TotalSeconds
+          if ($gap -lt ($growWaitSeconds - 0.1)) { 'The ssh started less than 10 seconds after the modify-volume call' }
         } } -Setup $okStreams
       Test-Case "${s}: the ssh is ssh -o ClearAllForwardings=yes agentspace <remote command>, the command one last argument" @('grow') @{
         Exit = 0; Stdout = $dfOut; Calls = (& $growCalls); SshCalls = 1
@@ -671,17 +704,17 @@ try {
 
       # ---- The refusals of grow's arguments: usage errors, before any AWS call (Command line) ----
       $c = 'operator.md#command-line'
-      Test-Case "${s}: -GiB abc is refused with -GiB MUST be a whole number, not 'abc'., and no AWS call" @('grow', '-GiB', 'abc') @{
+      Test-Case "${c}: -GiB abc is refused with -GiB MUST be a whole number, not 'abc'., and no AWS call" @('grow', '-GiB', 'abc') @{
         Exit = 1; Stderr = "agentspace: -GiB MUST be a whole number, not 'abc'.`n"; Calls = @() }
-      Test-Case "${s}: -GiB 2147483648 is out of the 32-bit range, so it is refused as not a whole number, and no AWS call" @('grow', '-GiB', '2147483648') @{
+      Test-Case "${c}: -GiB 2147483648 is out of the 32-bit range, so it is refused as not a whole number, and no AWS call" @('grow', '-GiB', '2147483648') @{
         Exit = 1; Stderr = "agentspace: -GiB MUST be a whole number, not '2147483648'.`n"; Calls = @() }
-      Test-Case "${s}: -GiB with no value is refused with -GiB needs a value., and no AWS call" @('grow', '-GiB') @{
+      Test-Case "${c}: -GiB with no value is refused with -GiB needs a value., and no AWS call" @('grow', '-GiB') @{
         Exit = 1; Stderr = "agentspace: -GiB needs a value.`n"; Calls = @() }
-      Test-Case "${s}: -GiB given twice is refused with -GiB is given more than once., and no AWS call" @('grow', '-GiB', '1', '-GiB', '2') @{
+      Test-Case "${c}: -GiB given twice is refused with -GiB is given more than once., and no AWS call" @('grow', '-GiB', '1', '-GiB', '2') @{
         Exit = 1; Stderr = "agentspace: -GiB is given more than once.`n"; Calls = @() }
-      Test-Case "${s}: -Alias is refused with -Alias applies to up alone., and no AWS call" @('grow', '-Alias', 'x') @{
+      Test-Case "${c}: -Alias is refused with -Alias applies to up alone., and no AWS call" @('grow', '-Alias', 'x') @{
         Exit = 1; Stderr = "agentspace: -Alias applies to up alone.`n"; Calls = @() }
-      Test-Case "${s}: a second positional argument is refused with Unexpected argument 'extra'., and no AWS call" @('grow', 'extra') @{
+      Test-Case "${c}: a second positional argument is refused with Unexpected argument 'extra'., and no AWS call" @('grow', 'extra') @{
         Exit = 1; Stderr = "agentspace: Unexpected argument 'extra'.`n"; Calls = @() }
     }
   }

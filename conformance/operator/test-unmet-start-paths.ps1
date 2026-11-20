@@ -28,14 +28,15 @@
 #   wait-20-polls and deadline.
 #
 # THE DEADLINE CASE WAITS THE REAL 15 MINUTES, and so it runs only when asked for (docs/conformance.md,
-# "Cases that run only when asked for", architect, 2026-11-19). No seam variable shortens the deadline,
-# and a check MUST NOT trust a time to be shorter (docs/conformance.md, "The program under test is
-# untrusted"). It runs only when -Case is exactly `deadline` (in any letter case), under a limit of its
-# own on `up` of 17 minutes, so that it can never hang. With any other -Case, the default `*` included,
-# it writes one `SKIPPED` result under the name its PASS or FAIL would carry, with the reason `the
-# 15-minute deadline case runs only with -Case deadline`, and does not run `up` for it. That skip is
-# an expected one: a run that shows it has not failed, and it makes the run's exit code 2. Every other
-# case runs by default, in about 2 to 3 minutes.
+# "Cases that run only when asked for", architect, 2026-11-19, corrected the same evening). No seam
+# variable shortens the deadline, and a check MUST NOT trust a time to be shorter (docs/conformance.md,
+# "The program under test is untrusted"). It runs only when -Case is exactly `deadline` (in any letter
+# case), under a limit of its own on `up` of 17 minutes, so that it can never hang. With any other
+# -Case that would select it, the default `*` and a wildcard such as `d*` included, it neither runs nor
+# reports it: it writes no result line for it, so a default run's results and exit code are those of
+# the other cases alone, and prints the one line that is not a result, `Not run: the 15-minute deadline
+# case; run it with -Case deadline.` Every other case runs by default, in about 2 to 3 minutes: 31
+# results, all PASS, exit 0.
 #
 # SAFETY. The harness points USERPROFILE, HOME, LOCALAPPDATA and APPDATA into the throwaway home and
 # removes every AWS credential. Before any program that can reach AWS starts, the check confirms under
@@ -64,8 +65,13 @@ $msgSsm = 'Waiting for Session Manager...'
 $msgPatching = 'Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...'
 $msgDeadline = "agentspace: $id was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch"
 $msgReady = "Ready: $id"
-$deadlineSkipReason = 'the 15-minute deadline case runs only with -Case deadline'
+$deadlineNotRun = 'Not run: the 15-minute deadline case; run it with -Case deadline.'
 $deadlineLimitSeconds = 17 * 60
+# The deadline is 15 minutes from the start of the wait, and the check allows it to fall from 14.5 to
+# 16.5 minutes (docs/conformance.md, "Cases that run only when asked for"): one number in the check
+# and in the doc.
+$deadlineMinSeconds = 14.5 * 60
+$deadlineMaxSeconds = 16.5 * 60
 
 # The stand-in aws: a Windows PowerShell 5.1 script that a .cmd starts, so that it sees the arguments
 # as a program would. Each call logs {"t": <UTC ticks>, "a": [<arguments>]}, then answers with the
@@ -94,7 +100,15 @@ function Write-Problems([string]$Name, $Problems) {
   if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS } else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
 }
 function New-Problems { , [System.Collections.Generic.List[string]]::new() }
-function Get-Lines($Run) { , @($Run.Stderr -split "`r?`n" | Where-Object { $_.Trim() -ne '' }) }
+# The lines of the operator's stderr, split at line feeds alone: a carriage return stays in its line, and
+# a blank line is a line, so a line that is not exactly the spec's text fails the comparison (as the
+# other two files' exact comparisons do). The line feed that ends the last line ends no further line.
+function Get-Lines($Run) {
+  $t = [string]$Run.Stderr
+  if ($t.Length -eq 0) { return , @() }
+  if ($t.EndsWith("`n")) { $t = $t.Substring(0, $t.Length - 1) }
+  , @($t -split "`n")
+}
 
 # One answer of the stand-in: what it writes to stdout and stderr, and its exit code.
 function New-Step([string]$Out = '', [string]$Err = '', [int]$Code = 0) { @{ out = $Out; err = $Err; code = $Code } }
@@ -120,9 +134,11 @@ function Get-LaunchTime([double]$MinutesAgo) {
 # the spec gives (FB-07): the service, the operation, --region us-west-2, --output json where it is
 # passed, then the operation's own arguments. The send-command's question is the box's own wording,
 # so its value is compared as `commands=<question>`. The wait is exactly
-# `ec2 wait --region us-west-2 instance-stopped --instance-ids <id>`: the operation is `wait`, so
-# --region follows it, and `instance-stopped` is the wait's own argument (docs/operator.md, Calls by
-# command (FB-07), ruling for E0.06-T03-S03, architect, 2026-11-19). The other placement is not accepted.
+# `ec2 wait --region us-west-2 instance-stopped --instance-ids <id>`, with no `--output json`
+# (docs/operator.md, AWS failures, the FB-07 paragraph that begins "Every AWS CLI call the operator
+# makes passes --region us-west-2": the operation is `wait`, so --region follows it, and
+# `instance-stopped` is the wait's own argument; architect, 2026-11-19, for E0.06-T03-S03). Any other
+# placement, and a wait that passes --output json, is no call of this list and fails the check.
 $symbols = @{
   (@('ec2', 'describe-instances', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $id) -join '|') = 'describe'
   (@('ec2', 'start-instances', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $id) -join '|') = 'start'
@@ -191,6 +207,8 @@ try {
       if ($Run.TimedOut) { $Problems.Add('It timed out') }
       elseif ($Run.ExitCode -ne $ExitCode) { $Problems.Add("Exit $($Run.ExitCode), not $ExitCode") }
       if ($Run.Stdout.Length -gt 0) { $Problems.Add('Stdout is not empty') }
+      if ($Run.Stderr.Contains("`r")) { $Problems.Add('Stderr holds a carriage return') }
+      if ($Run.Stderr.Length -gt 0 -and -not $Run.Stderr.EndsWith("`n")) { $Problems.Add('Stderr does not end in a line feed') }
       if ($Run.Stderr -match 'CategoryInfo|At line:|Exception') { $Problems.Add('Stderr shows a runtime error record') }
     }
     function Add-LinesProblems($Problems, $Run, [string[]]$Want) {
@@ -259,7 +277,8 @@ try {
 
         $p = New-Problems
         Add-CallProblems $p $calls @('describe', 'wait', 'start', 'dii', 'send', 'get')
-        Write-Problems "${sec}: A stopping box is waited for with ec2 wait --region us-west-2 instance-stopped --instance-ids <id> (FB-07's argument order, no --output), then started, and describe-instances is not called again (steps 1 and 2; FB-09)" $p
+        if (@($calls | Where-Object { $_.Args.Count -ge 2 -and $_.Args[0] -ceq 'ec2' -and $_.Args[1] -ceq 'wait' -and $_.Args -ccontains '--output' }).Count -gt 0) { $p.Add('The wait passes --output, and the FB-07 paragraph of operator.md gives it none') }
+        Write-Problems "${sec}: A stopping box is waited for with ec2 wait --region us-west-2 instance-stopped --instance-ids <id> (the FB-07 paragraph of operator.md: that argument order, no --output json), then started, and describe-instances is not called again (steps 1 and 2; FB-09)" $p
 
         $p = New-Problems
         if ($r.ExitCode -ne 0 -or -not ($lines -ccontains $msgReady)) { $p.Add('A wait that exited 255 stopped up, but its exit code is not checked') }
@@ -446,13 +465,13 @@ try {
 
       # ---- The 15-minute deadline, waited in full ----
       # The deadline case runs only with -Case deadline, exactly (docs/conformance.md, Cases that run
-      # only when asked for, architect, 2026-11-19), and otherwise is one SKIPPED result under the
-      # name of its first result. Its patch question goes through Session Manager's Run Command
-      # (docs/operator.md, What up waits for, and Calls by command: ssm send-command and ssm
-      # get-command-invocation; ssh and scp are tripwires).
+      # only when asked for, architect, 2026-11-19, corrected): otherwise it writes no result, and a
+      # -Case that would select it prints the one Not-run line. Its patch question goes through Session
+      # Manager's Run Command (docs/operator.md, What up waits for, and Calls by command: ssm
+      # send-command and ssm get-command-invocation; ssh and scp are tripwires).
       $deadlineName1 = "${sec}: A box that is never ready fails at the deadline with exactly agentspace: <id> was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch, exit 1, nothing on stdout (step 3)"
       if ((Get-Selected 'deadline') -and $Case -ine 'deadline') {
-        Write-ConformanceResult -Name $deadlineName1 -Status SKIPPED -Reason $deadlineSkipReason
+        Write-Host $deadlineNotRun
       } elseif (Get-Selected 'deadline') {
         # Online, and the box answers pending to every question: a patch run that never finishes.
         Set-Scenario ($askedOnce + @{
@@ -472,8 +491,8 @@ try {
 
         $p = New-Problems
         if ($r.TimedOut) { $p.Add('It was still running after 17 minutes') }
-        elseif ($clock.Elapsed.TotalSeconds -lt 870) { $p.Add('It gave up in less than 14.5 minutes') }
-        elseif ($clock.Elapsed.TotalSeconds -gt 1000) { $p.Add('It gave up after more than 16.5 minutes') }
+        elseif ($clock.Elapsed.TotalSeconds -lt $deadlineMinSeconds) { $p.Add('It gave up in less than 14.5 minutes') }
+        elseif ($clock.Elapsed.TotalSeconds -gt $deadlineMaxSeconds) { $p.Add('It gave up after more than 16.5 minutes') }
         Write-Problems "${sec}: The deadline is 15 minutes from the start of the wait, with the last pause cut short to end on it (step 3; the timing is loose)" $p
 
         $p = New-Problems

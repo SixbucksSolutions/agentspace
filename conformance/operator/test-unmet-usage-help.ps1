@@ -26,8 +26,10 @@
 #     spec says help is asked for: -h and --help in any case, before the command, after other
 #     parameters, in a parameter's value position, with an unknown command or parameter, and beside
 #     errors that help hides.
-#   - The home and the system folder: USERPROFILE and SystemRoot unset or empty fail every command
-#     with the spec's text, in the spec's order, and help and usage errors need neither.
+#   - The system folder: SystemRoot unset or empty fails every command with the spec's text, in the
+#     spec's order, and help and usage errors need it not. USERPROFILE is in the throwaway home in
+#     every case: no check runs a program with USERPROFILE unset or empty (docs/conformance.md, The
+#     harness), so the home's refusal is shown by the operator's own tests.
 #
 # The help texts below are copied from docs/operator.md's "Help" blocks, the oracle, and never from a
 # run of a build. A change to a block in the spec MUST be made here too.
@@ -214,10 +216,11 @@ try {
     function Get-AwsTripwireCalls { Get-StandInCallCount -Log $tripLogs[0] }
 
     # Runs the operator with the harness's environment and the three tripwires. $Unset names variables
-    # to remove from the child (it does not go through the harness's override, which refuses USERPROFILE);
-    # $Empty names variables to set to the empty string.
+    # to remove from the child, and $Empty names variables to set to the empty string. They MUST NOT
+    # name USERPROFILE (docs/conformance.md, The harness), and the function throws if they do.
     function Invoke-Operator([string[]]$Arguments, [string[]]$Unset = @(), [string[]]$Empty = @()) {
       $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $h -Override $trip
+      if (@($Unset + $Empty) -contains 'USERPROFILE') { throw 'A case MUST NOT run a program with USERPROFILE unset or empty.' }
       foreach ($n in $Unset) { $childEnv[$n] = $null }
       foreach ($n in $Empty) { $childEnv[$n] = '' }
       Start-ConformanceProcess -FilePath $program -Arguments $Arguments -ChildEnvironment $childEnv -TimeoutSeconds 60
@@ -397,23 +400,19 @@ try {
       Test-Accepted "${a}: $($case.N)" $case.A
     }
 
-    # =============== The home and the system folder (Command line) ===============
-    $e = 'operator.md#command-line: the home and the system folder'
-    $noHome = 'agentspace: USERPROFILE is not set, so there is no home folder.'
+    # =============== The system folder (Command line) ===============
+    # No case here runs the operator with USERPROFILE unset or empty (docs/conformance.md, The harness):
+    # USERPROFILE stays in the throwaway home, and its refusal is shown by the operator's own tests.
+    $e = 'operator.md#command-line: the system folder'
     $noSystem = "agentspace: SystemRoot is not set, so Windows' programs cannot be found."
-    foreach ($cmd in $commands) {
-      Test-Refusal "${e}: $cmd with USERPROFILE unset fails with the spec's text" @($cmd) $noHome -Unset @('USERPROFILE')
-    }
     foreach ($cmd in $commands) {
       Test-Refusal "${e}: $cmd with SystemRoot unset fails with the spec's text" @($cmd) $noSystem -Unset @('SystemRoot')
     }
-    Test-Refusal "${e}: USERPROFILE set to the empty string is not set" @('status') $noHome -Empty @('USERPROFILE')
     Test-Refusal "${e}: SystemRoot set to the empty string is not set" @('status') $noSystem -Empty @('SystemRoot')
-    Test-Refusal "${e}: with both unset the USERPROFILE message comes first" @('status') $noHome -Unset @('USERPROFILE', 'SystemRoot')
-    Test-Refusal "${e}: a usage error needs neither (bogus with both unset)" @('bogus') (& $unknown 'bogus') -Unset @('USERPROFILE', 'SystemRoot')
-    Test-Refusal "${e}: the -Alias check needs neither, and comes before them (status -Alias x with both unset)" @('status', '-Alias', 'x') 'agentspace: -Alias applies to up alone.' -Unset @('USERPROFILE', 'SystemRoot')
-    Test-Help "${e}: help needs neither (the top level's help with both unset)" @('--help') 'top' -Unset @('USERPROFILE', 'SystemRoot')
-    Test-Help "${e}: a command's help needs neither (grow -h with both unset)" @('grow', '-h') 'grow' -Unset @('USERPROFILE', 'SystemRoot')
+    Test-Refusal "${e}: a usage error needs no system folder (bogus with SystemRoot unset)" @('bogus') (& $unknown 'bogus') -Unset @('SystemRoot')
+    Test-Refusal "${e}: the -Alias check needs no system folder, and comes before it (status -Alias x with SystemRoot unset)" @('status', '-Alias', 'x') 'agentspace: -Alias applies to up alone.' -Unset @('SystemRoot')
+    Test-Help "${e}: help needs no system folder (the top level's help with SystemRoot unset)" @('--help') 'top' -Unset @('SystemRoot')
+    Test-Help "${e}: a command's help needs no system folder (grow -h with SystemRoot unset)" @('grow', '-h') 'grow' -Unset @('SystemRoot')
 
     # =============== Help: every block byte for byte ===============
     $sectionOf = @{ top = 'the-top-level'; deploy = 'deploy'; up = 'up'; sync = 'sync'; ca = 'ca'; down = 'down'; status = 'status'; grow = 'grow' }
