@@ -779,7 +779,10 @@ order; the first that fails is reported.
    creation time, whose command line cannot be read back has not exited** (architect, 2026-11-19,
    for E0.06-T02-S04): the start fails with `The holder started, but its command line could not be
    read back to check it, so it runs unrecorded.`, and the pass leaves it running, as item 7 of
-   [Starting a holder](#starting-a-holder) asks.
+   [Starting a holder](#starting-a-holder) asks. **Nor has one that cannot be opened**: the start
+   fails with `The holder started, but could not be opened to check it, so it may be running
+   unrecorded.`, and the pass leaves it alone. "Exited at once" is for a holder gone, or a running
+   process that is not the one the result names.
    - **The rest of E0.06-T02-S04's rulings:** a request that cannot be written in step 1 fails
      with `The holder could not be started: The launch request could not be written: <error>`;
      the launcher exits 0 when it answered or rightly started nothing, 1 when it could not write
