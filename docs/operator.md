@@ -484,7 +484,9 @@ A cache that is empty, holds only whitespace, cannot be parsed as JSON, or does 
 schema MUST be treated as missing (state.md). A cache that cannot be opened, such as one access is
 denied to or a folder at its path, MUST fail the command with exactly
 `agentspace: Cannot read the instance-ID cache <path>; remove it and run the command again.`, where
-`<path>` is its full path (architect, 2026-11-19, for v0.06: FA-16). A stack with
+`<path>` is its full path (architect, 2026-11-19, for v0.06: FA-16). A cache that cannot be
+written fails with `agentspace: Cannot write <path>.`, the form of the operator folder's own line,
+and caller mode's "Could not reach the host" (architect, the same day, for E0.06-T03-S01). A stack with
 no `InstanceId` output MUST fail with `agentspace: Stack 'agentbox' has no InstanceId output.`, and
 write no cache. The prototype writes an empty cache then, and every later command fails with a
 runtime error until `deploy` deletes it ([Q24](#open-questions)).
@@ -2299,7 +2301,10 @@ missing or of another form:
 
 A member a command reads that is missing, or not of the form above, fails the command with
 `agentspace: Unexpected answer from ec2 describe-instances: no <member>.`, where `<member>` is its
-path as this table writes it, such as `Reservations[0].Instances[0].LaunchTime`.
+path as this table writes it, such as `Reservations[0].Instances[0].LaunchTime`. When no element
+of `BlockDeviceMappings` has the `RootDeviceName`, or it has no `Ebs.VolumeId`, `<member>` is
+`Reservations[0].Instances[0].BlockDeviceMappings[].Ebs.VolumeId` (architect, 2026-11-19, for
+E0.06-T03-S01).
 
 **The same form holds for every call's members, with these exceptions** (architect, 2026-11-19,
 for E0.06-T01-S03):
