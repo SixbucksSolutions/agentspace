@@ -61,9 +61,10 @@ function New-OperatorStandIn {
   )
   $dir = Join-Path $ConformanceHome.Root 'standins'
   New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $dir) | Out-Null
-  $path = Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Join-Path $dir "$Name.cmd")
-  Set-Content -LiteralPath $path -Encoding ascii -Value (@('@echo off', "echo %~1 %~2 >>`"%~dp0$Name-calls.log`"") + $Body)
-  return $path
+  $path = Join-Path $dir "$Name.cmd"
+  Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path) -Encoding ascii -Value (@('@echo off', "echo %~1 %~2 >>`"%~dp0$Name-calls.log`"") + $Body)
+  # The full, long form of the path, as it was returned before the check moved to the write.
+  return (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path)
 }
 
 # The environment that points the operator's three programs at tripwires, for a check that must not
@@ -121,10 +122,10 @@ function New-QuotedWrapper {
     [string]$Name = 'quoted-case'
   )
   $dir = Join-Path $ConformanceHome.Root 'wrappers'
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $dir) | Out-Null
   $path = Join-Path $dir "$Name.cmd"
   $line = ('"{0}" {1} "%CONFORMANCE_CASE_ARG%"' -f $Program, $Lead)
-  Set-Content -LiteralPath $path -Encoding ascii -Value @('@echo off', $line, 'exit /b %ERRORLEVEL%')
+  Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path) -Encoding ascii -Value @('@echo off', $line, 'exit /b %ERRORLEVEL%')
   return $path
 }
 
@@ -150,12 +151,12 @@ function Invoke-QuotedCase {
 function Get-ArgumentCodePoint {
   param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][string]$Value)
   $dir = Join-Path $ConformanceHome.Root 'probe'
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $dir) | Out-Null
   $probePs1 = Join-Path $dir 'probe-args.ps1'
   $probeCmd = Join-Path $dir 'probe-args.cmd'
   $probeOut = Join-Path $dir 'probe-args.txt'
-  Set-Content -LiteralPath $probePs1 -Encoding ascii -Value '[IO.File]::WriteAllText($env:CONFORMANCE_PROBE_OUT, (($args[0].ToCharArray() | ForEach-Object { [int]$_ }) -join ","))'
-  Set-Content -LiteralPath $probeCmd -Encoding ascii -Value @(
+  Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $probePs1) -Encoding ascii -Value '[IO.File]::WriteAllText($env:CONFORMANCE_PROBE_OUT, (($args[0].ToCharArray() | ForEach-Object { [int]$_ }) -join ","))'
+  Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $probeCmd) -Encoding ascii -Value @(
     '@echo off',
     ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $probePs1 + '" %*'),
     'exit /b %ERRORLEVEL%'

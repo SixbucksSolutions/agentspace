@@ -18,7 +18,9 @@
 # Interface, pinned for every story that builds on it (docs/conformance.md, "Running the suite"):
 #   New-ConformanceHome, Invoke-AgentspaceCli, Test-ConformanceSchema, Write-ConformanceResult,
 #   Remove-ConformanceHome and Exit-ConformanceRun, plus Invoke-ConformanceProgram, which runs any
-#   program a conformance variable names.
+#   program a conformance variable names, Assert-ConformancePath, which every write and delete a check
+#   makes MUST call as the path of that very call, and Assert-ConformanceHomeRoot, which guards the
+#   home's own creation and removal (E0.06-T04-S01, #0110).
 
 $script:ConformanceRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:ConformanceSchemas = Join-Path $script:ConformanceRepo 'schemas'
@@ -184,10 +186,34 @@ function Invoke-ConformanceProgram {
   return $r
 }
 
+# Checks a home's root before the home exists, and again when it is removed: returns the root's full
+# path, or throws unless it is a folder named agentspace-conformance-<something> directly under
+# $env:TEMP and, when it already exists, not a reparse point (a junction or a symbolic link), because
+# a create or a delete through one could reach outside the temp folder. This is the one check that
+# does not go through Assert-ConformancePath, because Assert-ConformancePath measures a path against
+# a home's root, and this check is what makes that root safe to measure against. New-ConformanceHome
+# creates the root, and Remove-ConformanceHome deletes it, only through this check at the call.
+function Assert-ConformanceHomeRoot {
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Root)
+  if ([string]::IsNullOrWhiteSpace($Root)) { throw 'Refusing an empty path: it is not a conformance home under the temp folder.' }
+  $full = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+  $temp = [IO.Path]::GetFullPath([string]$env:TEMP).TrimEnd('\')
+  if ((Split-Path -Parent $full) -ne $temp -or (Split-Path -Leaf $full) -notlike 'agentspace-conformance-*') {
+    throw "Refusing a folder that is not a conformance home under the temp folder: $full"
+  }
+  $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+  if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "Refusing a conformance home that is a junction or symbolic link: $full"
+  }
+  return $full
+}
+
 # Makes a throwaway home: a folder under $env:TEMP that holds a fresh USERPROFILE (with .agentspace
 # and .ssh) and a throwaway CA made by the operator's ca under it. Returns Root, UserProfile,
 # StateDir, SshDir, CaReady and CaReason. When no CA can be made, CaReady is false and CaReason says
 # why; the home is still usable by a check that needs no CA, and the real CA is never used instead.
+# Every create and the one delete here is checked at the call: the root's by Assert-ConformanceHomeRoot,
+# and every folder under it by Assert-ConformancePath, once the root exists.
 function New-ConformanceHome {
   $root = Join-Path $env:TEMP ('agentspace-conformance-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
   $userProfile = Join-Path $root 'home'
@@ -200,14 +226,18 @@ function New-ConformanceHome {
     CaReason = ''
   }
   try {
-    New-Item -ItemType Directory -Force -Path (Join-Path $userProfile '.agentspace') | Out-Null
-    New-Item -ItemType Directory -Force -Path $h.SshDir | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $userProfile 'AppData\Local') | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $userProfile 'AppData\Roaming') | Out-Null
+    New-Item -ItemType Directory -Path (Assert-ConformanceHomeRoot -Root $root) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $userProfile '.agentspace')) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $h.SshDir) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $userProfile 'AppData\Local')) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $userProfile 'AppData\Roaming')) | Out-Null
     $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD' -ConformanceHome $h -Arguments @('ca', '-Quiet') -TimeoutSeconds 120
   } catch {
-    # The caller never gets the object, so it could not remove the folder: this MUST.
-    if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    # The caller never gets the object, so it could not remove the folder: this MUST. The check that
+    # guards the create guards this delete too, so a root it refused is never deleted.
+    try {
+      if (Test-Path -LiteralPath (Assert-ConformanceHomeRoot -Root $root)) { Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root $root) -Recurse -Force -ErrorAction SilentlyContinue }
+    } catch { }
     throw
   }
   $caPrivate = Join-Path $userProfile '.agentspace\ca\agentspace_ca'
@@ -224,16 +254,13 @@ function New-ConformanceHome {
 }
 
 # Deletes the home's root, and only it. Refuses a path that is not a folder this harness makes
-# directly under $env:TEMP.
+# directly under $env:TEMP, or that is a junction or a symbolic link (Assert-ConformanceHomeRoot),
+# and checks it again at each delete.
 function Remove-ConformanceHome {
   param([Parameter(Mandatory)]$ConformanceHome)
-  $root = [IO.Path]::GetFullPath([string]$ConformanceHome.Root).TrimEnd('\')
-  $temp = [IO.Path]::GetFullPath([string]$env:TEMP).TrimEnd('\')
-  if ((Split-Path -Parent $root) -ne $temp -or (Split-Path -Leaf $root) -notlike 'agentspace-conformance-*') {
-    throw "Refusing to delete a folder that is not a conformance home under the temp folder: $root"
-  }
+  $root = Assert-ConformanceHomeRoot -Root ([string]$ConformanceHome.Root)
   for ($try = 0; $try -lt 5 -and (Test-Path -LiteralPath $root); $try++) {
-    try { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 300 }
+    try { Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root ([string]$ConformanceHome.Root)) -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 300 }
   }
   if (Test-Path -LiteralPath $root) { Write-Host "FAIL Remove-ConformanceHome: The throwaway home could not be removed: $root"; $global:ConformanceCounts['FAIL']++ }
 }

@@ -98,7 +98,7 @@ try {
         Write-ConformanceResult -Name "$renew`: Setup, the ready lease has a key pair to delete" -Status FAIL -Reason 'The lease folder holds no id_ed25519'
       } else {
         # Both halves go, so that no certificate can be issued and the key MUST NOT change (lease-api.md, `renew`).
-        Remove-Item -LiteralPath $key -Force
+        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path $key) -Force
         Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path "$key.pub") -Force -ErrorAction SilentlyContinue
         $run = Invoke-UnmetLease $lab @('renew', $lease.Id)
         $p = Get-UnmetErrorProblems -Run $run -Code 'internal' -Exit 1

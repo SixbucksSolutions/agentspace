@@ -41,12 +41,12 @@ $fakeId = 'i-1234567890abcdef0'
 
 # Puts the cache variant at the cache's place, or removes it (-Kind none).
 function Set-CacheVariant($Lab, [string]$Kind) {
-  $path = Assert-ConformancePath -ConformanceHome $Lab -Path (Join-Path $Lab.UserProfile '.agentspace\instance-id.json')
-  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+  $path = Join-Path $Lab.UserProfile '.agentspace\instance-id.json'
+  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $Lab -Path $path) -Recurse -Force }
   switch ($Kind) {
-    'folder' { New-Item -ItemType Directory -Path $path | Out-Null }
-    'garbage' { [IO.File]::WriteAllText($path, 'this is not json') }
-    'valid' { [IO.File]::WriteAllText($path, ('{"version":0,"instance_id":"' + $fakeId + '"}')) }
+    'folder' { New-Item -ItemType Directory -Path (Assert-ConformancePath -ConformanceHome $Lab -Path $path) | Out-Null }
+    'garbage' { [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $Lab -Path $path), 'this is not json') }
+    'valid' { [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $Lab -Path $path), ('{"version":0,"instance_id":"' + $fakeId + '"}')) }
   }
 }
 

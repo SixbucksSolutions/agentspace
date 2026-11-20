@@ -159,8 +159,8 @@ try {
     Write-ConformanceResult -Name $seamName -Status FAIL -Reason 'Neither AGENTSPACE_OPERATOR_CMD nor its default names a program'
   } else {
     [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile '.agentspace\instance-id.json')), ('{"version":0,"instance_id":"' + $id + '"}'))
-    $standinDir = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.Root 'standins')
-    New-Item -ItemType Directory -Force -Path $standinDir | Out-Null
+    $standinDir = Join-Path $h.Root 'standins'
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $standinDir) | Out-Null
     [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standinDir 'aws-standin.ps1')), $awsStandInScript)
     $aws = New-OperatorStandIn -ConformanceHome $h -Name 'aws' -Body @(
       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0aws-standin.ps1" %*',

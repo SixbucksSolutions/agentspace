@@ -115,7 +115,7 @@ function Start-TrackingKeeper([int]$IntervalSeconds) {
 function Reset-Attempt($Process) {
   Stop-Watch $Process
   Stop-RunProcesses
-  foreach ($n in 'board-holder.log', 'board-holder.json') { Remove-Item -LiteralPath (Join-Path $env:AGENTSPACE_STATE_DIR $n) -ErrorAction SilentlyContinue }
+  foreach ($n in 'board-holder.log', 'board-holder.json') { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR $n)) -ErrorAction SilentlyContinue }
 }
 
 # Takes board-holder.lock the way the keeper does (a share mode that refuses a second taker), as soon
@@ -124,7 +124,7 @@ function Lock-PassLock($Process) {
   $path = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.lock'
   $box = @{ Stream = $null }
   $got = Wait-Until {
-    try { $box.Stream = [IO.FileStream]::new($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None); $true } catch [IO.IOException] { $false }
+    try { $box.Stream = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $runHome -Path $path), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None); $true } catch [IO.IOException] { $false }
   } 30 $Process
   if ($got) { $box.Stream } else { $null }
 }
@@ -238,7 +238,7 @@ try {
         if (-not $held) { $missed = 'The check could not take board-holder.lock.'; continue }
         $rec = Read-Record
         $holderPid = if ($rec) { [int]$rec['pid'] } else { -1 }
-        Remove-Item -LiteralPath (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json')
+        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'))
         $held.Dispose(); $held = $null
         $released = [DateTime]::UtcNow
         $after = Get-Outcome $p $index
@@ -259,7 +259,7 @@ try {
   Restore-CaseEnvironment
   Stop-RunProcesses
   $leftBehind = @(Get-RunProcesses).Count
-  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root $temp) -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 if ($leftBehind -eq 0) { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status PASS }

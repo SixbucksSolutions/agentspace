@@ -165,9 +165,13 @@ function Unlock-LockedProcess([int]$ProcessId, [DateTime]$CreationDate) {
 # is directly under $env:TEMP and named agentspace-conformance-*, as the harness's homes are.
 function Initialize-KeeperRun {
   $script:temp = Join-Path $env:TEMP "agentspace-conformance-keeper-$([guid]::NewGuid().ToString('N'))"
-  New-Item -ItemType Directory -Force -Path $script:temp | Out-Null
+  # The run's folder is a conformance home's root, so it is checked as one (Assert-ConformanceHomeRoot,
+  # conformance.md, "The program under test is untrusted"); every write and delete under it is checked
+  # at the call against $runHome, which names it as the root (Assert-ConformancePath).
+  New-Item -ItemType Directory -Force -Path (Assert-ConformanceHomeRoot -Root $script:temp) | Out-Null
+  $script:runHome = [pscustomobject]@{ Root = $script:temp }
   $script:stub = Join-Path $script:temp 'ssh-stub.cmd'
-  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ssh-stub.cmd') -Destination $script:stub
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ssh-stub.cmd') -Destination (Assert-ConformancePath -ConformanceHome $runHome -Path $script:stub)
 }
 
 # Every environment variable a case changes, with the value it had before the run, put back by
@@ -201,7 +205,7 @@ function New-CaseHome {
   $dir = Join-Path $temp ([guid]::NewGuid().ToString('N'))
   $userProfile = Join-Path $dir 'home'
   $h = [pscustomobject]@{ Root = $temp; UserProfile = $userProfile; StateDir = Join-Path $dir 'state'; SshDir = Join-Path $userProfile '.ssh' }
-  New-Item -ItemType Directory -Force -Path $h.StateDir, $h.SshDir, (Join-Path $userProfile 'AppData\Local'), (Join-Path $userProfile 'AppData\Roaming') | Out-Null
+  New-Item -ItemType Directory -Force -Path @($h.StateDir, $h.SshDir, (Join-Path $userProfile 'AppData\Local'), (Join-Path $userProfile 'AppData\Roaming') | ForEach-Object { Assert-ConformancePath -ConformanceHome $runHome -Path $_ }) | Out-Null
   Set-CaseEnvironment (Get-ConformanceChildEnvironment -ConformanceHome $h)
   $h
 }
@@ -232,14 +236,14 @@ function New-ReleasedRecord([string]$Letter, [string]$Expires) {
 
 function Write-Leases($Records) {
   $text = ([ordered]@{ version = 0; leases = @($Records) } | ConvertTo-Json -Compress -Depth 10) + "`n"
-  [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json'), $text)
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json')), $text)
 }
 
 function Format-Utc([DateTime]$Time) { $Time.ToUniversalTime().ToString("yyyy-MM-dd\THH:mm:ss.fff\Z", $ci) }
 
 function Write-Record([int]$ProcessId, [string]$StartedAt, [string]$LeaseId, [string]$Alias) {
   $text = [ordered]@{ pid = $ProcessId; process_started_at = $StartedAt; lease_id = $LeaseId; alias = $Alias } | ConvertTo-Json -Compress
-  [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'), $text + "`n")
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json')), $text + "`n")
 }
 
 function Read-Record {
@@ -387,7 +391,7 @@ function ConvertTo-ArgString([string[]]$Items) {
 function Start-KeeperProcess([string[]]$KeeperArgs, [string]$Tag) {
   $out = Join-Path $env:AGENTSPACE_STATE_DIR "$Tag.out"
   $err = Join-Path $env:AGENTSPACE_STATE_DIR "$Tag.err"
-  $p = Start-Process -FilePath $keeperCmd -ArgumentList (ConvertTo-ArgString $KeeperArgs) -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
+  $p = Start-Process -FilePath $keeperCmd -ArgumentList (ConvertTo-ArgString $KeeperArgs) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Assert-ConformancePath -ConformanceHome $runHome -Path $out) -RedirectStandardError (Assert-ConformancePath -ConformanceHome $runHome -Path $err)
   $null = $p.Handle
   $p
 }
@@ -428,7 +432,7 @@ function New-FailStub([bool]$LongThird, [int]$EveryLife = 0) {
   if ($LongThird) { $lines += 'if %n%==3 ping -n 11 127.0.0.1 >nul' }
   if ($EveryLife -gt 0) { $lines += "ping -n $($EveryLife + 1) 127.0.0.1 >nul" }
   $lines += 'exit /b 1'
-  [IO.File]::WriteAllText($path, (($lines -join "`r`n") + "`r`n"))
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path $path), (($lines -join "`r`n") + "`r`n"))
   $path
 }
 

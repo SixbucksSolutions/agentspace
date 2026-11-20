@@ -163,9 +163,9 @@ function Read-ConformanceStateFile {
 # Writes the document back as state.md says: compact JSON, UTF-8 without a byte order mark, one line feed.
 function Write-ConformanceStateFile {
   param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)]$Document, [string]$StateDir)
-  $path = Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Get-ConformanceStatePath -ConformanceHome $ConformanceHome -StateDir $StateDir)
+  $path = Get-ConformanceStatePath -ConformanceHome $ConformanceHome -StateDir $StateDir
   $json = $Document | ConvertTo-Json -Compress -Depth 50
-  [IO.File]::WriteAllText($path, $json + "`n", [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path), $json + "`n", [Text.UTF8Encoding]::new($false))
 }
 
 # Sets one member of one lease's record in the state file, to seed a time. Returns $false, and writes

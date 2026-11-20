@@ -45,7 +45,7 @@ function Set-CcLeasesDeny($Lab, [string]$Folder, [bool]$On) {
   $full = Assert-ConformancePath -ConformanceHome $Lab -Path $Folder
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
-  if ($On) { $out = & $icacls $full /deny "*${sid}:(OI)(CI)(DE,DC)" 2>&1 } else { $out = & $icacls $full /remove:d "*$sid" 2>&1 }
+  if ($On) { $out = & $icacls (Assert-ConformancePath -ConformanceHome $Lab -Path $full) /deny "*${sid}:(OI)(CI)(DE,DC)" 2>&1 } else { $out = & $icacls (Assert-ConformancePath -ConformanceHome $Lab -Path $full) /remove:d "*$sid" 2>&1 }
   if ($LASTEXITCODE -ne 0) { throw "icacls failed with exit code $LASTEXITCODE" }
 }
 
@@ -81,13 +81,13 @@ try {
     # The fault, and proof that it works: a probe folder under the rule cannot be deleted.
     $denied = $true
     Set-CcLeasesDeny $lab $leases $true
-    $probe = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $leases 'zz-probe')
-    New-Item -ItemType Directory -Path $probe | Out-Null
+    $probe = Join-Path $leases 'zz-probe'
+    New-Item -ItemType Directory -Path (Assert-ConformancePath -ConformanceHome $lab -Path $probe) | Out-Null
     $probeRemoved = $true
-    try { Remove-Item -LiteralPath $probe -Force -ErrorAction Stop } catch { $probeRemoved = $false }
+    try { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path $probe) -Force -ErrorAction Stop } catch { $probeRemoved = $false }
     Set-CcLeasesDeny $lab $leases $false
     $denied = $false
-    if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath $probe -Force }
+    if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path $probe) -Force }
     if (-not (Test-CcSuccess $seed)) {
       Write-ConformanceResult -Name "$sec`: Setup, an unsatisfiable create records a lease for the failed create to leave alone" -Status FAIL -Reason "The create exited with code $($seed.ExitCode), or did not print a valid lease"
     } elseif ($probeRemoved) {

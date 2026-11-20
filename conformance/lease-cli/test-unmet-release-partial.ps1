@@ -104,7 +104,7 @@ try {
         Write-ConformanceResult -Name "$release`: Setup, the ready lease has a key, a certificate and an alias file" -Status FAIL -Reason 'One of the three is missing'
       } else {
         # Hold the private key with no sharing at all, so that the lease folder cannot be deleted.
-        $held = [IO.FileStream]::new($key, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+        $held = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $lab -Path $key), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
         $run = Invoke-UnmetLease $lab @('release', $lease.Id)
 
         # What the first release left, read while the key is still held: the folder cannot go yet.

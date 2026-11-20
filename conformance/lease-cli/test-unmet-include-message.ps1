@@ -78,8 +78,8 @@ try {
   } else {
     # The line is there, but below the first Host line, so it belongs to that block.
     $original = [Text.UTF8Encoding]::new($false).GetBytes("Host elsewhere`n  User someone`nInclude agentspace.d/*`n")
-    $config = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.SshDir 'config')
-    [IO.File]::WriteAllBytes($config, $original)
+    $config = Join-Path $lab.SshDir 'config'
+    [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $lab -Path $config), $original)
 
     $run = Invoke-UnmetLease $lab @('create', '--project', 'misplaced')
     $p = Get-UnmetErrorProblems -Run $run -Code 'internal' -Exit 1

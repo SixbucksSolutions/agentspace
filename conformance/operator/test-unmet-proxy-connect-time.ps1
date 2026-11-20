@@ -93,16 +93,16 @@ try {
     foreach ($p in 'success', 'failure') { Write-ConformanceResult -Name "${section}: $($nameOf[$p]) names no backend" -Status FAIL -Reason 'Neither AGENTSPACE_SSH_PROXY_CMD nor its default names a program' }
   } else {
     # The instance-ID cache, in its place under the home (operator.md, "Laptop files").
-    [IO.File]::WriteAllText((Join-Path $h.UserProfile '.agentspace\instance-id.json'), ('{"version":0,"instance_id":"' + $fakeId + '"}'))
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile '.agentspace\instance-id.json')), ('{"version":0,"instance_id":"' + $fakeId + '"}'))
 
     # The stand-ins, in the home. They log the service and operation of every call, and no more.
     $dir = Join-Path $h.Root 'standins'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $dir) | Out-Null
     $awsOk = Join-Path $dir 'aws-ok.cmd'
     $awsFail = Join-Path $dir 'aws-fail.cmd'
     $logOk = Join-Path $dir 'aws-ok-calls.log'
     $logFail = Join-Path $dir 'aws-fail-calls.log'
-    Set-Content -LiteralPath $awsOk -Encoding ascii -Value @(
+    Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $awsOk) -Encoding ascii -Value @(
       '@echo off',
       'echo %~1 %~2 >>"%~dp0aws-ok-calls.log"',
       'if /i "%~1"=="ssm" if /i "%~2"=="start-session" goto tunnel',
@@ -115,7 +115,7 @@ try {
       'echo {"Reservations":[{"Instances":[{"State":{"Name":"running"},"LaunchTime":"2020-01-01T00:00:00+00:00"}]}]}',
       'exit /b 0'
     )
-    Set-Content -LiteralPath $awsFail -Encoding ascii -Value @(
+    Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $awsFail) -Encoding ascii -Value @(
       '@echo off',
       'echo %~1 %~2 >>"%~dp0aws-fail-calls.log"',
       "echo An error occurred (InternalFailure) when calling the %~2 operation: $marker $fakeId 1>&2",
@@ -127,7 +127,7 @@ try {
     # that starts either one, instead of the real ssh.exe, is caught and never reaches the real home.
     $sshStub = Join-Path $dir 'ssh-stub.cmd'
     $sshLog = Join-Path $dir 'ssh-stub-calls.log'
-    Set-Content -LiteralPath $sshStub -Encoding ascii -Value @('@echo off', 'echo called >>"%~dp0ssh-stub-calls.log"', 'exit /b 1')
+    Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $sshStub) -Encoding ascii -Value @('@echo off', 'echo called >>"%~dp0ssh-stub-calls.log"', 'exit /b 1')
     $sshEnv = @{ AGENTSPACE_SSH_CMD = $sshStub; AGENTSPACE_SCP_CMD = $sshStub }
 
     foreach ($p in 'success', 'failure') {

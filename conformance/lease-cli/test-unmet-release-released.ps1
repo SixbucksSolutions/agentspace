@@ -90,9 +90,9 @@ try {
       if (-not ((Test-Path -LiteralPath $folder -PathType Container) -and (Test-Path -LiteralPath $aliasFile -PathType Leaf))) {
         Write-ConformanceResult -Name "$release`: Setup, the ready lease has a lease folder and an alias file to copy" -Status FAIL -Reason 'One of the two is missing'
       } else {
-        New-Item -ItemType Directory -Force -Path $backup | Out-Null
-        Copy-Item -LiteralPath $folder -Destination $folderCopy -Recurse -Force
-        Copy-Item -LiteralPath $aliasFile -Destination $aliasCopy -Force
+        New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $backup) | Out-Null
+        Copy-Item -LiteralPath $folder -Destination (Assert-ConformancePath -ConformanceHome $lab -Path $folderCopy) -Recurse -Force
+        Copy-Item -LiteralPath $aliasFile -Destination (Assert-ConformancePath -ConformanceHome $lab -Path $aliasCopy) -Force
 
         # The first release: the lease is ready, so it deletes the files and records released.
         $first = Invoke-UnmetLease $lab @('release', $lease.Id)
@@ -104,8 +104,8 @@ try {
 
         if ($p.Count -eq 0) {
           # Put the copies back, as a release that failed part way would have left them.
-          Copy-Item -LiteralPath $folderCopy -Destination $folder -Recurse -Force
-          Copy-Item -LiteralPath $aliasCopy -Destination $aliasFile -Force
+          Copy-Item -LiteralPath $folderCopy -Destination (Assert-ConformancePath -ConformanceHome $lab -Path $folder) -Recurse -Force
+          Copy-Item -LiteralPath $aliasCopy -Destination (Assert-ConformancePath -ConformanceHome $lab -Path $aliasFile) -Force
 
           $second = Invoke-UnmetLease $lab @('release', $lease.Id)
           $p = Get-UnmetSuccessProblems $second

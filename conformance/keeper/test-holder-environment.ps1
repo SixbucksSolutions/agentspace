@@ -58,8 +58,6 @@ if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf))
 }
 
 Initialize-KeeperRun
-# The folder the run's own folder MUST be directly under, taken before any case changes the environment.
-$tempRoot = [IO.Path]::GetFullPath($env:TEMP)
 
 # A name made at run time, with no AGENTSPACE_ prefix: the assertion is that this name is absent.
 $sentinel = "T04_KEEPER_SENTINEL_$([guid]::NewGuid().ToString('N').Substring(0, 16))"
@@ -87,12 +85,10 @@ try {
     'for /f "delims==" %%A in (''set'') do @echo %%A>>"%~dp0holder-env-names.txt"',
     "if /i `"%USERPROFILE%`"==`"$homeInStub`" (echo yes>>`"%~dp0holder-env-userprofile.txt`") else (echo no>>`"%~dp0holder-env-userprofile.txt`")",
     "echo $endMark>>`"%~dp0holder-env-names.txt`"", 'echo stub-started %*', 'ping -n 1200 127.0.0.1 >nul')
-  Assert-ConformancePath -ConformanceHome $caseHome -Path $holderStub | Out-Null
-  [IO.File]::WriteAllText($holderStub, (($stubLines -join "`r`n") + "`r`n"))
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $caseHome -Path $holderStub), (($stubLines -join "`r`n") + "`r`n"))
   $stub = $holderStub
 
-  # The write, checked at the call: the state folder's leases.json, inside the case's home.
-  Assert-ConformancePath -ConformanceHome $caseHome -Path (Join-Path $caseHome.StateDir 'leases.json') | Out-Null
+  # Write-Leases checks its own path at the call, inside the case's home (keeper-common.ps1).
   Write-Leases @((New-ReadyRecord 'a' '2099-01-01T00:00:00Z'))
   # Set for the keeper only: every process the case starts inherits it, and the holder MUST NOT.
   if (-not $script:savedEnvironment.ContainsKey($sentinel)) { $script:savedEnvironment[$sentinel] = [Environment]::GetEnvironmentVariable($sentinel) }
@@ -135,10 +131,9 @@ try {
   Restore-CaseEnvironment
   Stop-RunProcesses
   $leftBehind = @(Get-RunProcesses).Count
-  # The delete, checked at the call: the run's folder, directly under the temp folder taken at the start.
+  # The delete, checked at the call: the run's folder, directly under the temp folder, as a home's root.
   if ((Test-Path -LiteralPath $temp) -and (Split-Path -Leaf $temp) -cmatch '\Aagentspace-conformance-keeper-[0-9a-f]{32}\z') {
-    Assert-ConformancePath -ConformanceHome ([pscustomobject]@{ Root = $tempRoot }) -Path $temp | Out-Null
-    Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root $temp) -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 
