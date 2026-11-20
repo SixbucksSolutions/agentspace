@@ -11,3 +11,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
+
+[dev-dependencies]
+agentspace-alias = { path = "../agentspace-alias" }
