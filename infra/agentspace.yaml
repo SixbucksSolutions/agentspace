@@ -110,7 +110,8 @@ Resources:
       # Runs at first boot only. Everything else is installed by agentspace-operator sync.
       # With CaPublicKey set, write_files also puts the CA's key and its sshd drop-in in place before
       # sshd first starts. The drop-in is box/system/50-agentspace-ca.conf, byte for byte, and sync
-      # later replaces both files with the same bytes.
+      # later replaces it with the same bytes; the key is written without its comment (D44), and
+      # sync replaces it with the CA's public key file as it is.
       UserData:
         Fn::If:
           - HasCaPublicKey
