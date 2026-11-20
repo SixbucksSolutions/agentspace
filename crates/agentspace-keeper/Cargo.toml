@@ -2,7 +2,7 @@
 name = "agentspace-keeper"
 version = "0.6.0"
 edition.workspace = true
-description = "The keeper's front and its pass (docs/keeper.md; D42)"
+description = "The keeper's program: its front, its pass and its wiring (docs/keeper.md; D42)"
 publish = false
 
 [lib]
@@ -18,6 +18,14 @@ agentspace-keeper-api = { path = "../agentspace-keeper-api" }
 # The lease state file, read as the lease commands read it (state.md, The lease state file), and
 # the contract's time form.
 agentspace-state = { path = "../agentspace-state" }
+# The holder record's bytes, and the matcher of the holder command (E0.06-T03-S04).
+agentspace-keeper-files = { path = "../agentspace-keeper-files" }
+# `Starter` and the launcher role: the private argument and `run_launcher` (D42).
+agentspace-launch = { path = "../agentspace-launch" }
+
+# The real `Processes` and `Locks` exist on Windows only (keeper.md, Where it runs).
+[target.'cfg(windows)'.dependencies]
+agentspace-keeper-win = { path = "../agentspace-keeper-win" }
 
 # The test author owns [dev-dependencies]. Both versions are already in Cargo.lock.
 [dev-dependencies]

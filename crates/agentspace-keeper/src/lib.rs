@@ -19,7 +19,8 @@
 //!   [`PROGRAM`] the name they and every message use.
 //! - [`run_pass`]: one pass, given a [`PassContext`] and the [`Deps`]; it returns a
 //!   [`PassReport`], whose [`Action`] a keeper (`-Watch`) tracks by.
-//! - [`Records`]: the holder record's file, read, written and removed.
+//! - [`Records`]: the holder record's file, read, written and removed; [`FileRecords`] is the
+//!   real one.
 //! - [`Deps`]: the pinned traits and [`Records`], as one pass uses them.
 //!
 //! A library: it writes to no stream but the ones it is given, and reads no environment but
@@ -31,6 +32,7 @@ mod args;
 mod front;
 mod log;
 mod pass;
+mod records;
 mod watch;
 
 use agentspace_keeper_api::{Clock, HolderRecord, Locks, Matcher, Processes, Starter};
@@ -39,11 +41,12 @@ use std::path::Path;
 pub use args::{Options, PROGRAM, USAGE, WatchOptions, parse_args};
 pub use front::{Env, run};
 pub use pass::{Action, PassContext, PassReport, run_pass};
+pub use records::FileRecords;
 
 /// `<state folder>\board-holder.json`, the holder record (docs/state.md, The holder record).
 ///
-/// The real one is built over `agentspace-keeper-files` in E0.06-T03-S04 (#0129); a pass is
-/// tested against a fake.
+/// The real one is [`FileRecords`], over `agentspace-keeper-files` and `agentspace-state`
+/// (E0.06-T03-S04, #0129); a pass is tested against a fake.
 pub trait Records {
     /// The record, or `None` when there is none. A record that cannot be read or parsed, or
     /// whose members do not have their forms, MUST be read as `None` (state.md, The holder
