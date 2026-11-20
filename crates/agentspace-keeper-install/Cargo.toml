@@ -1,0 +1,28 @@
+[package]
+name = "agentspace-keeper-install"
+version = "0.6.0"
+edition.workspace = true
+description = "The keeper task's installer: agentspace-keeper-install (docs/keeper.md, The installer; D42)"
+publish = false
+
+[lib]
+name = "agentspace_keeper_install"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentspace-keeper-install"
+path = "src/main.rs"
+
+[dependencies]
+# The keeper lock's PID reader, as a second keeper reads it (docs/keeper.md, Locks).
+agentspace-keeper-files = { path = "../agentspace-keeper-files" }
+
+# The Windows parts: the current user's name, the clock and its zone (windows-sys, as the
+# workspace's other crates use it), and Task Scheduler's COM API (windows, the one exact pin every
+# v0.06-T02 story uses).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Authentication_Identity", "Win32_System_SystemInformation", "Win32_System_Time"] }
+windows = { version = "=0.62.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_TaskScheduler", "Win32_System_Variant"] }
+
+# The test author and the implementer both add lines here; re-read before editing.
+[dev-dependencies]
