@@ -918,7 +918,15 @@ since the look before.
   [Reasons](#reasons) with the panic's message as `<error>`, and goes on as for any other error
   there. With the pinned traits no look returns an error, so a panic is the only way those reasons
   arise; a keeper that died of one would break "never exits for an error once its loop has
-  started".
+  started". **A wait whose clock itself panics ends there**, its error logged, and the loop goes
+  on to its next pass; `-MaxPasses` still bounds a run.
+- **The keeper's program prints nothing of a panic but agentspace's own words, and never exits
+  101** (architect, 2026-11-19, for E0.06-T02-S05 and E0.06-T03-S04). Its `main` installs a panic
+  hook that writes nothing, since the runtime's default writes `thread 'main' panicked at ...` to
+  stderr; a library MUST NOT set one. A panic that escapes to `main`, outside the loop's own
+  catches (a one-pass run, or before the first pass), ends the program with exit 1 and the one
+  stderr line `agentspace-keeper: The keeper stopped on an error: <panic message>`, as for any
+  other error before the first pass ([Exit codes](#exit-codes)).
 - **After the n-th fast failure in a row, the backoff is `min(BackoffMaxSeconds, BackoffBaseSeconds
   * 2^(n-1))` seconds**, and the wait is that or `-IntervalSeconds`, whichever is longer.
 - **With the defaults, a start that keeps failing waits** 30, 60, 120, 240, then 300 seconds for
