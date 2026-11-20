@@ -8,9 +8,10 @@ fn main() {
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    // Unlocked: each write takes the stdout lock for itself. A lock held for the whole run would
-    // block every other thread's write to stdout, and `deploy`'s passthrough copies the AWS CLI's
-    // output on a thread of its own while this one waits for it (#0139).
+    // A program that uses PassThrough MUST NOT hold its stdout or stderr lock across a command; the
+    // passed-through output is written from other threads (architect, 2026-11-20, for
+    // E0.06-T05-S02, #0139). So this stays unlocked, and each write takes the lock for itself:
+    // `deploy` copies the AWS CLI's output on a thread of its own while this one waits for it.
     let mut stdout = std::io::stdout();
     let code = agentspace_operator::run(
         &args,
