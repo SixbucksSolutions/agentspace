@@ -1,0 +1,24 @@
+[package]
+name = "agentspace-ca"
+version = "0.6.0"
+edition.workspace = true
+description = "The operator's ca command and sync's CA check (docs/operator.md, ca; D42)"
+publish = false
+
+[lib]
+name = "agentspace_ca"
+path = "src/lib.rs"
+
+[dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-credential = { path = "../agentspace-credential" }
+# The version already in Cargo.lock, which agentspace-credential uses.
+ssh-key = { version = "=0.6.7", default-features = false, features = ["alloc", "ed25519", "rand_core", "getrandom"] }
+
+# The Windows access rules, the elevated check and the local date. The one module that calls them
+# is src/win.rs.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = { version = "=3.23.0", default-features = false }
