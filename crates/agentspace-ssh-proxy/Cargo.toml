@@ -1,0 +1,12 @@
+[package]
+name = "agentspace-ssh-proxy"
+version = "0.6.0"
+edition.workspace = true
+description = "The ProxyCommand, agentspace-ssh-proxy.exe (docs/operator.md, The ProxyCommand; D42). A pinned stub until E0.06-T03-S03 builds it."
+publish = false
+
+[[bin]]
+name = "agentspace-ssh-proxy"
+path = "src/main.rs"
+
+[dependencies]

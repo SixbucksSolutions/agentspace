@@ -1,0 +1,10 @@
+[package]
+name = "agentspace-sync"
+version = "0.6.0"
+edition.workspace = true
+description = "The operator's sync and deploy (docs/operator.md; D42). A pinned stub until E0.06-T03-S02 builds it."
+publish = false
+
+[dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-ca = { path = "../agentspace-ca" }
