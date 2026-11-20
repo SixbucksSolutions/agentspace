@@ -222,6 +222,16 @@ agentspace's was in it, and nothing was committed, pushed or carded; on the lapt
 would have printed whatever the shell holds. A test asserts on the variables it names, and reports
 a mismatch by name or count, never by value.
 
+**A live run on Terry's real setup MUST mask what it reads before it prints it** (found in
+v0.06-T05, 2026-11-19 and 2026-11-20). Two prints reached subagent transcripts, and nothing reached
+a record, the repository or a card. A diagnostic process sampler printed an `aws` command line,
+which carries the stack's network parameters and the ssh public key. A `lease list` printed lease
+IDs and project names, because the mask had no rule for a UUID.
+- **Process command lines are masked before they are printed**, and an `aws` or `ssh` command line
+  is never printed whole.
+- **The mask covers UUIDs and lease aliases** as well as the account, instance, network and host
+  shapes, and is shown to catch a planted value of each before the run.
+
 ## Watching a measurement
 
 **A running `agentspace-sample` MUST be watched for liveness by whoever started it, from its start
