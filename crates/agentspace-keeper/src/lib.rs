@@ -11,12 +11,14 @@
 //! # The public API
 //!
 //! - [`run`]: the whole program, given its arguments, its [`Env`], its [`Deps`] and its two
-//!   streams; it returns the exit code.
+//!   streams; it returns the exit code. With `-Watch` it is a keeper: the keeper lock, then a
+//!   loop of passes with the look, the interval, the backoff and the release grace (keeper.md,
+//!   Watching), every duration on `Clock::monotonic` and `Clock::sleep`.
 //! - [`parse_args`]: the command line and its usage checks, giving [`Options`] (with
 //!   [`WatchOptions`]) or the usage error's message; [`USAGE`] is the two usage lines, and
 //!   [`PROGRAM`] the name they and every message use.
 //! - [`run_pass`]: one pass, given a [`PassContext`] and the [`Deps`]; it returns a
-//!   [`PassReport`], whose [`Action`] a keeper (`-Watch`, v0.06-T02) tracks by.
+//!   [`PassReport`], whose [`Action`] a keeper (`-Watch`) tracks by.
 //! - [`Records`]: the holder record's file, read, written and removed.
 //! - [`Deps`]: the pinned traits and [`Records`], as one pass uses them.
 //!
@@ -29,6 +31,7 @@ mod args;
 mod front;
 mod log;
 mod pass;
+mod watch;
 
 use agentspace_keeper_api::{Clock, HolderRecord, Locks, Matcher, Processes, Starter};
 use std::path::Path;
@@ -66,3 +69,5 @@ pub struct Deps<'a> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod watch_tests;
