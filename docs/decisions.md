@@ -2847,7 +2847,7 @@ driver answers it.
 **Decided, architect, 2026-11-20.**
 - **Each host is one stack, named `agentspace-host-<project>`**, deployed from the same template
   as `agentbox`, `infra\agentspace.yaml`. The project is the lease's normalized project
-  ([lease-api.md](lease-api.md#project)), so the name is at most 47 characters and always starts
+  ([lease-api.md](lease-api.md#project)), so the name is at most 48 characters and always starts
   with a letter, as CloudFormation requires.
 - **The template gains a `HostName` parameter whose default, `agentbox`, reproduces every name the
   `agentbox` stack has today**: the alarm's name, the `Name` and `project` tags. A deploy of
@@ -3144,6 +3144,12 @@ are pinned on their cards, so T03 builds on merged code.
 - **E0.07-T04-S01 re-seeds the lease CLI suite's throwaway homes**, because under D54 a home with no
   `projects.json` answers `no_capacity` for every project but swimcoach; E0.07-T03-S01's
   conformance done-when keeps only the cases that never reach place. T04-S01 grows to 2.5 hours.
+- **A host is never sized by the box's parameters** (on E0.07-T01-S01's finding: one
+  `stack-parameters.json` would size whichever host is deployed next). A new host's stack takes
+  only `SubnetId` and `VpcId` from that file, with every other size at the template's default; an
+  existing host's stack is deployed with every parameter's previous value; and a host other than
+  the box changes size only through `deploy -Host <project> -InstanceType <type>` (D39, D51).
+  Plain `deploy` of the box keeps today's path.
 
 **Carried in, with `references`:** #0137 (tests that change their own environment), its
 `agentspace-launch` half by E0.07-T02-S02 and its `agentspace-push` half by E0.07-T02-S04; #0138
