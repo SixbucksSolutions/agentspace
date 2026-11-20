@@ -789,7 +789,14 @@ order; the first that fails is reported.
 8. **The pass removes the request, then the claim, then the result**, whatever happened. The
    request goes before its claim, so a launcher that claims the request after the claim is gone
    finds no request, and starts nothing. A pass killed during a start leaves its files behind, and
-   nothing removes them later ([Q13](#open-questions)).
+   nothing removes them later ([Q13](#open-questions)). **When the request cannot be removed, the
+   claim MUST stay** (architect, 2026-11-19, for E0.06-T02-S04): the claim is what keeps a late
+   launcher from claiming that request and starting a holder no pass records, so the pass removes
+   the result alone, and the request and its claim are left for [Q13](#open-questions)'s cleanup.
+   - **The launcher resumes the holder, then writes the result**, as step 4 reads (architect, the
+     same day, for E0.06-T02-S04): a launcher killed between the two leaves a running holder that
+     no pass records, which step 5's timeout reason already names; the other order would leave a
+     suspended holder that passes the trust checks yet holds nothing.
    - **A pass that is killed after a launcher claimed its request breaks item 7.** The launcher
      still starts the holder and writes its result, and nothing records or reports that holder: no
      pass trusts it, none stops it, and while it holds the forwards every later start fails on
