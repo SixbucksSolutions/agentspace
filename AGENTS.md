@@ -60,6 +60,11 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
     review's fetch, and the architect's next line still deleted the branch. The branch was pushed
     back from `refs/pull/50/head`, the PR reopened, and the rebase checked with `git range-diff`
     to change only `Cargo.lock` before the merge.
+  - **The card's move and the "merged" message to the dev lead MUST wait for the merge's
+    success**, never go out beside it (found in v0.06-T01, 2026-11-19). The architect sent the
+    merge of PR #70 in parallel with #0114's move to Ready For Review and a "merged, clean up"
+    message; GitHub refused the merge on a Cargo.lock conflict, so the card moved and the message
+    claimed a merge that had not happened. Both were undone within a minute.
   - **The architect MUST archive a dev lead's session once every one of its pull requests is
     merged to `main`** (Terry, 2026-11-18), and then remove any worktree folder it left. An open
     session can hold its last worktree folder locked, so the folder goes after the archive.
