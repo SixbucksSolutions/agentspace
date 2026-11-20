@@ -47,10 +47,10 @@ try {
   if (-not $lab.CaReady) {
     Write-ConformanceResult -Name "$sec`: A relative state folder and ssh folder are resolved against the working folder and written as full paths" -Status SKIPPED -Reason "No throwaway CA could be made: $($lab.CaReason)"
   } else {
-    $cwdA = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.Root 'cwd-a')
-    $cwdB = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.Root 'cwd-b')
-    New-Item -ItemType Directory -Force -Path $cwdA | Out-Null
-    New-Item -ItemType Directory -Force -Path $cwdB | Out-Null
+    $cwdA = Join-Path $lab.Root 'cwd-a'
+    $cwdB = Join-Path $lab.Root 'cwd-b'
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $cwdA) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $cwdB) | Out-Null
     $relEnv = @{ AGENTSPACE_STATE_DIR = 'rel-state'; AGENTSPACE_SSH_DIR = 'rel-ssh' }
     $fullA = @{ AGENTSPACE_STATE_DIR = (Join-Path $cwdA 'rel-state'); AGENTSPACE_SSH_DIR = (Join-Path $cwdA 'rel-ssh') }
 

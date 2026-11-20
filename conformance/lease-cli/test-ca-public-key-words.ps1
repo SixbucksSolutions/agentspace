@@ -44,8 +44,8 @@ $sec = 'state.md#its-checks'
 
 # Writes the CA's public key file, in the throwaway home only.
 function Set-CaPublicKey($Lab, [string]$Text) {
-  $path = Assert-ConformancePath -ConformanceHome $Lab -Path (Join-Path $Lab.UserProfile '.agentspace\ca\agentspace_ca.pub')
-  [IO.File]::WriteAllBytes($path, [Text.UTF8Encoding]::new($false).GetBytes($Text))
+  $path = Join-Path $Lab.UserProfile '.agentspace\ca\agentspace_ca.pub'
+  [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $Lab -Path $path), [Text.UTF8Encoding]::new($false).GetBytes($Text))
 }
 
 # The letters of a string with their case swapped; digits and the other characters stay.

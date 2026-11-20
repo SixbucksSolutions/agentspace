@@ -416,7 +416,7 @@ try {
   # Lease state that cannot be read.
   Invoke-Case 'Unreadable lease state' 'keeper.md#the-order-of-a-pass' {
     if ($script:mut) { Write-Leases @((New-ReadyRecord 'a' '2026-11-17T13:00:00Z')) }
-    else { [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json'), '{ this is not json') }
+    else { [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json')), '{ this is not json') }
     $code = Invoke-Keeper $now
     Write-Result ($code -eq 1) 'Unreadable lease state: The pass exits 1' "The exit code was $code."
     Write-Result ((Get-HolderProcesses).Count -eq 0) 'Unreadable lease state: No holder is started'
@@ -433,7 +433,7 @@ try {
     $recordPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json'
     $before = [IO.File]::ReadAllText($recordPath)
     if ($script:mut) { Write-Leases @((New-ReleasedRecord 'a' '2026-11-17T13:00:00Z')) }
-    else { [IO.File]::WriteAllText((Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json'), '{ this is not json') }
+    else { [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'leases.json')), '{ this is not json') }
     $code = Invoke-Keeper $now
     Write-Result ($code -eq 1) 'Unreadable lease state, holder running: The pass exits 1' "The exit code was $code."
     Write-Result (Test-TreeAlive $h) 'Unreadable lease state, holder running: The holder and its child are still alive'
@@ -471,7 +471,7 @@ try {
     $lockPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.lock'
     $held = $null
     if (-not $script:mut) {
-      $held = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+      $held = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $runHome -Path $lockPath), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     }
     try { $code = Invoke-Keeper $now } finally { if ($held) { $held.Dispose() } }
     Write-Result ($code -eq 0) 'Lock busy: The pass exits 0' "The exit code was $code."
@@ -500,7 +500,7 @@ try {
     Write-Leases @((New-ReadyRecord 'a' '2026-11-17T13:00:00Z'))
     $sshLog = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder-ssh.log'
     $size = if ($script:mut) { 1MB - 100 } else { 1MB + 100 }
-    $fs = [IO.File]::Create($sshLog)
+    $fs = [IO.File]::Create((Assert-ConformancePath -ConformanceHome $runHome -Path $sshLog))
     try { $fs.SetLength($size) } finally { $fs.Dispose() }
     $code = Invoke-Keeper $now
     Write-Result ($code -eq 0) 'Rotation: The pass exits 0' "The exit code was $code."
@@ -533,7 +533,7 @@ try {
       if ($haveAll -or $script:mut) { break }
       # Missed: stop the holder and drop its record, so that the next pass starts one again.
       Stop-RunProcesses
-      Remove-Item -LiteralPath (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json') -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.json')) -ErrorAction SilentlyContinue
     }
     Write-Result ($code -eq 0) 'The pass that wrote the files exits 0' "The exit code was $code."
 
@@ -649,7 +649,7 @@ try {
     $first = $false
     $triesHeld = 0
     $running = $false
-    $held = [IO.FileStream]::new($logPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    $held = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $runHome -Path $logPath), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try {
       $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', $max, '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '2') $fail
       $first = Wait-Until { (Get-StartCount) -ge 1 } 60 $p
@@ -703,7 +703,7 @@ try {
 
     # A holder that fails at once: starts are spaced by the backoff, not by the interval alone.
     Write-Leases @((New-ReadyRecord 'a' $farFuture))
-    Remove-Item -LiteralPath (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log') -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log')) -ErrorAction SilentlyContinue
     $fail = New-FailStub $false
     $base = if ($script:mut) { '1' } else { '3' }
     $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '10', '-BackoffBaseSeconds', $base, '-BackoffMaxSeconds', '3') $fail
@@ -721,7 +721,7 @@ try {
     Write-Leases @((New-ReleasedRecord 'a' $farFuture))
     $lockPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.lock'
     $held = $null
-    if (-not $script:mut) { $held = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    if (-not $script:mut) { $held = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $runHome -Path $lockPath), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
     $sawSkip = $true
     try {
       $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '6') $stub
@@ -752,7 +752,7 @@ try {
     $sentinel = 'tok' + [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
     $env:AGENTSPACE_TEST_SECRET_TOKEN = $sentinel
     $logPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log'
-    if ($script:mut) { [IO.File]::WriteAllText($logPath, "2026-11-17T12:00:00Z failed key=C:\Users\x\.ssh\id_ed25519 cert=C:\x\lease.pem`n") }
+    if ($script:mut) { [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path $logPath), "2026-11-17T12:00:00Z failed key=C:\Users\x\.ssh\id_ed25519 cert=C:\x\lease.pem`n") }
     try {
       $fail = New-FailStub $false
       $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '6', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '2') $fail
@@ -996,7 +996,7 @@ try {
   Restore-CaseEnvironment
   Stop-RunProcesses
   $leftBehind = @(Get-RunProcesses).Count
-  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root $temp) -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 if (-not $SelfCheck) {

@@ -163,8 +163,7 @@ try {
       'exit /b %ERRORLEVEL%')
     $standins = Split-Path -Parent $aws
     [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standins 'aws-standin.ps1')), $awsStandInScript)
-    $sshPs1 = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standins 'ssh-standin.ps1')
-    [IO.File]::WriteAllText($sshPs1, $sshStandInScript)
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standins 'ssh-standin.ps1')), $sshStandInScript)
     $ssh = New-OperatorStandIn -ConformanceHome $h -Name 'ssh' -Body @(
       ('"' + $pwshPath + '" -NoProfile -File "%~dp0ssh-standin.ps1" %*'),
       'exit /b %ERRORLEVEL%')

@@ -558,18 +558,48 @@ check this: a home that was inside one would fail at the CA step, with the opera
   - **The home's own root.** `New-ConformanceHome` creates it, and `Remove-ConformanceHome` and
     `New-ConformanceHome`'s cleanup delete it, through `Assert-ConformanceHomeRoot` at the call (a
     folder named `agentspace-conformance-*` directly under `%TEMP%`, and not a junction or a symbolic
-    link). `Assert-ConformancePath` cannot guard its own reference, so this one check does.
+    link). `Assert-ConformancePath` cannot guard its own reference, so this one check does. **The
+    keeper suite's run folder is a root of the same kind** (`agentspace-conformance-keeper-<32 hex>`
+    directly under `%TEMP%`): `Initialize-KeeperRun` creates it, and the keeper checks delete it, through
+    `Assert-ConformanceHomeRoot` at the call, and every write under it goes through
+    `Assert-ConformancePath` against a home object whose `Root` is that folder (`$runHome`).
   - **A stand-in's own writes.** The `.cmd` stand-ins of `New-OperatorStandIn` and the ssh stand-in
     script of `test-unmet-push.ps1` log and record beside themselves, under the home's `standins`
     folder. They are programs outside agentspace that the check places, and a check does not make
     those writes.
-- **Shown by an audit of the source, not of a run** (E0.06-T04-S01): every line of
-  `conformance/lease-cli/` and `conformance/operator/` that names a write verb (the calls above, and
-  `Tee-Object`, `Clear-Content`, `Set-Acl`, `[IO.File]::Open`, `Delete`, `Replace`, `CopyTo`, `icacls`)
-  carries `Assert-ConformancePath` or `Assert-ConformanceHomeRoot`, except the three lines of the ssh
-  stand-in script that write, which are the stand-in's own. The search was first run against lines
-  known to write, and found them, so that a zero would not be believed blind. **#0110 points 1 and 2
-  are done.**
+- **Shown by an audit of the source, not of a run** (E0.06-T04-S01): every line of every file in
+  `conformance/lease-cli/`, `conformance/operator/` and `conformance/keeper/`, as of this branch,
+  that names a write verb (the calls above, and `Tee-Object`, `Clear-Content`, `Set-Acl`,
+  `[IO.File]::Open`, `[IO.FileStream]`, `Delete`, `Replace`, `CopyTo`, `icacls`, `Start-Process
+  -RedirectStandardOutput` and `-RedirectStandardError`, and a redirection to a file) carries
+  `Assert-ConformancePath` or `Assert-ConformanceHomeRoot`, except the lines of these classes, each
+  of which is not a write the check makes:
+  - **The text of a stand-in** (the `.cmd` files and scripts the checks place, and their `>>` and
+    `AppendAllText` lines), which writes beside itself when the stand-in runs.
+  - **A read.** A stream or file opened for reading only (`FileAccess` `Read`), such as the keeper
+    suite's reads of the log and the lock.
+  - **A process variable.** `Remove-Item Env:\<name>` removes a variable of the check's own process,
+    and no file.
+  - **The harness's pipes.** `RedirectStandardInput`, `RedirectStandardOutput`, `RedirectStandardError`
+    and `CopyToAsync` in `Invoke-ConformanceProgram` carry the program's output into memory.
+  - **A length set on a stream the check just opened through the check** (`SetLength` in the keeper
+    suite's rotation case), and **the working folder** (`[Environment]::CurrentDirectory` in
+    `test-relative-folders.ps1`), after which the check itself makes no relative write.
+
+  The search was first run against lines known to write, and found them (151 lines that carry an
+  assert were found by the same pattern), so that a zero would not be believed blind. **E0.06-T04-S01
+  extended it to the files that E0.06-T04-S02 and E0.06-T04-S03 added**, and to the keeper suite,
+  which the first pass had not covered. The sites it changed, so that each write is the path argument
+  of its own check and nothing runs between them: in `conformance/operator/`, `test-unmet-commands.ps1`
+  (the ssh stand-in script's write) and `test-unmet-start-paths.ps1` (the stand-in folder's creation);
+  in `conformance/lease-cli/`, `test-ca-public-key-words.ps1`, `test-relative-folders.ps1` and
+  `test-lease-ignores-instance-cache.ps1`; in `conformance/keeper/`, every write and delete of
+  `keeper-common.ps1` (the run folder's creation and copy, the case folders, `leases.json`, the
+  record, the launch redirects of the keeper's output and error files, the fail stub), the lock,
+  log and record sites of `test-keeper.ps1` and `test-unmet-holder-dies-mid-pass.ps1`, the run
+  folder's removal in all four keeper files, and the checks that stood before the write in
+  `test-holder-environment.ps1` and `test-unmet-launch-request-full-paths.ps1`. **#0110 points 1 and
+  2 are done.**
 - **A time the program printed is untrusted too.** A check MUST NOT wait for one, without a limit.
 - **One path from the program's output is read outside the home: the default ProxyCommand's
   program** ([state.md, The alias file](state.md#the-alias-file)), which D8 puts beside the CLI's
