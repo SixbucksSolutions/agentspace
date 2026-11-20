@@ -43,6 +43,8 @@ const UNRECORDED: &str = "A launcher claimed the request, or it could not be wit
 const EXITED: &str = "The holder exited at once; see board-holder-ssh.log.";
 const UNREAD_LINE: &str = "The holder started, but its command line could not be read back to \
                            check it, so it runs unrecorded.";
+const UNOPENED: &str =
+    "The holder started, but could not be opened to check it, so it may be running unrecorded.";
 
 /// What one create call of the launcher gave.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,14 +228,16 @@ fn handshake(
     };
 
     // Step 7: once, with no wait, by PID, creation time and command line. A process that is gone,
-    // cannot be opened, or was created at another time is not the holder the result names, and
-    // nor is one whose command line the matcher refuses: "exited at once". A holder still running
-    // by PID and creation time whose command line cannot be read back has not exited (keeper.md,
-    // The handshake, step 7; architect, 2026-11-19, for E0.06-T02-S04): the start fails saying it
-    // runs unrecorded, and the pass leaves it running, as this module never stops a process.
+    // or a running one that is not the holder the result names (created at another time, or a
+    // command line the matcher refuses), is "exited at once". A process that cannot be opened may
+    // well be running, and a holder still running by PID and creation time whose command line
+    // cannot be read back has not exited: each fails the start saying it may run unrecorded
+    // (keeper.md, The handshake, step 7, and Starting a holder, item 7; architect, 2026-11-19,
+    // for E0.06-T02-S04), and the pass leaves it alone, as this module never stops a process.
     let command_line = match pass.query(pid) {
         Query::Running(info) if info.process_started_at == process_started_at => info.command_line,
-        Query::Running(_) | Query::Gone | Query::CannotOpen(_) => return failed(EXITED),
+        Query::CannotOpen(_) => return failed(UNOPENED),
+        Query::Running(_) | Query::Gone => return failed(EXITED),
     };
     match command_line {
         None => return failed(UNREAD_LINE),
@@ -783,13 +787,7 @@ mod tests {
             process_started_at: "2026-11-19T04:05:37.002Z".to_string(),
             command_line: None,
         });
-        for query in [
-            Query::Gone,
-            Query::CannotOpen(5),
-            wrong_time,
-            wrong_line,
-            wrong_time_unread,
-        ] {
+        for query in [Query::Gone, wrong_time, wrong_line, wrong_time_unread] {
             let scratch = Scratch::new("exited");
             let pass = FakePass::new(&scratch);
             *pass.query.borrow_mut() = query.clone();
@@ -816,6 +814,27 @@ mod tests {
             Started::Failed(
                 "The holder could not be started: The holder started, but its command line could \
                  not be read back to check it, so it runs unrecorded."
+                    .to_string()
+            )
+        );
+        assert_eq!(pass.removed_names(), ORDER);
+        assert!(scratch.names().is_empty());
+    }
+
+    /// Step 7 (keeper.md; architect, 2026-11-19, for E0.06-T02-S04): a holder that cannot be
+    /// opened may well be running, so it is not "exited at once". The start fails saying it may
+    /// be running unrecorded, and nothing stops it.
+    #[test]
+    fn a_holder_that_cannot_be_opened_may_be_running_unrecorded() {
+        let scratch = Scratch::new("unopened");
+        let pass = FakePass::new(&scratch);
+        *pass.query.borrow_mut() = Query::CannotOpen(5);
+        answering(&pass, started());
+        assert_eq!(
+            run(&pass),
+            Started::Failed(
+                "The holder could not be started: The holder started, but could not be opened to \
+                 check it, so it may be running unrecorded."
                     .to_string()
             )
         );
