@@ -129,8 +129,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| Backlog cards v0.06 met: #0034, #0066, #0068, #0087 (named results in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md)), #0110 (T04-S01 and S03), #0136 (PR #85), #0139 (PR #88) | Terry: move each to Completed | Bot cannot move them out of Backlog |
-| #0029, #0041, #0083, OBE | Terry: move each to Completed | A comment on each |
+| Backlog cards v0.06 met: #0034, #0066, #0068, #0087 (named results in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md)), #0110 (T04-S01 and S03), #0136 (PR #85), #0139 (PR #88) | Done: Terry moved them out of Backlog, the architect moved them to Ready For Review, and Terry approved them into Completed on 2026-11-20 | Completed |
+| #0029, #0041, #0083, OBE | Done: archived at Terry's word on 2026-11-20, each with its OBE comment | The board's archive |
 | #0027: the operator from Git Bash. `status` and `up` were shown in T05; `deploy`, `sync` and `grow` were not run from Git Bash | Architect: run them from Git Bash at the next live use of the box, and record it | #0027 |
 | #0137, a crate's tests change their own environment with `set_var`; #0138, a conformance file removes `board-holder.json` without tolerating its absence | A release's hardening, or v0.07's first turn if it touches those files | Backlog |
 | #0109, the sampler dies silently when its disk fills; #0082, it misses work a session orphans | Before v0.09's measurement | roadmap.md |
