@@ -11,6 +11,11 @@ path = "src/lib.rs"
 
 [dependencies]
 
+# Only the Windows half uses it: reading the laptop's zone ID (src/system.rs), the one unsafe call.
+# The version the other crates already use.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Time"] }
+
 [dev-dependencies]
 # Already in the workspace's Cargo.lock; tests/zone_check_property.rs compiles the spec's pattern
 # with it, to compare the hand-written check against.
