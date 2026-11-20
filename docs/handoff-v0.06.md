@@ -37,13 +37,13 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 | What | State |
 |---|---|
-| v0.06 (#0055), the operator in Rust, PowerShell retired | **[at close]** T01 to T05 merged; T06 (#0135) running at 7:45am, 2026-11-20 |
+| v0.06 (#0055), the operator in Rust, PowerShell retired | All six turns merged, the last at 8:14am, 2026-11-20 (PR #89, `75c6f73`). #0055 and #0135 are in Ready For Review; **[at close]** Terry's approval |
 | Terry's laptop | Runs the Rust programs from `%USERPROFILE%\.agentspace\bin`, installed from S02's build `4f18b59` on 2026-11-20. His `agentspace` entry's ProxyCommand names `agentspace-ssh-proxy.exe`, and his keeper task runs `agentspace-keeper-task.exe`, both with his yes (D41). The reversals are in `C:\Projects\agentspace-runs\v0.06-t05\`, outside the repository |
-| The stack's parameters | `%USERPROFILE%\.agentspace\stack-parameters.json` (D40), written from the git-ignored `infra\local.parameters` in T05. **[at close]** what T06 made the source of a size change (AGENTS.md, "Sizing the box before it runs agents") |
+| The stack's parameters | `%USERPROFILE%\.agentspace\stack-parameters.json` (D40), written from the git-ignored `infra\local.parameters` in T05. Since T06 it is the only source: a size change sets its `InstanceType`, then `agentspace-operator deploy` while the box is stopped (AGENTS.md, "Sizing the box before it runs agents"). `infra\local.parameters` is no longer read |
 | The box | Stopped at 2:01am, 2026-11-20. `m9g.xlarge` (4 vCPUs), root volume 20 GiB. Its system files, CA check and localswim CLI were last installed by the Rust `sync` at 1:58am. Rust and gcc are still installed by hand in `ubuntu`'s home (D38's note) |
 | Leases | None ready |
 | The keeper | The Rust keeper, running and idle |
-| Swimcoach | **[at close]** `v0.06` until Terry approves #0055, and `v0.06-T06` until its dev lead is archived |
+| Swimcoach | `v0.06` until Terry approves #0055; `v0.06-T06` stopped at 8:15am, 2026-11-20 |
 | The app's SSH connection | `agentspace-inception`, whose host Terry points at each new lease's alias |
 
 ### v0.06 by turn
@@ -55,7 +55,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | T03, on the laptop | 6:42pm, 2026-11-19 | #79 to #83 | The operator, the ProxyCommand and the keeper as programs, built by `cargo xtask dist` |
 | T04, on the laptop | 10:58pm, 2026-11-19 | #84 to #86 | The whole suite against the Rust build: 1,439 results, none failed or skipped ([runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md)) |
 | T05, on the laptop and the box | 2:16am, 2026-11-20 | #87, #88 | The cutover and its live checks ([runs/e0.06-t05-s01.md](runs/e0.06-t05-s01.md)); the deploy hang found and fixed ([runs/e0.06-t05-s02.md](runs/e0.06-t05-s02.md)) |
-| T06, on the laptop | **[at close]** | **[at close]** | The prototype removed (#0135; D42's last bullet) |
+| T06, on the laptop | 8:14am, 2026-11-20; dev lead archived at 8:15am | #89 | The prototype removed. The suite passed against the installed programs under its new defaults: 44 files, 1,443 passed, none failed or skipped, and the deadline case 5 of 5 in 905 seconds; `cargo test --workspace --locked` 2,883 passed, 50 ignored helpers ([runs/e0.06-t06-s01.md](runs/e0.06-t06-s01.md)) |
 
 ## Terry's orders from v0.06
 
@@ -111,7 +111,8 @@ any run record. Until then, the PR titles are the list: `gh pr list --state merg
 | #0064, a release leaves a lease's connections up; #0043, the CloudWatch backstop | v0.08 | roadmap.md |
 | The box's Rust and gcc, installed by hand | v0.07 (#0047): a host that builds Rust gets them from its bootstrap | D38's note |
 | The interop check, retired with the prototype | None: its last result, 36 passed each way, is in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md) | D42 |
-| What the `test-unmet-` prefix means with no prototype left to fail against | **[at close]** what T06's conformance.md says | conformance.md |
+| The box's `install.sh` message now names `agentspace-operator sync` (FA-12), but the installed operator embeds the box files of build `4f18b59`, so the box has the old message until the operator is rebuilt from `main` and installed | Architect: at the next install from `main`, before its next `sync` | runs/e0.06-t06-s01.md |
+| What the `test-unmet-` prefix means now | None: every such file is an ordinary check the Rust programs pass, and a `FAIL` is a defect | conformance.md, its opening bullets |
 | localswim #0611 to #0614, its undocumented receipt and credential | localswim's board | handoff-v0.04.md, "What is open" |
 
 ## The scope ahead: v0.07

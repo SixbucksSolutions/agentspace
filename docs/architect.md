@@ -204,7 +204,12 @@ reads before it prints it").
 
 ## Checking that it still works
 
-**[at close]**, from v0.06-T06's run record: the conformance suite with no `AGENTSPACE_*` variable
-set, which tests the installed programs under the suite's defaults (conformance.md); `cargo test
---workspace --locked`, `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; and the
-box tools' Python tests, on the box. Each with its last count and where it is recorded.
+**Run from the main checkout. Every conformance check runs its programs in a throwaway home.**
+
+| Check | Run with | Last result |
+|---|---|---|
+| The conformance suite, against the installed programs | Each `conformance\*\test-*.ps1` with no `AGENTSPACE_*` variable set, so each program is the install folder's (conformance.md, Naming the program under test) | 44 files, 1,443 passed, none failed or skipped, 7:41am to 7:55am, 2026-11-20 ([runs/e0.06-t06-s01.md](runs/e0.06-t06-s01.md)) |
+| The deadline case | `conformance\operator\test-unmet-start-paths.ps1 -Case deadline`, about 15 minutes | 5 passed in 905 seconds, the same day |
+| The crates | `cargo test --workspace --locked`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, on Windows | 2,883 passed, 50 ignored helpers; fmt and clippy clean, the same day |
+| A build to test that is not installed | The same files with `AGENTSPACE_CMD`, `AGENTSPACE_OPERATOR_CMD`, `AGENTSPACE_SSH_PROXY_CMD` and `AGENTSPACE_KEEPER_CMD` naming `target\dist`'s programs | As in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md) |
+| The box tools | `python3 -I -m unittest discover -s box/tests -p 'test_agentspace_*.py'`, on the box | handoff-v0.04.md, "Checking that it still works" |
