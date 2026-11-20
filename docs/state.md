@@ -1002,10 +1002,14 @@ check:
    prototype compares both words without regard to case, which is looser than this and not
    behavior to copy
    ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
-   **"Split at whitespace" means at any run of it** (architect, 2026-11-19, for E0.06-T04-S03;
-   #0136): a tab, or several spaces, between the two words is one split, whitespace being U+0009
-   to U+000D and U+0020 as [lease-api.md, Input tolerance](lease-api.md#input-tolerance) defines it,
-   so such a CA stays usable, as `ssh-keygen` reads it.
+   **What "split at whitespace after trimming" means, as `ssh-keygen` reads a public key**
+   (architect, 2026-11-19, for E0.06-T04-S03; #0136): the line is trimmed of ASCII whitespace
+   (U+0009 to U+000D and U+0020) at both ends, and its words are split at any run of spaces and
+   tabs (U+0020, U+0009), so a tab, or several spaces, between the two words keeps the CA usable. A
+   line break (U+000A to U+000D) between the words ends the line, so the key has one word on it
+   and fails check 4 and check 5 alike, and a non-ASCII space such as U+00A0 is no whitespace here
+   and is refused. (The first form of this ruling named U+0009 to U+000D as split characters and
+   cited lease-api.md's Input tolerance for them; both were wrong, found in that story's review.)
 5. **The public key's fingerprint can be read**: the file parses as an OpenSSH public key. The
    prototype runs `ssh-keygen -l -f`.
 
