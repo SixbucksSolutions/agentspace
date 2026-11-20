@@ -1185,6 +1185,24 @@ nothing.
   program's name included as the name of the step, and `<tool output>` is the system's own error
   text.
 
+**Rulings for the rewrite's `ca`** (architect, 2026-11-19, for E0.06-T02-S01):
+- **`agentspace-ca` reads no environment variable.** `USERNAME`, `COMPUTERNAME`, `OneDrive`,
+  `OneDriveConsumer` and `OneDriveCommercial` reach it in an input struct of its own, which the
+  operator's program fills from its environment as it starts, beside the pinned `Context`.
+- **Locking the CA's folder** replaces its whole access list with one protected rule giving the
+  user full control; "Remove the other rules" then fires only for a folder someone else owns, or a
+  lock that did not take.
+- **Step 1's "missing" `ssh-keygen.exe`** is anything at that path that is not a file, a folder
+  included.
+- **`<user>` with `USERNAME` unset** is the token user's account name, and failing that the words
+  `the current user`.
+- **What cannot be read fails closed:** access rules that cannot be read are the problem
+  `could not be checked: <error>` with that check's message; an elevation that cannot be read is
+  refused with the elevated message; a CA folder that cannot be created fails with
+  `agentspace: Could not create <ca folder>: <error>`.
+- **Check 5's `<tool output>`**, since no tool runs, is `It is not an OpenSSH public key.`; a null
+  access list's `<problems>` is `has a rule allowing Everyone; has 0 access rules instead of one`.
+
 **`ca` MUST NOT overwrite, repair or loosen a CA, and MUST NOT change the access rules of an
 existing one.** A person decides what to do; if the private key may have been exposed, the CA is
 replaced: delete both files, run `ca`, run `sync` for every host, and re-issue every live lease's
