@@ -219,7 +219,9 @@ closed).
 
 **A failure MUST end the command at once**, with nothing after it run, and MUST print one message
 that starts `agentspace: `. **A failure MUST NOT print a runtime's error record, stack or
-exception text in place of that message.** The prototype does in some cases
+exception text in place of that message.** Where a message carries the system's error text, it is
+the system's own words alone: a runtime's addition, such as Rust's trailing ` (os error <n>)`, is
+dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in some cases
 ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
 
 ### Messages
