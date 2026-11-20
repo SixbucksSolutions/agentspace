@@ -118,6 +118,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-launch"
+version = "0.6.0"
+dependencies = [
+ "agentspace-keeper-api",
+ "agentspace-keeper-files",
+ "agentspace-state",
+ "windows",
+ "windows-sys",
+]
+
+[[package]]
 name = "agentspace-operator"
 version = "0.6.0"
 dependencies = [
