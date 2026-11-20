@@ -273,12 +273,14 @@ run reaches only by asking for it** (architect, 2026-11-19, for E0.06-T04-S02). 
 the deadline and the test seam has no variable that shortens it, and none is added: the deadline's
 logic is shown by the operator's own tests with a fake clock, so from outside the check needs only
 to see the message.
-- **`conformance/operator/test-start-paths.ps1` reports the case `SKIPPED` by default**, with the
-  reason `the 15-minute deadline case runs only with -Case deadline`, and runs it with
-  `-Case deadline`, under a limit of its own of 17 minutes so it can never hang.
-- **That skip is an expected one**: a run that shows it has not failed. A release's whole
-  conformance run (E0.06-T04-S01 for v0.06) runs it once with `-Case deadline` and records the
-  result beside the rest.
+- **`conformance/operator/test-unmet-start-paths.ps1` does not run or report the case by
+  default**, so a default run's results and its exit code are those of the other cases alone. It
+  prints one line that is not a result, `Not run: the 15-minute deadline case; run it with -Case
+  deadline.`, and runs it with `-Case deadline`, under a limit of its own of 17 minutes so it can
+  never hang. (Changed by the architect the same evening: this first said the case is reported
+  `SKIPPED` by default, which made every default run exit 2, "incomplete, never passed", above.)
+- A release's whole conformance run (E0.06-T04-S01 for v0.06) runs it once with `-Case deadline`
+  and records the result beside the rest.
 
 ## Running the suite
 
