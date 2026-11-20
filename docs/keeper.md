@@ -775,7 +775,17 @@ order; the first that fails is reported.
    result names, by PID, creation time and command line
    ([Trusting the record](#trusting-the-record)). A holder that is not fails the start with `The
    holder exited at once; see board-holder-ssh.log.` A holder that exits a moment after this check
-   is recorded, and found gone by a later look or pass.
+   is recorded, and found gone by a later look or pass. **A holder still running, by PID and
+   creation time, whose command line cannot be read back has not exited** (architect, 2026-11-19,
+   for E0.06-T02-S04): the start fails with `The holder started, but its command line could not be
+   read back to check it, so it runs unrecorded.`, and the pass leaves it running, as item 7 of
+   [Starting a holder](#starting-a-holder) asks.
+   - **The rest of E0.06-T02-S04's rulings:** a request that cannot be written in step 1 fails
+     with `The holder could not be started: The launch request could not be written: <error>`;
+     the launcher exits 0 when it answered or rightly started nothing, 1 when it could not write
+     the result, and 2 when its argument names no `board-holder-launch.<hex>.json`; and a holder
+     the launcher created suspended whose start time cannot be read is terminated before it runs,
+     the launcher answering `The holder's start time could not be read.`
 8. **The pass removes the request, then the claim, then the result**, whatever happened. The
    request goes before its claim, so a launcher that claims the request after the claim is gone
    finds no request, and starts nothing. A pass killed during a start leaves its files behind, and
