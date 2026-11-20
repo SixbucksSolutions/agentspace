@@ -576,6 +576,18 @@ comes up to about one interval after expiry.
   never looks for it ([Q20](#open-questions)).
 - **Every handle is held until the stop ends**, so no PID in the tree is reused while it is being
   stopped.
+- **A stop MUST NOT terminate the keeper's own process**, as the holder or anywhere in its tree
+  (architect, 2026-11-19, for E0.06-T02-S03, a guard its implementer added).
+- **Rulings for the rewrite's look and stop** (architect, 2026-11-19, for E0.06-T02-S03): a
+  process that opens but whose exit state or creation time cannot be read is "cannot be opened";
+  the same on the stop's own handle is "the stop met an error", and the record is kept; a holder
+  that fails the check on the stop's handle while a new look still trusts it is the "for another
+  reason" row, `<why>` being `it did not match the record when checked again on the handle opened
+  to stop it`; a process list that cannot be read in the first round is an error and terminates
+  nothing, and in a later round ends the stop with what it has; a terminated process is given exit
+  code 1. A lock's `<error>` is `<file> could not be opened: Windows error <n>.`, the number alone,
+  never the system's localized text; a keeper lock whose PID cannot be written is a lock that
+  could not be taken; and a lock never creates a missing state folder.
 - **The tree is terminated leaves first, the holder last.** The stop then waits up to 2 seconds for
   each process to exit, and walks the tree again for any child made meanwhile, for up to 5 rounds.
 - **A terminated holder does not close its session on the box.** That session keeps the forwards
