@@ -579,7 +579,7 @@ time a caller polls the lease with `get` (D48; card #0143).** It changes no leas
 | Transport override | Optional text | As for place, from the same variable, and for the same reason. |
 
 **The result: nothing.** A failure is the other answer, and **the CLI drops it: `get` prints the
-lease as it read it, exits 0, and prints nothing of the failure** (architect's to confirm). So
+lease as it read it, exits 0, and prints nothing of the failure** (architect, 2026-11-20, for v0.07-T01). So
 `check_pending` never changes `get`'s output or its exit code, and a `get` that would have
 succeeded without it succeeds with it.
 
@@ -598,8 +598,8 @@ succeeded without it succeeds with it.
 - **When the start itself has not returned within the 20 seconds, `get` returns at the bound
   regardless**, prints the lease as it read it and exits 0, and uses nothing the start returns
   later. The start counts as made: the record's `last_attempt_at` was written before it, so the
-  5-minute rule holds, and no other `get` starts a second run in that time (architect's to
-  confirm).
+  5-minute rule holds, and no other `get` starts a second run in that time (architect, 2026-11-20,
+  for v0.07-T01).
 - **It MUST NOT read the CLI's standard input, write to its standard output or standard error, or
   prompt** ([The boundary](#the-boundary)), and what it starts MUST NOT write to them either.
 - **It MAY start work that outlives `get`**, which is how the EC2 driver carries on making a host,
@@ -611,7 +611,7 @@ succeeded without it succeeds with it.
 **When the CLI asks:** once per `get` of a lease whose stored state is `pending`, after it has read
 the records and before it prints. `list` never asks, and neither do `create`, `renew` and
 `release`. **A `pending` record with no `driver`, or one whose `driver` names a driver the CLI does
-not have, is asked of no driver**, and `get` prints it as always (architect's to confirm). Every
+not have, is asked of no driver**, and `get` prints it as always (architect, 2026-11-20, for v0.07-T01). Every
 record a v0.07 `create` writes carries `driver` ([state.md](state.md#the-lease-state-file)). So
 `get` of such a record starts nothing.
 
@@ -711,11 +711,10 @@ output. Today the shared credential and alias steps also hold its user, transpor
 settings ([Q5](#open-questions), [Q7](#open-questions)).
 
 **What the marks below mean.** Where D43 to D55 and card #0143 left a fact open, the dev lead of
-v0.07-T01 pinned it, so that the four specs written in that turn agree (D55):
-- **"Architect, 2026-11-20, for v0.07-T01"** marks a pin the architect has ruled on. It binds as
-  written.
-- **"Architect's to confirm"** marks this page's writer's choice, where no pin settles the fact.
-  It is sent to the architect, and binds as written until the architect rules.
+v0.07-T01 pinned it, or this page's writer chose it, so that the four specs written in that turn
+agree (D55):
+- **"Architect, 2026-11-20, for v0.07-T01"** marks such a fact as the architect ruled on it. It
+  binds as written.
 
 ### What it supports
 
@@ -752,8 +751,8 @@ nothing (D54).
 - **A project that has a record is placed by it, listed or not** (D54). The list governs only
   making a host.
 - **The `no_capacity` reason's message names the project and no backend (D1)**, and SHOULD read:
-  `No capacity can be found for project '<project>'; agentspace's operator has not approved it.`
-  (architect's to confirm). `<project>` is the normalized project.
+  `No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.`
+  (architect, 2026-11-20, for v0.07-T01). `<project>` is the normalized project.
 - **The host is looked up only for a supported request.** An unsupported one is `unsatisfiable`
   with its `unsupported_*` reasons alone, and place reads neither file; so a laptop with no CA,
   no host registry and no project list still gets that answer, as before v0.07.
@@ -774,8 +773,8 @@ nothing (D54).
   validate.** For the host registry this is pin P9 (architect, 2026-11-20, for v0.07-T01): only a
   missing `hosts.json` reads as the box's record alone, and one that exists and is not valid, by
   its bytes, its JSON, its schema or a project listed twice, is never read as missing, and is
-  never repaired by agentspace. For the project list it is this page's choice (architect's to
-  confirm). Neither file is read as empty: an unreadable list read as empty would answer a
+  never repaired by agentspace. For the project list it is this page's choice (architect, 2026-11-20,
+  for v0.07-T01). Neither file is read as empty: an unreadable list read as empty would answer a
   terminal `unsatisfiable` for a project that MAY have a host made. The message is in
   agentspace's own words, and SHOULD be
   `The lease's host could not be looked up: <why>. Nothing was recorded.`, where `<why>` names
@@ -880,13 +879,13 @@ write leaves the registry as it was.
    ([state.md, A host's folder](state.md#a-hosts-folder)); the driver tries to take it once,
    without waiting, as state.md says the lock is held, and releases it at once if it took it. A
    host's folder or lock file that does not exist means that no run holds it, and the try creates
-   neither (architect's to confirm). The folder is made only at the start (below), and the lock
+   neither (architect, 2026-11-20, for v0.07-T01). The folder is made only at the start (below), and the lock
    only by a run.
 3. **When a run is due, it checks that the operator program can be found** (the operator
-   program, below), and only then. One that cannot be found fails the place with `internal` (architect's to confirm): it is an install
+   program, below), and only then. One that cannot be found fails the place with `internal` (architect, 2026-11-20, for v0.07-T01): it is an install
    that waiting will not mend. Nothing is written, so the host registry is as it was, without even
    the record that step 4 would have added. The message is in agentspace's own words, names no
-   path, and SHOULD be, by the reason the program cannot be found (architect's to confirm):
+   path, and SHOULD be, by the reason the program cannot be found (architect, 2026-11-20, for v0.07-T01):
    - **With `AGENTSPACE_PROVISION_CMD` unset or empty, no `agentspace-operator.exe` beside the
      CLI:** `The lease's host cannot be made: agentspace's operator program is not installed beside
      this program. Nothing was recorded.`
@@ -997,7 +996,7 @@ of life. What the start MUST achieve, from outside:
   bound.
 - **The driver never waits for the run**, and nothing it answers depends on the run's outcome: the
   lease is `pending` whether the start succeeded or not.
-- **A start that fails changes nothing more, and fails nothing** (architect's to confirm): the
+- **A start that fails changes nothing more, and fails nothing** (architect, 2026-11-20, for v0.07-T01): the
   record stays as step 4 wrote it, so the next start is due 5 minutes later, and place still
   answers `pending`. A record that step 4 found `ready` stays `ready`, with only its
   `last_attempt_at` changed.
@@ -1092,7 +1091,7 @@ from its own folder, by a `create` or `get` that names that folder.
       certificate's valid-before time, and `ssh`, the alias and the user `ubuntu`, and changes no
       other member, `created_at`, `ttl_seconds` and `driver` included. The file is checked against
       its schema before the write, and replaced atomically, as every write of it is
-      ([state.md](state.md#the-lease-state-file)). One write per lease (architect's to confirm), so
+      ([state.md](state.md#the-lease-state-file)). One write per lease (architect, 2026-11-20, for v0.07-T01), so
       that a failure costs only that lease.
    7. **A failure at step 4, 5 or 6 leaves that lease `pending`**, with every file this call made
       for it removed as a failed place removes them ([Place a lease](#place-a-lease)), and is

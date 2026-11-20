@@ -359,9 +359,8 @@ No schema, code or field changes for it, so the contract does not.
 - `Platform '<platform>' is not supported; v0 supports linux/arm64 only.`
 - `Profile '<profile>' is not supported; v0 supports agent-linux with no version only.`
 - `Size '<size>' is not supported; v0 supports size m only.`
-- `No capacity can be found for project '<project>'; agentspace's operator has not approved it.`
-  ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's to
-  confirm)
+- `No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.`
+  ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's, 2026-11-20, for v0.07-T01)
 
 **Which backend placed a lease MUST NOT appear in any output** (D1), although agentspace keeps it
 to renew and release the lease.
