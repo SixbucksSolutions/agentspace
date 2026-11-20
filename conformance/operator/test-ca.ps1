@@ -5,7 +5,7 @@
 # it makes the SSH CA once, checks it on every later run and changes nothing, never repairs a
 # half-made or mismatched CA, and refuses a folder that a OneDrive variable names. The program under
 # test is the one AGENTSPACE_OPERATOR_CMD names; unset, it takes its default from
-# conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program under test").
+# conformance/defaults.ps1 (docs/conformance.md, "Naming the program under test").
 #
 # - `ca` makes no AWS call and touches no box, so no AWS CLI need exist (B-50). The three programs the
 #   operator starts are named as tripwires through the test seam anyway, and the check ends by proving

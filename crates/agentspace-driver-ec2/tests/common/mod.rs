@@ -2,8 +2,8 @@
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. Every file lives in a throwaway folder
 //! under the temp folder, and a test MUST NOT touch the real profile. The CA a test uses is made by
-//! the operator's `ca`, run as conformance/lease-cli/harness.ps1 runs it: in the throwaway home,
-//! with the profile variables of that one child pointed into it.
+//! the operator's `ca`, run in process through `agentspace_ca::ca` with a context that names only
+//! the throwaway home (architect, 2026-11-20, for E0.06-T06-S01).
 #![cfg(windows)]
 #![allow(dead_code)]
 
@@ -97,59 +97,57 @@ fn make_openssh_safe(dir: &Path) {
     );
 }
 
-/// Makes the CA with the operator's `ca`, in the throwaway home, as the harness does.
+/// Makes the CA in the throwaway home with the operator's own `ca`, run in process through
+/// `agentspace_ca::ca` as agentspace-sync's tests do (architect, 2026-11-20, for E0.06-T06-S01).
+/// The context names the throwaway home and nothing of the real profile: no `LOCALAPPDATA`, and a
+/// made-up user and computer name.
 fn make_ca(home: &Path) {
     assert!(
         home.starts_with(std::env::temp_dir()),
         "The home is not under the temp folder"
     );
-    let op = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("conformance")
-        .join("prototype")
-        .join("operator.cmd");
-    let mut cmd = Command::new(&op);
-    cmd.args(["ca", "-Quiet"]);
-    for (name, _) in std::env::vars() {
-        let up = name.to_ascii_uppercase();
-        if up.starts_with("AGENTSPACE_")
-            || up.starts_with("AWS_")
-            || up == "PSMODULEPATH"
-            || up == "ONEDRIVE"
-            || up == "ONEDRIVECONSUMER"
-            || up == "ONEDRIVECOMMERCIAL"
-        {
-            cmd.env_remove(name);
-        }
+    let ctx = agentspace_operator_api::Context {
+        home: home.to_path_buf(),
+        local_app_data: None,
+        system_root: PathBuf::from(system_root()),
+        nested: false,
+    };
+    let env = agentspace_ca::CaEnv {
+        user_name: Some("someone".to_string()),
+        computer_name: Some("EXAMPLEPC".to_string()),
+        ..agentspace_ca::CaEnv::default()
+    };
+    if let Err(f) = agentspace_ca::ca(&ctx, &env, &NullSay) {
+        panic!(
+            "The operator's ca could not make the throwaway CA: {}",
+            f.message
+        );
     }
-    let p = home.to_str().unwrap().to_string();
-    cmd.env("USERPROFILE", &p)
-        .env("HOME", &p)
-        .env("LOCALAPPDATA", home.join("AppData").join("Local"))
-        .env("APPDATA", home.join("AppData").join("Roaming"))
-        .env(
-            "AGENTSPACE_STATE_DIR",
-            home.join(".agentspace").join("state"),
-        )
-        .env("AGENTSPACE_SSH_DIR", home.join(".ssh"))
-        .env("AWS_EC2_METADATA_DISABLED", "true");
-    let out = run_out(&mut cmd);
     let key = home.join(".agentspace").join("ca").join("agentspace_ca");
     let public = home
         .join(".agentspace")
         .join("ca")
         .join("agentspace_ca.pub");
     assert!(
-        out.status.success() && key.is_file() && public.is_file(),
-        "The operator's ca could not make the throwaway CA: {} {}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        key.is_file() && public.is_file(),
+        "The operator's ca made no throwaway CA"
     );
     assert!(
         key.starts_with(home),
         "The CA is not under the throwaway home"
     );
+}
+
+/// A `Say` that prints nothing, for the in-process `ca`.
+struct NullSay;
+
+impl agentspace_operator_api::Say for NullSay {
+    fn mode(&self) -> agentspace_operator_api::Mode {
+        agentspace_operator_api::Mode::Person
+    }
+    fn progress(&self, _: &str, _: Option<agentspace_operator_api::CallerLine>) {}
+    fn warning(&self, _: &str) {}
+    fn detail(&self, _: &str) {}
 }
 
 impl Fx {

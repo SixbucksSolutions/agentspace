@@ -3,7 +3,7 @@
 #
 # Usage-error conformance for the ProxyCommand's argument handling (docs/operator.md, "The
 # ProxyCommand"). The program under test is the one AGENTSPACE_SSH_PROXY_CMD names; unset, it takes
-# its default from conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program
+# its default from conformance/defaults.ps1 (docs/conformance.md, "Naming the program
 # under test"). Every case ends before a tunnel starts, with exit 1 and stdout empty.
 #
 # Run as: pwsh -NoProfile -File conformance/operator/test-proxy-arguments.ps1

@@ -21,8 +21,13 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   are one Backlog epic each (D26). It goes from there to someday-maybe ideas. The Backlog MUST
   match the roadmap at all times (Terry, 2026-11-17).
 - **The language:** agentspace's product code becomes Rust by v0.06, and all new product code MUST
-  be Rust from v0.07 on (D28). The PowerShell is the MVP prototype's, and the rewrite MUST be built
-  from specs, never from it (D20).
+  be Rust from v0.07 on (D28). The PowerShell was the MVP prototype's, and the rewrite MUST be
+  built from specs, never from it (D20). **The prototype was removed from the repository by
+  E0.06-T06-S01 (2026-11-20)**, `bin\` and its files in `scripts\` included. It remains in git
+  history, in every commit before that story's, and its code there MUST NOT be read (D20). The
+  PowerShell that remains is the conformance suite, the architect's process tools in `scripts\`
+  and a crate's test stand-in, none of them product (D28, D42). The programs are the installed Rust ones, in
+  `%USERPROFILE%\.agentspace\bin` ([README, Build and Install it](README.md#build)).
 - **The reasoning:** [docs/decisions.md](docs/decisions.md). A design choice MUST be recorded
   there, numbered, before or with the change that makes it, and a changed decision MUST say what
   replaced it rather than being deleted.
@@ -156,7 +161,7 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
 - **A grow MUST NOT leave the root filesystem less than 60% used**, measured right after it: grow
   in steps sized to the need, never far ahead of it, since a volume never shrinks.
 - **The architect SHOULD grow it when the root filesystem passes 80% used**, by the largest step
-  the 60% floor allows, with `scripts\agentspace.ps1 grow -GiB <n>` (operator.md, grow). EBS
+  the 60% floor allows, with `agentspace-operator grow -GiB <n>` (operator.md, grow). EBS
   allows one change per volume every 6 hours, so a step MUST be planned for the next 6 hours.
 - **The first step**, the same day during v0.05-T01: 8 to 11 GiB at 2:41am Pacific, which left
   the filesystem at 9.7G, 5.9G used (62%). It had filled at 6.8G with five crates' builds (D38).
@@ -179,10 +184,12 @@ least 4 GB of RAM."** D39 records it.
 - **The smallest such size is used**, on the box's own family (`m9g`: `xlarge` 4 vCPUs, `2xlarge`
   8, `4xlarge` 16, `8xlarge` 32, `12xlarge` 48, `16xlarge` 64). v0.05-T01's 10 subagents and its
   dev lead, 11 agents, would have needed an `m9g.4xlarge`; it ran on an `m9g.xlarge`.
-- **The size is set through the stack, never by hand in EC2**: `InstanceType=<type>` in
-  `infra\local.parameters`, then the operator's `deploy`, while the box is stopped. CloudFormation
+- **The size is set through the stack, never by hand in EC2**: `InstanceType` set to the type in
+  `%USERPROFILE%\.agentspace\stack-parameters.json` (D40; `infra\stack-parameters.example.json`
+  shows its form), then `agentspace-operator deploy`, while the box is stopped. CloudFormation
   stops and starts the instance to change it, and keeps the disk (operator.md, the template's
-  parameters).
+  parameters). Until E0.06-T06-S01 (2026-11-20) this rule named `infra\local.parameters` and the
+  prototype's `deploy`, which are gone.
 - **Each use is sized for its own peak**, so the box goes back down when the next use needs fewer
   agents. A lease whose sessions run no agents on the box, such as a live check from the laptop,
   needs no change.
@@ -190,7 +197,8 @@ least 4 GB of RAM."** D39 records it.
   2026-11-19: "make sure we don't leave it burning money when done with its work for a dev
   turn"): every PR of the turn merged to `main` and its cards in Ready For Review. The architect
   fetches anything the turn left on the box (a sampler's record), releases the turn's lease, and
-  runs the operator's `down` at once, then confirms with `status` that it is `stopped`. It MUST
+  runs `agentspace-operator down` at once, then confirms with `agentspace-operator status` that it
+  is `stopped`. It MUST
   NOT wait for the idle stop (D11), which takes up to an hour. v0.05-T01's box was stopped at its
   close, 3:00am Pacific.
 

@@ -18,3 +18,7 @@ agentspace-alias = { path = "../agentspace-alias" }
 # For the integration tests: throwaway folders, at the version agentspace-credential and
 # agentspace-state already use.
 tempfile = { version = "=3.23.0", default-features = false }
+# For the integration tests: the operator's `ca`, run in process to make each throwaway CA
+# (architect, 2026-11-20, for E0.06-T06-S01).
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-ca = { path = "../agentspace-ca" }

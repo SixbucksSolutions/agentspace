@@ -37,7 +37,7 @@
 # It never reports the offending text, only which rule it broke, because the text may carry an ID.
 #
 # The program under test is the one AGENTSPACE_SSH_PROXY_CMD names; unset, it takes its default from
-# conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program under test").
+# conformance/defaults.ps1 (docs/conformance.md, "Naming the program under test").
 #
 # SAFETY. The ProxyCommand's `up` can call the real AWS CLI when the seam is not met. The harness
 # gives the process a throwaway home, with USERPROFILE, HOME, LOCALAPPDATA, APPDATA and the state
@@ -199,8 +199,5 @@ try {
   }
 } finally {
   Remove-ConformanceHome -ConformanceHome $h
-}
-if ($global:ConformanceCounts['FAIL'] -gt 0) {
-  Write-Host 'NOTE This file is expected to fail against the prototype (card #0087 and the test seam); a rewrite MUST pass it.'
 }
 Exit-ConformanceRun

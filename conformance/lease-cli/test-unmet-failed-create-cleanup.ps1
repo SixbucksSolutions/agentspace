@@ -166,7 +166,4 @@ try {
   if ($denied -and $lab -and $leases) { try { Set-CcLeasesDeny $lab $leases $false } catch { } }
   if ($lab) { Remove-ConformanceHome -ConformanceHome $lab }
 }
-if ($global:ConformanceCounts['FAIL'] -gt 0) {
-  Write-Host 'NOTE This file is expected to fail against the prototype (the failed-create cleanup requirement); a rewrite MUST pass it.'
-}
 Exit-ConformanceRun

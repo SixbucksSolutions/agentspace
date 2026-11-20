@@ -1,9 +1,0 @@
-#!/bin/sh
-# The agentspace command (docs/lease-api.md) for Git Bash and other POSIX shells: runs
-# scripts/lease-cli.ps1 with the arguments unchanged. MSYS path conversion is turned off, so an
-# argument that looks like a path reaches the CLI as it was given; the script's own path is
-# converted with cygpath instead, where that exists.
-here=$(cd "$(dirname "$0")" && pwd)
-script="$here/../scripts/lease-cli.ps1"
-if command -v cygpath >/dev/null 2>&1; then script=$(cygpath -w "$script"); fi
-MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec pwsh -NoProfile -File "$script" "$@"
