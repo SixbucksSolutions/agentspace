@@ -158,6 +158,10 @@ on it:
 
 **Terry, 2026-11-19, standing order: the architect is authorized to grow the box's root EBS volume
 as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
+- **It covers every host, each on its own** (Terry, 2026-11-20, closing decisions.md Q7): from
+  v0.07 (#0047) on, each project's host (D25) has its own 64 GiB ceiling and 60% floor, and is
+  grown with `agentspace-operator grow -Host <project> -GiB <n>` once `-Host` exists (D49). "The
+  box" below means any host.
 - **The volume MUST NOT be grown past 64 GiB** without Terry's word.
 - **A grow MUST NOT leave the root filesystem less than 60% used**, measured right after it: grow
   in steps sized to the need, never far ahead of it, since a volume never shrinks.

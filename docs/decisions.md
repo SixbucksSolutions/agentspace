@@ -91,6 +91,7 @@ line's text after `Status:`, without its full stop.
 - [D51. Until v0.08, every host a turn starts is stopped at its close](#d51-until-v008-every-host-a-turn-starts-is-stopped-at-its-close): Decided
 - [D52. Sign-ins and the checkout on a new host are by hand, once, by a written procedure](#d52-sign-ins-and-the-checkout-on-a-new-host-are-by-hand-once-by-a-written-procedure): Decided
 - [D53. v0.07's done-when is shown by live checks, with Terry's yes for their instance hours](#d53-v007s-done-when-is-shown-by-live-checks-with-terrys-yes-for-their-instance-hours): Decided
+- [D54. A host is made only for a project Terry has named](#d54-a-host-is-made-only-for-a-project-terry-has-named): Decided
 
 ## The interface
 
@@ -2808,12 +2809,12 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
 
 ## v0.07: a host per project
 
-**D43 to D53 settle v0.07's (#0047) design calls before its stories are laid out**, as
+**D43 to D54 settle v0.07's (#0047) design calls before its stories are laid out**, as
 [handoff-v0.06.md](handoff-v0.06.md#the-scope-ahead-v007) asks. Each is the architect's,
 2026-11-20, unless it says otherwise. They bind the stories, which carry each one into the spec that
 owns the fact ([driver.md](driver.md), [operator.md](operator.md), [state.md](state.md),
-[keeper.md](keeper.md)) in the same pull request that builds it (D34). Two calls are Terry's, and
-wait on him as [Q6 and Q7](#open-questions).
+[keeper.md](keeper.md)) in the same pull request that builds it (D34). Terry made the two cost calls
+the same day, taking the architect's recommendations: D54, and the disk order per host (D46).
 
 **What none of them changes:** the lease contract (D1). Every output, schema and reason code of
 contract v0 stays as it is; `pending` was already in it, and v0.07 is the first release whose
@@ -2902,8 +2903,8 @@ driver answers it.
   Rust is installed and not promised, as on the box today, since promising it would change the
   contract.
 - **A new host's root volume starts at the template's 8 GiB, and grows under the same rule as the
-  box's**, through `grow` with the host named. Whether Terry's standing order on the box's disk
-  covers every host is [Q7](#open-questions).
+  box's**, through `grow` with the host named. Terry's standing order on the box's disk covers
+  every host, each on its own (Terry, 2026-11-20, closing Q7; AGENTS.md, "Growing the box's disk").
 
 **Why not an image:**
 - **A host is kept, and patched at every boot** (D25, how-it-was-built.md). An image would be
@@ -3013,7 +3014,7 @@ it runs agents", last bullet) to every host. v0.08 (#0048) replaces it with leas
   its own alarm (D44), and `sync` installs the idle check on each.
 - **Each host is sized by hand for its use, as the box is** (D39), through its own stack's
   `InstanceType` and `deploy -Host`.
-- **Which projects may have a host made at all is [Q6](#open-questions)**, Terry's call.
+- **A host is made only for a project Terry has named** (D54, which closes Q6).
 
 ### D52. Sign-ins and the checkout on a new host are by hand, once, by a written procedure
 
@@ -3047,6 +3048,25 @@ it runs agents", last bullet) to every host. v0.08 (#0048) replaces it with leas
   every host it started is stopped at its close (D51).
 - **conformance.md's coverage table is read for every "None" these change** (architect.md,
   Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+
+### D54. A host is made only for a project Terry has named
+
+**Decided, Terry, 2026-11-20**, taking the architect's recommendation (Q6, closed). A host costs
+its disk while stopped, about $0.64 a month at 8 GiB and $1.60 at 20 GiB, and about $0.20 an hour
+while running at `m9g.xlarge`, so a mistyped `--project` MUST NOT make one.
+- **`%USERPROFILE%\.agentspace\projects.json` lists the projects that may have a host made.** It
+  is JSON with a draft 2020-12 schema in `schemas/state/` (D40), and its exact form is state.md's.
+  Every entry takes Terry's yes, recorded with its date where the architect writes it; the
+  architect MAY write the file, and nothing in agentspace adds to it on its own.
+- **For v0.07 it holds `agentspace` alone.** swimcoach needs no entry: its host already exists in
+  `hosts.json` (D43, D45), and the list governs only making a host.
+- **A project that has a host in `hosts.json` is placed as D48 says, listed or not.**
+- **A lease for a project with no host and no entry is `unsatisfiable` with `no_capacity`**,
+  whose meaning contract v0 already gives: "The request is supported, but no capacity can be found
+  for it." Its message names the project and no backend (D1), and nothing is issued or started.
+  lease-api.md's note that v0 never reports `no_capacity` changes to say the EC2 driver reports it
+  for such a project; no schema or code changes, so the contract does not.
+- **A missing `projects.json` lists nothing.** So a laptop without one makes no host at all.
 
 ## Keys
 
@@ -3113,5 +3133,5 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q3** | **Later, not blocking:** card #0008 is after 1.0 (roadmap.md), and contract v0's board access is D12's. How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
 | **Q4** | **Later, not blocking:** card #0016 is after 1.0 (roadmap.md), and contract v0 has one driver, whose reachability is D9's. One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
 | **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 for the MVP (D18), then Rust (D28). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |
-| **Q6** | **Needs Terry, before v0.07's stories (cost).** May any project's first lease make a host (D48), or only a project Terry has named? A host costs its disk while stopped, about $0.64 a month at 8 GiB and $1.60 at 20 GiB, and about $0.20 an hour while running at `m9g.xlarge`. With no list, a mistyped `--project` makes a host. **The architect recommends a list**, `%USERPROFILE%\.agentspace\projects.json`, that Terry approves each entry of, holding `agentspace` for v0.07; a lease for a project not on it is `unsatisfiable` with `no_capacity`, which contract v0 already has ("supported, but no capacity can be found"), so the contract does not change. | Terry |
-| **Q7** | **Needs Terry, before v0.07's stories (cost).** Does his standing order on the box's disk (AGENTS.md, "Growing the box's disk": up to 64 GiB, never below 60% used after a grow, grow past 80%) cover every host, each on its own? **The architect recommends yes, per host**, so agentspace's host can be grown ahead of its first compiling turn as the box was. | Terry |
+| **Q6** | **Closed by D54 (Terry, 2026-11-20).** ~~May any project's first lease make a host, or only a project Terry has named?~~ Only a named one, listed in `projects.json`; another project's lease is `unsatisfiable` with `no_capacity`. | Closed, D54 |
+| **Q7** | **Closed (Terry, 2026-11-20).** ~~Does his standing order on the box's disk cover every host?~~ Yes, each host on its own: AGENTS.md, "Growing the box's disk", and D46. | Closed |
