@@ -16,9 +16,9 @@
 # fake Bot credential (DPAPI-protected for the current user, as localswim's is), the instance-ID
 # cache, a stand-in `aws` that reports a running instance launched long ago, and a stand-in `ssh`
 # that behaves as the box does (docs/operator.md, "What the box does") and records its arguments, its
-# standard input and its environment. It then runs `up -Alias <alias>` in each of the cases below and
-# checks only what it can see: the recorded call, the stamp file in the home, the messages on stderr,
-# the exit code and stdout.
+# standard input and the names, never the values, of the environment variables that hold the token.
+# It then runs `up -Alias <alias>` in each of the cases below and checks only what it can see: the
+# recorded call, the stamp file in the home, the messages on stderr, the exit code and stdout.
 #
 #   1. The first push: the ssh arguments, the two lines on stdin, the stamp, the messages, exit 0.
 #   2. An unchanged token and zone: nothing is sent.
@@ -72,7 +72,9 @@ $m = New-Object IO.MemoryStream
 $bytes = $m.ToArray()
 [IO.File]::WriteAllBytes((Join-Path $dir "ssh-stdin-$n.bin"), $bytes)
 [IO.File]::AppendAllText((Join-Path $dir 'ssh-args.log'), ((ConvertTo-Json -InputObject @($args) -Compress) + "`n"))
-[IO.File]::WriteAllText((Join-Path $dir "ssh-env-$n.txt"), ((Get-ChildItem Env: | ForEach-Object { $_.Name + '=' + $_.Value }) -join "`n"))
+$token = (Get-Content -LiteralPath (Join-Path $dir 'ssh-token.txt') -Raw -ErrorAction Stop).Trim()
+$holders = @(Get-ChildItem Env: | Where-Object { $token -ne '' -and $_.Value.Contains($token) } | ForEach-Object { $_.Name })
+[IO.File]::WriteAllText((Join-Path $dir "ssh-env-$n.txt"), ($holders -join "`n"))
 if ($scenario -eq 'hang') { Start-Sleep -Seconds 120; exit 0 }
 if ($scenario -eq 'fail') { exit 255 }
 $text = [Text.Encoding]::UTF8.GetString($bytes).Replace("`r", '')
@@ -125,6 +127,9 @@ try {
       'exit /b %ERRORLEVEL%')
     $scp = New-OperatorStandIn -ConformanceHome $h -Name 'scp' -Body @('exit /b 255')
     $standins = Split-Path -Parent $ssh
+    # The stand-in reads the fake token from here, and records only the names of the environment
+    # variables whose value contains it, never a value.
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standins 'ssh-token.txt')), $tokenValue)
     $sshCalls = Join-Path $standins 'ssh-calls.log'
     $awsCalls = Join-Path $standins 'aws-calls.log'
     $scpCalls = Join-Path $standins 'scp-calls.log'
@@ -229,7 +234,11 @@ try {
       $a1 = Get-SshArgs 1
       if ($a1 -and ($a1 -join ' ').Contains($tokenValue)) { $p.Add('An ssh argument holds the token') }
       $envFile = Join-Path $standins 'ssh-env-1.txt'
-      if ((Test-Path -LiteralPath $envFile) -and ([IO.File]::ReadAllText($envFile)).Contains($tokenValue)) { $p.Add('An environment variable the ssh sees holds the token') }
+      if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) { $p.Add('The stand-in recorded no environment check') }
+      else {
+        $holders = @([IO.File]::ReadAllText($envFile) -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+        if ($holders.Count -gt 0) { $p.Add("An environment variable the ssh sees holds the token: $($holders -join ', ')") }
+      }
       if ($r.Stderr.Contains($tokenValue) -or $r.Stdout.Contains($tokenValue)) { $p.Add('A message holds the token') }
       if ((Get-StampText) -and (Get-StampText).Contains($tokenValue)) { $p.Add('The stamp holds the token') }
       Write-Problems "${sec}: The token is on the ssh's standard input only: in no argument, no environment variable, no message and not in the stamp (Secrecy)" $p
