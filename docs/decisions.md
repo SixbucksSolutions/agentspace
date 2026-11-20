@@ -2968,6 +2968,13 @@ driver: how a `pending` lease becomes `ready`.
   lead's pin P3). `get` starts a run for it under the same 5-minute rule, the run on a `ready` host
   does every step again, each safe to repeat, and ends by placing the project's pending leases. So
   no such lease is stranded, and `get` still never writes the lease state file.
+- **A run never takes a `ready` host out of `ready`** (architect, 2026-11-20, for v0.07-T01, on the
+  dev lead's finding). A host that is not `ready` sends its project's ready leases to the box (D55),
+  where ssh's strict key check refuses them, so a run that marked a `ready` host `creating` would
+  cut every lease of that project for its length, and for good if a step failed. A run on a `ready`
+  host, and the driver that starts it, write only `last_attempt_at`; success keeps `ready`, and a
+  failed step is logged and leaves `ready`. `creating` and `failed` apply only to a host that was
+  never `ready`.
 - **A lease's TTL starts when it becomes `ready`**: `expires_at` is the certificate's valid-before,
   as today, so time spent `pending` costs the caller none of it.
 
