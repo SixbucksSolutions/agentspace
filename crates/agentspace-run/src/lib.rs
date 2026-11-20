@@ -33,6 +33,11 @@
 //! The library writes to stdout and stderr only what the spec passes through: `ssh`'s and `scp`'s
 //! streams, a [`Output::PassThrough`] call's streams, and an [`Output::Ignore`] call's stderr when
 //! the runner opted in. An [`Output::Ignore`] call's stdout is never passed.
+//!
+//! **A program that uses [`Output::PassThrough`] MUST NOT hold its stdout or stderr lock across a
+//! command; the passed-through output is written from other threads** (architect, 2026-11-20, for
+//! E0.06-T05-S02, #0139). A `StdoutLock` is reentrant only on the thread that holds it, so a copy
+//! thread's first write would wait for the lock while the call waits for the copy thread.
 
 #![forbid(unsafe_code)]
 

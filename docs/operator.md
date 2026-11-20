@@ -200,6 +200,10 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   `sync` and `grow`: the AWS CLI's `cloudformation deploy` output, `go build`'s, the box's
   `install.sh` lines and `grow`'s `df` table reach the operator's stdout or stderr as those
   programs wrote them. A caller MUST NOT parse that output; it is for a person.
+- **A pass-through call MUST return once the program it runs exits**, with everything that
+  program wrote already passed through, as the bullet above says (architect, 2026-11-20, for
+  E0.06-T05-S02, #0139). The operator's `deploy` once waited forever after the AWS CLI's
+  `cloudformation deploy` had exited, having passed none of its lines through.
 - **Help goes to stdout**, with exit 0. **Help that cannot be written**, to a full or closed
   stdout, fails with `agentspace: Could not write the help to stdout.` on stderr and exit 1
   (architect, 2026-11-19, for E0.06-T01-S01).
