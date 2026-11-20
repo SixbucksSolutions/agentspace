@@ -75,8 +75,8 @@ agentspace-operator ca
 
 The commands are the operator's ([docs/operator.md, Command line](docs/operator.md#command-line)).
 `agentspace-operator` runs once the install folder is on the user's `PATH`, which is persistent
-configuration on Terry's laptop and MUST be done only with his yes. Until then each runs by its
-full path, `%USERPROFILE%\.agentspace\bin\agentspace-operator.exe`.
+configuration on Terry's laptop and so takes his yes ([Install it](#install-it), step 4). Until
+then each runs by its full path, `%USERPROFILE%\.agentspace\bin\agentspace-operator.exe`.
 
 - **`sync`** checks the agentspace SSH CA first, with the same checks `ca` makes, and stops
   before touching the instance if the pair is missing, mismatched or readable by anyone else
@@ -246,7 +246,8 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      starts `ssh.exe -N -o ExitOnForwardFailure=yes <alias>` through the ready lease that expires
      last, and it stops a holder whose lease is no longer ready.
    - **`agentspace-keeper-install` registers the task.** `-DryRun` prints every field of the task
-     it would register and changes nothing, and `-Uninstall` removes the task. Registering the task
+     it would register and changes nothing, and `-Uninstall` removes the task and the prototype's
+     launcher, `BoardHolderLauncher.exe`, if one is left. Registering the task
      is persistent configuration on Terry's laptop, so it MUST only happen with his yes
      (E0.02-T03-S01; [keeper.md, The installer](docs/keeper.md#the-installer)).
    - **The installer MUST be run from the install folder, never from a build's output folder or a
@@ -438,7 +439,7 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
      py -3 C:/Projects/agentspace/box/system/agentspace-footprint <run>.jsonl
      ```
 
-     The script is in agentspace's main checkout, `C:\Projects\agentspace` (lease step 1). A
+     The script is in agentspace's main checkout, `C:\Projects\agentspace`, where one exists. A
      project without that checkout MUST summarize on the box instead, over the lease and before
      it is released, which needs no fetch:
 

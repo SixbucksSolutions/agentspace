@@ -53,7 +53,8 @@ function Get-ConformanceChildEnvironment {
   foreach ($name in [Environment]::GetEnvironmentVariables().Keys) {
     if ($name -like 'AGENTSPACE_*') { $env2[$name] = $null }
   }
-  # A PowerShell 7 session's module path breaks Windows PowerShell 5.1, which the operator runs under.
+  # A PowerShell 7 session's module path breaks a Windows PowerShell 5.1 child, which the prototype's
+  # operator ran under; it is still cleared, so no program under test inherits the suite's own.
   $env2['PSModulePath'] = $null
   foreach ($name in $script:ConformanceAwsRemoved) { $env2[$name] = $null }
   $env2['USERPROFILE'] = $ConformanceHome.UserProfile

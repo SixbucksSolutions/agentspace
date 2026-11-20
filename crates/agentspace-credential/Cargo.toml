@@ -13,3 +13,7 @@ windows-sys = { version = "=0.61.2", default-features = false, features = ["Win3
 
 [dev-dependencies]
 tempfile = { version = "=3.23.0", default-features = false }
+# For the Windows disk tests: the operator's `ca`, run in process to make each throwaway CA
+# (architect, 2026-11-20, for E0.06-T06-S01).
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-ca = { path = "../agentspace-ca" }

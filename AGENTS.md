@@ -21,11 +21,12 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   are one Backlog epic each (D26). It goes from there to someday-maybe ideas. The Backlog MUST
   match the roadmap at all times (Terry, 2026-11-17).
 - **The language:** agentspace's product code becomes Rust by v0.06, and all new product code MUST
-  be Rust from v0.07 on (D28). The PowerShell was the MVP prototype's, and the rewrite was built
-  from specs, never from it (D20). **The prototype was removed from the repository by
-  E0.06-T06-S01 (2026-11-20)**, `bin\` and its files in `scripts\` included. The PowerShell that
-  remains is the conformance suite, the architect's process tools in `scripts\` and a crate's test
-  stand-in, none of them product (D28, D42). The programs are the installed Rust ones, in
+  be Rust from v0.07 on (D28). The PowerShell was the MVP prototype's, and the rewrite MUST be
+  built from specs, never from it (D20). **The prototype was removed from the repository by
+  E0.06-T06-S01 (2026-11-20)**, `bin\` and its files in `scripts\` included. It remains in git
+  history, in every commit before that story's, and its code there MUST NOT be read (D20). The
+  PowerShell that remains is the conformance suite, the architect's process tools in `scripts\`
+  and a crate's test stand-in, none of them product (D28, D42). The programs are the installed Rust ones, in
   `%USERPROFILE%\.agentspace\bin` ([README, Build and Install it](README.md#build)).
 - **The reasoning:** [docs/decisions.md](docs/decisions.md). A design choice MUST be recorded
   there, numbered, before or with the change that makes it, and a changed decision MUST say what

@@ -47,6 +47,8 @@ dependencies = [
 name = "agentspace-credential"
 version = "0.5.0"
 dependencies = [
+ "agentspace-ca",
+ "agentspace-operator-api",
  "ssh-key",
  "tempfile",
  "windows-sys",
@@ -61,8 +63,10 @@ name = "agentspace-driver-ec2"
 version = "0.5.0"
 dependencies = [
  "agentspace-alias",
+ "agentspace-ca",
  "agentspace-credential",
  "agentspace-driver-api",
+ "agentspace-operator-api",
  "tempfile",
 ]
 
