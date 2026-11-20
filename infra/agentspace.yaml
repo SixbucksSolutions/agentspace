@@ -2,9 +2,10 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agentspace: a Graviton EC2 host for coding agents. No inbound ports; reached over
   Session Manager. Stops itself when idle, with a low-CPU CloudWatch alarm as a backstop.
-  The on-box services live in box/system and are installed by scripts\agentspace.ps1 sync.
-  Resource names and tags keep the project's first name, agentbox: renaming them would replace
-  resources, and the stack cannot be renamed without replacing the instance.
+  The on-box services live in box/system and are installed by agentspace-operator sync.
+  Resource names and tags come from HostName, whose default, agentbox, keeps the first host's
+  names: renaming them would replace resources, and the stack cannot be renamed without
+  replacing the instance.
 
 Parameters:
   InstanceType:
@@ -21,18 +22,41 @@ Parameters:
     Type: AWS::EC2::Subnet::Id
     Description: >-
       A subnet that assigns a public IPv4 at launch, as a default VPC's subnets do. Set it in
-      infra/local.parameters, which is not committed.
+      %USERPROFILE%\.agentspace\stack-parameters.json, which is not committed.
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: The subnet's VPC. Set it in infra/local.parameters, which is not committed.
+    Description: >-
+      The subnet's VPC. Set it in %USERPROFILE%\.agentspace\stack-parameters.json, which is not
+      committed.
   RootVolumeGiB:
     Type: Number
     Default: 8
     MinValue: 8
-    Description: The AMI's minimum. Grow it with scripts\agentspace.ps1 grow; EBS volumes never shrink.
+    Description: The AMI's minimum. Grow it with agentspace-operator grow; EBS volumes never shrink.
   SshPublicKey:
     Type: String
     Description: Public key installed for the ubuntu user.
+  HostName:
+    Type: String
+    Default: agentbox
+    Description: >-
+      The name this host's resources carry: the alarm's name and the Name and project tags. The
+      default, agentbox, is the first host's, so an update of that stack changes nothing.
+  CaPublicKey:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+={0,3}$'
+    ConstraintDescription: >-
+      Must be empty, or the CA public key's type and key fields only, separated by one space, with
+      no comment and no line break.
+    Description: >-
+      The agentspace SSH CA's public key as its type and key fields only, with no comment, since the
+      comment names the laptop. It is public. When set, the first boot
+      installs it and its sshd drop-in, so the host trusts the CA before sshd first starts. Empty
+      leaves the user data as it was.
+
+Conditions:
+  HasCaPublicKey: !Not [!Equals [!Ref CaPublicKey, ""]]
 
 Resources:
   Role:
@@ -47,7 +71,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Tags:
-        - { Key: project, Value: agentbox }
+        - { Key: project, Value: !Ref HostName }
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -57,12 +81,12 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: agentbox - no inbound; all outbound
+      GroupDescription: !Sub "${HostName} - no inbound; all outbound"
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - { IpProtocol: "-1", CidrIp: 0.0.0.0/0 }
       Tags:
-        - { Key: Name, Value: agentbox }
+        - { Key: Name, Value: !Ref HostName }
 
   Instance:
     Type: AWS::EC2::Instance
@@ -81,25 +105,56 @@ Resources:
             Encrypted: true
             DeleteOnTermination: true
       Tags:
-        - { Key: Name, Value: agentbox }
-        - { Key: project, Value: agentbox }
-      # Runs at first boot only. Everything else is installed by scripts\agentspace.ps1 sync.
+        - { Key: Name, Value: !Ref HostName }
+        - { Key: project, Value: !Ref HostName }
+      # Runs at first boot only. Everything else is installed by agentspace-operator sync.
+      # With CaPublicKey set, write_files also puts the CA's key and its sshd drop-in in place before
+      # sshd first starts. The drop-in is box/system/50-agentspace-ca.conf, byte for byte, and sync
+      # later replaces both files with the same bytes.
       UserData:
-        Fn::Base64: !Sub |
-          #cloud-config
-          package_update: true
-          package_upgrade: true
-          packages: [git, tmux, jq, ripgrep, unzip]
-          ssh_authorized_keys:
-            - ${SshPublicKey}
+        Fn::If:
+          - HasCaPublicKey
+          - Fn::Base64: !Sub |
+              #cloud-config
+              package_update: true
+              package_upgrade: true
+              packages: [git, tmux, jq, ripgrep, unzip]
+              ssh_authorized_keys:
+                - ${SshPublicKey}
+              write_files:
+                - path: /etc/ssh/agentspace_ca.pub
+                  owner: root:root
+                  permissions: "0644"
+                  content: |
+                    ${CaPublicKey}
+                - path: /etc/ssh/sshd_config.d/50-agentspace-ca.conf
+                  owner: root:root
+                  permissions: "0644"
+                  content: |
+                    # Installed by scripts\agentspace.ps1 sync to /etc/ssh/sshd_config.d/ (decision D7).
+                    # sshd keeps the first value it reads for each keyword and reads this file before
+                    # 60-cloudimg-settings.conf; install.sh checks with sshd -T that both values below took effect.
+                    #
+                    # Trust user certificates signed by the agentspace SSH CA. sync replaces
+                    # /etc/ssh/agentspace_ca.pub with the laptop CA's public key, so a new CA drops the old one.
+                    TrustedUserCAKeys /etc/ssh/agentspace_ca.pub
+                    # No login as root by any means, a CA certificate naming root among them.
+                    PermitRootLogin no
+          - Fn::Base64: !Sub |
+              #cloud-config
+              package_update: true
+              package_upgrade: true
+              packages: [git, tmux, jq, ripgrep, unzip]
+              ssh_authorized_keys:
+                - ${SshPublicKey}
 
   # Backstop for a dead on-box idle check: stop after 3 hours averaging under 1% CPU.
   # A stopped instance reports no data, which counts as not breaching.
   IdleAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: agentbox-idle-backstop
-      AlarmDescription: Stops agentbox after 3 hours averaging under 1% CPU.
+      AlarmName: !Sub "${HostName}-idle-backstop"
+      AlarmDescription: !Sub "Stops ${HostName} after 3 hours averaging under 1% CPU."
       Namespace: AWS/EC2
       MetricName: CPUUtilization
       Dimensions:
