@@ -160,8 +160,9 @@ arguments.
   polls the log line, the file or the process it expects, with a deadline. Reading found three
   fixed sleeps (5 seconds in the log-held case, 3 in the default-grace case, 2 in the
   holder-after-a-stop case). A moved suite SHOULD replace each with a wait on the condition it
-  stands for, with a deadline. #0066 (the locked case flakes under load) is carried to the
-  keeper's conformance story.
+  stands for, with a deadline. **Done for the Rust build's run (E0.06-T04-S01):** none of the three
+  remains, and the "Watch locked" case waits on its log line and on the process's exit
+  ([The keeper suite](#the-keeper-suite)).
 - **The keeper suite MUST NOT run under a timeout shorter than its run.** It takes about 7
   minutes (Terry's figure), and longer with `-SelfCheck`. The 95-second default-grace case and the
   240-second `-Watch` waits dominate.
@@ -473,13 +474,14 @@ check this: a home that was inside one would fail at the CA step, with the opera
 
 | Function | Does |
 |---|---|
-| `New-ConformanceHome` | Makes a folder under `%TEMP%` named `agentspace-conformance-<12 hex>`, holding a fresh `USERPROFILE` (`home`, with `.agentspace` and `.ssh`) and a throwaway CA made by the operator's `ca` under it. Returns `Root`, `UserProfile`, `StateDir` (`.agentspace\state` in the home), `SshDir` (`.ssh` in the home), `CaReady` and `CaReason`. When no CA can be made, `CaReady` is false and `CaReason` says why, and the real CA is never used instead |
+| `New-ConformanceHome` | Makes a folder under `%TEMP%` named `agentspace-conformance-<12 hex>`, holding a fresh `USERPROFILE` (`home`, with `.agentspace` and `.ssh`) and a throwaway CA made by the operator's `ca` under it. Returns `Root`, `UserProfile`, `StateDir` (`.agentspace\state` in the home), `SshDir` (`.ssh` in the home), `CaReady` and `CaReason`. When no CA can be made, `CaReady` is false and `CaReason` says why, and the real CA is never used instead. **Every folder it makes is checked at the call**: the `Root` through `Assert-ConformanceHomeRoot`, and each folder under it through `Assert-ConformancePath`, once the `Root` exists. Should the making fail, it deletes the `Root` through `Assert-ConformanceHomeRoot` too (#0110 point 2) |
 | `Invoke-AgentspaceCli -ConformanceHome <h> -Arguments <string[]> [-InputJson <string>] [-Environment <hashtable>]` | Runs the program `AGENTSPACE_CMD` names as a separate process, inside the home. Returns `ExitCode`, `Stdout`, `Stderr`, `Json` (stdout parsed with every time kept as a string, or null), `ErrorJson` (stderr parsed, or null), `StdoutBytes`, `StderrBytes` and `TimedOut`. `-Environment` adds or removes variables for that one run, and a null value removes one. **It refuses an override of `USERPROFILE`, `HOME`, `LOCALAPPDATA` or `APPDATA`, and an override of `AGENTSPACE_STATE_DIR` or `AGENTSPACE_SSH_DIR` to a path that is not under the home's `Root`.** A refusal throws, and the check reports it as FAIL. `-InputJson` is written to stdin |
 | `Invoke-ConformanceProgram -Variable <name> ...` | The same for any program a conformance variable names, such as `AGENTSPACE_OPERATOR_CMD` |
 | `Test-ConformanceSchema -Json <string> -Schema <file>` | True when the document validates against a schema under `schemas/` (`state/leases.state.schema.json` is allowed), by PowerShell 7's `Test-Json -SchemaFile`. False when it does not validate or is not JSON |
 | `Write-ConformanceResult -Name <check> -Status PASS\|FAIL\|SKIPPED [-Reason <text>]` | Prints one result line and counts it |
-| `Assert-ConformancePath -ConformanceHome <h> -Path <p>` | Resolves the path and returns it in full, or throws unless it is the home's `Root` or under it (an empty path, a path with `..` that leads out, another drive). **It also throws when the `Root` itself, or any folder or file that exists between the `Root` and the path, is a reparse point (a junction or a symbolic link)**, because a write or a delete through one could reach outside the home. It checks the attributes of each existing step, from the `Root` down. **Every delete and every write a lease CLI check makes MUST call it first** ([The program under test is untrusted](#the-program-under-test-is-untrusted)). The path it returns is in full and long form, so it can differ in spelling from the text a program wrote (a short `8.3` folder name in `%TEMP%` is expanded): a check that compares a path with such text uses the path as it built it, after the call |
-| `Remove-ConformanceHome -ConformanceHome <h>` | Deletes the home's `Root`, and only it. It refuses a folder that is not an `agentspace-conformance-*` folder directly under `%TEMP%` |
+| `Assert-ConformancePath -ConformanceHome <h> -Path <p>` | Resolves the path and returns it in full, or throws unless it is the home's `Root` or under it (an empty path, a path with `..` that leads out, another drive). **It also throws when the `Root` itself, or any folder or file that exists between the `Root` and the path, is a reparse point (a junction or a symbolic link)**, because a write or a delete through one could reach outside the home. It checks the attributes of each existing step, from the `Root` down. **Every delete and every write a lease CLI or operator check makes MUST call it at the call**, as the path argument of that very call, with no program run between the check and the write ([The program under test is untrusted](#the-program-under-test-is-untrusted)). The path it returns is in full and long form, so it can differ in spelling from the text a program wrote (a short `8.3` folder name in `%TEMP%` is expanded): a check that compares a path with such text uses the path as it built it, after the call |
+| `Assert-ConformanceHomeRoot -Root <p>` | Returns the full path of a home's root, or throws unless it is a folder named `agentspace-conformance-<something>` directly under `%TEMP%` and, when it exists, is not a reparse point. **It is the one write check that is not `Assert-ConformancePath`**: that one measures a path against a home's `Root`, and this one is what makes the `Root` safe to measure against. It guards `New-ConformanceHome`'s creation of the `Root`, and the deletes of `Remove-ConformanceHome` and of `New-ConformanceHome`'s own cleanup. A check that writes inside a home calls `Assert-ConformancePath`, never this (E0.06-T04-S01, #0110 point 2) |
+| `Remove-ConformanceHome -ConformanceHome <h>` | Deletes the home's `Root`, and only it. It refuses a folder that is not an `agentspace-conformance-*` folder directly under `%TEMP%`, and a `Root` that is a junction or a symbolic link, and it checks again at each delete (`Assert-ConformanceHomeRoot`) |
 | `Exit-ConformanceRun` | Prints the summary line and exits with the code above. A run that counted no result exits 1, after a `FAIL` line saying that no check ran |
 
 - **Every program the harness starts gets the same environment.**
@@ -540,10 +542,34 @@ check this: a home that was inside one would fail at the CA step, with the opera
   when the run passed the whole success test, and `Get-CcLeaseDir` and `Get-CcAliasPath`, the only
   functions that build a lease's paths, refuse an ID or an alias that does not match and check the
   path.
-- **Every delete and every write a lease CLI check makes MUST call `Assert-ConformancePath` first,
-  at the call**: `Remove-Item`, `Set-Content`, `Add-Content`, `Out-File`, `[IO.File]::Write*`,
-  `New-Item`, `Copy-Item` and `Move-Item`. The checks of S01 on `main` are included. A path that is
-  outside the throwaway home makes the check throw, and the check reports FAIL.
+- **Every delete and every write a lease CLI or operator check makes MUST call
+  `Assert-ConformancePath` at the call**: `Remove-Item`, `Set-Content`, `Add-Content`, `Out-File`,
+  `Export-Clixml`, `[IO.File]::Write*`, `New-Item`, `Copy-Item`, `Move-Item`, `Rename-Item`, and a
+  `[IO.FileStream]` opened to create or hold a file. **At the call means as the path argument of that
+  very call**, as in `Set-Content -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $p) ...`,
+  so that no statement and no program run lies between the check and the write (E0.06-T04-S01, #0110
+  point 1). A path asserted when it is assigned, and used a few lines later, is stale once a program has
+  run in between, which can swap a folder for a junction: `test-unmet-release-released.ps1` asserted its
+  paths, ran the program, and then copied to them. A call that moves or deletes a file through a path
+  checks that path too, and a `Move-Item` checks both ends. A path that is outside the throwaway home
+  makes the check throw, and the check reports FAIL. **No new function was needed**: the call is
+  `Assert-ConformancePath` itself, used inline.
+- **Two things are written without `Assert-ConformancePath`, and each is named** (#0110 point 2):
+  - **The home's own root.** `New-ConformanceHome` creates it, and `Remove-ConformanceHome` and
+    `New-ConformanceHome`'s cleanup delete it, through `Assert-ConformanceHomeRoot` at the call (a
+    folder named `agentspace-conformance-*` directly under `%TEMP%`, and not a junction or a symbolic
+    link). `Assert-ConformancePath` cannot guard its own reference, so this one check does.
+  - **A stand-in's own writes.** The `.cmd` stand-ins of `New-OperatorStandIn` and the ssh stand-in
+    script of `test-unmet-push.ps1` log and record beside themselves, under the home's `standins`
+    folder. They are programs outside agentspace that the check places, and a check does not make
+    those writes.
+- **Shown by an audit of the source, not of a run** (E0.06-T04-S01): every line of
+  `conformance/lease-cli/` and `conformance/operator/` that names a write verb (the calls above, and
+  `Tee-Object`, `Clear-Content`, `Set-Acl`, `[IO.File]::Open`, `Delete`, `Replace`, `CopyTo`, `icacls`)
+  carries `Assert-ConformancePath` or `Assert-ConformanceHomeRoot`, except the three lines of the ssh
+  stand-in script that write, which are the stand-in's own. The search was first run against lines
+  known to write, and found them, so that a zero would not be believed blind. **#0110 points 1 and 2
+  are done.**
 - **A time the program printed is untrusted too.** A check MUST NOT wait for one, without a limit.
 - **One path from the program's output is read outside the home: the default ProxyCommand's
   program** ([state.md, The alias file](state.md#the-alias-file)), which D8 puts beside the CLI's
@@ -956,8 +982,27 @@ prototype they found no disagreement with either. The requirement they do not co
 which is checked by its own file, expected to fail against the prototype
 ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)).
 
-**Not yet shown:** #0066's done-when, that the cases pass 5 times in a row beside two other
-copies of the suite and a live keeper, was not run by this story. What was run, on 2026-11-18, after the
+**#0066's done-when is shown (E0.06-T04-S01, 2026-11-19), for the Rust keeper.** The "Watch locked"
+case held the lock until the first pass logged `skipped ... reason=locked`, waited for that line for
+60 seconds, and waited for the keeper's exit for 240. It now waits up to 5 minutes for the line and
+up to 10 for the exit, and a line that never comes is a result of its own (`Watch locked: A pass that
+finds the lock held logs the skipped line before the deadline`), so a loaded laptop fails with what
+the case was waiting for, never with a later check's reason. A release some seconds after the log
+line is still safe: a pass that waits for the lock retries for up to 10 seconds
+([docs/keeper.md, Locks](keeper.md#board-holderlock-one-pass-at-a-time)), so the second pass takes it
+and logs `idle`. No sleep that stands for a condition remains. What is left is `Wait-Until`'s
+100-millisecond poll, and the 6-second hold in the #0068 file, a bounded wait inside a window where
+the keeper logs nothing ([keeper.md Q9](keeper.md#open-questions)).
+- **The run:** `-Case 'Watch: a locked pass*'`, 5 times in a row, against `target\dist\agentspace-keeper.exe`
+  built from `main` at 5430289, while two other copies of the whole keeper suite ran against the
+  same build at the same time, as separate `pwsh` processes the run started. **5 of 5 exited 0**, each
+  5 passed, 0 failed, 0 skipped, in 18 to 19 seconds (alone, about 20). The two copies were still
+  running when the fifth ended, and each ended 208 passed, 0 failed, 0 skipped, exit 0.
+- **What it does not show:** the Rust keeper is a light load, and the two copies slowed the case by
+  nothing. The load that #0066 saw was the prototype's PowerShell keeper beside a live keeper, and no
+  run with the prototype was made.
+
+What had been run before it, on 2026-11-18, after the
 cases were given the harness's environment and the 20-second wait: the full suite against the
 prototype (206 checks passed, 0 failed, 0 skipped, exit 0, in 7 minutes 15 seconds; 207 passed with the shared-token check that E0.04-T05-S05 added, 0 failed, 0 skipped, exit 0); the full suite
 against a keeper that prints nothing and exits 0 (119 of its 196 checks failed, and every case failed
@@ -1255,7 +1300,7 @@ and no file checks it.
 | driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable. What a caller sees of the driver is covered by `conformance/lease-cli/test-lease-driver-outcomes.ps1`: unsatisfiable requests, no driver name in any output, and a failed alias step. A foreign alias file kept by a failed `create` is not movable, since the alias name comes from a random ID |
 | keeper.md: The installed task | No conformance check covers an installed task. The three installer cases stay in `scripts/` as prototype code, and [Coverage](#coverage-of-the-operator-and-the-keeper) says why |
 | keeper.md: Release grace, card #0068 | **Checked by `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, which fails against the prototype** ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)). The gap that remains is the window itself: the keeper logs nothing when its look finds a holder alive and its pass then waits for `board-holder.lock`, so no event marks the moment between the look and the trust check. The file enters it with one bounded wait from the keeper's own `skipped` line, reads the log to see which path the keeper took, and reports SKIPPED if it missed. The second case in the file reaches the same rule with no timing, through a record that is gone |
-| keeper.md: Checking the keeper, card #0066 | The 5 passes in a row beside two other copies of the suite are not shown. The waits are conditions with deadlines, but no run of this story was made under that load |
+| keeper.md: Checking the keeper, card #0066 | **Shown for the Rust keeper (E0.06-T04-S01):** the "Watch locked" case passed 5 times in a row beside two other copies of the suite ([The keeper suite](#the-keeper-suite)). **Not shown:** the same under the prototype's keeper, a heavier load, which no run was made with |
 | keeper.md: The task's launcher; Stopping and starting the keeper | Nothing runs the launcher, the install, or the End and restart steps: they need the real Task Scheduler |
 | keeper.md: Starting a holder | The refusals of "Before the start" (a state folder or a keeper path holding a `"`, an alias outside the form), the create retries, the 10-second bound on one process-create call (D35) and the 35-second, 60-second and 95-second bounds have no case. The first needs a path that holds a `"`, which Windows refuses, and an alias outside the form, which the lease state's schema refuses; the rest need a launcher that does not answer, or a create call that does not return |
 | keeper.md: Locks | The `board-holder-keeper.lock` error path (any error other than the file being held) and the `board-holder.lock` error that is not "in use" have no case |

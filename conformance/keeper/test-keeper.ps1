@@ -722,12 +722,20 @@ try {
     $lockPath = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.lock'
     $held = $null
     if (-not $script:mut) { $held = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    $sawSkip = $true
     try {
       $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '6') $stub
-      if (-not $script:mut) { Wait-Until { @(Read-LogLines | Where-Object { $_ -cmatch ' skipped .*reason=locked' }).Count -ge 1 } 60 $p | Out-Null }
+      # The lock is held until the first pass has logged that it found the lock held, which is the
+      # condition the case stands on (#0066). A pass that waits for the lock retries for up to 10 seconds
+      # (keeper.md, "Locks"), so a release a few seconds late still falls inside the second pass's wait.
+      # The deadline is 5 minutes, for a laptop running three copies of the suite; the wait ends early if
+      # the keeper has exited.
+      if (-not $script:mut) { $sawSkip = Wait-Until { @(Read-LogLines | Where-Object { $_ -cmatch ' skipped .*reason=locked' }).Count -ge 1 } 300 $p }
     } finally { if ($held) { $held.Dispose() } }
-    $code = Wait-Watch $p 240
-    Write-Result ($code -eq 0) 'Watch locked: The loop ends on its own with exit 0' "The exit code was $code."
+    # The keeper ends by itself after its -MaxPasses passes: wait for that exit, never for a time.
+    $code = Wait-Watch $p 600
+    Write-Result $sawSkip 'Watch locked: A pass that finds the lock held logs the skipped line before the deadline' 'No skipped line was logged within 5 minutes, or the keeper exited first.'
+    Write-Result ($code -eq 0) 'Watch locked: The loop ends on its own with exit 0' "The exit code was $code (-999 means it did not end within 10 minutes)."
     $log = Read-LogLines
     $skipped = @($log | Where-Object { $_ -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ skipped lease=- alias=- pid=- reason=locked\z' })
     Write-Result ($skipped.Count -ge 1) "Watch locked: At least one line ""skipped lease=- alias=- pid=- reason=locked"" is logged (got $($skipped.Count))"

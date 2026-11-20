@@ -123,7 +123,7 @@ function Invoke-CcGatedRound {
   New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $Lab -Path $Lab.StateDir) | Out-Null
   $tokens = @($Jobs | ForEach-Object { [string]$_.Token })
   $started = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
-  $held = [System.IO.FileStream]::new($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+  $held = [System.IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $Lab -Path $lockPath), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
   $job = $null; $releasedAt = $null; $allSeen = $false; $seen = @()
   try {
     $job = Start-CcJobs -Lab $Lab -Jobs $Jobs -Started $started
@@ -496,7 +496,7 @@ try {
     $fRes = @(); $stateHeld = $null; $stateAfterBusy = $null; $issuedHeld = $null; $issuedAfterBusy = $null
     try {
       New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $lab.StateDir) | Out-Null
-      $held = [System.IO.FileStream]::new($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+      $held = [System.IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $lab -Path $lockPath), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
       $sw = [System.Diagnostics.Stopwatch]::StartNew()
       $listRun = Invoke-CcLease $lab @('list'); $listSeconds = $sw.Elapsed.TotalSeconds
       $sw.Restart()

@@ -99,7 +99,7 @@ try {
         $ttlBefore = [int]$recBefore.ttl_seconds
 
         # Hold the state file for reading with no delete sharing, so that its replacement fails.
-        $held = [IO.FileStream]::new($statePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $held = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $lab -Path $statePath), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
         $run = Invoke-UnmetLease $lab @('renew', $lease.Id, '--ttl', '90m')
         $held.Dispose()
         $held = $null

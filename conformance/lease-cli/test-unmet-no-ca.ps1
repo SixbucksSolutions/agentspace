@@ -117,7 +117,7 @@ function Get-UnmetMapDifferences {
 function Remove-UnmetCa {
   param([Parameter(Mandatory)]$Lab)
   $caDir = Assert-ConformancePath -ConformanceHome $Lab -Path (Join-Path $Lab.UserProfile '.agentspace\ca')
-  if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath $caDir -Recurse -Force }
+  if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $Lab -Path $caDir) -Recurse -Force }
 }
 
 $create = 'lease-api.md#the-credential'

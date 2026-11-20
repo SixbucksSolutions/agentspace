@@ -140,28 +140,28 @@ try {
     # refuses a private key that is not the user's alone.
     $keyAside = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $backup 'agentspace_ca')
     $pubAside = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $backup 'agentspace_ca.pub')
-    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pub) -Destination $pubAside
+    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pub) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pubAside)
     $keyBefore = Get-CaHash $key
     $r = Invoke-Ca $h $trip
     $p = Get-CaRefusalProblems $r @('exists but', 'does not repair a half-made CA')
     if (Test-Path -LiteralPath $pub) { $p.Add('The public key was made again') }
     if ((Get-CaHash $key) -cne $keyBefore) { $p.Add('The private key changed') }
     Write-CaResult "${sec}: A private key with no public key is refused with exit 1 and is not repaired" $p
-    Move-Item -LiteralPath $pubAside -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pub)
+    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pubAside) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pub)
 
-    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $key) -Destination $keyAside
+    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $key) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $keyAside)
     $pubBefore = Get-CaHash $pub
     $r = Invoke-Ca $h $trip
     $p = Get-CaRefusalProblems $r @('exists but', 'private key is lost')
     if (Test-Path -LiteralPath $key) { $p.Add('A private key was made') }
     if ((Get-CaHash $pub) -cne $pubBefore) { $p.Add('The public key changed') }
     Write-CaResult "${sec}: A public key with no private key is refused with exit 1, and no CA is made over it" $p
-    Move-Item -LiteralPath $keyAside -Destination (Assert-ConformancePath -ConformanceHome $h -Path $key)
+    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $keyAside) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $key)
 
     # ---- A public key that is not the private key's own is refused, and not repaired ----
     $other = Join-Path $h.Root 'other-key'
     & $keygen -q -t ed25519 -N '' -f (Assert-ConformancePath -ConformanceHome $h -Path $other) | Out-Null
-    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pub) -Destination $pubAside
+    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pub) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pubAside)
     Copy-Item -LiteralPath "$other.pub" -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pub)
     $pubBefore = Get-CaHash $pub
     $keyBefore = Get-CaHash $key
@@ -170,7 +170,7 @@ try {
     if ((Get-CaHash $pub) -cne $pubBefore -or (Get-CaHash $key) -cne $keyBefore) { $p.Add('A key file changed') }
     Write-CaResult "${sec}: A public key that is not the private key's own is refused with exit 1 and is not repaired" $p
     Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pub) -Force
-    Move-Item -LiteralPath $pubAside -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pub)
+    Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $pubAside) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $pub)
     $r = Invoke-Ca $h $trip
     Write-CaResult "${sec}: With the pair put back by hand, ca passes again" (Get-CaSuccessProblems $r)
 

@@ -106,9 +106,9 @@ try {
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $credDir) | Out-Null
     $receipt = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $lsDir 'service.json')
     $botXml = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $credDir 'bot.xml')
-    [IO.File]::WriteAllText($receipt, (ConvertTo-Json -Compress -InputObject @{ base = $baseUrl; credential_directory = $credDir }))
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $receipt), (ConvertTo-Json -Compress -InputObject @{ base = $baseUrl; credential_directory = $credDir }))
     $secure = ConvertTo-SecureString -String $tokenValue -AsPlainText -Force
-    [pscredential]::new('bot', $secure) | Export-Clixml -LiteralPath $botXml
+    [pscredential]::new('bot', $secure) | Export-Clixml -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botXml)
 
     # The stand-ins: a running instance launched long ago, so that `up` does not wait.
     $aws = New-OperatorStandIn -ConformanceHome $h -Name 'aws' -Body @(
@@ -118,8 +118,8 @@ try {
       'echo {"Reservations":[{"Instances":[{"State":{"Name":"running"},"LaunchTime":"2020-01-01T00:00:00+00:00"}]}]}',
       'exit /b 0')
     $sshPs1 = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.Root 'standins\ssh-standin.ps1')
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sshPs1) | Out-Null
-    [IO.File]::WriteAllText($sshPs1, $sshStandInScript)
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Split-Path -Parent $sshPs1)) | Out-Null
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $sshPs1), $sshStandInScript)
     $ssh = New-OperatorStandIn -ConformanceHome $h -Name 'ssh' -Body @(
       'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0ssh-standin.ps1" %*',
       'exit /b %ERRORLEVEL%')
@@ -322,7 +322,7 @@ try {
       # ---- 5. A credential that cannot be read ----
       $botBackup = Join-Path $h.Root 'bot.xml.keep'
       Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botXml) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $botBackup)
-      [IO.File]::WriteAllText($botXml, 'not a credential')
+      [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $botXml), 'not a credential')
       $callsBefore = Get-StandInCallCount -Log $sshCalls
       $r = Invoke-Up $zoneB
       $p = Get-Problems $r

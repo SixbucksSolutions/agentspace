@@ -224,7 +224,7 @@ function Reset-CcSshDir($Lab) {
   $full = Assert-ConformancePath -ConformanceHome $Lab -Path $Lab.SshDir
   if ($full -ieq (Assert-ConformancePath -ConformanceHome $Lab -Path $Lab.Root)) { throw 'The ssh folder is the throwaway root itself.' }
   if (Test-Path -LiteralPath $full) { Get-ChildItem -LiteralPath $full -Force | ForEach-Object { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $Lab -Path $_.FullName) -Recurse -Force } }
-  else { New-Item -ItemType Directory -Force -Path $full | Out-Null }
+  else { New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $Lab -Path $full) | Out-Null }
 }
 
 # --- Times ---------------------------------------------------------------------------------------
