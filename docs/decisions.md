@@ -92,6 +92,7 @@ line's text after `Status:`, without its full stop.
 - [D52. Sign-ins and the checkout on a new host are by hand, once, by a written procedure](#d52-sign-ins-and-the-checkout-on-a-new-host-are-by-hand-once-by-a-written-procedure): Decided
 - [D53. v0.07's done-when is shown by live checks, with Terry's yes for their instance hours](#d53-v007s-done-when-is-shown-by-live-checks-with-terrys-yes-for-their-instance-hours): Decided
 - [D54. A host is made only for a project Terry has named](#d54-a-host-is-made-only-for-a-project-terry-has-named): Decided
+- [D55. v0.07 is twenty stories in six turns: specs, foundations, programs, conformance, live](#d55-v007-is-twenty-stories-in-six-turns-specs-foundations-programs-conformance-live): Decided
 
 ## The interface
 
@@ -2809,7 +2810,7 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
 
 ## v0.07: a host per project
 
-**D43 to D54 settle v0.07's (#0047) design calls before its stories are laid out**, as
+**D43 to D54 settle v0.07's (#0047) design calls before its stories are laid out, and D55 lays them out**, as
 [handoff-v0.06.md](handoff-v0.06.md#the-scope-ahead-v007) asks. Each is the architect's,
 2026-11-20, unless it says otherwise. They bind the stories, which carry each one into the spec that
 owns the fact ([driver.md](driver.md), [operator.md](operator.md), [state.md](state.md),
@@ -2916,8 +2917,10 @@ driver answers it.
 
 ### D47. The operator reaches every host with its own certificate, and keeps each host's key under its own name
 
-**Decided, architect, 2026-11-20.**
-- **The operator connects to a host through an alias of its own, `agentspace-host-<project>`**,
+**Decided, architect, 2026-11-20.** The alias and the key's name were `agentspace-host-<project>`
+until D55 the same day made them `agentspace-host.<project>`: no lease alias holds a dot, so none
+can equal one, where a lease of project `host` could have. The stack keeps its hyphen (D44).
+- **The operator connects to a host through an alias of its own, `agentspace-host.<project>`**,
   written by agentspace into `agentspace.d` with the same owner mark and rules as a lease's alias
   file ([state.md, The alias file](state.md#the-alias-file)), and a certificate the operator signs
   for itself with the CA: principal `ubuntu`, key ID `operator-<project>`, valid for one hour, made
@@ -2925,7 +2928,7 @@ driver answers it.
   never uses his own key.
 - **Terry's `agentspace` entry keeps working for swimcoach's host**, and the operator MAY still use
   it there. Nothing makes him write an entry per host.
-- **Each new host's key is checked under its own name, `agentspace-host-<project>`, in agentspace's
+- **Each new host's key is checked under its own name, `agentspace-host.<project>`, in agentspace's
   own known-hosts file, `%USERPROFILE%\.agentspace\known_hosts`.** The operator's alias accepts a
   new key on first use (`StrictHostKeyChecking accept-new`), and every lease alias for that host
   checks it strictly (`StrictHostKeyChecking yes`, with `UserKnownHostsFile` and `HostKeyAlias`
@@ -2984,7 +2987,7 @@ driver: how a `pending` lease becomes `ready`.
   running.** They are the cost guard's tools until v0.08 (D51).
 - **The ProxyCommand finds a lease's host from the lease itself**: it reads the lease state file
   read-only, as the keeper does, for the record whose `ssh.host_alias` is its argument, then that
-  lease's project in `hosts.json`. An `agentspace-host-<project>` alias names its host directly, and
+  lease's project in `hosts.json`. An `agentspace-host.<project>` alias names its host directly, and
   no argument means the box. So the alias line's format, `"<program>" <alias>`, does not change, and
   every alias file already on the laptop keeps working.
 - **The token push and its stamp are per host** (D50).
@@ -3020,7 +3023,7 @@ it runs agents", last bullet) to every host. v0.08 (#0048) replaces it with leas
 
 **Decided, architect, 2026-11-20.** Card #0009 automates the sign-ins after 1.0.
 - **Terry signs in on each new host once**: Claude Code, Codex and gh, as how-it-was-built.md's
-  step 5 does for the box, over `ssh agentspace-host-<project>` (D47), with `-L 1455:localhost:1455`
+  step 5 does for the box, over `ssh agentspace-host.<project>` (D47), with `-L 1455:localhost:1455`
   for Codex.
 - **The project's checkout is cloned in the same sitting, after gh's sign-in**, with
   `gh repo clone <owner>/<repo> ~/<project>`, since agentspace knows no project's repository and a
@@ -3067,6 +3070,69 @@ while running at `m9g.xlarge`, so a mistyped `--project` MUST NOT make one.
   lease-api.md's note that v0 never reports `no_capacity` changes to say the EC2 driver reports it
   for such a project; no schema or code changes, so the contract does not.
 - **A missing `projects.json` lists nothing.** So a laptop without one makes no host at all.
+
+### D55. v0.07 is twenty stories in six turns: specs, foundations, programs, conformance, live
+
+**Decided, architect, 2026-11-20, when Terry had v0.07 (#0047) broken into stories** ("Break v0.07
+into stories"). It lays v0.07 out as D42 laid out v0.06, on the designs of D43 to D54, and the
+stories' cards carry the detail. Terry, the same day: every story's card names each subagent with
+its `Model/effort`, and a story is split into parallel workstreams wherever the work divides
+cleanly and that is a net win (D31).
+
+**The pinned names.** Every story uses these, and the specs written in T01 own their exact forms
+(state.md for files, operator.md for command lines, driver.md for the driver):
+
+| Name | Pinned as |
+|---|---|
+| The box | The host whose record has stack `agentbox`; its project is `swimcoach` (D43) |
+| A host's stack | `agentbox` for the box; `agentspace-host-<project>` for every other (D44) |
+| A host's operator alias, and its key's name | `agentspace-host.<project>` (D47), one file in `<ssh folder>\agentspace.d\`, owner mark `# agentspace host <project>; <comment>`, so that no lease's release or overwrite ever matches it |
+| The host registry | `%USERPROFILE%\.agentspace\hosts.json`, `{"version":0,"hosts":[{"project","stack","state","instance_id"?,"last_attempt_at"?}]}`, `state` one of `creating`, `ready`, `failed`; its lock `hosts.lock` beside it. Missing reads as the box's record alone, written by the first change (D45) |
+| The project list | `%USERPROFILE%\.agentspace\projects.json`, `{"version":0,"projects":[{"name","approved"}]}`, `approved` a date `YYYY-MM-DD`; missing lists nothing (D54) |
+| A host's folder | `%USERPROFILE%\.agentspace\hosts\<project>\`: the operator's key `id_ed25519`, its certificate `id_ed25519-cert.pub` (key ID `operator-<project>`, principal `ubuntu`, valid one hour, signed by each command), the run's log `provision.log`, the run's lock `provision.lock` (held for the run's life, so a held lock means a run is running), and the host's push stamp `localswim-pushed.json` |
+| The box's own files | Unchanged: its push stamp stays `%USERPROFILE%\.agentspace\localswim-pushed.json`, its holder record `<state folder>\board-holder.json`, so swimcoach's side reads as v0.06 left it |
+| Agentspace's host keys | `%USERPROFILE%\.agentspace\known_hosts`, written only by ssh (D47) |
+| Another host's holder | `<state folder>\board-holder.<project>.json` and `board-holder-ssh.<project>.log`, in the box's files' forms |
+| A lease alias for a host that is not the box | Today's block with `HostKeyAlias agentspace-host.<project>` and one more line after it, `UserKnownHostsFile "<known_hosts path>"`, the path written as the key's is. The box's lease aliases keep v0.06's bytes |
+| The operator's new command lines | `-Host <project>` on `deploy`, `up`, `sync`, `down`, `status`, `grow`; `-All` on `status`, `down`, `sync`; `bootstrap [-Host <project>]`; `provision -Host <project>`, the run D48 starts, which a person MAY run too |
+| Which host a connection reaches | An `agentspace-host.<project>` alias: that project's host. A lease alias: the record in the lease state file with that `ssh.host_alias`, then its project's `ready` host. No alias, or a project with no `ready` host: the box |
+
+**The turns.** Stories in a turn run in parallel, each in its own worktree; a turn starts when every
+pull request of the turn before is merged (D16). All six run on the laptop; only T05 and T06 start
+instances.
+
+| Turn | Stories | What | Peak |
+|---|---|---|---|
+| T01 | S01 to S05 | **The specs and the template.** state.md and the two new schemas; operator.md; driver.md and lease-api.md; keeper.md; the template's `HostName` and `CaPublicKey` with the empty `agentbox` change set shown live, and the bootstrap's Rust and gcc | 9 subagents |
+| T02 | S01 to S04 | **The foundations, as libraries.** `agentspace-hosts` (new); `agentspace-detach` (new), the detached start out of `agentspace-launch`; `agentspace-alias` and `agentspace-credential` for host aliases and the operator's certificate; `agentspace-box` and `agentspace-push` per host | 10 |
+| T03 | S01 to S05 | **The programs.** The driver and the lease CLI; the operator's commands; `deploy`, `sync`, `bootstrap` and `provision`; the ProxyCommand; the keeper | 13 |
+| T04 | S01 to S04 | **Conformance.** The lease CLI's cases; the operator's and the ProxyCommand's; the keeper's, with conformance.md's coverage; the whole suite against T03's build | 10 |
+| T05 | S01 | **The install and the live checks** of D53, but the sign-ins | 2 |
+| T06 | S01 | **The done-when:** Terry's sign-ins on agentspace's host, its checkout, and an agent working an agentspace card there | 1 |
+
+**Pins as code, committed by the architect before T03**, as D42's stubs were: the driver boundary
+gains `Driver::check_pending` (a default that does nothing) and the driver's `Context` gains the
+operator program a run starts; `agentspace-driver-ec2` gains a stub `place_pending`; and
+`agentspace-sync` gains stubs of `bootstrap` and `provision` and a `Target` parameter on `sync` and
+`deploy`. Each returns `not built yet` until its T03 story builds it. The T02 crates' public APIs
+are pinned on their cards, so T03 builds on merged code.
+
+**Carried in, with `references`:** #0137 (tests that change their own environment), its
+`agentspace-launch` half by E0.07-T02-S02 and its `agentspace-push` half by E0.07-T02-S04; #0138
+(a conformance file that does not tolerate a missing `board-holder.json`) by E0.07-T04-S03; and
+#0027 (the operator from Git Bash) by E0.07-T05-S01, as the handoff asks at the next live use.
+
+**Why this shape:**
+- **Specs first, as v0.04 did for v0.05 and v0.06 (D34).** Twelve decisions change four specs, and
+  a builder reads the spec, never the decision alone. Writing them in parallel is safe because the
+  names above are pinned here, and the architect reviews the four together.
+- **Libraries before programs.** Every T03 program needs the registry, the detached start, the
+  host alias and per-host box access; built first, they are merged code in T03, and only the
+  calls between T03's own stories need stubs.
+- **The live checks come last, and only after the whole suite passes**, as v0.06's cutover did
+  (D41), so no instance is started for a build that fails a check a stand-in could have shown.
+- **T06 is a story of its own** because it waits on Terry's sign-ins, which pause its clock in
+  Needs Terry, and T05's evidence MUST be merged before he is asked.
 
 ## Keys
 
