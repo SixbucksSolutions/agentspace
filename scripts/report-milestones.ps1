@@ -23,8 +23,12 @@ $Config = Join-Path $PSScriptRoot 'milestones.json'
 function Get-Cards {
   . C:\Projects\claude-localswim-watcher\lib\env.ps1
   Set-LocalswimEnv
-  try { $b = & $Localswim board get --view lanes $Board | ConvertFrom-Json -Depth 20 }
+  try { $b = & $Localswim board get --view lanes $Board 2>$null | ConvertFrom-Json -Depth 20 }
+  catch { $b = $null }
   finally { Clear-LocalswimEnv }
+  # The board can be unreachable for a moment, such as just after the laptop starts. A pass with no
+  # board MUST NOT end a watching reporter: it reports nothing and tries again at the next poll.
+  if (-not $b -or -not $b.lanes) { throw [System.IO.IOException]::new('the board could not be read') }
   $keys = @{}
   foreach ($l in $b.lanes) { $keys[$l.id] = $l.key }
   foreach ($c in $b.cards) { [pscustomobject]@{ Ticket = [int]$c.ticket; Lane = $keys[$c.lane_id]; Title = $c.title } }
@@ -80,7 +84,14 @@ function Save-State {
 function Get-Time($v) { if ($v -is [DateTime]) { $v.ToUniversalTime() } else { ([DateTimeOffset]::Parse("$v")).UtcDateTime } }
 while ($true) {
   $milestones = (Get-Content $Config -Raw | ConvertFrom-Json).milestones
-  $cards = @(Get-Cards)
+  try { $cards = @(Get-Cards) }
+  catch [System.IO.IOException] {
+    $stamp = (Get-Date).ToString('h:mmtt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
+    Write-Output "$stamp The board could not be read; no report this pass."
+    if (-not $Watch) { exit 1 }
+    Start-Sleep -Seconds 60
+    continue
+  }
   $now = [DateTime]::UtcNow
   foreach ($m in $milestones) {
     $st = $state[$m.name]
