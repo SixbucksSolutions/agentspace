@@ -2747,6 +2747,12 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
   story's Windows check at review. **T02 is the Windows halves, T03 wires the programs, T04 runs
   and extends the conformance suite, T05 cuts over on the laptop, and T06 removes the prototype**
   (D41, as changed).
+- **T05 gains a second story, E0.06-T05-S02 (#0140)** (Terry, 2026-11-20: "Add it to T05 as
+  S02"). The cutover's live check found that the Rust `deploy` hangs after the AWS CLI's
+  `cloudformation deploy` and never reaches `sync` (#0139; [runs/e0.06-t05-s01.md](runs/e0.06-t05-s01.md),
+  step D). S02 fixes it, with a live no-op deploy as its check, and it MUST merge before T06
+  starts: T06 removes the prototype, whose `deploy` is the only one that works until then, and D41
+  keeps the repository's change last so that a failed live check leaves a fallback in `main`.
 - **The ProxyCommand runs `up` in its own process**, calling `agentspace-box` and
   `agentspace-push` itself, in caller mode. operator.md allows it, and no private argument exists
   to leak into help.
