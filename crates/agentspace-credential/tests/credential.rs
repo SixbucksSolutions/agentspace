@@ -617,6 +617,93 @@ fn ca_accepts_crlf_and_any_comment_on_the_public_key() {
     assert!(check_ca_keys(&private, bare.as_bytes()).is_ok());
 }
 
+// state.md, The CA, check 4 (architect, 2026-11-19, as corrected, #0136): the words are split at any
+// run of spaces and tabs (U+0020, U+0009), so a tab or several spaces may separate them.
+#[test]
+fn ca_accepts_a_tab_between_the_two_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = keygen(dir.path(), "ca", "ed25519", "");
+    let private = fs::read(p).unwrap();
+    let public = fs::read_to_string(q).unwrap();
+    let w = words(&public);
+    let tabbed = format!("{}\t{} agentspace-conformance\n", w[0], w[1]);
+    assert_eq!(check_ca_keys(&private, tabbed.as_bytes()), Ok(()));
+}
+
+#[test]
+fn ca_accepts_two_spaces_between_the_two_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = keygen(dir.path(), "ca", "ed25519", "");
+    let private = fs::read(p).unwrap();
+    let public = fs::read_to_string(q).unwrap();
+    let w = words(&public);
+    let spaced = format!("{}  {} agentspace-conformance\n", w[0], w[1]);
+    assert_eq!(check_ca_keys(&private, spaced.as_bytes()), Ok(()));
+}
+
+// state.md, The CA, check 4 (architect, 2026-11-19, as corrected): the line is trimmed of ASCII
+// whitespace (U+0009 to U+000D, U+0020) at both ends, so a line break around the key is harmless.
+#[test]
+fn ca_trims_any_ascii_whitespace_around_the_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = keygen(dir.path(), "ca", "ed25519", "");
+    let private = fs::read(p).unwrap();
+    let public = fs::read_to_string(q).unwrap();
+    let w = words(&public);
+    for c in ['\u{9}', '\u{a}', '\u{b}', '\u{c}', '\u{d}', ' '] {
+        let line = format!("{c}{c}{} {} x{c}{c}", w[0], w[1]);
+        assert_eq!(check_ca_keys(&private, line.as_bytes()), Ok(()));
+    }
+}
+
+// state.md, The CA, check 4 (architect, 2026-11-19, as corrected): a line break (U+000A to U+000D)
+// between the words ends the line, so the key has one word and fails check 4 and check 5 alike, as
+// ssh-keygen exits 255 on it.
+#[test]
+fn ca_refuses_a_line_break_between_the_two_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = keygen(dir.path(), "ca", "ed25519", "");
+    let private = fs::read(p).unwrap();
+    let public = fs::read_to_string(q).unwrap();
+    let w = words(&public);
+    for (name, sep) in [
+        ("LF", "\u{a}"),
+        ("CR", "\u{d}"),
+        ("VT", "\u{b}"),
+        ("FF", "\u{c}"),
+        ("CRLF", "\u{d}\u{a}"),
+    ] {
+        let line = format!("{}{sep}{} x\n", w[0], w[1]);
+        assert!(
+            check_ca_keys(&private, line.as_bytes()).is_err(),
+            "A {name} between the words MUST refuse the CA"
+        );
+    }
+    // A break next to a run of spaces is still a break.
+    let mixed = format!("{} \u{a} {}", w[0], w[1]);
+    assert!(check_ca_keys(&private, mixed.as_bytes()).is_err());
+}
+
+// state.md, The CA, check 4 (architect, 2026-11-19, as corrected): a non-ASCII space such as U+00A0
+// is no whitespace, so it is neither trimmed from the ends nor a separator between the words.
+#[test]
+fn ca_refuses_a_non_ascii_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = keygen(dir.path(), "ca", "ed25519", "");
+    let private = fs::read(p).unwrap();
+    let public = fs::read_to_string(q).unwrap();
+    let w = words(&public);
+    let between = format!("{}\u{a0}{}", w[0], w[1]);
+    assert_eq!(
+        check_ca_keys(&private, between.as_bytes()),
+        Err(CaProblem::Unreadable)
+    );
+    let leading = format!("\u{a0}{} {}", w[0], w[1]);
+    assert!(check_ca_keys(&private, leading.as_bytes()).is_err());
+    let trailing = format!("{} {}\u{a0}", w[0], w[1]);
+    assert!(check_ca_keys(&private, trailing.as_bytes()).is_err());
+}
+
 #[test]
 fn ca_with_a_passphrase_fails_encrypted() {
     let dir = tempfile::tempdir().unwrap();

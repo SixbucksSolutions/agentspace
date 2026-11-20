@@ -231,9 +231,26 @@ pub fn sign_certificate(
     Ok(line)
 }
 
-/// The first two whitespace-separated words of a trimmed line.
-fn first_two_words(text: &str) -> Option<(&str, &str)> {
-    let mut words = text.split_whitespace();
+/// Whether a character is ASCII whitespace as state.md's "The CA" (check 4) trims a key's line:
+/// U+0009 to U+000D and U+0020, and nothing else. A non-ASCII space such as U+00A0 is not one.
+fn is_key_whitespace(c: char) -> bool {
+    matches!(c, '\u{9}'..='\u{d}' | ' ')
+}
+
+/// A public key's first two words, read as `ssh-keygen` reads a key (state.md, "The CA", check 4,
+/// architect, 2026-11-19, as corrected): the text is trimmed of ASCII whitespace at both ends, it
+/// ends at the first line break (U+000A to U+000D), and the line's words are split at any run of
+/// spaces and tabs (U+0020, U+0009) only.
+///
+/// A line break between the words ends the line, so the key has one word and `None` is returned. A
+/// non-ASCII space is no separator. Check 4 and check 5 both read the key through this one
+/// function, so they agree by construction.
+fn first_two_words(bytes: &[u8]) -> Option<(&str, &str)> {
+    let text = std::str::from_utf8(bytes)
+        .ok()?
+        .trim_matches(is_key_whitespace);
+    let line = text.split(['\n', '\u{b}', '\u{c}', '\r']).next()?;
+    let mut words = line.split([' ', '\t']).filter(|w| !w.is_empty());
     Some((words.next()?, words.next()?))
 }
 
@@ -267,19 +284,20 @@ pub fn check_ca_keys(private: &[u8], public: &[u8]) -> Result<(), CaProblem> {
         return Err(CaProblem::Encrypted);
     }
 
-    let public_text = normalized(public).ok_or(CaProblem::Unreadable)?;
-    let public_text = public_text.trim();
-    let (kind, blob) = first_two_words(public_text).ok_or(CaProblem::Unreadable)?;
+    let (kind, blob) = first_two_words(public).ok_or(CaProblem::Unreadable)?;
     if kind != ED25519_WORD || private_key.algorithm() != Algorithm::Ed25519 {
         return Err(CaProblem::NotEd25519);
     }
-    PublicKey::from_openssh(public_text).map_err(|_| CaProblem::Unreadable)?;
+    // Check 5 parses the key from the same two words check 4 compared (no separate reading), and
+    // the parser wants one space between them, so it is given them rejoined.
+    PublicKey::from_openssh(&format!("{kind} {blob}")).map_err(|_| CaProblem::Unreadable)?;
 
     let derived = private_key
         .public_key()
         .to_openssh()
         .map_err(|_| CaProblem::Unreadable)?;
-    let (derived_kind, derived_blob) = first_two_words(&derived).ok_or(CaProblem::Unreadable)?;
+    let (derived_kind, derived_blob) =
+        first_two_words(derived.as_bytes()).ok_or(CaProblem::Unreadable)?;
     if kind != derived_kind || blob != derived_blob {
         return Err(CaProblem::Mismatch);
     }
