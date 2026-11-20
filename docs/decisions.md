@@ -3123,7 +3123,7 @@ instances.
 | T01 | S01 to S05 | **The specs and the template.** state.md and the two new schemas; operator.md; driver.md and lease-api.md; keeper.md; the template's `HostName` and `CaPublicKey` with the empty `agentbox` change set shown live, and the bootstrap's Rust and gcc | 9 subagents |
 | T02 | S01 to S04 | **The foundations, as libraries.** `agentspace-hosts` (new); `agentspace-detach` (new), the detached start out of `agentspace-launch`; `agentspace-alias` and `agentspace-credential` for host aliases and the operator's certificate; `agentspace-box` and `agentspace-push` per host | 10 |
 | T03 | S01 to S05 | **The programs.** The driver and the lease CLI; the operator's commands; `deploy`, `sync`, `bootstrap` and `provision`; the ProxyCommand; the keeper | 13 |
-| T04 | S01 to S04 | **Conformance.** The lease CLI's cases; the operator's and the ProxyCommand's; the keeper's, with conformance.md's coverage; the whole suite against T03's build | 10 |
+| T04 | S01 to S04 | **Conformance.** The lease CLI's cases; the operator's and the ProxyCommand's; the keeper's, with conformance.md's coverage; the whole suite against T03's build | 11 |
 | T05 | S01 | **The install and the live checks** of D53, but the sign-ins | 2 |
 | T06 | S01 | **The done-when:** Terry's sign-ins on agentspace's host, its checkout, and an agent working an agentspace card there | 1 |
 
@@ -3133,6 +3133,17 @@ operator program a run starts; `agentspace-driver-ec2` gains a stub `place_pendi
 `agentspace-sync` gains stubs of `bootstrap` and `provision` and a `Target` parameter on `sync` and
 `deploy`. Each returns `not built yet` until its T03 story builds it. The T02 crates' public APIs
 are pinned on their cards, so T03 builds on merged code.
+
+**Changed during T01 (architect, 2026-11-20, on the dev lead's questions from E0.07-T01-S03):**
+- **The driver's `Context` also gains `state_dir`**, since `place_pending` writes the lease state
+  file, and the run builds that Context from the variables its detached start is given.
+- **The lease CLI names the run's program with a variable of its own, `AGENTSPACE_PROVISION_CMD`**,
+  never `AGENTSPACE_OPERATOR_CMD`, which the conformance harness sets to the operator under test.
+- **`agentspace-detach` passes an environment** (`AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR`,
+  `AGENTSPACE_PROXY_COMMAND` when set, and `USERPROFILE`), and uses no launch files.
+- **E0.07-T04-S01 re-seeds the lease CLI suite's throwaway homes**, because under D54 a home with no
+  `projects.json` answers `no_capacity` for every project but swimcoach; E0.07-T03-S01's
+  conformance done-when keeps only the cases that never reach place. T04-S01 grows to 2.5 hours.
 
 **Carried in, with `references`:** #0137 (tests that change their own environment), its
 `agentspace-launch` half by E0.07-T02-S02 and its `agentspace-push` half by E0.07-T02-S04; #0138
