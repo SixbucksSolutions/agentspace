@@ -80,6 +80,17 @@ line's text after `Status:`, without its full stop.
 - [D40. By v1.0, agentspace's own files are JSON where feasible](#d40-by-v10-agentspaces-own-files-are-json-where-feasible): Direction, Terry, 2026-11-19, to be met by v1.0 (#0053)
 - [D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration](#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration): Decided; step 8 changed by D42
 - [D42. v0.06 builds the operator and the keeper as crates around two pinned boundaries, in six turns](#d42-v006-builds-the-operator-and-the-keeper-as-crates-around-two-pinned-boundaries-in-six-turns): Decided
+- [D43. Today's box becomes swimcoach's host, and agentspace is the second project](#d43-todays-box-becomes-swimcoachs-host-and-agentspace-is-the-second-project): Decided
+- [D44. A host is a CloudFormation stack of its own, from the one template](#d44-a-host-is-a-cloudformation-stack-of-its-own-from-the-one-template): Decided
+- [D45. The laptop keeps which host serves which project, in `hosts.json`](#d45-the-laptop-keeps-which-host-serves-which-project-in-hostsjson): Decided
+- [D46. A new host gets its software from `box/system` and a bootstrap, never an image, in v0.07](#d46-a-new-host-gets-its-software-from-boxsystem-and-a-bootstrap-never-an-image-in-v007): Decided
+- [D47. The operator reaches every host with its own certificate, and keeps each host's key under its own name](#d47-the-operator-reaches-every-host-with-its-own-certificate-and-keeps-each-hosts-key-under-its-own-name): Decided
+- [D48. A lease for a project with no host answers `pending`, and a run that outlives the call makes the host](#d48-a-lease-for-a-project-with-no-host-answers-pending-and-a-run-that-outlives-the-call-makes-the-host): Decided
+- [D49. The operator's commands name a host, and without one act on today's box](#d49-the-operators-commands-name-a-host-and-without-one-act-on-todays-box): Decided
+- [D50. One holder per host, one push stamp per host, one CA for every host](#d50-one-holder-per-host-one-push-stamp-per-host-one-ca-for-every-host): Decided
+- [D51. Until v0.08, every host a turn starts is stopped at its close](#d51-until-v008-every-host-a-turn-starts-is-stopped-at-its-close): Decided
+- [D52. Sign-ins and the checkout on a new host are by hand, once, by a written procedure](#d52-sign-ins-and-the-checkout-on-a-new-host-are-by-hand-once-by-a-written-procedure): Decided
+- [D53. v0.07's done-when is shown by live checks, with Terry's yes for their instance hours](#d53-v007s-done-when-is-shown-by-live-checks-with-terrys-yes-for-their-instance-hours): Decided
 
 ## The interface
 
@@ -2795,6 +2806,248 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
 - **The cards carried in** are linked with `references`: #0027 and #0034 (the operator's), #0087
   (the caller), #0066 and #0068 (the keeper's), and #0110 (conformance hardening).
 
+## v0.07: a host per project
+
+**D43 to D53 settle v0.07's (#0047) design calls before its stories are laid out**, as
+[handoff-v0.06.md](handoff-v0.06.md#the-scope-ahead-v007) asks. Each is the architect's,
+2026-11-20, unless it says otherwise. They bind the stories, which carry each one into the spec that
+owns the fact ([driver.md](driver.md), [operator.md](operator.md), [state.md](state.md),
+[keeper.md](keeper.md)) in the same pull request that builds it (D34). Two calls are Terry's, and
+wait on him as [Q6 and Q7](#open-questions).
+
+**What none of them changes:** the lease contract (D1). Every output, schema and reason code of
+contract v0 stays as it is; `pending` was already in it, and v0.07 is the first release whose
+driver answers it.
+
+### D43. Today's box becomes swimcoach's host, and agentspace is the second project
+
+**Decided, architect, 2026-11-20.**
+- **The `agentbox` stack and its instance become swimcoach's host**, with nothing about them
+  renamed or replaced: its disk, its sign-ins, its checkout of swimcoach and its host key all stay.
+  Terry's `agentspace` SSH entry keeps reaching it.
+- **Every other project gets a host of its own at its first lease** (D25, D48). The first is
+  `agentspace` itself, so v0.07's done-when is shown by an agentspace lease that creates
+  agentspace's host and works a card on the agentspace board.
+- **No lease is moved.** Every lease on the laptop is released today (handoff-v0.06.md, Where
+  things stand), so no `ready` lease of another project points at the box when v0.07 lands.
+
+**Why this way round:**
+- **The done-when says swimcoach's leases are unaffected.** Keeping swimcoach on the box it already
+  uses is the only reading in which nothing about them changes.
+- **agentspace's own work is what needs the bootstrap proven.** Its turns compile Rust, and the box
+  got Rust and gcc by hand (D38). A fresh agentspace host shows that the bootstrap gives them
+  (D46), where moving agentspace onto the box would hide the gap.
+- **The box's agentspace checkout and its hand-installed Rust stay harmless on swimcoach's host**,
+  and a later cleaning pass MAY remove them.
+
+### D44. A host is a CloudFormation stack of its own, from the one template
+
+**Decided, architect, 2026-11-20.**
+- **Each host is one stack, named `agentspace-host-<project>`**, deployed from the same template
+  as `agentbox`, `infra\agentspace.yaml`. The project is the lease's normalized project
+  ([lease-api.md](lease-api.md#project)), so the name is at most 47 characters and always starts
+  with a letter, as CloudFormation requires.
+- **The template gains a `HostName` parameter whose default, `agentbox`, reproduces every name the
+  `agentbox` stack has today**: the alarm's name, the `Name` and `project` tags. A deploy of
+  `agentbox` from the changed template MUST be an empty change set, and the story that changes the
+  template MUST show that live, by creating the change set, reading it, and deleting it unexecuted,
+  before its pull request is merged.
+- **Each host's stack holds its own role, instance profile, security group, instance and alarm.**
+  Nothing is shared between stacks, so deleting one host's stack touches no other.
+- **The CA's public key becomes a stack parameter, `CaPublicKey`**, installed with its sshd drop-in
+  by the first-boot user data, so a new host trusts the CA before the operator first connects
+  (D47). It is a public key, and MAY be seen in the stack's parameters. `sync` still installs it as
+  today, and replaces the first boot's copy with the same bytes.
+- **The laptop's AWS sign-in needs no new permission.** Today it is an administrator (operator.md,
+  The AWS side). The calls a host adds are the ones `deploy` already makes, per stack, and
+  operator.md's list of what the identity needs gains no new service.
+
+**Why not the alternatives:**
+- **More instances in the one stack:** every host's change would be an update of a shared stack,
+  a failed update would roll every host back, and a host could not be removed on its own.
+- **Instances made by the driver with `RunInstances`, outside any stack:** it would rebuild what
+  the stack already does (role, security group, alarm, the parameters D39 sizes through) in Rust,
+  and leave resources with nothing that deletes them together.
+- **A second template:** two templates drift. A parameter with a default that changes nothing for
+  `agentbox` keeps one.
+
+### D45. The laptop keeps which host serves which project, in `hosts.json`
+
+**Decided, architect, 2026-11-20** (D21, D40).
+- **`%USERPROFILE%\.agentspace\hosts.json` is the host registry**: one record per host, with its
+  project, its stack's name, its state (`creating`, `ready` or `failed`), its cached instance ID,
+  and the time of its last attempt. It is JSON with a draft 2020-12 schema in `schemas/state/`,
+  replaced atomically under a lock of its own, as state.md's other files are. Its exact form is
+  state.md's, written by the story that builds it.
+- **It replaces the instance-ID cache, `instance-id.json`.** That file was only a cache of one
+  stack's output, and becomes a member of a record. Nothing migrates: a missing record's instance
+  ID is read from its stack again, as the cache is today.
+- **A missing `hosts.json` is seeded with one record: project `swimcoach`, stack `agentbox`,
+  state `ready`** (D43). So the laptop as it is today reads as v0.07's starting point.
+- **It is laptop state, never output** (D1). No lease command prints anything from it.
+
+### D46. A new host gets its software from `box/system` and a bootstrap, never an image, in v0.07
+
+**Decided, architect, 2026-11-20.** Card #0014 (versioned images) stays after 1.0.
+- **A new host is made in four steps, by the operator:** its stack is deployed (D44), it is
+  started and waited for as `up` does, `sync` installs `box/system`, the CA, the localswim CLI and
+  `CLAUDE.md` as it does for the box, and the bootstrap installs the toolchain.
+- **The bootstrap becomes the operator's to run**, as a command (D49), with `box/bootstrap.sh`
+  embedded in the operator as `box/system` is (D37's addendum). Today a person runs it once per
+  instance by hand (operator.md, The box's files).
+- **The bootstrap MUST install what the box got by hand**: Ubuntu's `build-essential` (gcc, for
+  linking) and rustup with the stable toolchain, `rustfmt` and `clippy` (D38's note). It stays
+  safe to run again, so running it on the box makes the box's Rust the bootstrap's.
+- **The `agent-linux` profile's promise does not change** ([lease-api.md](lease-api.md#profiles)).
+  Rust is installed and not promised, as on the box today, since promising it would change the
+  contract.
+- **A new host's root volume starts at the template's 8 GiB, and grows under the same rule as the
+  box's**, through `grow` with the host named. Whether Terry's standing order on the box's disk
+  covers every host is [Q7](#open-questions).
+
+**Why not an image:**
+- **A host is kept, and patched at every boot** (D25, how-it-was-built.md). An image would be
+  stale the day after it was made, and the boot-time patch would do the same work anyway.
+- **An image needs a build pipeline, a store and a version per profile** (#0014's design), which
+  is a release of its own. The bootstrap costs about ten minutes, once per project.
+- **The bootstrap already exists and has run on the box.** Extending it is a small change, and
+  keeps one path for the box and every new host.
+
+### D47. The operator reaches every host with its own certificate, and keeps each host's key under its own name
+
+**Decided, architect, 2026-11-20.**
+- **The operator connects to a host through an alias of its own, `agentspace-host-<project>`**,
+  written by agentspace into `agentspace.d` with the same owner mark and rules as a lease's alias
+  file ([state.md, The alias file](state.md#the-alias-file)), and a certificate the operator signs
+  for itself with the CA: principal `ubuntu`, key ID `operator-<project>`, valid for one hour, made
+  fresh for each command. So setting up a host needs no change to Terry's SSH configuration and
+  never uses his own key.
+- **Terry's `agentspace` entry keeps working for swimcoach's host**, and the operator MAY still use
+  it there. Nothing makes him write an entry per host.
+- **Each new host's key is checked under its own name, `agentspace-host-<project>`, in agentspace's
+  own known-hosts file, `%USERPROFILE%\.agentspace\known_hosts`.** The operator's alias accepts a
+  new key on first use (`StrictHostKeyChecking accept-new`), and every lease alias for that host
+  checks it strictly (`StrictHostKeyChecking yes`, with `UserKnownHostsFile` and `HostKeyAlias`
+  naming it). Terry's `known_hosts` is never written for a new host.
+- **Swimcoach's lease aliases keep today's bytes**, `HostKeyAlias agentspace` and Terry's
+  `known_hosts`, so its leases are unaffected (D43).
+- **Accepting the first key is sound here** because the transport is a Session Manager session to
+  a known instance ID, opened with Terry's AWS sign-in: nothing but that instance can answer it.
+  Host certificates (#0032) stay after 1.0.
+
+### D48. A lease for a project with no host answers `pending`, and a run that outlives the call makes the host
+
+**Decided, architect, 2026-11-20.** It settles [driver.md Q3](driver.md#open-questions) for the EC2
+driver: how a `pending` lease becomes `ready`.
+- **When the project's host is `ready`, place is as today**: no AWS call, the credential and the
+  alias, and `ready`. The alias names that host's key (D47).
+- **When the project has no host, or its host is `creating` or `failed`, place answers `pending`
+  and issues nothing.** Under the host registry's lock it records the host as `creating`, if it is
+  not already, and starts the host's provisioning run unless one is running. Place still makes no
+  AWS call and never waits for a host (driver.md, Reachability).
+- **The provisioning run is `agentspace-operator`, started detached through `agentspace-launch`'s
+  Starter**, the same handshake that lets the keeper's holder outlive a tool call (D42). It runs
+  D46's four steps, logs to `<state folder>\hosts\<project>.log`, and sets the host's record to
+  `ready` or `failed`.
+- **When the run finishes, it places every `pending` lease of that project**: under the lease state
+  lock, it issues each one's credential and alias, as place does, and writes it `ready`. That is
+  lease-api.md's transition "`pending` to `ready`, by agentspace, when placement finishes", and
+  `get` and `list` stay read-only.
+- **A failed run leaves the leases `pending`, never `unsatisfiable`**, because `unsatisfiable`
+  means the request can never be met as asked (D5), and a failed deploy or an expired AWS sign-in
+  is neither. A later `create` or `get` for the project starts the run again, at most once every 5
+  minutes. A caller that gives up releases the lease, and its host is kept (D25).
+- **A lease's TTL starts when it becomes `ready`**: `expires_at` is the certificate's valid-before,
+  as today, so time spent `pending` costs the caller none of it.
+
+**Why not the alternatives:**
+- **`create` waiting for the host:** making a host takes about ten minutes, longer than an agent's
+  tool call runs by default, and a call killed while it waited would leave the host half made.
+- **The first connection making the host**, as it starts a stopped box: the same ten minutes inside
+  ssh's connection, which every client would have to wait out (the desktop app passes
+  `ConnectTimeout=30`, D12's E3.03 finding), with the same half-made host when one gives up.
+- **The keeper making hosts:** it would have to talk to AWS, which keeper.md rules out, for a job
+  that happens once per project.
+
+### D49. The operator's commands name a host, and without one act on today's box
+
+**Decided, architect, 2026-11-20.**
+- **`deploy`, `up`, `sync`, `down`, `status` and `grow` take `-Host <project>`.** Without it, each
+  acts on swimcoach's host, the `agentbox` stack, exactly as today, so every command line in the
+  repository and every conformance case keeps its meaning.
+- **`deploy -Host <project>` creates the host's stack when it has none**, and updates it otherwise
+  (D39's resize path, per host).
+- **A new command, `bootstrap`, runs the toolchain bootstrap** (D46) on the host it names, or on the
+  box without `-Host`.
+- **`status -All` reports every host in `hosts.json`, and `down -All` stops every one that is
+  running.** They are the cost guard's tools until v0.08 (D51).
+- **The ProxyCommand finds a lease's host from the lease itself**: it reads the lease state file
+  read-only, as the keeper does, for the record whose `ssh.host_alias` is its argument, then that
+  lease's project in `hosts.json`. An `agentspace-host-<project>` alias names its host directly, and
+  no argument means the box. So the alias line's format, `"<program>" <alias>`, does not change, and
+  every alias file already on the laptop keeps working.
+- **The token push and its stamp are per host** (D50).
+
+### D50. One holder per host, one push stamp per host, one CA for every host
+
+**Decided, architect, 2026-11-20.**
+- **The keeper holds one holder per host** (D30's "one per project host"). Each pass groups the
+  ready leases by their host, and for each host holds through the one that expires last, as it does
+  for the one box today. The holder record holds one entry per host; its form is state.md's.
+  The laptop's ends of the forwards are shared: each host binds the board's ports on its own
+  loopback, so two holders never contend.
+- **The push stamp is kept per host.** One stamp for all would differ at every connection to
+  another host, since it covers the instance ID, and so push at every connection. A stamp per host
+  pushes once per host per change, as today.
+- **Every host trusts the one CA** (D7, D17). `sync -Host` sends it; a replaced CA MUST be synced to
+  every host, which `sync -All` does, and D17's replacement steps now say "every host".
+- **The time zone push and `CLAUDE.md`'s copy go to each host** as they go to the box (D32).
+
+### D51. Until v0.08, every host a turn starts is stopped at its close
+
+**Decided, architect, 2026-11-20**, extending AGENTS.md's rule for the box ("Sizing the box before
+it runs agents", last bullet) to every host. v0.08 (#0048) replaces it with lease-based stop.
+- **A turn's close MUST name every host it used**, stop each with `down -Host` or `down -All`, and
+  confirm with `status -All` that each is `stopped`.
+- **D11's idle stop and the CloudWatch backstop apply to every host**: each host's stack carries
+  its own alarm (D44), and `sync` installs the idle check on each.
+- **Each host is sized by hand for its use, as the box is** (D39), through its own stack's
+  `InstanceType` and `deploy -Host`.
+- **Which projects may have a host made at all is [Q6](#open-questions)**, Terry's call.
+
+### D52. Sign-ins and the checkout on a new host are by hand, once, by a written procedure
+
+**Decided, architect, 2026-11-20.** Card #0009 automates the sign-ins after 1.0.
+- **Terry signs in on each new host once**: Claude Code, Codex and gh, as how-it-was-built.md's
+  step 5 does for the box, over `ssh agentspace-host-<project>` (D47), with `-L 1455:localhost:1455`
+  for Codex.
+- **The project's checkout is cloned in the same sitting, after gh's sign-in**, with
+  `gh repo clone <owner>/<repo> ~/<project>`, since agentspace knows no project's repository and a
+  private one needs gh's credential. Cloning before the sign-in would fail for a private repository.
+- **The procedure is written in the README by the story that makes the first new host**, and the
+  operator's provisioning run ends by printing where it is. A host is `ready` for leases before the
+  sign-ins: `ready` means a connection is expected to succeed (lease-api.md, States), not that an
+  agent can work there yet.
+
+### D53. v0.07's done-when is shown by live checks, with Terry's yes for their instance hours
+
+**Decided, architect, 2026-11-20** (D19).
+- **No stand-in can show a host being made**, so the stories' done-whens name these live checks:
+  - **A first agentspace lease answers `pending`, and becomes `ready`** once its host's run ends,
+    with `agentspace-host-agentspace` created, set up and recorded `ready` in `hosts.json`.
+  - **The lease's alias reaches the new host**, and the keeper holds the board there.
+  - **After Terry's sign-ins (D52), an agent in a desktop-app session on the lease works a card on
+    the agentspace board.**
+  - **A swimcoach lease created before and after connects to the box as it did**, with its alias
+    file byte for byte as v0.06 writes it.
+  - **`lease create`, `get` and `list` print documents that validate against contract v0's
+    schemas** throughout.
+  - **The `agentbox` change set is empty** (D44).
+- **Terry's yes is asked once, before the first live check, for the instance hours it starts**, and
+  every host it started is stopped at its close (D51).
+- **conformance.md's coverage table is read for every "None" these change** (architect.md,
+  Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -2860,3 +3113,5 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q3** | **Later, not blocking:** card #0008 is after 1.0 (roadmap.md), and contract v0's board access is D12's. How do many leases, and later many project users, reach the laptop's localswim board? | #0008 |
 | **Q4** | **Later, not blocking:** card #0016 is after 1.0 (roadmap.md), and contract v0 has one driver, whose reachability is D9's. One overlay network across all backends (WireGuard, Tailscale, Cloudflare Tunnel), or a reachability path per driver? | #0016 |
 | **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 for the MVP (D18), then Rust (D28). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |
+| **Q6** | **Needs Terry, before v0.07's stories (cost).** May any project's first lease make a host (D48), or only a project Terry has named? A host costs its disk while stopped, about $0.64 a month at 8 GiB and $1.60 at 20 GiB, and about $0.20 an hour while running at `m9g.xlarge`. With no list, a mistyped `--project` makes a host. **The architect recommends a list**, `%USERPROFILE%\.agentspace\projects.json`, that Terry approves each entry of, holding `agentspace` for v0.07; a lease for a project not on it is `unsatisfiable` with `no_capacity`, which contract v0 already has ("supported, but no capacity can be found"), so the contract does not change. | Terry |
+| **Q7** | **Needs Terry, before v0.07's stories (cost).** Does his standing order on the box's disk (AGENTS.md, "Growing the box's disk": up to 64 GiB, never below 60% used after a grow, grow past 80%) cover every host, each on its own? **The architect recommends yes, per host**, so agentspace's host can be grown ahead of its first compiling turn as the box was. | Terry |
