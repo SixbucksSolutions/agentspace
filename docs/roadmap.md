@@ -75,8 +75,10 @@ when Terry says so (D14).
 - **A host per project comes before sizes and plans,** because a size means nothing until a project
   has a host of its own to size.
 - **Plan from the board comes before `linux/amd64`** (Terry, 2026-11-19, D26), so agentspace is
-  feature complete on one platform before it turns to others. Neither needs the other: a plan read
-  from an epic names no platform.
+  feature complete on one platform before it turns to others. Neither needs the other's code, since
+  a plan read from an epic names no platform, but they run in serial: on the board #0052 blocks
+  #0051, and #0051 blocks #0053 (Terry, 2026-11-19, 4:35pm Pacific, moving v0.11's link from v1.0
+  to v0.12), so the releases from v0.10 to v1.0 are one chain (AGENTS.md, The board).
 - **Both new platforms are one release, built in parallel** (Terry, 2026-11-19, D26). Windows
   needs the driver to serve more than one platform, not the amd64 host, so that is v0.12's shared
   first turn, and the two platforms' tracks run side by side after it. Terry placed Windows before
