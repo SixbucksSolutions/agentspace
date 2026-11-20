@@ -2952,7 +2952,9 @@ driver: how a `pending` lease becomes `ready`.
 - **The provisioning run is `agentspace-operator`, started detached through `agentspace-launch`'s
   Starter**, the same handshake that lets the keeper's holder outlive a tool call (D42). It runs
   D46's four steps, logs to `<state folder>\hosts\<project>.log`, and sets the host's record to
-  `ready` or `failed`.
+  `ready` or `failed`. Changed by D55 the same day: the run is started through the new
+  `agentspace-detach` crate, which shares agentspace-launch's WMI call, and its log is
+  `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`.
 - **When the run finishes, it places every `pending` lease of that project**: under the lease state
   lock, it issues each one's credential and alias, as place does, and writes it `ready`. That is
   lease-api.md's transition "`pending` to `ready`, by agentspace, when placement finishes", and
@@ -2961,6 +2963,11 @@ driver: how a `pending` lease becomes `ready`.
   means the request can never be met as asked (D5), and a failed deploy or an expired AWS sign-in
   is neither. A later `create` or `get` for the project starts the run again, at most once every 5
   minutes. A caller that gives up releases the lease, and its host is kept (D25).
+- **A lease left `pending` on a host that is already `ready`**, because the run's placing of it
+  failed, is placed by the next run too (architect, 2026-11-20, for v0.07-T01, ruling on the dev
+  lead's pin P3). `get` starts a run for it under the same 5-minute rule, the run on a `ready` host
+  does every step again, each safe to repeat, and ends by placing the project's pending leases. So
+  no such lease is stranded, and `get` still never writes the lease state file.
 - **A lease's TTL starts when it becomes `ready`**: `expires_at` is the certificate's valid-before,
   as today, so time spent `pending` costs the caller none of it.
 
