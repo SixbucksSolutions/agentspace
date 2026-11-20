@@ -1401,8 +1401,12 @@ Mode: dry run; nothing was registered or started.
 - **The rest of FA-17 and FB-17, ruled by the architect on 2026-11-19 for v0.06:**
   - **Every line of a dry run goes to stdout**, the `Warning:` line included, and nothing to
     stderr.
-  - **`<registration time>` is the laptop's local time with its offset, to the whole second:**
-    `YYYY-MM-DDTHH:MM:SS+HH:MM` (or `-HH:MM`), the form Task Scheduler stores a boundary in.
+  - **`<registration time>` is the boundary exactly as the definition holds it: UTC with a `Z`,
+    to the whole second**, `YYYY-MM-DDTHH:MM:SSZ`, as [The task's fields](#the-tasks-fields)'
+    Trigger 2 row gives it. (Corrected by the architect the same evening, for E0.06-T02-S06: this
+    line first said local time with its offset, against that row. The row wins, since a UTC
+    boundary does not move when the laptop's zone does.) A real install's read-back prints the
+    boundary as Task Scheduler returns it.
   - **`<DOMAIN>\<user>` is the current user's account as Windows names it**, the form of `ca`'s
     `<owner>` ([operator.md, ca](operator.md#ca)): for a local account, the computer's name, a
     backslash and the user name. Like an instance ID, it MUST be withheld from anything committed
@@ -1496,7 +1500,13 @@ exit, and a launcher still exiting holds its file. Running `-Uninstall` again th
 ([Q21](#open-questions)). The prototype's own `-Uninstall` deletes its launcher the same way.
 
 **Any other error ends the installer with exit 1**, with one line on stderr that starts
-`agentspace-keeper-install: `. The prototype prints PowerShell's own error record then, and its
+`agentspace-keeper-install: `. Three of them, ruled by the architect on 2026-11-19 for
+E0.06-T02-S06: `USERPROFILE` unset or empty, after the usage checks and in every mode `-DryRun`
+included, is `agentspace-keeper-install: USERPROFILE is not set, so there is no home folder.`; a
+keeper lock file that exists but cannot be opened for any reason but a sharing or lock violation
+is `agentspace-keeper-install: The keeper lock <path> could not be checked: <error>`; and an
+`-Uninstall` whose unregistration fails stops there, exit 1, and does not remove the prototype's
+launcher, which a task that is still registered may yet run. The prototype prints PowerShell's own error record then, and its
 arguments are bound by PowerShell, so an unknown argument there is PowerShell's error, with exit 1.
 
 ## Stopping and starting the keeper
