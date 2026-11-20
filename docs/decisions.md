@@ -2753,6 +2753,21 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
   step D). S02 fixes it, with a live no-op deploy as its check, and it MUST merge before T06
   starts: T06 removes the prototype, whose `deploy` is the only one that works until then, and D41
   keeps the repository's change last so that a failed live check leaves a fallback in `main`.
+- **What E0.06-T06-S01 (#0135) keeps, and what retires** (architect, 2026-11-20, before T06
+  starts, from `git ls-files` at `3c2618e`):
+  - **The architect's process tools stay** (D28): `scripts/watchdog.ps1`,
+    `scripts/report-milestones.ps1`, `scripts/milestones.json` and `scripts/watch-sampler.ps1`, the
+    last of which the card's list missed.
+  - **A crate's own test stand-in is not product code**, so
+    `crates/agentspace-push/tests/win_support/ssh-standin.ps1` stays. #0055's third done-when reads
+    "nothing but the conformance suite, the architect's process tools and the crates' test
+    stand-ins".
+  - **Interop retires with the prototype.** `conformance/lease-cli/test-interop.ps1` exists to show
+    the rewrite and the prototype share their state, and with no prototype it has no peer. It and
+    `AGENTSPACE_PEER_CMD` are removed. conformance.md keeps a note that cites the last run,
+    36 passed each way in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md).
+  - **`box/system/install.sh`'s one message is the exception to "MUST NOT edit box/system"** (D37's
+    addendum), as D41 step 8 names it (gap FA-12). Nothing else in `box/system` changes.
 - **The ProxyCommand runs `up` in its own process**, calling `agentspace-box` and
   `agentspace-push` itself, in caller mode. operator.md allows it, and no private argument exists
   to leak into help.
