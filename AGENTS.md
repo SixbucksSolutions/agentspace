@@ -11,12 +11,13 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where it stands:** [docs/handoff-v0.05.md](docs/handoff-v0.05.md), the architect's handoff
-  after v0.05, for the architect who starts v0.06. It is final, and v0.05 is closed (2026-11-19).
-  An agent picking agentspace up SHOULD read it first. It gives only what v0.05 changed, and
-  [docs/handoff-v0.04.md](docs/handoff-v0.04.md) still holds the release cycle it builds on. The
-  earlier handoffs, [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and
-  [docs/handoff-mvp.md](docs/handoff-mvp.md), stay for their pieces and lessons.
+- **Where it stands:** [docs/handoff-v0.06.md](docs/handoff-v0.06.md), the architect's handoff
+  after v0.06, for the architect who starts v0.07. It is final, and v0.06 is closed (2026-11-20).
+  An agent picking agentspace up SHOULD read it first.
+- **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
+  current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with
+  [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and [docs/handoff-mvp.md](docs/handoff-mvp.md),
+  for their pieces and lessons.
 - **The plan:** [docs/roadmap.md](docs/roadmap.md): the MVP was v0.01, and releases v0.02 to v1.0
   are one Backlog epic each (D26). It goes from there to someday-maybe ideas. The Backlog MUST
   match the roadmap at all times (Terry, 2026-11-17).

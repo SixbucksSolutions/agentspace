@@ -2,9 +2,10 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Draft, started at 7:45am Pacific on 2026-11-20, during v0.06-T06, at Terry's word.** Every
-> **[at close]** is filled when T06 merges and Terry approves #0055. Where this file and AGENTS.md
-> or the board disagree, they win.
+> **Final, as of 10:04am Pacific on 2026-11-20.** v0.06 is closed: all twenty-six of its pull
+> requests are merged to `main`, and Terry approved #0055 and its last story into Completed.
+> Started as a draft at 7:45am the same day, during v0.06-T06, at Terry's word. Where this file and
+> AGENTS.md or the board disagree, they win.
 
 **Written for the architect who starts v0.07, after Terry `/clear`s this one.** Read in this order:
 
@@ -33,17 +34,17 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 ## Where things stand
 
-**As of [at close]. Each turn's close is in the next table.**
+**As of 10:04am Pacific, 2026-11-20. Each turn's close is in the next table.**
 
 | What | State |
 |---|---|
-| v0.06 (#0055), the operator in Rust, PowerShell retired | All six turns merged, the last at 8:14am, 2026-11-20 (PR #89, `75c6f73`). #0055 and #0135 are in Ready For Review; **[at close]** Terry's approval |
+| v0.06 (#0055), the operator in Rust, PowerShell retired | All six turns merged, the last at 8:14am, 2026-11-20 (PR #89, `75c6f73`). Done: Terry approved #0055 and #0135 into Completed by 10:04am. Marked done in roadmap.md |
 | Terry's laptop | Runs the Rust programs from `%USERPROFILE%\.agentspace\bin`, installed from S02's build `4f18b59` on 2026-11-20. His `agentspace` entry's ProxyCommand names `agentspace-ssh-proxy.exe`, and his keeper task runs `agentspace-keeper-task.exe`, both with his yes (D41). The reversals are in `C:\Projects\agentspace-runs\v0.06-t05\`, outside the repository |
 | The stack's parameters | `%USERPROFILE%\.agentspace\stack-parameters.json` (D40), written from the git-ignored `infra\local.parameters` in T05. Since T06 it is the only source: a size change sets its `InstanceType`, then `agentspace-operator deploy` while the box is stopped (AGENTS.md, "Sizing the box before it runs agents"). `infra\local.parameters` is no longer read |
 | The box | Stopped at 2:01am, 2026-11-20. `m9g.xlarge` (4 vCPUs), root volume 20 GiB. Its system files, CA check and localswim CLI were last installed by the Rust `sync` at 1:58am. Rust and gcc are still installed by hand in `ubuntu`'s home (D38's note) |
 | Leases | None ready |
 | The keeper | The Rust keeper, running and idle |
-| Swimcoach | `v0.06` until Terry approves #0055; `v0.06-T06` stopped at 8:15am, 2026-11-20 |
+| Swimcoach | No milestone. `v0.06` was stopped and the reporter with it at 10:04am, 2026-11-20; start it again when v0.07's stories are laid out |
 | The app's SSH connection | `agentspace-inception`, whose host Terry points at each new lease's alias |
 
 ### v0.06 by turn
@@ -73,9 +74,34 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 ## What v0.06 built
 
-**[at close]** One line per story, from the PR list (#64 to #88, and T06's), with its card and
-any run record. Until then, the PR titles are the list: `gh pr list --state merged --search
-"E0.06"`.
+| Turn | Story | Card | PR | What |
+|---|---|---|---|---|
+| T01 | E0.06-T01-S01 | #0111 | #65 | The operator's front: command line, help, usage errors and messages |
+| T01 | E0.06-T01-S02 | #0112 | #68 | The programs the operator starts: the AWS CLI, ssh and scp |
+| T01 | E0.06-T01-S03 | #0113 | #67 | Starting the box and waiting for it, and the instance-ID cache |
+| T01 | E0.06-T01-S04 | #0114 | #70 | The token push, its portable half |
+| T01 | E0.06-T01-S05 | #0115 | #64 | The laptop's time zone as an IANA name, and the zone check |
+| T01 | E0.06-T01-S06 | #0116 | #69 | The keeper's front and its pass |
+| T01 | E0.06-T01-S07 | #0117 | #66 | The keeper's files: holder record, launch files and the holder command's matcher |
+| T02 | E0.06-T02-S01 | #0118 | #77 | The `ca` command and sync's CA check |
+| T02 | E0.06-T02-S02 | #0119 | #76 | The token push, its Windows half |
+| T02 | E0.06-T02-S03 | #0120 | #75 | The keeper on Windows: processes, the stop, the locks |
+| T02 | E0.06-T02-S04 | #0121 | #78 | Starting a holder: the handshake, WMI and the launcher |
+| T02 | E0.06-T02-S05 | #0122 | #74 | The keeper's watch |
+| T02 | E0.06-T02-S06 | #0123 | #73 | The keeper task's installer |
+| T02 | E0.06-T02-S07 | #0124 | #71 | The keeper task's launcher |
+| T02 | E0.06-T02-S08 | #0125 | #72 | The footprint of v0.06-T01, measured ([runs/e0.06-t02-s08.md](runs/e0.06-t02-s08.md)) |
+| T03 | E0.06-T03-S01 | #0126 | #83 | The operator commands: `up`, `down`, `status`, `grow` and `ca` |
+| T03 | E0.06-T03-S02 | #0127 | #82 | `sync` and `deploy`, with the template and the box files embedded |
+| T03 | E0.06-T03-S03 | #0128 | #80 | The ProxyCommand, `agentspace-ssh-proxy.exe` |
+| T03 | E0.06-T03-S04 | #0129 | #81 | The keeper program, wired: real processes, locks, launcher and clock |
+| T03 | E0.06-T03-S05 | #0130 | #79 | `cargo xtask dist` writes v0.06's eight files |
+| T04 | E0.06-T04-S01 | #0131 | #86 | The whole conformance suite against the Rust build ([runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md)) |
+| T04 | E0.06-T04-S02 | #0132 | #84 | Operator checks for `down`, `status`, `grow`, usage, help and the start paths |
+| T04 | E0.06-T04-S03 | #0133 | #85 | #0110's missing cases, the keeper's logon environment, and the CA key's words (#0136) |
+| T05 | E0.06-T05-S01 | #0134 | #87 | The cutover on the laptop, and its live checks ([runs/e0.06-t05-s01.md](runs/e0.06-t05-s01.md)) |
+| T05 | E0.06-T05-S02 | #0140 | #88 | The deploy hang fixed (#0139), with a live no-op deploy ([runs/e0.06-t05-s02.md](runs/e0.06-t05-s02.md)) |
+| T06 | E0.06-T06-S01 | #0135 | #89 | The prototype removed, the suite's defaults moved to the install folder ([runs/e0.06-t06-s01.md](runs/e0.06-t06-s01.md)) |
 
 ## Lessons from v0.06
 
@@ -99,7 +125,7 @@ any run record. Until then, the PR titles are the list: `gh pr list --state merg
 
 ## What is open
 
-**[at close]** Rechecked when Terry approves #0055.
+**Rechecked at close, 10:04am Pacific, 2026-11-20:** every card named below is still in Backlog.
 
 | What | Who acts | Where it goes |
 |---|---|---|
@@ -150,10 +176,11 @@ platforms, then v1.0.
 
 ## When Terry approves v0.06
 
-**Once every pull request is merged and the board shows #0055 and every v0.06 story in
-Completed,** follow [architect.md](architect.md#closing-a-release), and in it:
-1. Fill every **[at close]** here, replace the draft note, and point AGENTS.md's "Where it
-   stands" at this file.
+**Done, 2026-11-20, by 10:04am Pacific**, after a board event showed #0055 and #0135 in Completed.
+Kept as the record of this close; the procedure is [architect.md](architect.md#closing-a-release).
+In it:
+1. Fill every slot left for the close here, replace the draft note, and point AGENTS.md's "Where
+   it stands" at this file.
 2. Mark v0.06 done in roadmap.md's table: the operator, the ProxyCommand and the keeper in Rust,
    the laptop cut over, and no PowerShell left in the product.
 3. List the Backlog cards in "What is open" for Terry, with their evidence, in one message.
