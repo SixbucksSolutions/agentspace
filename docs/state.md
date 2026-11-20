@@ -1154,6 +1154,12 @@ strict, as a writer MUST write it.
 | `not_after` | The launcher's deadline, UTC, as `YYYY-MM-DDTHH:MM:SS.fffffffZ` (seven fraction digits) |
 | `result` | The full path of the result file |
 
+**The starter, which writes the request, writes every path in it with backslashes**, turning each
+`/` of the `-SshExe` it was given into `\`, and builds the holder's command line from that same
+path, so the request, the record and the matcher agree (architect, 2026-11-19, for E0.06-T02-S04).
+The checks of [keeper.md, Before the start](keeper.md#before-the-start) are the pass's, and the
+starter does not repeat them.
+
 The request carries full paths so that the launcher, which MUST run with the user's logon
 environment and not the pass's
 ([keeper.md, "Streams and environment"](keeper.md#streams-and-environment)), never reads
