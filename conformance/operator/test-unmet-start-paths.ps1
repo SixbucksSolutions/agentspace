@@ -27,12 +27,15 @@
 #   other-states, bad-launch-time, wait-messages, wait-answers, wait-invocation-polls,
 #   wait-20-polls and deadline.
 #
-# THE DEADLINE CASE WAITS THE REAL 15 MINUTES. No seam variable shortens the deadline, and a check
-# MUST NOT trust a time to be shorter (docs/conformance.md, "The program under test is untrusted").
-# It runs by default, so a whole run takes about 18 minutes, and the case's own limit on `up` is 17
-# minutes, so that it can never hang. Run the rest alone with -Case, for example -Case 'wait-*'.
-# QUESTION: Is the real 15-minute wait right for the deadline case, or does a later ruling give a
-# check a way to reach it faster? Interim: its own case, selectable, run by default, limit 17 minutes.
+# THE DEADLINE CASE WAITS THE REAL 15 MINUTES, and so it runs only when asked for (docs/conformance.md,
+# "Cases that run only when asked for", architect, 2026-11-19). No seam variable shortens the deadline,
+# and a check MUST NOT trust a time to be shorter (docs/conformance.md, "The program under test is
+# untrusted"). It runs only when -Case is exactly `deadline` (in any letter case), under a limit of its
+# own on `up` of 17 minutes, so that it can never hang. With any other -Case, the default `*` included,
+# it writes one `SKIPPED` result under the name its PASS or FAIL would carry, with the reason `the
+# 15-minute deadline case runs only with -Case deadline`, and does not run `up` for it. That skip is
+# an expected one: a run that shows it has not failed, and it makes the run's exit code 2. Every other
+# case runs by default, in about 2 to 3 minutes.
 #
 # SAFETY. The harness points USERPROFILE, HOME, LOCALAPPDATA and APPDATA into the throwaway home and
 # removes every AWS credential. Before any program that can reach AWS starts, the check confirms under
@@ -45,7 +48,7 @@
 # conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program under test"). A
 # failure reason never quotes the program's output.
 #
-# Run as: pwsh -NoProfile -File conformance/operator/test-unmet-start-paths.ps1 [-Case <wildcard>]
+# Run as: pwsh -NoProfile -File conformance/operator/test-unmet-start-paths.ps1 [-Case <wildcard>|deadline]
 param(
   [string]$Case = '*'
 )
@@ -61,6 +64,7 @@ $msgSsm = 'Waiting for Session Manager...'
 $msgPatching = 'Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...'
 $msgDeadline = "agentspace: $id was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch"
 $msgReady = "Ready: $id"
+$deadlineSkipReason = 'the 15-minute deadline case runs only with -Case deadline'
 $deadlineLimitSeconds = 17 * 60
 
 # The stand-in aws: a Windows PowerShell 5.1 script that a .cmd starts, so that it sees the arguments
@@ -115,14 +119,13 @@ function Get-LaunchTime([double]$MinutesAgo) {
 # Names for the calls the spec lists (Calls by command), by their whole argument list in the order
 # the spec gives (FB-07): the service, the operation, --region us-west-2, --output json where it is
 # passed, then the operation's own arguments. The send-command's question is the box's own wording,
-# so its value is compared as `commands=<question>`.
-# QUESTION: For `ec2 wait instance-stopped`, does FB-07's "the service, the operation, --region
-# us-west-2, then the operation's own arguments" put --region after `wait` (the operation, as the
-# first two arguments of a stand-in) or after `instance-stopped`? Interim: both are accepted.
+# so its value is compared as `commands=<question>`. The wait is exactly
+# `ec2 wait --region us-west-2 instance-stopped --instance-ids <id>`: the operation is `wait`, so
+# --region follows it, and `instance-stopped` is the wait's own argument (docs/operator.md, Calls by
+# command (FB-07), ruling for E0.06-T03-S03, architect, 2026-11-19). The other placement is not accepted.
 $symbols = @{
   (@('ec2', 'describe-instances', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $id) -join '|') = 'describe'
   (@('ec2', 'start-instances', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $id) -join '|') = 'start'
-  (@('ec2', 'wait', 'instance-stopped', '--region', 'us-west-2', '--instance-ids', $id) -join '|') = 'wait'
   (@('ec2', 'wait', '--region', 'us-west-2', 'instance-stopped', '--instance-ids', $id) -join '|') = 'wait'
   (@('ssm', 'describe-instance-information', '--region', 'us-west-2', '--output', 'json', '--filters', "Key=InstanceIds,Values=$id") -join '|') = 'dii'
   (@('ssm', 'send-command', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $id, '--document-name', 'AWS-RunShellScript', '--comment', 'agentspace up: patch check', '--parameters', 'commands=<question>') -join '|') = 'send'
@@ -256,7 +259,7 @@ try {
 
         $p = New-Problems
         Add-CallProblems $p $calls @('describe', 'wait', 'start', 'dii', 'send', 'get')
-        Write-Problems "${sec}: A stopping box is waited for with ec2 wait instance-stopped --region us-west-2 --instance-ids <id> (FB-07's argument order, no --output), then started, and describe-instances is not called again (steps 1 and 2; FB-09)" $p
+        Write-Problems "${sec}: A stopping box is waited for with ec2 wait --region us-west-2 instance-stopped --instance-ids <id> (FB-07's argument order, no --output), then started, and describe-instances is not called again (steps 1 and 2; FB-09)" $p
 
         $p = New-Problems
         if ($r.ExitCode -ne 0 -or -not ($lines -ccontains $msgReady)) { $p.Add('A wait that exited 255 stopped up, but its exit code is not checked') }
@@ -442,7 +445,15 @@ try {
       }
 
       # ---- The 15-minute deadline, waited in full ----
-      if (Get-Selected 'deadline') {
+      # The deadline case runs only with -Case deadline, exactly (docs/conformance.md, Cases that run
+      # only when asked for, architect, 2026-11-19), and otherwise is one SKIPPED result under the
+      # name of its first result. Its patch question goes through Session Manager's Run Command
+      # (docs/operator.md, What up waits for, and Calls by command: ssm send-command and ssm
+      # get-command-invocation; ssh and scp are tripwires).
+      $deadlineName1 = "${sec}: A box that is never ready fails at the deadline with exactly agentspace: <id> was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch, exit 1, nothing on stdout (step 3)"
+      if ((Get-Selected 'deadline') -and $Case -ine 'deadline') {
+        Write-ConformanceResult -Name $deadlineName1 -Status SKIPPED -Reason $deadlineSkipReason
+      } elseif (Get-Selected 'deadline') {
         # Online, and the box answers pending to every question: a patch run that never finishes.
         Set-Scenario ($askedOnce + @{
             'ec2 describe-instances'     = @((New-Describe 'running'), (New-Describe 'running' (Get-LaunchTime 1)))
@@ -457,7 +468,7 @@ try {
         Add-RunProblems $p $r 1
         if ($lines.Count -eq 0 -or $lines[-1] -cne $msgDeadline) { $p.Add('The last line on stderr is not agentspace: <id> was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch') }
         if ($lines | Where-Object { $_ -like 'Ready:*' }) { $p.Add('Ready was printed') }
-        Write-Problems "${sec}: A box that is never ready fails at the deadline with exactly agentspace: <id> was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch, exit 1, nothing on stdout (step 3)" $p
+        Write-Problems $deadlineName1 $p
 
         $p = New-Problems
         if ($r.TimedOut) { $p.Add('It was still running after 17 minutes') }
