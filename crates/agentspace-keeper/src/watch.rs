@@ -184,10 +184,9 @@ fn wait(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, wait: Option<Wait
             );
         }
     }
-    // QUESTION: How long does a keeper wait when `Clock::sleep` itself panics? The pinned clock
-    // is the only way a keeper waits, so it cannot wait out the rest of a sleep that panicked.
-    // Interim: the wait ends there, its error is logged, and the loop goes on; a real clock's
-    // sleep does not panic, and `-MaxPasses` still bounds a check's loop.
+    // A wait whose `Clock::sleep` panics ends there, its error is logged, and the loop goes on to
+    // its next pass (keeper.md, Fast failures and backoff; architect, 2026-11-19, for
+    // E0.06-T02-S05). The pinned clock is the only way a keeper waits.
     if let Err(message) = guarded(|| deps.clock.sleep(Duration::from_secs(seconds))) {
         log_failed(
             deps,
