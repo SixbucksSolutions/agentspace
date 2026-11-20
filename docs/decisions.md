@@ -2640,6 +2640,9 @@ owns each format; operator.md owns what the commands do with them). Each is
 - **The conformance files that write the rewrite's cache or stamp change with it:**
   `conformance/operator/test-unmet-proxy-connect-time.ps1`, `test-unmet-proxy-steps.ps1` and
   `test-unmet-push.ps1` write `instance-id` and `localswim-pushed.sha256` in the old forms today.
+  **Changed in T03, not T04** (architect, 2026-11-19, asked by the T03 dev lead): T03's done-whens
+  run those files in full, so E0.06-T03-S03 changes the two ProxyCommand files and E0.06-T03-S01
+  changes `test-unmet-push.ps1`, each in its own pull request; E0.06-T04-S01 keeps the harness.
 - **Contract v0's files are already JSON** (the lease state file, the keeper's records, every
   document the CLI prints) and change nothing.
 
