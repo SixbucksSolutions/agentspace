@@ -4,8 +4,8 @@
 # Conformance check of `deploy`'s passthrough of the AWS CLI's `cloudformation deploy` output
 # (docs/operator.md, "deploy", steps 3 to 5; "Streams"), run through the test seam (docs/operator.md,
 # "The test seam"). Defect #0139, story E0.06-T05-S02 (#0140): the real CLI writes progress lines to
-# stdout while it deploys, and the v0.06 operator then never returned. Every check before this one
-# stood in a CLI that wrote nothing to stdout during the deploy.
+# stdout while it deploys, and the v0.06 operator then never returned. No check before this one ran
+# `deploy` (docs/conformance.md, Coverage, the `deploy` row).
 #
 # EXPECTED TO FAIL AGAINST THE PROTOTYPE, because it does not meet the seam: it runs the AWS CLI by a
 # fixed path and reads none of AGENTSPACE_AWS_CMD, AGENTSPACE_SSH_CMD or AGENTSPACE_SCP_CMD (card
@@ -17,8 +17,9 @@
 # beside it. Every case stops `deploy` at step 5 or before: the stand-in's `cloudformation
 # describe-stacks` answers a stack with no InstanceId output, so `sync` (step 6) is never reached,
 # and `go`, `ssh-keygen`, `ssh` and `scp`, which a check MUST NOT run here (docs/conformance.md,
-# Coverage, the `deploy` row), are never started. Each case checks that the run ended within its deadline, the operator's stdout against the
-# CLI's exactly, the first and last stderr lines, the exit code and the AWS calls made.
+# Coverage, the `deploy` row), are never started. Each case checks that the run ended within its
+# deadline, the operator's stdout against the CLI's exactly, the first and last stderr lines, the
+# CLI's stderr line where it wrote one, the exit code and the AWS calls made.
 #
 # The deadline is the run's own: the harness waits for the operator to exit, and a run that has not
 # exited within it is stopped with its process tree and fails, saying what it waited for. Nothing
@@ -112,6 +113,7 @@ try {
       @(Get-Content -LiteralPath $keysLog | Where-Object { $_.Trim() -ne '' })
     }
     # Runs `deploy` once and reports it. $Expect: Exit, Stdout (exact), Last (the last stderr line),
+    # Has (a line the CLI wrote to stderr, which MUST be among the operator's stderr lines; optional),
     # Keys (the AWS calls' <service>-<operation>, in order).
     function Test-Case {
       param(
@@ -133,6 +135,7 @@ try {
         $lines = @($r.Stderr -split "`n" | Where-Object { $_ -ne '' })
         if ($lines.Count -eq 0 -or $lines[0] -cne $deploying) { $p.Add("The first stderr line is not '$deploying'") }
         if ($lines.Count -eq 0 -or $lines[-1] -cne $Expect.Last) { $p.Add("The last stderr line is not '$($Expect.Last)'") }
+        if ($Expect.Has -and -not ($lines -ccontains $Expect.Has)) { $p.Add("The CLI's stderr line '$($Expect.Has)' did not reach the operator's stderr") }
         if ($r.Stderr -match 'CategoryInfo|At line:|Exception|panicked') { $p.Add('Stderr shows a runtime error record') }
         $keys = @(Get-AwsKeys)
         if (($keys -join ',') -cne ($Expect.Keys -join ',')) { $p.Add("The AWS calls were $($keys.Count), not the $($Expect.Keys.Count) of '$($Expect.Keys -join ', ')'") }
@@ -164,11 +167,11 @@ try {
       Test-Case "${sec}: a deploy whose CLI writes progress lines to stdout passes them through as written, ends, and goes on to step 5 (#0139)" {
         Set-Answer 'cloudformation-deploy' -Out $cliStdout -Err $cliStderr -Code 0
         Set-Answer 'cloudformation-describe-stacks' -Out $noOutputs -Code 0
-      } @{ Exit = 1; Stdout = $cliStdout; Last = $noInstanceId; Keys = $stepFive }
+      } @{ Exit = 1; Stdout = $cliStdout; Last = $noInstanceId; Has = $cliStderr.TrimEnd("`n"); Keys = $stepFive }
 
       Test-Case "${sec}: a failed deploy whose CLI wrote to stdout passes it through and ends with step 4's failure (#0139)" {
         Set-Answer 'cloudformation-deploy' -Out "`nWaiting for changeset to be created..`n" -Err "An error occurred (ValidationError) when calling the CreateChangeSet operation`n" -Code 255
-      } @{ Exit = 1; Stdout = "`nWaiting for changeset to be created..`n"; Last = $deployFailed; Keys = @('cloudformation-deploy') }
+      } @{ Exit = 1; Stdout = "`nWaiting for changeset to be created..`n"; Last = $deployFailed; Has = 'An error occurred (ValidationError) when calling the CreateChangeSet operation'; Keys = @('cloudformation-deploy') }
     }
   }
 } catch {
