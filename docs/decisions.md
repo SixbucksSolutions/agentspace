@@ -2755,6 +2755,14 @@ v0.06 the way D38 laid out v0.05, and the stories' cards carry the detail.
 - **The holder's process tree is stopped through the Windows API, never `taskkill`**, and `ca`
   sets access rules through the Windows API, never `icacls` (FB-15).
 - **T02-S08 writes v0.06-T01's run record**, as E0.05-T02-S04 wrote v0.05-T01's, for v0.09 (#0049).
+- **The pinned `Output` gains a fourth kind, `Checked`** (architect, 2026-11-19, from
+  E0.06-T04-S02's conformance run): `--output json` passed, the exit code checked as for any call,
+  and the answer never parsed. `ec2 start-instances`, `ec2 stop-instances` and `ec2 modify-volume`
+  use it, since operator.md reads their answers no further than the exit code, and the build
+  failed `down` and `grow` with "not JSON" when a stand-in answered with something else. E0.06-T04-S02
+  makes the change to `agentspace-operator-api` in the same pull request that implements it in
+  `agentspace-run` and uses it in `agentspace-box` and `agentspace-operator`, since a new variant
+  breaks every exhaustive match until both land.
 - **The holder record's file is a trait of the keeper's own** (architect, 2026-11-19, for
   E0.06-T01-S06, asked by its dev lead before GO). The keeper pin has no seam for reading, writing
   and removing `board-holder.json`, and its parser is E0.06-T01-S07's, built in parallel. So
