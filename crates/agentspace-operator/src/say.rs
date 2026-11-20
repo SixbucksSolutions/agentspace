@@ -11,6 +11,8 @@ use std::sync::Mutex;
 
 use agentspace_operator_api::{CallerFailure, CallerLine, Failure, Mode, Say};
 
+use crate::Report;
+
 /// What the caller's progress lines say.
 fn caller_text(line: CallerLine) -> &'static str {
     match line {
@@ -99,6 +101,13 @@ impl Printer {
             (Mode::Caller, CallerFailure::NotReady) => self.write_line(NOT_READY),
             (Mode::Caller, CallerFailure::CouldNotReach) => self.write_line(COULD_NOT_REACH),
         }
+    }
+}
+
+impl Report for Printer {
+    /// `status`'s report: a line to the same writer, whatever `-Quiet` says.
+    fn report(&self, line: &str) {
+        self.write_line(line);
     }
 }
 
@@ -195,6 +204,13 @@ mod tests {
             cap.text(),
             "Starting i-0123456789abcdef0...\nStarting i-0123456789abcdef0...\nWaiting for Session Manager...\nagentspace: The instance said no.\n"
         );
+    }
+
+    #[test]
+    fn the_report_prints_whatever_quiet_says() {
+        let (say, cap) = printer(Mode::Person, true, false);
+        say.report("Instance  i-1234567890abcdef0");
+        assert_eq!(cap.text(), "Instance  i-1234567890abcdef0\n");
     }
 
     #[test]

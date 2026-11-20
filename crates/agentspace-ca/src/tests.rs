@@ -1021,6 +1021,65 @@ fn utc_dates_are_civil() {
     );
 }
 
+// ---- The system's error text (operator.md, Exit codes: architect, 2026-11-19) ----
+
+#[test]
+fn io_text_drops_rusts_os_error_suffix_from_a_real_os_error() {
+    let scratch = Scratch::new();
+    let in_the_way = scratch.root.join("ca");
+    fs::write(&in_the_way, b"a file where the folder has to be").unwrap();
+    let e = fs::create_dir_all(&in_the_way).expect_err("a file is in the way");
+    let code = e.raw_os_error().expect("an OS error");
+    let rust = e.to_string();
+    let suffix = format!(" (os error {code})");
+    assert!(
+        rust.ends_with(&suffix),
+        "Rust adds its suffix to an OS error"
+    );
+    let text = crate::io_text(&e);
+    assert_eq!(text, rust[..rust.len() - suffix.len()].trim());
+    assert!(!text.contains("os error"));
+    assert!(!text.is_empty());
+    // The system's own words, its own final period included, are kept as they are.
+    assert_eq!(text, text.trim());
+    #[cfg(windows)]
+    assert_eq!(code, 183, "ERROR_ALREADY_EXISTS");
+}
+
+#[test]
+fn io_text_strips_only_a_trailing_os_error_with_digits() {
+    let os = std::io::Error::from_raw_os_error(5);
+    assert!(!crate::io_text(&os).contains("os error"));
+    assert!(!crate::io_text(&os).is_empty());
+    let cases = [
+        // (Rust's text, what io_text gives)
+        ("Access is denied. (os error 5)", "Access is denied."),
+        (
+            "The system cannot find the file specified. (os error 2)\r\n",
+            "The system cannot find the file specified.",
+        ),
+        ("Some text (os error -2147024891)", "Some text"),
+        ("No suffix at all.", "No suffix at all."),
+        ("  Padded.  ", "Padded."),
+        ("A near miss (os error )", "A near miss (os error )"),
+        ("A near miss (os error 12a)", "A near miss (os error 12a)"),
+        ("A near miss (OS error 5)", "A near miss (OS error 5)"),
+        (
+            "Mid-text (os error 5) is kept",
+            "Mid-text (os error 5) is kept",
+        ),
+        (
+            "Only the last (os error 1) (os error 2)",
+            "Only the last (os error 1)",
+        ),
+        ("(os error 5)", "(os error 5)"),
+    ];
+    for (rust, expected) in cases {
+        let synthetic = std::io::Error::other(rust);
+        assert_eq!(crate::io_text(&synthetic), expected, "for {rust:?}");
+    }
+}
+
 // ---- The real Windows API, in throwaway folders ----
 
 #[cfg(windows)]

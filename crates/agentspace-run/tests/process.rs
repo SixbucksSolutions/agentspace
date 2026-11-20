@@ -28,7 +28,7 @@ fn child_ctx(dir: &Path) -> Context {
 
 /// Runs this test binary again, running only `test`, with a throwaway home and the given extra
 /// environment, and with a pipe on its stdin that holds data nobody should read.
-fn run_child(test: &str, dir: &Path, extra: &[(&str, &std::ffi::OsStr)]) {
+fn run_child(test: &str, dir: &Path, extra: &[(&str, &std::ffi::OsStr)]) -> std::process::Output {
     let home = dir.join("home");
     std::fs::create_dir_all(&home).unwrap();
     let mut cmd = Command::new(std::env::current_exe().unwrap());
@@ -59,6 +59,7 @@ fn run_child(test: &str, dir: &Path, extra: &[(&str, &std::ffi::OsStr)]) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    out
 }
 
 fn is_child(test: &str) -> Option<PathBuf> {
@@ -93,6 +94,30 @@ fn child_start_every_program() {
     r.call(&ignore).unwrap();
     assert_eq!(r.ssh(&["devbox"], Some("true")), Ok(0));
     assert_eq!(r.scp(&["a", "devbox:b"]), Ok(0));
+}
+
+/// Set to `1` for the child to build its runner with `passing_ignored_stderr`.
+const PASS: &str = "AGENTSPACE_TEST_PASS_IGNORED_STDERR";
+
+#[test]
+fn child_ignore_call() {
+    let Some(dir) = is_child("child_ignore_call") else {
+        return;
+    };
+    let ctx = child_ctx(&dir);
+    let ignore = Call {
+        service: "ec2",
+        operation: "wait",
+        args: &["instance-stopped", "--instance-ids", "i-1234567890abcdef0"],
+        output: Output::Ignore,
+    };
+    let got = if std::env::var_os(PASS).is_some_and(|v| v == "1") {
+        common::make_runner_real_env_passing_ignored_stderr(ctx).call(&ignore)
+    } else {
+        common::make_runner_real_env(ctx).call(&ignore)
+    };
+    // The exit code is not checked, whichever way the runner was built.
+    assert_eq!(got, Ok(serde_json::Value::Null));
 }
 
 #[test]
@@ -178,6 +203,66 @@ fn no_program_gets_a_variable_ending_posix_fd_state() {
             s.env_var("KEEP_ME_FD_STATE_NOT").as_deref(),
             Some("kept"),
             "{name} lost an unrelated variable"
+        );
+    }
+}
+
+/// Runs `child_ignore_call` against an AWS stand-in that writes to both streams and exits 255,
+/// and returns the child's own stdout and stderr.
+fn run_ignore_call(pass: bool) -> (String, String) {
+    let rig = Rig::new();
+    let aws = rig
+        .standin("aws")
+        .stdout("IGNORED-CALL-STDOUT")
+        .stderr("IGNORED-CALL-STDERR")
+        .exit(255)
+        .write();
+    let out = run_child(
+        "child_ignore_call",
+        rig.dir.path(),
+        &[
+            ("AGENTSPACE_AWS_CMD", &aws.value()),
+            (PASS, if pass { "1".as_ref() } else { "0".as_ref() }),
+        ],
+    );
+    assert!(aws.ran(), "The stand-in was not started");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn an_ignore_calls_streams_are_withheld_by_default() {
+    // The ProxyCommand's caller mode relies on it (operator.md, Starting the box, step 1).
+    let (stdout, stderr) = run_ignore_call(false);
+    for (name, text) in [("stdout", &stdout), ("stderr", &stderr)] {
+        assert!(
+            !text.contains("IGNORED-CALL-STDERR"),
+            "The Ignore call's stderr reached the program's {name}"
+        );
+        assert!(
+            !text.contains("IGNORED-CALL-STDOUT"),
+            "The Ignore call's stdout reached the program's {name}"
+        );
+    }
+}
+
+#[test]
+fn an_opted_in_runner_passes_an_ignore_calls_stderr_and_never_its_stdout() {
+    let (stdout, stderr) = run_ignore_call(true);
+    assert!(
+        stderr.contains("IGNORED-CALL-STDERR"),
+        "The Ignore call's stderr did not reach the program's stderr"
+    );
+    assert!(
+        !stdout.contains("IGNORED-CALL-STDERR"),
+        "The Ignore call's stderr reached the program's stdout"
+    );
+    for (name, text) in [("stdout", &stdout), ("stderr", &stderr)] {
+        assert!(
+            !text.contains("IGNORED-CALL-STDOUT"),
+            "The Ignore call's stdout reached the program's {name}"
         );
     }
 }

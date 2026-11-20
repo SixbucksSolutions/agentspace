@@ -38,9 +38,6 @@ pub fn needs_value(name: &str) -> String {
 pub fn not_a_number(arg: &str) -> String {
     format!("agentspace: -GiB MUST be a whole number, not '{arg}'.")
 }
-pub fn not_built(command: &str) -> String {
-    format!("agentspace: {command} is not built yet.")
-}
 
 /// What one run of the program gave.
 #[derive(Debug)]
@@ -103,6 +100,9 @@ impl Home {
             .env("LOCALAPPDATA", self.dir.path().join("localappdata"))
             .env("APPDATA", self.dir.path().join("appdata"))
             .env("SystemRoot", self.dir.path().join("systemroot"))
+            // An empty folder: no run can find a real program on PATH, `go` among them
+            // (rulings for E0.06-T03-S02), nor the AWS CLI's fallback.
+            .env("PATH", self.dir.path().join("systemroot"))
             .env("AGENTSPACE_AWS_CMD", self.missing_program())
             .env("AGENTSPACE_SSH_CMD", self.missing_program())
             .env("AGENTSPACE_SCP_CMD", self.missing_program())
@@ -191,11 +191,69 @@ pub fn assert_failure_run(shown: &str, r: &Run, message: &str) {
     );
 }
 
-/// A command line that passes every check reaches its command. In v0.06-T01-S01 every command is
-/// a stub that fails with `agentspace: <command> is not built yet.`; T03 replaces the stubs, and
-/// this function and `tests/stubs_not_built_yet.rs` are all that change then.
+/// A command line that passes every check reaches its command. In the harness's throwaway home no
+/// instance-ID cache exists and the seam's three variables name nothing, so each command that
+/// needs the AWS CLI stops at its first call with the seam's own failure, and `ca` stops at its
+/// first step, the missing `ssh-keygen.exe` of the throwaway `SystemRoot`. `deploy` and `sync` are
+/// the sync crate's: [`assert_reaches_sync_crate`] checks what holds whether that crate is still
+/// its stub or E0.06-T03-S02's build.
 pub fn assert_reaches_command<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], command: &str) {
-    assert_failure(args, &not_built(command));
+    if command == "deploy" || command == "sync" {
+        assert_reaches_sync_crate(args);
+        return;
+    }
+    let home = Home::new();
+    let r = home.run(args);
+    let expected = match command {
+        "ca" => format!(
+            "agentspace: {} is missing; install the Windows OpenSSH client.",
+            home.path()
+                .join("systemroot")
+                .join("System32")
+                .join("OpenSSH")
+                .join("ssh-keygen.exe")
+                .display()
+        ),
+        _ => format!(
+            "agentspace: AGENTSPACE_AWS_CMD names {}, which cannot be run.",
+            home.missing_program().display()
+        ),
+    };
+    assert_failure_run(&format!("{args:?}"), &r, &expected);
+}
+
+/// `deploy` or `sync` reaches the sync crate, and fails there in the throwaway home, whether that
+/// crate is the pinned stub (`<command> is not built yet.`) or E0.06-T03-S02's build (`deploy`
+/// stops at the missing `id_ed25519.pub`, `sync` at its CA check's missing `ssh-keygen.exe`). What
+/// holds for both: exit 1, nothing on stdout, one `agentspace: ` line on stderr, and no program of
+/// the seam started (each names nothing, so a start would fail with the seam's own line).
+///
+/// `PATH` names an empty folder ([`Home::command`]), so no run of `sync` can find the real `go`.
+pub fn assert_reaches_sync_crate<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S]) {
+    let r = run(args);
+    let shown = format!("{args:?}");
+    assert_eq!(
+        r.code,
+        Some(1),
+        "{shown}: exit code; stderr was {:?}",
+        r.err()
+    );
+    assert_eq!(r.out(), "", "{shown}: stdout MUST be empty on a failure");
+    let err = r.err();
+    assert_eq!(
+        err.lines().count(),
+        1,
+        "{shown}: one line on stderr, not {:?}",
+        err
+    );
+    assert!(
+        err.starts_with("agentspace: ") && err.ends_with('\n'),
+        "{shown}: the failure is one agentspace: line: {err:?}"
+    );
+    assert!(
+        !err.contains("which cannot be run"),
+        "{shown}: a program of the seam was started: {err:?}"
+    );
 }
 
 /// A command line given as a string of words, and the failure it MUST give.

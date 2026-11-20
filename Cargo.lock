@@ -135,8 +135,17 @@ dependencies = [
 name = "agentspace-operator"
 version = "0.6.0"
 dependencies = [
+ "agentspace-box",
+ "agentspace-ca",
  "agentspace-operator-api",
+ "agentspace-push",
+ "agentspace-run",
+ "agentspace-state",
+ "agentspace-sync",
+ "serde_json",
+ "sha2",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

@@ -6,7 +6,8 @@
 //!
 //! - [`Runner`]: built from a pinned [`Context`], by [`Runner::new`] (the seam variables are read
 //!   from the real environment) or [`Runner::with_lookup`] (an injectable variable lookup, for
-//!   tests). It implements the pinned [`Aws`] and [`Remote`].
+//!   tests). It implements the pinned [`Aws`] and [`Remote`]. [`Runner::passing_ignored_stderr`]
+//!   opts in to an [`Output::Ignore`] call's stderr reaching the program's own stderr.
 //! - [`prepare_child_env`]: applies the environment rules to any [`std::process::Command`]; later
 //!   stories (the push's ssh, the tunnel, `go build`) MUST call it on theirs.
 //! - [`ssh_program`]: the ssh the push's own pipe-wired ssh MUST be started from (T02).
@@ -30,7 +31,8 @@
 //!   double quote or a control character, or ends in a backslash (gap FA-15).
 //!
 //! The library writes to stdout and stderr only what the spec passes through: `ssh`'s and `scp`'s
-//! streams, and a [`Output::PassThrough`] call's streams.
+//! streams, a [`Output::PassThrough`] call's streams, and an [`Output::Ignore`] call's stderr when
+//! the runner opted in. An [`Output::Ignore`] call's stdout is never passed.
 
 #![forbid(unsafe_code)]
 
@@ -63,12 +65,16 @@ type Lookup = dyn Fn(&str) -> Option<OsString> + Send + Sync;
 pub struct Runner {
     ctx: Context,
     lookup: Arc<Lookup>,
+    /// Whether an [`Output::Ignore`] call's stderr goes to the program's own stderr
+    /// ([`Runner::passing_ignored_stderr`]); withheld when `false`, the default.
+    pass_ignored_stderr: bool,
 }
 
 impl std::fmt::Debug for Runner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Runner")
             .field("ctx", &self.ctx)
+            .field("pass_ignored_stderr", &self.pass_ignored_stderr)
             .finish_non_exhaustive()
     }
 }
@@ -89,7 +95,21 @@ impl Runner {
         Self {
             ctx,
             lookup: Arc::new(lookup),
+            pass_ignored_stderr: false,
         }
+    }
+
+    /// The same runner, but one that sends an [`Output::Ignore`] call's stderr to the program's
+    /// own stderr, as the program wrote it (operator.md, Starting the box and waiting for it,
+    /// step 1: what `ec2 wait instance-stopped` writes to stderr passes through in a person's
+    /// `up`). Its stdout is never passed, so `up` still writes nothing to stdout.
+    ///
+    /// **By default that stderr is withheld**, as the ProxyCommand's caller mode requires (What a
+    /// caller sees). The operator's program MUST opt in for a person's command, and the
+    /// ProxyCommand MUST NOT.
+    pub fn passing_ignored_stderr(mut self) -> Self {
+        self.pass_ignored_stderr = true;
+        self
     }
 
     /// The ssh this runner starts (see [`ssh_program_with`]).
@@ -413,9 +433,15 @@ impl Aws for Runner {
                 Err(aws_failure(&err, &out, status))
             }
             Output::Ignore => {
-                // The exit code is not checked: the call after it is the check.
+                // The exit code is not checked: the call after it is the check. The stdout is
+                // never passed; the stderr only when the runner was built to pass it.
+                let stderr = if self.pass_ignored_stderr {
+                    Stdio::inherit()
+                } else {
+                    Stdio::null()
+                };
                 cmd.stdout(Stdio::null())
-                    .stderr(Stdio::null())
+                    .stderr(stderr)
                     .status()
                     .map_err(|_| cannot_run())?;
                 Ok(Value::Null)

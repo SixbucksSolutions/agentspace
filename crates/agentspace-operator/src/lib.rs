@@ -18,25 +18,42 @@
 //!   such a lookup.
 //! - [`run`] is the program: it parses, checks the home and the system folder, prints and
 //!   dispatches, and returns the exit code, 0 or 1.
-//! - [`dispatch`] is where a parsed command runs. Today each command is a stub that fails with
-//!   `agentspace: <command> is not built yet.`; v0.06-T03 replaces it.
+//! - [`dispatch`] is where a parsed command runs, over [`Parts`]: the pinned [`Aws`], [`Remote`]
+//!   and [`Say`], a [`Clock`], the instance-ID cache ([`FileInstanceIdCache`]), a [`Report`] for
+//!   `status`'s lines and a [`Reach`] for the token push, `ca`, `sync` and `deploy`. [`up`],
+//!   [`down`], [`status`] and [`grow`] are the commands themselves.
+//! - [`Env`] is the program's environment as it started, copied once from a lookup; [`run`]
+//!   builds the [`Context`], the [`CaEnv`] and every program's seam variables from it.
 //!
-//! The library reads no environment variable itself and never mutates the process environment
-//! (the "environment at start" rule is agentspace-run's, which starts every program). It writes to
-//! stdout only the help text, and to stderr only through [`Printer`].
+//! The library reads no environment variable but through the lookup [`run`] is given, once, and
+//! never mutates the process environment (the "environment at start" rule is agentspace-run's,
+//! which starts every program). It writes to stdout only the help text, and to stderr only through
+//! [`Printer`] and the streams of the programs it starts.
 
 #![forbid(unsafe_code)]
 
+mod cache;
 mod cli;
+mod commands;
 mod help_text;
+mod reach;
 mod say;
+#[cfg(test)]
+mod testing;
 
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 
-pub use agentspace_operator_api::{CallerFailure, CallerLine, Context, Failure, Mode, Say};
+pub use agentspace_box::{Clock, InstanceIdCache, SystemClock};
+pub use agentspace_ca::CaEnv;
+pub use agentspace_operator_api::{
+    Aws, CallerFailure, CallerLine, Context, Failure, Mode, Remote, Say,
+};
+pub use cache::{FileInstanceIdCache, cache_path};
 pub use cli::{Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, Parsed, Request, help, parse};
+pub use commands::{Parts, Reach, Report, dispatch, down, grow, status, up};
+pub use reach::{Env, SystemReach};
 pub use say::{COULD_NOT_REACH, NOT_AVAILABLE, NOT_READY, Printer, caller_warning};
 
 /// A source of environment variables: the process's own, or a test's.
@@ -90,15 +107,6 @@ pub fn diagnostic_from(lookup: EnvLookup) -> bool {
     non_empty(lookup, "AGENTSPACE_DIAGNOSTIC").is_some()
 }
 
-/// Runs a parsed command. Today every command is a stub that fails with
-/// `agentspace: <command> is not built yet.` (v0.06-T03 replaces it).
-pub fn dispatch(request: &Request, _context: &Context, _say: &dyn Say) -> Result<(), Failure> {
-    Err(Failure {
-        message: format!("agentspace: {} is not built yet.", request.command.name()),
-        caller: CallerFailure::Same,
-    })
-}
-
 /// The whole program for a person's command: reads `args` (the program's own name excluded),
 /// writes help to `stdout` and every other message to `stderr`, and returns the exit code, which
 /// is 0 or 1 and nothing else.
@@ -141,8 +149,32 @@ pub fn run(
         }
         Parsed::Run(request) => {
             let say = Printer::new(Mode::Person, request.quiet, false, stderr);
-            let result =
-                context_from(lookup).and_then(|context| dispatch(&request, &context, &say));
+            let result = context_from(lookup).and_then(|context| {
+                // The environment is read once, here; nothing below reads it again.
+                let env = Env::snapshot(lookup);
+                let ca_env = env.ca_env();
+                // A person's command: what `ec2 wait instance-stopped` writes to stderr passes
+                // through (operator.md, Starting the box and waiting for it, step 1).
+                let runner = agentspace_run::Runner::with_lookup(context.clone(), env.lookup())
+                    .passing_ignored_stderr();
+                let cache = FileInstanceIdCache::new(&context);
+                let reach = SystemReach::new(env);
+                let clock = SystemClock::new();
+                dispatch(
+                    &request,
+                    &Parts {
+                        ctx: &context,
+                        ca_env: &ca_env,
+                        say: &say,
+                        report: &say,
+                        aws: &runner,
+                        remote: &runner,
+                        clock: &clock,
+                        cache: &cache,
+                        reach: &reach,
+                    },
+                )
+            });
             match result {
                 Ok(()) => 0,
                 Err(failure) => {
@@ -173,7 +205,7 @@ mod tests {
         }
     }
 
-    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let map: HashMap<String, OsString> = pairs
             .iter()
             .map(|(k, v)| (k.to_string(), OsString::from(v)))
@@ -194,20 +226,53 @@ mod tests {
         (code, String::from_utf8(out).unwrap(), err_text)
     }
 
+    /// Runs `line` in process in a throwaway home, with the AWS CLI, ssh and scp named as files
+    /// that do not exist, so that nothing real can be reached.
+    fn go_isolated(line: &[&str], name: &str) -> (i32, String, String, String) {
+        let home = crate::testing::TempHome::new(name);
+        let userprofile = home.path().join("home");
+        let missing = home.path().join("no-such-program");
+        let root = home.path().join("root");
+        let lookup = env(&[
+            ("USERPROFILE", userprofile.to_str().unwrap()),
+            ("SystemRoot", root.to_str().unwrap()),
+            ("AGENTSPACE_AWS_CMD", missing.to_str().unwrap()),
+            ("AGENTSPACE_SSH_CMD", missing.to_str().unwrap()),
+            ("AGENTSPACE_SCP_CMD", missing.to_str().unwrap()),
+        ]);
+        let args: Vec<String> = line.iter().map(|s| s.to_string()).collect();
+        let mut out = Vec::new();
+        let err = Capture::default();
+        let code = run(&args, &lookup, &mut out, Box::new(err.clone()));
+        let err_text = String::from_utf8(err.0.lock().unwrap().clone()).unwrap();
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            err_text,
+            missing.display().to_string(),
+        )
+    }
+
     #[test]
-    fn every_command_is_a_stub_that_fails_with_exit_1() {
-        for c in Command::ALL {
-            let (code, out, err) = go(&[&c.name().to_uppercase()]);
-            assert_eq!((code, out.as_str()), (1, ""), "{c:?}");
-            assert_eq!(err, format!("agentspace: {} is not built yet.\n", c.name()));
+    fn an_aws_command_whose_seam_program_cannot_be_run_fails_and_never_falls_back() {
+        for command in ["up", "down", "status", "grow"] {
+            let (code, out, err, missing) = go_isolated(&[command], "seam-aws");
+            assert_eq!((code, out.as_str()), (1, ""), "{command}");
+            assert_eq!(
+                err,
+                format!("agentspace: AGENTSPACE_AWS_CMD names {missing}, which cannot be run.\n"),
+                "{command}"
+            );
         }
     }
 
     #[test]
-    fn a_stub_failure_prints_even_with_quiet() {
-        let (code, _, err) = go(&["status", "-Quiet"]);
+    fn a_failure_prints_even_with_quiet_and_up_writes_nothing_to_stdout() {
+        let (code, out, err, _) = go_isolated(&["up", "-Quiet"], "seam-quiet");
         assert_eq!(code, 1);
-        assert_eq!(err, "agentspace: status is not built yet.\n");
+        assert_eq!(out, "");
+        assert_eq!(err.lines().count(), 1);
+        assert!(err.starts_with("agentspace: AGENTSPACE_AWS_CMD names"));
     }
 
     #[test]
