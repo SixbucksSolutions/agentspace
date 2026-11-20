@@ -1,0 +1,28 @@
+[package]
+name = "agentspace-keeper-win"
+version = "0.6.0"
+edition.workspace = true
+description = "The keeper's processes and locks on Windows (docs/keeper.md; docs/state.md; D42)"
+publish = false
+
+[lib]
+name = "agentspace_keeper_win"
+path = "src/lib.rs"
+
+[dependencies]
+agentspace-keeper-api = { path = "../agentspace-keeper-api" }
+# The lock files' names and the keeper lock's PID line.
+agentspace-keeper-files = { path = "../agentspace-keeper-files" }
+
+# The Windows half: processes, their tree and the system folder. The one module that calls it is
+# src/sys.rs. The version is the one already in Cargo.lock.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Wdk_System_Threading", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Kernel", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+
+[dev-dependencies]
+# Throwaway folders for the on-disk tests; the version the other crates use.
+tempfile = { version = "=3.23.0", default-features = false }
+
+# Only the unit tests' job object, which ends every process a test starts if the test fails.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Security", "Win32_System_JobObjects"] }

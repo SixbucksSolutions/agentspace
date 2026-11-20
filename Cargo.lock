@@ -97,6 +97,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-keeper-win"
+version = "0.6.0"
+dependencies = [
+ "agentspace-keeper-api",
+ "agentspace-keeper-files",
+ "tempfile",
+ "windows-sys",
+]
+
+[[package]]
 name = "agentspace-operator"
 version = "0.6.0"
 dependencies = [
