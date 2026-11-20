@@ -898,6 +898,15 @@ since the look before.
 
 - **Only proof of life resets the count**: a look that finds the tracked holder alive at least 60
   seconds after tracking began. A stop, or a tried stop, also resets it. An idle pass does not.
+  **An adopted holder is under the same rule** (architect, 2026-11-19, for E0.06-T02-S05): it is
+  proven from adoption, its count unchanged then, and a later look at least 60 seconds after
+  tracking began that finds it alive resets the count, as for a holder the keeper started.
+- **A panic in a look, a pass or a wait is an error the keeper does not exit for** (architect,
+  2026-11-19, for E0.06-T02-S05): the keeper catches it, logs the matching reason of
+  [Reasons](#reasons) with the panic's message as `<error>`, and goes on as for any other error
+  there. With the pinned traits no look returns an error, so a panic is the only way those reasons
+  arise; a keeper that died of one would break "never exits for an error once its loop has
+  started".
 - **After the n-th fast failure in a row, the backoff is `min(BackoffMaxSeconds, BackoffBaseSeconds
   * 2^(n-1))` seconds**, and the wait is that or `-IntervalSeconds`, whichever is longer.
 - **With the defaults, a start that keeps failing waits** 30, 60, 120, 240, then 300 seconds for
