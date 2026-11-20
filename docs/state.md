@@ -1002,6 +1002,10 @@ check:
    prototype compares both words without regard to case, which is looser than this and not
    behavior to copy
    ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
+   **"Split at whitespace" means at any run of it** (architect, 2026-11-19, for E0.06-T04-S03;
+   #0136): a tab, or several spaces, between the two words is one split, whitespace being U+0009
+   to U+000D and U+0020 as [lease-api.md, Input tolerance](lease-api.md#input-tolerance) defines it,
+   so such a CA stays usable, as `ssh-keygen` reads it.
 5. **The public key's fingerprint can be read**: the file parses as an OpenSSH public key. The
    prototype runs `ssh-keygen -l -f`.
 
