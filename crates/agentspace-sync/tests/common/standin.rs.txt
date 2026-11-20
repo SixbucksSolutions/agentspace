@@ -1,0 +1,180 @@
+// The stand-in program of agentspace-sync's tests: copied as aws.exe, ssh.exe, scp.exe and go.exe,
+// each beside its own `<name>.cfg`. It is compiled by the tests with rustc, from this text.
+//
+// It records each call, and answers by the rules in its cfg. It records only the arguments, the
+// working folder and the values of a few named, non-secret variables, never its whole environment.
+use std::fs;
+use std::io::{Read, Write};
+use std::path::Path;
+
+const US: char = '\u{1f}';
+
+fn fnv(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in data {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn append(path: &str, text: &str) {
+    if path.is_empty() {
+        return;
+    }
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
+fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, u64, u64)>) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk(base, &p, out);
+        } else if let Ok(b) = fs::read(&p) {
+            let rel = p
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push((rel, b.len() as u64, fnv(&b)));
+        }
+    }
+}
+
+fn main() {
+    let exe = std::env::current_exe().unwrap();
+    let stem = exe.file_stem().unwrap().to_string_lossy().into_owned();
+    let cfg = fs::read_to_string(exe.with_extension("cfg")).unwrap_or_default();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    let mut log = String::new();
+    let mut rules: Vec<Vec<String>> = Vec::new();
+    let mut confirm = String::new();
+    let mut stdin_file = String::new();
+    for line in cfg.lines() {
+        if let Some(v) = line.strip_prefix("log=") {
+            log = v.to_string();
+        } else if let Some(v) = line.strip_prefix("rule=") {
+            rules.push(v.split(US).map(|s| s.to_string()).collect());
+        } else if let Some(v) = line.strip_prefix("confirm=") {
+            confirm = v.to_string();
+        } else if let Some(v) = line.strip_prefix("stdin=") {
+            stdin_file = v.to_string();
+        }
+    }
+
+    let count_path = exe.with_extension("count");
+    let n: u32 = fs::read_to_string(&count_path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+        + 1;
+    let _ = fs::write(&count_path, n.to_string());
+
+    let var = |k: &str| std::env::var(k).unwrap_or_else(|_| "<unset>".to_string());
+    let fd = std::env::vars_os()
+        .filter(|(k, _)| {
+            k.to_string_lossy()
+                .to_ascii_uppercase()
+                .ends_with("_POSIX_FD_STATE")
+        })
+        .count();
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let mut rec: Vec<String> = vec![
+        "CALL".into(),
+        stem.clone(),
+        n.to_string(),
+        cwd,
+        var("AGENTSPACE_NESTED"),
+        fd.to_string(),
+        var("GOOS"),
+        var("GOARCH"),
+        var("CGO_ENABLED"),
+        "--".into(),
+    ];
+    rec.extend(args.iter().cloned());
+    append(&log, &(rec.join(&US.to_string()) + "\n"));
+
+    for a in &args {
+        let p = Path::new(a);
+        if p.is_absolute() && p.exists() {
+            if p.is_file() {
+                let b = fs::read(p).unwrap_or_default();
+                append(
+                    &log,
+                    &format!(
+                        "SNAPF{US}{stem}{US}{n}{US}{a}{US}{}{US}{}\n",
+                        b.len(),
+                        fnv(&b)
+                    ),
+                );
+            } else if p.is_dir() {
+                let mut v = Vec::new();
+                walk(p, p, &mut v);
+                v.sort();
+                append(&log, &format!("SNAPD{US}{stem}{US}{n}{US}{a}\n"));
+                for (rel, len, h) in v {
+                    append(
+                        &log,
+                        &format!("SNAPE{US}{stem}{US}{n}{US}{a}{US}{rel}{US}{len}{US}{h}\n"),
+                    );
+                }
+            }
+        }
+    }
+
+    let joined = args.join(" ");
+    let batch = joined.contains("BatchMode=yes");
+    let mut stdin_bytes = Vec::new();
+    if batch && !stdin_file.is_empty() {
+        let _ = std::io::stdin().read_to_end(&mut stdin_bytes);
+        let _ = fs::write(&stdin_file, &stdin_bytes);
+    }
+
+    let mut code = 0i32;
+    let mut out = String::new();
+    let mut err = String::new();
+    let mut matched = false;
+    for r in &rules {
+        if r.len() < 5 {
+            continue;
+        }
+        let rn: u32 = r[0].parse().unwrap_or(0);
+        if (rn == 0 || rn == n) && (r[1].is_empty() || joined.contains(&r[1])) {
+            code = r[2].parse().unwrap_or(0);
+            out = r[3].replace("\\n", "\n");
+            err = r[4].replace("\\n", "\n");
+            matched = true;
+            break;
+        }
+    }
+    if !matched && batch && !confirm.is_empty() {
+        let mut it = confirm.splitn(2, '|');
+        let hash = it.next().unwrap_or("");
+        let zone = it.next().unwrap_or("");
+        out = format!("{hash}  -\n");
+        if !zone.is_empty() {
+            out.push_str(&format!("zone {zone}\n"));
+        }
+    }
+    if stem == "go" && code == 0 && args.first().map(|s| s.as_str()) == Some("build") {
+        if let Some(i) = args.iter().position(|a| a == "-o") {
+            if let Some(o) = args.get(i + 1) {
+                if let Some(parent) = Path::new(o).parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(o, b"FAKE-LOCALSWIM-BINARY\n");
+            }
+        }
+    }
+    print!("{out}");
+    eprint!("{err}");
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(code);
+}
