@@ -344,7 +344,10 @@ today's, and not configurable
 `--output json` where it is passed, then the operation's own arguments in the order
 [Calls by command](#calls-by-command) gives them (architect, 2026-11-19, for v0.06, gap FB-07). The
 tunnel's line in [The ProxyCommand](#the-proxycommand), step 6, is that order. So a stand-in finds
-the service and the operation as its first two arguments.
+the service and the operation as its first two arguments. **For `ec2 wait instance-stopped` the
+operation is `wait`**, and `instance-stopped` is the first of its own arguments, so the line is
+`ec2 wait --region us-west-2 instance-stopped --instance-ids <id>`, with no `--output json`
+(architect, 2026-11-19, for E0.06-T03-S03, run against the real AWS CLI and accepted).
 
 ### Environment variables
 
@@ -1294,7 +1297,9 @@ SSM       <ssm>
 - **`<ssm>`** is `online` when the instance is running and Session Manager reports its agent
   `Online`, `not yet` when it is running and not online, and `-` in every other state.
 
-**`status` never starts the box.** **Stdout:** nothing. **Exit codes:** 0 and 1.
+**`status` never starts the box.** **Stdout:** nothing. **Exit codes:** 0 and 1. **The five
+lines print only once every call they need has succeeded** (architect, 2026-11-19, for
+E0.06-T04-S02): a failed call prints its failure line alone, never a partial report before it.
 
 **Help:**
 

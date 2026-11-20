@@ -504,6 +504,13 @@ check this: a home that was inside one would fail at the CA step, with the opera
   `~/.ssh` or the real CA**, and the harness never gives one a path to them. Only a person or a
   verifier proving a run touched nothing lists them, before and after.
 - **A check MUST NOT load prototype code** (D34). It reaches the program only through the harness.
+- **A check MUST NOT run a program with `USERPROFILE` unset or empty** (architect, 2026-11-19, for
+  E0.06-T04-S02), and the harness refuses that override. A conforming program stops there, but one
+  that does not may fall back to Windows' own profile lookup and read Terry's real CA key, stack
+  parameters or cache before any stand-in is reached, and isolation is what keeps his files safe.
+  So the rules for an unset or empty `USERPROFILE` (operator.md, Command line; keeper.md, Streams
+  and environment) are shown by each program's own tests, never from outside. `SystemRoot`'s are
+  checked from outside, with `USERPROFILE` in the throwaway home.
 
 ### The program under test is untrusted
 
