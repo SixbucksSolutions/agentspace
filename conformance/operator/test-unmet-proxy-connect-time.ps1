@@ -93,7 +93,7 @@ try {
     foreach ($p in 'success', 'failure') { Write-ConformanceResult -Name "${section}: $($nameOf[$p]) names no backend" -Status FAIL -Reason 'Neither AGENTSPACE_SSH_PROXY_CMD nor its default names a program' }
   } else {
     # The instance-ID cache, in its place under the home (operator.md, "Laptop files").
-    [IO.File]::WriteAllText((Join-Path $h.UserProfile '.agentspace\instance-id'), $fakeId)
+    [IO.File]::WriteAllText((Join-Path $h.UserProfile '.agentspace\instance-id.json'), ('{"version":0,"instance_id":"' + $fakeId + '"}'))
 
     # The stand-ins, in the home. They log the service and operation of every call, and no more.
     $dir = Join-Path $h.Root 'standins'
