@@ -2859,7 +2859,10 @@ driver answers it.
 - **The CA's public key becomes a stack parameter, `CaPublicKey`**, installed with its sshd drop-in
   by the first-boot user data, so a new host trusts the CA before the operator first connects
   (D47). It is a public key, and MAY be seen in the stack's parameters. `sync` still installs it as
-  today, and replaces the first boot's copy with the same bytes.
+  today, and replaces the first boot's copy with the same bytes. Changed for v0.07-T01 (architect,
+  2026-11-20, on the dev lead's pin P8): `CaPublicKey` is the key's type and base64 only, without
+  its comment, which names the computer that made it; the first boot writes that and a line feed,
+  and `sync` later replaces it with the public key file's own bytes.
 - **The laptop's AWS sign-in needs no new permission.** Today it is an administrator (operator.md,
   The AWS side). The calls a host adds are the ones `deploy` already makes, per stack, and
   operator.md's list of what the identity needs gains no new service.
