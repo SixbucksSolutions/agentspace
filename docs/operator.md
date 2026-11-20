@@ -445,6 +445,14 @@ by a real box.
 
 **Not covered:** `go`, `ssh-keygen`, `icacls` and `taskkill` have no variable
 ([Q30](#open-questions)).
+- **So a test of `sync` or `deploy` inside the program's own crate MUST NOT reach the real `go` or
+  `C:\Projects\localswim`** (architect, 2026-11-19, for E0.06-T03-S02): a build from Terry's
+  checkout would read it. The crate gives its tests a hidden entry with the `go` finder, the
+  localswim folder, the clock, the CA check and the push passed in, and no seam variable is
+  added. `sync` finds `go` on `PATH` through a lookup over the process's environment, as the AWS
+  CLI's fallback is found, and reads nothing else of the environment. An instance-ID cache that
+  `deploy` cannot delete or write fails with `agentspace: Cannot write <path>.`; one already
+  missing at the delete is not an error.
 
 ### Laptop files
 
@@ -869,7 +877,9 @@ operator deploy [-Quiet]
 `sync`.**
 
 1. **Reads the user's public key** from `%USERPROFILE%\.ssh\id_ed25519.pub`, trimmed. A missing,
-   unreadable or empty file MUST fail with an `agentspace: ` message naming it. The prototype fails
+   unreadable or empty file MUST fail with an `agentspace: ` message naming it:
+   `agentspace: <path> does not exist.`, `agentspace: Cannot read <path>.` or
+   `agentspace: <path> is empty.` (architect, 2026-11-19, for E0.06-T03-S02). The prototype fails
    with a runtime error for a missing or empty file, and passes an empty key on for a
    whitespace-only one.
 2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\stack-parameters.json`** (D37,
@@ -880,7 +890,10 @@ operator deploy [-Quiet]
    not match its schema fails with `agentspace: <path> is not a valid stack parameters file:
    <reason>.`, where `<reason>` is one sentence fragment that names the first problem found and
    holds no line break (architect, 2026-11-19, for v0.06). Each member of `parameters` becomes a
-   parameter override (format: docs/state.md). Any stack parameter can be set there, not only
+   parameter override (format: docs/state.md). **A file that names `SshPublicKey`, or names any
+   member twice, is not valid** (architect, 2026-11-19, for E0.06-T03-S02): `deploy` sets
+   `SshPublicKey` itself from step 1, and a file that could override it would put another key on
+   the box with no word said. The `<reason>` names the member. Any stack parameter can be set there, not only
    `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack
    ([The stack](#the-stack)).
 3. **Prints `Deploying stack 'agentbox' in us-west-2...`.**
