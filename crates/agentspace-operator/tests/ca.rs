@@ -583,15 +583,22 @@ fn a_files_in_the_way_of_the_ca_folder_does_not_panic_and_fails_with_an_agentspa
     .unwrap();
     let out = rig.op(&["ca"]).real_windows().run();
     assert_eq!(out.code, Some(1), "{:?}", out.err());
+    // The whole line, with the system's own words alone: Rust's ` (os error <n>)` is dropped
+    // (operator.md, Exit codes: architect, 2026-11-19). The throwaway path, which carries the
+    // Windows user name, is masked before anything is compared or shown.
+    let folder = rig.state_dir().join("ca").display().to_string();
     let last = out.err_lines().last().cloned().unwrap_or_default();
-    assert!(
-        last.starts_with(&format!(
-            "agentspace: Could not create {}: ",
-            rig.state_dir().join("ca").display()
-        )),
-        "{:?}",
-        out.err()
+    let shown = last.replace(&folder, "<ca folder>");
+    let rust = std::io::Error::from_raw_os_error(183).to_string();
+    let system = rust
+        .strip_suffix(" (os error 183)")
+        .expect("Rust's suffix on ERROR_ALREADY_EXISTS")
+        .trim();
+    assert_eq!(
+        shown,
+        format!("agentspace: Could not create <ca folder>: {system}")
     );
+    assert!(!out.err().contains("os error"));
     assert!(!out.err().contains("panicked"));
     assert_eq!(out.out(), "");
 }

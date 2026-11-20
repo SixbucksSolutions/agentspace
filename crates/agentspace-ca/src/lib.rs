@@ -251,9 +251,28 @@ fn present(path: &Path) -> bool {
     }
 }
 
-/// An I/O error's text, trimmed.
+/// An I/O error's text: the system's own words alone, trimmed. Rust's trailing
+/// ` (os error <n>)` MUST be dropped (operator.md, Exit codes: architect, 2026-11-19, for
+/// E0.06-T03-S01); the system's message, its own final period included, is kept as it is.
 fn io_text(e: &io::Error) -> String {
-    e.to_string().trim().to_string()
+    strip_os_error(&e.to_string()).trim().to_string()
+}
+
+/// `text` without one trailing ` (os error <digits>)`, the suffix Rust's `io::Error` adds to an
+/// OS error's message. Anything else, a near miss included, is returned as it is.
+fn strip_os_error(text: &str) -> &str {
+    const OPEN: &str = " (os error ";
+    let trimmed = text.trim_end();
+    if let Some(body) = trimmed.strip_suffix(')')
+        && let Some(open) = body.rfind(OPEN)
+    {
+        let code = &body[open + OPEN.len()..];
+        let digits = code.strip_prefix('-').unwrap_or(code);
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            return &trimmed[..open];
+        }
+    }
+    text
 }
 
 /// `ca` (with `say`) or `sync`'s check (without it). Returns the fingerprint.

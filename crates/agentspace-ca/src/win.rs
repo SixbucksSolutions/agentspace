@@ -84,12 +84,10 @@ impl Drop for Token {
     }
 }
 
-/// The system's own text for a Windows error code, trimmed.
+/// The system's own text for a Windows error code, trimmed, without Rust's ` (os error <n>)`
+/// (operator.md, Exit codes: architect, 2026-11-19).
 fn error_text(code: u32) -> String {
-    std::io::Error::from_raw_os_error(code as i32)
-        .to_string()
-        .trim()
-        .to_string()
+    crate::io_text(&std::io::Error::from_raw_os_error(code as i32))
 }
 
 /// The system's text for the calling thread's last error.
