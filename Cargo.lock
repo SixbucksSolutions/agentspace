@@ -80,6 +80,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-keeper-task"
+version = "0.6.0"
+dependencies = [
+ "tempfile",
+ "windows-sys",
+]
+
+[[package]]
 name = "agentspace-operator"
 version = "0.6.0"
 dependencies = [

@@ -1,0 +1,32 @@
+[package]
+name = "agentspace-keeper-task"
+version = "0.6.0"
+edition.workspace = true
+description = "The keeper task's launcher, the windowless program the logon task runs (docs/keeper.md, The task's launcher; D42)"
+publish = false
+
+[lib]
+name = "agentspace_keeper_task"
+path = "src/lib.rs"
+
+# The program the logon task runs: a Windows-subsystem program, so it has no console.
+[[bin]]
+name = "agentspace-keeper-task"
+path = "src/main.rs"
+
+# TEST-ONLY. A stand-in for agentspace-keeper.exe that the tests copy under that name into a
+# throwaway folder beside a copy of the launcher. It MUST NOT be installed or shipped. It is not
+# named agentspace-keeper, so it never shares an output file with the keeper crate's program.
+[[bin]]
+name = "agentspace-keeper-task-stub-keeper"
+path = "tests/support/stub_keeper.rs"
+test = false
+
+# Only the test-only stub uses it (GetConsoleWindow, in its own module); the launcher itself needs
+# no Win32 call. The version is the one the other crates use (Cargo.lock).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Console"] }
+
+# The version agentspace-state's tests use.
+[dev-dependencies]
+tempfile = { version = "=3.23.0", default-features = false }
