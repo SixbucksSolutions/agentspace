@@ -708,7 +708,9 @@ the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#depl
   own, written from the steps on this page (D34).
 - **A file the operator writes under `%USERPROFILE%\.agentspace\operator` that cannot be written
   fails the command** before anything reads it, with exactly `agentspace: Cannot write <path>.`,
-  where `<path>` is the file's or folder's full path (architect, 2026-11-19, for v0.06, gap FA-16).
+  where `<path>` is the file's or folder's full path (architect, 2026-11-19, for v0.06, gap FA-16):
+  the first one whose creation or write failed, so an `operator` folder that cannot be made is
+  named itself, never a file or folder below it (architect, the same day, for E0.06-T03-S02).
 - **The localswim checkout that `sync` builds from, `C:\Projects\localswim`, is localswim's, not
   agentspace's**, and this section does not move it ([sync](#sync), step 7).
 
@@ -879,7 +881,8 @@ operator deploy [-Quiet]
 1. **Reads the user's public key** from `%USERPROFILE%\.ssh\id_ed25519.pub`, trimmed. A missing,
    unreadable or empty file MUST fail with an `agentspace: ` message naming it:
    `agentspace: <path> does not exist.`, `agentspace: Cannot read <path>.` or
-   `agentspace: <path> is empty.` (architect, 2026-11-19, for E0.06-T03-S02). The prototype fails
+   `agentspace: <path> is empty.` (architect, 2026-11-19, for E0.06-T03-S02). A file of whitespace
+   alone is empty, since the key is read trimmed. The prototype fails
    with a runtime error for a missing or empty file, and passes an empty key on for a
    whitespace-only one.
 2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\stack-parameters.json`** (D37,
