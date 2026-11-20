@@ -125,7 +125,7 @@ fn start_instance(aws: &dyn Aws, id: &str) -> Result<(), Failure> {
         service: "ec2",
         operation: "start-instances",
         args: &["--instance-ids", id],
-        output: Output::Json,
+        output: Output::Checked,
     })?;
     Ok(())
 }

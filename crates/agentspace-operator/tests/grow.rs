@@ -377,3 +377,22 @@ fn grow_without_a_cache_reads_the_stack_first() {
     assert_eq!(rig.keys()[0], "cloudformation-describe-stacks");
     assert_eq!(rig.cache_bytes(), Some(Rig::cache_file(ID)));
 }
+
+#[test]
+fn an_answer_of_modify_volume_that_is_not_json_does_not_fail_grow() {
+    // Operator.md, What is read from each answer: `ec2 modify-volume`'s answer is not read
+    // beyond its exit code, so a CLI that exits 0 with text on stdout still succeeds.
+    for answer in ["not json at all\n", ""] {
+        let rig = cached_rig();
+        rig.instance("stopped");
+        rig.ok("ec2-modify-volume", answer);
+        let out = rig.run(&["grow"]);
+        assert_eq!(out.code, Some(0), "{answer:?}: {:?}", out.err());
+        assert_eq!(
+            out.err_lines(),
+            [growing(8, 10), NEXT_BOOT.to_string()],
+            "{answer:?}"
+        );
+        assert_eq!(rig.calls_of("ec2-modify-volume").len(), 1, "{answer:?}");
+    }
+}

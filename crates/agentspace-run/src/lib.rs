@@ -345,7 +345,8 @@ fn command(program: &Path) -> Command {
 /// Whether a call passes `--output json` (operator.md, AWS failures; Calls by command): every
 /// call but `cloudformation deploy` and `ec2 wait instance-stopped` does, whether or not its
 /// output is read. The tunnel is not started here. The call's shape decides, not its [`Output`]:
-/// an [`Output::Ignore`] or [`Output::PassThrough`] call of any other shape still passes it.
+/// an [`Output::Ignore`], [`Output::PassThrough`] or [`Output::Checked`] call of any other shape
+/// still passes it.
 fn passes_output_json(call: &Call) -> bool {
     let deploy = call.service == "cloudformation" && call.operation == "deploy";
     let wait_stopped = call.service == "ec2"
@@ -395,7 +396,7 @@ impl Aws for Runner {
         let mut cmd = command(&program.path);
         cmd.args(aws_args(call)).stdin(Stdio::null());
         match call.output {
-            Output::Json => {
+            Output::Json | Output::Checked => {
                 let out = cmd
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -403,6 +404,10 @@ impl Aws for Runner {
                     .map_err(|_| cannot_run())?;
                 if !out.status.success() {
                     return Err(aws_failure(&out.stderr, &out.stdout, out.status));
+                }
+                if call.output == Output::Checked {
+                    // The answer is not read beyond the exit code (operator.md, The AWS side).
+                    return Ok(Value::Null);
                 }
                 let text = String::from_utf8_lossy(&out.stdout);
                 let text = text.trim_start_matches('\u{feff}').trim();

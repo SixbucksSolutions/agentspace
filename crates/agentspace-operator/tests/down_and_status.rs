@@ -106,6 +106,20 @@ fn a_refused_stop_fails_with_the_clis_text_and_never_says_stopping() {
     );
 }
 
+#[test]
+fn an_answer_of_stop_instances_that_is_not_json_does_not_fail_down() {
+    // Operator.md, What is read from each answer: `ec2 stop-instances`'s answer is not read
+    // beyond its exit code, so a CLI that exits 0 with text on stdout still succeeds.
+    for answer in ["not json at all\n", ""] {
+        let rig = cached_rig();
+        rig.ok("ec2-stop-instances", answer);
+        let out = rig.run(&["down"]);
+        assert_eq!(out.code, Some(0), "{answer:?}: {:?}", out.err());
+        assert_eq!(out.err(), format!("Stopping {ID}.\n"), "{answer:?}");
+        assert_eq!(out.out(), "", "{answer:?}");
+    }
+}
+
 // ---- status ----
 
 fn status_lines(id: &str, state: &str, itype: &str, size: u32, vol: &str, ssm: &str) -> String {

@@ -304,3 +304,74 @@ fn pass_through_failure_without_sign_in_words_keeps_the_cli_text() {
         ))
     );
 }
+
+// ---------------------------------------------------------------- Checked (operator.md, The AWS side)
+
+#[test]
+fn checked_call_passes_region_and_output_json_in_fb07_order() {
+    let rig = Rig::new();
+    let s = aws_standin(&rig).stdout("{}").write();
+    rig.env.set("AGENTSPACE_AWS_CMD", s.value());
+    let own = ["--instance-ids", "i-1234567890abcdef0"];
+    rig.runner().call(&call(Output::Checked, &own)).unwrap();
+    assert_eq!(
+        s.args(),
+        [
+            "ec2",
+            "describe-instances",
+            "--region",
+            "us-west-2",
+            "--output",
+            "json",
+            "--instance-ids",
+            "i-1234567890abcdef0"
+        ]
+    );
+}
+
+#[test]
+fn checked_call_never_reads_the_answer_whatever_it_is() {
+    // Exit 0 with an answer that is not JSON, empty, or JSON: all succeed, none is parsed.
+    for text in ["this is not json", "", "{\"a\": 1}", "[1,"] {
+        let rig = Rig::new();
+        let s = aws_standin(&rig).stdout(text).write();
+        rig.env.set("AGENTSPACE_AWS_CMD", s.value());
+        assert_eq!(
+            rig.runner().call(&call(Output::Checked, &[])),
+            Ok(serde_json::Value::Null),
+            "{text:?}"
+        );
+        assert!(s.ran());
+    }
+}
+
+#[test]
+fn checked_call_fails_on_a_non_zero_exit_with_the_clis_text() {
+    let rig = Rig::new();
+    let s = aws_standin(&rig)
+        .exit(254)
+        .stdout("not json")
+        .stderr("\n An error occurred (UnauthorizedOperation): no \n")
+        .write();
+    rig.env.set("AGENTSPACE_AWS_CMD", s.value());
+    assert_eq!(
+        rig.runner().call(&call(Output::Checked, &[])),
+        Err(AwsError::Failed(
+            "An error occurred (UnauthorizedOperation): no".to_string()
+        ))
+    );
+}
+
+#[test]
+fn checked_call_failing_with_sign_in_words_is_the_sign_in_failure() {
+    let rig = Rig::new();
+    let s = aws_standin(&rig)
+        .exit(255)
+        .stderr("The SSO session has expired")
+        .write();
+    rig.env.set("AGENTSPACE_AWS_CMD", s.value());
+    assert_eq!(
+        rig.runner().call(&call(Output::Checked, &[])),
+        Err(AwsError::SignIn)
+    );
+}

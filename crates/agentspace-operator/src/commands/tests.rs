@@ -311,6 +311,16 @@ fn another_aws_failure_is_agentspace_and_the_clis_text() {
 // ---- down ----
 
 #[test]
+fn down_reads_the_stop_answer_no_further_than_its_exit_code() {
+    // Operator.md, What is read from each answer: `ec2 stop-instances` is `Checked`, never
+    // parsed, so an answer that is not JSON cannot fail the command.
+    let home = home_with_cache("down-checked");
+    let rig = Rig::new(&home, false, false, vec![ok(Value::Null)]);
+    rig.run(&request(Command::Down)).unwrap();
+    assert_eq!(rig.aws.outputs(), vec![Output::Checked]);
+}
+
+#[test]
 fn down_asks_ec2_to_stop_and_says_so() {
     let home = home_with_cache("down");
     let rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
@@ -540,6 +550,24 @@ fn grow_of_a_running_box_changes_the_volume_waits_and_grows_the_filesystem_over_
         vec!["-o", "ClearAllForwardings=yes", "agentspace"]
     );
     assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+}
+
+#[test]
+fn grow_reads_the_modify_answer_no_further_than_its_exit_code() {
+    // Operator.md, What is read from each answer: `ec2 modify-volume` is `Checked`, never
+    // parsed, so an answer that is not JSON cannot fail the command.
+    let home = home_with_cache("grow-checked");
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("stopped")), ok(volume(8)), ok(Value::Null)],
+    );
+    rig.run(&request(Command::Grow)).unwrap();
+    assert_eq!(
+        rig.aws.outputs(),
+        vec![Output::Json, Output::Json, Output::Checked]
+    );
 }
 
 #[test]

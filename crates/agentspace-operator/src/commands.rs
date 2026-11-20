@@ -104,7 +104,7 @@ pub fn down(parts: &Parts) -> Result<(), Failure> {
         service: "ec2",
         operation: "stop-instances",
         args: &["--instance-ids", &id],
-        output: Output::Json,
+        output: Output::Checked,
     })?;
     parts.say.progress(&format!("Stopping {id}."), None);
     Ok(())
@@ -310,7 +310,7 @@ pub fn grow(parts: &Parts, gib: i32) -> Result<(), Failure> {
         service: "ec2",
         operation: "modify-volume",
         args: &["--volume-id", volume, "--size", &new_text],
-        output: Output::Json,
+        output: Output::Checked,
     })?;
     if instance.state == "running" {
         parts.say.progress("Growing the filesystem online...", None);
