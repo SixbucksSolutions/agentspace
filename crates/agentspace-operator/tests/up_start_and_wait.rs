@@ -434,6 +434,24 @@ fn a_failure_ends_the_command_at_once() {
     );
 }
 
+#[test]
+fn an_answer_of_start_instances_that_is_not_json_does_not_fail_up() {
+    // Operator.md, What is read from each answer: `ec2 start-instances`'s answer is not read
+    // beyond its exit code, so a CLI that exits 0 with text on stdout still succeeds.
+    for answer in ["not json at all\n", ""] {
+        let rig = cached_rig();
+        rig.instance("stopped");
+        rig.ok("ec2-start-instances", answer);
+        let out = rig.run(&["up"]);
+        assert_eq!(out.code, Some(0), "{answer:?}: {:?}", out.err());
+        assert_eq!(
+            out.err(),
+            format!("Starting {ID}...\nReady: {ID}\n"),
+            "{answer:?}"
+        );
+    }
+}
+
 // ---- The 20-minute rule ----
 
 #[test]

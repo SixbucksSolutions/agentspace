@@ -91,6 +91,11 @@ pub enum Output {
     PassThrough,
     /// Not read, and its exit code not checked (`ec2 wait instance-stopped`).
     Ignore,
+    /// `--output json`, the exit code checked like any call's and failing under AWS failures
+    /// exactly as the others do, the answer never parsed: `ec2 start-instances`,
+    /// `ec2 stop-instances` and `ec2 modify-volume` (operator.md, The AWS side, What is read from
+    /// each answer: "not read beyond their exit code").
+    Checked,
 }
 
 /// One AWS CLI call. The runner adds `--region us-west-2` and, for [`Output::Json`],

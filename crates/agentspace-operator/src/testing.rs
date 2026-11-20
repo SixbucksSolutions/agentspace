@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use agentspace_box::Clock;
 use agentspace_ca::CaEnv;
 use agentspace_operator_api::{
-    Aws, AwsError, Call, CallerFailure, CallerLine, Context, Failure, Mode, Remote, Say,
+    Aws, AwsError, Call, CallerFailure, CallerLine, Context, Failure, Mode, Output, Remote, Say,
 };
 use serde_json::Value;
 
@@ -102,6 +102,7 @@ impl Report for FakeSay {
 /// An AWS CLI that answers from a script and records each call as `service operation args...`.
 pub(crate) struct FakeAws {
     calls: RefCell<Vec<String>>,
+    outputs: RefCell<Vec<Output>>,
     answers: RefCell<VecDeque<Result<Value, AwsError>>>,
 }
 
@@ -109,12 +110,18 @@ impl FakeAws {
     pub(crate) fn new(answers: Vec<Result<Value, AwsError>>) -> Self {
         FakeAws {
             calls: RefCell::default(),
+            outputs: RefCell::default(),
             answers: RefCell::new(answers.into()),
         }
     }
 
     pub(crate) fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
+    }
+
+    /// How each call asked for its answer to be handled, in the order of [`FakeAws::calls`].
+    pub(crate) fn outputs(&self) -> Vec<Output> {
+        self.outputs.borrow().clone()
     }
 }
 
@@ -126,6 +133,7 @@ impl Aws for FakeAws {
             line.push_str(arg);
         }
         self.calls.borrow_mut().push(line);
+        self.outputs.borrow_mut().push(call.output);
         self.answers
             .borrow_mut()
             .pop_front()

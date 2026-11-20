@@ -147,6 +147,7 @@ impl Aws for FakeAws {
             Output::Json => "json",
             Output::PassThrough => "pass",
             Output::Ignore => "ignore",
+            Output::Checked => "checked",
         };
         self.calls.borrow_mut().push(format!(
             "{} {} [{output}] {}",

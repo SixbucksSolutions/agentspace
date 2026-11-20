@@ -155,7 +155,8 @@ fn a_stopped_box_is_started_then_waited_for_without_a_second_describe_instances(
             start.text(),
             format!("ec2 start-instances --instance-ids {ID}")
         );
-        assert_eq!(start.output, Output::Json);
+        // Its answer is read no further than its exit code (operator.md, The AWS side).
+        assert_eq!(start.output, Output::Checked);
         match mode {
             Mode::Person => {}
             Mode::Caller => assert_eq!(
@@ -191,6 +192,8 @@ fn a_stopping_box_is_waited_for_then_started_with_the_waiters_exit_unchecked() {
         );
         // Its output is not read and its exit code not checked.
         assert_eq!(waiter.output, Output::Ignore);
+        // The start after it is the check, and its answer is not read either.
+        assert_eq!(sim.calls_of(START)[0].output, Output::Checked);
         // Each message before the call it announces, and the start after the wait.
         let stopping = format!("Waiting for {ID} to finish stopping...");
         let starting = format!("Starting {ID}...");
