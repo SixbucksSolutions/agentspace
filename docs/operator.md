@@ -1379,6 +1379,11 @@ Exit codes: 0 success, 1 failure.
      so the start request fails, under [AWS failures](#aws-failures), with its own error text or
      #0034's message. What the wait itself writes to stderr passes through in a person's `up`,
      and is withheld in the ProxyCommand ([What a caller sees](#what-a-caller-sees-d1-card-0087)).
+     **How the rewrite does it** (architect, 2026-11-19, for E0.06-T03-S01): `agentspace-run`'s
+     runner withholds an `Output::Ignore` call's stderr by default, and takes an opt-in, when it
+     is built, that sends that stderr to the operator's own stderr; the operator's program opts in
+     for a person's command, and the ProxyCommand does not. Its stdout is never passed, so `up`
+     still writes nothing to stdout. The pinned `Output` is unchanged.
    - **Any other state** fails with `agentspace: Instance <id> is <state>.`
 2. **Decides whether to wait.** It waits unless the state read in step 1 was `running` and the
    instance's launch time, read again now, is 20 minutes ago or more. **The second
