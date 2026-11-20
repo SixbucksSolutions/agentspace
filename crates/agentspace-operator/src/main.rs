@@ -8,7 +8,10 @@ fn main() {
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    let mut stdout = std::io::stdout().lock();
+    // Unlocked: each write takes the stdout lock for itself. A lock held for the whole run would
+    // block every other thread's write to stdout, and `deploy`'s passthrough copies the AWS CLI's
+    // output on a thread of its own while this one waits for it (#0139).
+    let mut stdout = std::io::stdout();
     let code = agentspace_operator::run(
         &args,
         &agentspace_operator::process_env,
