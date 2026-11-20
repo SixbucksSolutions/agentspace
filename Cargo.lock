@@ -172,6 +172,15 @@ dependencies = [
 [[package]]
 name = "agentspace-ssh-proxy"
 version = "0.6.0"
+dependencies = [
+ "agentspace-box",
+ "agentspace-operator",
+ "agentspace-operator-api",
+ "agentspace-push",
+ "agentspace-run",
+ "agentspace-state",
+ "windows-sys",
+]
 
 [[package]]
 name = "agentspace-state"

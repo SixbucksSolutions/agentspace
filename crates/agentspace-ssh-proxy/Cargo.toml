@@ -2,11 +2,36 @@
 name = "agentspace-ssh-proxy"
 version = "0.6.0"
 edition.workspace = true
-description = "The ProxyCommand, agentspace-ssh-proxy.exe (docs/operator.md, The ProxyCommand; D42). A pinned stub until E0.06-T03-S03 builds it."
+description = "The ProxyCommand, agentspace-ssh-proxy.exe (docs/operator.md, The ProxyCommand; D42)"
 publish = false
+
+[lib]
+name = "agentspace_ssh_proxy"
+path = "src/lib.rs"
 
 [[bin]]
 name = "agentspace-ssh-proxy"
 path = "src/main.rs"
 
 [dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+# The command line's -Alias check, the caller's printer and the home check: the operator's own,
+# so that the ProxyCommand's `up` refuses and speaks as `up` does.
+agentspace-operator = { path = "../agentspace-operator" }
+# `up`'s steps: start-and-wait and the instance-ID cache's decisions, then the token push.
+agentspace-box = { path = "../agentspace-box" }
+agentspace-push = { path = "../agentspace-push" }
+# Every program the ProxyCommand starts gets its environment through this crate (D42).
+agentspace-run = { path = "../agentspace-run" }
+# The cache's atomic replace.
+agentspace-state = { path = "../agentspace-state" }
+
+# Only src/win.rs uses it, the one module that calls Windows: the process's PATH and the
+# standard output handle and the console's output mode. The version the other crates already use.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Environment"] }
+
+# The Windows tests' own call: CryptProtectData for a dummy Bot credential (operator.md, The test
+# seam), in one module of tests/proxy.rs.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
