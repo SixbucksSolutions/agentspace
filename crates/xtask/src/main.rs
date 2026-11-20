@@ -3,10 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{Request, parse_args, write_dist};
-
-/// The programs of the workspace that ship: the package and the binary in it.
-const PROGRAMS: [(&str, &str); 1] = [("agentspace-cli", "agentspace")];
+use xtask::{PROGRAMS, Request, parse_args, write_dist};
 
 fn main() -> ExitCode {
     match parse_args(std::env::args().skip(1)) {
@@ -14,10 +11,7 @@ fn main() -> ExitCode {
             print!("{}", xtask::USAGE);
             ExitCode::SUCCESS
         }
-        Ok(Request::Dist {
-            release,
-            proxy_checkout,
-        }) => dist(release, proxy_checkout),
+        Ok(Request::Dist { release }) => dist(release),
         Err(message) => {
             eprintln!("xtask: {message}");
             eprint!("{}", xtask::USAGE);
@@ -34,32 +28,19 @@ fn workspace_root() -> Option<PathBuf> {
     manifest.parent()?.parent().map(Path::to_path_buf)
 }
 
-fn dist(release: bool, proxy_checkout: Option<PathBuf>) -> ExitCode {
+fn dist(release: bool) -> ExitCode {
     let Some(root) = workspace_root() else {
         eprintln!("xtask: The workspace's folder was not found.");
         return ExitCode::FAILURE;
     };
-    let checkout = match xtask::choose_checkout(proxy_checkout.as_deref(), &root) {
-        Ok(checkout) => checkout,
-        Err(error) => {
-            eprintln!("xtask: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    // Refuse before the build, so that a missing target costs nothing and touches nothing.
-    if let Err(error) = xtask::proxy_target(&checkout) {
-        eprintln!("xtask: {error}");
-        return ExitCode::FAILURE;
-    }
-
     let target_dir = root.join("target");
     let profile = xtask::choose_profile(release);
-    for (package, binary) in PROGRAMS {
+    for program in PROGRAMS {
         let mut build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
         build
             .current_dir(&root)
             .arg("build")
-            .args(["--package", package, "--bin", binary])
+            .args(["--package", program.package, "--bin", program.binary])
             .arg("--target-dir")
             .arg(&target_dir);
         if release {
@@ -68,21 +49,17 @@ fn dist(release: bool, proxy_checkout: Option<PathBuf>) -> ExitCode {
         match build.status() {
             Ok(status) if status.success() => {}
             _ => {
-                eprintln!("xtask: The build of {package} failed.");
+                eprintln!("xtask: The build of {} failed.", program.package);
                 return ExitCode::FAILURE;
             }
         }
     }
 
-    let built = target_dir
-        .join(profile)
-        .join(format!("agentspace{}", std::env::consts::EXE_SUFFIX));
+    let built = target_dir.join(profile);
     let dist = target_dir.join("dist");
-    match write_dist(&dist, &built, &checkout) {
+    match write_dist(&dist, &built) {
         Ok(()) => {
-            println!(
-                "Wrote target\\dist\\ with agentspace.exe, agentspace and agentspace-ssh-proxy.cmd."
-            );
+            println!("Wrote target\\dist\\ with the six programs, agentspace and the forwarder.");
             ExitCode::SUCCESS
         }
         Err(error) => {
