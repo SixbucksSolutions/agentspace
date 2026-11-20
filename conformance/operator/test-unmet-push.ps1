@@ -98,8 +98,9 @@ try {
   } else {
     # The throwaway home: the instance-ID cache, a fake receipt and a fake DPAPI-protected credential.
     $agentspaceDir = Join-Path $h.UserProfile '.agentspace'
-    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'instance-id')), $fakeId)
-    $stamp = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'localswim-pushed.sha256')
+    # The cache and the stamp are the rewrite's JSON files (D40; docs/state.md).
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'instance-id.json')), ('{"version":0,"instance_id":"' + $fakeId + '"}'))
+    $stamp = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'localswim-pushed.json')
     $lsDir = Join-Path $h.UserProfile 'AppData\Local\localswim-v2'
     $credDir = Join-Path $lsDir 'cred'
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $credDir) | Out-Null
@@ -145,7 +146,18 @@ try {
       if (-not $line) { return $null }
       , @(ConvertFrom-Json -InputObject $line)
     }
-    function Get-StampText { if (Test-Path -LiteralPath $stamp -PathType Leaf) { [IO.File]::ReadAllText($stamp) } else { $null } }
+    # The stamp that localswim-pushed.json holds, {"version":0,"stamp":"<hex>"} (docs/state.md, The
+    # push stamp); the file's whole text when it is not that document, so that no check below passes on it.
+    function Get-StampText {
+      if (-not (Test-Path -LiteralPath $stamp -PathType Leaf)) { return $null }
+      $raw = [IO.File]::ReadAllText($stamp)
+      try { $doc = ConvertFrom-Json -InputObject $raw -ErrorAction Stop } catch { return $raw }
+      if ($doc -isnot [pscustomobject]) { return $raw }
+      $names = @($doc.PSObject.Properties.Name)
+      if ($names.Count -ne 2 -or $names -cnotcontains 'version' -or $names -cnotcontains 'stamp') { return $raw }
+      if ($doc.version -isnot [long] -or $doc.version -ne 0 -or $doc.stamp -isnot [string]) { return $raw }
+      $doc.stamp
+    }
     function Get-Problems($Run) {
       $p = [System.Collections.Generic.List[string]]::new()
       if ($Run.TimedOut) { $p.Add('It timed out') }
@@ -201,7 +213,7 @@ try {
       $stampText = Get-StampText
       if ($null -eq $stampText) { $p.Add('No stamp file was written') }
       else {
-        if ($stampText -notmatch '\A[0-9A-Fa-f]{64}\z') { $p.Add('The stamp is not 64 hex digits and nothing else') }
+        if ($stampText -cnotmatch '\A[0-9A-F]{64}\z') { $p.Add('The stamp file is not {"version":0,"stamp":"<64 uppercase hex digits>"}') }
         elseif ($stampText.ToLowerInvariant() -cne (Get-ExpectedStamp $zoneA)) { $p.Add('The stamp is not the SHA-256 of <instance ID> LF <zone> LF <content>') }
       }
       Write-Problems "${sec}: The stamp is the SHA-256 of the instance ID, the zone and the content, written once the box confirmed (The stamp)" $p
@@ -243,7 +255,7 @@ try {
       if ((Get-StampText) -and (Get-StampText).ToLowerInvariant() -cne (Get-ExpectedStamp $zoneB)) { $p.Add('The stamp is not the new zone''s') }
       Write-Problems "${sec}: A changed zone makes the push due, and the stamp then covers the new zone (The stamp)" $p
 
-      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $stamp) -Force
+      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $stamp) -Force -ErrorAction SilentlyContinue
       $callsBefore = Get-StandInCallCount -Log $sshCalls
       $r = Invoke-Up $zoneB
       $p = Get-Problems $r
@@ -291,7 +303,7 @@ try {
       # ---- 4. A nested up pushes nothing; a missing receipt is silent ----
       $callsBefore = Get-StandInCallCount -Log $sshCalls
       $r = Invoke-Up $zoneB -Extra @{ AGENTSPACE_NESTED = '1' }
-      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $stamp) -Force
+      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $stamp) -Force -ErrorAction SilentlyContinue
       $r2 = Invoke-Up $zoneB -Extra @{ AGENTSPACE_NESTED = '1' }
       $p = Get-Problems $r2
       if ((Get-StandInCallCount -Log $sshCalls) -ne $callsBefore) { $p.Add('A nested up started an ssh') }

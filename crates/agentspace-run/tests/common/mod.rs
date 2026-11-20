@@ -26,6 +26,13 @@ pub fn make_runner_real_env(ctx: Context) -> impl Aws + Remote {
     agentspace_run::Runner::with_lookup(ctx, |name: &str| std::env::var_os(name))
 }
 
+/// The same, built with `Runner::passing_ignored_stderr` (operator.md, Starting the box and
+/// waiting for it, step 1).
+pub fn make_runner_real_env_passing_ignored_stderr(ctx: Context) -> impl Aws + Remote {
+    agentspace_run::Runner::with_lookup(ctx, |name: &str| std::env::var_os(name))
+        .passing_ignored_stderr()
+}
+
 /// ASSUMED: `agentspace_run::ssh_program(&Context) -> Result<PathBuf, Failure>` (the card).
 /// It reads the real process environment, so only a child process calls it.
 pub fn ssh_program(ctx: &Context) -> Result<PathBuf, Failure> {
