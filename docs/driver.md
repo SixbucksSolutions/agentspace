@@ -24,11 +24,19 @@ rather than restating it:
   [the lease state file](state.md#the-lease-state-file) and
   [a lease's credential](state.md#a-leases-credential).
 - **The operator**, which sets up the CA, starts and stops the box, and runs the ProxyCommand
-  that today's driver hands back: [docs/operator.md](operator.md).
+  that today's driver hands back: [docs/operator.md](operator.md). From v0.07 (#0047) that
+  includes `provision`, the run that makes a project's host, whose steps and records are
+  [operator.md, provision](operator.md#provision)'s.
+- **The host registry, the project list and a host's folder**, which the EC2 driver reads and
+  writes from v0.07: [state.md, The host registry](state.md#the-host-registry),
+  [The project list](state.md#the-project-list) and [A host's folder](state.md#a-hosts-folder).
+  The alias of a lease on a host that is not the box is
+  [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)'s.
 
 **Where this page is the owner:** the operations and their rules; the shape of a failure at the
 boundary; the rule for what is `unsatisfiable`; what reachability is, and who supplies it; and the
-EC2 driver as it stands.
+EC2 driver as it stands, among it where it places a lease by its project's host, when it starts a
+provisioning run and what it records then, and `place_pending`, which a finished run calls.
 
 **Hardening carried in.** Card #0041, first point (credential errors reach the caller unwrapped),
 is carried in here as a requirement on every failure that crosses the boundary
@@ -53,10 +61,13 @@ prototype stay as the record of the change.
   [ordering and concurrency](#ordering-and-concurrency),
   [the driver's name](#the-drivers-name)
 - [The operations](#the-operations): [place a lease](#place-a-lease),
-  [renew a lease](#renew-a-lease), [release a lease](#release-a-lease)
+  [renew a lease](#renew-a-lease), [release a lease](#release-a-lease),
+  [check a pending lease](#check_pending)
 - [Unsatisfiable requests](#unsatisfiable-requests)
 - [Reachability](#reachability)
-- [The EC2 driver](#the-ec2-driver)
+- [The EC2 driver](#the-ec2-driver): [where it places a lease](#where-it-places-a-lease),
+  [starting a provisioning run](#starting-a-provisioning-run), [`place_pending`](#place_pending),
+  [lock order](#lock-order), [conformance cases for v0.07](#conformance-cases-for-v007)
 - [Writing another driver](#writing-another-driver)
 - [Hardening carried in](#hardening-carried-in)
 - [Open questions](#open-questions)
@@ -65,13 +76,20 @@ prototype stay as the record of the change.
 
 ### The boundary
 
-**The boundary is three operations: place a lease, renew a lease and release a lease.** The CLI
-asks nothing else of a driver. `get` and `list` never call one, and neither does any command on a
-lease that is `unsatisfiable`. Which commands ask a driver for a lease in each state is in
-[Release a lease](#release-a-lease).
+**The boundary is four operations: place a lease, renew a lease, release a lease, and check a
+pending lease ([`check_pending`](#check_pending), from v0.07, D48).** The CLI asks nothing else of
+a driver. `list` never calls one, `get` calls only `check_pending`, and only for a lease whose
+stored state is `pending`, and no command calls one for a lease that is `unsatisfiable`. Which
+commands ask a driver for a lease in each state is in [Release a lease](#release-a-lease) and
+[`check_pending`](#check_pending).
+- **A driver that never answers `pending` needs no `check_pending` of its own:** the CLI calls
+  `check_pending` only for a lease that a driver placed `pending`, so it never calls one for such a
+  driver, and the boundary's default, which does nothing, is all that driver has. So the four
+  operations ask nothing more of such a driver than the three did
+  ([Writing another driver](#writing-another-driver)).
 - In the prototype, no command reaches a driver for a lease that is `pending`, because the
-  prototype's driver never answers `pending`. How a placement that is `pending` would reach one is
-  [Q3](#open-questions)'s.
+  prototype's driver never answers `pending`. How a `pending` lease becomes `ready` was
+  [Q3](#open-questions)'s, closed for the EC2 driver by D48.
 
 **Each operation is a request that carries named inputs, answered by a result or a failure.** This
 page describes them by what they carry and do, never by how they are called:
@@ -202,8 +220,17 @@ it has recorded the outcome** ([state.md](state.md#the-lease-state-file) owns th
   well under 30 seconds, and MUST NOT wait on anything that needs the lock or a person. Whether
   the prototype does is [Q12](#open-questions).
 - **A driver that has to start or create compute to place a lease SHOULD start it and answer
-  `pending`, instead of waiting inside the operation** ([Place a lease](#place-a-lease)). Today's
-  driver starts nothing at place time ([The EC2 driver](#the-ec2-driver)).
+  `pending`, instead of waiting inside the operation** ([Place a lease](#place-a-lease)). The EC2
+  driver does so from v0.07 for a project whose host is not `ready`: it starts a provisioning run
+  and never waits for it ([Starting a provisioning run](#starting-a-provisioning-run)).
+- **`get` does not take the lock** ([lease-api.md](lease-api.md#concurrency-and-atomicity)), so
+  [`check_pending`](#check_pending) runs outside it, and MUST NOT take it or write the lease state
+  file.
+- **A process other than the CLI MAY change a lease too:** a finished provisioning run calls
+  [`place_pending`](#place_pending), which takes the lease state lock as a changing command does,
+  waits for it as one does, and holds it until it has written ([state.md, The lease state
+  lock](state.md#the-lease-state-lock)). It takes the lock once per lease it places, so no hold
+  spans several placements.
 
 **What the CLI does, in order, around each operation:**
 
@@ -211,9 +238,14 @@ it has recorded the outcome** ([state.md](state.md#the-lease-state-file) owns th
 |---|---|---|---|
 | `create` | Reads the records; picks a new lease ID whose alias no kept lease uses | To place the lease | Records the lease, validates the records, writes them |
 | `renew` | Finds the lease; checks that it is `ready`, so an expired lease is refused before any driver is asked ([lease-api.md](lease-api.md#agentspace-lease-renew)) | To renew the lease's certificate | Records the new `expires_at` and `ttl_seconds`, writes |
-| `release` | Finds the lease | To release it, when its stored state is `ready` or `released` ([Release a lease](#release-a-lease)) | Records `released`, drops `ssh`, sets `released_at`, writes |
+| `release` | Finds the lease | To release it, when its stored state is `ready` or `released`, or `pending` with a `driver` (pin P16, architect, 2026-11-20, for v0.07-T01; [Release a lease](#release-a-lease)) | Records `released`, drops `ssh`, sets `released_at`, writes |
+| `get` | Nothing: `get` takes no lock. It reads the records and finds the lease | To check it, when its stored state is `pending` ([`check_pending`](#check_pending)) | Prints the lease as it read it, whatever the check did; writes nothing |
 
-**A failure of the driver ends the command at once, with the records untouched.** A failure after
+**A failure of the driver ends the command at once, with the records untouched**, but for a
+failure of `check_pending`, which `get` drops ([`check_pending`](#check_pending)). **A failure in
+recording a `pending` lease asks no driver anything:** the lease has no credential or alias, and
+what the EC2 driver started stays, its host registry record and any run, which makes the host and
+finds no lease of this `create` to place; the host is kept (D25). A failure after
 a lease was placed `ready`, in recording it, is different: the CLI then asks the driver to release
 the lease it just placed, and reports the first failure, naming in it whatever that release could not
 remove ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity), whose
@@ -270,6 +302,7 @@ under.
 | [Place a lease](#place-a-lease) | `create` | A lease ID, project, platform, profile, size and TTL | The CLI has chosen an ID whose alias no kept lease uses |
 | [Renew a lease](#renew-a-lease) | `renew` | A lease's new certificate | The lease is `ready` |
 | [Release a lease](#release-a-lease) | `release`, and `create` when it fails after a `ready` place | A lease's local credential and alias, gone | The lease's stored state is `ready` or `released`, or it has just been placed |
+| [Check a pending lease](#check_pending) | `get` | Nothing it returns: the driver carries on with the lease's placement, if it needs to | The lease's stored state is `pending` |
 
 ### Place a lease
 
@@ -291,7 +324,9 @@ credential, makes the lease reachable, and says how.**
 
 **The request carries no state folder.** Where the lease's key and certificate go is
 [state.md](state.md#a-leases-credential)'s, and the CLI's own state folder
-([lease-api.md](lease-api.md#environment)) is the CLI's alone.
+([lease-api.md](lease-api.md#environment)) is the CLI's alone. From v0.07 the driver's context
+also holds it, and the EC2 driver uses it only to hand it to a provisioning run it starts, for
+[`place_pending`](#place_pending) (pin P12, architect, 2026-11-20, for v0.07-T01).
 
 **The result, always one of these states:**
 
@@ -299,7 +334,7 @@ credential, makes the lease reachable, and says how.**
 |---|---|---|
 | `ready` | Host alias, user, expires at | The lease's credential and alias are in place, and a connection through the alias is expected to succeed until the expiry |
 | `unsatisfiable` | Reasons, 1 to 4 | The request cannot be met as asked ([Unsatisfiable requests](#unsatisfiable-requests)). Nothing was issued |
-| `pending` | None | Accepted, not yet ready. No credential has been issued. The prototype's driver never answers it |
+| `pending` | None | Accepted, not yet ready. No credential has been issued. The prototype's driver never answers it; the EC2 driver answers it from v0.07 for a project whose host is not `ready` ([Where it places a lease](#where-it-places-a-lease)) |
 
 - **A result's members that do not belong to its state MUST be left out.** A driver MUST NOT
   answer any other state.
@@ -361,7 +396,7 @@ third point). The check MUST NOT change anything on the caller's machine.
 |---|---|
 | `ready` | Records the lease `ready` with its expiry, host alias and user, and the driver's name; prints it; exits 0 |
 | `unsatisfiable` | Records the lease `unsatisfiable` with its reasons and the driver's name; prints it; exits 0; asks no more of any driver for it |
-| `pending` | Would record the lease `pending` with the driver's name, and print it. How the lease then leaves `pending` is not in the boundary ([Q3](#open-questions)) |
+| `pending` | Records the lease `pending` with the driver's name, and no `expires_at`, `ssh` or `reasons` ([state.md](state.md#the-lease-state-file)); prints it; exits 0. The lease leaves `pending` by the driver's own work, never by the CLI's: for the EC2 driver, a finished provisioning run calls [`place_pending`](#place_pending), and `get` asks [`check_pending`](#check_pending) in the meantime ([Q3](#open-questions), closed for the EC2 driver) |
 | A failure | Records nothing, and ends the command with `internal`, exit 1 |
 
 **A failed place MUST remove every file and folder it made, and MUST NOT disturb anything that
@@ -372,10 +407,12 @@ says what today's driver leaves, which is nothing except in the alias row.
 
 | Failure | When | Left behind |
 |---|---|---|
-| The CA is missing or unusable | The CA check fails: no CA, a half-made one, or a mismatched or loosened one, by the five checks of [state.md](state.md#its-checks) and no others. The CA folder's place is `ca`'s to check, not the driver's. A driver MUST NOT create the CA ([lease-api.md](lease-api.md#the-credential), #0029) | Nothing |
+| The CA is missing or unusable | The CA check fails: no CA, a half-made one, or a mismatched or loosened one, by the five checks of [state.md](state.md#its-checks) and no others. The CA folder's place is `ca`'s to check, not the driver's. A driver MUST NOT create the CA ([lease-api.md](lease-api.md#the-credential), #0029). From v0.07 the EC2 driver checks it before a `pending` answer too ([Where it places a lease](#where-it-places-a-lease)) | Nothing; for a `pending` answer, nothing in the host registry either |
 | The credential could not be issued | Making the key, checking that it has no passphrase, or signing fails | Nothing from the credential: every file this call made is removed, and the lease's folder too if this call made it. A folder that already existed, and held neither key nor certificate, stays (gap FA-01) |
 | The lease ID already has a credential | A key or certificate for this ID exists. A driver MUST refuse, and MUST NOT overwrite or remove it | The existing files, untouched |
 | The alias could not be set up | The caller's OpenSSH configuration cannot take it, an alias file for this alias belongs to another lease or to no lease, the transport cannot be found, the transport or a path holds a line break, the alias is not a valid name, or a write fails | The credential is removed, and a foreign file at the alias's place is kept. See below for what the alias step itself can leave |
+| The project's host cannot be looked up | From v0.07: the host registry cannot be read or does not validate, the project list, which is read only for a project with no record, cannot be read or does not validate, or the host registry's lock cannot be had within 30 seconds ([Where it places a lease](#where-it-places-a-lease)) | Nothing |
+| A provisioning run cannot be started | From v0.07: a run is due and the operator program cannot be found ([Starting a provisioning run](#starting-a-provisioning-run)). A start that fails after the program was found is not a failure of place | Nothing: the host registry is not written |
 | Anything else | A file cannot be written | Nothing |
 
 **An alias failure found after the `Include` line was added leaves that line, and it is allowed
@@ -495,8 +532,21 @@ or is `released`. It is asked for no lease that is `unsatisfiable`:
   CLI MUST ask the driver again. The prototype does not: it returns a `released` lease unchanged
   and touches no files. That is #0041's defect
   ([lease-api.md](lease-api.md#agentspace-lease-release)), and it stays unmet until the rewrite.
-- **`pending`:** the prototype never has one, and records `released` without asking a driver. A
-  driver that answers `pending` has to be told to give up the request ([Q3](#open-questions)).
+- **`pending`, with a `driver`:** from v0.07 the CLI asks that driver to release it, as it asks for
+  a `ready` one (pin P16, architect, 2026-11-20, for v0.07-T01). A `pending` lease has no
+  credential or alias by contract, but a placement killed part way can have left that lease's
+  files, and lease-api.md's `released` state says its local credential and alias are gone. So the
+  driver's release removes the alias file only when its owner mark names this lease, then the
+  lease's folder, and a missing file is not a failure; for a lease that has no files it removes
+  nothing. It runs under the lease state lock, so it serializes with
+  [`place_pending`](#place_pending), which re-reads each record and skips one that is no longer
+  `pending`: a lease released first is never placed. **With no home folder, the cleanup is
+  skipped and the release still succeeds**, as lease-api.md's exit-code order requires (pin P16,
+  architect, 2026-11-20, for v0.07-T01); a later release of the `released` lease, with the home
+  set, removes what is left, as for any `released` lease above. The project's host, and a run
+  making it, are kept (D25). Leftovers of a lease that is still `pending` are also removed first by
+  its next [`place_pending`](#place_pending) (pin P14.5, architect, 2026-11-20, for v0.07-T01).
+- **`pending`, with no `driver`:** the CLI records `released` and asks no driver.
 - **`unsatisfiable`:** nothing was issued, so nothing is asked.
 
 **Failures of release,** each leaving the lease as the failed step found it, so that a retry
@@ -511,6 +561,60 @@ A failure's message SHOULD be the wording lease-api.md's table gives for release
 agentspace's own words and MUST NOT carry an absolute path. The prototype lets the underlying
 error through, path and all ([Failure](#failure)).
 
+### check_pending
+
+**Checks a pending lease: it lets a driver carry on with a placement it answered `pending`, each
+time a caller polls the lease with `get` (D48; card #0143).** It changes no lease, and nothing
+`get` prints. It is new in v0.07; the code's boundary has it with a default that does nothing
+(D55), which is all a driver that never answers `pending` needs.
+
+**The request:**
+
+| Input | Value | Notes |
+|---|---|---|
+| Driver name | The name stored at place | Selects the driver ([The driver's name](#the-drivers-name)). |
+| Lease ID | A lowercase UUIDv4, normalized | The lease's stored state is `pending`. |
+| Project | The project stored at place | |
+| OpenSSH client folder | Optional text | As for place, from the same variable. Whatever the driver starts to place the lease later uses it ([Starting a provisioning run](#starting-a-provisioning-run)). |
+| Transport override | Optional text | As for place, from the same variable, and for the same reason. |
+
+**The result: nothing.** A failure is the other answer, and **the CLI drops it: `get` prints the
+lease as it read it, exits 0, and prints nothing of the failure** (architect's to confirm). So
+`check_pending` never changes `get`'s output or its exit code, and a `get` that would have
+succeeded without it succeeds with it.
+
+**What a driver MUST and MUST NOT do in it:**
+- **It MUST NOT write the lease state file or take the lease state lock**, and MUST NOT issue a
+  credential or write an alias. A lease leaves `pending` only through the driver's own placement,
+  under the lock ([`place_pending`](#place_pending) for the EC2 driver), so `get` stays read-only
+  for leases ([lease-api.md](lease-api.md#agentspace-lease-get); state.md: `get` MUST NOT write the
+  lease state file).
+- **It MUST NOT wait for the placement to finish, or for a lock that a command changing leases
+  holds** ([lease-api.md](lease-api.md#concurrency-and-atomicity): `get` MUST NOT wait for one).
+  **It MUST end within 20 seconds** (pin P12, architect, 2026-11-20, for v0.07-T01), started work
+  or not, since a caller polls `get`. The EC2 driver tries `hosts.lock` without waiting, and its
+  start of a run is one call that never waits for the run
+  ([Starting a provisioning run](#starting-a-provisioning-run)).
+- **When the start itself has not returned within the 20 seconds, `get` returns at the bound
+  regardless**, prints the lease as it read it and exits 0, and uses nothing the start returns
+  later. The start counts as made: the record's `last_attempt_at` was written before it, so the
+  5-minute rule holds, and no other `get` starts a second run in that time (architect's to
+  confirm).
+- **It MUST NOT read the CLI's standard input, write to its standard output or standard error, or
+  prompt** ([The boundary](#the-boundary)), and what it starts MUST NOT write to them either.
+- **It MAY start work that outlives `get`**, which is how the EC2 driver carries on making a host,
+  or placing a lease on a host that is already `ready`
+  ([Starting a provisioning run](#starting-a-provisioning-run)).
+- **Idempotence:** any number of calls is safe. A driver bounds how often a call starts work; the
+  EC2 driver starts a run at most once every 5 minutes for a host.
+
+**When the CLI asks:** once per `get` of a lease whose stored state is `pending`, after it has read
+the records and before it prints. `list` never asks, and neither do `create`, `renew` and
+`release`. **A `pending` record with no `driver`, or one whose `driver` names a driver the CLI does
+not have, is asked of no driver**, and `get` prints it as always (architect's to confirm). Every
+record a v0.07 `create` writes carries `driver` ([state.md](state.md#the-lease-state-file)). So
+`get` of such a record starts nothing.
+
 ## Unsatisfiable requests
 
 **A request the driver cannot meet MUST end `unsatisfiable`, with a reason for every value it
@@ -523,7 +627,10 @@ cannot meet, and never be met by something else (D5).**
   rules of [lease-api.md](lease-api.md#fields).** A reason's message quotes the normalized value
   that cannot be met, and names no backend (D1).
 - **`no_capacity`** is for a request that is supported, but for which no capacity can be found.
-  The prototype's driver never has a reason to answer it.
+  The prototype's driver never has a reason to answer it. The EC2 driver answers it from v0.07 for
+  a project that has no host and is not on the project list (D54;
+  [Where it places a lease](#where-it-places-a-lease)). It applies only to a supported request, so
+  it is never listed beside an `unsupported_*` reason.
 - **A driver MUST NOT swap one value for another,** whether it is the platform, the profile or
   the size, however close a match it has.
 - **An unsatisfiable lease needs nothing from any driver afterwards:** no credential, no alias and
@@ -595,10 +702,20 @@ check belongs to the driver is [Q7](#open-questions)'s.
 
 ## The EC2 driver
 
-**The one driver v0 has: it places every lease on the one shared box, an EC2 instance.** It is the
-only part meant to know the backend, and what it names stays in the files state.md owns and in the
-operator's messages, never in the CLI's output. Today the shared credential and alias steps also
-hold its user, transport and host-key settings ([Q5](#open-questions), [Q7](#open-questions)).
+**The one driver v0 has: it places each project's leases on that project's host, an EC2 instance**
+(D25, D43). Until v0.07 (#0047) every lease went to the one shared box; from v0.07 the box is
+swimcoach's host, and each other project gets a host of its own at its first lease, made by a
+provisioning run the driver starts (D48). It is the only part meant to know the backend, and what
+it names stays in the files state.md owns and in the operator's messages, never in the CLI's
+output. Today the shared credential and alias steps also hold its user, transport and host-key
+settings ([Q5](#open-questions), [Q7](#open-questions)).
+
+**What the marks below mean.** Where D43 to D55 and card #0143 left a fact open, the dev lead of
+v0.07-T01 pinned it, so that the four specs written in that turn agree (D55):
+- **"Architect, 2026-11-20, for v0.07-T01"** marks a pin the architect has ruled on. It binds as
+  written.
+- **"Architect's to confirm"** marks this page's writer's choice, where no pin settles the fact.
+  It is sent to the architect, and binds as written until the architect rules.
 
 ### What it supports
 
@@ -611,14 +728,82 @@ hold its user, transport and host-key settings ([Q5](#open-questions), [Q7](#ope
 | Size | `m` | `unsupported_size` |
 
 **Matching is exact on the normalized values.** `windows/amd64`, `linux/amd64`, and any
-profile with a version are `unsatisfiable`. The reasons use lease-api.md's three messages, and the
-driver never answers `no_capacity` or `pending`.
+profile with a version are `unsatisfiable`. The reasons use lease-api.md's three messages. Until
+v0.07 the driver never answered `no_capacity` or `pending`; from v0.07 it answers each for a
+supported request, by its project's host ([Where it places a lease](#where-it-places-a-lease)).
+
+### Where it places a lease
+
+**A supported request is placed by its project's host, found in the host registry
+([state.md, The host registry](state.md#the-host-registry)) by its `project`, compared exactly**
+(both are normalized; D45, D48; pin P1, architect, 2026-11-20, for v0.07-T01). A missing
+`hosts.json` reads as one record, the box's: project `swimcoach`, stack `agentbox`, state `ready`
+(D45). The box is the record whose stack is `agentbox`. The project list is
+[state.md, The project list](state.md#the-project-list), and a missing `projects.json` lists
+nothing (D54).
+
+| The project's host | Place answers | Issues | Starts |
+|---|---|---|---|
+| A record in state `ready` | `ready`, as before v0.07, with the host's key lines in the alias (D47): the box's lease aliases keep v0.06's bytes, `HostKeyAlias agentspace` and no `UserKnownHostsFile` ([state.md, The alias file](state.md#the-alias-file)); every other host's are [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)'s | The credential and the alias, by [How it places a lease](#how-it-places-a-lease) | Nothing |
+| A record in state `creating` or `failed` | `pending` | Nothing | A provisioning run, when one is due ([Starting a provisioning run](#starting-a-provisioning-run)) |
+| No record, and the project is on the project list | `pending` | Nothing | It adds the project's record, state `creating`, and starts a provisioning run when one is due |
+| No record, and the project is not on the project list | `unsatisfiable`, with one reason, `no_capacity` (D54) | Nothing | Nothing, and writes nothing to the host registry |
+
+- **A project that has a record is placed by it, listed or not** (D54). The list governs only
+  making a host.
+- **The `no_capacity` reason's message names the project and no backend (D1)**, and SHOULD read:
+  `No capacity can be found for project '<project>'; agentspace's operator has not approved it.`
+  (architect's to confirm). `<project>` is the normalized project.
+- **The host is looked up only for a supported request.** An unsupported one is `unsatisfiable`
+  with its `unsupported_*` reasons alone, and place reads neither file; so a laptop with no CA,
+  no host registry and no project list still gets that answer, as before v0.07.
+- **The registry is read under its lock, `hosts.lock`** ([state.md, The host registry](state.md#the-host-registry)),
+  taken as state.md says, for as long as the decision and any write of it take, and released before
+  any run is started. It follows the lease state lock's rules, a lock held for longer being waited
+  for up to 30 seconds, and place takes it while it holds the lease state lock, as the lock order
+  allows ([Lock order](#lock-order)). A `ready` answer needs only the record's `state`: place
+  MUST NOT read, check for or depend on the record's `instance_id`
+  ([How it is reached](#how-it-is-reached)).
+- **The project list is read only for a project that has no record in the host registry** (pin P14.3, architect, 2026-11-20,
+  for v0.07-T01). A project that has a record is placed by it whatever the list holds, so
+  a project list that is missing, unreadable or not valid never fails a lease of a project that
+  has a host, swimcoach's among them (D43).
+- **A host registry that cannot be read, or does not validate against its schema, fails the
+  place** with `internal`, writing nothing, **and so does a lock on the registry that cannot be
+  had within its 30 seconds, and a project list, when it is read, that cannot be read or does not
+  validate.** For the host registry this is pin P9 (architect, 2026-11-20, for v0.07-T01): only a
+  missing `hosts.json` reads as the box's record alone, and one that exists and is not valid, by
+  its bytes, its JSON, its schema or a project listed twice, is never read as missing, and is
+  never repaired by agentspace. For the project list it is this page's choice (architect's to
+  confirm). Neither file is read as empty: an unreadable list read as empty would answer a
+  terminal `unsatisfiable` for a project that MAY have a host made. The message is in
+  agentspace's own words, and SHOULD be
+  `The lease's host could not be looked up: <why>. Nothing was recorded.`, where `<why>` names
+  the file by what it is, as in `agentspace's host records are not valid`.
+- **A `pending` answer issues nothing:** no key, no certificate and no alias, as for
+  `unsatisfiable`. The credential and the alias are made when the lease is placed `ready`
+  ([`place_pending`](#place_pending)).
+- **A `pending` answer still checks the CA first, as before it issues** (pin P14.1, architect, 2026-11-20, for v0.07-T01): by step 2 of [How it places a lease](#how-it-places-a-lease), after the host lookup has
+  decided on `pending` and before anything is written. A CA that fails a check fails the place with
+  `internal`, records no lease, writes nothing to the host registry and starts nothing, so
+  lease-api.md's rule that `create` with no CA fails ([lease-api.md](lease-api.md#the-credential))
+  holds for a `pending` answer as for a `ready` one. An `unsatisfiable` answer runs no CA check,
+  as before v0.07. [`place_pending`](#place_pending) checks the CA again when it places the lease.
+- **Place still makes no call to AWS and never waits for a host** (D48;
+  [Reachability](#reachability)). A provisioning run does both, in a process of its own.
 
 ### How it places a lease
 
-**Place makes no call to AWS and starts no host.** Every step is on the caller's machine:
+**Place makes no call to AWS and waits for no host.** For a host that is `ready` it starts nothing;
+for one that is not, it MAY start a provisioning run and answers `pending`
+([Where it places a lease](#where-it-places-a-lease)). Every step below is on the caller's
+machine, and the steps after the first are those of a lease placed `ready`, whether by place or by
+[`place_pending`](#place_pending):
 1. **Decides** whether the request is supported, and answers `unsatisfiable` with every reason
-   when it is not. Nothing has been issued.
+   when it is not. Nothing has been issued. **From v0.07, it then finds the project's host**, and
+   answers `pending` or `unsatisfiable` there, as [Where it places a lease](#where-it-places-a-lease)
+   says, unless the host is `ready`. Before a `pending` answer it runs step 2's CA check, and
+   nothing after it.
 2. **Checks the CA by the checks of [state.md, Its checks](state.md#its-checks), and those alone.**
    A CA that fails one fails the place, and place MUST NOT create a missing CA (#0029, point 3).
    It never runs the operator's `ca` ([operator.md](operator.md#ca)).
@@ -639,10 +824,11 @@ driver never answers `no_capacity` or `pending`.
    The valid-after time SHOULD be back-dated there; the prototype's is the issue time itself,
    which is not behavior to copy.
 5. **Writes the lease's alias** into the caller's OpenSSH client configuration, with the
-   transport the next section describes. If the configuration cannot take the alias, or the
-   default transport's program cannot be found, place fails here, after the key is made and
-   signed, and the credential is removed as for any alias failure. **Place MUST NOT check for the
-   instance-ID cache** ([How it is reached](#how-it-is-reached)).
+   transport the next section describes and the host's key lines
+   ([Where it places a lease](#where-it-places-a-lease), D47). If the configuration cannot take the
+   alias, or the default transport's program cannot be found, place fails here, after the key is
+   made and signed, and the credential is removed as for any alias failure. **Place MUST NOT check
+   for the host's instance ID**, cached or not ([How it is reached](#how-it-is-reached)).
    - Note on where this came from: without an override, the prototype first checks that its
      checkout holds `.instance-id`, and fails place at this step when it does not. That is a
      difference the spec drops (D21), and never behavior to copy.
@@ -661,6 +847,300 @@ that is refused (for example because a foreign file sits at the alias), removes 
 folder directly. It keeps the foreign file. The failure it reports is a message of its own with the
 original as the cause.
 
+### Starting a provisioning run
+
+**A provisioning run is `agentspace-operator provision -Host <project>`**, which makes the
+project's host by D46's four steps, or runs them again on a host that is already `ready`, each
+step being safe to repeat, and ends by placing the project's `pending` leases with
+[`place_pending`](#place_pending) (D46, D48). Its steps, its log and its own records are
+[operator.md, provision](operator.md#provision)'s. **The driver starts one from place (a `create`)
+and from [`check_pending`](#check_pending) (a `get` of a `pending` lease):**
+- **From place,** for a project whose record is `creating` or `failed`, or that has no record and
+  is on the project list. Place for a project whose record is `ready` answers `ready` and starts
+  nothing ([Where it places a lease](#where-it-places-a-lease)).
+- **From `check_pending`,** for the same projects, and also for a project whose record is `ready`
+  (pin P3, architect, 2026-11-20, for v0.07-T01; D48): a lease left `pending` on a `ready` host,
+  because a run's `place_pending` could not place it, is placed by the next run, never by `get`.
+
+A person MAY run `provision -Host <project>` by hand as well.
+
+**When the driver starts a run, and what it records** (pin P2, architect, 2026-11-20, for
+v0.07-T01). Steps 1 to 4 are made holding `hosts.lock`, in one hold
+([state.md, The host registry](state.md#the-host-registry)), and in this order: the reads that
+decide, then the program, then the one write. So a `create` that fails at any step before the
+write leaves the registry as it was.
+1. **It reads the project's record, and, only when there is none, the project list** (pin P14.3, architect, 2026-11-20,
+   for v0.07-T01). From place, no record and not on the list is `unsatisfiable`, as
+   [Where it places a lease](#where-it-places-a-lease) says, and nothing below happens; from
+   `check_pending` it is nothing at all (below). From place, a `pending` answer's CA check comes
+   here, after this read ([Where it places a lease](#where-it-places-a-lease)), and reads only.
+2. **It decides whether a run is due, by reads alone.** A run is due only when no run holds the
+   project's `provision.lock`, and the record's `last_attempt_at` is absent or at least 5 minutes
+   before now; a record that step 4 is about to add has none. The lock is in the host's folder
+   ([state.md, A host's folder](state.md#a-hosts-folder)); the driver tries to take it once,
+   without waiting, as state.md says the lock is held, and releases it at once if it took it. A
+   host's folder or lock file that does not exist means that no run holds it, and the try creates
+   neither (architect's to confirm). The folder is made only at the start (below), and the lock
+   only by a run.
+3. **When a run is due, it checks that the operator program can be found** (the operator
+   program, below), and only then. One that cannot be found fails the place with `internal` (architect's to confirm): it is an install
+   that waiting will not mend. Nothing is written, so the host registry is as it was, without even
+   the record that step 4 would have added. The message is in agentspace's own words, names no
+   path, and SHOULD be, by the reason the program cannot be found (architect's to confirm):
+   - **With `AGENTSPACE_PROVISION_CMD` unset or empty, no `agentspace-operator.exe` beside the
+     CLI:** `The lease's host cannot be made: agentspace's operator program is not installed beside
+     this program. Nothing was recorded.`
+   - **`AGENTSPACE_PROVISION_CMD` naming no existing file:** `The lease's host cannot be made: the
+     program that AGENTSPACE_PROVISION_CMD names does not exist. Nothing was recorded.`
+   - **A `.cmd` or `.bat` program with `SystemRoot` unset or empty:** `The lease's host cannot be
+     made: Windows' command interpreter cannot be found, because SystemRoot is not set. Nothing was
+     recorded.`
+
+   From `check_pending` the same is a failure the CLI drops, and nothing is written either.
+4. **It writes the registry once, and only what applies:**
+   - **No record, and the project is on the project list:** it adds
+     `{"project":"<project>","stack":"agentspace-host-<project>","state":"creating"}` (D44, D55).
+     With no `hosts.json`, the file it writes holds the box's record as well, as state.md says of
+     the registry's first change (pin P9, architect, 2026-11-20, for v0.07-T01).
+   - **When a run is due:** it sets the record's `last_attempt_at` to now and, only when the record
+     is new or in state `creating` or `failed`, its `state` to `creating`, in the same write.
+   - **When no run is due:** it writes `last_attempt_at` into no record, so an added record has
+     none, and a record that existed is not written at all.
+5. **It releases `hosts.lock`, and only then, when a run is due, starts it, detached** (below).
+   When no run is due it starts none, and the lease is `pending` all the same.
+
+- **A record in state `ready` never has its `state` changed by the driver** (architect, 2026-11-20,
+  for v0.07-T01; D48). Starting a run for it writes only its `last_attempt_at`, and a start that
+  fails leaves it `ready`. A host that is not `ready` sends its project's `ready` leases to the box,
+  where ssh's strict key check refuses them ([How it is reached](#how-it-is-reached)), so a `ready`
+  host taken out of `ready` would cut every lease of its project. `creating` and `failed` apply
+  only to a host that was never `ready`.
+- **So at most one run is started for a host in any 5 minutes**, by any number of `create`s and
+  `get`s: the rule covers a failed run, a run that died with its record still `creating`, and the
+  moment between the start and the run taking its lock.
+- **`last_attempt_at` is the start time of the last run**, UTC, in state.md's timestamp form, and
+  "now" is the clock of the caller's machine. A run writes its own when it takes its lock, so a
+  run by hand counts too ([operator.md, provision](operator.md#provision)).
+- **A run that is not due never makes the `create` fail:** the program is looked for only for a
+  run that is due (step 3), so a `create` whose run is not due answers `pending` even when the program
+  cannot be found.
+- **The locks are taken in [the order below](#lock-order)**: place holds the lease state lock when
+  it takes `hosts.lock`, and only tries `provision.lock`.
+
+**The operator program** is the one the driver's context names, which the CLI resolves when it
+starts (card #0143; D55 pins it into the code's `Context`; pin P12, architect, 2026-11-20, for
+v0.07-T01):
+- **`AGENTSPACE_PROVISION_CMD`, when it is set and not empty:** the full path of the program the
+  driver starts for a provisioning run, in place of agentspace's own, so that a check can stand one
+  in ([lease-api.md](lease-api.md#environment)). It is a program's documented variable, as
+  `AGENTSPACE_PROXY_COMMAND` is. A relative path is made full against the CLI's working folder,
+  as state.md makes a relative folder full, before the detached start, since the run's own working
+  folder is the home folder (pin P12, architect, 2026-11-20, for v0.07-T01).
+- **Otherwise, `agentspace-operator.exe` in the folder the CLI's own executable runs from**, as the
+  CLI finds the ProxyCommand program ([operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others)).
+- **A path that does not name an existing file is a program that cannot be found.**
+- **Its command line is the program, then exactly `provision`, `-Host` and the normalized
+  project**, and nothing else ([operator.md, provision](operator.md#provision)): `"<program>"
+  provision -Host <project>`. **A `.cmd` or `.bat` program**, its extension compared without regard
+  to case, is run through Windows' command interpreter as a ProxyCommand line is:
+  `<system folder>\cmd.exe /d /c "<program>" provision -Host <project>`, with `<system folder>` as
+  [state.md, The alias file](state.md#the-alias-file) gives it, and a `SystemRoot` that is unset or
+  empty makes the program one that cannot be found.
+
+**The detached start (D48, D55; pin P12, architect, 2026-11-20, for v0.07-T01).** A provisioning
+run takes about ten minutes, and MUST outlive the `create` or `get` that started it, the agent's
+tool call that ran that command, and every process above them. So the driver starts it through
+agentspace's detached start, which creates it with WMI's `Win32_Process.Create`, the call by which
+the keeper's holder is started (D42; [keeper.md, Starting a holder](keeper.md#starting-a-holder)).
+That call returns the run's process ID directly. **A run has no launch files**, no request, claim
+or result file and no handshake: `provision.lock`, which the run holds for its life, is its proof
+of life. What the start MUST achieve, from outside:
+- **The run is outside the Job Object of the CLI and of every process above it**, as keeper.md's
+  item 1 says of a holder.
+- **It has no window, starts in a new process group, and its working folder is the home folder**,
+  as the CLI has it, so that it never holds a worktree or a checkout open.
+- **The driver gives the run no standard handles: its standard input, standard output and
+  standard error are null**, and so never the CLI's ([The boundary](#the-boundary); pin P14.2,
+  architect, 2026-11-20, for v0.07-T01). A process created through `Win32_Process.Create` cannot
+  be handed a file handle, so the driver MUST NOT open the host's `provision.log`, and passes no
+  handle to the run.
+- **The run opens `provision.log` for append itself, as its first step, and writes every line of
+  its log there** ([state.md, A host's folder](state.md#a-hosts-folder); pins P4 and P14.2,
+  architect, 2026-11-20, for v0.07-T01). A run that cannot open its log exits 1 and writes nothing
+  else ([operator.md, provision](operator.md#provision)).
+- **Before the start, after it has released `hosts.lock`, the driver makes the host's folder,
+  `hosts\<project>\`, when it is missing** (pin P14.2, architect, 2026-11-20, for v0.07-T01), so
+  that the run can open its log there.
+  - **A failure to make the folder is a start that fails** (below): the lease is `pending`, and
+    nothing else changes.
+  - **That folder is the one thing in a host's folder the driver ever makes.** It never makes or
+    opens `provision.log`, and never makes `provision.lock`. A missing folder or lock still means
+    that no run is running (step 2).
+- **It inherits no handle of the CLI's**, and in particular never the lease state lock, which the
+  `create` that started it still holds, or `hosts.lock`.
+- **Its environment is the user's logon environment, with `USERPROFILE` set to the CLI's, and with
+  each of `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` present if
+  and only if the CLI had it set and not empty** (pins P15.1 and P15.2, architect, 2026-11-20, for
+  v0.07-T01). A value of one of the three that the logon environment holds and the CLI did not
+  have is removed. `USERPROFILE`, `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` name folders,
+  and each is made full against the CLI's working folder, as state.md makes a relative folder full.
+  `AGENTSPACE_PROXY_COMMAND` is a command line, not a folder, and is passed exactly as the CLI had
+  it (pin P12, architect, 2026-11-20, for v0.07-T01). Any other variable set only in the CLI's
+  environment, not in the logon environment, never reaches the run. They are what [`place_pending`](#place_pending) needs to place
+  the leases in the same home, state folder and OpenSSH client folder, and with the same
+  transport, as the command that started the run: `provision` builds `place_pending`'s context
+  from them as the lease CLI builds its own. No other variable of the CLI's reaches the run, so
+  nothing of an agent's session does.
+- **At most one run is started per start**, and the start is one call that returns the run's
+  process ID or fails. It never waits for the run, so that place stays well under the 30-second
+  wait ([Ordering and concurrency](#ordering-and-concurrency)) and `check_pending` within its
+  bound.
+- **The driver never waits for the run**, and nothing it answers depends on the run's outcome: the
+  lease is `pending` whether the start succeeded or not.
+- **A start that fails changes nothing more, and fails nothing** (architect's to confirm): the
+  record stays as step 4 wrote it, so the next start is due 5 minutes later, and place still
+  answers `pending`. A record that step 4 found `ready` stays `ready`, with only its
+  `last_attempt_at` changed.
+
+**From `check_pending`, the rule is the same, with these differences:**
+- **It tries `hosts.lock` once, without waiting, and when another process holds it, starts nothing
+  and succeeds** (pin P12, architect, 2026-11-20, for v0.07-T01). The holder is a place or a run
+  acting on the registry, and `get` MUST NOT wait on it ([check_pending](#check_pending)); the
+  next `get` checks again.
+- **A record in state `ready` is treated as `creating` and `failed` are, by steps 2 to 5**, but
+  for its `state`, which stays `ready` (pin P3, architect, 2026-11-20, for v0.07-T01): when a run
+  is due, it writes only `last_attempt_at` and starts the run, which places the lease.
+- **No record, and the project is on the project list:** it adds the record, as place does, and
+  goes on by the rule. **No record, and not on the list** (a registry changed by hand since the
+  `create`): it does nothing, and the lease stays `pending`. `get` never makes a lease
+  `unsatisfiable`.
+- **It runs no CA check**: [`place_pending`](#place_pending) checks the CA when it places the lease
+  (pin P14.1, architect, 2026-11-20, for v0.07-T01).
+- **It never writes the lease state file and never calls [`place_pending`](#place_pending)**, and
+  a registry or list that cannot be read is a failure the CLI drops. **A pending lease whose
+  driver is missing or unknown** starts nothing ([check_pending](#check_pending)).
+
+**After the run.** A run that succeeds records the host `ready`, or keeps it `ready`, and then calls
+[`place_pending`](#place_pending) for the project (pin P3, architect, 2026-11-20, for v0.07-T01). A
+failure of that call is the run's to log, and leaves the host `ready`; the leases it could not
+place stay `pending`, and the next run P2's rule allows, started by a `get` of one of them, places
+them. **A failed run leaves the leases `pending`, never `unsatisfiable`** (D48, D5). It records a
+host that was never `ready` as `failed`, and on a host that was `ready` it logs the failed step and
+leaves it `ready`. Once 5 minutes have passed since its last start, the run is started again: for a
+host that is not `ready`, by a later `create` or `get` of the project, and for a `ready` one, by a
+later `get` of a lease that is still `pending`. A caller that gives up releases the lease, and the
+host is kept (D25).
+
+### place_pending
+
+**Places every `pending` lease of one project once its host is `ready`: the transition lease-api.md
+names "`pending` to `ready`, by agentspace, when placement finishes"** (D48; card #0143). It is a
+library call of the EC2 driver, made by every provisioning run that succeeds, as its last step,
+after it has recorded the host `ready` or kept it `ready` (pin P3, architect, 2026-11-20, for
+v0.07-T01; [operator.md, provision](operator.md#provision)), and not a boundary operation: the
+lease CLI never calls it, and neither does [`check_pending`](#check_pending).
+
+**Its inputs:** the project, normalized; and the home folder, state folder, OpenSSH client folder,
+transport override and system folder, which the calling program reads from its own environment as
+the lease CLI reads them ([lease-api.md](lease-api.md#environment); [state.md, The home
+folder](state.md#the-home-folder)), and so, in a run the driver started, as the command that
+started it had them ([The detached start](#starting-a-provisioning-run)). The driver's context
+carries the state folder for it, as the code's `state_dir` (pin P12, architect, 2026-11-20, for
+v0.07-T01, a code pin committed before T03). The default transport's program is found in the
+folder the calling program's own executable runs from, as the CLI finds it
+([How it is reached](#how-it-is-reached); [state.md, The alias file](state.md#the-alias-file), D8;
+pin P15.4, architect, 2026-11-20, for v0.07-T01). In a run, that is `agentspace-operator.exe`'s
+folder, which D37 puts beside the CLI and the ProxyCommand program. **When the program is not
+there, `place_pending` fails that lease as `create` would** (step 5 of
+[How it places a lease](#how-it-places-a-lease)), and the lease stays `pending`. A transport
+override, the CLI's `AGENTSPACE_PROXY_COMMAND` when it had it set, replaces the whole line, and
+the program is then not looked for. **A stand-in that `AGENTSPACE_PROVISION_CMD` names never
+calls `place_pending`.**
+
+**It places only the leases of the state folder it is given.** A `pending` lease in a state
+folder other than the one whose command started the run is placed only by a later run started
+from its own folder, by a `create` or `get` that names that folder.
+
+**What it does, in order:**
+1. **Reads the project's host record**, holding `hosts.lock` for that read alone, and no lease
+   state lock, as [the lock order](#lock-order) allows. A registry that cannot be read, or whose
+   lock cannot be had within its 30 seconds, fails the call, and every lease stays `pending`.
+   **A record that is not `ready`, or none, places nothing**, and the call succeeds.
+2. **Places the project's `pending` leases one at a time, each in a hold of its own of the lease
+   state lock** (pin P14.4, architect, 2026-11-20, for v0.07-T01), so that no hold spans several placements, and a
+   `create`, `renew` or `release` waits behind one placement at most. For each lease in turn:
+   1. **Takes the lease state lock**, and waits for it as a changing lease command does, up to 30
+      seconds ([state.md, The lease state lock](state.md#the-lease-state-lock)). One it cannot
+      take fails the call, and every lease not yet placed stays `pending`.
+   2. **Reads the lease state file again**, as every lease command does, so a lease released or
+      changed since the last hold is seen as it now stands. One that cannot be read, or does not
+      validate, fails the call: it releases the lock, and changes nothing more.
+   3. **Picks the first record, in the file's order, whose stored state is `pending`, whose
+      `project` is the project, whose `driver` is this driver's name, and that this call has not
+      tried yet.** When there is none, it releases the lock, and the call is done.
+   4. **Removes that lease's leftover credential files first** (pin P14.5, architect, 2026-11-20, for v0.07-T01): a
+      key, certificate or alias file for its ID, removed as release removes them
+      ([Release a lease](#release-a-lease)). A `pending` lease has none by contract, so any there
+      can only be a placement's that was killed part way. A removal that fails, a foreign file at
+      the alias's place among them, is a failure of this lease.
+   5. **Issues the lease's credential and alias** by steps 2 to 5 of
+      [How it places a lease](#how-it-places-a-lease): the CA check, the key, the certificate and
+      the alias, with the record's lease ID and project, its `ttl_seconds` as the TTL, and the
+      host's key lines ([Where it places a lease](#where-it-places-a-lease)). **A CA that fails its
+      check fails this lease** (pin P14.1, architect, 2026-11-20, for v0.07-T01), and MUST NOT be created.
+   6. **Writes the lease state file with that record `ready`**: it adds `expires_at`, the
+      certificate's valid-before time, and `ssh`, the alias and the user `ubuntu`, and changes no
+      other member, `created_at`, `ttl_seconds` and `driver` included. The file is checked against
+      its schema before the write, and replaced atomically, as every write of it is
+      ([state.md](state.md#the-lease-state-file)). One write per lease (architect's to confirm), so
+      that a failure costs only that lease.
+   7. **A failure at step 4, 5 or 6 leaves that lease `pending`**, with every file this call made
+      for it removed as a failed place removes them ([Place a lease](#place-a-lease)), and is
+      named in the call's result for the run's log. When the write fails, the driver releases the
+      lease's files as release does.
+   8. **Releases the lease state lock**, and goes on to the next lease.
+
+- **A lease's TTL starts when it becomes `ready`** (D48): its `expires_at` is its certificate's
+  valid-before time, so the time it spent `pending` costs its caller none of it.
+- **Every other record is left as it was**: a lease released while it was `pending`, another
+  project's, and another driver's.
+- **It never answers `unsatisfiable`, starts nothing, makes no call to AWS, and never writes the host
+  registry.**
+- **Its result, to the run that called it,** names each lease it placed by ID, and each it could
+  not by ID with the failure's message, for the run's log. Each message meets
+  [Failure](#failure)'s rules. The call as a whole fails only at step 1, or at step 2's lock or
+  read; a lease it placed before such a failure stays `ready`.
+- **A lease it places is like one place made `ready`**: renew, release, the keeper and the
+  ProxyCommand treat the two alike.
+- **A failure of the call is the run's to log, and leaves the host `ready`** (pin P3, architect,
+  2026-11-20, for v0.07-T01). A lease it could not place stays `pending` until a later run places
+  it, or its caller releases it. That run is started by the next `get` of the lease that P2's rule
+  allows ([Starting a provisioning run](#starting-a-provisioning-run), from `check_pending`), or by
+  a person with `provision -Host <project>`. So no such lease is stranded.
+
+### Lock order
+
+**Three locks are waited for, always in this order: a host's `provision.lock`, then the lease state
+lock, then `hosts.lock`** (pin P10, architect, 2026-11-20, for v0.07-T01). A program that holds a
+later lock MUST NOT wait for an earlier one, so no two programs ever wait on each other.
+- **A try without waiting is outside the order**, and cannot deadlock: place, holding the lease
+  state lock and `hosts.lock`, MAY try a host's `provision.lock` without waiting, and releases it
+  at once if it took it ([Starting a provisioning run](#starting-a-provisioning-run), step 2).
+  `check_pending`, holding `hosts.lock` alone, MAY try it the same way.
+- **`hosts.lock` follows the lease state lock's rules** ([state.md, The lease state
+  lock](state.md#the-lease-state-lock)): the open handle is the lock, the file is never deleted,
+  and a lock held by another process is waited for up to 30 seconds. **The one exception is
+  `check_pending`, which tries it once without waiting** (pin P12, architect, 2026-11-20, for
+  v0.07-T01).
+- **`provision.lock` is taken without waiting by every program**, and a run holds it for its life
+  ([state.md, A host's folder](state.md#a-hosts-folder)).
+- **A run ends in this order:** under `hosts.lock` alone it records the host `ready`, or keeps it
+  `ready`, with the instance ID it learned, and releases that lock; it then calls
+  [`place_pending`](#place_pending), which takes `hosts.lock` alone for its read of the host
+  record, and then the lease state lock once per lease; it holds `provision.lock` throughout.
+  `place_pending` reads the lease state file again in each hold, so a lease released meanwhile is
+  never placed.
+
 ### Renew and release
 
 **Renew** checks the CA, signs a copy of the lease's public key under a temporary name inside the
@@ -673,6 +1153,10 @@ If the alias file belongs to another lease or to none, release fails and deletes
 absent, release goes on. It runs no CA check and starts no program. It does not touch the OpenSSH
 client configuration, and it tells the box nothing.
 
+**Both are the same for a lease on any host** (D48): neither reads the host registry or the project
+list, neither starts a run, and a lease that [`place_pending`](#place_pending) placed is renewed
+and released as one place made `ready`.
+
 ### What it records
 
 **On the caller's machine only, and only the files [state.md](state.md#a-leases-credential)
@@ -680,10 +1164,22 @@ describes:** the lease's key pair, its certificate, and its alias file, and the 
 the OpenSSH client configuration that pulls aliases in (place adds it when it is missing, and
 release leaves it; how is state.md's).
 
+**From v0.07, it also writes the host registry, and nothing else of its own** (D45, D48;
+[Starting a provisioning run](#starting-a-provisioning-run)): a project's record, added in state
+`creating` when the project is on the project list and has none, and, when it starts a run, the
+record's `last_attempt_at` set to now, with its `state` set to `creating` unless it is `ready`. Their
+form is [state.md, The host registry](state.md#the-host-registry)'s. It never writes the project
+list, which only the architect writes, with Terry's yes (D54), never a record's `instance_id`, or
+`ready` or `failed`, which are the run's ([operator.md, provision](operator.md#provision)), and
+never the `state` of a record that is `ready` (D48). The lease state
+file is the CLI's, but for [`place_pending`](#place_pending)'s writes of the leases it places.
+
 **The driver keeps no other record.** Everything it needs to renew or release a lease comes from
-the lease's ID and project, the OpenSSH client folder, and those files. **Nothing is recorded on
-the box and nothing in AWS.** The box learns of a lease only when a connection arrives, through the
-certificate's key ID in its SSH log (D7).
+the lease's ID and project, the OpenSSH client folder, and those files. **Nothing is recorded on a
+host and nothing in AWS by the driver itself**: a provisioning run that the driver starts makes and
+records the host's stack, which is the run's ([operator.md, provision](operator.md#provision)). A
+host learns of a lease only when a connection arrives, through the certificate's key ID in its SSH
+log (D7).
 
 ### How it is reached
 
@@ -696,14 +1192,26 @@ operator's `up` for the alias and then tunnels SSH to the box. Its AWS calls, in
 ProxyCommand row of [operator.md](operator.md#calls-by-command), and the programs it starts are in
 [operator.md](operator.md#programs-it-starts). Place itself starts only `ssh-keygen`, and, in the
 prototype, Windows PowerShell 5.1 for `ca`, which is not behavior to copy
-([How it places a lease](#how-it-places-a-lease)).
+([How it places a lease](#how-it-places-a-lease)). From v0.07, place and `check_pending` also start
+a provisioning run, detached, and never wait for it
+([Starting a provisioning run](#starting-a-provisioning-run)).
 
-**The default transport reads the operator's instance-ID cache when a connection is made, and
-place never reads it** (D21). The cache is `%USERPROFILE%\.agentspace\instance-id.json` (D40)
-([state.md](state.md#files-in-the-checkout)), and what the ProxyCommand does when it is missing or
-stale is [operator.md](operator.md#laptop-files)'s. **`create` MUST NOT read it, check for it or
-depend on it:** a missing or stale cache fails the connection, never the `create`. So a check, or a
-worktree, needs no cache to create a lease, with or without the override.
+**Which host a connection reaches is the ProxyCommand's to find, from the lease itself** (D49, D55;
+pin P7, architect, 2026-11-20, for v0.07-T01): the lease's record's `project`, then that
+project's record in the host registry if it is `ready`, and otherwise the box. The alias line does not change for that. A lease alias for a host
+that is not the box checks the host's key under that host's own name, so a fall back to the box
+fails ssh's strict key check rather than reaching the wrong machine
+([state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)).
+
+**The default transport reads a host's instance ID when a connection is made, and place never
+reads it** (D21). Until v0.07 it was the operator's instance-ID cache,
+`%USERPROFILE%\.agentspace\instance-id.json` (D40); from v0.07 it is a member of the host's record
+in the host registry, which replaces the cache (D45). What the ProxyCommand does when it is missing
+or stale is [operator.md](operator.md#laptop-files)'s. **`create` MUST NOT read it, check for it or
+depend on it:** a missing or stale instance ID fails the connection, never the `create`. Place
+reads a host record's `state` and nothing more of it
+([Where it places a lease](#where-it-places-a-lease)). So a check, or a worktree, needs no instance
+ID to create a lease, with or without the override.
 - **If the default transport's program cannot be found, place fails** (step 5 above), with a
   message in agentspace's own words and no absolute path
   ([lease-api.md](lease-api.md#messages)).
@@ -712,28 +1220,99 @@ worktree, needs no cache to create a lease, with or without the override.
   checkout's `.instance-id`, its copy of the cache, which a git worktree does not have. That check
   is a difference the spec drops (D21).
 
-**What place cannot know:** whether the box trusts the CA, or is running, or can be reached. The
-operator sets up the CA, and `sync` installs its public half on the box (operator.md,
-[The box as the laptop sees it](operator.md#the-box-as-the-laptop-sees-it)). A lease placed before
-that is `ready` and refuses every connection. That is why place MUST NOT create the CA itself.
+**What place cannot know:** whether the lease's host trusts the CA, or is running, or can be
+reached. The operator sets up the CA, and `sync` installs its public half on each host (operator.md,
+[The box as the laptop sees it](operator.md#the-box-as-the-laptop-sees-it)); a new host also gets it
+at its first boot (D44). A lease placed before that is `ready` and refuses every connection. That is
+why place MUST NOT create the CA itself. A host record's `ready` means only that a connection is
+expected to succeed (D52; [lease-api.md](lease-api.md#states)), not that the host's sign-ins or
+checkout are there.
 
 ### What is true of today's box
 
-**These are properties of this driver and its one host, never of the contract (D4):**
-- **The host runs Linux on arm64 as Ubuntu,** with `sshd` trusting the CA, `systemd`, and a login
-  user named `ubuntu` with a home and `sudo`.
+**These are properties of this driver and its hosts, never of the contract (D4):**
+- **The box is swimcoach's host** (D43): the `agentbox` stack's instance, with its disk, sign-ins,
+  checkout and host key as they were, and the record whose stack is `agentbox` in the host registry.
+  Every other project's host is a stack of its own, `agentspace-host-<project>`, from the same
+  template (D44), made for a project on the project list at its first lease (D48, D54). For v0.07
+  the list holds `agentspace` alone.
+- **Every host runs Linux on arm64 as Ubuntu,** with `sshd` trusting the CA, `systemd`, and a
+  login user named `ubuntu` with a home and `sudo`. A new host gets its software from `box/system`
+  and the bootstrap (D46).
 - **Every lease logs in as `ubuntu`** (D3). The driver says so in three places (the certificate's
   principal, the returned user, the alias's login user), and every driver MUST keep all three the
   same. D25 replaced D3's isolation by a user per project with a host per project, which arrives
   in v0.07.
-- **Every project's leases land on the same host** until v0.07 (D25).
-- **The host stops itself when idle,** and the transport starts it (D11).
+- **Each project's leases land on that project's host from v0.07** (D25, D43); until then every
+  project's landed on the box. No lease was moved (D43).
+- **The box's leases keep v0.06's alias bytes**, and are checked under the key name `agentspace` in
+  the user's own `known_hosts` (D47); every other host's key is checked under
+  `agentspace-host.<project>` in agentspace's own known-hosts file
+  ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)).
+- **Each host stops itself when idle,** and the transport starts it (D11, D51).
+
+### Conformance cases for v0.07
+
+**Each behavior below can be shown through the lease CLI with stand-ins, and MUST be a conformance
+case of E0.07-T04-S01** (card #0143; D53). Each runs in the harness's throwaway home
+([conformance.md](conformance.md)), writes `hosts.json`, `projects.json` and a held `provision.lock`
+there itself where it needs them, and sets `AGENTSPACE_PROVISION_CMD` to a stand-in that records
+its arguments, working folder, standard input, the four variables of its environment that the
+detached start sets, and its start time, and makes no host. **A check whose `create` or `get` could
+start a run MUST set `AGENTSPACE_PROVISION_CMD` to such a stand-in** (pin P12, architect,
+2026-11-20, for v0.07-T01), so that no check ever starts a real provisioning run. In a throwaway
+home with no `projects.json`, a supported `create` for any project but `swimcoach` now answers
+`unsatisfiable` with `no_capacity`, so an existing lease CLI case that uses another project changes
+with this release; the harness's change for it is E0.07-T04-S01's (pin P12).
+
+| Case | What it shows | Where the rule is |
+|---|---|---|
+| C1 | A supported `create` for a project with no record and not on the list answers `unsatisfiable` with exactly one reason, `no_capacity`, whose message quotes the project; the record carries `driver`; no lease folder or alias file is made; the host registry is not written; the stand-in is not started | [Where it places a lease](#where-it-places-a-lease) |
+| C2 | An unsupported `create` for such a project lists its `unsupported_*` reasons and no `no_capacity`, and writes no host registry | [Where it places a lease](#where-it-places-a-lease) |
+| C3 | A `create` for `swimcoach` with no `hosts.json` answers `ready` with v0.06's alias bytes, starts nothing, and leaves `hosts.json` absent | [Where it places a lease](#where-it-places-a-lease) |
+| C4 | A `create` for a project whose record is `ready` and not the box answers `ready`, with the alias of [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box), and starts nothing | [Where it places a lease](#where-it-places-a-lease) |
+| C5 | A `create` for a listed project with no record answers `pending`, exit 0, a document that validates, with no `expires_at`, `ssh` or `reasons`; makes no lease folder or alias file; adds the record `creating` with `last_attempt_at` within the command's run, beside the box's record; and starts the stand-in once, with exactly `provision -Host <project>` | [Starting a provisioning run](#starting-a-provisioning-run) |
+| C6 | The `create` does not wait for the run: a stand-in that runs for a minute is still running after the `create` has exited, and goes on to finish | [Starting a provisioning run](#starting-a-provisioning-run), the detached start |
+| C7 | The stand-in's working folder is the home folder, it reads nothing from its standard input, nothing it writes to its standard output or standard error reaches the CLI's (stdout holds exactly one document, stderr nothing), its `USERPROFILE` is the CLI's, made full, `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` are the CLI's, each made full, given relative, and `AGENTSPACE_PROXY_COMMAND` is the CLI's exactly, not made full, where the CLI had them set and not empty, and each is absent where the CLI had it unset or empty | [Starting a provisioning run](#starting-a-provisioning-run), the detached start |
+| C8 | A second `create` or a `get` of the project within 5 minutes of `last_attempt_at` answers `pending` and starts nothing, and leaves `last_attempt_at` as it was | [Starting a provisioning run](#starting-a-provisioning-run), step 2 |
+| C9 | A record `failed` or `creating` whose `last_attempt_at` is 5 minutes or more before now: a `create` starts the stand-in once, and sets `state` `creating` and `last_attempt_at` to now | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4 |
+| C10 | With the project's `provision.lock` held by the check, a `create` or `get` starts nothing, and leaves the record's `state` and `last_attempt_at` as they were | [Starting a provisioning run](#starting-a-provisioning-run), step 2 |
+| C11 | A `get` of a `pending` lease leaves the lease state file byte for byte as it was, whether it starts the stand-in or not, and prints the lease as stored | [check_pending](#check_pending) |
+| C12 | A `get` of a `pending` lease whose host's record is `ready`, with `last_attempt_at` absent or 5 minutes or more before now, starts the stand-in once, with exactly `provision -Host <project>`; sets the record's `last_attempt_at` to now; leaves the lease state file byte for byte as it was, with no lease folder or alias file made; and prints the lease `pending`. A second `get` within 5 minutes starts nothing | [Starting a provisioning run](#starting-a-provisioning-run), from `check_pending` |
+| C13 | A `get` of a `pending` lease succeeds, exit 0 with the lease, when `hosts.json` is not valid, when `AGENTSPACE_PROVISION_CMD` names no file, and while the check holds `hosts.lock`; in each, it starts nothing and returns within 20 seconds | [check_pending](#check_pending) |
+| C14 | `list` never starts the stand-in, whatever its leases' states | [The boundary](#the-boundary) |
+| C15 | `release` of a `pending` lease records it `released` with no `expires_at`, starts nothing and leaves the host registry as it was | [Release a lease](#release-a-lease) |
+| C16 | A `create` that would start a run, with `AGENTSPACE_PROVISION_CMD` naming no file, fails with `internal`, records no lease, and leaves the host registry as it was; its message has no path | [Starting a provisioning run](#starting-a-provisioning-run) |
+| C17 | A supported `create` with a `hosts.json` that does not validate fails with `internal` and records nothing; so does one for a project with no record in a valid `hosts.json`, with a `projects.json` that does not validate | [Where it places a lease](#where-it-places-a-lease) |
+| C18 | A `.cmd` stand-in is started through `cmd.exe /d /c`, and receives the same three arguments | [Starting a provisioning run](#starting-a-provisioning-run), the program |
+| C19 | A record in state `ready` never has its `state` changed by the driver: a `get` that starts the stand-in for it, and a `get` whose `AGENTSPACE_PROVISION_CMD` names no file, each leave its `state` `ready` and its `instance_id` as they were, the first changing only `last_attempt_at` and the second nothing | [Starting a provisioning run](#starting-a-provisioning-run), steps 3 and 4 |
+| C20 | A `create` for a project whose record is `ready`, while another lease of the project is `pending`, answers `ready` and starts nothing, whatever the record's `last_attempt_at` | [Starting a provisioning run](#starting-a-provisioning-run), from place |
+| C21 | With a `projects.json` that does not validate, a `create` for a project that has a record succeeds as it would with a valid one: `swimcoach` with no `hosts.json` answers `ready`, and a project whose record is `creating` answers `pending` | [Where it places a lease](#where-it-places-a-lease) |
+| C22 | With `hosts.lock` held by the check: a `create` for a listed project with no record, whose hold is let go after under 30 seconds, succeeds as C5 says once it is let go; one whose hold lasts past 30 seconds fails with `internal`, records no lease, leaves the host registry as it was and starts nothing | [Where it places a lease](#where-it-places-a-lease) |
+| C23 | A `create` for a listed project with no record, while the check holds the project's `provision.lock`, answers `pending`, adds the record `creating` with no `last_attempt_at`, and starts nothing | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4 |
+| C24 | A `create` for a project whose record is `creating` or `failed`, and that is not on the project list (none, or one that does not list it), answers `pending` and starts the stand-in once: the record wins over the list | [Where it places a lease](#where-it-places-a-lease) |
+| C25 | A `get` of a `pending` lease whose project has no record (the check removes it after the `create`): for a listed project, it adds the record `creating` and starts the stand-in once; for one not listed, it writes nothing to the host registry, starts nothing and prints the lease `pending`, exit 0 | [Starting a provisioning run](#starting-a-provisioning-run), from `check_pending` |
+| C26 | A `get` of a `pending` record with no `driver`, or with a `driver` the CLI does not have, written by the check, prints it, exit 0, starts nothing and leaves the host registry as it was | [check_pending](#check_pending) |
+| C27 | With no host's folder before the `create`, the driver made `hosts\<project>\` and the stand-in was started; the case never asserts on `provision.log`, since a stand-in writes no log (operator.md's `provision` case does) | [Starting a provisioning run](#starting-a-provisioning-run), the detached start |
+| C28 | A variable set only in the CLI's environment, under a name of the check's own that the logon environment does not hold, is absent from the stand-in's environment | [Starting a provisioning run](#starting-a-provisioning-run), the detached start |
+| C29 | The run inherits no lock: while a stand-in started by a `create` is still running, a second `create` in the same state folder, and a `release` of the first lease, each succeed within their 30 seconds | [Starting a provisioning run](#starting-a-provisioning-run), the detached start |
+| C30 | A relative `AGENTSPACE_PROVISION_CMD`, with the CLI's working folder other than the home folder, is made full against the CLI's working folder: the stand-in it names is started | [Starting a provisioning run](#starting-a-provisioning-run), the operator program |
+| C31 | With `AGENTSPACE_PROVISION_CMD` naming no file, a `create` whose run is due fails with `internal` (C16), while the same `create` with no run due, for a record whose `last_attempt_at` is under 5 minutes before now, answers `pending` and leaves the host registry as it was | [Starting a provisioning run](#starting-a-provisioning-run), step 3 |
+| C32 | With no CA, a supported `create` for a listed project with no record fails with `internal`, records no lease, leaves the host registry as it was and starts nothing; its message is lease-api.md's for a missing CA | [Where it places a lease](#where-it-places-a-lease) |
+
+**What no stand-in for the lease CLI shows:** [`place_pending`](#place_pending), which only a
+provisioning run calls, and a run's own records, among them that a run on a `ready` host keeps it
+`ready` whether its steps succeed or fail. Their cases are the operator's, through `provision` and
+operator.md's test seam (E0.07-T04-S02), and D53's live check of a first agentspace lease that
+becomes `ready`.
 
 ## Writing another driver
 
 **To be driven by the CLI without change, a driver MUST:**
 1. **Supply the three operations,** with the inputs, results and failures above, over whatever
-   transport the rewrite chooses ([Q1](#open-questions)), and an opaque, stable name.
+   transport the rewrite chooses ([Q1](#open-questions)), and an opaque, stable name. A driver
+   that ever answers `pending` also supplies [`check_pending`](#check_pending); one that never
+   does keeps the boundary's default, which does nothing.
 2. **Decide support before it does anything,** and answer `unsatisfiable` with every reason that
    applies ([Unsatisfiable requests](#unsatisfiable-requests)).
 3. **Check the CA without creating it,** before it issues a credential or renews one.
@@ -817,9 +1396,19 @@ none blocks building a drop-in of contract v0.
    prototype asks the first driver it loaded. D5 says a request no backend can meet is
    `unsatisfiable`, but nothing says whether every driver is asked, in what order, whose reasons
    are shown, or how a driver is chosen for a project that D25 gives a host of its own.
-3. **Later, not blocking:** v0's one driver never answers `pending`
-   ([What it supports](#what-it-supports)), so a v0 lease never needs a way out of it.
-   **Q3: How does a `pending` lease become `ready` or `unsatisfiable`, and how is one given up?**
+3. **Closed for the EC2 driver by D48 (v0.07, card #0143); later, not blocking, for any other.**
+   The EC2 driver answers `pending` for a project whose host is not `ready`, and the lease becomes
+   `ready` when the provisioning run that makes the host calls [`place_pending`](#place_pending),
+   which places it under the lease state lock; `get` asks [`check_pending`](#check_pending), which
+   starts a run again when one is due and never writes a lease. A lease that a run's
+   `place_pending` could not place, on a host that is already `ready`, is placed by the next run,
+   which a `get` of it starts under the same 5-minute rule (pin P3, architect, 2026-11-20, for
+   v0.07-T01; D48), so no gap is left for the EC2 driver. A `pending` lease of this driver never
+   becomes `unsatisfiable`: a failed run leaves it `pending` (D48, D5). It is given up by
+   `release`, which asks the driver to release it, removing anything a killed placement left, and
+   the host is kept (pin P16, architect, 2026-11-20, for v0.07-T01; D25). So a driver that holds
+   something per lease while it is `pending` now hears of a release through its release operation.
+   **Q3, as asked: How does a `pending` lease become `ready` or `unsatisfiable`, and how is one given up?**
    The states allow it ([lease-api.md](lease-api.md#states): "agentspace, when placement
    finishes"), but the boundary has no operation to ask a driver how a placement stands, to cancel
    one, or to hear that it finished. The prototype's driver never answers `pending`, so none has
@@ -850,7 +1439,11 @@ none blocks building a drop-in of contract v0.
    arises only with a second host.
    **Q7: Is the alias's host-key check the driver's?** Today's alias names the box's known-hosts
    entry and demands a match, which is true only of the one box (D9). A second host needs its own
-   rule, and no decision says who supplies it.
+   rule, and no decision says who supplies it. **For the EC2 driver, D47 supplies it from v0.07:**
+   the box's aliases keep `HostKeyAlias agentspace`, and every other host's name its own key in
+   agentspace's own known-hosts file ([What is true of today's box](#what-is-true-of-todays-box)).
+   Whether the rule belongs to the driver or to the shared alias step stays with
+   [Q5](#open-questions).
 8. **Q8: Closed for a failed `create` by [lease-api.md](lease-api.md#concurrency-and-atomicity)
    (E0.04-T05-S05, 2026-11-18): what happens when cleanup fails.** What a failed `create` MUST do
    when a removal fails, and what its message MUST name, is lease-api.md's. The prototype

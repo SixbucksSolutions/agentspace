@@ -134,8 +134,10 @@ of the change.
 - **"Now" is the clock of the machine that answers the command.** In v0 that is the caller's
   machine.
 - **A lease's certificate is issued at a whole second, its issue time, during the command that
-  issues it** (`create` or `renew`). `expires_at` MUST equal the issue time plus the TTL exactly,
-  which is also the certificate's valid-before time ([The credential](#the-credential)).
+  issues it** (`create` or `renew`), **or by agentspace when it places a lease that `create`
+  answered `pending`** (from agentspace's v0.07 release, #0047; [States](#states)). `expires_at`
+  MUST equal the issue time plus the TTL exactly, which is also the certificate's valid-before time
+  ([The credential](#the-credential)), however the certificate was issued.
 - **The conformance suite (E0.04-T02-S04) MUST check these against its own clock, and MUST run at
   least once with the caller's time zone set to one other than UTC (#0029).** A check of the start
   of a certificate's validity against the suite's own clock, and a run in another zone, are the
@@ -308,9 +310,12 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 | `reasons[].code` | String | Inside each reason | One of the reason codes below. |
 | `reasons[].message` | String | Inside each reason | One sentence for a person, naming the value that cannot be met. |
 
-**`expires_at` is the issue time plus the TTL, not `created_at` plus the TTL.** The certificate is
-issued during `create`, so the two differ by no more than the time `create` took, and either MAY
-come first.
+**`expires_at` is the issue time plus the TTL, not `created_at` plus the TTL.** For a lease that
+`create` answered `ready`, the certificate is issued during `create`, so the two differ by no more
+than the time `create` took, and either MAY come first. For a lease that `create` answered
+`pending`, it is issued when agentspace places the lease, which can be minutes after `created_at`
+([States](#states)), so the issue time is later than `created_at` by up to that long; `expires_at`
+is still the issue time plus the TTL exactly.
 
 **`ssh.host_alias` is `agentspace-<project>-<first 8 hex digits of id>`**, for example
 `agentspace-swimcoach-3f2a9c1e`. A caller MUST treat it as an opaque name to pass to `ssh` or to any
@@ -339,13 +344,24 @@ narrower pattern of the lease state file, which is what binds a driver
 
 **Every reason that applies MUST be listed, each code once,** in the order of the table, so a
 request with an unsupported platform and an unsupported size gets two reasons. In v0 only
-`linux/arm64`, `agent-linux` and size `m` are supported (D5); `no_capacity` is in the contract for
-later backends, and v0 never reports it.
+`linux/arm64`, `agent-linux` and size `m` are supported (D5). `no_capacity` is in the contract for
+backends that can run out. Until agentspace's v0.07 release (#0047) it was never reported; from
+v0.07, v0's driver reports it for a supported request whose project has no host and is not on the
+list of projects that may have one made (D54; [docs/driver.md](driver.md#where-it-places-a-lease)).
+It is never listed beside an `unsupported_*` reason, since it applies only to a supported request.
+No schema, code or field changes for it, so the contract does not.
+- **An `unsatisfiable` lease with `no_capacity` stays `unsatisfiable`**, as every `unsatisfiable`
+  lease does ([States](#states)): nothing makes it `ready` later. **A later `create` is judged
+  afresh**, and MAY be answered `pending` or `ready`, for example once agentspace's operator has
+  approved the project.
 
 **Each reason's message quotes the normalized value**, and SHOULD read as v0's do:
 - `Platform '<platform>' is not supported; v0 supports linux/arm64 only.`
 - `Profile '<profile>' is not supported; v0 supports agent-linux with no version only.`
 - `Size '<size>' is not supported; v0 supports size m only.`
+- `No capacity can be found for project '<project>'; agentspace's operator has not approved it.`
+  ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's to
+  confirm)
 
 **Which backend placed a lease MUST NOT appear in any output** (D1), although agentspace keeps it
 to renew and release the lease.
@@ -379,9 +395,14 @@ expired lease cannot be renewed.
 connection after a quiet spell MAY take a few minutes while agentspace brings the compute up, and a
 caller SHOULD allow for that in its SSH timeouts.
 
-**A caller MUST handle `pending`**, by calling `get` until the state changes, even though v0's
-`create` answers `ready` or `unsatisfiable` straight away. A later backend MAY take minutes to
-place a lease, and `create` will then answer `pending`.
+**A caller MUST handle `pending`**, by calling `get` until the state changes. Until agentspace's
+v0.07 release (#0047), `create` answered `ready` or `unsatisfiable` straight away. **From v0.07,
+`create` MAY answer `pending`**: a lease for a project whose compute is still being made stays
+`pending` until it is, which can take minutes, and is then made `ready` by agentspace, never by a
+command of the caller's. The caller's `get`s let that work carry on, among them after a failed
+attempt (D48; [docs/driver.md](driver.md#check_pending)). A lease's TTL starts when it becomes
+`ready`, so time spent `pending` costs none of it. A caller that stops waiting SHOULD `release` the
+lease.
 
 **How `expired` is decided:** a lease that was `ready` is `expired` when the command reading it
 runs at or after its `expires_at`, to the second. Nothing has to run at that moment: `get`, `list`,
@@ -411,7 +432,8 @@ signed by agentspace's CA (D7).** What the caller sees of it is below; the files
 how they are made and removed, are [docs/state.md](state.md)'s.
 
 **The key:**
-- **`create` makes a new key pair for each lease.** The private key MUST NOT appear in any output,
+- **A new key pair is made for each lease, by `create`, or by agentspace when it places a lease
+  that `create` answered `pending`.** The private key MUST NOT appear in any output,
   MUST NOT leave the caller's machine, and MUST NOT be readable by another ordinary user of that
   machine. The access rules that meet this are [docs/state.md](state.md#the-lease-folder)'s.
 - **The private key MUST have no passphrase**, so that `ssh <host_alias>` never prompts (#0029).
@@ -437,12 +459,19 @@ how they are made and removed, are [docs/state.md](state.md)'s.
   refuse every connection.
 - **If there is no CA, `create` and `renew` MUST fail with `internal`**, change nothing, and say
   that agentspace's CA has not been set up ([Messages](#messages)). Setting it up is the
-  operator's ([docs/operator.md](operator.md)).
+  operator's ([docs/operator.md](operator.md)). This holds for a `create` that would answer
+  `pending` too: the CA is checked before that answer, as before anything is issued (from
+  agentspace's v0.07 release, #0047; architect, 2026-11-20, for v0.07-T01).
+- **When agentspace places a lease that `create` answered `pending`, it checks the CA again, and
+  MUST NOT create it.** With no CA the lease stays `pending`
+  ([docs/driver.md](driver.md#place_pending); architect, 2026-11-20, for v0.07-T01).
 
 **The alias:**
 - **`create` makes `ssh.host_alias` usable from the calling user's OpenSSH client configuration**,
-  so that `ssh <host_alias>` works with no other options. What it adds to that configuration, and
-  how, is [docs/state.md](state.md)'s, and nothing else in it is changed.
+  so that `ssh <host_alias>` works with no other options. **For a lease that `create` answered
+  `pending`, agentspace makes it usable when it places the lease**, in the OpenSSH client
+  configuration that [Environment](#environment) names for a `pending` lease. What it adds to
+  that configuration, and how, is [docs/state.md](state.md)'s, and nothing else in it is changed.
 - **If the calling user's OpenSSH configuration cannot take the alias as it stands, `create` MUST
   fail with `internal`**, record no lease and leave no key, certificate or alias, and say what a
   person has to fix ([Messages](#messages)). What it MAY leave in that configuration, and when
@@ -730,7 +759,9 @@ agentspace lease create --project <name> [--platform <os/arch>] [--profile <name
 `pending` or `unsatisfiable`, and a caller MUST check it before connecting:
 - **`ready`:** `ssh.host_alias` is usable from the caller's OpenSSH configuration, and
   `expires_at` is the issue time plus the TTL ([The credential](#the-credential)).
-- **`pending`:** call `get` until it is `ready` or `unsatisfiable`.
+- **`pending`:** call `get` until it is `ready` or `unsatisfiable`. From agentspace's v0.07 release
+  (#0047), a `create` MAY answer it for a project whose compute is still being made
+  ([States](#states)).
 - **`unsatisfiable`:** `reasons` says which values cannot be met. Nothing was issued, and the lease
   needs no `release`.
 
@@ -766,7 +797,7 @@ met is decided before anything is issued.
 | `usage` | None | An unknown option, or any positional argument. |
 | `invalid_value` | `project`, `platform`, `profile`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. |
 | `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
-| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, or the lease records could not be read, written or locked. No lease was recorded. What a failed `create` removes, what it MAY keep in the OpenSSH configuration, and what its message MUST name when a removal fails are in [Concurrency and atomicity](#concurrency-and-atomicity). |
+| `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, the lease's host could not be looked up or its making could not be started (from v0.07, [docs/driver.md](driver.md#where-it-places-a-lease)), or the lease records could not be read, written or locked. No lease was recorded. What a failed `create` removes, what it MAY keep in the OpenSSH configuration, and what its message MUST name when a removal fails are in [Concurrency and atomicity](#concurrency-and-atomicity). |
 
 **Help:**
 
@@ -800,8 +831,14 @@ Any other well-formed value gives an unsatisfiable lease, never a substitute.
 agentspace lease get <id>
 ```
 
-**Prints one lease as it stands now.** It changes nothing. A `ready` lease whose `expires_at` has
+**Prints one lease as it stands now.** It changes no lease. A `ready` lease whose `expires_at` has
 passed is printed as `expired`.
+- **For a lease that is `pending`, `get` MAY let agentspace carry on placing it** (from agentspace's
+  v0.07 release, #0047; D48): it asks the lease's driver to check it
+  ([docs/driver.md](driver.md#check_pending)), which can start the work that makes its compute
+  and places it. That changes no lease and nothing `get` prints: the lease is printed as stored,
+  `get` never waits for the work, and a check that fails changes neither the output nor the exit code. The
+  lease becomes `ready` later, by agentspace, as [States](#states) says.
 
 | Argument or flag | Type | Notes |
 |---|---|---|
@@ -1082,7 +1119,7 @@ the error codes beside it, and every failure that fits none of the others is `in
    path under the home folder, and at the first point it needs one:** with `AGENTSPACE_STATE_DIR`
    set, `get` and `list` need none and run, and `create`, `renew` and `release` read their records
    first, so a `not_found` or `invalid_state` comes before the no-home failure, and a `release` of
-   a `pending` or `unsatisfiable` lease, which touches no file, succeeds
+   a `pending` or `unsatisfiable` lease, which needs no file, succeeds
    ([docs/state.md](state.md#the-home-folder)).
 4. **`not_found`**, from looking the lease up.
 5. **`invalid_state`**, from the lease's state.
@@ -1215,12 +1252,20 @@ starts, and one that is unset or empty means the default.
 | `AGENTSPACE_STATE_DIR` | Every command keeps its lease records in this folder instead of the default ([docs/state.md](state.md)). |
 | `AGENTSPACE_SSH_DIR` | `create` makes the lease's alias usable from the OpenSSH client folder named here, instead of the calling user's own, and `release` removes it from there ([docs/state.md](state.md)). |
 | `AGENTSPACE_PROXY_COMMAND` | `create` gives the alias this command as its way to reach the lease's host, instead of agentspace's own ([docs/driver.md](driver.md)). |
+| `AGENTSPACE_PROVISION_CMD` | From agentspace's v0.07 release (#0047): the full path of the program that `create` and `get` start, instead of agentspace's own, when a lease's compute has to be made or a `pending` lease placed ([docs/driver.md](driver.md#starting-a-provisioning-run)). It changes no output. |
 
 - **They exist so that a check, or a worktree, can run the CLI without touching the caller's real
   leases or OpenSSH configuration.** A caller in normal use MUST NOT set them.
+- **A check whose `create` or `get` could reach `pending` MUST set `AGENTSPACE_PROVISION_CMD` to a
+  stand-in**, so that it never starts the real work ([docs/driver.md](driver.md#conformance-cases-for-v007)).
 - **A check that sets `AGENTSPACE_SSH_DIR` MUST keep the same value from `create` to `release`**,
   since `release` removes the alias from the folder named when it runs. `renew` does not touch the
   alias, and reads neither `AGENTSPACE_SSH_DIR` nor `AGENTSPACE_PROXY_COMMAND`.
+- **A lease that is `pending` gets its alias later, in the OpenSSH client folder and with the
+  transport of the `create` or `get` that started the work placing it**
+  ([docs/driver.md](driver.md#starting-a-provisioning-run)). So a check MUST keep
+  `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` the same across a
+  `pending` lease's `create`, every `get` of it and its `release`.
 - **No other environment variable changes the contract's behavior.** Variables that the caller's
   own system uses to name a home folder are [docs/state.md](state.md)'s.
 
