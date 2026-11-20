@@ -2,7 +2,7 @@
 name = "agentspace-push"
 version = "0.6.0"
 edition.workspace = true
-description = "The token push, its portable half (docs/operator.md, The token push; D42)"
+description = "The token push: its portable half, and its Windows half (docs/operator.md, The token push; D42)"
 publish = false
 
 [lib]
@@ -14,12 +14,24 @@ agentspace-operator-api = { path = "../agentspace-operator-api" }
 # The zone's check, as the guard before the zone goes on a command line (operator.md, What the
 # laptop checks, the architect's 2026-11-19 push rulings).
 agentspace-zone = { path = "../agentspace-zone" }
+# The Windows half (v0.06-T02): the ssh's program and environment rules, and the stamp's atomic
+# replace.
+agentspace-run = { path = "../agentspace-run" }
+agentspace-state = { path = "../agentspace-state" }
 roxmltree = { version = "=0.21.2", default-features = false }
 serde = { version = "=1.0.229", default-features = false, features = ["std"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 sha2 = { version = "=0.10.9", default-features = false }
 zeroize = { version = "=1.8.2", default-features = false, features = ["alloc"] }
 
+# Only src/win.rs uses it, the one module that calls Windows: CryptUnprotectData, and the push's
+# ssh's wait and tree kill. The version the other crates already use.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+
 [dev-dependencies]
 # Throwaway folders for the on-disk tests; the version agentspace-state already uses.
 tempfile = { version = "=3.23.0", default-features = false }
+# The Windows tests' own calls: CryptProtectData for a dummy credential, and the checks that a
+# stand-in's processes are ended (or left alone). The version the other crates already use.
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Threading"] }

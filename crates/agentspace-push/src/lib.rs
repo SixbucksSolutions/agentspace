@@ -1,16 +1,23 @@
-//! The token push, its portable half (docs/operator.md, The token push; D42).
+//! The token push: its portable half, and its Windows half (docs/operator.md, The token push; D42).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
-//! Everything about the push that is not a Windows call: when it runs and when it is due, what
-//! the laptop reads (the receipt, and the Bot credential down to its `SS` element's hex), the
-//! content and the stamp, the ssh's arguments and remote command, what the laptop checks in the
-//! box's answer, and every warning, through the pinned [`Say`]. What needs Windows, touches the
-//! disk or starts a program is behind three small traits that v0.06-T02 implements: [`Files`],
+//! The portable half (v0.06-T01) is everything about the push that is not a Windows call: when it
+//! runs and when it is due, what the laptop reads (the receipt, and the Bot credential down to its
+//! `SS` element's hex), the content and the stamp, the ssh's arguments and remote command, what
+//! the laptop checks in the box's answer, and every warning, through the pinned [`Say`]. What
+//! needs Windows, touches the disk or starts a program is behind three small traits: [`Files`],
 //! [`Unprotect`] and [`SshRun`].
+//!
+//! The Windows half (v0.06-T02) implements them: [`DpapiUnprotect`] (`CryptUnprotectData`),
+//! [`SystemSsh`] (the push's one ssh, its pipes, its 20-second limit and the tree kill through the
+//! Windows API) and [`SystemFiles`] (the stamp's atomic replace), and wires them to
+//! [`push_with`] in [`push`], the entry point `up` and `sync` call.
 //!
 //! # The public API
 //!
+//! - [`push`]: one push as the operator runs it, never failing a command. [`push_using`] is the
+//!   same over an injectable look-up of the environment, and returns its [`Outcome`].
 //! - [`push_with`]: one push, start to end, never failing; returns its [`Outcome`].
 //! - [`Seams`], holding the three traits and the zone: [`Files`] (with [`FileRead`], and
 //!   [`StdFiles`], a portable `Files` that T02 MAY use or replace), [`Unprotect`] and [`SshRun`]
@@ -39,12 +46,23 @@
 //! value. The `Debug` of [`FileRead`] and [`SshResult`] gives byte counts, never the bytes, so
 //! that no file's content and nothing the box printed reaches a log through them.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 mod boxside;
 mod credential;
+// The Windows half's calls, and the only module with `unsafe` (the Windows one, `win.rs`). On any
+// other system `other.rs` stands in, which is NOT THE CONTRACT'S: it exists so that the crate
+// builds and its portable logic is tested on Linux.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+#[path = "win.rs"]
+mod platform;
+#[cfg(not(windows))]
+#[path = "other.rs"]
+mod platform;
 mod receipt;
 mod stamp;
+mod system;
 mod text;
 mod zone;
 
@@ -53,6 +71,10 @@ pub use boxside::{alias_is_valid, remote_command, ssh_args};
 pub use credential::{parse_credential_blob, read_token};
 pub use receipt::{Receipt, parse_receipt};
 pub use stamp::{content, parse_stamp_file, stamp, stamp_file_bytes};
+pub use system::{
+    DpapiUnprotect, Lookup, SSH_LIMIT, STDOUT_WAIT, SystemFiles, SystemSsh, push, push_using,
+    push_using_with,
+};
 pub use zeroize::Zeroizing;
 pub use zone::check_zone;
 
@@ -212,7 +234,7 @@ fn unique_hex() -> String {
     format!("{:x}{nanos:x}{count:x}", std::process::id())
 }
 
-fn read_file(path: &Path) -> FileRead {
+pub(crate) fn read_file(path: &Path) -> FileRead {
     match std::fs::read(path) {
         Ok(bytes) => FileRead::Bytes(bytes),
         Err(e) => match e.kind() {
@@ -230,7 +252,7 @@ fn read_file(path: &Path) -> FileRead {
 }
 
 /// The decryption of the credential's DPAPI blob (operator.md, The Bot credential):
-/// `CryptUnprotectData` on Windows, which v0.06-T02 implements.
+/// `CryptUnprotectData` on Windows, which [`DpapiUnprotect`] implements.
 pub trait Unprotect {
     /// The plaintext, the token in UTF-16LE, or `None` when the call fails.
     fn unprotect(&self, blob: &[u8]) -> Option<Zeroizing<Vec<u8>>>;
@@ -263,7 +285,7 @@ impl fmt::Debug for SshResult {
     }
 }
 
-/// The push's one ssh (operator.md, What the laptop sends, steps 2 to 5), which v0.06-T02
+/// The push's one ssh (operator.md, What the laptop sends, steps 2 to 5), which [`SystemSsh`]
 /// implements.
 pub trait SshRun {
     /// Starts ssh with `args`, exactly these and in this order, under the 20-second limit: a pipe

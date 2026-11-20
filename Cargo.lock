@@ -126,12 +126,15 @@ name = "agentspace-push"
 version = "0.6.0"
 dependencies = [
  "agentspace-operator-api",
+ "agentspace-run",
+ "agentspace-state",
  "agentspace-zone",
  "roxmltree",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "windows-sys",
  "zeroize",
 ]
 
@@ -164,6 +167,7 @@ name = "agentspace-zone"
 version = "0.6.0"
 dependencies = [
  "regex",
+ "windows-sys",
 ]
 
 [[package]]

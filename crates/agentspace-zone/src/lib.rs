@@ -13,7 +13,11 @@
 //!    is the empty zone, which this crate gives as `None`.
 //!
 //! The crate reads no environment variable and no file, writes to no stream, and never panics on
-//! bad input. Reading the laptop's own Windows zone is not its job.
+//! bad input. Its one system read is the laptop's own Windows zone ID ([`windows_zone_id`], from
+//! the system's time zone setting), which [`laptop_zone`] makes only when no override is given;
+//! the override's value is the caller's to read from `AGENTSPACE_TIMEZONE`.
+
+#![deny(unsafe_code)]
 
 /// The seven legacy names and their current ones (operator.md, The time zone, step 2).
 /// Names are matched case-sensitively.
@@ -31,6 +35,9 @@ pub const LEGACY_NAMES: [(&str, &str); 7] = [
 // `examples/gen_windows_zones.rs` and sorted by Windows ID, bytewise, so a lookup can bisect.
 // The file's header names the CLDR release it comes from; a test keeps the rows sorted.
 mod cldr_windows_zones;
+
+// The one place that calls Windows, to read the laptop's zone ID.
+mod system;
 
 use cldr_windows_zones::WINDOWS_ZONES;
 pub use cldr_windows_zones::{CLDR_RELEASE, CLDR_RELEASE_DATE};
@@ -108,6 +115,22 @@ pub fn zone(windows_id: Option<&str>, override_value: Option<&str>) -> Option<St
         _ => windows_to_iana(windows_id?)?,
     };
     check_zone(map_legacy(converted)).map(str::to_owned)
+}
+
+pub use system::windows_zone_id;
+
+/// The zone the token push sends for this laptop: [`zone`], with the laptop's Windows zone ID read
+/// from the system ([`windows_zone_id`]) only when it is needed.
+///
+/// - `override_value` is the value of `AGENTSPACE_TIMEZONE`, or `None` when it is unset. When it
+///   is set and not empty, it takes the place of the laptop's zone and the system is not read
+///   (operator.md, The time zone; The test seam). An empty one counts as unset.
+/// - Otherwise the system's zone ID is converted. A zone the system cannot give gives `None`.
+pub fn laptop_zone(override_value: Option<&str>) -> Option<String> {
+    match override_value {
+        Some(value) if !value.is_empty() => zone(None, Some(value)),
+        _ => zone(windows_zone_id().as_deref(), None),
+    }
 }
 
 #[cfg(test)]
