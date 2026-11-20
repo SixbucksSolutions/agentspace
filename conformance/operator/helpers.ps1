@@ -3,7 +3,7 @@
 #
 # Shared code for the operator and ProxyCommand checks in conformance/operator/. It dot-sources the
 # harness (conformance/lease-cli/harness.ps1), which starts every program and makes every home, so
-# every default comes from conformance/prototype/defaults.ps1 and every child gets the harness's
+# every default comes from conformance/defaults.ps1 and every child gets the harness's
 # isolation set. This file loads no prototype code, and no check names a shim path.
 #
 # What the harness does not cover is here: the AWS gate, the stand-ins for the programs outside

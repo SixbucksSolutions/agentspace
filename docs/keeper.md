@@ -70,12 +70,20 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 - **A host's platform is a parameter of the contract (D4).** Nothing here depends on the host's OS,
   with one exception, marked "today's box" where it appears: the default release grace is derived
   from the keepalive settings of today's box's sshd ([Release grace](#release-grace)).
-- **The prototype is `scripts/board-holder.ps1`, run by PowerShell 7, with its installer
+- **The prototype was `scripts/board-holder.ps1`, run by PowerShell 7, with its installer
   `scripts/install-board-holder.ps1` and its task launcher `scripts/BoardHolderLauncher.cs`.**
-  They are named here only where a note says where a requirement came from. The rewrite replaces
+  They are named here only where a note says where a requirement came from. The rewrite replaced
   all three in v0.06 (#0055, D28) with `agentspace-keeper.exe`, `agentspace-keeper-install.exe`
   and `agentspace-keeper-task.exe`, installed with agentspace's other programs as
   [operator.md, Programs and install layout](operator.md#programs-and-install-layout) says.
+  - **Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** The
+    cutover that replaced its task and keeper on the laptop was E0.06-T05-S01
+    ([the run record](runs/e0.06-t05-s01.md)). **Every note on this page that names the
+    prototype is history:** it says where a requirement came from, or what the rewrite replaced.
+    None tells a reader to run the prototype, and none binds a program that is built now. What
+    binds is the rule each note stands beside, and the rows of
+    [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
+    stay as the record of what the rewrite was built to do differently.
 
 ### Words used here
 
@@ -1507,6 +1515,10 @@ Mode: dry run; nothing was registered or started.
    FB-27): the installer finds a keeper by the lock and the task's state alone, and MUST NOT match
    a process's command line, the prototype's script name included. The prototype's names here are
    for v0.06's change-over, and leave this page with the prototype.
+   **Status (E0.06-T06-S01, 2026-11-20): that change-over is done and the prototype was removed
+   from the repository**, so the `pwsh.exe` alternative above names a keeper that can no longer be
+   started. It is kept here as the record of the change-over. The rule that binds is the lock and
+   the PID, and `agentspace-keeper.exe` as the program.
 4. **It registers the task, replacing any task of that name with no prompt, and starts it at
    once.** A failure to register or start ends the install with exit 1.
 5. **It removes the prototype's launcher, `%USERPROFILE%\.agentspace\BoardHolderLauncher.exe`, if
@@ -1630,6 +1642,11 @@ look and its pass's trust check gets the grace before the next start, with no st
 
 ## Requirements the prototype does not meet yet
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository, so this table
+is history.** It records what the rewrite was built to do differently, and no conformance check
+runs against the prototype any more. The requirement in each row's first column still binds
+the keeper that is built now.
+
 **Behavior this page requires that the prototype does not show, so a conformance check run against
 the prototype is expected to fail here.** **The rewrite MUST NOT copy the prototype's behavior in
 this table.**
@@ -1648,6 +1665,10 @@ this table.**
 | The installer finds a running keeper by the task's state or `board-holder-keeper.lock` | Matches a `pwsh.exe` process's command line against its own checkout's script path, and finds none when the process list cannot be read | [The installer](#the-installer); [Q12](#open-questions) |
 
 ## Open questions
+
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** A question
+below that asks what the prototype does is moot, since nothing can run it to find out, and its
+answer was never a requirement of the rewrite.
 
 **What reading the code and the docs could not settle.** After the clean-room review
 (E0.04-T04-S01, #0080), E0.04-T05-S04 (#0091) and E0.04-T05-S02 (#0089), every question here is

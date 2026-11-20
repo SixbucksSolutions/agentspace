@@ -30,6 +30,14 @@ into this contract as requirements on behavior (D28, D34). Each requirement name
 it is stated, and [Hardening carried in](#hardening-carried-in) maps every point of both cards to
 its requirement, or says why it is declined.
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** Every note
+on this page that names the prototype, `scripts/lease-cli.ps1` and `bin/agentspace.cmd` included,
+is history: it says where a requirement came from. None tells a reader to run the prototype, and
+none binds a program that is built now. What binds is the rule each note stands beside. The
+tables of [Hardening carried in](#hardening-carried-in) and the questions under
+[Open questions](#open-questions) that compare the rewrite with the prototype stay as the record
+of the change.
+
 ## Contents
 
 - [Conventions](#conventions): [the program](#the-program), [output](#output),

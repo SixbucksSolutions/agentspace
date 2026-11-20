@@ -75,12 +75,18 @@ that a lease's client sees, so D1 binds it, and everything it runs
   systemd, bash and passwordless `sudo`. Wherever this page names one of those, it is a property
   of today's box, marked "today's box", and not of the contract. A Windows host (v0.12, #0051)
   would answer the same questions in its own way.
-- **The prototype is `scripts/agentspace.ps1`, run by Windows PowerShell 5.1, and
+- **The prototype was `scripts/agentspace.ps1`, run by Windows PowerShell 5.1, and
   `scripts/ssh-proxy.cmd`.** They are named here only where a note says where a requirement came
-  from. The rewrite replaces both in v0.06 (#0055, D28) with `agentspace-operator.exe` and
+  from. The rewrite replaced both in v0.06 (#0055, D28) with `agentspace-operator.exe` and
   `agentspace-ssh-proxy.exe`, installed as [Programs and install layout](#programs-and-install-layout)
   says. Every path this page gives under `<checkout>` is the prototype's, and that section gives
   the rewrite's place for each.
+  - **Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository**, `bin\`
+    and every PowerShell and cmd file the operator, the ProxyCommand and the keeper had included.
+    **Every note on this page that names the prototype, and every `<checkout>` path under it, is
+    history:** it says where a requirement came from, or what the rewrite replaced. None of them
+    tells a reader to run the prototype, and none binds a program that is built now. What binds is
+    the rule each note stands beside.
 
 ### Command line
 
@@ -469,7 +475,8 @@ by a real box.
 This table says only which command reads or writes it. **The one exception is localswim's receipt
 and Bot credential:** their formats are this page's ([The receipt](#the-receipt),
 [The Bot credential](#the-bot-credential)), and state.md owns none of them. **The `<checkout>` rows
-are the prototype's places;** where the rewrite keeps each is
+are the prototype's places, which the prototype's removal (E0.06-T06-S01, 2026-11-20) left as
+history;** where the rewrite keeps each is
 [Programs and install layout](#programs-and-install-layout) (D37).
 
 | File (as today's prototype has it) | Read by | Written by | What it is |
@@ -571,7 +578,8 @@ ssh or scp it starts, to stderr, and each one costs a Session Manager session.
 wrapper for POSIX shells.** Each program finds the others, and everything the prototype took from
 its checkout, without a checkout of the repository. This section owns their file names, the
 install folder, how each program finds the others and those files, the argument style, and how
-the prototype's entry points behave until v0.06 (#0055) retires them. Its rules are D37's, which
+the prototype's entry points behaved until v0.06 (#0055) retired them (a record now: see [the
+status of that part](#until-v006-retires-the-prototypes-entry-points)). Its rules are D37's, which
 settles [Q10](#open-questions) here, and keeper.md's [Q3, Q8 and Q10](keeper.md#open-questions).
 
 ### The programs
@@ -691,6 +699,10 @@ program (D37).
 
 ### What the prototype took from its checkout
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository, so the
+prototype's column below is history, kept for what each row says the rewrite replaced.** The
+rewrite's column binds, as it did before.
+
 **Wherever this page names a path under `<checkout>`, it is the prototype's, and the rewrite uses
 the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#deploy), [sync](#sync),
 [ca](#ca), [The AWS side](#the-aws-side)). The files' formats are [docs/state.md](state.md)'s, at
@@ -759,6 +771,14 @@ committed.
 
 ### ProxyCommand lines already on the laptop
 
+**Status (E0.06-T06-S01, 2026-11-20): the checkout's `scripts\ssh-proxy.cmd` was removed with the
+prototype, so the rules below that name it are history.** The v0.06 cutover (E0.06-T05-S01, [the
+run record](runs/e0.06-t05-s01.md)) ran with no lease ready, as D41 plans, and pointed Terry's
+`agentspace` entry at `agentspace-ssh-proxy.exe`, so no line the prototype wrote is in use. **The
+rule in the next paragraph still binds** the install's programs: `agentspace-ssh-proxy.exe` and
+the forwarder `agentspace-ssh-proxy.cmd` MUST keep working while a `ready` lease's alias file or
+the user's entry names them.
+
 **A ProxyCommand line names a program by its full path until the line is rewritten, so a program
 that a line names MUST keep working, or forward to one that does, for as long as that line can
 still make a connection (D37, B-30).** Three kinds of line exist:
@@ -791,6 +811,23 @@ still make a connection (D37, B-30).** Three kinds of line exist:
   after its tunnel ends.
 
 ### Until v0.06 retires the prototype's entry points
+
+**Status (E0.06-T06-S01, 2026-11-20): v0.06 retired the prototype, and the condition in this
+heading has passed.** The cutover on the laptop was E0.06-T05-S01 ([the run record](runs/e0.06-t05-s01.md)),
+which installed the seven files and the forwarder and repointed Terry's entry and the keeper's
+task. **E0.06-T06-S01 removed the prototype's files from the repository**: `bin\agentspace.cmd`
+and `bin\agentspace`, `scripts\agentspace.ps1`, `scripts\ssh-proxy.cmd`,
+`scripts\board-holder.ps1`, `scripts\install-board-holder.ps1` and the rest of the prototype
+(D41 step 8, D42). The heading and the bullets below describe the change-over and are history,
+and the ending of v0.05's forwarder, which reached into a checkout, was met the same way. **What
+still binds the programs is the rule in the bullet that begins "v0.06's install adds the other
+programs": v0.06's forwarder is one fixed line, `@"%~dp0agentspace-ssh-proxy.exe" %*`, ended in CR
+LF, which `cargo xtask dist` writes into the output folder like any other file, and an install
+keeps it while a `ready` lease's alias file names it.** The lease CLI still looks for
+`agentspace-ssh-proxy.exe` first and `agentspace-ssh-proxy.cmd` second
+([How each program finds the others](#how-each-program-finds-the-others)), and the keeper's
+installer still removes the prototype's `BoardHolderLauncher.exe` from an install
+([keeper.md, The installer](keeper.md#the-installer)).
 
 **The rewrite arrives in two releases (D28): the lease CLI in v0.05 (#0054), and the operator, the
 ProxyCommand and the keeper in v0.06 (#0055).** Until v0.06 removes them (D37):
@@ -2113,10 +2150,11 @@ keyword, so a new sshd drop-in MUST NOT set a keyword that another drop-in alrea
 - **Fails at once if `agentspace_ca.pub` is missing or empty**, printing `install.sh:
   agentspace_ca.pub is missing; run agentspace-operator sync, which sends it` to stderr and
   exiting 1. The prototype's box files name `scripts\agentspace.ps1` there. **The repository's
-  `box\system\install.sh` is changed to this text by v0.06's cutover story, in the pull request
-  that removes `scripts\agentspace.ps1`** (architect, 2026-11-19, for v0.06, gap FA-12): under
-  D37's addendum the box's files change only through the repository, so the clean room's builders
-  do not edit it.
+  `box\system\install.sh` is changed to this text in the pull request that removes
+  `scripts\agentspace.ps1`** (architect, 2026-11-19, for v0.06, gap FA-12): under D37's addendum
+  the box's files change only through the repository, so the clean room's builders do not edit it.
+  **That pull request is E0.06-T06-S01's, not the cutover's** (D42, 2026-11-19; E0.06-T06-S01,
+  2026-11-20), and it makes this change.
 - **Retires the project's first name, once.** On a box that still has `agentbox` units, it
   disables them, carries over this boot's patch marker and the last patch-reboot time, removes the
   old files, and prints `Retired the agentbox units and files`.
@@ -2354,6 +2392,11 @@ for E0.06-T01-S03):
 
 ## Requirements the prototype does not meet yet
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository, so this table
+is history.** It records what the rewrite was built to do differently, and no conformance check
+runs against the prototype any more. The requirement in each row's first column still binds
+the programs that are built now.
+
 **Behavior this page requires that the prototype does not show, so that a conformance check run
 against the prototype is expected to fail here.** **The rewrite MUST NOT copy the prototype's
 behavior in this table.**
@@ -2390,6 +2433,10 @@ behavior in this table.**
 | The box's install names `agentspace-operator sync` when the CA's public key is missing | Names `scripts\agentspace.ps1 sync` | [What sync installs](#what-sync-installs) |
 
 ## Open questions
+
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** A question
+below that asks what the prototype does is moot, since nothing can run it to find out, and its
+answer was never a requirement of the rewrite.
 
 **What reading the code and the docs could not settle.** After the clean-room review
 (E0.04-T04-S01, #0080) and its fixes in v0.04-T05, every question here is either closed or

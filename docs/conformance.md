@@ -12,6 +12,24 @@ folders alone were then run, to show the header lines broke nothing, and all pas
 `test-board-holder.ps1` (221, about 7 minutes). The six that write the real
 `%USERPROFILE%\.agentspace` were parsed, never run.
 
+**The prototype was removed from the repository by E0.06-T06-S01 (#0135), 2026-11-20** (decisions
+[D41](decisions.md#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration)
+step 8 and [D42](decisions.md#d42-v006-builds-the-operator-and-the-keeper-as-crates-around-two-pinned-boundaries-in-six-turns)).
+The rest of this page was written while it existed, and **it is kept as history where it describes
+the prototype, never as an instruction to run it**:
+- **The checks in `scripts/` that the sorting below describes no longer exist**, and neither do
+  `bin\agentspace.cmd`, `conformance/prototype/` (the default shims and their defaults file) and
+  `conformance/lease-cli/test-interop.ps1`. What stays in `scripts/` is the architect's process tools
+  and `scripts/check-forward-release.ps1` ([The live-box check](#the-live-box-check)).
+- **The variables' defaults are now the install folder's programs**, named by `conformance/defaults.ps1`
+  ([Naming the program under test](#naming-the-program-under-test)), and there are four variables,
+  not five: `AGENTSPACE_PEER_CMD` retired with `test-interop.ps1` ([Interop retired](#interop-retired)).
+- **Every `test-unmet-*` file and every "Requirements the prototype does not meet yet" row below is
+  now an ordinary check that the Rust programs pass** (they did, in
+  [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md)). The words "expected to fail against the
+  prototype" are what was true when each file was written. A `FAIL` in any of them is now a defect in
+  the build or in the check, never an expected result.
+
 ## Contents
 
 - [The rule](#the-rule)
@@ -72,33 +90,39 @@ code that loads the prototype.
 
 **A conformance check names the program it tests through one environment variable per program,
 so the same check runs against the prototype and against the rewrite (D34).** The variables
-below are **pinned** (the architect, 2026-11-18; the fifth, `AGENTSPACE_PEER_CMD`, D38, 2026-11-19).
+below are **pinned** (the architect, 2026-11-18; a fifth, `AGENTSPACE_PEER_CMD`, was added by D38,
+2026-11-19, and retired by E0.06-T06-S01, 2026-11-20: [Interop retired](#interop-retired)).
 The harness reads `AGENTSPACE_CMD` and `AGENTSPACE_OPERATOR_CMD` (E0.04-T03-S01, #0084); the checks
-of E0.04-T03-S02 (#0085) read the operator's and ProxyCommand's by `Get-ConformanceProgram` too, and
-`test-interop.ps1` (E0.05-T02-S05, #0103) reads the peer's. **A variable that is unset or empty
-takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**; a variable
-that is set always wins. **Every default is a path in that file, relative to its folder**, and
-each names a program in `conformance/prototype/`, except the first two, which name the prototype's
-`bin\agentspace.cmd`.
+of E0.04-T03-S02 (#0085) read the operator's and ProxyCommand's by `Get-ConformanceProgram` too.
+**A variable that is unset or empty takes its default from `conformance/defaults.ps1`, and from
+nowhere else**; a variable that is set always wins. **Every default is the full path of one program
+in the install folder, `%USERPROFILE%\.agentspace\bin`** ([operator.md, Programs and install layout](operator.md#programs-and-install-layout);
+D37), so a run with no variable set tests the programs that are installed. (Until E0.06-T06-S01,
+2026-11-20, the defaults named the prototype's entry points and shims, in `conformance/prototype/`.)
 
-| Variable | Names | Default, as `conformance/prototype/defaults.ps1` gives it |
+| Variable | Names | Default, as `conformance/defaults.ps1` gives it |
 |---|---|---|
-| `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | `..\..\bin\agentspace.cmd`, the prototype's lease CLI |
-| `AGENTSPACE_PEER_CMD` | A second lease CLI, run the same way as `AGENTSPACE_CMD`, and read only by the one check that drives one lease through two programs ([Running the suite](#running-the-suite); D38) | `..\..\bin\agentspace.cmd`, the prototype's lease CLI, given exactly as `AGENTSPACE_CMD`'s default is |
-| `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | `operator.cmd`, a shim that starts the prototype's operator under Windows PowerShell 5.1 |
-| `AGENTSPACE_KEEPER_CMD` | The keeper | `keeper.cmd`, a shim that starts the prototype's keeper under PowerShell 7 |
-| `AGENTSPACE_SSH_PROXY_CMD` | The ProxyCommand program | `ssh-proxy.cmd`, a shim that calls the prototype's `scripts\ssh-proxy.cmd` |
+| `AGENTSPACE_CMD` | The lease CLI, run as `& $env:AGENTSPACE_CMD lease ...` with its arguments unchanged | `agentspace.exe` in the install folder |
+| `AGENTSPACE_OPERATOR_CMD` | The operator (`deploy`, `up`, `sync`, `ca`, `down`, `status`, `grow`) | `agentspace-operator.exe` in the install folder |
+| `AGENTSPACE_KEEPER_CMD` | The keeper | `agentspace-keeper.exe` in the install folder |
+| `AGENTSPACE_SSH_PROXY_CMD` | The ProxyCommand program | `agentspace-ssh-proxy.exe` in the install folder |
 
-**Why five and not one.** The story card asked for `AGENTSPACE_CMD` for the lease CLI and the
-operator. The prototype has them as two programs under two runtimes (the lease CLI under
-PowerShell 7, the operator under Windows PowerShell 5.1), and the keeper and the ProxyCommand are
-two more, so each needs a name. **The fifth is not another role**: `AGENTSPACE_PEER_CMD` is a second
-lease CLI, so that one check can run a lease through two builds, each way round (D38). **Every other
-check ignores it.** With both lease CLI variables unset, the two programs are the prototype's, and
-the check runs the prototype against itself.
+**The install folder is found from the real profile folder, never from `USERPROFILE`.** The harness
+points `USERPROFILE` (and `HOME`, `LOCALAPPDATA` and `APPDATA`) at a throwaway home for every program
+it starts, and a suite MAY already have done so in its own process before a default is read.
+`conformance/defaults.ps1` therefore asks Windows for the account's profile folder
+(`[Environment]::GetFolderPath('UserProfile')`), which does not read the variable, so a default is
+the same whichever order a check calls things in. **That file MUST NOT read the variable, and MUST
+read, list and hash nothing in the install folder:** it builds four paths. The only way a check
+touches an installed program is by running it, inside the throwaway home, as AGENTS.md's "Terry's
+real files in a review" allows.
+
+**Why four and not one.** The story card asked for `AGENTSPACE_CMD` for the lease CLI and the
+operator. They are separate programs, and the keeper and the ProxyCommand are two more, so each
+needs a name.
 
 **Each variable names a program that runs its role with the command line its spec gives**
-(architect, 2026-11-18): `AGENTSPACE_CMD` and `AGENTSPACE_PEER_CMD` with [lease-api.md](lease-api.md#command-lines)'s,
+(architect, 2026-11-18): `AGENTSPACE_CMD` with [lease-api.md](lease-api.md#command-lines)'s,
 `AGENTSPACE_OPERATOR_CMD` with [operator.md](operator.md#command-line)'s, `AGENTSPACE_KEEPER_CMD`
 with [keeper.md](keeper.md#command-line)'s, and `AGENTSPACE_SSH_PROXY_CMD` with
 [operator.md](operator.md#the-proxycommand)'s. A check starts the program a variable names with
@@ -110,12 +134,9 @@ arguments.
   cannot tell them apart, because the four command lines collide: with no argument the lease CLI
   MUST fail with a usage error, the keeper MUST run one pass, and the ProxyCommand MUST run `up` and
   its tunnel; and one word is an unknown command to the lease CLI and an alias to the ProxyCommand.
-  **`AGENTSPACE_CMD` and `AGENTSPACE_PEER_CMD` are one role, so they MAY name one program**:
-  `conformance/prototype/defaults.ps1` gives both the prototype's lease CLI, and a rewrite run against
-  itself names its own lease CLI in both.
 - **A rewrite's variables name its installed programs** ([operator.md, Programs and install layout](operator.md#programs-and-install-layout);
   D37): each is the full path of one program in the install folder, such as
-  `agentspace-ssh-proxy.exe` for `AGENTSPACE_SSH_PROXY_CMD`. A check never names the file itself.
+  `agentspace-ssh-proxy.exe` for `AGENTSPACE_SSH_PROXY_CMD`. A check never names the file itself (only `conformance/defaults.ps1` does).
 - **The names MUST NOT be `AGENTSPACE_PROXY_COMMAND`.** That variable already means something
   else: it is the command string that `create` writes into a lease's alias
   ([docs/lease-api.md](lease-api.md#environment)). `AGENTSPACE_SSH_PROXY_CMD` is a different
@@ -123,9 +144,9 @@ arguments.
 - **The conformance variables are read by checks, never by a program under test.** So
   [docs/lease-api.md](lease-api.md#environment)'s rule, that no other environment variable
   changes the contract's behavior, is unaffected.
-- **The only files in `conformance/` that name the prototype are its default shims and
-  `conformance/prototype/defaults.ps1`**, which are all in `conformance/prototype/`. A check and the
-  harness never do.
+- **The only file in `conformance/` that names a program's file is `conformance/defaults.ps1`.** A
+  check and the harness never do. (Until E0.06-T06-S01, 2026-11-20, the only files that named the
+  prototype were its default shims and their defaults file, in `conformance/prototype/`.)
 - **The token push has no program of its own,** because it is a part of the operator's `up` and
   `sync`, so it has no variable. [The gaps](#the-gaps) say what it needs instead.
 
@@ -309,7 +330,6 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 | `test-lease-alias-file.ps1` | The alias file, read with `ssh -G`, and the `Include` line on each shape of config; a ProxyCommand with a CR or LF refused; the default ProxyCommand line as D8 makes it checkable ([state.md](state.md#the-alias-file), [The `Include` line](state.md#the-include-line), [lease-api.md](lease-api.md#environment)) | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when `create` fails under the default transport (see below) |
 | `test-lease-driver-outcomes.ps1` | The driver as a caller sees it: unsatisfiable requests, no driver name in any output, a failed alias step ([driver.md](driver.md#unsatisfiable-requests), [lease-api.md](lease-api.md#concurrency-and-atomicity)) | Only for the ready half. The unsatisfiable half runs without one |
 | `test-lease-concurrency.ps1` | Concurrent `create`s, `renew`s and `release`s, readers that never wait, the lease state lock and its 30 seconds ([lease-api.md](lease-api.md#concurrency-and-atomicity), [state.md](state.md#the-lease-state-lock)) | Yes. SKIPPED when no CA could be made |
-| `test-interop.ps1` | **One lease through two programs, `AGENTSPACE_CMD` and `AGENTSPACE_PEER_CMD`**, each way round: it enforces [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite), that the two MUST share one home folder and one state folder. See below | Yes. SKIPPED when no CA could be made, and four results are SKIPPED when no `ssh-keygen` is on the `PATH` |
 | `test-id-whole-value.ps1` | The lease ID matched as a whole value, for `get`, `renew` and `release`: a trailing dot refused (`<id>.`, `<id>..`, `<id> .`, `<id>.` and a line feed) and changing nothing, a trailing line feed trimmed and the lease found, and `not_found`'s normalized `lease_id` ([Lease ID](lease-api.md#lease-id), [Input tolerance](lease-api.md#input-tolerance)) | For the cases that look at a lease. The refusals and `not_found` need none. SKIPPED for the rest when no CA could be made |
 | `test-ca-public-key-words.ps1` | The CA check's two words compared exactly: a first word in another case, a second word with its letters' case swapped and a key type that is not ed25519, a line break (LF, CR, VT, FF or CRLF) between the two words, and a no-break space (U+00A0) before the first word each fail `create` and `renew`, and the same words with another comment, surrounding whitespace, or a tab or two spaces between the two words (each also for `renew`; #0136) are accepted ([state.md, Its checks](state.md#its-checks), check 4, architect, 2026-11-19, as corrected). 37 results | Yes. SKIPPED when no CA could be made |
 | `test-relative-folders.ps1` | A relative `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` resolved against the working folder, and the alias file's full paths ([state.md, The home folder](state.md#the-home-folder)). A relative `USERPROFILE` is not given: the harness refuses it | Yes. SKIPPED when no CA could be made |
@@ -317,13 +337,13 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 | `test-lease-ignores-instance-cache.ps1` | The lease CLI never reads or needs the instance-ID cache: `create`, `get`, `renew` and `release` succeed with a folder, a file that is not JSON and a valid cache at its place ([state.md, The alias file](state.md#the-alias-file)) | Yes. SKIPPED when no CA could be made, and one result is SKIPPED when `create` fails under the default transport with no cache at all with a valid `internal` error (see below); any other failure of that `create` is a FAIL |
 
 **The first ten rows are the ten checks that this page and the run records mean when they say "the
-ten", and `test-interop.ps1` is the eleventh.** The five from `test-id-whole-value.ps1` on are
+ten".** (`test-interop.ps1` was an eleventh until it retired: [Interop retired](#interop-retired).) The five from `test-id-whole-value.ps1` on are
 E0.06-T04-S03's (#0133, #0110 point 4), and four `test-unmet-` files beside them
 ([The files that are expected to fail](#the-files-that-are-expected-to-fail)) are its too.
 
 **The helpers the checks share are three files.** `conformance/lease-cli/lease-cli-common.ps1` serves
 S01's five, and `conformance/lease-cli/lease-check-support.ps1` serves the next five, which are
-E0.04-T03-S03's, and `test-interop.ps1` (E0.05-T02-S05, #0103). `conformance/lease-cli/lease-check-hardening.ps1` serves E0.06-T04-S03's nine files (#0133): a run's error problems without the program's own text, the lease ID refusal, and the map of every file under the home that shows a failed command changed nothing.
+E0.04-T03-S03's (and, until it retired, `test-interop.ps1`, E0.05-T02-S05, #0103). `conformance/lease-cli/lease-check-hardening.ps1` serves E0.06-T04-S03's nine files (#0133): a run's error problems without the program's own text, the lease ID refusal, and the map of every file under the home that shows a failed command changed nothing.
 
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
@@ -335,8 +355,7 @@ E0.04-T03-S03's, and `test-interop.ps1` (E0.05-T02-S05, #0103). `conformance/lea
   [What a conformance run needs](#what-a-conformance-run-needs)). The checks skip only for these
   reasons, and each reason says which:
   - **The harness could not make a throwaway CA** (any check that places a ready lease).
-  - **No `ssh-keygen` is on the `PATH`** (two checks of `test-create-get.ps1`, and four results of
-    `test-interop.ps1`, which reads each renewed certificate with it).
+  - **No `ssh-keygen` is on the `PATH`** (two checks of `test-create-get.ps1`).
   - **The local UTC offset is 0** (one check of `test-create-get.ps1` and one of
     `test-lease-certificate.ps1`).
   - **A `create` under the default transport fails with a valid `internal` error** (one check of
@@ -369,8 +388,8 @@ E0.04-T03-S03's, and `test-interop.ps1` (E0.05-T02-S05, #0103). `conformance/lea
   incomplete, never passed. **Who makes the run, and how, is
   [What the specs require of the suite](#what-the-specs-require-of-the-suite)'s**: a machine whose
   zone is not UTC, run by the agent or person who runs the suite for the build.
-- **A check takes from about 20 seconds to about 2 minutes against the prototype, and the ten about
-  10 minutes** (`test-interop.ps1` about 40 seconds, on top), most of it starting programs: about
+- **A check took from about 20 seconds to about 2 minutes against the prototype, and the ten about
+  10 minutes** (the Rust build's runs are in [the run records](runs/e0.06-t04-s01.md)), most of it starting programs: about
   0.5 seconds for a run that issues no credential, and a few seconds for a ready `create`. `test-lease-concurrency.ps1` is the longest, because
   round F waits out the lock's 30 seconds. Against a program that prints nothing, all ten take
   about a minute.
@@ -386,80 +405,34 @@ ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-
    and the lease CLI is `target\dist\agentspace.exe`. **The run MUST be made from a build of a
    commit, and the run record MUST name that commit**, so that a pass belongs to code that can be
    fetched again.
-2. **Set `AGENTSPACE_CMD` to the full path of `target\dist\agentspace.exe`**, in PowerShell 7, with
-   every other `AGENTSPACE_*` conformance variable unset. The operator that makes each throwaway CA
-   then takes its default, the prototype's (`AGENTSPACE_OPERATOR_CMD`), because v0.06 (#0055) builds
-   the Rust one.
+2. **Name the build's programs, or install them.** With no `AGENTSPACE_*` conformance variable set,
+   every program is the install folder's ([Naming the program under test](#naming-the-program-under-test)).
+   To run a build that is not installed, set each variable that build's program answers for to its
+   full path in `target\dist\`, in PowerShell 7, such as `AGENTSPACE_CMD` to
+   `target\dist\agentspace.exe`, and leave the others unset. (v0.05's run, before the Rust operator
+   existed, set only `AGENTSPACE_CMD`, and the operator that made each throwaway CA was then the
+   prototype's.)
 3. **Run every file, each as `pwsh -NoProfile -File <file>`:** every
-   `conformance\lease-cli\test-*.ps1` except `test-interop.ps1`, so the ten checks and every
-   `test-unmet-*` file, and `conformance\schemas\test-schemas.ps1`, which names no program.
-4. **Run `test-interop.ps1` each way round, against the prototype as the peer:**
-   - **A is the build:** `AGENTSPACE_CMD` is the build and `AGENTSPACE_PEER_CMD` is unset, so the
-     peer is the prototype by default.
-   - **B is the build:** `AGENTSPACE_PEER_CMD` is the build and `AGENTSPACE_CMD` is unset, so A is
-     the prototype by default.
-5. **A complete run exits 0 on every file, with no SKIPPED result, on a machine whose zone is not
+   `conformance\lease-cli\test-*.ps1`, so the ten checks and every `test-unmet-*` file, and
+   `conformance\schemas\test-schemas.ps1`, which names no program.
+4. **A complete run exits 0 on every file, with no SKIPPED result, on a machine whose zone is not
    UTC.** Each `test-unmet-*` file is a requirement the build MUST meet, so against a build its
    `FAIL` is the build's failure ([The files that are expected to fail](#the-files-that-are-expected-to-fail)).
-6. **The empty-program run MUST be made too**: `AGENTSPACE_CMD` naming a `.cmd` of `@exit /b 0`,
-   for every lease CLI file, and `test-interop.ps1` with it as A and as the peer. Each MUST exit 1.
+5. **The empty-program run MUST be made too**: `AGENTSPACE_CMD` naming a `.cmd` of `@exit /b 0`,
+   for every lease CLI file. Each MUST exit 1.
 
-### `test-interop.ps1`: one lease through two programs
+### Interop retired
 
-**This check enforces [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite)**
-(#0054, D38): the prototype and the rewrite MUST be able to share one home folder and one state
-folder. RFC 2119 keywords again.
-- **It runs two lease CLIs, A and B, in one throwaway home with one state folder.** A is the program
-  `AGENTSPACE_CMD` names and B is the program `AGENTSPACE_PEER_CMD` names, each started by the
-  harness's `Invoke-ConformanceProgram` as a separate process. **Each variable that is unset or empty
-  takes its default from `conformance/prototype/defaults.ps1`, and from nowhere else**, so a run with both
-  unset runs the prototype against itself, and a run of the rewrite against the prototype sets one
-  variable. The check names no prototype path and loads no prototype code.
-- **It runs two rounds, A then B and B then A.** In a round, the first program creates and the other
-  program checks, in this order:
-  1. The first program creates a ready lease, and the lease has its folder, its key pair and its alias
-     file, whose first line starts `# agentspace lease <id>;` (state.md's checklist for the other
-     program).
-  2. The other program's `get` prints that lease with the same values, compared parsed.
-  3. The other program's `list` holds that lease once, with the same values, compared parsed.
-  4. The other program renews it with `--ttl 90m`. The renew prints the lease asked for, unchanged
-     on every field but `expires_at` and `ttl_seconds`. The first program's `get` prints the same
-     document, and the certificate on disk is a new one, valid until that `expires_at`.
-  5. The first program renews it again, without `--ttl`, and the other program's `get` shows that
-     renewal the same way.
-  6. The other program releases it. The release prints the lease asked for, unchanged on every
-     field but `state`, `ssh` and `released_at`. The first program's `get` prints the same document,
-     `released`, with the other program's `released_at`, and its alias file and lease folder are gone.
-  7. The first program releases it again, after the clock has passed that `released_at`. It exits 0
-     and prints the same document.
-  8. An unsatisfiable lease that the first program created reads the same in the other, by `get` and by `list`.
-- **A document a program prints MUST be the lease that was asked for.** Each `renew` and `release`
-  document, and each `get` after one, carries the lease's `id`, compared exactly. A `get` is compared
-  in full, parsed, with the document the other program just printed, since both are the lease as it
-  stands, seconds apart. A `renew` is compared with the document before it on every field except
-  `expires_at` and `ttl_seconds`, and a `release` with the last `renew` on every field except
-  `state`, `ssh` and `released_at` ([lease-api.md, renew](lease-api.md#agentspace-lease-renew), [release](lease-api.md#agentspace-lease-release)).
-  Without that, a program that printed some other lease, or changed `created_at`, would pass on the
-  fields the steps look at.
-- **After every step, the state file validates against its schema** (`schemas/state/leases.state.schema.json`),
-  **and every lease either program has printed is in it exactly once.** A lease counts as printed once
-  a document that passed its schema has carried its ID.
-- **It checks MUSTs only, and a reason never quotes a program's output**: a reason names what
-  differs, with the exit code and whether each stream was empty.
-- **It follows the rule for an untrusted program** ([below](#the-program-under-test-is-untrusted)): a
-  path is built from a lease ID or a host alias only after the document passed its schema, and then
-  only through `Get-CcLeaseDir` and `Get-CcAliasPath`. It writes and deletes nothing itself.
-- **Set either variable to a program that prints nothing and exits 0, and the run MUST fail.** A
-  program that cannot create fails step 1 of its own round, and one that cannot read fails step 2 of
-  the other round, so neither variable can be left unread. Shown on 2026-11-19 against the prototype:
-  36 passed, 0 failed, 0 skipped, exit 0, in about 40 seconds; with `AGENTSPACE_CMD` naming such a
-  program, 9 passed and 27 failed, exit 1; and with `AGENTSPACE_PEER_CMD` naming it, 17 passed and 19
-  failed, exit 1. The results that still pass then are mostly the state file's, which hold when a
-  program printed nothing for them to find.
-  **A program that prints the wrong lease is caught too.** Shown the same day with a wrapper around
-  the prototype's command line, as `AGENTSPACE_PEER_CMD`, that changed one behavior: a `renew` that
-  printed another lease's `id` failed 4 results (32 passed), a `renew` that changed `created_at`
-  failed 10 (26 passed), and the wrapper changing nothing passed all 36.
+**`conformance/lease-cli/test-interop.ps1` and `AGENTSPACE_PEER_CMD` were removed by E0.06-T06-S01
+(#0135), 2026-11-20 (architect, D42).** The check drove one lease through two lease CLIs, each way
+round, to enforce [state.md, Between the prototype and the rewrite](state.md#between-the-prototype-and-the-rewrite):
+that the prototype and the rewrite MUST be able to share one home folder and one state folder. With
+the prototype gone from the repository there is no peer to run it against, so the check has nothing
+to show, and its variable went with it.
+- **Its last run was on v0.06's build, in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md): 36 passed,
+  0 failed, 0 skipped, each way round.**
+- **The requirement it enforced stands in state.md as history**, and a later release that has two
+  builds to share state between MAY write a check for it again.
 
 ### The harness
 
@@ -519,8 +492,9 @@ check this: a home that was inside one would fail at the CA step, with the opera
   - **Every other `AGENTSPACE_*` variable the caller holds is removed**, so that a shell's own
     settings never reach the program.
   - **`PSModulePath` is removed.** A PowerShell 7 session's value carries PowerShell 7's own module
-    folders, and Windows PowerShell 5.1, which runs the prototype's operator, then cannot load its
-    security module, so its `ca` fails.
+    folders, and Windows PowerShell 5.1, which ran the prototype's operator, then could not load its
+    security module, so its `ca` failed. The Rust operator needs none of this, and the harness still
+    removes the variable, so that no program inherits the session's.
 - **A check MUST NOT read, write, list or hash the real `%USERPROFILE%\.agentspace`, the real
   `~/.ssh` or the real CA**, and the harness never gives one a path to them. Only a person or a
   verifier proving a run touched nothing lists them, before and after.
@@ -625,6 +599,10 @@ account, so the real profile is not unreachable), the operator's
 printed a document that validates.
 
 ## The sorting
+
+**History (E0.06-T06-S01, 2026-11-20): this section and the ones under it describe the prototype's
+checks as they were before the prototype was removed.** The `scripts/` files they name no longer
+exist, except `scripts/check-forward-release.ps1`.
 
 ### The summary
 
@@ -800,8 +778,8 @@ against that build: the counts below are what each file holds.
 as three more files** (the table below): `down`, `status` and `grow`, the operator's usage errors
 and help texts, and the start paths of `up`. Each fails against the prototype, because the
 prototype does not meet the seam.
-**`scripts/test-push-localswim.ps1` stays prototype code and keeps passing**, with every group of it
-below. Four of its groups needed no stand-in and moved earlier, to `conformance/operator/`, in two
+**`scripts/test-push-localswim.ps1` stayed prototype code and kept passing** until E0.06-T06-S01
+removed it (2026-11-20), with every group of it below. Four of its groups needed no stand-in and moved earlier, to `conformance/operator/`, in two
 kinds: the refusals of `-Alias` (two groups) and the refusals of the ProxyCommand's arguments (two
 groups).
 
@@ -930,17 +908,19 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
 #### `conformance/keeper/test-keeper.ps1`, with `keeper-common.ps1` and its own `conformance/keeper/ssh-stub.cmd`: conformance
 
 **E0.04-T03-S02 rewrote the 41 process cases of `scripts/test-board-holder.ps1` as this check, and
-added one.** The original stays in `scripts/` with its three installer cases, which are prototype
-code ([below](#the-three-installer-cases-prototype-code)).
+added one.** The original stayed in `scripts/` with its three installer cases, which were prototype
+code ([below](#the-three-installer-cases-prototype-code)), until E0.06-T06-S01 removed it
+(2026-11-20).
 
 - **Drives:** The keeper as a separate process, only through the program that
   `AGENTSPACE_KEEPER_CMD` names, run with the keeper's own arguments unchanged
   ([docs/keeper.md](keeper.md#command-line)): `<program> -SshExe <stub> [-Now t]`, and in `-Watch`
   mode with `-IntervalSeconds`, `-MaxPasses`, `-BackoffBaseSeconds`, `-BackoffMaxSeconds`,
   `-FastFailureSeconds` and `-ReleaseGraceSeconds`. The program is found by the harness's
-  `Get-ConformanceProgram`: when the variable is unset or empty, the default is the shim
-  `conformance/prototype/keeper.cmd`, which `conformance/prototype/defaults.ps1` names, and nowhere
-  else; no case names the prototype's script. The variable is read before the first case, because
+  `Get-ConformanceProgram`: when the variable is unset or empty, the default is the install folder's
+  `agentspace-keeper.exe`, which `conformance/defaults.ps1` names, and nowhere else; no case names
+  the keeper's file or script. (Until E0.06-T06-S01 the default was the shim
+  `conformance/prototype/keeper.cmd`.) The variable is read before the first case, because
   a case strips every `AGENTSPACE_*` variable from the environment. A check that names a program
   that is not a file fails.
 - **Options:** `-Case <wildcard>` runs only the cases whose name matches. `-SelfCheck` runs each
@@ -1115,8 +1095,8 @@ Its header says so, its `FAIL` lines still say `FAIL`, and a rewrite's keeper MU
 
 #### The three installer cases: prototype code
 
-**These stay in `scripts/test-board-holder.ps1`, whole and untouched, as prototype code.** The
-rewrite MUST NOT read them. They are the three cases that load or test the prototype's packaging:
+**These stayed in `scripts/test-board-holder.ps1`, whole and untouched, as prototype code, until
+E0.06-T06-S01 removed the file (2026-11-20).** The rewrite MUST NOT read them. They are the three cases that load or test the prototype's packaging:
 
 | Case | Count | Class | Notes |
 |---|---|---|---|
@@ -1124,10 +1104,9 @@ rewrite MUST NOT read them. They are the three cases that load or test the proto
 | Installer: a running keeper is found by its command line | 1 case, 5 checks | Prototype code | It loads a prototype function from the installer's syntax tree |
 | Installer: `-DryRun` warns from a worktree | 1 case, 2 checks | Prototype code | It tests the prototype's install location, not the keeper |
 
-**The 41 process cases are also still in `scripts/test-board-holder.ps1`**, because a story MUST
-NOT edit that file and the suites left in `scripts/` MUST keep passing until the rewrite replaces
-them. The dev lead decides whether to remove them there once the move is merged, so that each case
-has one home.
+**The 41 process cases were also still in `scripts/test-board-holder.ps1`**, because a story MUST
+NOT edit that file and the suites left in `scripts/` MUST keep passing until the rewrite replaced
+them. E0.06-T06-S01 removed the file, so each case now has one home.
 
 ### The schemas check
 
@@ -1149,9 +1128,8 @@ has one home.
   against the package on 2026-11-18. **The three keeper schemas in `schemas/state/` are checked by the
   keeper suite's case against the files a run writes, not by this check**
   ([docs/state.md](state.md#open-questions), Q13).
-- **The copy in `scripts/test-schemas.ps1` is the same check**, left in place because a story MUST
-  NOT edit a `scripts/test-*.ps1`. The dev lead decides whether to remove it once the move is
-  merged, so that the check has one home.
+- **The copy in `scripts/test-schemas.ps1` was the same check**, left in place because a story MUST
+  NOT edit a `scripts/test-*.ps1`. E0.06-T06-S01 removed it, so the check has one home.
 
 ### The live-box check
 
@@ -1168,6 +1146,9 @@ has one home.
   cover it ([The gaps](#the-gaps)).
 
 ## The header line in each script
+
+**History (E0.06-T06-S01, 2026-11-20):** the prototype's suites that carried these headers were
+removed, so what is left of this section is the headers of the files in `conformance/`.
 
 **Each suite sorted above, and the keeper's stub, carries one comment line, right after any
 `#Requires` line, that says its class and points here** (a `REM` line in the `.cmd`).
@@ -1220,6 +1201,10 @@ exists, so every link to one resolves (B-36).
 | The keeper's files against `schemas/state/` | [docs/state.md](state.md): The keeper's files (the holder record, a holder's launch files), and its Q13; keeper.md: The handshake |
 
 ## The files that are expected to fail
+
+**History (E0.06-T06-S01, 2026-11-20): the prototype is gone, so these files are now ordinary
+checks that the Rust programs pass** (the note at the top of this page). What follows says what each file showed against the prototype, and a `FAIL` in
+any of them is now a defect.
 
 **RFC 2119 keywords again.** Every file in `conformance/` named `test-unmet-<what>.ps1` checks a
 MUST that the prototype does not meet yet (E0.04-T03-S03, #0086; the pins of v0.04-T03). It says
@@ -1334,7 +1319,7 @@ and no file checks it.
 | lease-api.md: The program | Arguments reach the program unchanged from Git Bash have no check, since it needs Git Bash. **An argument such as `-:x` is checked, and fails against the prototype** (#0083 point 1; #0110): `conformance/lease-cli/test-unmet-runtime-refused-argument.ps1` runs it in each position and as a flag's value, and the prototype's runtime refuses it with exit 1 and no error document. **A line feed inside an argument is checked, and fails against the prototype**: its `bin\agentspace.cmd` cuts the argument at it, so a project value `a<LF>b` is read as `a` and the create succeeds, where the spec requires `invalid_value`. The check is `conformance/lease-cli/test-unmet-argument-line-feed.ps1`, which fails against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)) |
 | lease-api.md: The credential, no CA | `create` and `renew` MUST fail with `internal` and make no CA when none exists (#0029 point 3). **The prototype's `create` makes one**, so the check of the rule fails against it: `conformance/lease-cli/test-unmet-no-ca.ps1` ([The files that are expected to fail](#the-files-that-are-expected-to-fail); [docs/state.md](state.md#its-checks)). Also checked, and passing: an unsatisfiable `create` with no CA answers and makes none |
 | driver.md | The driver boundary is in-process, so no conformance check can drive it. The registration checks are not movable. What a caller sees of the driver is covered by `conformance/lease-cli/test-lease-driver-outcomes.ps1`: unsatisfiable requests, no driver name in any output, and a failed alias step. A foreign alias file kept by a failed `create` is not movable, since the alias name comes from a random ID |
-| keeper.md: The installed task | No conformance check covers an installed task. The three installer cases stay in `scripts/` as prototype code, and [Coverage](#coverage-of-the-operator-and-the-keeper) says why |
+| keeper.md: The installed task | No conformance check covers an installed task. The three installer cases were in `scripts/` as prototype code until E0.06-T06-S01 removed them, and [Coverage](#coverage-of-the-operator-and-the-keeper) says why |
 | keeper.md: Release grace, card #0068 | **Checked by `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, which fails against the prototype** ([The #0068 file](#the-0068-file-test-unmet-holder-dies-mid-passps1)). The gap that remains is the window itself: the keeper logs nothing when its look finds a holder alive and its pass then waits for `board-holder.lock`, so no event marks the moment between the look and the trust check. The file enters it with one bounded wait from the keeper's own `skipped` line, reads the log to see which path the keeper took, and reports SKIPPED if it missed. The second case in the file reaches the same rule with no timing, through a record that is gone |
 | keeper.md: Checking the keeper, card #0066 | **Shown for the Rust keeper (E0.06-T04-S01):** the "Watch locked" case passed 5 times in a row beside two other copies of the suite ([The keeper suite](#the-keeper-suite)). **Not shown:** the same under the prototype's keeper, a heavier load, which no run was made with |
 | keeper.md: The task's launcher; Stopping and starting the keeper | Nothing runs the launcher, the install, or the End and restart steps: they need the real Task Scheduler |
@@ -1365,7 +1350,7 @@ a check for it can be added by a later story without changing a spec.
 | operator.md: The ProxyCommand | The argument refusals, the steps (`test-unmet-proxy-steps.ps1`) and what a caller sees | **Later, not blocking:** the console-mode repair ([Q17](operator.md#open-questions)) needs a Windows console, and the harness gives a program pipes |
 | keeper.md: Streams and environment (the holder and its launcher run in the user's logon environment, D35) | `conformance/keeper/test-holder-environment.ps1` | The holder's environment names show neither a sentinel set only for the keeper, nor `AGENTSPACE_STATE_DIR`, nor any `AGENTSPACE_*` name, with `SystemRoot` present as a control, and the holder's `USERPROFILE` is not the keeper's changed one (a yes or no marker, never the value). **Not shown:** the launcher's own environment (only the holder's is seen) and that the keeper itself held the sentinel (set before the start, not observable from outside; the check makes it a precondition) |
 | operator.md: The Bot credential (the token push) | `test-unmet-push.ps1` writes its fake credential with PowerShell's `Export-Clixml` | **Later, not blocking:** writing it with `CryptProtectData` directly, as [operator.md, The Bot credential](operator.md#the-bot-credential) describes the file, would make the check independent of PowerShell's own serializer. It changes how a fixture is made and shows nothing new |
-| keeper.md: The installed task, the launcher, stopping and starting | None | **Later, not blocking:** the task is the machine's Task Scheduler entry, which a throwaway home does not isolate, so a check would register a real task in the user's account. The installer's usage errors change nothing on the machine ([docs/keeper.md, The installer](keeper.md#the-installer); D37; B-51), so a check of them would register no task, but none is written yet: no conformance variable names the installer ([Naming the program under test](#naming-the-program-under-test)), and it runs only from the install folder (D37), so such a check needs a fifth variable and an install to point it at. The three installer cases stay in `scripts/` as prototype code |
+| keeper.md: The installed task, the launcher, stopping and starting | None | **Later, not blocking:** the task is the machine's Task Scheduler entry, which a throwaway home does not isolate, so a check would register a real task in the user's account. The installer's usage errors change nothing on the machine ([docs/keeper.md, The installer](keeper.md#the-installer); D37; B-51), so a check of them would register no task, but none is written yet: no conformance variable names the installer ([Naming the program under test](#naming-the-program-under-test)), and it runs only from the install folder (D37), so such a check needs a fifth variable and an install to point it at. The three installer cases were in `scripts/` as prototype code until E0.06-T06-S01 removed them |
 
 The numbers in "Checked by" are the results of each file, run against the prototype or against a
 stand-in of a conforming build, as [The operator and the token push](#the-operator-and-the-token-push)
@@ -1397,7 +1382,7 @@ with the same release (roadmap.md).
     the token push](#the-operator-and-the-token-push)).
   - **Still open of the rows FB-25 names for v0.06:** the keeper's logon environment (D35), which
     is not this story's.
-- **The skip reason that FA-20 found is fixed:** `test-interop.ps1` now says that no `ssh-keygen`
+- **The skip reason that FA-20 found is fixed:** `test-interop.ps1` (since retired) said that no `ssh-keygen`
   was found in `System32\OpenSSH` or on `PATH`, the two places it looks.
 
 ## The remaining work
@@ -1413,8 +1398,9 @@ are the sorter's, in agent active minutes, from reading the suites, and not meas
 | 2. The remaining lease CLI checks, against a pinned harness interface | The normalizers as probes (35), the state file through seeded `leases.json` (30), `renew` and `release` with `create`-made seeds (25), the certificate and the renew and release checks (25), the alias and the `Include` line (35), and the driver's unsatisfiable and failed-alias checks (25) | 175 minutes |
 | 3. The operator, keeper and schemas checks, plus the push seam in `operator.md` (done by E0.04-T03-S02, #0085; the push's checks stay prototype code until a build meets the seam) | The keeper suite parametrized by `AGENTSPACE_KEEPER_CMD` and run twice in full: 60 minutes. The operator's alias refusals and the proxy's argument refusals: 25. The schemas check moved: 10. The push seam is specified in [operator.md](operator.md) by this story: an environment variable naming `ssh` and `aws`, and a way to give the push a time zone (operator.md Q11 and Q12). Until the product has that seam, the push stays prototype code | 95 minutes, without the seam |
 
-**The suites left in `scripts/` MUST keep passing until the rewrite replaces them.** The
-conformance suite adds to them, and does not retire one.
+**The suites left in `scripts/` had to keep passing until the rewrite replaced them**, and the
+conformance suite added to them and retired none. E0.06-T06-S01 (2026-11-20) removed them with the
+prototype, and the conformance suite is now the only one.
 
 ## Open questions
 

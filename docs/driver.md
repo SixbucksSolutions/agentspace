@@ -39,6 +39,13 @@ is carried in here as a requirement on every failure that crosses the boundary
 behavior follows as a note.** Where a note says "not behavior to copy", the rewrite MUST meet the
 requirement and MUST NOT repeat the note.
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** Every note
+on this page that names the prototype, and its `scripts/lease-driver.ps1` and
+`scripts/lease-driver-ec2.ps1`, is history: it says where a requirement came from. None tells a
+reader to run the prototype, and none binds a program that is built now. What binds is the rule
+each note stands beside, and the tables and questions below that compare the rewrite with the
+prototype stay as the record of the change.
+
 ## Contents
 
 - [Conventions](#conventions): [the boundary](#the-boundary), [failure](#failure),

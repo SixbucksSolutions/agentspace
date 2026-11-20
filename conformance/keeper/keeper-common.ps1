@@ -48,7 +48,7 @@ $ci = [Globalization.CultureInfo]::InvariantCulture
 . (Join-Path $PSScriptRoot '..\lease-cli\harness.ps1')
 
 # The full path of the program that AGENTSPACE_KEEPER_CMD names, or its default from
-# conformance/prototype/defaults.ps1, through the harness; $null when neither names one.
+# conformance/defaults.ps1, through the harness; $null when neither names one.
 function Resolve-KeeperProgram {
   $p = Get-ConformanceProgram -Variable 'AGENTSPACE_KEEPER_CMD'
   if ([string]::IsNullOrWhiteSpace($p)) { return $null }

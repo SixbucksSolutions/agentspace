@@ -11,6 +11,11 @@ are told to "run this in agentspace".
 The plan is in [docs/roadmap.md](docs/roadmap.md), and the reasoning in
 [docs/decisions.md](docs/decisions.md). The work is on the `agentspace` localswim board.
 
+**The programs are Rust, and the PowerShell prototype is gone** (D28; removed from the repository
+by E0.06-T06-S01, 2026-11-20). The PowerShell that remains is the conformance suite, the
+architect's process tools under `scripts\` and a crate's test stand-in. Every command below runs the
+installed programs ([Build](#build), [Install it](#install-it)).
+
 | Piece | What |
 |---|---|
 | Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; `m9g.xlarge` (4 vCPUs, 16 GiB) by default, sized for each use with a vCPU per agent ([D39](docs/decisions.md#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent)) |
@@ -31,7 +36,7 @@ people and agents use changed.
 ssh agentspace
 ```
 
-The `agentspace` entry in `%USERPROFILE%\.ssh\config` runs `scripts\ssh-proxy.cmd`, which starts
+The `agentspace` entry in `%USERPROFILE%\.ssh\config` runs `agentspace-ssh-proxy.exe`, which starts
 the instance if it is stopped, waits until its boot-time patch run has finished, and tunnels SSH
 through Session Manager. The first connection after a stop takes under a minute, longer when a
 new kernel means a reboot. VS Code Remote-SSH and the Claude desktop app's SSH connections can use
@@ -43,7 +48,7 @@ The whole entry, since it lives outside this repo:
 Host agentspace
   User ubuntu
   IdentityFile ~/.ssh/id_ed25519
-  ProxyCommand C:\Windows\System32\cmd.exe /d /c "C:\Projects\agentspace\scripts\ssh-proxy.cmd"
+  ProxyCommand "C:\Users\<you>\.agentspace\bin\agentspace-ssh-proxy.exe"
   StrictHostKeyChecking accept-new
   ServerAliveInterval 30
   ServerAliveCountMax 4
@@ -51,14 +56,27 @@ Host agentspace
   RemoteForward 127.0.0.1:53147 127.0.0.1:53147
 ```
 
+The `ProxyCommand` line is the full path of the installed program in double quotes, with your
+profile folder's value written out in place of `C:\Users\<you>` and no alias, since ssh expands no
+environment variable in a ProxyCommand
+([operator.md, ProxyCommand lines already on the laptop](docs/operator.md#proxycommand-lines-already-on-the-laptop)).
+
+**The programs are the installed Rust programs** (D28, D37), kept in `%USERPROFILE%\.agentspace\bin`.
+A person builds and installs them as [Build](#build) and [Install it](#install-it) below say.
+
 ```bat
-powershell -File scripts\agentspace.ps1 status
-powershell -File scripts\agentspace.ps1 down
-powershell -File scripts\agentspace.ps1 grow -GiB 2
-powershell -File scripts\agentspace.ps1 sync
-powershell -File scripts\agentspace.ps1 deploy
-powershell -File scripts\agentspace.ps1 ca
+agentspace-operator status
+agentspace-operator down
+agentspace-operator grow -GiB 2
+agentspace-operator sync
+agentspace-operator deploy
+agentspace-operator ca
 ```
+
+The commands are the operator's ([docs/operator.md, Command line](docs/operator.md#command-line)).
+`agentspace-operator` runs once the install folder is on the user's `PATH`, which is persistent
+configuration on Terry's laptop and MUST be done only with his yes. Until then each runs by its
+full path, `%USERPROFILE%\.agentspace\bin\agentspace-operator.exe`.
 
 - **`sync`** checks the agentspace SSH CA first, with the same checks `ca` makes, and stops
   before touching the instance if the pair is missing, mismatched or readable by anyone else
@@ -86,32 +104,28 @@ powershell -File scripts\agentspace.ps1 ca
   Code) there, builds and installs the localswim CLI, and sends the current localswim Bot token
   with the laptop's time zone.
 - **`deploy`** updates the CloudFormation stack and then runs `sync`. The account-specific
-  parameters (`VpcId`, `SubnetId`) come from `infra\local.parameters`, which is not committed;
-  `infra\local.parameters.example` shows the format.
+  parameters (`VpcId`, `SubnetId`) come from `%USERPROFILE%\.agentspace\stack-parameters.json`,
+  JSON that a person writes and that is not committed (D40);
+  `infra\stack-parameters.example.json` shows the format
+  ([operator.md, deploy](docs/operator.md#deploy)). `deploy` fails before it calls AWS when the
+  file is missing or not valid.
 - **`ca`** creates the agentspace SSH CA that signs lease certificates
   ([D7](docs/decisions.md#d7-ssh-access-through-short-lived-certificates-from-an-agentspace-ca)),
   once, as `%USERPROFILE%\.agentspace\ca\agentspace_ca` and `agentspace_ca.pub`, locked to the
   current user (D17). Running it again changes nothing and prints the paths and fingerprint. It
   refuses to overwrite a CA, and fails without repairing anything when the pair is half there,
   mismatched or readable by anyone else.
-- **`scripts\lease-credential.ps1`** (PowerShell 7, D18) defines
-  `New-LeaseCredential -LeaseId <id> -Ttl <TimeSpan>`, which the prototype's lease CLI
-  dot-sources. It checks the CA with `agentspace.ps1 ca`, makes a new ed25519 key without a passphrase in
-  `%USERPROFILE%\.agentspace\leases\<id>\`, and signs it with principal `ubuntu`, the lease ID as
-  key ID and a validity of exactly the TTL. It refuses a lease ID that is not a safe token and a
-  lease that already has a key. Check it with
-  `pwsh -NoProfile -File scripts\test-lease-credential.ps1`, which prints PASS or FAIL per check
-  and removes its throwaway leases.
-  The same file also defines `Update-LeaseCredential -LeaseId <id> -Ttl <TimeSpan>`, which signs a
-  new certificate for an existing key, and `Remove-LeaseCredential -Project <name> -LeaseId <uuid>`,
-  which deletes the lease's alias file and its folder and leaves `~/.ssh/config` alone. Check them
-  with `pwsh -NoProfile -File scripts\test-lease-renew-release.ps1`.
-- **`scripts\lease-alias.ps1`** (PowerShell 7, D18) defines `Set-LeaseAlias` and `Remove-LeaseAlias`
-  (each `-Project <name> -LeaseId <uuid>`) and `Install-LeaseAliasInclude`, which the prototype's
-  lease CLI dot-sources. They write and remove a lease's host alias, `agentspace-<project>-<first 8 hex of
-  the lease ID>`, as a file in `~/.ssh/agentspace.d` (see "Lease host aliases" below). Check them
-  with `pwsh -NoProfile -File scripts\test-lease-alias.ps1`, which works in a throwaway folder
-  under `%USERPROFILE%\.agentspace`, never in the real `~/.ssh`, and prints PASS or FAIL per check.
+- **A lease's key, certificate and host alias are the lease CLI's** (D28), no longer a PowerShell
+  script's. `agentspace lease create` checks the CA (it never creates one), makes a new ed25519 key
+  without a passphrase in `%USERPROFILE%\.agentspace\leases\<id>\`, signs it with principal
+  `ubuntu`, the lease ID as key ID and a validity of exactly the TTL, and writes the lease's host
+  alias, `agentspace-<project>-<first 8 hex of the lease ID>`, as a file in `~/.ssh/agentspace.d`
+  (see "Lease host aliases" below). `renew` signs a new certificate for the existing key, and
+  `release` deletes the alias file and the lease's folder and leaves `~/.ssh/config` alone. The
+  rules are [docs/lease-api.md](docs/lease-api.md)'s and [docs/state.md](docs/state.md)'s, and the
+  checks are the conformance suite ([docs/conformance.md](docs/conformance.md)). **The prototype's
+  scripts for these, `scripts\lease-credential.ps1` and `scripts\lease-alias.ps1`, were removed by
+  E0.06-T06-S01 (2026-11-20)**, with the rest of the prototype.
 
 ### The lease CLI
 
@@ -129,39 +143,37 @@ Leases are kept in `%USERPROFILE%\.agentspace\leases.json`, or in the folder tha
   Putting the folder on `PATH` is persistent configuration on Terry's laptop, and MUST be done only
   with his yes ([operator.md, The install folder](docs/operator.md#the-install-folder)). Until it
   is, the CLI is run by its full path.
-- **The checkout's `bin\agentspace.cmd`, and `bin/agentspace` for Git Bash, run the prototype until
-  v0.06 (#0055).** They are the PowerShell lease CLI, `scripts\lease-cli.ps1`, and MUST NOT be
-  pointed at an install
-  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
-  Which `agentspace` a person gets is `PATH`'s choice, so once the install folder is on `PATH`, the
-  checkout's `bin\` SHOULD be taken off it. The prototype and the Rust CLI share one home and one
-  state folder, so a lease that one made is the other's to renew and release
-  ([state.md, Between the prototype and the rewrite](docs/state.md#between-the-prototype-and-the-rewrite)).
+- **The checkout no longer holds a lease CLI.** Its `bin\agentspace.cmd` and `bin/agentspace` ran
+  the PowerShell prototype, and were removed with it by E0.06-T06-S01 (2026-11-20; v0.06, #0055;
+  [operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
+  Which `agentspace` a person gets is `PATH`'s choice, so a `PATH` that still names a checkout's
+  `bin\` SHOULD have that entry taken off, since it names nothing.
 - **A lease SHOULD be created by the installed CLI**, since a lease created by a CLI in a build's
   `target\dist` folder, or in a git worktree, names that folder in its alias file, and every
   connection through the alias fails once the folder is gone
   ([operator.md, The install folder](docs/operator.md#the-install-folder)).
-- **The prototype's checks still describe the prototype.** `scripts\test-lease-cmd-create-get.ps1`
-  checks its `create` and `get`, `scripts\test-lease-cmd-renew-release-list.ps1` its `renew`,
-  `release` and `list`, and `pwsh -NoProfile -File scripts\test-lease-cli.ps1` its whole CLI in a
-  throwaway folder under `%TEMP%`, each printing PASS or FAIL per check. The Rust CLI's checks are
-  the conformance suite ([docs/conformance.md](docs/conformance.md)), and its first live run through
-  the real box is [docs/runs/e0.05-t05-s01.md](docs/runs/e0.05-t05-s01.md).
+- **The lease CLI's checks are the conformance suite**
+  ([docs/conformance.md](docs/conformance.md#running-the-suite)), which runs the installed
+  programs, or a build's output folder, in a throwaway home
+  ([docs/conformance.md, Naming the program under test](docs/conformance.md#naming-the-program-under-test)).
+  The prototype's own `scripts\test-*.ps1` checks were removed with it (E0.06-T06-S01,
+  2026-11-20). The CLI's first live run through the real box is
+  [docs/runs/e0.05-t05-s01.md](docs/runs/e0.05-t05-s01.md).
 
 ### Lease host aliases
 
 RFC 2119 keywords; the capitals are load-bearing.
 
 Each lease gets one alias file, `~/.ssh/agentspace.d/agentspace-<project>-<shortid>`, written by
-the lease CLI (the prototype's `Set-LeaseAlias`) and deleted by `release` (the prototype's
-`Remove-LeaseAlias`). `~/.ssh/config` reaches them through one line:
+the lease CLI's `create` and deleted by its `release`. `~/.ssh/config` reaches them through one
+line:
 
 ```
 Include agentspace.d/*
 ```
 
 - **The line MUST be above the first `Host` or `Match` line.** An `Include` after a `Host` line
-  belongs to that host's block. `create` (the prototype's `Set-LeaseAlias`) adds it as line 1 when it is missing, and refuses,
+  belongs to that host's block. `create` adds it as line 1 when it is missing, and refuses,
   changing nothing, when it finds one below a `Host` line: a person has to move it.
 - **The path resolves against `~/.ssh`**, not the current directory.
 - **The first change backs up the config** as `config.agentspace-backup-<UTC time>` beside it,
@@ -171,22 +183,22 @@ Include agentspace.d/*
 - **`C:\Windows\System32\OpenSSH\ssh.exe -G <alias>`** prints the settings an alias gives.
 - **The alias's ProxyCommand names the alias itself** (card #0057), written out literally at the
   end. The installed CLI writes
-  `C:\WINDOWS\System32\cmd.exe /d /c "%USERPROFILE%\.agentspace\bin\agentspace-ssh-proxy.cmd" <alias>`,
-  with the values of `SystemRoot` and `USERPROFILE` written out: the install's forwarder, which runs the main checkout's
-  `scripts\ssh-proxy.cmd` with the alias, until v0.06 retires the prototype's ProxyCommand
-  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
-  The prototype's line names `<repo>\scripts\ssh-proxy.cmd` directly:
-  `C:\Windows\System32\cmd.exe /d /c "<repo>\scripts\ssh-proxy.cmd" <alias>`. Each line MUST NOT
-  use ssh's `%n` token, because the Claude desktop app runs the ProxyCommand line through its own
-  proxy (D12) and nothing shows that it expands tokens. `ssh-proxy.cmd` passes the alias to
-  `agentspace.ps1 up -Alias <alias>`, so the token push rides the lease's own key and
-  certificate, not Terry's `agentspace` entry. An alias MUST match `^[A-Za-z0-9._-]+\z`, case
-  sensitive, and MUST NOT start with `-`, since it is on a command line; the alias names the CLI
-  generates always do, and it refuses one that does not. A project name MUST be ASCII. That check
-  is the gate: `ssh-proxy.cmd` passes its argument on as it is, because whoever writes a
-  ProxyCommand line already runs commands, and `up` checks the alias again before any ssh. The
-  forwarder needs the main checkout that has `.instance-id`, and the install's forwarder names it
-  ([Build](#build)).
+  `"%USERPROFILE%\.agentspace\bin\agentspace-ssh-proxy.exe" <alias>`, with the value of
+  `USERPROFILE` written out: the ProxyCommand program that sits beside the CLI in the install
+  folder (D8, D37). The install folder's `agentspace-ssh-proxy.cmd`, the forwarder that v0.05's
+  install ran and that v0.06's replaced with one line running the `.exe`, is kept only for an alias
+  file that already names it ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
+  The prototype's lines named `<repo>\scripts\ssh-proxy.cmd`, which was removed by E0.06-T06-S01
+  (2026-11-20). The line MUST NOT use ssh's `%n` token, because the Claude desktop app runs the
+  ProxyCommand line through its own proxy (D12) and nothing shows that it expands tokens.
+  `agentspace-ssh-proxy.exe` runs `up` for the alias (`up -Alias <alias>`), so the token push rides
+  the lease's own key and certificate, not Terry's `agentspace` entry. An alias MUST match
+  `^[A-Za-z0-9._-]+\z`, case sensitive, and MUST NOT start with `-`, since it is on a command line;
+  the alias names the CLI generates always do, and it refuses one that does not. A project name
+  MUST be ASCII. That check is the gate: the ProxyCommand passes its argument on as it is, because
+  whoever writes a ProxyCommand line already runs commands, and `up` checks the alias again before
+  any ssh ([operator.md, The ProxyCommand](docs/operator.md#the-proxycommand)). Nothing in a
+  checkout is read at run time, so no checkout needs to exist for a connection (D37).
 
 ### Use a lease from a project
 
@@ -206,10 +218,8 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
 
    Where the install folder is not yet on `PATH`, call it by its full path,
    `%USERPROFILE%\.agentspace\bin\agentspace.exe`. The default ProxyCommand names the install's
-   forwarder, which runs the main checkout's `scripts\ssh-proxy.cmd`, so the main checkout and its
-   `.instance-id` MUST exist ([Build](#build)). The checkout's `bin\agentspace.cmd` is the
-   prototype until v0.06 (#0055), and SHOULD NOT be used to create a lease. The JSON gives the
-   lease's `id`, its `expires_at` (8 hours from now unless `--ttl` says otherwise) and
+   `agentspace-ssh-proxy.exe`, so no checkout needs to exist ([Install it](#install-it)). The JSON
+   gives the lease's `id`, its `expires_at` (8 hours from now unless `--ttl` says otherwise) and
    `ssh.host_alias`, such as `agentspace-swimcoach-a62cb513`.
 2. **Put the project's repo on the box.** Nothing clones it for you. The repo MUST be in the
    folder the agents will open, for example `ssh <alias> "git clone <url> ~/swimcoach"`. Every
@@ -231,16 +241,18 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    them instead, and nobody starts it by hand
    ([D30](docs/decisions.md#d30-a-keeper-on-the-laptop-holds-the-boards-forwards)):
    - **The keeper runs at logon as the scheduled task `agentspace board holder`.** It runs
-     `scripts\board-holder.ps1 -Watch` through a no-window launcher. While a lease is ready and no
-     holder runs, it starts `ssh.exe -N -o ExitOnForwardFailure=yes <alias>` through the ready
-     lease that expires last, and it stops a holder whose lease is no longer ready.
-   - **`scripts\install-board-holder.ps1` registers the task.** `-DryRun` prints every field of
-     the task it would register and changes nothing, and `-Uninstall` removes the task and its
-     launcher. Registering the task is persistent configuration on Terry's laptop, so it MUST only
-     happen with his yes (E0.02-T03-S01).
-   - **The install MUST be run from the main checkout, never from a worktree.** The task points at
-     the folder the installer is in, and a worktree is deleted after its branch merges. An install
-     from a worktree is refused with exit 2, and `-DryRun` there prints a `Warning:` line.
+     `agentspace-keeper-task.exe -Watch`, a no-window launcher in the install folder, which runs
+     `agentspace-keeper.exe` beside it. While a lease is ready and no holder runs, the keeper
+     starts `ssh.exe -N -o ExitOnForwardFailure=yes <alias>` through the ready lease that expires
+     last, and it stops a holder whose lease is no longer ready.
+   - **`agentspace-keeper-install` registers the task.** `-DryRun` prints every field of the task
+     it would register and changes nothing, and `-Uninstall` removes the task. Registering the task
+     is persistent configuration on Terry's laptop, so it MUST only happen with his yes
+     (E0.02-T03-S01; [keeper.md, The installer](docs/keeper.md#the-installer)).
+   - **The installer MUST be run from the install folder, never from a build's output folder or a
+     worktree.** The task points at the programs beside the installer, and a worktree is deleted
+     after its branch merges. An install from anywhere else is refused with exit 2, and `-DryRun`
+     there prints a `Warning:` line.
    - **The keeper logs to `%USERPROFILE%\.agentspace\board-holder.log`**, and the holder's own
      output goes to `board-holder-ssh.log` beside it, which is rotated to `board-holder-ssh.log.1`
      past 1 MB.
@@ -267,14 +279,15 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      one the task's next firing starts, logs `<time> another keeper is running pid=<n>` and exits 0
      at once, without a pass. The lock is released when the keeper's process ends for any reason,
      a kill included. A one-pass run does not use it.
-   - **End in Task Scheduler stops only the launcher** and leaves the keeper's pwsh running; the
+   - **End in Task Scheduler stops only the launcher** and leaves the keeper's process running; the
      next firing's keeper then exits on the lock and does not loop beside it (E0.02-T04-S03,
      E0.02-T05-S01). The first keeper keeps the board held meanwhile, and each firing logs one
      `another keeper is running` line, one a minute, until that keeper is stopped. To stop the
-     keeper, its pwsh MUST be stopped by its checked PID after the task is ended. To keep it
-     stopped, the task MUST also be disabled (`Disable-ScheduledTask`) or removed with
-     `-Uninstall`; `-Uninstall` ends the task the same way, so its keeper's pwsh MUST still be
-     stopped by PID. A re-registration is refused while a keeper runs, for the same reason.
+     keeper, its process (`agentspace-keeper.exe`) MUST be stopped by its checked PID after the
+     task is ended. To keep it stopped, the task MUST also be disabled (`Disable-ScheduledTask`) or
+     removed with `-Uninstall`; `-Uninstall` ends the task the same way, so its keeper's process
+     MUST still be stopped by PID. A re-registration is refused while a keeper runs, for the same
+     reason ([keeper.md, Stopping and starting the keeper](docs/keeper.md#stopping-and-starting-the-keeper)).
 
    Only one connection on the box can hold the forwards (D12), so the holder exits rather than
    run without them when another connection already has them. An interactive `ssh <alias>` that
@@ -466,7 +479,7 @@ keep it from ever stopping (Terry, 2026-11-16).
 - **The first connection binds the ports; later ones print "remote port forwarding failed" and
   carry on**, using the first one's forward. When the first connection closes, the board
   disappears from the box until a new connection opens, even if others are still open.
-- **`agentspace.ps1` passes `ClearAllForwardings=yes` to its own ssh and scp calls**, so they
+- **`agentspace-operator` passes `ClearAllForwardings=yes` to its own ssh and scp calls**, so they
   never take the ports from an interactive session.
 - **An agent on the box MUST treat an unreachable board as a reason to stop and report, not to
   work without a card.** The board goes away when Terry disconnects, as it does when the laptop
@@ -486,17 +499,18 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   on stdin: it MUST NOT be put on a command line, printed, or stored anywhere else. Nothing about
   it is kept on the laptop except a SHA-256 of what was last sent, in `%USERPROFILE%\.agentspace`.
 - **The push rides the alias the caller connected with** (card #0057). A lease alias's
-  ProxyCommand runs `ssh-proxy.cmd <alias>`, which runs `up -Alias <alias>`, so the push uses
-  that lease's key and certificate. Terry's `agentspace` entry has no argument and still works:
-  `ssh-proxy.cmd` runs `up` and the push goes over `agentspace`, as before. `sync` still pushes
+  ProxyCommand runs `agentspace-ssh-proxy.exe <alias>`, which runs `up -Alias <alias>`, so the push
+  uses that lease's key and certificate. Terry's `agentspace` entry has no argument and still
+  works: `agentspace-ssh-proxy.exe` runs `up` and the push goes over `agentspace`, as before. `sync` still pushes
   over `agentspace`, as intended. The push's ssh runs with `BatchMode=yes`, so an alias that
   resolves to an unknown host fails at once rather than waiting on a prompt.
 - **A send is recorded only once the box confirms it.** The box reads two lines, writes them to
   a temporary file, renames it over `bot.env` and sends back the file's SHA-256, which `up`
   compares with what it meant to write. A failed, unconfirmed or interrupted send leaves the old
   `bot.env` in place, records nothing, and is tried again at the next connection. The send's ssh
-  is stopped after 20 seconds, so a hang delays a connection by at most that. `scripts\test-push-localswim.ps1`
-  checks this without the box, in Windows PowerShell 5.1.
+  is stopped after 20 seconds, so a hang delays a connection by at most that.
+  `conformance\operator\test-unmet-push.ps1` checks this without the box
+  ([docs/conformance.md, Running the suite](docs/conformance.md#running-the-suite)).
 - **The same push sets the box's time zone to the laptop's**
   ([D32](docs/decisions.md#d32-a-leases-box-runs-in-the-laptops-time-zone)), so `date` on the box
   gives Terry's local time and UTC offset. `up` works out the laptop's zone as an IANA name, such
@@ -524,57 +538,57 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
 RFC 2119 keywords; the capitals are load-bearing.
 
 ```bat
-cargo xtask dist [--release] [--proxy-checkout <folder>]
+cargo xtask dist [--release]
 ```
 
-- **`cargo xtask dist` builds the lease CLI and writes `target\dist\`**, which holds exactly three
-  files, and removes anything else there: `agentspace.exe`, the `agentspace` wrapper that Git Bash
-  and other POSIX shells find, and `agentspace-ssh-proxy.cmd`, v0.05's forwarder
-  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
-- **The forwarder runs `scripts\ssh-proxy.cmd` of `--proxy-checkout`**, or else of the checkout the
-  build ran from. `dist` MUST fail, and write no forwarder, when that file does not exist.
+- **`cargo xtask dist` builds the workspace's programs and writes `target\dist\`**, which holds
+  exactly eight files, and removes anything else there: the six programs, `agentspace.exe`,
+  `agentspace-operator.exe`, `agentspace-ssh-proxy.exe`, `agentspace-keeper.exe`,
+  `agentspace-keeper-task.exe` and `agentspace-keeper-install.exe`; the `agentspace` wrapper that
+  Git Bash and other POSIX shells find; and `agentspace-ssh-proxy.cmd`, a forwarder of one fixed
+  line that runs the `.exe` beside it
+  ([operator.md, The programs](docs/operator.md#the-programs);
+  [operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
+  No file holds a path, so a build MAY be run from any checkout or worktree.
 - **The output folder is for checks.** A lease that a CLI in it creates names that folder in its
   alias file, so a clean-up breaks the lease's connections. Real leases SHOULD come from the install
   ([operator.md, The install folder](docs/operator.md#the-install-folder)).
-- **A build whose files are copied into the install MUST be run in the main checkout, or MUST pass
-  `--proxy-checkout` naming it.** An install's forwarder MUST NOT name a git worktree, which is
-  deleted after its branch merges
-  ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
 
 ### Install it
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-**An install is a copy of one build's three files into one folder**
-([operator.md, The install folder](docs/operator.md#the-install-folder)). No agentspace program
-makes it: a person, or an agent at the person's request, does.
+**An install is a copy of one build's files into one folder, `%USERPROFILE%\.agentspace\bin`**
+(D37; [operator.md, The install folder](docs/operator.md#the-install-folder)). No agentspace
+program makes it: a person, or an agent at the person's request, does.
 
-1. **Build in release mode in the main checkout**, `C:\Projects\agentspace`, so that the
-   forwarder names that checkout:
+1. **Build in release mode:**
 
    ```bat
    cargo xtask dist --release
    ```
 
-   From anywhere else, `--proxy-checkout C:\Projects\agentspace` MUST be passed.
-2. **Copy the three files of `target\dist`** (`agentspace.exe`, `agentspace` and
-   `agentspace-ssh-proxy.cmd`) into `%USERPROFILE%\.agentspace\bin`, **creating the folder when it
-   is missing.** All three come from the one build, so the programs in the folder come from one
-   version of the repository.
+2. **Copy the files of `target\dist`** into `%USERPROFILE%\.agentspace\bin`, **creating the folder
+   when it is missing.** Every file comes from the one build, so the programs in the folder come
+   from one version of the repository.
 3. **The install MUST NOT be run elevated, MUST NOT go under `%LOCALAPPDATA%` or `%APPDATA%`, and
    MUST NOT stop a running program.** Windows refuses to replace the file of a running program
    but lets it be renamed, and the ProxyCommand runs for as long as any connection through it is
    open. So a file that is running SHOULD be renamed aside in the folder as `<file>.old-<32
    lowercase hex digits>` and the new one copied in, and each `.old-` file that can be removed
    SHOULD be removed on a later install
-   ([operator.md, The install folder](docs/operator.md#the-install-folder)). An install whose copy
-   fails part way SHOULD be run again before any program in the folder is used.
-4. **Add the folder to the user's `PATH`, which MUST be done only with Terry's yes**, and then
-   take the checkout's `bin\` off it, as the lease CLI's section above says.
+   ([operator.md, The install folder](docs/operator.md#the-install-folder)). An install SHOULD NOT
+   replace `agentspace-keeper.exe` while a keeper runs, and SHOULD stop the keeper first
+   ([docs/keeper.md, Stopping and starting the keeper](docs/keeper.md#stopping-and-starting-the-keeper)).
+   An install whose copy fails part way SHOULD be run again before any program in the folder is
+   used.
+4. **Add the folder to the user's `PATH`, which MUST be done only with Terry's yes**, so that
+   `agentspace` and `agentspace-operator` run by name.
 
-**The checkout's `bin\` runs the prototype until v0.06 retires it (#0055).** The install's
-forwarder, `agentspace-ssh-proxy.cmd`, is the one place an install reaches into a checkout, and it
-ends with v0.06
+**An install no longer reaches into a checkout** (E0.06-T06-S01, 2026-11-20). v0.05's forwarder,
+`agentspace-ssh-proxy.cmd`, ran the prototype's `scripts\ssh-proxy.cmd` from the main checkout,
+which the build had to be told about. v0.06's replaced it with one fixed line, and the prototype
+was removed from the repository
 ([operator.md, Until v0.06 retires the prototype's entry points](docs/operator.md#until-v006-retires-the-prototypes-entry-points)).
 
 ## Rules
@@ -614,7 +628,8 @@ RFC 2119 keywords; the capitals are load-bearing.
   `--remote` prints the URL instead of opening the default browser, and asks for the code the
   page shows.
 - **Account-specific values and secrets MUST NOT be committed:** this repo is public.
-  Account-specific parameters go in `infra\local.parameters`; tokens never touch the repo.
+  Account-specific parameters go in `%USERPROFILE%\.agentspace\stack-parameters.json`, outside the
+  repo; tokens never touch the repo.
 - **Unix-relevant files MUST use LF line endings**; only Windows-specific files (`.cmd`, `.ps1`)
   use CRLF. `.gitattributes` enforces it (Terry, 2026-11-16).
 

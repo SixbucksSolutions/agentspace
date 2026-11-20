@@ -29,6 +29,15 @@ D34), where they touch the files; the rest of #0041, and #0029, are
 [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
 lists every requirement here that the prototype misses.
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** Every note
+on this page that names the prototype, and every sentence that compares a rule with its behavior,
+is history: it says where a requirement came from, or what the rewrite replaced. None tells a
+reader to run the prototype, and none binds a program that is built now. What binds is the rule
+each note stands beside. The two programs that shared a home folder and a state folder through
+v0.05 and v0.06's cutover (the checklist in
+[Between the prototype and the rewrite](#between-the-prototype-and-the-rewrite)) are now one, and
+every program MUST still take the state lock as [Concurrency](#concurrency) says.
+
 **What v0.05's Rust build shows (E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)):**
 the conformance file for each of these points passes against it. The last column of
 [the table below](#requirements-the-prototype-does-not-meet-yet) says it row by row.
@@ -40,7 +49,9 @@ the conformance file for each of these points passes against it. The last column
 - **#0029, third point (`create` and `renew` never create the CA):**
   `conformance/lease-cli/test-unmet-no-ca.ps1`.
 - **The home folder that both programs share:** `conformance/lease-cli/test-interop.ps1`, each way
-  round, with the prototype as the peer.
+  round, with the prototype as the peer. **Retired by E0.06-T06-S01 (2026-11-20)** with the
+  prototype, which was its peer: the file was removed, and its last run, 36 passed each way, is
+  [the run record](runs/e0.06-t04-s01.md).
 
 ## Contents
 
@@ -898,6 +909,12 @@ go before the lease folder, so that an alias never points at a key that is gone.
 
 ### Between the prototype and the rewrite
 
+**Status (E0.06-T06-S01, 2026-11-20): the condition of this section has passed.** The prototype was
+removed from the repository, and the cutover to the Rust programs (E0.06-T05-S01, [the run
+record](runs/e0.06-t05-s01.md)) left one program for each role, so no two programs share a
+home folder now. The checklist below is kept as the record of what #0054 required, and the last
+paragraph's lock rule still binds every program that changes the lease state file.
+
 **The two MUST be able to share one home folder and one state folder (#0054).** These are the
 facts each relies on in the other's files; everything above is binding, and this is the
 checklist.
@@ -1062,7 +1079,8 @@ operator.md's ([The stamp](operator.md#the-stamp)); this section owns how it is 
 - **The prototype's stamp is `localswim-pushed.sha256`, the 64 hex digits alone**, with no line
   ending. The rewrite MUST NOT read, write or remove that file. So the first `up` after the
   change-over finds no stamp and pushes once, which changes nothing on the box. A person MAY
-  delete the old file once the prototype is gone.
+  delete the old file once the prototype is gone. **The prototype is gone** (removed from the
+  repository by E0.06-T06-S01, 2026-11-20), so a person MAY delete it now.
 - **Written by:** `up` and `sync`, only after the box confirms the push, creating
   `%USERPROFILE%\.agentspace` if needed. **Read by:** `up`, to decide whether a push is due.
 - **It MUST be replaced atomically** ([Replacing a file](#replacing-a-file)), through
@@ -1288,6 +1306,9 @@ process inside the app finds there proves nothing about the real files.
 
 ## Files in the checkout
 
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository, so the
+prototype's column and its notes below are history.** The rewrite's rules bind, as they did before.
+
 **The rewrite keeps nothing in a checkout: no program of agentspace reads or writes one at run
 time** (D37; [operator.md, What the prototype took from its checkout](operator.md#what-the-prototype-took-from-its-checkout)).
 The prototype's operator keeps three files in the checkout it runs from, and the prototype's
@@ -1363,10 +1384,11 @@ agentspace.** They are not part of the product, and the rewrite MUST NOT make th
 |---|---|---|---|
 | `%USERPROFILE%\.agentspace\watchdog\<lead>.last-status` | The architect's watchdog (D22) | A UTC time, ISO 8601 with seven fraction digits and `Z`, no line ending; the file's modification time is the timer | Never |
 | `%USERPROFILE%\.agentspace\swimcoach-last.json` | The milestone reporter (AGENTS.md) | One JSON object per milestone name, with `active`, `polled`, `at` and `lanes` | Never |
-| `%USERPROFILE%\.agentspace\tmp-test-lease-alias-<time>\` | The prototype's alias test | A throwaway folder | By the test, at its end |
+| `%USERPROFILE%\.agentspace\tmp-test-lease-alias-<time>\` | The prototype's alias test, which was removed by E0.06-T06-S01 (2026-11-20) | A throwaway folder | By the test, at its end. A folder a killed run left is removed by hand |
 
-**The prototype's own checks also create real lease folders under
-`%USERPROFILE%\.agentspace\leases`, signed with the real CA, and delete exactly those.** Every
+**The prototype's own checks also created real lease folders under
+`%USERPROFILE%\.agentspace\leases`, signed with the real CA, and deleted exactly those (history:
+the checks were removed by E0.06-T06-S01, 2026-11-20).** Every
 other check works under `%TEMP%`, through `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR`. A
 conformance check MUST instead set `USERPROFILE` ([What moves which files](#what-moves-which-files)),
 and MUST NOT touch the real profile (D34).
@@ -1432,8 +1454,10 @@ the prototype is expected to fail here.** **The rewrite MUST NOT copy the protot
 this table.**
 
 **The last column is what v0.05's Rust build shows (E0.05-T04-S01, 2026-11-19, [the run record](runs/e0.05-t04-s01.md)).**
-The rows stay, because they describe the prototype, which runs through `bin\` until v0.06 (#0055) retires it
-(D37, D38; architect, 2026-11-19). A row is marked yes only where the conformance file it names checks that
+The rows stay, because they describe the prototype, which ran through `bin\` until v0.06 (#0055)
+retired it (D37, D38; architect, 2026-11-19). **Status (E0.06-T06-S01, 2026-11-20): the prototype
+was removed from the repository, so the table is history.** It records what the rewrite was built to
+do differently, and each row's requirement still binds the programs that are built now. A row is marked yes only where the conformance file it names checks that
 row's MUST, and "Not shown" says that no file does. "Not a lease CLI row" is a row of the operator or the
 keeper, which the Rust build does not have yet.
 
@@ -1458,6 +1482,10 @@ keeper, which the Rust build does not have yet.
 | The push stamp is readable by the user alone (SHOULD) | It inherits `SYSTEM` and `Administrators` as well | [The push stamp](#the-push-stamp); [operator.md Q27](operator.md#open-questions) | Not a lease CLI row |
 
 ## Open questions
+
+**Status (E0.06-T06-S01, 2026-11-20): the prototype was removed from the repository.** A question
+below that asks what the prototype does is moot, since nothing can run it to find out, and its
+answer was never a requirement of the rewrite.
 
 **What reading the code and the docs could not settle.** After the clean-room review
 (E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and

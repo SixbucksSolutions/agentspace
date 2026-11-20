@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 # sync sends the CA's public key beside these files; it is never in the repo (decision D17).
 if [ ! -s agentspace_ca.pub ]; then
-  echo "install.sh: agentspace_ca.pub is missing; run scripts\\agentspace.ps1 sync, which sends it" >&2
+  echo "install.sh: agentspace_ca.pub is missing; run agentspace-operator sync, which sends it" >&2
   exit 1
 fi
 

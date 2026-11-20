@@ -32,7 +32,7 @@
 # key is made up. A failure reason never quotes the program's output.
 #
 # The program under test is the one AGENTSPACE_OPERATOR_CMD names; unset, it takes its default from
-# conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program under test").
+# conformance/defaults.ps1 (docs/conformance.md, "Naming the program under test").
 #
 # Run as: pwsh -NoProfile -File conformance/operator/test-unmet-deploy-passthrough.ps1
 . (Join-Path $PSScriptRoot 'helpers.ps1')
@@ -179,8 +179,5 @@ try {
   Write-ConformanceResult -Name 'test-unmet-deploy-passthrough.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h
-}
-if ($global:ConformanceCounts['FAIL'] -gt 0) {
-  Write-Host 'NOTE This file is expected to fail against the prototype (the test seam, card #0085); a rewrite MUST pass it.'
 }
 Exit-ConformanceRun

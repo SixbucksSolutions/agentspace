@@ -46,7 +46,7 @@
 # never waits out the deadline on a program that ignores the seam. The instance ID is made up.
 #
 # The program under test is the one AGENTSPACE_OPERATOR_CMD names; unset, it takes its default from
-# conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program under test"). A
+# conformance/defaults.ps1 (docs/conformance.md, "Naming the program under test"). A
 # failure reason never quotes the program's output.
 #
 # Run as: pwsh -NoProfile -File conformance/operator/test-unmet-start-paths.ps1 [-Case <wildcard>|deadline]
@@ -521,8 +521,5 @@ try {
   Write-ConformanceResult -Name 'test-unmet-start-paths.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h
-}
-if ($global:ConformanceCounts['FAIL'] -gt 0) {
-  Write-Host 'NOTE This file is expected to fail against the prototype (the test seam, card #0085); a rewrite MUST pass it.'
 }
 Exit-ConformanceRun

@@ -6,14 +6,15 @@
 #
 # - The program under test is named by an environment variable (AGENTSPACE_CMD for the lease CLI,
 #   AGENTSPACE_OPERATOR_CMD for the operator). A variable that is unset or empty takes its default
-#   from conformance/prototype/defaults.ps1, and nowhere else: the harness and the checks MUST NOT
-#   name the prototype.
+#   from conformance/defaults.ps1, and nowhere else: the install folder's program, found from the
+#   real profile folder and never from the USERPROFILE variable, which the harness points into a
+#   throwaway home. The harness and the checks MUST NOT name a program any other way.
 # - Every program the harness starts runs as a separate process, with USERPROFILE, HOME,
 #   LOCALAPPDATA, APPDATA, AGENTSPACE_STATE_DIR and AGENTSPACE_SSH_DIR pointed into a throwaway home
 #   under $env:TEMP, and with the AWS variables arranged so that a mistaken run cannot reach AWS or
 #   the real token. A
 #   check MUST NOT read or write the real %USERPROFILE%\.agentspace, the real ~/.ssh or the real CA.
-# - Nothing here loads prototype code.
+# - Nothing here loads a program's code.
 #
 # Interface, pinned for every story that builds on it (docs/conformance.md, "Running the suite"):
 #   New-ConformanceHome, Invoke-AgentspaceCli, Test-ConformanceSchema, Write-ConformanceResult,
@@ -24,7 +25,7 @@
 
 $script:ConformanceRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:ConformanceSchemas = Join-Path $script:ConformanceRepo 'schemas'
-$script:ConformanceDefaultsFile = Join-Path $script:ConformanceRepo 'conformance\prototype\defaults.ps1'
+$script:ConformanceDefaultsFile = Join-Path $script:ConformanceRepo 'conformance\defaults.ps1'
 $global:ConformanceCounts = @{ PASS = 0; FAIL = 0; SKIPPED = 0 }
 
 # Variables that make a child process reach AWS or the real token: removed from every child.
@@ -40,8 +41,7 @@ function Get-ConformanceProgram {
   if (-not (Test-Path -LiteralPath $script:ConformanceDefaultsFile -PathType Leaf)) { return $null }
   $defaults = & $script:ConformanceDefaultsFile
   if ($defaults -isnot [hashtable] -or -not $defaults.ContainsKey($Variable)) { return $null }
-  $path = Join-Path (Split-Path -Parent $script:ConformanceDefaultsFile) $defaults[$Variable]
-  return [IO.Path]::GetFullPath($path)
+  return [IO.Path]::GetFullPath([string]$defaults[$Variable])
 }
 
 # Builds the environment every child process gets, as a dictionary of name to value (a $null value

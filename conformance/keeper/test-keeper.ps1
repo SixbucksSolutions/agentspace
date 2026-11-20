@@ -3,8 +3,8 @@
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # The keeper's process cases (docs/keeper.md, docs/state.md), run against the program that
-# AGENTSPACE_KEEPER_CMD names. When it is unset or empty, the default is the one in
-# conformance/prototype/ (docs/conformance.md, "Naming the program under test"). The program is run
+# AGENTSPACE_KEEPER_CMD names. When it is unset or empty, the default is the install folder's program, named by
+# conformance/defaults.ps1 (docs/conformance.md, "Naming the program under test"). The program is run
 # with the keeper's own arguments, unchanged, as: <program> [-SshExe <full path>] [-Now <time>] and
 # <program> -Watch [-SshExe <full path>] [-IntervalSeconds <n>] ... (keeper.md, "Command line").
 # A check MUST NOT name the keeper's program, script or entry point in any other way.
@@ -115,7 +115,7 @@ if (-not $IsWindows) {
 # the environment every child gets). Compiled before any environment variable is changed.
 . (Join-Path $PSScriptRoot 'keeper-common.ps1')
 
-# The program under test: its variable first, and only then the default that conformance/prototype/
+# The program under test: its variable first, and only then the default that conformance/defaults.ps1
 # names, both through the harness. Resolved before the first case, which strips AGENTSPACE_* from the environment.
 $keeperCmd = Resolve-KeeperProgram
 if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {

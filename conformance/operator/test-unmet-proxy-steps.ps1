@@ -30,7 +30,7 @@
 # token, and AGENTSPACE_SSH_CMD and AGENTSPACE_SCP_CMD name tripwires that no step may call.
 #
 # The program under test is the one AGENTSPACE_SSH_PROXY_CMD names; unset, it takes its default from
-# conformance/prototype/defaults.ps1 (docs/conformance.md, "Naming the program under test"). A failure
+# conformance/defaults.ps1 (docs/conformance.md, "Naming the program under test"). A failure
 # reason never quotes the program's output, which can hold an instance ID.
 #
 # Run as: pwsh -NoProfile -File conformance/operator/test-unmet-proxy-steps.ps1
@@ -200,8 +200,5 @@ try {
   Write-ConformanceResult -Name 'test-unmet-proxy-steps.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h
-}
-if ($global:ConformanceCounts['FAIL'] -gt 0) {
-  Write-Host 'NOTE This file is expected to fail against the prototype (the test seam, card #0085); a rewrite MUST pass it.'
 }
 Exit-ConformanceRun
