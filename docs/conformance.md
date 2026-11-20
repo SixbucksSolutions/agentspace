@@ -379,7 +379,8 @@ E0.04-T03-S03's, and `test-interop.ps1` (E0.05-T02-S05, #0103). `conformance/lea
 
 **RFC 2119 keywords again.** This is how v0.05's Rust build is run (E0.05-T04-S01, #0107, D38), and
 how any later build that ships in a `target\dist` folder is. [The run record](runs/e0.05-t04-s01.md)
-is the first, and shows the results.
+is the first, and shows the results. **v0.06's run, of the whole suite against the Rust operator,
+ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md).**
 1. **Build the output folder from the workspace's root, with `cargo xtask dist`**
    ([operator.md, The install folder](operator.md#the-install-folder)). It writes `target\dist\`,
    and the lease CLI is `target\dist\agentspace.exe`. **The run MUST be made from a build of a
