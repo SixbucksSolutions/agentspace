@@ -1336,7 +1336,11 @@ is the one reported:
 | 2 | `-DryRun` with `-Uninstall` | `-DryRun and -Uninstall cannot be given together.` |
 
 `<Name>` is the argument's name as this page spells it; `<raw>` is what the caller gave. So
-`-DryRun -Uninstall` changes nothing, as a dry run never does.
+`-DryRun -Uninstall` changes nothing, as a dry run never does. **Check 1 is one scan from left to
+right that ends at the first failure, asking of each argument, in this order, whether it is a
+known name and whether that name was given before** (architect, 2026-11-19, for E0.06-T02-S06,
+as [Usage errors](#usage-errors) reads the keeper's check 1). So `-DryRun -DryRun -Bogus` gives
+`-DryRun is given twice.`, and `-Bogus -DryRun -DryRun` gives `Unknown argument '-Bogus'.`
 
 **`-DryRun` builds the task's definition and prints the fields the installer sets, and changes
 nothing**: no registration, no start, no removal. It does not look for a running keeper, and it
