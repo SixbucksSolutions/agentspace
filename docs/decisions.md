@@ -2622,7 +2622,7 @@ you."**
   | `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | Cargo's own formats |
   | `box/`: shell scripts and systemd units | The host runs them (D28: not product, so not ported) |
   | Markdown docs | Written for people |
-  | localswim's receipt and `bot.xml` | localswim's files, which agentspace only reads ([operator.md](operator.md#the-bot-credential)); a change there is localswim's |
+  | localswim's receipt and Bot credential | localswim's files, which agentspace only reads ([operator.md](operator.md#the-bot-credential)); a change there is localswim's. Both are JSON since localswim's PR #13 (8d9d583, 2026-11-20) moved the credential from `bot.xml` to `bot.json`, which E0.07-T02-S05 (#0162) reads; they stay on this list only because their format is localswim's to set |
   | The keeper's logs ([keeper.md](keeper.md#log-lines)) | Lines of text that people read, and that the keeper's checks match line by line (Terry, 2026-11-19, agreeing) |
   | The CloudFormation template, `infra\agentspace.yaml` | Maintained by hand (D37's addendum), and YAML keeps its comments (Terry, 2026-11-19, agreeing) |
 
