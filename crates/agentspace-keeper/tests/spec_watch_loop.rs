@@ -325,13 +325,16 @@ fn a_step_of_the_utc_clock_forward_proves_no_holder() {
         bodies(&ran.stdout),
         vec![
             format!(
-                "started lease={ID_A} alias={} pid=100",
+                "started lease={ID_A} alias={} pid=100 host=swimcoach",
                 common::alias_of(ID_A)
             ),
-            format!("kept lease={ID_A} alias={} pid=100", common::alias_of(ID_A)),
+            format!(
+                "kept lease={ID_A} alias={} pid=100 host=swimcoach",
+                common::alias_of(ID_A)
+            ),
             "backoff seconds=40".to_string(),
             format!(
-                "started lease={ID_A} alias={} pid=200",
+                "started lease={ID_A} alias={} pid=200 host=swimcoach",
                 common::alias_of(ID_A)
             ),
         ]
@@ -353,12 +356,12 @@ fn a_step_of_the_utc_clock_back_does_not_keep_a_holder_from_being_proven() {
     assert_eq!(
         bodies(&ran.stdout),
         vec![
-            format!("started lease={ID_A} alias={alias} pid=100"),
-            format!("kept lease={ID_A} alias={alias} pid=100"),
-            format!("kept lease={ID_A} alias={alias} pid=100"),
-            format!("kept lease={ID_A} alias={alias} pid=100"),
+            format!("started lease={ID_A} alias={alias} pid=100 host=swimcoach"),
+            format!("kept lease={ID_A} alias={alias} pid=100 host=swimcoach"),
+            format!("kept lease={ID_A} alias={alias} pid=100 host=swimcoach"),
+            format!("kept lease={ID_A} alias={alias} pid=100 host=swimcoach"),
             "grace seconds=10".to_string(),
-            format!("started lease={ID_A} alias={alias} pid=200"),
+            format!("started lease={ID_A} alias={alias} pid=200 host=swimcoach"),
         ]
     );
     assert_eq!(w.sleeps_secs(), vec![5, 5, 5, 5, 10]);

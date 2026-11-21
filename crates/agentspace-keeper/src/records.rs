@@ -1,14 +1,15 @@
-//! The holder record's file, over `agentspace-keeper-files` and `agentspace-state` (docs/state.md,
-//! The holder record; Replacing a file).
+//! The holder records' files, over `agentspace-keeper-files` and `agentspace-state` (docs/state.md,
+//! The holder record; Another host's holder; Replacing a file).
 
 use crate::Records;
 use agentspace_keeper_api::HolderRecord;
-use agentspace_keeper_files::{HOLDER_RECORD_FILE, parse_holder_record, serialize_holder_record};
+use agentspace_keeper_files::{holder_record_file, parse_holder_record, serialize_holder_record};
 use agentspace_state::write_atomically;
 use std::io::ErrorKind;
 use std::path::Path;
 
-/// The real [`Records`]: `<state folder>\board-holder.json`.
+/// The real [`Records`]: `<state folder>\board-holder.json` for the box, and
+/// `<state folder>\board-holder.<project>.json` for another host, each in the same form.
 ///
 /// - **A read is the tolerant one of state.md**: a record that is missing, cannot be read, cannot
 ///   be parsed, or whose members do not have their forms is no record (`None`).
@@ -31,21 +32,41 @@ impl FileRecords {
 
 impl Records for FileRecords {
     fn read(&self, state_dir: &Path) -> Option<HolderRecord> {
-        let bytes = std::fs::read(state_dir.join(HOLDER_RECORD_FILE)).ok()?;
-        parse_holder_record(&bytes)
+        read_file(state_dir, None)
     }
 
     fn write(&self, state_dir: &Path, record: &HolderRecord) -> Result<(), String> {
-        let bytes = serialize_holder_record(record).map_err(|e| e.0)?;
-        write_atomically(&state_dir.join(HOLDER_RECORD_FILE), &bytes).map_err(|e| e.to_string())
+        write_file(state_dir, None, record)
     }
 
     fn remove(&self, state_dir: &Path) -> Result<(), String> {
-        match std::fs::remove_file(state_dir.join(HOLDER_RECORD_FILE)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
+        remove_file(state_dir, None)
+    }
+}
+
+/// A host's record file, read tolerantly: `None` for the box, `Some(project)` for another host.
+pub(crate) fn read_file(state_dir: &Path, project: Option<&str>) -> Option<HolderRecord> {
+    let bytes = std::fs::read(state_dir.join(holder_record_file(project))).ok()?;
+    parse_holder_record(&bytes)
+}
+
+/// Writes a host's record file atomically, strict to the schema.
+pub(crate) fn write_file(
+    state_dir: &Path,
+    project: Option<&str>,
+    record: &HolderRecord,
+) -> Result<(), String> {
+    let bytes = serialize_holder_record(record).map_err(|e| e.0)?;
+    write_atomically(&state_dir.join(holder_record_file(project)), &bytes)
+        .map_err(|e| e.to_string())
+}
+
+/// Removes a host's record file; one already gone is `Ok`.
+pub(crate) fn remove_file(state_dir: &Path, project: Option<&str>) -> Result<(), String> {
+    match std::fs::remove_file(state_dir.join(holder_record_file(project))) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -179,5 +200,22 @@ mod tests {
             .expect_err("A folder is not a record");
         assert!(!error.is_empty());
         assert!(file(&dir).is_dir());
+    }
+
+    #[test]
+    fn another_hosts_record_is_its_own_file_and_leaves_the_boxs_alone() {
+        let dir = state();
+        let records = FileRecords::new();
+        records
+            .write_host(dir.path(), Some("demo"), &record())
+            .expect("It is written");
+        assert!(dir.path().join("board-holder.demo.json").is_file());
+        assert!(!file(&dir).exists());
+        assert_eq!(records.read_host(dir.path(), Some("demo")), Some(record()));
+        assert_eq!(records.read_host(dir.path(), None), None);
+        assert_eq!(records.read(dir.path()), None);
+        assert_eq!(records.remove_host(dir.path(), Some("demo")), Ok(()));
+        assert!(!dir.path().join("board-holder.demo.json").exists());
+        assert_eq!(records.remove_host(dir.path(), Some("demo")), Ok(()));
     }
 }

@@ -41,7 +41,7 @@ fn the_started_example_is_what_a_start_writes() {
     h.pass("2026-11-18T05:07:00Z");
     assert_eq!(
         h.log_bytes(),
-        b"2026-11-18T05:07:00Z started lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112\n"
+        b"2026-11-18T05:07:00Z started lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112 host=swimcoach\n"
     );
 }
 
@@ -57,7 +57,7 @@ fn the_kept_example_is_what_a_kept_holder_writes() {
     h.pass("2026-11-18T05:07:30Z");
     assert_eq!(
         h.log_bytes(),
-        b"2026-11-18T05:07:30Z kept lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112\n"
+        b"2026-11-18T05:07:30Z kept lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112 host=swimcoach\n"
     );
 }
 
@@ -73,7 +73,7 @@ fn the_stopped_example_is_what_a_stop_writes() {
     h.pass("2026-11-18T06:00:01Z");
     assert_eq!(
         h.log_bytes(),
-        b"2026-11-18T06:00:01Z stopped lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112\n"
+        b"2026-11-18T06:00:01Z stopped lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112 host=swimcoach\n"
     );
 }
 
@@ -218,7 +218,7 @@ fn any_whitespace_character_inside_a_value_is_written_as_an_underscore() {
     h.pass(NOW);
     assert_eq!(
         h.log(),
-        "2026-11-19T12:00:00Z stopped lease=id_with_blanks alias=agentspace_x_y_z pid=4242\n"
+        "2026-11-19T12:00:00Z stopped lease=id_with_blanks alias=agentspace_x_y_z pid=4242 host=swimcoach\n"
     );
 }
 
@@ -238,7 +238,7 @@ fn a_failed_stops_line_has_the_records_values_with_the_same_rule() {
     assert_eq!(
         h.log(),
         format!(
-            "{NOW} failed lease={ID_A} alias=a_b pid=9 reason=The holder is still running after it was stopped.\n"
+            "{NOW} failed lease={ID_A} alias=a_b pid=9 host=swimcoach reason=The holder is still running after it was stopped.\n"
         )
     );
 }
@@ -252,7 +252,7 @@ fn reason_is_the_last_field_and_runs_to_the_end_of_the_line_blanks_inside_it_kep
     assert_eq!(
         h.log(),
         format!(
-            "{NOW} failed lease={ID_A} alias={} pid=- reason=one  two three\n",
+            "{NOW} failed lease={ID_A} alias={} pid=- host=swimcoach reason=one  two three\n",
             alias_of(ID_A)
         )
     );

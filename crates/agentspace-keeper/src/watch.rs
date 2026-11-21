@@ -1,8 +1,13 @@
-//! A keeper's loop: `-Watch` (docs/keeper.md, Watching; Fast failures and backoff; Release grace;
-//! Locks, board-holder-keeper.lock; Log lines, A keeper's own lines).
+//! A keeper's loop: `-Watch` (docs/keeper.md, Watching; The keeper's wait; Fast failures and
+//! backoff; Release grace; Locks, board-holder-keeper.lock; Log lines, A keeper's own lines).
 //!
 //! Every duration here is measured on `Clock::monotonic` and waited with `Clock::sleep`, never on
 //! local time and never with the standard library's sleep (keeper.md, Times).
+//!
+//! **The keeper keeps a state for each host, and one host's state never changes another's**: the
+//! holder it tracks there, whether that holder is proven, the host's count of fast failures, and
+//! the host's hold-off (keeper.md, Watching). With only the box there is one host's state, and the
+//! loop is v0.06's step for step.
 //!
 //! **No error ends the loop** (keeper.md, Watching): the look, the pass and the wait each run on
 //! their own, and a panic that escapes one is caught, logged as a keeper's `failed` line with the
@@ -14,10 +19,12 @@
 
 use crate::Deps;
 use crate::args::WatchOptions;
+use crate::hosts::HostKey;
 use crate::log::{Logger, pass_line};
-use crate::pass::{Action, PassContext, run_pass};
+use crate::pass::{Action, PassContext, Tracking, run_pass_hosts};
 use agentspace_keeper_api::{HolderRecord, Query, Taken};
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
@@ -32,7 +39,7 @@ pub(crate) struct Keeping<'a> {
     pub options: WatchOptions,
 }
 
-/// The holder a keeper tracks between passes: one it started, or one it adopted.
+/// The holder a keeper tracks on a host between passes: one it started, or one it adopted.
 struct Tracked {
     /// Its PID, creation time, lease ID and alias, as the keeper holds them.
     record: HolderRecord,
@@ -42,21 +49,71 @@ struct Tracked {
     proven: bool,
 }
 
-/// The keeper's state, which lives only in its process (keeper.md, Watching).
-struct State {
+/// One host's state, which lives only in the keeper's process (keeper.md, Watching).
+#[derive(Default)]
+struct HostState {
     tracked: Option<Tracked>,
-    /// Fast failures in a row.
+    /// Fast failures in a row, on this host alone.
     failures: u32,
+    /// The monotonic time at which the host's hold-off ends; while it runs, no pass of this
+    /// keeper starts a holder on the host.
+    hold_until: Option<Duration>,
 }
 
-/// Which line a wait is logged with.
+/// The keeper's state.
+struct State {
+    hosts: BTreeMap<HostKey, HostState>,
+    /// The hosts of the keeper's last pass, or the box alone before its first pass (keeper.md, The
+    /// keeper's wait).
+    keeper_hosts: Vec<HostKey>,
+}
+
+impl State {
+    fn host(&mut self, key: &HostKey) -> &mut HostState {
+        self.hosts.entry(key.clone()).or_default()
+    }
+
+    /// Whether `key`'s hold-off is still running at `now`.
+    fn held_off(&self, key: &HostKey, now: Duration) -> bool {
+        self.hosts
+            .get(key)
+            .and_then(|h| h.hold_until)
+            .is_some_and(|until| until > now)
+    }
+
+    /// When the first of the keeper's hosts that is in a hold-off is due, or `None` when one of
+    /// them has no hold-off running at `now`, and so is due at once after a look, and an interval
+    /// after a pass.
+    fn all_held_until(&self, now: Duration) -> Option<Duration> {
+        let mut first: Option<Duration> = None;
+        for key in &self.keeper_hosts {
+            match self.hosts.get(key).and_then(|h| h.hold_until) {
+                Some(until) if until > now => {
+                    first = Some(first.map_or(until, |f| f.min(until)));
+                }
+                _ => return None,
+            }
+        }
+        first
+    }
+
+    /// Drops the state of a host that has nothing left in it: no tracked holder, no count and no
+    /// hold-off running. Such a state is the same as none.
+    fn prune(&mut self, now: Duration) {
+        self.hosts.retain(|_, h| {
+            h.tracked.is_some() || h.failures > 0 || h.hold_until.is_some_and(|u| u > now)
+        });
+    }
+}
+
+/// Which line a hold-off is logged with.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Word {
     Grace,
     Backoff,
 }
 
-/// A wait, as the keeper's table gives it.
+/// A hold-off, as the keeper's tables give it.
 #[derive(Clone, Copy)]
 struct Wait {
     word: Word,
@@ -123,8 +180,8 @@ fn backoff_seconds(options: &WatchOptions, failures: u32) -> u64 {
     base.saturating_mul(1u64 << exponent).min(max)
 }
 
-/// The wait after a stop, a tried stop, or a holder that ended and was never a fast failure: the
-/// release grace, and at least `-IntervalSeconds`.
+/// The hold-off after a stop, or a tried stop: the release grace, and at least
+/// `-IntervalSeconds`.
 fn grace_wait(options: &WatchOptions) -> Wait {
     Wait {
         word: Word::Grace,
@@ -132,7 +189,8 @@ fn grace_wait(options: &WatchOptions) -> Wait {
     }
 }
 
-/// The wait after a failed start: the backoff for the count, and at least `-IntervalSeconds`.
+/// The hold-off after a failed start: the backoff for the host's count, and at least
+/// `-IntervalSeconds`.
 fn backoff_wait(options: &WatchOptions, failures: u32) -> Wait {
     Wait {
         word: Word::Backoff,
@@ -140,9 +198,10 @@ fn backoff_wait(options: &WatchOptions, failures: u32) -> Wait {
     }
 }
 
-/// The wait after a holder that ended: the longer of the grace and, for an unproven holder, the
-/// backoff for the new count, never their sum, and at least `-IntervalSeconds`. The line says
-/// `backoff` when the backoff is at least the grace, else `grace` (keeper.md, Release grace).
+/// The hold-off after a holder that ended: the longer of the grace and, for an unproven holder,
+/// the backoff for the host's new count, never their sum, and at least `-IntervalSeconds`. The
+/// line says `backoff` when the backoff is at least the grace, else `grace` (keeper.md, Release
+/// grace).
 fn ended_wait(options: &WatchOptions, unproven: bool, failures: u32) -> Wait {
     let grace = u64::from(options.release_grace_seconds);
     let (word, longer) = if unproven {
@@ -161,33 +220,51 @@ fn ended_wait(options: &WatchOptions, unproven: bool, failures: u32) -> Wait {
     }
 }
 
-/// Logs a wait's line and waits it out. A line that cannot be logged changes nothing: the wait is
-/// still its full time. A panic in the line or in the sleep is the wait's error (keeper.md,
-/// Reasons): it is logged, and the keeper goes on.
-fn wait(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, wait: Option<Wait>, interval: u32) {
-    let seconds = wait.map_or(u64::from(interval), |w| w.seconds);
-    if let Some(w) = wait {
-        let word = match w.word {
-            Word::Grace => "grace",
-            Word::Backoff => "backoff",
-        };
-        let logged = guarded(|| {
-            let line = own_line(deps, &format!("{word} seconds={}", w.seconds));
-            log_own(deps, state_dir, stdout, &line);
-        });
-        if let Err(message) = logged {
-            log_failed(
-                deps,
-                state_dir,
-                stdout,
-                &format!("The wait stopped on an error: {message}"),
-            );
-        }
+/// Sets a host's hold-off and logs its line: `grace seconds=<n>` or `backoff seconds=<n>`, with
+/// ` host=<project>` for a host that is not the box (keeper.md, A keeper's own lines). The hold-off
+/// replaces any running there, and is counted from when its line has been written, so the line's
+/// `<n>` is the whole seconds it has left then. A line that cannot be logged changes nothing; a
+/// panic while it is logged is the wait's error (keeper.md, Reasons), and the hold-off is set all
+/// the same.
+fn hold_off(
+    deps: &Deps,
+    state_dir: &Path,
+    stdout: &mut dyn Write,
+    state: &mut State,
+    key: &HostKey,
+    w: Wait,
+) {
+    let word = match w.word {
+        Word::Grace => "grace",
+        Word::Backoff => "backoff",
+    };
+    let host = key
+        .as_deref()
+        .map_or_else(String::new, |p| format!(" host={p}"));
+    let logged = guarded(|| {
+        let line = own_line(deps, &format!("{word} seconds={}{host}", w.seconds));
+        log_own(deps, state_dir, stdout, &line);
+    });
+    if let Err(message) = logged {
+        log_failed(
+            deps,
+            state_dir,
+            stdout,
+            &format!("The wait stopped on an error: {message}"),
+        );
     }
-    // A wait whose `Clock::sleep` panics ends there, its error is logged, and the loop goes on to
-    // its next pass (keeper.md, Fast failures and backoff; architect, 2026-11-19, for
-    // E0.06-T02-S05). The pinned clock is the only way a keeper waits.
-    if let Err(message) = guarded(|| deps.clock.sleep(Duration::from_secs(seconds))) {
+    // Architect's to confirm: the hold-off counts from just after its line, not from the end of
+    // the pass or the look itself, which keeps v0.06's wait of exactly `<n>` seconds after the
+    // line even when the line's write was retried; the two differ by the line's write alone.
+    let from = guarded(|| deps.clock.monotonic()).unwrap_or_default();
+    state.host(key).hold_until = Some(from.saturating_add(Duration::from_secs(w.seconds)));
+}
+
+/// Waits `d` on the keeper's clock. A wait whose `Clock::sleep` panics ends there, its error is
+/// logged, and the loop goes on to its next pass (keeper.md, Fast failures and backoff;
+/// architect, 2026-11-19, for E0.06-T02-S05). The pinned clock is the only way a keeper waits.
+fn sleep(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, d: Duration) {
+    if let Err(message) = guarded(|| deps.clock.sleep(d)) {
         log_failed(
             deps,
             state_dir,
@@ -197,8 +274,25 @@ fn wait(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, wait: Option<Wait
     }
 }
 
-/// The look: is the tracked holder alive, by PID, creation time and command line, against the
-/// keeper's `-SshExe` and the alias it was started or adopted with? It reads the process only,
+/// The monotonic time now, or `None` when reading it panicked, which is logged as the wait's
+/// error.
+fn now(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write) -> Option<Duration> {
+    match guarded(|| deps.clock.monotonic()) {
+        Ok(t) => Some(t),
+        Err(message) => {
+            log_failed(
+                deps,
+                state_dir,
+                stdout,
+                &format!("The wait stopped on an error: {message}"),
+            );
+            None
+        }
+    }
+}
+
+/// The look's check of one holder: is it alive, by PID, creation time and command line, against
+/// the keeper's `-SshExe` and the alias it was started or adopted with? It reads the process only,
 /// never the record. A process that cannot be opened to query it, or that cannot be checked, is
 /// not found.
 fn alive(deps: &Deps, ssh_exe: &Path, holder: &HolderRecord) -> bool {
@@ -240,36 +334,67 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
     };
 
     let mut state = State {
-        tracked: None,
-        failures: 0,
+        hosts: BTreeMap::new(),
+        keeper_hosts: vec![None],
     };
     let mut passes: u32 = 0;
     loop {
-        // 1. The look, before the pass, and the wait it may earn at once.
-        look(keeping, deps, stdout, &mut state);
+        // 1. The look, before the pass, at each host the keeper tracks a holder on, and the wait
+        // it may earn at once.
+        if look(keeping, deps, stdout, &mut state) {
+            wait_after_look(deps, state_dir, stdout, &state);
+        }
 
         // 2. The pass, with the pass time taken now. It counts whether or not it ran to the end.
         // The monotonic time is read in the same guard: a holder this pass started or adopted is
         // tracked from the end of the pass.
-        let tracked = state.tracked.as_ref().map(|t| &t.record);
-        let ran = guarded(|| {
-            let ctx = PassContext {
-                state_dir,
-                profile: keeping.profile,
-                ssh_exe: keeping.ssh_exe,
-                own_exe: keeping.own_exe,
-                now: None,
-                tracked,
-            };
-            let report = run_pass(&ctx, deps, stdout);
-            (report.action, deps.clock.monotonic())
-        });
+        let tracked: BTreeMap<HostKey, HolderRecord> = state
+            .hosts
+            .iter()
+            .filter_map(|(k, h)| h.tracked.as_ref().map(|t| (k.clone(), t.record.clone())))
+            .collect();
+        let ran = {
+            let state = &state;
+            let held_off = |key: &HostKey| state.held_off(key, deps.clock.monotonic());
+            guarded(|| {
+                let ctx = PassContext {
+                    state_dir,
+                    profile: keeping.profile,
+                    ssh_exe: keeping.ssh_exe,
+                    own_exe: keeping.own_exe,
+                    now: None,
+                    tracked: None,
+                };
+                let tracking = Tracking {
+                    tracked: &tracked,
+                    held_off: &held_off,
+                };
+                let passed = run_pass_hosts(&ctx, &tracking, deps, stdout);
+                (passed, deps.clock.monotonic())
+            })
+        };
         passes = passes.saturating_add(1);
 
-        // 3. What the pass did, for tracking, and the wait it earns. A pass that stopped on a
-        // panic is a pass that failed before deciding: nothing changes.
-        let after = match ran {
-            Ok((action, ended)) => track(&mut state, action, ended, &options),
+        // 3. What each host's turn did, for tracking there, and the hold-off it calls for. A pass
+        // that stopped on a panic is a pass that failed before any turn: nothing changes.
+        // Architect's to confirm: a panic is caught for the whole pass, as in v0.06, so a panic
+        // in one host's turn ends the turns after it in that pass too; the code panics on no
+        // input, so only a fake can raise one.
+        let mut holds: Vec<(HostKey, Wait)> = Vec::new();
+        match ran {
+            Ok((passed, ended)) => {
+                // Architect's to confirm: a pass that took no turn (`skipped`, or failed before
+                // its turns) leaves the keeper's hosts those of the pass before it.
+                if let Some(hosts) = passed.hosts {
+                    state.keeper_hosts = hosts;
+                }
+                for turn in passed.turns {
+                    let host = state.host(&turn.host);
+                    if let Some(w) = track(host, turn.action, ended, &options) {
+                        holds.push((turn.host, w));
+                    }
+                }
+            }
             Err(message) => {
                 log_failed(
                     deps,
@@ -277,18 +402,64 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
                     stdout,
                     &format!("The pass stopped on an error: {message}"),
                 );
-                None
             }
-        };
+        }
 
         // 4. `-MaxPasses` passes have run.
         if options.max_passes.is_some_and(|max| passes >= max) {
             return 0;
         }
 
-        // 5. The wait. Every iteration waits at least `-IntervalSeconds`, on every path.
-        wait(deps, state_dir, stdout, after, options.interval_seconds);
+        // 5. The hold-offs the pass set, in the order of the turns.
+        for (key, w) in holds {
+            hold_off(deps, state_dir, stdout, &mut state, &key, w);
+        }
+
+        // 6. The wait. Every iteration waits at least `-IntervalSeconds`, on every path.
+        wait_after_pass(
+            deps,
+            state_dir,
+            stdout,
+            &mut state,
+            options.interval_seconds,
+        );
     }
+}
+
+/// The wait after a look that set a hold-off (keeper.md, The keeper's wait): until the first of
+/// the keeper's hosts is due, which is at once while any of them has no hold-off running. With
+/// only the box, it waits out the box's hold-off, as v0.06's wait after the look did.
+fn wait_after_look(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, state: &State) {
+    let Some(start) = now(deps, state_dir, stdout) else {
+        return;
+    };
+    if let Some(until) = state.all_held_until(start) {
+        sleep(deps, state_dir, stdout, until.saturating_sub(start));
+    }
+}
+
+/// The wait after a pass (keeper.md, The keeper's wait): until the first of the keeper's hosts is
+/// due, a host with no hold-off running being due `-IntervalSeconds` after the wait began, and
+/// never shorter than `-IntervalSeconds`. With only the box, it is v0.06's: the box's hold-off
+/// when the pass set one, else `-IntervalSeconds`.
+fn wait_after_pass(
+    deps: &Deps,
+    state_dir: &Path,
+    stdout: &mut dyn Write,
+    state: &mut State,
+    interval: u32,
+) {
+    let interval = Duration::from_secs(u64::from(interval));
+    let Some(start) = now(deps, state_dir, stdout) else {
+        // A clock that cannot be read still gives the floor (D14).
+        sleep(deps, state_dir, stdout, interval);
+        return;
+    };
+    state.prune(start);
+    let d = state
+        .all_held_until(start)
+        .map_or(interval, |until| until.saturating_sub(start).max(interval));
+    sleep(deps, state_dir, stdout, d);
 }
 
 /// A second keeper's one line, and its exit 0, with no pass and no wait.
@@ -309,70 +480,79 @@ enum Seen {
     Ended,
 }
 
-/// Step 1 of an iteration: the look at the tracked holder, and the wait it may earn at once.
-fn look(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, state: &mut State) {
+/// Step 1 of an iteration: the look at each host's tracked holder, the box's first, then the
+/// others in the ordinal order of their projects. A holder found ended sets its host's hold-off,
+/// counted from the look, and logs its line. Says whether the look set any hold-off.
+fn look(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, state: &mut State) -> bool {
     let options = &keeping.options;
-    let Some(tracked) = state.tracked.as_ref() else {
-        return;
-    };
     let proof = Duration::from_secs(u64::from(options.fast_failure_seconds));
-    let seen = guarded(|| {
-        if alive(deps, keeping.ssh_exe, &tracked.record) {
-            let age = deps.clock.monotonic().saturating_sub(tracked.since);
-            Seen::Alive {
-                proven: age >= proof,
+    let keys: Vec<HostKey> = state
+        .hosts
+        .iter()
+        .filter(|(_, h)| h.tracked.is_some())
+        .map(|(k, _)| k.clone())
+        .collect();
+    let mut set_any = false;
+    for key in keys {
+        let Some(tracked) = state.host(&key).tracked.as_ref() else {
+            continue;
+        };
+        let seen = guarded(|| {
+            if alive(deps, keeping.ssh_exe, &tracked.record) {
+                let age = deps.clock.monotonic().saturating_sub(tracked.since);
+                Seen::Alive {
+                    proven: age >= proof,
+                }
+            } else {
+                Seen::Ended
             }
-        } else {
-            Seen::Ended
-        }
-    })
-    .unwrap_or_else(|message| {
-        // A look that stopped on an error is a check that failed: the holder is no longer
-        // tracked, as when it is gone (keeper.md, Watching, step 1).
-        log_failed(
-            deps,
-            keeping.state_dir,
-            stdout,
-            &format!("The look at the holder stopped on an error: {message}"),
-        );
-        Seen::Ended
-    });
-
-    match seen {
-        // Alive, and tracked for at least `-FastFailureSeconds`: proven, and the count goes to 0.
-        // An adopted holder is under the same rule (architect, 2026-11-19, ruling 2).
-        Seen::Alive { proven: true } => {
-            if let Some(t) = state.tracked.as_mut() {
-                t.proven = true;
-            }
-            state.failures = 0;
-        }
-        // Alive and younger: nothing changes.
-        Seen::Alive { proven: false } => {}
-        Seen::Ended => {
-            // No longer tracked. Never proven is a fast failure; proven leaves the count as it is.
-            let proven = state.tracked.take().is_some_and(|t| t.proven);
-            if !proven {
-                state.failures = state.failures.saturating_add(1);
-            }
-            // The keeper waits once, at once, before the pass.
-            let w = ended_wait(options, !proven, state.failures);
-            wait(
+        })
+        .unwrap_or_else(|message| {
+            // A look that stopped on an error is a check that failed: the holder is no longer
+            // tracked, as when it is gone (keeper.md, Watching, step 1).
+            log_failed(
                 deps,
                 keeping.state_dir,
                 stdout,
-                Some(w),
-                options.interval_seconds,
+                &format!("The look at the holder stopped on an error: {message}"),
             );
+            Seen::Ended
+        });
+
+        let host = state.host(&key);
+        match seen {
+            // Alive, and tracked for at least `-FastFailureSeconds`: proven, and the host's count
+            // goes to 0. An adopted holder is under the same rule (architect, 2026-11-19, ruling
+            // 2).
+            Seen::Alive { proven: true } => {
+                if let Some(t) = host.tracked.as_mut() {
+                    t.proven = true;
+                }
+                host.failures = 0;
+            }
+            // Alive and younger: nothing changes.
+            Seen::Alive { proven: false } => {}
+            Seen::Ended => {
+                // No longer tracked. Never proven is a fast failure on this host; proven leaves
+                // the count as it is.
+                let proven = host.tracked.take().is_some_and(|t| t.proven);
+                if !proven {
+                    host.failures = host.failures.saturating_add(1);
+                }
+                let w = ended_wait(options, !proven, host.failures);
+                hold_off(deps, keeping.state_dir, stdout, state, &key, w);
+                set_any = true;
+            }
         }
     }
+    set_any
 }
 
-/// Step 3 of an iteration: what the pass did, for tracking (keeper.md, Watching), and the wait
-/// after it. `ended` is the monotonic time at the end of the pass. `None` is the plain wait of
-/// `-IntervalSeconds`, with no line.
+/// Step 3 of an iteration, for one host: what its turn did, for tracking there (keeper.md,
+/// Watching), and the hold-off it calls for. `ended` is the monotonic time at the end of the pass.
+/// `None` sets no hold-off; one running there runs on.
 fn track(
-    state: &mut State,
+    host: &mut HostState,
     action: Action,
     ended: Duration,
     options: &WatchOptions,
@@ -380,7 +560,7 @@ fn track(
     match action {
         // Tracked, unproven, from the end of this pass.
         Action::Started(holder) => {
-            state.tracked = Some(Tracked {
+            host.tracked = Some(Tracked {
                 record: holder,
                 since: ended,
                 proven: false,
@@ -388,14 +568,15 @@ fn track(
             None
         }
         Action::Kept(holder) => {
-            let already = state.tracked.as_ref().is_some_and(|t| {
+            let already = host.tracked.as_ref().is_some_and(|t| {
                 t.record.pid == holder.pid
                     && t.record.process_started_at == holder.process_started_at
             });
             if !already {
                 // Adopted: tracked from the end of this pass, proven, in place of any holder
-                // tracked before. The count is unchanged, and no grace follows.
-                state.tracked = Some(Tracked {
+                // tracked there before. The count and the hold-off are unchanged, and no grace
+                // follows.
+                host.tracked = Some(Tracked {
                     record: holder,
                     since: ended,
                     proven: true,
@@ -403,26 +584,26 @@ fn track(
             }
             None
         }
-        // The pass found no trusted holder, and started nothing: the grace, or the longer
+        // The pass found no trusted holder there, and started nothing: the grace, or the longer
         // backoff if the holder was never proven (card #0068).
         Action::Lost(_) => {
-            let proven = state.tracked.take().is_some_and(|t| t.proven);
+            let proven = host.tracked.take().is_some_and(|t| t.proven);
             if !proven {
-                state.failures = state.failures.saturating_add(1);
+                host.failures = host.failures.saturating_add(1);
             }
-            Some(ended_wait(options, !proven, state.failures))
+            Some(ended_wait(options, !proven, host.failures))
         }
         // A start that did not give a live holder: a fast failure, and the backoff alone. A
         // holder stopped because its record could not be written gets no grace either.
         Action::StartFailed(_) => {
-            state.tracked = None;
-            state.failures = state.failures.saturating_add(1);
-            Some(backoff_wait(options, state.failures))
+            host.tracked = None;
+            host.failures = host.failures.saturating_add(1);
+            Some(backoff_wait(options, host.failures))
         }
         // A holder stopped, or a stop tried: the count goes to 0, and the release grace follows.
         Action::Stopped(_) | Action::StopFailed(_) => {
-            state.tracked = None;
-            state.failures = 0;
+            host.tracked = None;
+            host.failures = 0;
             Some(grace_wait(options))
         }
         // Nothing changes.

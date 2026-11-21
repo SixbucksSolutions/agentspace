@@ -98,7 +98,7 @@ fn the_kept_line_names_the_records_lease_alias_and_pid() {
     h.pass(NOW);
     assert_eq!(
         h.log(),
-        "2026-11-19T12:00:00Z kept lease=9b1d0c77-2222-4333-9444-555566667777 alias=agentspace-demo-9b1d0c77 pid=31337\n"
+        "2026-11-19T12:00:00Z kept lease=9b1d0c77-2222-4333-9444-555566667777 alias=agentspace-demo-9b1d0c77 pid=31337 host=swimcoach\n"
     );
 }
 

@@ -20,6 +20,8 @@ agentspace-keeper-api = { path = "../agentspace-keeper-api" }
 agentspace-state = { path = "../agentspace-state" }
 # The holder record's bytes, and the matcher of the holder command (E0.06-T03-S04).
 agentspace-keeper-files = { path = "../agentspace-keeper-files" }
+# The host registry, read without its lock, and which host a lease is on (keeper.md, Hosts; D55).
+agentspace-hosts = { path = "../agentspace-hosts" }
 # `Starter` and the launcher role: the private argument and `run_launcher` (D42).
 agentspace-launch = { path = "../agentspace-launch" }
 
