@@ -3151,6 +3151,19 @@ are pinned on their cards, so T03 builds on merged code.
   the box changes size only through `deploy -Host <project> -InstanceType <type>` (D39, D51).
   Plain `deploy` of the box keeps today's path.
 
+**Added during T02 (architect, 2026-11-20, on Terry's word: "Apply card #161 ... Follow
+agentspace's own process for the work"):**
+- **E0.07-T02-S05 (#0162) moves the token push from localswim's `bot.xml` to `bot.json`**, carrying
+  #0161. localswim's PR #13 (8d9d583) changed the launch credentials from CLIXML to JSON, so after
+  localswim's next cold start the push could read no token. Its spec is localswim's
+  `docs/windows-operations.md`, "The service receipt and credential files", and operator.md cites
+  it rather than restating the formats.
+- **It is a story of T02 that runs after E0.07-T02-S04 (#0149)**, as architect.md's step 11 puts a
+  defect that blocks the next turn: #0149 changes the same push crate, and the fake `bot.xml` it
+  replaces is written by tests in the operator, sync and ssh-proxy crates that T03's #0151, #0152
+  and #0153 own. T02's wall-clock budget becomes 5 hours, and v0.07's 17.
+- **The run records in `docs/runs/` are not rewritten**: they record what was true when they ran.
+
 **Carried in, with `references`:** #0137 (tests that change their own environment), its
 `agentspace-launch` half by E0.07-T02-S02 and its `agentspace-push` half by E0.07-T02-S04; #0138
 (a conformance file that does not tolerate a missing `board-holder.json`) by E0.07-T04-S03; and
