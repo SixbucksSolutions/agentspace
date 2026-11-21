@@ -229,6 +229,14 @@ were checked afterwards through `agentspace lease list`, 15 leases, all released
 in-process entry now takes a throwaway home, and a guard test shows the suite creates nothing in
 the real one.
 
+**A case MUST NOT copy, hash or open the program under test when that program is the installed
+one** (found in v0.07-T04, 2026-11-21). The installed programs live in Terry's real
+`%USERPROFILE%\.agentspace\bin`, so the run against them, with no `AGENTSPACE_*_CMD` set, MAY
+start them and MUST NOT read them as files. A provision case copied the installed operator into
+its throwaway home with `Copy-Item`; only the program file was read, nothing was written, and the
+copy went with the home. Such a case SKIPs against the installed programs, as
+`test-unmet-host-alias-no-proxy-program.ps1`'s do.
+
 **A test MUST NOT print, log or format the values of an environment it captured** (found in
 v0.06-T01, 2026-11-19). E0.06-T01-S04's harness recorded the whole environment a fake ssh saw and
 derived `Debug` on it, so one failing assertion printed every variable into a subagent's tool
