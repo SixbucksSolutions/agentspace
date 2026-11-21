@@ -2,8 +2,8 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-**The reference for the keeper: the program on the laptop that holds the board's forwards on the
-box for as long as a lease is ready (D30).** It is written so that the keeper can be rebuilt
+**The reference for the keeper: the program on the laptop that holds the board's forwards on each
+project's host for as long as a lease on that host is ready (D30, D50).** It is written so that the keeper can be rebuilt
 without reading any of its code (D20, D34). It names every argument, decision, timing, lock, log
 line and exit code, the handshake that starts a holder, and the logon task that runs the keeper
 unattended. The reasoning behind each rule is in [decisions.md](decisions.md), cited as `D<n>`.
@@ -15,7 +15,13 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
   is created and removed. So are the path of the task's launcher and the folder of its error log.
   This page says when and why the keeper reads, writes or removes each file, the form of every log
   line, the rotation rule, what holding each lock means, and the launch handshake. The lease state
-  file the keeper reads is [docs/state.md](state.md#the-lease-state-file)'s too.
+  file the keeper reads is [docs/state.md](state.md#the-lease-state-file)'s too, and so are the
+  host registry, `hosts.json` ([state.md, The host registry](state.md#the-host-registry)), and
+  the files of a holder on a host that is not the box
+  ([state.md, Another host's holder](state.md#another-hosts-holder)).
+- **Which host a lease's connection reaches** is the ProxyCommand's
+  ([operator.md](operator.md#the-proxycommand)). The keeper only works out the same answer from
+  the same files, to know which holder a lease belongs to ([Hosts](#hosts)).
 - **What a lease is, its states and its fields** are [lease-api.md](lease-api.md#the-lease)'s.
 - **The ProxyCommand, which every holder's connection runs**, and the token push it may make, are
   [operator.md](operator.md#the-proxycommand)'s.
@@ -64,9 +70,9 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
   keeper: Windows processes, a Windows scheduled task, and Windows paths (`%USERPROFILE%`,
   `%SystemRoot%`). A keeper for another laptop OS is out of scope for v0
   ([Q1](#open-questions)).
-- **The keeper never talks to the box or to AWS itself.** It reads the lease state file, and starts
-  and stops one local ssh client, the holder. Everything the holder's connection does on the far
-  side goes through the lease's alias and its ProxyCommand.
+- **The keeper never talks to a host or to AWS itself.** It reads the lease state file and the host
+  registry, and starts and stops local ssh clients, the holders, at most one per host. Everything a
+  holder's connection does on the far side goes through the lease's alias and its ProxyCommand.
 - **A host's platform is a parameter of the contract (D4).** Nothing here depends on the host's OS,
   with one exception, marked "today's box" where it appears: the default release grace is derived
   from the keepalive settings of today's box's sshd ([Release grace](#release-grace)).
@@ -89,14 +95,20 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 
 | Word | Means |
 |---|---|
-| Holder | The ssh client process the keeper starts to hold the board's forwards: `<ssh> -N -o ExitOnForwardFailure=yes <alias>` ([The holder command](#the-holder-command)). |
-| Pass | One look at the leases and the holder, and at most one action to make them agree ([A pass](#a-pass)). |
+| Holder | The ssh client process the keeper starts to hold the board's forwards on one host: `<ssh> -N -o ExitOnForwardFailure=yes <alias>` ([The holder command](#the-holder-command)). |
+| Host | A machine leases connect to, named by its project: one record of the host registry ([Hosts](#hosts)). |
+| The box | The host whose record has the stack `agentbox`; its project is `swimcoach` (D43, D55). Its holder's files are v0.06's. |
+| Another host | Any host that is not the box. Its holder's files carry its project in their names ([Hosts](#hosts)). |
+| A host's leases | The ready leases that are on that host, by [Which host a lease is on](#which-host-a-lease-is-on). |
+| With only the box | Of a pass: one whose only host is the box ([The hosts of a pass](#the-hosts-of-a-pass)). Of a keeper: one whose every pass so far has had only the box. That is every keeper and pass of v0.06, and of a laptop with no other host's lease, record or holder. |
+| Pass | One look at the leases and the holders, and for each host at most one action to make them agree ([A pass](#a-pass)). |
 | Keeper | The keeper's program. "A keeper", where this page says one does something, is a run of that program with `-Watch`: a pass every interval, for the life of the process ([Watching](#watching)). `-Watch` is off unless it is given, and the installed task gives it. |
 | One-pass run | The keeper's program run without `-Watch`: one pass, then exit. |
-| Record | The keeper's record of the holder it started, `board-holder.json` ([docs/state.md](state.md#the-keepers-files)). |
+| Record | The keeper's record of the holder it started on a host: `board-holder.json` for the box ([docs/state.md](state.md#the-keepers-files)), `board-holder.<project>.json` for another host ([state.md, Another host's holder](state.md#another-hosts-holder)). "The record" on this page is the record of the host being looked at. |
 | Ready lease | A lease whose stored state is `ready` and whose `expires_at` is after the pass time ([Which leases are ready](#which-leases-are-ready)). |
-| Trusted holder | A process that the record names and that passes every identity check ([Trusting the record](#trusting-the-record)). |
-| Tracked holder | The holder a keeper watches between passes: one it started, or one it adopted when a pass logged `kept` for it. The keeper holds its PID, creation time, lease ID and alias in its own process. |
+| Trusted holder | A process that a host's record names and that passes every identity check ([Trusting the record](#trusting-the-record)). |
+| Tracked holder | The holder a keeper watches on a host between passes: one it started, or one it adopted when a pass logged `kept` for it. A keeper tracks at most one per host, and holds each one's host, PID, creation time, lease ID and alias in its own process. |
+| Hold-off | The time during which a keeper starts no holder on one host: the release grace or the backoff, set when a holder there ends, is stopped or fails to start ([Watching](#watching)). Each host has its own. |
 | Launcher | The process a start has created, outside the pass's job, to create the holder and answer the pass ([Starting a holder](#starting-a-holder)). |
 | Proven | A tracked holder seen alive by a look at least `-FastFailureSeconds` (60) after the keeper began to track it, or one the keeper adopted, whose age is unknown. A keeper begins to track a holder it started when the pass that started it ends, not when the holder started. |
 | Fast failure | A start that did not give a live holder, or a tracked holder that a look found gone, or that a pass logged `lost` for, before it was proven. |
@@ -110,9 +122,12 @@ share modes and access rules. This table says only what the keeper does with it.
 | File | The keeper |
 |---|---|
 | `leases.json` | Reads it at every pass, without a lock, and never writes it ([docs/state.md](state.md#the-lease-state-file)). |
-| `board-holder.json` | Writes it when it starts a holder, reads it at every pass, and removes it when the holder it names is stopped, gone or untrusted. |
-| `board-holder.log` | Appends its log lines ([Log lines](#log-lines)). |
-| `board-holder-ssh.log`, `board-holder-ssh.log.1` | Gives the holder the first as its stdout and stderr, and rotates it to the second ([The holder's log](#the-holders-log)). |
+| `hosts.json`, the host registry | Reads it at every pass, without a lock, and never writes or creates it. It never takes `hosts.lock` ([Hosts](#hosts); [state.md, The host registry](state.md#the-host-registry)). |
+| `board-holder.json` | The box's record. Writes it when it starts a holder on the box, reads it at every pass, and removes it when the holder it names is stopped, gone or untrusted. |
+| `board-holder.<project>.json` | Another host's record, in the box's record's form ([state.md, Another host's holder](state.md#another-hosts-holder)). The keeper does with it, for that host, what it does with `board-holder.json` for the box, and finds it by its name ([The hosts of a pass](#the-hosts-of-a-pass)). |
+| `board-holder.log` | Appends its log lines, for every host ([Log lines](#log-lines)). |
+| `board-holder-ssh.log`, `board-holder-ssh.log.1` | The box's holder's log. Gives the box's holder the first as its stdout and stderr, and rotates it to the second ([The holder's log](#the-holders-log)). |
+| `board-holder-ssh.<project>.log`, `board-holder-ssh.<project>.log.1` | Another host's holder's log, given and rotated as the box's is ([state.md, Another host's holder](state.md#another-hosts-holder)). |
 | `board-holder.lock` | Holds it for the length of a pass ([Locks](#locks)). |
 | `board-holder-keeper.lock` | A keeper holds it for its whole life ([Locks](#locks)). |
 | `board-holder-launch.<hex>.json`, `.claim`, `.result.json` | The launch request, its claim and its result. Every start writes them, and they exist only while a holder is being started ([Starting a holder](#starting-a-holder)). `<hex>` is the token [docs/state.md](state.md#a-holders-launch-files) defines, new for each start and shared by its three files. |
@@ -120,6 +135,50 @@ share modes and access rules. This table says only what the keeper does with it.
 
 **Every JSON file the keeper writes is replaced atomically
 ([docs/state.md](state.md#the-keepers-files)).**
+
+**One of each of these files serves every host:** `board-holder.log`, the launch files, the two
+locks and the launcher's error log. A launch request names the log of the host it starts a holder
+on, so the launch files need no host in their names (D55; architect, 2026-11-20, for v0.07-T01).
+Only a record and a holder's log are per host.
+
+### Hosts
+
+**From v0.07 (#0047) every project has a host of its own, and the keeper holds one holder per host
+(D30, D50).** Until v0.07 every lease was on the box, and a keeper with only the box
+([Words used here](#words-used-here)) behaves exactly as v0.06's did, but for one field added to
+some of its lines ([Log lines](#log-lines)) and two new ways its pass fails, each with a `failed`
+line and exit 1: a host registry that cannot be read ([The order of a pass](#the-order-of-a-pass),
+step 5), and a state folder that cannot be listed ([The hosts of a pass](#the-hosts-of-a-pass)).
+
+- **The host registry, `hosts.json`, says which hosts exist and which are `ready`.** Its path,
+  form and validity are [state.md, The host registry](state.md#the-host-registry)'s, under the
+  `USERPROFILE` of the keeper's own environment. **`AGENTSPACE_STATE_DIR` does not move it**: it
+  stays `%USERPROFILE%\.agentspace\hosts.json`, one registry for every state folder, and a keeper
+  given another state folder still reads it there.
+- **The keeper reads it read-only**: once per pass, whole, without a lock. It MUST NOT write it,
+  create it, or take or create its lock, `hosts.lock`, so a pass never waits on the driver or a
+  provisioning run, and they never wait on a pass. The registry is replaced atomically, so a
+  read sees it as it was before or after any one write.
+- **A missing `hosts.json` reads as the box's record alone**: project `swimcoach`, stack
+  `agentbox`, state `ready` (D45; architect, 2026-11-20, for v0.07-T01). The keeper never writes
+  that record; the first change by the driver or the operator does. So a laptop as v0.06 left it
+  reads as the box alone, and every ready lease is on the box.
+- **A registry that cannot be read fails the pass**, as a lease state that cannot be read does
+  ([The order of a pass](#the-order-of-a-pass), step 5). It cannot be read when it is not a file
+  (a folder, say) or cannot be opened, and when it is not valid by
+  [state.md, The host registry](state.md#the-host-registry)'s rules: its bytes, its schema, and
+  the rules beyond it, among them that a valid file holds exactly one record whose `stack` is
+  `agentbox`, and that record's `project` is `swimcoach` (architect, 2026-11-20, for v0.07-T01).
+  Only a missing file reads as the box alone; a file that is not valid never does.
+- **The box is the host whose record's `stack` is `agentbox`**, and its project is that record's
+  `project`. Every other record names another host by its `project`. A host is never named by its
+  stack or its instance in anything the keeper writes.
+- **Another host whose state is not `ready` (`creating` or `failed`) has no lease on it**
+  ([Which host a lease is on](#which-host-a-lease-is-on)). The keeper never starts a holder on such
+  a host, and stops one that runs there, which only a person's edit of `hosts.json` can bring
+  about (D48; [Stopping a holder](#stopping-a-holder)). The box is
+  different: every ready lease that is on no other host is on the box, whatever the box's own
+  record's state, as D55's last row says.
 
 ### Times
 
@@ -137,8 +196,8 @@ share modes and access rules. This table says only what the keeper does with it.
     move.** That covers the 60-second proof of a holder, the waits for a lock and for a launch
     result, the 10-second bound on a create call, the interval, the backoff and the grace. That
     clock MAY be the UTC clock or a monotonic clock. It SHOULD count the time the laptop spends
-    asleep or hibernated, because the box's sshd drops a dead session on the box's own time, so the
-    grace is about time that passed on the box.
+    asleep or hibernated, because a host's sshd drops a dead session on the host's own time, so the
+    grace is about time that passed on the host.
   - **Across a laptop sleep, a wait MAY end at once on waking, or run on for its remaining
     seconds.** Neither breaks a rule here: no wait ends before its seconds have passed on the clock
     it uses, and the pass after it starts a holder if a lease is ready. A check MUST NOT depend on
@@ -164,19 +223,30 @@ share modes and access rules. This table says only what the keeper does with it.
 board's forwards** (card #0042). The Claude desktop app was observed to start its ssh with
 `-o ClearAllForwardings=yes` (D12, E3.03), so a lease alias's forwards never apply to its
 connection, and an agent in a desktop-app session reaches the board only while some other
-connection on the laptop holds them. The keeper supplies them: while a lease is ready, it keeps
-one holder running through that lease's alias ([The board's forwards](#the-boards-forwards)).
+connection on the laptop holds them. The keeper supplies them: while a lease on a host is ready, it
+keeps one holder running on that host through a ready lease's alias
+([The board's forwards](#the-boards-forwards)).
 
-- **It holds through the ready lease that expires last**, ties going to the lowest lease ID, so the
-  holder lives as long as any ready lease does and is moved as rarely as possible
-  ([Which lease](#which-lease)). A holder already running through a ready lease is kept, even when
-  another ready lease expires later.
-- **One holder at a time.** Only one connection on a host can bind the forwards (D12), and every
-  lease is on one host until v0.07 (#0047), so the keeper runs one holder in all
-  ([Q2](#open-questions)).
-- **It stops a holder whose lease is no longer ready**, at the first pass at or after the lease's
+- **One holder per host (D30, D50; [Q2](#open-questions), closed).** Only one connection on a host
+  can bind the forwards (D12), so a host has at most one holder. Each host binds the board's ports
+  on its own loopback, so holders on two hosts never contend, and the keeper runs them side by
+  side. Each pass groups the ready leases by their host ([Hosts](#hosts)), and does for each host
+  what v0.06 did for the one box.
+- **On each host it holds through that host's ready lease that expires last**, ties going to the
+  lowest lease ID, so the holder lives as long as any of the host's ready leases does and is moved
+  as rarely as possible ([Which lease](#which-lease)). A holder already running through one of the
+  host's ready leases is kept, even when another expires later.
+- **A failure on one host never stops another host's holder**: each host has its own record, its
+  own backoff and its own release grace ([A pass](#a-pass), [Watching](#watching)). A host's
+  backoff or grace never delays a start, keep or stop on another host that was in the keeper's last
+  pass. The one delay it can cause is to the first start on a host that was not
+  ([The keeper's wait](#the-keepers-wait); [Q23](#open-questions)).
+- **It stops a holder whose lease is no longer ready on its host**, at the first pass at or after the lease's
   `expires_at` or its release, so a holder outlives its lease by at most about one interval and a
-  pass (D30). The next pass, not the same one, starts a holder for another ready lease. A holder
+  pass (D30). A holder whose host a person's edit or removal of `hosts.json` has left without a
+  `ready` record is stopped the same way, by the first pass that reads the edit; that edit is the
+  one way a host leaves `ready` (D48; [The order of a pass](#the-order-of-a-pass)). The next pass, not the same one, starts a
+  holder on that host for another of its ready leases. A holder
   whose record was dropped is the exception: no pass stops it
   ([Trusting the record](#trusting-the-record)).
 - **It MUST NOT stop a process it did not start.** A recorded PID is trusted only when the
@@ -184,8 +254,8 @@ one holder running through that lease's alias ([The board's forwards](#the-board
 - **The holder MUST outlive whatever started it**: the pass, the keeper, an agent's tool call and
   the scheduled task ([Starting a holder](#starting-a-holder)). So a keeper that dies leaves the
   board held, and the next keeper adopts the holder by its record.
-- **It retries with backoff, never in a tight loop (D14)**, and waits out the box's release of a
-  dead holder's forwards before it starts the next one ([Watching](#watching)).
+- **It retries with backoff, never in a tight loop (D14)**, and waits out a host's release of a
+  dead holder's forwards before it starts the next one there ([Watching](#watching)).
 - **One keeper runs at a time per state folder** ([Locks](#locks)), started at logon and again
   within about a minute of a crash by a scheduled task ([The installed task](#the-installed-task)).
 
@@ -325,8 +395,8 @@ because it would end a quoted path early, or be expanded by cmd.
 
 | Exit | One pass | `-Watch` |
 |---|---|---|
-| 0 | The pass ran, whatever its action, `failed` included; or it was skipped because another pass held `board-holder.lock` | `-MaxPasses` passes ran; or another keeper holds `board-holder-keeper.lock` |
-| 1 | The lease state could not be read, the pass met an error it does not handle, or the pass's own line could not be logged | `board-holder-keeper.lock` could not be taken for a reason other than another keeper holding it; or an error before the first pass |
+| 0 | The pass ran, whatever each host's action, `failed` starts and stops included; or it was skipped because another pass held `board-holder.lock` | `-MaxPasses` passes ran; or another keeper holds `board-holder-keeper.lock` |
+| 1 | The lease state or the host registry could not be read, the pass or any host's turn met an error it does not handle, or a line of the pass or of any host's turn could not be logged | `board-holder-keeper.lock` could not be taken for a reason other than another keeper holding it; or an error before the first pass |
 | 2 | A usage error | A usage error |
 
 **The architect ruled these on 2026-11-17 (D30).** A `failed` start or stop exits 0, because the
@@ -344,7 +414,10 @@ pass ran and logged what happened; the next pass tries again.
   to be trusted ends the pass with `failed lease=- alias=- pid=- reason=The pass stopped on an
   error: The record could not be removed: <error>` and exit 1; after a stop, the failed removal is
   not reported, the line stays `stopped`, and the next pass removes the record, which then names
-  no running holder.
+  no running holder. **From v0.07 it ends only that host's turn**: its line carries the host's
+  `host=` field when the host is not the box, the pass goes on to the next host, and the one-pass
+  run exits 1 at its end ([The order of a pass](#the-order-of-a-pass); card #0144, "a failure on
+  one host never stopping another's holder").
 
 ### Streams and environment
 
@@ -356,8 +429,9 @@ pass ran and logged what happened; the next pass tries again.
 - **`AGENTSPACE_STATE_DIR`**, when set and not empty, names the state folder; a check MUST set it
   to a throwaway folder ([Checking the keeper](#checking-the-keeper)). The keeper creates the state
   folder if it is missing.
-- **`USERPROFILE`**, as the keeper's own environment has it, names the holder's working folder
-  and, with `AGENTSPACE_STATE_DIR` unset, the state folder. **When it is unset or empty, the keeper
+- **`USERPROFILE`**, as the keeper's own environment has it, names the holder's working folder,
+  the folder of the host registry as [state.md](state.md#the-host-registry) places it
+  ([Hosts](#hosts)), and, with `AGENTSPACE_STATE_DIR` unset, the state folder. **When it is unset or empty, the keeper
   MUST end before its first pass, whether or not `AGENTSPACE_STATE_DIR` is set**, since a holder
   needs its working folder: exit 1, nothing logged, and the one line
   `agentspace-keeper: USERPROFILE is not set, so there is no home folder.` on stderr, after the
@@ -385,47 +459,90 @@ pass ran and logged what happened; the next pass tries again.
 
 ## A pass
 
-**A pass looks at the leases and at the holder once, then takes at most one action to make them
-agree**, and logs one line for it. A one-pass run is one pass; a keeper runs one per iteration.
+**A pass looks at the leases and at each host's holder once, then takes at most one action per
+host to make them agree**, and logs one line for each host it acts on. A one-pass run is one pass;
+a keeper runs one per iteration. With only the box, a pass is v0.06's pass: one look, at most one
+action, one line.
 
 ### The order of a pass
 
 1. **Take `board-holder.lock`**, waiting up to 10 seconds ([Locks](#locks)). A pass that cannot
-   take it logs `skipped` and ends, with nothing else looked at.
+   take it logs `skipped` and ends, with nothing else looked at. One lock serves every host.
 2. **Check the command matcher against its own cases** ([The holder command](#the-holder-command)).
-   A matcher that fails ends the pass with a `failed` line and exit 1, trusting nothing.
-3. **Rotate `board-holder-ssh.log`** if it is due ([The holder's log](#the-holders-log)).
+   A matcher that fails ends the pass with a `failed` line and exit 1, trusting nothing, on any
+   host.
+3. **Rotate the holders' logs** that are due: the box's `board-holder-ssh.log`, then each other
+   host's ([The holder's log](#the-holders-log)).
 4. **Read the lease state.** If it cannot be read, log `failed lease=- alias=- pid=- reason=Lease
-   state could not be read: <error>`, leave the holder and the record as they are, and end with
-   exit 1. A missing state file is no leases, not an error.
-5. **Work out the ready leases** ([Which leases are ready](#which-leases-are-ready)).
-6. **Read the record and decide whether it names a trusted holder**
-   ([Trusting the record](#trusting-the-record)). A record that does not is removed, and its
-   process, if any, is left alone.
-7. **Act**, by the first row of this table that applies:
+   state could not be read: <error>`, leave every holder and every record as they are, and end
+   with exit 1. A missing state file is no leases, not an error.
+5. **Read the host registry** ([Hosts](#hosts)). If it cannot be read, log `failed lease=- alias=-
+   pid=- reason=Host registry could not be read: <error>`, leave every holder and every record as
+   they are, and end with exit 1 (architect, 2026-11-20, for v0.07-T01). A missing registry is the
+   box alone, not an error.
+6. **Work out the ready leases, and the host each one is on**
+   ([Which leases are ready](#which-leases-are-ready),
+   [Which host a lease is on](#which-host-a-lease-is-on)).
+7. **Work out the hosts of the pass** ([The hosts of a pass](#the-hosts-of-a-pass)): the box first,
+   then the others in order.
+8. **Take each host's turn, one host at a time, in that order.** A host's turn is v0.06's pass for
+   that host alone, on that host's record and that host's leases:
+   1. **Read the host's record and decide whether it names a trusted holder**
+      ([Trusting the record](#trusting-the-record)). A record that does not is removed, and its
+      process, if any, is left alone.
+   2. **Act**, by the first row of the table below that applies, and log the turn's one line.
+9. **Release `board-holder.lock`.**
 
-| The holder | The leases | Action | Line |
+| The host's holder | The host's leases | Action | Line |
 |---|---|---|---|
-| Trusted, and its lease is ready under the recorded alias | Any | Keep it | `kept` |
-| Trusted, and its lease is not ready, or its alias changed | Any | Stop it, and start nothing this pass | `stopped`, or `failed` |
-| None trusted, in a keeper that tracks a holder (card #0068, [Release grace](#release-grace)) | Any | Nothing | `lost`, naming the tracked holder |
+| Trusted, and its lease is one of the host's ready leases under the recorded alias | Any | Keep it | `kept` |
+| Trusted, and its lease is not one of the host's ready leases, or its alias changed | Any | Stop it, and start nothing on this host this pass | `stopped`, or `failed` |
+| None trusted, in a keeper that tracks a holder on this host (card #0068, [Release grace](#release-grace)) | Any | Nothing | `lost`, naming the tracked holder |
 | None trusted | None ready | Nothing | `idle` |
-| None trusted | One or more ready | Start one through the chosen lease | `started`, or `failed` |
+| None trusted, on a host in a keeper's hold-off | One or more ready | Nothing | None ([The keeper's wait](#the-keepers-wait)) |
+| None trusted | One or more ready | Start one on this host through the chosen lease | `started`, or `failed` |
 
-8. **Release `board-holder.lock`.**
+**One host's turn never changes another's.** A turn reads and writes only its own host's record,
+starts and stops only its own host's holder, and gives a holder only its own host's log.
+- **A turn that fails** (a failed start or stop) logs its `failed` line, and the pass goes on to
+  the next host. As in v0.06, that is not an error of the pass, and a one-pass run still exits 0.
+- **A turn that meets an error the pass does not handle** ends that turn with its `failed` line,
+  naming its host ([Log lines](#log-lines)), and the pass goes on to the next host. The one-pass
+  run then exits 1 once the pass has ended (card #0144, "a failure on one host never stopping
+  another's holder"). That covers a record that cannot be removed ([Exit codes](#exit-codes)): it
+  ends its own host's turn, never another's.
+- **Steps 1 to 7 are the whole pass's**, so a failure in them stops every host's turn, which leaves
+  every holder and record as it is: it stops nothing.
+- **A `failed lease=- alias=- pid=- reason=The pass stopped on an error: <error>` line with no
+  `host=` reads the same whether it ended only the box's turn or the whole pass.** A reader tells
+  them apart by the lines after it with the same pass time: when it ended only the box's turn, a
+  line of each other host's turn that logs one follows it; when it ended the whole pass, none does.
+  With no other host in the pass, the two end the same.
 
 **The rows are taken in order, so a trusted holder in the record wins over the #0068 row** (A-09,
-B-38; [Q6](#open-questions), closed). When a keeper tracks one holder and the record now names
-another that is trusted (one a one-pass run started, say), the pass keeps it (`kept`) when its
-lease is ready under its alias, and the keeper adopts it with no grace, since the pass starts
-nothing; or it stops it (`stopped` or `failed`) when its lease is not, and the grace follows that
-stop as after any other ([Release grace](#release-grace)).
+B-38; [Q6](#open-questions), closed). When a keeper tracks one holder on a host and that host's
+record now names another that is trusted (one a one-pass run started, say), the pass keeps it
+(`kept`) when its lease is one of the host's ready leases under its alias, and the keeper adopts it
+with no grace, since the pass starts nothing; or it stops it (`stopped` or `failed`) when it is
+not, and the grace follows that stop as after any other ([Release grace](#release-grace)).
+
+**A host that a person's edit takes out of `ready` has its holder stopped**, a safeguard for a hand
+edit. Nothing in agentspace moves a record out of `ready` or removes one: a provisioning run never
+takes a `ready` host out of `ready` (D48; [state.md, Its states](state.md#its-states)). Only a
+person's edit or removal of `hosts.json` can. When such an edit leaves a host's record `creating`
+or `failed`, or removes the record or the file (a missing file reads as the box alone), while a
+holder runs on that host, which is never the box, none of the ready leases is on that host any more
+([Which host a lease is on](#which-host-a-lease-is-on)), so the holder's lease is not one of the
+host's ready leases, and the next pass stops it under [Stopping a holder](#stopping-a-holder)'s
+rules, with the release grace after it. A holder is never kept on a host that the registry does
+not say is `ready`.
 
 **The pass time is fixed when the pass begins**, before the lock is taken: `-Now` when given, else
-the current UTC second. Every line of the pass carries it, so a `started` line can carry a time up
-to about 95 seconds before it is written, plus the pass's wait for `board-holder.lock` (up to 10
-seconds) ([Timings](#timings-of-a-start)). A `skipped` line likewise carries the pass time, and
-is written about 10 seconds later, when the lock wait ends.
+the current UTC second. Every line of the pass carries it, every host's included, so a `started`
+line can carry a time up to about 95 seconds before it is written for each start the pass made
+before it, its own included, plus the pass's wait for `board-holder.lock` (up to 10 seconds)
+([Timings](#timings-of-a-start)). A `skipped` line likewise carries the pass time, and is written
+about 10 seconds later, when the lock wait ends.
 
 ### Which leases are ready
 
@@ -441,15 +558,74 @@ is written about 10 seconds later, when the lock wait ends.
   and fails the pass as in step 4, with `<error>` `the state file is not valid` (architect,
   2026-11-19, for v0.06, gaps FA-19 and FB-18). It never picks a lease from such a file.
 
+### Which host a lease is on
+
+**A ready lease is on the host D55's last row gives, exactly** (D55; architect, 2026-11-20, for
+v0.07-T01), the same answer the ProxyCommand reaches for the lease's alias
+([operator.md](operator.md#the-proxycommand)):
+1. **Take the lease record's `project`.**
+2. **Find the registry's record with that `project`**, compared exactly: both are stored
+   normalized ([lease-api.md](lease-api.md#project)).
+3. **If that record's `state` is `ready`, the lease is on that record's host**: the box when the
+   record's `stack` is `agentbox`, else the host named by that project.
+4. **Otherwise, with no such record or a record that is `creating` or `failed`, the lease is on the
+   box.**
+
+- **So a swimcoach lease is on the box**, since swimcoach's record is the box's (D43), and with a
+  missing registry every ready lease is on the box, as in v0.06.
+- **Step 4 puts a ready lease of another project on the box only after a person's edit**: one that
+  takes its host's record out of `ready`, or removes it or the file, while the lease is still
+  ready. Nothing in agentspace does that (D48), and a lease is made `ready` only on a host that is
+  `ready`, so this is a hand-edit case. Its alias carries `HostKeyAlias agentspace-host.<project>`
+  ([state.md](state.md#a-lease-alias-for-a-host-that-is-not-the-box)), so a holder through it that
+  reaches the box fails ssh's strict key check and exits at once: a fast failure on the box, never
+  a connection to the wrong machine. While such a lease is the box's latest-expiring one, every
+  start on the box chooses it and fails, and the box's own leases get no holder until it expires or
+  is released, or its host is `ready` again. A box holder that is already running through one of
+  the box's leases is kept. Whether the box SHOULD leave such leases out was
+  [Q22](#open-questions), closed as overcome by D48's ruling.
+- **The lease's `ssh.host_alias` plays no part in the choice of host.** The keeper finds the host
+  from the project, as the ProxyCommand does for a lease alias.
+
+### The hosts of a pass
+
+**A pass takes a turn for each of these hosts, each once:**
+1. **The box, always**, so a pass with nothing to do anywhere logs one `idle` line, as v0.06 did.
+2. **Each host that a ready lease is on.**
+3. **Each other host whose record is in the state folder**: a file named
+   `board-holder.<project>.json` whose `<project>` matches the normalized project's pattern
+   `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$` ([lease-api.md](lease-api.md#project)). The name is
+   compared without regard to case, and `<project>` is taken in lowercase. So a host whose record
+   a person's edit has removed from the registry, or taken out of `ready`, still gets a turn while
+   its holder's record is there, and that turn stops the holder the record names if it is trusted,
+   or removes the record if not.
+4. **In a keeper, each host on which it tracks a holder**, so a tracked holder whose record was
+   removed gets its `lost` line ([Release grace](#release-grace)).
+
+- **The box's turn comes first, then every other host's in the ordinal order of its project.**
+- **A `board-holder.<project>.json` whose `<project>` is the box's project is not a record**: the
+  box's record is `board-holder.json`, and the keeper never reads, writes or removes that file.
+- **A state folder that cannot be listed ends the pass** with `failed lease=- alias=- pid=-
+  reason=The pass stopped on an error: <error>` and exit 1, every holder and record left as they
+  are.
+- **Item 3 is how the keeper does what state.md gives it**: it removes a record left for a host it
+  no longer holds through, and nothing else removes one
+  ([state.md, Another host's holder](state.md#another-hosts-holder)). Each host's record and log
+  are named by its project there, so a listing finds them without the registry (D55; architect,
+  2026-11-20, for v0.07-T01).
+
 ### Which lease
 
-**When it starts a holder, the pass chooses the ready lease with the latest `expires_at`; among
-those that share it, the one whose lease ID is lowest in ordinal order.** The holder goes through
-that lease's `ssh.host_alias`. The choice is stable: the same leases always give the same choice.
+**When it starts a holder on a host, the pass chooses, among that host's ready leases, the one with
+the latest `expires_at`; among those that share it, the one whose lease ID is lowest in ordinal
+order.** The holder goes through that lease's `ssh.host_alias`. The choice is stable: the same
+leases and the same registry always give the same choice. A lease on one host is never chosen for
+another.
 
 ### Trusting the record
 
-**The pass trusts the recorded holder only when all of these hold:**
+**In each host's turn, the pass reads that host's record, and trusts the holder it names only when
+all of these hold.** The rule is the same for the box's record and another host's:
 1. **The record can be read and is valid**: every field present, of its type and form
    ([docs/state.md](state.md#the-keepers-files)). A record that is not is no record.
 2. **A process with the recorded PID is running, and can be opened to query it**: opened with
@@ -462,11 +638,11 @@ that lease's `ssh.host_alias`. The choice is stable: the same leases always give
    the matcher in [The holder command](#the-holder-command).
 
 **A record that fails any of these is removed, and the process it names, if any, MUST be left
-running and untouched.** The removal has no log line of its own. In a keeper that tracks a holder,
-the pass logs `lost` for the tracked holder and starts nothing (card #0068,
-[Release grace](#release-grace)). Otherwise, in a one-pass run or in a keeper that tracks none,
-the pass goes on as with no holder, logs `idle` or starts one if a lease is ready, and that line
-is the only sign that a holder was lost. So a holder started with another `-SshExe` is orphaned,
+running and untouched.** The removal has no log line of its own. In a keeper that tracks a holder
+on that host, the turn logs `lost` for the tracked holder and starts nothing (card #0068,
+[Release grace](#release-grace)). Otherwise, in a one-pass run or in a keeper that tracks none
+there, the turn goes on as with no holder, logs `idle` or starts one if one of the host's leases is
+ready, and that line is the only sign that a holder was lost. So a holder started with another `-SshExe` is orphaned,
 and a holder started for it then most likely fails on `ExitOnForwardFailure` while the orphan
 holds the ports.
 
@@ -555,19 +731,23 @@ the following, and a pass whose matcher gives any wrong answer MUST trust nothin
 
 ### Keeping a holder
 
-**A trusted holder whose record's lease is ready, by ID compared without regard to ASCII case,
-and whose ready lease's `ssh.host_alias` equals the recorded alias exactly, is kept.** (The ID
+**A trusted holder whose record's lease is one of its host's ready leases, by ID compared without
+regard to ASCII case, and whose ready lease's `ssh.host_alias` equals the recorded alias exactly,
+is kept.** (The ID
 was "compared exactly" until 2026-11-19, when the architect ruled for E0.06-T01-S07 that a reader
 keeps a record's `lease_id` as stored, which state.md's MAY lets be in any case.) The pass logs `kept lease=<id>
-alias=<alias> pid=<pid>` and changes nothing. A keeper that did not start that holder adopts it
-([Watching](#watching)).
+alias=<alias> pid=<pid> host=<project>` and changes nothing. A keeper that did not start that
+holder adopts it ([Watching](#watching)).
 
 ### Stopping a holder
 
-**A trusted holder whose lease is not ready (released, expired, unsatisfiable, pending, or gone
-from the state file), or whose lease's alias is no longer the recorded one, is stopped.** A lease
-that expires is seen at the first pass whose pass time is at or after its `expires_at`, so the stop
-comes up to about one interval after expiry.
+**A trusted holder whose lease is not one of its host's ready leases is stopped**: the lease is not
+ready (released, expired, unsatisfiable, pending, or gone from the state file), or it is ready but
+on another host ([Which host a lease is on](#which-host-a-lease-is-on)), or its alias is no longer
+the recorded one. A lease that expires is seen at the first pass whose pass time is at or after its
+`expires_at`, so the stop comes up to about one interval after expiry. A person's edit that takes
+a host's record out of `ready` is seen the same way, at the first pass that reads it
+([The order of a pass](#the-order-of-a-pass)).
 - **The stop opens the holder by PID, and checks its creation time and command line again on that
   same handle, by the same rule.** While the handle is open Windows cannot reuse the PID, so the
   process checked is the process stopped.
@@ -598,9 +778,9 @@ comes up to about one interval after expiry.
   could not be taken; and a lock never creates a missing state folder.
 - **The tree is terminated leaves first, the holder last.** The stop then waits up to 2 seconds for
   each process to exit, and walks the tree again for any child made meanwhile, for up to 5 rounds.
-- **A terminated holder does not close its session on the box.** That session keeps the forwards
-  until the box's sshd drops it, which is why a keeper waits the release grace before the next
-  start ([Release grace](#release-grace)).
+- **A terminated holder does not close its session on its host.** That session keeps the forwards
+  until the host's sshd drops it, which is why a keeper waits the release grace before the next
+  start on that host ([Release grace](#release-grace)).
 
 **What the pass logs, and what becomes of the record:**
 
@@ -617,7 +797,8 @@ comes up to about one interval after expiry.
 **`stopped` MUST be logged only when the pass no longer finds the recorded holder**: the stop ended
 it, or a new look finds no trusted process under the record. The record MUST be kept while a look
 still finds the recorded holder running, so that the next pass tries again (D30). A pass that
-stops a holder, or tries to, MUST NOT start one; the next pass does.
+stops a holder on a host, or tries to, MUST NOT start one on that host; the next pass does. It MAY
+start one on another host in the same pass, in that host's own turn.
 
 **The new look is the trust check of [Trusting the record](#trusting-the-record), items 2 to
 4.** It does not find the recorded holder when the process is gone, is no longer the recorded
@@ -637,10 +818,13 @@ one, or cannot be opened to query it.
 
 ### Idle
 
-**With no trusted holder and no ready lease, the pass logs `idle lease=- alias=- pid=-`** and
-changes nothing. An idle line never names a holder. The one exception is a keeper's pass while the
-keeper tracks a holder, which logs `lost` for that holder instead
-([The order of a pass](#the-order-of-a-pass)).
+**With no trusted holder on a host and none of its leases ready, the host's turn logs `idle
+lease=- alias=- pid=-`**, followed by ` host=<project>` for a host that is not the box
+([Log lines](#log-lines)), and changes nothing. An idle line never names a holder. The one
+exception is a keeper's pass while the keeper tracks a holder on that host, which logs `lost` for
+that holder instead ([The order of a pass](#the-order-of-a-pass)). The box's turn comes in every
+pass, so a pass that finds no record of another host, tracks no holder and has no ready lease
+anywhere logs exactly the box's `idle lease=- alias=- pid=-`, as v0.06's did.
 
 ## Starting a holder
 
@@ -648,8 +832,9 @@ keeper tracks a holder, which logs `lost` for that holder instead
 1. **The holder MUST outlive the pass and every process above it.** On Windows that means it MUST
    NOT be in the Job Object of the process that asked for it, or of any process above that: a job
    is closed when an agent's tool call or a scheduled task ends, and kills what is in it.
-2. **Its stdin is `NUL`, and its stdout and stderr are one handle that appends to
-   `board-holder-ssh.log`**, opened with the sharing that
+2. **Its stdin is `NUL`, and its stdout and stderr are one handle that appends to its host's
+   holder log**, `board-holder-ssh.log` for the box and `board-holder-ssh.<project>.log` for another
+   host ([The holder's log](#the-holders-log)), opened with the sharing that
    [docs/state.md](state.md#the-keepers-files) gives the holder's log handle, so that a later
    holder, a rotation, or a reader is never refused while an earlier holder still has it open. A
    shell's own `>>` redirection does not share writing; it MUST NOT be used.
@@ -717,6 +902,9 @@ order; the first that fails is reported.
    command line, the holder's log, its working folder, the result file, and a deadline 30 seconds
    from now ([docs/state.md](state.md#a-holders-launch-files) has its fields). The deadline is
    taken just before the request is written, and every later bound of the start counts from it.
+   The holder's log is the log of the host the holder is started on, as a full path; the launch
+   files themselves are named as for any start, with no host in their names, and one host's start
+   ends, its files removed, before the next host's turn begins.
 2. **The pass has a launcher process created**, told the request's path, with no window and the
    pass's `%USERPROFILE%` as its working folder. **It MUST be created outside the pass's job and
    every job above it, and with the user's logon environment**
@@ -782,7 +970,8 @@ order; the first that fails is reported.
 7. **The pass checks, once and with no wait, that the holder is still running** and is the one the
    result names, by PID, creation time and command line
    ([Trusting the record](#trusting-the-record)). A holder that is not fails the start with `The
-   holder exited at once; see board-holder-ssh.log.` A holder that exits a moment after this check
+   holder exited at once; see board-holder-ssh.log.`, naming the host's own log, so
+   `board-holder-ssh.<project>.log` for another host. A holder that exits a moment after this check
    is recorded, and found gone by a later look or pass. **A holder still running, by PID and
    creation time, whose command line cannot be read back has not exited** (architect, 2026-11-19,
    for E0.06-T02-S04): the start fails with `The holder started, but its command line could not be
@@ -813,8 +1002,8 @@ order; the first that fails is reported.
      pass trusts it, none stops it, and while it holds the forwards every later start fails on
      `ExitOnForwardFailure`. The same holds for a pass killed after the result and before the
      record ([A pass that is killed](#a-pass-that-is-killed)).
-9. **The pass writes the record** for the holder, and only then logs `started lease=<id>
-   alias=<alias> pid=<pid>`, so a `started` line always follows its record.
+9. **The pass writes the host's record** for the holder, and only then logs `started lease=<id>
+   alias=<alias> pid=<pid> host=<project>`, so a `started` line always follows its record.
 
 **If the record cannot be written, the pass stops the holder at once**, since an unrecorded holder
 could never be stopped later, and logs `failed` with the holder's PID:
@@ -842,10 +1031,16 @@ holder could not be started: <reason>`.
 | The wait after a launcher claimed first | 60 more seconds, counted from the first try to withdraw |
 | The longest a start can hold its pass, and so `board-holder.lock` | The withdrawal comes at most 35 seconds after the request, whether the create succeeded or failed, then up to 60 more: about 95 seconds |
 | A start whose create failed, and whose withdrawal wins | The time of its create calls only: at most about 34 seconds after three tries, and the time of one call when that call returns a non-zero code |
+| A pass that starts holders on several hosts | One start after another, never two at once: up to about 95 seconds for each host it starts on, since one pass at a time serves every host (D55; architect, 2026-11-20, for v0.07-T01) |
 | Polling of the result file | Every 100 ms |
 
 **Nothing in a start is retried in a loop (D14).** A start that fails is retried by a later pass,
-under a keeper's backoff.
+under a keeper's backoff for that host.
+
+**Starts on two hosts never overlap**, so one set of launch files is in the state folder at a time,
+and a slow start on one host delays the turns after it in the same pass, by at most its 95
+seconds. Two hosts that both need a holder at logon get both in one pass. A one-pass run or a
+keeper beside a pass that long finds `board-holder.lock` held and logs `skipped`, as in v0.06.
 
 **The bound on each create call keeps a start inside its 95 seconds.** The prototype sets no bound
 on a create call, so one call that hangs holds the pass, and `board-holder.lock`, for as long as it
@@ -865,6 +1060,9 @@ hangs ([Requirements the prototype does not meet yet](#requirements-the-prototyp
   beside it.
 - **A half-finished stop keeps the record**, so the next pass checks the holder again and stops
   what is left of it.
+- **Every host's turn before the kill stands, and every host's turn after it never happened.** Each
+  host's record is its own file, replaced on its own, so a kill in one host's turn leaves every
+  other host's record whole.
 - **A half-finished start can leave a holder running unrecorded**, as in step 8 of
   [The handshake](#the-handshake), and its launch files behind ([Q13](#open-questions)).
 - **No line is logged for the killed pass.** When the keeper itself was killed and the holder its
@@ -874,50 +1072,100 @@ hangs ([Requirements the prototype does not meet yet](#requirements-the-prototyp
 ## Watching
 
 **A keeper (`-Watch`) runs passes in one process, for its whole life.** It first takes
-`board-holder-keeper.lock` ([Locks](#locks)), then loops:
+`board-holder-keeper.lock` ([Locks](#locks)), then loops.
 
-1. **The look**, before the pass. If it tracks a holder, it checks that holder by PID, creation
-   time and command line, against the keeper's `-SshExe` and the alias the holder was started or
-   adopted with. The look reads the process only, never the record.
+**It keeps a state for each host, and one host's state never changes another's**: the holder it
+tracks there, if any, and whether that holder is proven; the host's count of fast failures; and
+the host's hold-off, if one is running. Every rule in this section about "the holder", "the count"
+or a grace or backoff is about one host's, and applies to each host on its own (D50; the card's
+"backoff and release grace per host"). **With only the box, there is one host's state, and the
+loop is v0.06's step for step**: every look, pass, line and wait is the same, but for the `host=`
+field of [Log lines](#log-lines).
+
+1. **The look**, before the pass, at each host on which the keeper tracks a holder, the box first
+   and then the others in the ordinal order of their projects. It checks that host's holder by
+   PID, creation time and command line, against the keeper's `-SshExe` and the alias the holder
+   was started or adopted with. The look reads the process only, never the record.
    - **Alive**, and tracked for at least 60 seconds (`-FastFailureSeconds`): the holder is proven,
-     and the count of fast failures goes to 0.
+     and the host's count of fast failures goes to 0.
    - **Alive, and younger:** nothing changes.
    - **Gone, no longer the same process, or the check itself fails:** the holder is no longer
-     tracked. If it was never proven, that is a fast failure and the count goes up by one; if it
-     was proven, the count is unchanged. Then the keeper waits once, at once, before the pass: the
-     longer of the release grace and, for an unproven holder, the backoff for the new count, and
-     at least `-IntervalSeconds`. It logs `grace seconds=<n>` or `backoff seconds=<n>` for that
-     wait ([Release grace](#release-grace)); with the defaults, a proven holder gives
-     `grace seconds=95`. Then it goes on to the pass.
+     tracked. If it was never proven, that is a fast failure and the host's count goes up by one;
+     if it was proven, the count is unchanged. The keeper sets the host's hold-off, counted from
+     this look: the longer of the release grace and, for an unproven holder, the backoff for the
+     new count, and at least `-IntervalSeconds`. It logs `grace seconds=<n>` or `backoff
+     seconds=<n>` for it ([Release grace](#release-grace)); with the defaults, a proven holder
+     gives `grace seconds=95`.
+   - **When the look set a hold-off, the keeper waits before the pass**, as
+     [The keeper's wait](#the-keepers-wait) says. With only the box, that waits out the box's
+     hold-off, as v0.06's wait after the look did. Then it goes on to the pass.
 2. **The pass**, with the pass time taken now ([A pass](#a-pass)). It counts toward `-MaxPasses`
-   whether or not it ran to the end.
-3. **What the pass did**, for tracking:
+   whether or not it ran to the end. A host whose hold-off is still running gets its turn, but no
+   holder is started on it ([The order of a pass](#the-order-of-a-pass)).
+3. **What each host's turn did**, for tracking on that host:
 
-| The pass | Then |
+| The host's turn | Then, on that host |
 |---|---|
 | `started` a holder | The keeper tracks it, unproven, from the end of this pass |
-| `kept` a holder it does not already track (by PID and creation time) | The keeper adopts it: tracks it from the end of this pass, proven, since its age is unknown, in place of any holder it tracked before. The count is unchanged, and no grace follows |
-| `kept` the holder it tracks | Nothing changes |
-| `lost` the holder the keeper tracks (card #0068) | No holder is tracked. If it was never proven, that is a fast failure and the count goes up by one ([Release grace](#release-grace)) |
-| Decided to start, and failed (any `failed` line from [Starting a holder](#starting-a-holder)) | No holder is tracked; the count of fast failures goes up by one |
-| Stopped a holder, or tried to (`stopped`, or a `failed` stop) | No holder is tracked; the count goes to 0 |
-| Anything else (`idle`, `skipped`, a pass that failed before deciding) | Nothing changes |
+| `kept` a holder it does not already track there (by PID and creation time) | The keeper adopts it: tracks it from the end of this pass, proven, since its age is unknown, in place of any holder it tracked there before. The host's count and hold-off are unchanged, and no grace follows |
+| `kept` the holder it tracks there | Nothing changes |
+| `lost` the holder the keeper tracks there (card #0068) | No holder is tracked. If it was never proven, that is a fast failure and the host's count goes up by one ([Release grace](#release-grace)) |
+| Decided to start, and failed (any `failed` line from [Starting a holder](#starting-a-holder)) | No holder is tracked; the host's count of fast failures goes up by one |
+| Stopped a holder, or tried to (`stopped`, or a `failed` stop) | No holder is tracked; the host's count goes to 0 |
+| Anything else (`idle`, no line on a host in hold-off, a turn that failed before deciding) | Nothing changes |
 
+   A pass that logged `skipped`, or failed before any host's turn, changes no host's state.
 4. **If `-MaxPasses` passes have run, exit 0.**
-5. **The wait:**
+5. **The hold-offs the pass set**, each counted from the end of the pass, one per host whose turn
+   calls for one, logged in the order of the turns:
 
-| After | Wait | Line |
+| After the host's turn | The host's hold-off | Line |
 |---|---|---|
-| A failed start | The backoff for the count, at least `-IntervalSeconds` | `backoff seconds=<n>` |
+| A failed start | The backoff for the host's count, at least `-IntervalSeconds` | `backoff seconds=<n>` |
 | A stop, or a tried stop | The release grace, at least `-IntervalSeconds` | `grace seconds=<n>` |
-| A pass that logged `lost` (card #0068) | The release grace, or the longer backoff if the holder was unproven, at least `-IntervalSeconds` | `grace seconds=<n>` or `backoff seconds=<n>` |
-| Anything else | `-IntervalSeconds` | None |
+| A turn that logged `lost` (card #0068) | The release grace, or the longer backoff if the holder was unproven, at least `-IntervalSeconds` | `grace seconds=<n>` or `backoff seconds=<n>` |
+| Anything else | None set; a running one runs on | None |
 
-**One iteration can wait twice**: once after the look, when the look found the tracked holder gone,
-and again after the pass, when that pass then failed to start a holder. The two waits are
-sequential, each with its own line, so they add: with the defaults, a proven holder's end gives
-`grace seconds=95`, then a failed start gives `backoff seconds=30` before the next pass. The rule
-"the longer, never the sum" applies within one wait only ([Release grace](#release-grace)).
+6. **The wait**, as [The keeper's wait](#the-keepers-wait) says. With only the box, it is v0.06's:
+   the box's hold-off when the pass set one, else `-IntervalSeconds`.
+
+**A new hold-off on a host replaces any that is running there.** A hold-off ends once its seconds
+have passed on the clock the keeper measures durations on ([Times](#times)); while it runs, no
+pass of that keeper starts a holder on that host. It never stops a keep, a stop or a `lost` there,
+and never touches another host.
+
+**One iteration can wait twice**: once after the look, when the look found a tracked holder gone,
+and again after the pass, when that pass then failed to start a holder there. The two waits are
+sequential, each with its own line, so they add: with the defaults and only the box, a proven
+holder's end gives `grace seconds=95`, then a failed start gives `backoff seconds=30` before the
+next pass. The rule "the longer, never the sum" applies within one hold-off only
+([Release grace](#release-grace)).
+
+### The keeper's wait
+
+**A keeper waits at two points of an iteration: after the look, only when the look set a hold-off,
+and after the pass, always.** Each wait ends when the first of the keeper's hosts is due
+(architect, 2026-11-20, for v0.07-T01):
+- **The keeper's hosts** are the hosts of its last pass ([The hosts of a pass](#the-hosts-of-a-pass)),
+  or the box alone before its first pass.
+- **A host with a running hold-off is due when its hold-off ends.**
+- **A host with none is due, after the pass, `-IntervalSeconds` after the wait began; and after the
+  look, at once.** So the wait after a look is no wait at all while any of the keeper's hosts has no
+  hold-off, and a host whose holder ended does not delay the pass that the others are due for.
+- **The wait after the pass is never shorter than `-IntervalSeconds`**, whatever is due (D14).
+
+**So, with the defaults:**
+- **Only the box:** its hold-off, when one runs, is the whole wait, and the wait is v0.06's.
+- **The box and another host, the other's holder stopped:** the other host has a 95-second grace;
+  the box has none, so passes come every 30 seconds. The box's turn keeps, stops or starts as
+  usual in each, and the other host's turn starts nothing until its grace has run, then starts at
+  the first pass after it.
+- **Every one of the keeper's hosts in a hold-off:** the keeper waits until the first of them ends,
+  so a lease that became ready meanwhile on a host that was not in the last pass gets its first
+  holder only then: at most the longest hold-off, `-BackoffMaxSeconds` or the grace, after it
+  became ready, as a lease did in v0.06 while the box waited out a grace or a backoff
+  ([Q23](#open-questions)). The box is always one of the keeper's hosts, so this happens only
+  while the box is in a hold-off too.
 
 **No error ends the loop.** Each of the look, the pass and the wait runs on its own: an error that
 escapes one is logged as a `failed lease=- alias=- pid=- reason=<text>` line, if the log can be
@@ -925,19 +1173,21 @@ written, and the loop goes on. **Every iteration MUST wait at least `-IntervalSe
 path, the error paths included**, so no failure can make a tight loop (D14). A wait whose line
 cannot be logged still waits its full time.
 
-**The keeper's state lives only in its process.** The count of fast failures, the tracked holder
-and whether it is proven start empty in a new keeper. What a new keeper inherits is the record, and
-its first pass adopts the holder the record names, if it is trusted.
+**The keeper's state lives only in its process.** Each host's count of fast failures, tracked
+holder, proof and hold-off start empty in a new keeper. What a new keeper inherits is the records,
+and its first pass adopts the holder each host's record names, if it is trusted.
 
 ### Fast failures and backoff
 
 **A fast failure is a start that did not give a live holder, or a tracked holder found gone before
 it was proven**, by a look, or by a pass that logged `lost` for it. A holder found gone that was
 never proven is a fast failure however long ago it started, because it may have died at any time
-since the look before.
+since the look before. **A fast failure counts on its own host only**, and a host's backoff grows
+with its own count alone: a host whose starts keep failing never lengthens another host's waits.
 
 - **Only proof of life resets the count**: a look that finds the tracked holder alive at least 60
   seconds after tracking began. A stop, or a tried stop, also resets it. An idle pass does not.
+  Each resets only its own host's count.
   **An adopted holder is under the same rule** (architect, 2026-11-19, for E0.06-T02-S05): it is
   proven from adoption, its count unchanged then, and a later look at least 60 seconds after
   tracking began that finds it alive resets the count, as for a holder the keeper started.
@@ -955,27 +1205,30 @@ since the look before.
   catches (a one-pass run, or before the first pass), ends the program with exit 1 and the one
   stderr line `agentspace-keeper: The keeper stopped on an error: <panic message>`, as for any
   other error before the first pass ([Exit codes](#exit-codes)).
-- **After the n-th fast failure in a row, the backoff is `min(BackoffMaxSeconds, BackoffBaseSeconds
-  * 2^(n-1))` seconds**, and the wait is that or `-IntervalSeconds`, whichever is longer.
-- **With the defaults, a start that keeps failing waits** 30, 60, 120, 240, then 300 seconds for
-  every failure after, each logged `backoff seconds=<n>`, and each wait comes after the pass that
-  failed.
+- **After the n-th fast failure in a row on a host, the backoff is `min(BackoffMaxSeconds,
+  BackoffBaseSeconds * 2^(n-1))` seconds**, and the host's hold-off is that or `-IntervalSeconds`,
+  whichever is longer. `-BackoffBaseSeconds` and `-BackoffMaxSeconds` are one pair for every host.
+- **With the defaults, a start that keeps failing on a host waits** 30, 60, 120, 240, then 300
+  seconds for every failure after, each logged `backoff seconds=<n>`, and each hold-off comes after
+  the pass that failed. With only the box, each is the keeper's whole wait, as in v0.06.
 
 ### Release grace
 
-**When a look finds a tracked holder gone, the keeper MUST NOT start a holder until
+**When a look finds a tracked holder gone, the keeper MUST NOT start a holder on that host until
 `-ReleaseGraceSeconds` has passed, counted from that look (D30, E0.02-T04-S03).** A holder that
-ends leaves its session on the box, which keeps the forwards until the box's sshd drops it. A
-holder started meanwhile fails on `ExitOnForwardFailure`, and leaves another session for sshd to
-time out.
+ends leaves its session on its host, which keeps the forwards until the host's sshd drops it. A
+holder started there meanwhile fails on `ExitOnForwardFailure`, and leaves another session for
+sshd to time out. **The grace is per host**: it is the host's hold-off, and another host's holders
+are started, kept and stopped through it as usual ([Watching](#watching)). The forwards are bound
+on each host's own loopback, so a session left on one host holds nothing on another.
 
 **Where each grace counts from:**
 - **A holder that a look finds gone:** from that look, which comes up to one interval and a pass
-  after the holder ended. The wait comes before that iteration's pass.
-- **A holder the keeper stopped, or tried to:** from the end of the pass that stopped it. The wait
-  comes after that pass.
+  after the holder ended. With only the box, the wait comes before that iteration's pass.
+- **A holder the keeper stopped, or tried to:** from the end of the pass that stopped it. With only
+  the box, the wait comes after that pass.
 - **A tracked holder that a pass logged `lost` for (card #0068, below):** from the end of that
-  pass. The wait comes after that pass.
+  pass. With only the box, the wait comes after that pass.
 
 > **Note, observed.** Before the grace, a killed holder left the board down for 2 minutes 49
 > seconds, against about 90 seconds of sshd's bound; with it, 1 minute 56 seconds, with no failed
@@ -985,47 +1238,51 @@ time out.
 - **The default, 95 seconds, MUST be used when `-ReleaseGraceSeconds` is not given.** It is derived
   from today's box: sshd's `ClientAliveInterval` 15 times `ClientAliveCountMax` 5, plus 20 seconds
   for the probe already in flight (0.02.T1.1, D12). For another host the same rule gives its
-  value: its sshd's keepalive interval times its count, plus a margin for one probe in flight. A
-  host with other keepalive settings needs another value, and where a keeper gets it for a host
-  is [Q19](#open-questions).
+  value: its sshd's keepalive interval times its count, plus a margin for one probe in flight.
+- **One grace serves every host, the default included** ([Q19](#open-questions), closed). Every host is made from the one template and gets `box/system` from
+  `sync` (D44, D46), whose sshd drop-in sets the box's keepalive settings, so the box's 95 seconds
+  is every host's. `-ReleaseGraceSeconds` sets the grace for all of them at once. A host with other
+  keepalive settings would need a grace of its own, which nothing in v0.07 makes.
 - **It applies to every holder the keeper started or adopted, whether it died or the keeper stopped
-  it** (the architect's ruling, 2026-11-17). The stop terminates the holder, which leaves the
-  box's session holding the forwards, so the next holder, for the next lease, waits the grace from
-  the stop.
-- **It does not apply to a keeper that has had no holder**, such as one that starts with no holder
-  recorded, or one whose grace has passed: it starts its first holder at once. The grace keeps no
-  state after its wait.
+  it** (the architect's ruling, 2026-11-17). The stop terminates the holder, which leaves its
+  host's session holding the forwards, so the next holder there, for the next lease, waits the
+  grace from the stop.
+- **It does not apply to a host on which the keeper has had no holder**, such as one whose record
+  was missing when the keeper started, or one whose grace has passed: the keeper starts its first
+  holder there at once. The grace keeps no state after it ends.
 - **It does not apply to a holder stopped because its record could not be written.** That stop
   runs milliseconds after the start, before ssh can have bound the forwards, so nothing is held on
-  the box. That failure gets the backoff only.
-- **With a fast failure, the wait is the longer of the grace and the backoff, never their sum**,
-  and one line is logged: `backoff seconds=<n>` when the backoff is at least the grace, else
-  `grace seconds=<n>`, with the seconds actually waited. A grace set above `-BackoffMaxSeconds`
-  therefore waits the grace.
-- **Bounds.** Every wait is at least `-IntervalSeconds`. No wait is longer than the greatest of
-  the grace, `-BackoffMaxSeconds` and `-IntervalSeconds`. One holder's end gives one bounded wait, and the
-  pass after it starts a holder if a lease is ready, so the grace cannot keep the board down for
-  good.
+  the host. That failure gets the backoff only.
+- **With a fast failure, the hold-off is the longer of the grace and the backoff, never their
+  sum**, and one line is logged: `backoff seconds=<n>` when the backoff is at least the grace, else
+  `grace seconds=<n>`, with the seconds the hold-off has left. A grace set above
+  `-BackoffMaxSeconds` therefore waits the grace.
+- **Bounds.** Every hold-off, and every wait after a pass, is at least `-IntervalSeconds`. No
+  hold-off or wait is longer than the greatest of the grace, `-BackoffMaxSeconds` and
+  `-IntervalSeconds`. One holder's end gives one bounded hold-off on its host, and the pass after
+  it starts a holder there if one of the host's leases is ready, so the grace cannot keep the board
+  down for good.
 - **With the defaults, a started holder that keeps dying unproven waits** 95 (`grace`), 95
   (`grace`), 120 (`backoff`), 240 (`backoff`), then 300 (`backoff`) seconds before each next start.
 
 **Card #0068 (a holder that dies mid-pass skips the grace) is carried in here as a requirement.**
-- **When the keeper tracks a holder and its pass finds no trusted holder** (the tracked one's
-  process gone or no longer the same process, the record missing, or the record naming a process
-  that is not trusted), **the pass MUST NOT start a holder, and logs `lost`** for the tracked
-  holder. A record that names another holder that is trusted is kept or stopped instead
-  ([The order of a pass](#the-order-of-a-pass)). The keeper then stops tracking it, counts a fast
-  failure if it was never proven, and waits after that pass: the release grace, or the longer
-  backoff if the holder was unproven, and at least `-IntervalSeconds`, logged `grace seconds=<n>`
-  or `backoff seconds=<n>` as for any other wait. The pass after the wait starts the next holder
-  if a lease is ready.
+- **When the keeper tracks a holder on a host and its pass finds no trusted holder there** (the
+  tracked one's process gone or no longer the same process, the host's record missing, or the
+  record naming a process that is not trusted), **the pass MUST NOT start a holder on that host,
+  and logs `lost`** for the tracked holder. A record that names another holder that is trusted is
+  kept or stopped instead ([The order of a pass](#the-order-of-a-pass)). The keeper then stops
+  tracking it, counts a fast failure on that host if it was never proven, and sets the host's
+  hold-off after that pass: the release grace, or the longer backoff if the holder was unproven,
+  and at least `-IntervalSeconds`, logged `grace seconds=<n>` or `backoff seconds=<n>` as for any
+  other. The first pass after the hold-off starts the next holder there if one of the host's
+  leases is ready.
 - **The grace counts from the end of that pass**, as after a stop. So the next start comes one
   wait after the pass that found the holder gone, never in that pass.
 - **What the pass needs from the keeper is the tracked holder's identity**: its PID, creation time,
   lease ID and alias, which the keeper holds in its own process from the look before. No file
   carries it. A one-pass run tracks nothing, so this rule never applies to one ([Locks](#locks)).
-- **The pass logs exactly one action line, `lost lease=<id> alias=<alias> pid=<pid>`**, naming
-  the tracked holder from the keeper's own identity of it (D35; A-09, B-38;
+- **The host's turn logs exactly one action line, `lost lease=<id> alias=<alias> pid=<pid>
+  host=<project>`**, naming the tracked holder and its host from the keeper's own identity of it (D35; A-09, B-38;
   [Q6](#open-questions), closed). It is logged whether or not a lease is ready. `lost` says the
   keeper no longer has the holder it tracked, whether that process ended or only its record did;
   the process, if it still runs, is left alone ([Trusting the record](#trusting-the-record)). A
@@ -1048,11 +1305,17 @@ time out.
 
 ### What a keeper does over time
 
-**With the defaults, as seen in `board-holder.log`:**
+**With the defaults, as seen in `board-holder.log`.** Each row is about one host, and its lines
+carry that host's `host=` field where [Log lines](#log-lines) gives one; with several hosts, each
+pass also logs a line for every other host it acts on.
 
 | Event | Lines |
 |---|---|
 | Logon with a lease ready and no record | `started`, then `kept` every 30 seconds or so |
+| Logon with ready leases on the box and on another host, and no record | `started ... host=swimcoach`, then `started ... host=<project>` in the same pass; then a `kept` line for each in every pass |
+| A person's hand edit of `hosts.json` takes another host's record out of `ready` while its holder runs (nothing in agentspace does, D48) | `stopped ... host=<project>`, then `grace seconds=95 host=<project>`; the box's lines go on as before, a pass every 30 seconds |
+| A holder on another host keeps failing to start | Its `failed ... host=<project>` lines, with `backoff ... host=<project>` hold-offs growing to 300 seconds; the box's `kept` line every 30 seconds or so throughout |
+| An upgrade from v0.06 with the box's holder running | `kept ... host=swimcoach` on the new keeper's first pass, with no new holder and no new login on the box ([Stopping and starting the keeper](#stopping-and-starting-the-keeper)) |
 | Logon or restart with a running, recorded holder | `kept` on the first pass, with no new holder and no new login on the box |
 | The lease is released or expires | `stopped`, then `grace seconds=95`, then `idle` (or `started` for another ready lease) |
 | The holder is killed | Within about 30 seconds, `grace seconds=95`; then `started` |
@@ -1063,7 +1326,8 @@ time out.
 | The keeper is killed | No line. The task starts a new keeper within about a minute, and its first pass logs `kept` for a holder that still runs, or `started` or `idle` |
 
 **Passes are spaced by the wait plus the pass's own time**, so a keeper notices a holder's end up
-to `-IntervalSeconds` after it, and the grace counts from that notice.
+to `-IntervalSeconds` after it, and the grace counts from that notice. A pass that starts holders
+on several hosts takes the time of each start ([Timings of a start](#timings-of-a-start)).
 
 ## Locks
 
@@ -1075,17 +1339,25 @@ Their paths, share modes and contents are [docs/state.md](state.md#the-keepers-f
 `leases.lock` is not the keeper's; it is [docs/state.md](state.md#concurrency)'s, and the keeper
 never takes it.
 
-**Both locks are per state folder.** A keeper with another `AGENTSPACE_STATE_DIR` (a check's, say)
-runs beside the real one, and neither lock sees the other.
+**Both locks are per state folder, and serve every host**: there is no lock per host (D55;
+architect, 2026-11-20, for v0.07-T01). A keeper with another `AGENTSPACE_STATE_DIR` (a check's,
+say) runs beside the real one, and neither lock sees the other.
+
+**The host registry's lock, `hosts.lock`, is not the keeper's either**
+([state.md, The host registry](state.md#the-host-registry)). The keeper never takes, opens or
+creates it, and reads `hosts.json` without it ([Hosts](#hosts)), so a provisioning run or a lease
+command that holds it never delays a pass, and a pass never delays them.
 
 ### board-holder.lock: one pass at a time
 
 - **What holding it means:** a pass is running, in a one-pass run or in a keeper. So two passes
-  never both start a holder (one holder per host, D30), and never act on one record at once.
+  never both start a holder on a host (one holder per host, D30, D50), and never act on one record
+  at once.
 - **Who takes it:** every pass, as its first step, before it looks at anything. It is created if
   missing, and held as [docs/state.md](state.md#the-keepers-files) says.
-- **For how long:** the whole pass, up to about 95 seconds when it starts a holder
-  ([Timings of a start](#timings-of-a-start)), and released when the pass ends, whatever happened.
+- **For how long:** the whole pass, every host's turn included: up to about 95 seconds for each
+  host it starts a holder on ([Timings of a start](#timings-of-a-start)), and released when the
+  pass ends, whatever happened.
 - **A second taker** tries again every 100 ms for up to 10 seconds. One that still cannot take it
   logs `skipped lease=- alias=- pid=- reason=locked`, never `idle`, does nothing else, and its run
   exits 0; a keeper goes on to its usual wait.
@@ -1113,18 +1385,19 @@ runs beside the real one, and neither lock sees the other.
   two log handles ([Starting a holder](#starting-a-holder)).
 
 **A one-pass run beside a keeper is allowed**, and contends with it only on `board-holder.lock`. It
-acts on the same record; a one-pass run with another `-SshExe` drops the keeper's record and
-orphans its holder ([Trusting the record](#trusting-the-record)).
+acts on the same records; a one-pass run with another `-SshExe` drops the keeper's records and
+orphans their holders, on every host ([Trusting the record](#trusting-the-record)).
 
-**A one-pass run keeps no state, so it never waits a grace or a backoff.** One run while a keeper
-waits out a grace can start a holder at once, which fails on `ExitOnForwardFailure` and leaves
-another session on the box for sshd to time out. That is allowed; anything that runs passes beside
-a keeper SHOULD expect it. The keeper then finds a record it did not write: its next pass adopts
-the holder if it is trusted, or drops the record if not.
+**A one-pass run keeps no state, so it never waits a grace or a backoff, on any host.** One run
+while a keeper waits out a grace on a host can start a holder there at once, which fails on
+`ExitOnForwardFailure` and leaves another session on that host for sshd to time out. That is
+allowed; anything that runs passes beside a keeper SHOULD expect it. The keeper then finds a record
+it did not write: its next pass adopts the holder if it is trusted, or drops the record if not.
 
 ## Log lines
 
-**The keeper appends its lines to `board-holder.log`**, and writes each line to stdout as well.
+**The keeper appends its lines to `board-holder.log`**, one log for every host, and writes each
+line to stdout as well.
 The file's bytes (encoding and line ending) and its share mode are
 [docs/state.md](state.md#the-keepers-files)'s. The file is opened for each line; an open that
 fails is tried up to 5 times, 50 ms apart. **Each line MUST land whole at the end of the file even
@@ -1142,7 +1415,9 @@ it:**
   `failed lease=- alias=- pid=- reason=The pass stopped on an error: <error>` in its place, which
   is dropped too if the log still cannot be written, and a one-pass run exits 1
   ([Exit codes](#exit-codes)). A `skipped` line is a pass's own line. A `rotated` line is not: a
-  dropped one changes nothing.
+  dropped one changes nothing. **A host's turn whose line was dropped** does the same for that
+  host, its `failed` line carrying the host's `host=` field as below, and the pass goes on to the
+  next host's turn, as after any error in a turn ([The order of a pass](#the-order-of-a-pass)).
 - **A keeper's own line that is dropped ends nothing.** A wait whose line was dropped still waits
   its full time, a dropped `failed` line leaves the loop running, and a second keeper whose
   `another keeper is running` line was dropped still exits 0 ([Watching](#watching),
@@ -1153,10 +1428,31 @@ it:**
 ### A pass's line
 
 ```
-<time> <action> lease=<lease> alias=<alias> pid=<pid>[ reason=<reason>]
+<time> <action> lease=<lease> alias=<alias> pid=<pid>[ host=<project>][ reason=<reason>]
 ```
 
 - **`<time>`** is the pass time ([The order of a pass](#the-order-of-a-pass)).
+- **`host=<project>` names the host a line is about, by its project** (the box's is `swimcoach`).
+  It comes after `pid` and before `reason`, so every field v0.06 wrote keeps its place and its
+  order, and a reader that matches a line up to `pid=<pid>` reads it as v0.06's. Where it is
+  written is the dev lead's reading of P6 (the keeper log's lines name the host's project where
+  they concern one host), accepted on condition that every existing keeper conformance check
+  passes unchanged (architect, 2026-11-20, for v0.07-T01):
+  - **On every line of another host's turn**: `started`, `kept`, `stopped`, `lost`, `idle`,
+    `rotated` and `failed`, its `failed` lines with `lease=-` included, and on its `backoff` and
+    `grace` lines ([A keeper's own lines](#a-keepers-own-lines)).
+  - **On the box's lines that name a holder**, as `host=swimcoach`: `started`, `kept`, `stopped`,
+    `lost`, and `failed` for a start or a stop. So every line that starts, keeps or stops a holder
+    names its host's project, the box's included.
+  - **Never on the box's other lines** (`idle`, `rotated`, `grace`, `backoff`, and `failed` for an
+    error of the box's turn), **nor on a line of the whole pass** (`skipped`, and `failed` for the
+    matcher, the lease state, the registry or the state folder's listing). Those read exactly as
+    v0.06's.
+  - **Why there:** v0.06's conformance checks match the box's `idle`, `rotated`, `grace` and
+    `backoff` lines and the `skipped` line to the end of the line, and match no line that names a
+    holder to its end, so this placement keeps every one of them passing.
+  - **Where this page writes a line's form without `host=`**, such as a `failed` line in
+    [Starting a holder](#starting-a-holder), the field is added by these rules.
 - **`<action>`** is one of `started`, `kept`, `stopped`, `lost`, `idle`, `failed`, `skipped` and
   `rotated`, in lowercase. `lost` is logged only by a keeper's pass (card #0068,
   [Release grace](#release-grace)).
@@ -1167,44 +1463,57 @@ it:**
 - **`reason`** is written for `failed` and `skipped` only, is the last field, and runs to the end of
   the line. Each run of control characters (U+0000 to U+001F, and U+007F) in it is written as one
   space, and it is trimmed. An empty reason is written `Unknown.`
-- **A pass writes one action line**, before which it MAY write one `rotated` line.
+- **A pass writes one action line for each host whose turn logs one**, in the order of the turns
+  ([The hosts of a pass](#the-hosts-of-a-pass)), the box's first. Before them it MAY write one
+  `rotated` line for each host whose log it rotated, the box's first. With only the box, that is
+  v0.06's one action line and at most one `rotated` line. A host in a keeper's hold-off whose turn
+  would start a holder logs no line ([The order of a pass](#the-order-of-a-pass)).
 
-| Action | `lease` | `alias` | `pid` | `reason` |
-|---|---|---|---|---|
-| `started` | The chosen lease | Its alias | The holder's | None |
-| `kept` | The record's | The record's | The record's | None |
-| `stopped` | The record's | The record's | The record's | None |
-| `lost` | The tracked holder's, as the keeper holds it | The same | The same | None |
-| `idle` | `-` | `-` | `-` | None |
-| `skipped` | `-` | `-` | `-` | Always `locked` |
-| `rotated` | `-` | `-` | `-` | None |
-| `failed`, lease state unreadable or another error of the pass | `-` | `-` | `-` | Below |
-| `failed`, a start | The chosen lease | Its alias | `-`, or the holder's when it started but could not be recorded | Below |
-| `failed`, a stop | The record's | The record's | The record's | Below |
+| Action | `lease` | `alias` | `pid` | `host` | `reason` |
+|---|---|---|---|---|---|
+| `started` | The chosen lease | Its alias | The holder's | The host's | None |
+| `kept` | The record's | The record's | The record's | The host's | None |
+| `stopped` | The record's | The record's | The record's | The host's | None |
+| `lost` | The tracked holder's, as the keeper holds it | The same | The same | The host's | None |
+| `idle` | `-` | `-` | `-` | Another host's only | None |
+| `skipped` | `-` | `-` | `-` | None | Always `locked` |
+| `rotated` | `-` | `-` | `-` | Another host's only | None |
+| `failed`, the lease state or the registry unreadable, or another error of the whole pass | `-` | `-` | `-` | None | Below |
+| `failed`, an error of one host's turn | `-` | `-` | `-` | Another host's only | Below |
+| `failed`, a start | The chosen lease | Its alias | `-`, or the holder's when it started but could not be recorded | The host's | Below |
+| `failed`, a stop | The record's | The record's | The record's | The host's | Below |
 
-**Examples:**
+**Examples**, the first six on the box and the last three on another host:
 
 ```
-2026-11-18T05:07:00Z started lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112
-2026-11-18T05:07:30Z kept lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112
-2026-11-18T06:00:01Z stopped lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112
+2026-11-18T05:07:00Z started lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112 host=swimcoach
+2026-11-18T05:07:30Z kept lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112 host=swimcoach
+2026-11-18T06:00:01Z stopped lease=0b6f4c1e-8d1a-4f0e-9c3b-2a5d7e9f1c44 alias=agentspace-swimcoach-0b6f4c1e pid=24112 host=swimcoach
 2026-11-18T06:01:36Z idle lease=- alias=- pid=-
 2026-11-18T06:02:06Z skipped lease=- alias=- pid=- reason=locked
-2026-11-18T07:12:30Z lost lease=7d2e9a40-3c5b-4e1f-8a6d-1b9c0f2e4a77 alias=agentspace-swimcoach-7d2e9a40 pid=25160
+2026-11-18T07:12:30Z lost lease=7d2e9a40-3c5b-4e1f-8a6d-1b9c0f2e4a77 alias=agentspace-swimcoach-7d2e9a40 pid=25160 host=swimcoach
+2026-11-18T07:13:00Z started lease=3a9c5e21-6b7d-4c8e-9f01-2d3e4f5a6b7c alias=agentspace-agentspace-3a9c5e21 pid=25344 host=agentspace
+2026-11-18T07:20:00Z failed lease=3a9c5e21-6b7d-4c8e-9f01-2d3e4f5a6b7c alias=agentspace-agentspace-3a9c5e21 pid=- host=agentspace reason=The holder could not be started: The holder exited at once; see board-holder-ssh.agentspace.log.
+2026-11-18T07:30:00Z idle lease=- alias=- pid=- host=agentspace
 ```
 
 ### A keeper's own lines
 
 ```
-<time> backoff seconds=<n>
-<time> grace seconds=<n>
+<time> backoff seconds=<n>[ host=<project>]
+<time> grace seconds=<n>[ host=<project>]
 <time> another keeper is running pid=<n>
 <time> failed lease=- alias=- pid=- reason=<reason>
 ```
 
 - **`<time>` is the current second when the line is written**, not a pass time.
-- **`seconds=<n>`** is the whole seconds the keeper waits after the line, the `-IntervalSeconds`
-  floor included.
+- **`seconds=<n>`** is the whole seconds the host's hold-off has left when the line is written, the
+  `-IntervalSeconds` floor included. With only the box, it is the whole seconds the keeper waits
+  after the line, as in v0.06.
+- **`host=<project>`** is written on a `backoff` or `grace` line for a host that is not the box,
+  and never for the box, whose lines read exactly as v0.06's (architect, 2026-11-20, for
+  v0.07-T01; [A pass's line](#a-passs-line)). The keeper's
+  `another keeper is running` and `failed` lines concern no host and never carry it.
 - **`pid=<n>`** is the running keeper's PID as its lock file gives it, or `-`
   ([Locks](#locks)).
 - **A keeper's `failed` line** has the pass line's grammar and reason rules, with `-` in every
@@ -1220,6 +1529,7 @@ and so MUST a holder left running because its record could not be written.
 | Where | Reason |
 |---|---|
 | The lease state cannot be read | `Lease state could not be read: <error>` |
+| The host registry cannot be read | `Host registry could not be read: <error>`, where `<error>` says why, `the host registry is not valid` for a file [state.md](state.md#the-host-registry) calls not valid, one without exactly one `agentbox` record whose project is `swimcoach` included ([Hosts](#hosts)) |
 | An error a pass does not handle, the matcher's self-check included | `The pass stopped on an error: <error>`; for the matcher, `<error>` is `The holder command matcher failed its own checks: <case>; <case>` |
 | `board-holder.lock` is held | `locked` |
 | A start | `The holder could not be started: <reason>`, where `<reason>` is from [Before the start](#before-the-start) or [The handshake](#the-handshake) |
@@ -1232,18 +1542,29 @@ and so MUST a holder left running because its record could not be written.
 
 ### The holder's log
 
-**`board-holder-ssh.log` holds the holder's stdout and stderr, appended**; its bytes are
-[docs/state.md](state.md#the-keepers-files)'s. Nothing parses it, and nothing but the holder writes
-to it.
+**`board-holder-ssh.log` holds the box's holder's stdout and stderr, appended**; its bytes are
+[docs/state.md](state.md#the-keepers-files)'s. **Another host's holder writes
+`board-holder-ssh.<project>.log`** instead, in the same bytes
+([state.md, Another host's holder](state.md#another-hosts-holder)). Nothing parses either, and
+nothing but a holder on that host writes to it. Every rule below holds for each host's log on its
+own.
 
 **Rotation:**
 - **At the start of every pass that holds `board-holder.lock`**, before the lease state is read,
   a `board-holder-ssh.log` larger than 1 MiB (1,048,576 bytes) is renamed to
   `board-holder-ssh.log.1`, replacing any older one, and the pass logs
   `<time> rotated lease=- alias=- pid=-`.
+- **Then each other host's log is rotated the same way**: every `board-holder-ssh.<project>.log`
+  in the state folder whose `<project>` is a normalized project and not the box's, matched as
+  [The hosts of a pass](#the-hosts-of-a-pass) matches a record's name, in the ordinal order of the
+  projects. One larger than 1 MiB is renamed to `board-holder-ssh.<project>.log.1`, and the pass
+  logs `<time> rotated lease=- alias=- pid=- host=<project>`. The pass finds these logs by listing
+  the state folder, since the registry is not read yet and each log is named by its project
+  (D55; [state.md, Another host's holder](state.md#another-hosts-holder)); a listing that fails
+  rotates no other host's log, and is not logged.
 - **A failure to rotate, or to log the rotation, MUST NOT stop the pass**, and is not logged.
 - **A holder that has the file open keeps writing to it under its new name**, since it opened the
-  file shared for deleting. The next holder opens a new `board-holder-ssh.log`.
+  file shared for deleting. The next holder on that host opens a new log.
 - **So only the named file is bounded.** A single long-lived holder that writes more than 1 MiB
   keeps writing to `board-holder-ssh.log.1`, or to a file that a later rotation replaced, until it
   exits. A holder run with `-N` writes little.
@@ -1573,8 +1894,8 @@ arguments are bound by PowerShell, so an unknown argument there is PowerShell's 
    repeating trigger starts a keeper again within a minute. A later real install enables a disabled
    task again and starts it.
 
-**The holder keeps running throughout**, unsupervised. It holds the board until it dies or a keeper
-stops it.
+**Every host's holder keeps running throughout**, unsupervised. Each holds the board on its host
+until it dies or a keeper stops it.
 
 **An orphaned keeper**, left by step 1 without step 2, keeps the board held, and the task's next
 firing starts a second keeper that logs one `another keeper is running pid=<n>` line and exits. That
@@ -1582,12 +1903,24 @@ is one line a minute, about 90 KB of `board-holder.log` a day, until the orphan 
 accepted (D30): End is a step taken on purpose.
 
 **To start it again:** start the task (`Start-ScheduledTask`), or wait for the repeating trigger,
-or log on. The new keeper's first pass adopts the recorded holder (`kept`), with no new holder and
-no new login on the box, when the holder is still trusted.
+or log on. The new keeper's first pass adopts each host's recorded holder (`kept`), with no new
+holder and no new login on that host, when the holder is still trusted.
 
 **To load new keeper code**, the keeper MUST be stopped and started again: a running keeper read
 its program once, when it started, and a merge does not reach it. A re-registration (a real
 install) is refused while a keeper runs, so it, too, comes after the keeper is stopped.
+
+**A v0.07 keeper started while v0.06's box holder runs MUST adopt that holder, with no restart**
+(the card's done-when; D55, "The box's own files"). Nothing about the box's holder moved:
+- **The box's record is still `board-holder.json`, in v0.06's form, and its log still
+  `board-holder-ssh.log`.** A v0.07 keeper reads that record as the box's, with v0.06's trust
+  rules, so a holder v0.06 started passes them when both keepers run with the same `-SshExe`.
+- **The holder's lease is a swimcoach lease, on the box**: with the registry missing, or with
+  swimcoach's record the box's, as D43 and D45 leave it
+  ([Which host a lease is on](#which-host-a-lease-is-on)).
+- **So the first pass logs `kept ... host=swimcoach`** and adopts it, with no new holder and no new
+  login on the box, and writes nothing to the record. An upgrade MUST NOT move, rename or rewrite a
+  file of the box's holder.
 
 **Before a re-install, the task SHOULD be disabled as well, or the install run within the minute.**
 A keeper started by the repeating trigger between the installer's check and its registration
@@ -1599,8 +1932,15 @@ keeps running the old program, and the new task's keeper finds the keeper lock h
 **A conformance check of the keeper drives it only as a separate process (D34)**, through what this
 page documents:
 - **It MUST set `AGENTSPACE_STATE_DIR` to a throwaway folder**, writes its own `leases.json` there
-  ([docs/state.md](state.md#the-lease-state-file)), and reads `board-holder.log`, the record and
+  ([docs/state.md](state.md#the-lease-state-file)), and reads `board-holder.log`, the records and
   the processes the keeper starts.
+- **It MUST set `USERPROFILE` to a throwaway folder as well**, since the host registry is found
+  through it ([Hosts](#hosts)), and either writes its own `hosts.json` where
+  [state.md](state.md#the-host-registry) places it under that folder, or writes none to have the box
+  alone. A check that left `USERPROFILE` as it is would read the user's real registry. The
+  conformance harness already moves it (conformance.md, The harness).
+- **It gives each host its own leases by their `project`**, and a lease of a project with no
+  `ready` record is on the box, so a check that writes no registry needs no change from v0.06.
 - **It stubs ssh with `-SshExe`**, naming a `.cmd` that prints a line and stays alive until it is
   stopped, connecting nowhere and touching no file. A stub receives the holder's arguments on its
   own command line, which is how a check finds it, and does not receive the keeper's environment
@@ -1614,9 +1954,14 @@ page documents:
   all three. They are part of the contract ([Starting a holder](#starting-a-holder)).
 - **It MAY see the holder's environment through its stub**, which can write it to
   `board-holder-ssh.log`, to show that a variable set only for the keeper does not reach the
-  holder ([Streams and environment](#streams-and-environment)).
+  holder ([Streams and environment](#streams-and-environment)). A stub MUST NOT print the
+  environment's values to anything but that log, and a check reads the variables it names only
+  (AGENTS.md, "Terry's real files in a review").
+- **It MAY tell the box's holder from another host's by the alias on the stub's command line**, and
+  MAY make one host's stub exit at once and another's stay alive by that alias, so one stub stands
+  in for every host.
 - **It MUST NOT call the hidden `-Launch`**, and MUST NOT run the installer for real, touch the real
-  task, or touch the user's real state folder or `~/.ssh`.
+  task, or touch the user's real state folder, real `hosts.json` or `~/.ssh`.
 - **It MUST stop every stub holder it started**, by its checked PID.
 
 > **Note.** The prototype's suite uses `scripts/test-board-holder-stub.cmd` as its stub.
@@ -1639,6 +1984,38 @@ look and its pass's trust check gets the grace before the next start, with no st
 ([Release grace](#release-grace)). It is `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`
 ([docs/conformance.md](conformance.md#the-files-that-are-expected-to-fail)), which settles
 [Q9](#open-questions).
+
+### Conformance cases for a host per project
+
+**Each behavior below is one that a stand-in can show, and MUST be a conformance case of the
+keeper, written by E0.07-T04-S03** (D53, D55). Each runs with a throwaway `USERPROFILE` and state
+folder, a stub `-SshExe`, and a registry the case writes, or none. `<p>` is a project the case
+names, such as `agentspace`, with a `ready` record of its own. No case needs a real host: a
+holder's connection is a stub's.
+
+| # | The case | It shows |
+|---|---|---|
+| H1 | Every v0.06 case of the keeper, run twice: once with no registry, and once with a registry that holds the box's record alone, `{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}` | Each time, the box alone behaves as v0.06's keeper did, line for line, but for ` host=swimcoach` on the box's lines that name a holder ([Log lines](#log-lines)) |
+| H2 | No registry; a ready lease of any project; one-pass run | The holder is the box's: `board-holder.json` is written, the request's `log` is `board-holder-ssh.log`, and no `board-holder.<project>.json` appears ([Hosts](#hosts)) |
+| H3 | Registry with the box and `<p>`, both `ready`; a ready swimcoach lease and a ready `<p>` lease; one-pass run | One pass starts two holders, the box's first: two `started` lines, `host=swimcoach` then `host=<p>`; records `board-holder.json` and `board-holder.<p>.json`; each launch request's `log` is its host's; and the two starts' launch files never exist at the same time: the second start's request appears only after the first start's three files are gone ([The order of a pass](#the-order-of-a-pass), [Timings of a start](#timings-of-a-start)) |
+| H4 | Two ready leases on each of two hosts, with differing and with equal `expires_at` | Each host's holder goes through that host's latest-expiring lease, ties to the lowest ID, and never through the other host's ([Which lease](#which-lease)) |
+| H5 | A ready `<p>` lease, `<p>`'s record `creating`, then `failed`, then absent | The lease is on the box each time: the box's holder goes through it, and no `board-holder.<p>.json` is written ([Which host a lease is on](#which-host-a-lease-is-on)) |
+| H6 | A hand-edit safeguard: `<p>`'s holder running and recorded; its record in the registry rewritten to `creating` by the case, as a person's edit would (nothing in agentspace does, D48) | The next pass stops it: `stopped ... host=<p>`, `board-holder.<p>.json` removed, the stub's PID gone; a box holder running beside it is kept in the same pass ([Stopping a holder](#stopping-a-holder)) |
+| H7 | A running stub recorded in `board-holder.<q>.json` for a project `<q>` with no record in the registry | The pass gives `<q>` a turn and stops that holder ([The hosts of a pass](#the-hosts-of-a-pass)) |
+| H8 | A `board-holder.swimcoach.json` naming a running stub | The keeper never reads, removes or stops it, and the box's turn uses `board-holder.json` alone |
+| H9 | Keeper; `<p>`'s stub exits at once, the box's stays alive | `<p>`'s `failed ... host=<p>` lines with `backoff seconds=<n> host=<p>` growing per `<p>`'s count, while the box's holder is kept in a pass every `-IntervalSeconds`; no box line waits on `<p>`'s backoff ([Watching](#watching)) |
+| H10 | Keeper; `<p>`'s holder stopped (its lease released) while the box's lease stays ready | `grace seconds=<n> host=<p>`; passes go on every `-IntervalSeconds` with the box's `kept`; no start on `<p>` until its grace has run, then a start at the first pass after it if a `<p>` lease is ready ([The keeper's wait](#the-keepers-wait)) |
+| H11 | Keeper tracking holders on two hosts; one host's record removed between look and pass, as #0068's check does | `lost ... host=<that host>` and its grace, with the other host's holder kept in the same pass ([Release grace](#release-grace)) |
+| H12 | Each in turn: a registry that is not JSON, one that fails its schema, one in which two records share a project, one with no `agentbox` record, one whose `agentbox` record's project is not `swimcoach`, and a folder in its place; holders running on two hosts | One `failed lease=- alias=- pid=- reason=Host registry could not be read:` line, exit 1, both holders running and both records unchanged ([Hosts](#hosts)) |
+| H13 | A registry the case holds `hosts.lock` on, then releases | Passes run while the lock is held; the registry's bytes and time stamps and `hosts.lock` are never written, and a missing `hosts.lock` is never created ([Locks](#locks)) |
+| H14 | `board-holder-ssh.<p>.log` over 1 MiB | It is renamed to `.log.1`, and `rotated lease=- alias=- pid=- host=<p>` is logged after any box `rotated` line ([The holder's log](#the-holders-log)) |
+| H15 | Upgrade: a running stub recorded in v0.06's form in `board-holder.json`, through a ready lease, with no registry; a keeper started | Its first pass logs `kept ... host=swimcoach` and adopts the holder: no new start, no launch files, the record unchanged ([Stopping and starting the keeper](#stopping-and-starting-the-keeper)) |
+| H16 | A record of `<p>` that cannot be removed (the case holds it open with no sharing) after it fails to be trusted, beside a holder on a host `<r>` whose project comes after `<p>`'s | `<p>`'s turn ends with its `failed lease=- alias=- pid=- host=<p> reason=The pass stopped on an error: The record could not be removed:` line, `<r>`'s turn still runs and keeps its holder, and the one-pass run exits 1 ([The order of a pass](#the-order-of-a-pass)) |
+| H17 | A registry with the box and `<p>`, both `ready`; no lease, no holder record and no holder log for any host; one-pass run, then a keeper's passes | Each pass logs exactly one line, the box's `idle lease=- alias=- pid=-`, with no `host=` and no line for `<p>` ([Idle](#idle), [The hosts of a pass](#the-hosts-of-a-pass)) |
+| H18 | `AGENTSPACE_STATE_DIR` set to a folder other than `<USERPROFILE>\.agentspace`; a `hosts.json` in the state folder that is not JSON, and a valid registry with the box and `<p>`, both `ready`, in `<USERPROFILE>\.agentspace`; a ready `<p>` lease; one-pass run | The pass reads the registry from `<USERPROFILE>\.agentspace` and never from the state folder: no `Host registry could not be read` line, and a `started ... host=<p>` line ([Hosts](#hosts)) |
+
+**The rest of v0.07's done-when for the keeper is live** (D53): that the keeper holds the board on
+agentspace's own host, which no stand-in can show.
 
 ## Requirements the prototype does not meet yet
 
@@ -1678,7 +2055,7 @@ those blocks building a drop-in of contract v0.
 | | Question | Settled by |
 |---|---|---|
 | **Q1** | **Later, not blocking:** **Is a keeper for a laptop that is not Windows in scope?** Everything here is Windows: Job Objects, WMI, Task Scheduler, `cmd.exe`. D4 makes the host's platform a parameter, but says nothing of the laptop's. | Contract v0's caller runs on Windows (D8; [lease-api.md](lease-api.md#the-program)), and this page specifies a Windows keeper in full, so a drop-in has nothing to guess. Later: the architect, with the lease CLI's Linux and macOS callers |
-| **Q2** | **Later, not blocking:** **One holder per host, or one in all?** D30 says one per host; today every lease is on one host, so the keeper runs one in all and picks across every ready lease. With a host per project (v0.07, #0047), the choice, the record (one holder today) and the locks need a per-host form. | Every lease is on one host until v0.07, so one in all is one per host, and this page states it ([What the keeper does](#what-the-keeper-does)). Later: v0.07 (#0047) |
+| **Q2** | **Closed by E0.07-T01-S04 (#0144; D30, D50, D55).** ~~One holder per host, or one in all?~~ One per host. Each pass groups the ready leases by their host ([Which host a lease is on](#which-host-a-lease-is-on)) and, for each host, keeps or starts one holder through that host's latest-expiring ready lease, ties to the lowest ID. The box keeps v0.06's record and log; another host has its own, named by its project ([Hosts](#hosts)). The two locks, the keeper's log and the launch files stay one for every host (architect, 2026-11-20, for v0.07-T01). Backoff and release grace are per host ([Watching](#watching)). | Closed |
 | **Q3** | **Closed by D37 (architect, 2026-11-18).** ~~What is the rewrite's keeper entry point called, and does it keep PowerShell-style arguments (`-Watch`, `-SshExe`)?~~ It is `agentspace-keeper.exe`, a console program in the install folder, and its usage lines and messages name it `agentspace-keeper` ([Command line](#command-line); [operator.md, Programs and install layout](operator.md#programs-and-install-layout)). It keeps the single-dash arguments this page gives ([operator.md, Argument style](operator.md#argument-style)). | Closed |
 | **Q4** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-26, B-41): the holder, and the launcher that creates it, MUST run with the user's logon environment, never with the keeper's**, and a variable set only for the keeper MUST NOT reach the holder or its ProxyCommand ([Streams and environment](#streams-and-environment)). The prototype meets it: its launcher is created by WMI. | Closed |
 | **Q5** | **Closed (E0.04-T05-S04, 2026-11-18; D35; A-07, B-37, A-26): the launch request, claim and result files are part of contract v0.** Every start MUST go through the handshake with them; which program the launcher is, and how it is told the request's path, are the build's ([Starting a holder](#starting-a-holder)). Whether a compiled keeper could break away from the task's job directly is still unobserved, and a later contract MAY drop the files once a run on the laptop shows another mechanism meets the start's guarantees. | Closed |
@@ -1695,6 +2072,8 @@ those blocks building a drop-in of contract v0.
 | **Q16** | **Later, not blocking:** **Should a record whose process runs but cannot be opened to query it be kept, rather than removed?** Today it is removed and the process left running, which orphans a live holder; a stop in the same case keeps the record. | This page states the rule to build, that it is removed and the process left alone ([Trusting the record](#trusting-the-record)). The holder's own user can always open it, so the case needs a holder started with other rights. Later: the architect; a run on the laptop |
 | **Q17** | **Closed (E0.04-T05-S04, 2026-11-18; D35; B-40, A-25).** The launcher's deadline is a UTC time. Every other duration is measured on one clock that local time never moves, the UTC clock or a monotonic one, which SHOULD count the time the laptop sleeps. A wait that spans a sleep MAY end at once on waking or run on, a step of the UTC clock MAY end one measured on it early or late, and a check MUST NOT depend on either ([Times](#times)). | Closed |
 | **Q18** | **Later, not blocking:** **What does logoff do to the keeper and to a holder created outside the keeper's job?** Both run as the user in the user's session, so logoff would end them; the box's session then waits out sshd's bound. Unobserved. | Nothing on this page depends on it: the next logon's trigger starts a keeper, which finds the record untrusted if the holder is gone and starts one ([The installed task](#the-installed-task)). Later: a run on the laptop |
-| **Q19** | **Later, not blocking:** **Where does a keeper get the release grace for a host other than today's box?** The default is today's box's bound. With hosts of other platforms (D4) or keepalive settings, it is a property of the host, which the lease or its driver would have to give. | Every lease is on today's box until v0.07, and `-ReleaseGraceSeconds` sets the grace for any other ([Release grace](#release-grace)). Later: the architect, with v0.07 (#0047) |
+| **Q19** | **Closed for v0.07 by E0.07-T01-S04 (#0144; D44, D46).** ~~Where does a keeper get the release grace for a host other than today's box?~~ Every host is made from the one template and gets `box/system`, and with it the box's sshd keepalive settings, from `sync` (D44, D46), so the box's grace is every host's, and `-ReleaseGraceSeconds` sets one grace for all ([Release grace](#release-grace)). A host of another platform (D4) or with other keepalive settings would need a grace of its own, which the lease or its driver would have to give; nothing in v0.07 makes one. | Closed for v0.07. Later, with a host of other settings: the architect |
 | **Q20** | **Later, not blocking:** **Does a holder's ProxyCommand end when the holder ends by itself?** A stop ends the holder's tree; a holder that dies or is killed by something else leaves its children untraceable by parent, and the keeper never looks for them. | This page states the rule to build, that the keeper never looks for them ([Stopping a holder](#stopping-a-holder)), and what the ProxyCommand does is [operator.md](operator.md#the-proxycommand)'s. Later: a run on the laptop |
 | **Q21** | **Later, not blocking:** **Should `-Uninstall` wait for the launcher to exit before it deletes the exe?** It can fail on a launcher still exiting ([The installer](#the-installer)). Unobserved. | The installer's `-Uninstall` is stated as it is, and running it again removes the exe. Whether a compiled keeper keeps a launcher at all goes with the installer ([Q8](#open-questions)); where it keeps none, this concerns only a launcher that a prototype install left behind. Later: the architect; a run on the laptop |
+| **Q22** | **OBE, overcome by D48's ready-host ruling (architect, 2026-11-20, for v0.07-T01).** ~~Should the box leave out a ready lease of another project whose host is not `ready`?~~ The case needed a host whose record leaves `ready` while one of its leases is ready, and D48 now says a provisioning run never takes a `ready` host out of `ready`, and nothing in agentspace moves a record out of `ready` or removes one ([state.md, Its states](state.md#its-states)). A lease is made `ready` only on a host that is `ready`, so only a person's edit or removal of `hosts.json` can put such a lease on the box, and the keeper's stop of that host's holder is a safeguard for that edit ([The order of a pass](#the-order-of-a-pass)). [Which host a lease is on](#which-host-a-lease-is-on) follows D55's last row exactly, as the ProxyCommand does. | OBE: D48 |
+| **Q23** | **Later, not blocking:** **Should a keeper pass sooner, while every host it knows is in a hold-off, so that a lease newly ready on another host gets its first holder at once?** [The keeper's wait](#the-keepers-wait) waits until the first hold-off ends, at most the grace or `-BackoffMaxSeconds`, as v0.06's keeper did for any lease while the box waited out a grace or a backoff (architect, 2026-11-20, for v0.07-T01). | Passing at `-IntervalSeconds` through a hold-off would add passes, and lines, that v0.06's keeper never made with only the box, which the card's done-when keeps as it was. The delay is bounded, and comes only while the box is in a hold-off too. **A candidate that keeps that parity, from the review:** during a wait in which every one of the keeper's hosts is in a hold-off, the keeper re-reads `leases.json` and `hosts.json` every `-IntervalSeconds`, without a lock and logging nothing, and ends the wait early only for a ready lease on a host that was not in its last pass. Later: the architect |
