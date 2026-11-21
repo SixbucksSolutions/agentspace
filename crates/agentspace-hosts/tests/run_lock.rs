@@ -48,8 +48,12 @@ fn a_second_try_while_it_is_held_finds_it_held_without_waiting() {
 fn dropping_the_lock_frees_it() {
     let t = TempHome::new();
     drop(try_run_lock(t.path(), PROJECT).unwrap().unwrap());
-    let again = try_run_lock(t.path(), PROJECT).unwrap();
-    assert!(again.is_some(), "A dropped lock is free again");
+    assert!(
+        free_within(FREE_WITHIN, || try_run_lock(t.path(), PROJECT)
+            .unwrap()
+            .is_some()),
+        "A dropped lock is free again"
+    );
 }
 
 #[test]
@@ -60,7 +64,12 @@ fn the_lock_is_held_for_as_long_as_the_value_lives() {
         assert!(try_run_lock(t.path(), PROJECT).unwrap().is_none());
     }
     drop(lock);
-    assert!(try_run_lock(t.path(), PROJECT).unwrap().is_some());
+    assert!(
+        free_within(FREE_WITHIN, || try_run_lock(t.path(), PROJECT)
+            .unwrap()
+            .is_some()),
+        "A dropped lock is free again"
+    );
 }
 
 #[test]
@@ -129,7 +138,10 @@ fn a_run_is_running_exactly_while_its_lock_is_held() {
     let lock = try_run_lock(t.path(), PROJECT).unwrap().unwrap();
     assert!(run_is_running(t.path(), PROJECT).unwrap());
     drop(lock);
-    assert!(!run_is_running(t.path(), PROJECT).unwrap());
+    assert!(
+        free_within(FREE_WITHIN, || !run_is_running(t.path(), PROJECT).unwrap()),
+        "No run is running once its lock is dropped"
+    );
 }
 
 #[test]
@@ -138,10 +150,14 @@ fn asking_whether_a_run_is_running_does_not_keep_the_lock() {
     let t = TempHome::new();
     drop(try_run_lock(t.path(), PROJECT).unwrap().unwrap());
     for _ in 0..3 {
-        assert!(!run_is_running(t.path(), PROJECT).unwrap());
-        let lock = try_run_lock(t.path(), PROJECT).unwrap();
         assert!(
-            lock.is_some(),
+            free_within(FREE_WITHIN, || !run_is_running(t.path(), PROJECT).unwrap()),
+            "No run is running while nobody holds the lock"
+        );
+        assert!(
+            free_within(FREE_WITHIN, || try_run_lock(t.path(), PROJECT)
+                .unwrap()
+                .is_some()),
             "run_is_running must not leave the lock held"
         );
     }
@@ -232,8 +248,12 @@ fn another_thread_finds_it_held_and_then_free() {
     assert_eq!(h.join().unwrap(), (true, true));
     drop(lock);
     let home = t.path().to_path_buf();
-    let h = std::thread::spawn(move || try_run_lock(&home, PROJECT).unwrap().is_some());
-    assert!(h.join().unwrap());
+    let h = std::thread::spawn(move || {
+        free_within(FREE_WITHIN, || {
+            try_run_lock(&home, PROJECT).unwrap().is_some()
+        })
+    });
+    assert!(h.join().unwrap(), "A dropped lock is free again");
 }
 
 // --- Across processes -------------------------------------------------------------------------
@@ -250,14 +270,19 @@ fn a_helper_process_that_holds_the_lock_makes_us_find_it_held() {
     assert!(run_is_running(t.path(), PROJECT).unwrap());
     assert_eq!(helper.wait_exit(Duration::from_secs(30)), Some(0));
     assert!(
-        wait_until(Duration::from_secs(10), || !run_is_running(
+        free_within(Duration::from_secs(10), || !run_is_running(
             t.path(),
             PROJECT
         )
         .unwrap()),
         "The lock must be free once the holder has exited"
     );
-    assert!(try_run_lock(t.path(), PROJECT).unwrap().is_some());
+    assert!(
+        free_within(FREE_WITHIN, || try_run_lock(t.path(), PROJECT)
+            .unwrap()
+            .is_some()),
+        "The lock must be free once the holder has exited"
+    );
 }
 
 #[test]
@@ -268,13 +293,16 @@ fn a_helper_process_finds_the_lock_we_hold_busy() {
     assert_eq!(helper.next_line(Duration::from_secs(30)), "busy");
     assert_eq!(helper.wait_exit(Duration::from_secs(30)), Some(0));
     drop(lock);
-    let mut helper = Helper::start(t.path(), PROJECT, 0);
-    assert_eq!(
-        helper.next_line(Duration::from_secs(30)),
-        "held",
+    // A helper makes one try, so a "busy" right after the drop is retried with a fresh helper.
+    assert!(
+        free_within(FREE_WITHIN, || {
+            let mut helper = Helper::start(t.path(), PROJECT, 0);
+            let line = helper.next_line(Duration::from_secs(30));
+            assert_eq!(helper.wait_exit(Duration::from_secs(30)), Some(0));
+            line == "held"
+        }),
         "Once we let go, the other process gets it"
     );
-    assert_eq!(helper.wait_exit(Duration::from_secs(30)), Some(0));
 }
 
 #[test]
@@ -307,7 +335,7 @@ fn a_killed_holder_leaves_the_lock_free() {
     assert!(try_run_lock(t.path(), PROJECT).unwrap().is_none());
     helper.kill();
     assert!(
-        wait_until(Duration::from_secs(15), || {
+        free_within(Duration::from_secs(15), || {
             try_run_lock(t.path(), PROJECT)
                 .map(|l| l.is_some())
                 .unwrap_or(false)
@@ -334,20 +362,11 @@ fn a_program_the_holder_starts_does_not_keep_the_lock() {
     // exec closes it, so one try right after the drop can find the lock held although nothing
     // inherited it. The helper lives 4 seconds, so a handle it inherited is still held after the
     // 2 seconds polled here, and real inheritance is still caught.
-    let again = {
-        let started = std::time::Instant::now();
-        loop {
-            match try_run_lock(t.path(), PROJECT).unwrap() {
-                Some(lock) => break Some(lock),
-                None if started.elapsed() >= Duration::from_secs(2) => break None,
-                None => std::thread::sleep(Duration::from_millis(20)),
-            }
-        }
-    };
     assert!(
-        again.is_some(),
+        free_within(FREE_WITHIN, || try_run_lock(t.path(), PROJECT)
+            .unwrap()
+            .is_some()),
         "The lock stayed held by the program its holder started: its handle was inherited"
     );
-    drop(again);
     other.kill();
 }

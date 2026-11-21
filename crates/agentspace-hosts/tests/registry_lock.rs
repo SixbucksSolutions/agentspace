@@ -3,7 +3,7 @@
 
 mod common;
 
-use agentspace_hosts::{lock, read};
+use agentspace_hosts::{lock, read, try_lock};
 use common::*;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -179,12 +179,11 @@ fn the_locks_handle_is_not_inherited_by_a_program_started_while_it_is_held() {
     let mut helper = Helper::start(t.path(), "other-project", 4000);
     assert_eq!(helper.next_line(Duration::from_secs(20)), "held");
     drop(guard);
-    let started = Instant::now();
-    let again = lock(t.path()).expect("The lock must be free once its holder drops it");
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        free_within(FREE_WITHIN, || try_lock(t.path())
+            .expect("The lock must be takeable once its holder drops it")
+            .is_some()),
         "The lock stayed held by the program the holder started: its handle was inherited"
     );
-    drop(again);
     helper.kill();
 }

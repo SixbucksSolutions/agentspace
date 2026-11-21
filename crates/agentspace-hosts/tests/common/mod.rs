@@ -322,6 +322,32 @@ impl Drop for Helper {
     }
 }
 
+/// Calls `take` every 20 ms until it returns true or `deadline` has passed, and says whether it
+/// did. A test MUST use it, rather than a single try, for a take that expects a lock to be free
+/// again right after its holder dropped it, exited or was killed.
+///
+/// Why (architect, 2026-11-20, for v0.07-T02): on Linux, a fork made by a test running in
+/// parallel holds a duplicate of a lock's descriptor until that child's exec closes it, so one try
+/// right after a drop can find the lock held although the code (O_CLOEXEC) is right. A lock that
+/// a program the holder started inherited is held for that program's whole life, so a deadline
+/// shorter than that program's life still catches it. A check that a lock IS held MUST stay a
+/// single immediate try, and does not use this.
+pub fn free_within(deadline: Duration, mut take: impl FnMut() -> bool) -> bool {
+    let started = Instant::now();
+    loop {
+        if take() {
+            return true;
+        }
+        if started.elapsed() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// How long a take is retried by default: see [`free_within`].
+pub const FREE_WITHIN: Duration = Duration::from_secs(2);
+
 /// Polls `condition` until it holds or `timeout` passes, and says whether it held.
 pub fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
