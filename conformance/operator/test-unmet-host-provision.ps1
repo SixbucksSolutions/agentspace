@@ -16,7 +16,10 @@
 # localswim receipt and Bot credential. A stand-in `aws`, `ssh`, `scp` and `go` (conformance/operator/
 # host-provision-common.ps1) log each call with its arguments, snapshot hosts.json at the moment of the
 # call, record the ssh's standard input, and answer from a scenario. `go` is found through a PATH of
-# the check's own, so no case reaches the real `go` or a real localswim checkout. The cases check the
+# the check's own, so no case starts the real `go`. sync's step 7 builds only when C:\Projects\localswim
+# exists (operator.md, sync, step 7), and the `go` stand-in runs with that folder as its working folder, so a
+# case that shows the build MUST report SKIPPED, naming the folder, when the folder is absent. That is one
+# Test-Path -PathType Container on it; no case lists, reads or writes anything in it. The cases check the
 # calls in order, the record at each of them, the log, the streams, the exit code, provision.lock held
 # for the whole run, and the operator's folder.
 #
@@ -75,7 +78,7 @@ function Add-AliasProblems($Problems, $Calls, [string]$Want) {
 }
 
 # ---- 1. A new host's first run --------------------------------------------------------------------
-Invoke-HpInHome -Name "${sec}: a new host's first run" -Body {
+Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
   param($h, $s)
   Initialize-HpHome -H $h
   New-HpFakeLocalswim -H $h | Out-Null
@@ -259,7 +262,7 @@ Invoke-HpInHome -Name "${sec}: -Quiet" -Body {
 }
 
 # ---- 2. provision -Host swimcoach ---------------------------------------------------------------------
-Invoke-HpInHome -Name "${sec}: provision -Host swimcoach" -Body {
+Invoke-HpInHome -Name "${sec}: provision -Host swimcoach" -NeedsLocalswim -Body {
   param($h, $s)
   # The project list is not valid: it is read only for a project with no record, so it never fails the box's run.
   Initialize-HpHome -H $h -ProjectsText 'this is not json {'

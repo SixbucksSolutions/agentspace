@@ -26,6 +26,11 @@
 #     _IN_PROGRESS and any other status, each failing with operator.md's message before any
 #     `cloudformation deploy`, recording `failed` for a host that was never ready and leaving a ready
 #     host ready, the message in the log.
+#   - A stack in REVIEW_IN_PROGRESS, which takes the create path: the existence check, then
+#     cloudformation deploy with the creation parameters (the deploy then fails, so the run ends there).
+#   - The 24-hour sweep: provision, as it makes its own operator\<hex>\ folder, removes a 32-hex folder
+#     created more than 24 hours ago and leaves a younger one and a folder of another name, with the
+#     folders' creation times set by the case.
 #
 # SAFETY. See test-unmet-host-provision.ps1: the harness's isolation, the AWS gate, stand-ins for
 # `aws`, `ssh`, `scp` and `go`, made-up instance IDs. A failure reason never quotes the program's output.
@@ -48,7 +53,9 @@ $syncCalls = @('ssh:sync', 'scp', 'scp', 'ssh:sync')
 # One case: $C holds N (the name), Seed (none, creating or ready), Aws (overrides of the AWS answers),
 # Rules (ssh and scp rules), Seq (the calls, in order), Shape (the log's lines), Msg (the step's failure
 # message without its prefix), Id (the instance ID the final record holds, or empty) and Has (a line
-# of stderr that the stand-in program wrote, which MUST pass through).
+# of stderr that the stand-in program wrote, which MUST pass through) and, optionally, Extra (a
+# scriptblock taking the calls, the home and the problems list, which adds its own problems to the
+# calls result).
 function Test-FailedStep($C) {
   Invoke-HpInHome -Name "${sec}: $($C.N)" -Body {
     param($h, $s)
@@ -82,6 +89,7 @@ function Test-FailedStep($C) {
     $got = Get-HpSequence $calls
     $p = New-HpProblems
     if (($got -join ',') -cne ($C.Seq -join ',')) { $p.Add("The calls are not the steps up to the failure and nothing after it ($($got.Count) calls, not $($C.Seq.Count))") }
+    if ($C.Extra) { & $C.Extra $calls $h $p }
     Write-HpProblems "${sec}: $($C.N): the calls stop at the failed step, nothing after it runs" $p
 
     $p = New-HpProblems
@@ -201,6 +209,79 @@ Test-FailedStep @{
   N = 'a stack in a status no update can start from (DELETE_FAILED), which names no delete command'; Seed = 'none'
   Aws = @{ 'cloudformation describe-stacks' = @((New-HpStack $stack 'DELETE_FAILED')) }
   Rules = @(); Seq = $one; Shape = 'run begun,deploy failed'; Msg = $otherStatus; Id = ''
+}
+
+# ---- A stack in REVIEW_IN_PROGRESS takes the create path --------------------------------------------------
+# The stack holds a change set and no resources (operator.md, deploy), so provision creates it: the one
+# existence check, then cloudformation deploy with the creation parameters. The deploy answers a failure
+# here so that the run ends at once, as the other cases of this file do; the check is on the deploy's
+# arguments, which a run that took the update path would not give.
+Test-FailedStep @{
+  N = 'a stack in REVIEW_IN_PROGRESS takes the create path: the existence check, then cloudformation deploy with the creation parameters'; Seed = 'none'
+  Aws = @{ 'cloudformation describe-stacks' = @((New-HpStack $stack 'REVIEW_IN_PROGRESS')); 'cloudformation deploy' = @((New-HpStep '' '' 255)) }
+  Rules = @(); Seq = @('aws cloudformation describe-stacks', 'aws cloudformation deploy'); Shape = 'run begun,deploy failed'; Msg = $deployFailed; Id = ''
+  Extra = {
+    param($calls, $h, $p)
+    $d = @($calls | Where-Object { (Get-HpCallName $_) -eq 'aws cloudformation deploy' }) | Select-Object -First 1
+    if (-not $d) { $p.Add('No cloudformation deploy was made'); return }
+    $a = @($d['a'])
+    $i = [Array]::IndexOf($a, '--parameter-overrides')
+    if ($i -lt 0) { $p.Add('The deploy of a stack in REVIEW_IN_PROGRESS passed no --parameter-overrides: it MUST take the creation parameters'); return }
+    $caPub = [IO.File]::ReadAllText((Join-Path $h.UserProfile '.agentspace\ca\agentspace_ca.pub')).Trim()
+    $caKey = ($caPub -split '\s+')[0..1] -join ' '
+    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', "HostName=$stack", "CaPublicKey=$caKey")
+    $got = @($a | Select-Object -Skip ($i + 1))
+    if (($got -join [char]0) -cne ($want -join [char]0)) { $p.Add('The overrides are not the creation parameters: SshPublicKey, SubnetId, VpcId, HostName and CaPublicKey, in that order, one argument each') }
+  }
+}
+
+# ---- The 24-hour sweep, by provision ------------------------------------------------------------------------
+# A command that makes its operator\<hex>\ folder first removes every folder there whose name is 32
+# lowercase hex digits and whose creation time is more than 24 hours before now (operator.md, "The
+# operator's folder, one per command"). provision makes its folder for the deploy step's template, so the
+# run ends at the deploy, which fails, and the check is on what the stand-in aws saw at that call and on
+# what is left. The folders' creation times are set by this case.
+Invoke-HpInHome -Name "operator.md#the-operators-folder-one-per-command: provision removes a 32-hex folder created more than 24 hours ago as it makes its own, and leaves a younger one, a folder of another name and a v0.06 operator's file" -Body {
+  param($h, $s)
+  Initialize-HpHome -H $h
+  $aws = Get-HpHostAws -Project 'agentspace' -Id $script:HpHostId
+  $aws['cloudformation deploy'] = @((New-HpStep '' '' 255))
+  Set-HpScenario -H $h -S $s -LockProject 'agentspace' -Scenario @{ aws = $aws; rules = @() }
+  $opDir = Join-Path $h.UserProfile '.agentspace\operator'
+  $hexOld = '0123456789abcdef0123456789abcdef'
+  $hexYoung = 'fedcba9876543210fedcba9876543210'
+  $upper = 'ABCDEF0123456789ABCDEF0123456789'
+  $now = [DateTime]::UtcNow
+  foreach ($spec in @(@($hexOld, $now.AddHours(-25)), @($hexYoung, $now.AddHours(-23)), @($upper, $now.AddHours(-48)), @('system', $now.AddHours(-72)))) {
+    $dir = Join-Path $opDir $spec[0]
+    New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $dir) | Out-Null
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $dir 'file.txt')), 'x')
+    [IO.Directory]::SetCreationTimeUtc((Assert-ConformancePath -ConformanceHome $h -Path $dir), $spec[1])
+  }
+  $v06 = Join-Path $opDir 'agentspace.yaml'
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $v06), 'a v0.06 file')
+  [IO.File]::SetCreationTimeUtc((Assert-ConformancePath -ConformanceHome $h -Path $v06), $now.AddHours(-72))
+
+  $r = Invoke-HpOperator -H $h -S $s -Arguments @('provision', '-Host', 'agentspace')
+  $calls = @(Get-HpCalls $s)
+  $deploy = @($calls | Where-Object { (Get-HpCallName $_) -eq 'aws cloudformation deploy' }) | Select-Object -First 1
+  $p = New-HpProblems
+  Add-HpRunProblems $p $r 1
+  if (-not $deploy) { $p.Add('No cloudformation deploy was made, so the run never made its folder') }
+  else {
+    $seen = @($deploy['opdirs'].Keys)
+    if ($seen -ccontains $hexOld) { $p.Add('A folder created 25 hours ago still existed when the run''s deploy was called: the sweep comes as the run makes its folder') }
+    if ($seen -cnotcontains $hexYoung) { $p.Add('A folder created 23 hours ago was removed') }
+    if (@($seen | Where-Object { $_ -cmatch '^[0-9a-f]{32}$' -and $_ -cne $hexYoung }).Count -ne 1) { $p.Add('The deploy did not see exactly one more 32-hex folder, the run''s own') }
+  }
+  $has = { param($n) Test-Path -LiteralPath (Join-Path $opDir $n) }
+  if (& $has $hexOld) { $p.Add('A folder created 25 hours ago was not removed') }
+  if (-not (& $has $hexYoung)) { $p.Add('A folder created 23 hours ago was removed by the end of the run') }
+  foreach ($n in $upper, 'system', 'agentspace.yaml') {
+    if (-not (& $has $n)) { $p.Add("'$n' was removed, though it is not a folder of 32 lowercase hex digits (anything else there is left)") }
+  }
+  if (@(Get-HpOperatorFolders $h).Count -ne 1) { $p.Add('The run''s own folder was left, or the younger folder was removed: one 32-hex folder MUST remain') }
+  Write-HpProblems "operator.md#the-operators-folder-one-per-command: provision removes a 32-hex folder created more than 24 hours ago as it makes its own, and leaves a younger one, a folder of another name and a v0.06 operator's file" $p
 }
 
 Exit-ConformanceRun

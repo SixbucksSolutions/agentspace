@@ -40,8 +40,9 @@
 #      `place failed reason=<message>` line, the warning `agentspace: The pending leases of '<project>' could
 #      not be placed: <reason>; the next run places them.`, the host left `ready`, exit 0.
 #
-# NOT SHOWN here, named for E0.07-T05-S01's live check and the driver crate's own tests: "one lease per hold
-# of the lease state lock". place_pending starts no program, so no stand-in is in play while it holds the
+# NOT SHOWN here: "one lease per hold of the lease state lock". operator.md's "Which checks show it" gives
+# it to the driver crate's test, tests\pending_place_pending.rs of agentspace-driver-ec2, in the row for
+# place_pending taking the lease state lock once per lease. place_pending starts no program, so no stand-in is in play while it holds the
 # lock, and a check from outside sees only the files it leaves. The cases above show what a hold per lease
 # gives (a failure costing one lease, a lease released between holds never placed).
 #

@@ -14,7 +14,10 @@
 # conformance/operator/host-provision-common.ps1: an `aws` that reports a running instance launched long
 # ago, an `ssh` that records its arguments and its standard input, an `scp` and a `go` that record
 # their arguments (and, for each local path, what it held at the moment of the call). `go` is found
-# through a PATH of the check's own, so no case reaches the real `go` or a real localswim checkout.
+# through a PATH of the check's own, so no case starts the real `go`. sync's step 7 builds only when
+# C:\Projects\localswim exists (operator.md, sync, step 7), and the `go` stand-in runs with that folder as its
+# working folder, so a case that shows the build MUST report SKIPPED, naming the folder, when the folder
+# is absent. That is one Test-Path -PathType Container on it; no case lists, reads or writes anything in it.
 #
 #   1. `bootstrap -Host <project>`: the one ssh's arguments (`-o ClearAllForwardings=yes <alias>
 #      <remote command>`, no BatchMode), the script's bytes on its stdin equal to the repository's
@@ -180,7 +183,7 @@ Invoke-HpInHome -Name "${bs}: the CA is checked first for a host that is not the
 
 # ---- 3. sync -Host <project> ----------------------------------------------------------------------------------------
 function Test-SyncCalls([string]$Name, [string[]]$Arguments, [string]$Alias, [string]$Id, [bool]$IsBox) {
-  Invoke-HpInHome -Name $Name -Body {
+  Invoke-HpInHome -Name $Name -NeedsLocalswim -Body {
     param($h, $s)
     Initialize-Setup $h $s
     New-HpClaudeMd $h

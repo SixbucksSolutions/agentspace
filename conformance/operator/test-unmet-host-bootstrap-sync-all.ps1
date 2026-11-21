@@ -12,7 +12,10 @@
 # order: the box (ready), alpha (ready), beta (creating, no instance ID), gamma (failed, with an instance
 # ID) and delta (ready); a CLAUDE.md; and the stand-ins of conformance/operator/host-provision-common.ps1.
 # The order is not alphabetical, so a build that sorts shows it. `go` is found through a PATH of the
-# check's own: a stand-in, or none, so no case reaches the real `go` or a real localswim checkout.
+# check's own: a stand-in, or none, so no case starts the real `go`. sync's step 7 builds only when
+# C:\Projects\localswim exists (operator.md, sync, step 7), and the `go` stand-in runs with that folder as its
+# working folder, so a case that shows the build MUST report SKIPPED, naming the folder, when the folder
+# is absent. That is one Test-Path -PathType Container on it; no case lists, reads or writes anything in it.
 #
 #   1. The order and the Host lines (`Host      <project> (<stack>), <state>`), the skips for a host
 #      that is not ready, every host's calls in one block and none for a skipped host, the closing
@@ -75,7 +78,7 @@ function Get-HostLineIndexes($Lines) { @($hostLines | ForEach-Object { [Array]::
 $allBlocks = @("id:$($script:HpBoxId)", 'alias:agentspace', "id:$($script:HpIdA)", "alias:$aliasAlpha", "id:$($script:HpHostId)", "alias:$aliasDelta")
 
 # ---- 1 and 2. A run that fails no host --------------------------------------------------------------------------
-Invoke-HpInHome -Name "${sec}: sync -All over five records" -Body {
+Invoke-HpInHome -Name "${sec}: sync -All over five records" -NeedsLocalswim -Body {
   param($h, $s)
   Initialize-AllHome $h $s
   $hostsBefore = Get-HpFileBytes (Get-HpHostsFile $h)
@@ -152,7 +155,7 @@ Invoke-HpInHome -Name "${sec}: sync -All with no go" -Body {
 }
 
 # ---- 3. A host that fails ends its part and the run goes on --------------------------------------------------------
-Invoke-HpInHome -Name "${sec}: a host that fails" -Body {
+Invoke-HpInHome -Name "${sec}: a host that fails" -NeedsLocalswim -Body {
   param($h, $s)
   Initialize-AllHome $h $s -Rules @(@{ kind = 'ssh'; class = 'sync'; alias = $aliasAlpha; nth = 2; code = 1 })
   $r = Invoke-HpOperator -H $h -S $s -Arguments @('sync', '-All') -WithGo
@@ -171,7 +174,7 @@ Invoke-HpInHome -Name "${sec}: a host that fails" -Body {
   Write-HpProblems "${sec}: a failure on one host ends that host's part and the command goes on to the next: the failure in its part, the last line agentspace: <n> of <m> hosts failed. with <m> the number of records, exit 1 (Every host at once; Exit codes)" $p
 }
 
-Invoke-HpInHome -Name "${sec}: a localswim build that fails" -Body {
+Invoke-HpInHome -Name "${sec}: a localswim build that fails" -NeedsLocalswim -Body {
   param($h, $s)
   Initialize-AllHome $h $s -Go @{ code = 1; err = "go build wrote this`n" }
   $r = Invoke-HpOperator -H $h -S $s -Arguments @('sync', '-All') -WithGo
@@ -192,7 +195,7 @@ Invoke-HpInHome -Name "${sec}: a localswim build that fails" -Body {
 }
 
 # ---- 4. The sign-in failure ends the command ------------------------------------------------------------------------
-Invoke-HpInHome -Name "${sec}: an expired sign-in" -Body {
+Invoke-HpInHome -Name "${sec}: an expired sign-in" -NeedsLocalswim -Body {
   param($h, $s)
   $signInErr = 'Unable to locate credentials. You can configure credentials by running "aws login".'
   Initialize-AllHome $h $s -Aws @{ 'ec2 describe-instances' = @((New-HpDescribe), (New-HpDescribe), (New-HpStep '' $signInErr 255)) }
@@ -210,7 +213,7 @@ Invoke-HpInHome -Name "${sec}: an expired sign-in" -Body {
 }
 
 # ---- 5. -Quiet, and a stopped host ---------------------------------------------------------------------------------
-Invoke-HpInHome -Name "${sec}: -Quiet" -Body {
+Invoke-HpInHome -Name "${sec}: -Quiet" -NeedsLocalswim -Body {
   param($h, $s)
   Initialize-AllHome $h $s
   $r = Invoke-HpOperator -H $h -S $s -Arguments @('sync', '-All', '-Quiet') -WithGo

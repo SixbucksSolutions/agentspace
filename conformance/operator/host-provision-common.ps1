@@ -342,8 +342,9 @@ function Read-HpLeases($H) {
 
 # ---- Running the operator ---------------------------------------------------------------------------
 # The environment of one run: the three seam variables, the zone, no ProxyCommand override unless the
-# case gives one, and a PATH that finds no `go` unless $WithGo (so a run never builds from a real
-# checkout), with only Windows' own folder on it.
+# case gives one, and a PATH that finds no `go` unless $WithGo (a run with $WithGo builds with the `go`
+# stand-in, and only when C:\Projects\localswim exists: see Invoke-HpInHome -NeedsLocalswim), with only
+# Windows' own folder on it.
 function Get-HpEnvironment {
   param([Parameter(Mandatory)]$S, [switch]$WithGo, [hashtable]$Extra = @{})
   $sys = Join-Path $env:SystemRoot 'System32'
@@ -468,8 +469,18 @@ function Test-HpReady {
 $script:HpGate = $null
 # Makes a throwaway home and the stand-ins, runs $Body with them, and removes the home in a finally. An
 # unexpected error is the case's FAIL, named $Name. A home for each case keeps every case independent.
+# A case whose run builds the localswim CLI (a run with -WithGo) MUST pass -NeedsLocalswim: sync's step 7
+# builds only when the localswim checkout exists on the machine (docs/operator.md, sync, step 7), so with
+# no such folder the case reports SKIPPED, naming the folder. The check is one Test-Path -PathType
+# Container on the folder and nothing more: it never lists, reads or writes anything in it.
+$script:HpLocalswimCheckout = 'C:\Projects\localswim'
+function Test-HpLocalswimFolder { Test-Path -LiteralPath $script:HpLocalswimCheckout -PathType Container }
 function Invoke-HpInHome {
-  param([Parameter(Mandatory)][scriptblock]$Body, [Parameter(Mandatory)][string]$Name)
+  param([Parameter(Mandatory)][scriptblock]$Body, [Parameter(Mandatory)][string]$Name, [switch]$NeedsLocalswim)
+  if ($NeedsLocalswim -and -not (Test-HpLocalswimFolder)) {
+    Write-ConformanceResult -Name $Name -Status SKIPPED -Reason "The folder $($script:HpLocalswimCheckout) does not exist on this machine, so sync's step 7 builds nothing and a case that shows the build cannot run"
+    return
+  }
   $h = New-ConformanceHome
   try {
     if (-not (Test-HpReady -H $h -Name $Name)) { return }

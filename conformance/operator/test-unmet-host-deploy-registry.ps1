@@ -87,9 +87,24 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
   foreach ($line in @(@('deploy'), @('deploy', '-Host', 'swimcoach'))) {
     Test-HostCase "${d}: $($line -join ' ') writes the new instance ID into the box's record and prints Instance: <id>; the box's deploy makes no existence check" ([string[]]$line) @{
       Exit = 0; StderrLines = @("Deploying stack 'agentbox' in us-west-2...", "Instance: $idNew"); SshCalls = 'any'; ScpCalls = 'any'
-      Calls = @((Get-DeployCall 'agentbox' @('re:^SshPublicKey=', 're:^SubnetId=', 're:^VpcId=')), (Get-CallStack 'agentbox'), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew))
+      Calls = 'any'
       Check = { param($run, $started)
         $c = @(Get-AwsCalls)
+        # The spec fixes SshPublicKey first and no order for the file's members (operator.md, Calls by command), so they compare as a set.
+        $wantCalls = @((Get-CallStack 'agentbox'), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew))
+        if ($c.Count -ne 4) { "The AWS CLI was called $($c.Count) times, not 4: the deploy, the read of the stack, and sync's two reads of the instance" }
+        else {
+          $da = @($c[0].a)
+          $oi = [array]::IndexOf($da, '--parameter-overrides')
+          if ($oi -lt 1) { 'The box''s deploy passed no --parameter-overrides' }
+          else {
+            if (-not (Test-CallMatch (Get-DeployCall 'agentbox' @()) @($da[0..($oi - 1)]))) { 'The first call is not the box''s cloudformation deploy up to --parameter-overrides' }
+            $ov = @($da[($oi + 1)..($da.Count - 1)])
+            if ($ov[0] -cnotmatch '^SshPublicKey=') { 'The first override is not SshPublicKey=<the public key>' }
+            if ((@($ov | Select-Object -Skip 1 | Sort-Object) -join '|') -cne ((@("SubnetId=$($fx.SubnetValue)", "VpcId=$($fx.VpcValue)") | Sort-Object) -join '|')) { 'The other overrides are not every member of the file, and nothing else' }
+          }
+          for ($k = 0; $k -lt 3; $k++) { if (-not (Test-CallMatch $wantCalls[$k] @($c[$k + 1].a))) { "AWS CLI call $($k + 2) is not the one the box's deploy makes there" } }
+        }
         if ($c.Count -ge 2) {
           if ((Get-RecordMember ([string]$c[0].hosts) 'swimcoach' 'instance_id') -cne $script:IdBox) { 'The box''s old instance ID was removed before cloudformation deploy had run' }
           if ($null -ne (Get-RecordMember ([string]$c[1].hosts) 'swimcoach' 'instance_id')) { 'The box''s record still held an instance ID when the stack''s output was read' }
