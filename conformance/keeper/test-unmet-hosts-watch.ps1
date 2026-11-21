@@ -115,7 +115,10 @@ function Invoke-LostCase([string]$Id, [string]$LostProject, [string]$LostTag, [s
 }
 
 try {
-  # H9. <p>'s stub exits at once, the box's stays alive: <p> backs off alone.
+  # H9. <p>'s stub exits at once, the box's stays alive: <p> backs off alone. keeper.md's H9 row: <p>'s fast failures, each either a
+  # failed ... host=<p> line or a started ... host=<p> line whose holder a later look finds gone (step 7 of The handshake: a holder that
+  # exits a moment after the start's check is recorded; architect, 2026-11-21, for v0.07-T04), with backoff seconds=<n> host=<p> growing
+  # per <p>'s count, while the box's holder is kept in a pass every -IntervalSeconds; no box line waits on <p>'s backoff.
   if (Test-Selected 'H9') { Invoke-HostCase 'H9' 'keeper.md#fast-failures-and-backoff' {
     Write-Registry @((New-HostRecord $boxProject), (New-HostRecord $pProject))
     Write-Leases @((New-HostLease $boxProject 'b1' $farFuture), (New-HostLease $pProject 'c1' $farFuture))
@@ -129,10 +132,23 @@ try {
     Add-HostCheck $got 'The keeper logs three backoff lines for agentspace' "Backoff lines seen for agentspace: $($b.Count). The log ends: $(($log | Select-Object -Last 4) -join ' | ')"
     Add-HostCheck ($b.Count -ge 3 -and (($b[0..2]) -join ',') -ceq '2,4,8') "agentspace's backoff lines say seconds 2, 4, 8 (got $($b -join ','))"
     Add-HostCheck (@($log | Where-Object { $_ -cmatch ' (backoff|grace) seconds=' }).Count -eq @($log | Where-Object { $_ -cmatch ' (backoff|grace) seconds=\d+ host=agentspace\z' }).Count) 'Every backoff and grace line is agentspace''s: none is the box''s' "Lines: $(@($log | Where-Object { $_ -cmatch ' (backoff|grace) seconds=' }) -join ' | ')"
-    # The stand-in exits at once, which a start meets in one of two ways that keeper.md allows: the keeper's one look finds it gone (a failed line),
-    # or it dies a moment after that look and is found gone by the next one (a started line, then the backoff). Either is a fast failure on agentspace alone.
-    $failed = @($log | Where-Object { Test-HostLine $_ 'failed' (Get-HostLeaseId 'c1') (Get-HostAlias $pProject 'c1') '-' $pProject })
-    Add-HostCheck ($failed.Count -ge 1 -and @($failed | Where-Object { $_ -cmatch ' reason=The holder could not be started: ' }).Count -eq $failed.Count) 'agentspace''s failed starts are logged as failed ... pid=- host=agentspace, with a reason that the holder could not be started' "Failed lines: $($failed.Count). The log: $($log -join ' | ')"
+    # The stand-in exits at once, which a start meets in one of two ways that keeper.md's H9 row allows: the keeper's one look finds it gone (a failed line),
+    # or it dies a moment after that look, is recorded, and is found gone by a later look (a started line; step 7 of The handshake). Each is one fast failure
+    # on agentspace alone, and each is followed by that host's next backoff line, so the lines of agentspace's turns before each of the first three backoff
+    # lines hold exactly one of the two.
+    $startedRx = $logTime + 'started lease=' + [regex]::Escape((Get-HostLeaseId 'c1')) + ' alias=' + [regex]::Escape((Get-HostAlias $pProject 'c1')) + ' pid=\d+ host=agentspace\z'
+    $segments = [System.Collections.Generic.List[object]]::new()
+    $current = [System.Collections.Generic.List[string]]::new()
+    foreach ($l in $log) {
+      if ($l -cmatch ' backoff seconds=\d+ host=agentspace\z') { $segments.Add(@($current.ToArray())); $current = [System.Collections.Generic.List[string]]::new() }
+      elseif (Test-HostLine $l 'failed' (Get-HostLeaseId 'c1') (Get-HostAlias $pProject 'c1') '-' $pProject) { $current.Add('failed') }
+      elseif ($l -cmatch $startedRx) { $current.Add('started') }
+    }
+    $firstThree = @($segments | Select-Object -First 3)
+    $forms = @($firstThree | ForEach-Object { @($_) -join '+' })
+    Add-HostCheck ($firstThree.Count -eq 3 -and @($firstThree | Where-Object { @($_).Count -eq 1 }).Count -eq 3) 'Each of agentspace''s first three fast failures is one failed ... pid=- host=agentspace line or one started ... host=agentspace line, found before the backoff line that follows it' "Forms seen before each backoff line: $($forms -join ', '). The log: $($log -join ' | ')"
+    $failedLines = @($log | Where-Object { $_ -cmatch ' failed ' -and $_ -cmatch ' host=agentspace(\s|\z)' })
+    Add-HostCheck (@($failedLines | Where-Object { (Test-HostLine $_ 'failed' (Get-HostLeaseId 'c1') (Get-HostAlias $pProject 'c1') '-' $pProject) -and $_ -cmatch ' reason=The holder could not be started: ' }).Count -eq $failedLines.Count) 'Each failed line for agentspace is failed ... pid=- host=agentspace, with a reason that the holder could not be started' "Failed lines: $($failedLines -join ' | ')"
     Add-HostCheck (@(Get-HolderProcesses | Where-Object { ([string]$_.CommandLine).Contains((Get-HostAlias $pProject 'c1')) }).Count -eq 0) 'No holder is left running on agentspace'
     $boxStarted = @($log | Where-Object { $_ -cmatch ' started ' -and $_ -cmatch ' host=swimcoach' })
     $recB = Read-HostRecord $boxProject
