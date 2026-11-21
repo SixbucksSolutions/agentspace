@@ -350,21 +350,28 @@ cases for v0.07](driver.md#conformance-cases-for-v007)). From v0.07, a `create` 
 provisioning run, through the program `AGENTSPACE_PROVISION_CMD` names
 ([lease-api.md, Environment](lease-api.md#environment)), and a throwaway home with no
 `projects.json` answers `unsatisfiable` with `no_capacity` for every project but `swimcoach`.
-- **No lease CLI case starts the real operator.** The harness gives every program it starts a
-  tripwire as `AGENTSPACE_PROVISION_CMD` ([The harness](#the-harness)), and a case that can reach
-  `pending` MUST set its own stand-in through `-Environment`, one that records what it is given and
-  makes no host. The real `agentspace-operator.exe` is never the program a lease CLI case's run
-  starts, so a case never reaches AWS through a detached run, which the seam does not cover
+- **No lease CLI case starts the real operator.** The harness gives the lease CLI a tripwire as
+  `AGENTSPACE_PROVISION_CMD` ([The harness](#the-harness)), and a case that can reach `pending`
+  MUST set its own stand-in through `-Environment`, one that records what it is given and makes no
+  host. The real `agentspace-operator.exe` is never the program a lease CLI case's run starts, so a
+  case never reaches AWS through a detached run, which the seam does not cover
   ([operator.md, The test seam](operator.md#the-test-seam)).
-- **Each case seeds its home with the host registry and the project list it needs**, through the
-  harness's seeding helper (D54): a `ready` record for each project whose case expects `ready`, a
-  listed project for a case that expects `pending`, and nothing for a case that expects
-  `no_capacity`. A case that places a `swimcoach` lease needs neither file.
+- **Each case seeds its home with the host registry and the project list it needs** (D54). A check
+  that needs a `ready` host for a project calls the harness's `Add-ConformanceReadyHost` before its
+  first `create` ([The harness](#the-harness)), and `New-CcReadyLease` does so for the checks that
+  use it. The v0.07 files write their own `hosts.json`, `projects.json` and held locks, in the forms
+  of [state.md](state.md#the-host-registry), each write through `Assert-ConformancePath`: a listed
+  project for a case that expects `pending`, and nothing for a case that expects `no_capacity`. A
+  case that places a `swimcoach` lease needs neither file.
 - **A run needs no real `hosts.json` or `projects.json`, and MUST NOT name Terry's**: both are read
   from the throwaway home's `.agentspace` folder, under its `USERPROFILE`.
 - **v0.07's lease CLI files are `test-unmet-*` files** in `conformance/lease-cli/`, listed with
-  their cases in [The files that are expected to fail](#the-files-that-are-expected-to-fail), and
-  `provision-standin.ps1` beside them is the stand-in run program they share, a helper with no case.
+  their cases in [The files that are expected to fail](#the-files-that-are-expected-to-fail).
+  **`conformance/lease-cli/provision-standin.ps1` is the helper the `pending` and `no_capacity`
+  files share**, dot-sourced after the other helpers: it writes each case's stand-in run, a `.cmd`
+  under the home that records what it is given and makes no host, and reads back what it recorded.
+  It holds no case. `test-unmet-host-alias-bytes.ps1` and `test-unmet-pending-get-list-release.ps1`
+  write their own stand-ins, and dot-source only the harness and `lease-check-support.ps1`.
 
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
@@ -439,7 +446,7 @@ ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-
    ships the operator, the ProxyCommand and the keeper runs every `conformance\operator\test-*.ps1`
    and `conformance\keeper\test-*.ps1` too**, with `-Case deadline` run once more
    ([Cases that run only when asked for](#cases-that-run-only-when-asked-for)), and **from v0.07,
-   every file in `conformance\schemas\`**, the state schemas' samples check among them.
+   every file in `conformance\schemas\`**, `test-state-schemas.ps1` among them.
    - **v0.07's runs need no `AGENTSPACE_PROVISION_CMD` from the runner, and MUST NOT name the real
      operator in it.** The harness removes the caller's value and sets its tripwire, and each case
      that can reach `pending` names its own stand-in ([The harness](#the-harness)), so no lease CLI
@@ -488,12 +495,15 @@ check this: a home that was inside one would fail at the CA step, with the opera
 | `Assert-ConformanceHomeRoot -Root <p>` | Returns the full path of a home's root, or throws unless it is a folder named `agentspace-conformance-<something>` directly under `%TEMP%` and, when it exists, is not a reparse point. **It is the one write check that is not `Assert-ConformancePath`**: that one measures a path against a home's `Root`, and this one is what makes the `Root` safe to measure against. It guards `New-ConformanceHome`'s creation of the `Root`, and the deletes of `Remove-ConformanceHome` and of `New-ConformanceHome`'s own cleanup. A check that writes inside a home MUST call `Assert-ConformancePath`, and MUST NOT call this (E0.06-T04-S01, #0110 point 2) |
 | `Remove-ConformanceHome -ConformanceHome <h>` | Deletes the home's `Root`, and only it. It refuses a folder that is not an `agentspace-conformance-*` folder directly under `%TEMP%`, and a `Root` that is a junction or a symbolic link, and it checks again at each delete (`Assert-ConformanceHomeRoot`) |
 | `Exit-ConformanceRun` | Prints the summary line and exits with the code above. A run that counted no result exits 1, after a `FAIL` line saying that no check ran |
+| `Add-ConformanceReadyHost -ConformanceHome <h> -Project <string[]>` | Seeds the home's host registry, `%USERPROFILE%\.agentspace\hosts.json` ([state.md, The host registry](state.md#the-host-registry)), so that a `create` for each project answers `ready` as it did before D54 (a home with no `projects.json` answers `unsatisfiable` with `no_capacity` for every supported project but `swimcoach`). It adds `{"project","stack":"agentspace-host-<project>","state":"ready"}` with no `instance_id`, after the box's record, as compact JSON, UTF-8 with no byte order mark and one LF, checked against `schemas/state/hosts.state.schema.json` and written through `Assert-ConformancePath`. It skips `swimcoach` (the box: `hosts.json` stays absent for a case about v0.06's bytes), keeps a project's existing record as it is, never touches `projects.json`, and throws for a name that is not a normalized project or for an existing file that is not valid. It returns the names it added. `New-CcReadyLease` (`lease-check-support.ps1`) calls it, and its `-NoHost` skips that (E0.07-T04-S01, #0155) |
+| `Clear-ConformanceHosts -ConformanceHome <h>` | Deletes the home's `hosts.json` (never `hosts.lock`), so that the registry reads as the box's record alone again |
+| `Get-ConformanceTripwireStarts -ConformanceHome <h>` | The number of times the provisioning-run tripwire was started in the home |
 
-**From v0.07 the harness also has a seeding helper** (E0.07-T04-S01, #0155; D54), which gives a
-home the host registry and the project list a case needs, at their places under the home's
-`USERPROFILE` ([state.md, The host registry](state.md#the-host-registry),
-[The project list](state.md#the-project-list)). Its writes go through `Assert-ConformancePath`, as
-every write does.
+**The harness has a provisioning-run tripwire from v0.07** (E0.07-T04-S01, #0155; D48, D54, pin
+P12): every home holds `<Root>\tripwire\provision-tripwire.cmd`, which the lease CLI is given as
+`AGENTSPACE_PROVISION_CMD` unless a check names its own stand-in, and `Remove-ConformanceHome`
+reports FAIL when it was started. **A later lease CLI case MUST either name its own stand-in or
+reach no provisioning run**: the bullets below give the rules.
 
 - **Every program the harness starts gets the same environment.**
   - **Pointed into the home:** `USERPROFILE`, `HOME`, `AGENTSPACE_STATE_DIR` and
@@ -526,13 +536,21 @@ every write does.
     interpreter's `/d /c exit 1`, found through `ComSpec`), so that a ready lease
     needs no real box ([lease-api.md](lease-api.md#environment)). A check MAY override it with
     `-Environment`.
-  - **`AGENTSPACE_PROVISION_CMD` is set to a tripwire by default** (E0.07-T04-S01, #0155; D55), so
-    that a lease CLI run that reaches a provisioning run starts a program that makes no host,
-    never the operator beside the CLI ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)).
-    A case that can reach `pending` MUST override it with `-Environment`, naming a stand-in under
-    the home that records what it is given ([lease-api.md, Environment](lease-api.md#environment)).
-    The variable is the lease CLI's own, not a conformance variable: the harness sets it for the
-    program under test, and no check reads it to find a program.
+  - **The lease CLI, and only it, gets `AGENTSPACE_PROVISION_CMD` set to a tripwire in the home**
+    (E0.07-T04-S01, #0155; D48, pin P12): `<Root>\tripwire\provision-tripwire.cmd`, which appends
+    one line to `tripwire-started.txt` beside itself and exits 1 at once. A run's default program is
+    `agentspace-operator.exe` beside the CLI, the real operator in `target\dist`
+    ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)), so no lease
+    CLI case MUST NOT be able to start it. A check MAY replace the value with `-Environment` (its
+    own stand-in; an empty value or `$null` removes it), and a check that reaches a run on purpose
+    MUST name its own stand-in ([lease-api.md, Environment](lease-api.md#environment)). The
+    operator, the ProxyCommand and the keeper do not get it.
+  - **`Remove-ConformanceHome` reports FAIL when the tripwire was started**, because a check then
+    reached a provisioning run it had named no stand-in for.
+  - **A check that needs a `ready` host for a project calls `Add-ConformanceReadyHost` before its
+    first `create`, and before any file map it compares.** A check whose `get` would start a run
+    for a seeded project (a `pending` lease of a project with a `ready` host, D48) MUST name a
+    stand-in, or clear the registry first with `Clear-ConformanceHosts`.
   - **Every other `AGENTSPACE_*` variable the caller holds is removed**, so that a shell's own
     settings never reach the program.
   - **`PSModulePath` is removed.** A PowerShell 7 session's value carries PowerShell 7's own module
@@ -919,11 +937,14 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
   to put the token on the ssh's command line (the secrecy result failed). `test-unmet-proxy-steps.ps1`
   passed 11 of 11. **No build had passed either file when they were written**, because none met the
   seam. The v0.06 build meets it, and the run record (E0.06-T04-S01) gives its runs.
-- **v0.07's operator and ProxyCommand files** (E0.07-T04-S02, #0156) are six groups of
-  `test-unmet-*` files beside these, through the same helpers, the same AWS gate and the same seam:
-  `test-unmet-host-commands*.ps1`, `test-unmet-host-deploy*.ps1`, `test-unmet-host-provision*.ps1`,
-  `test-unmet-host-bootstrap-sync*.ps1`, `test-unmet-host-proxy*.ps1` and
-  `test-unmet-host-alias*.ps1`. Each case is a row of
+- **v0.07's operator and ProxyCommand files** (E0.07-T04-S02, #0156) are `test-unmet-*` files
+  beside these, through `helpers.ps1`, the same AWS gate and the same seam, with helpers of their
+  own beside them: `host-proxy-common.ps1`, which serves `test-unmet-host-proxy-lookup.ps1`,
+  `test-unmet-host-proxy-instance-id.ps1`, `test-unmet-host-proxy-stamp.ps1`,
+  `test-unmet-host-alias-file.ps1`, `test-unmet-host-alias-no-proxy-program.ps1` and
+  `test-unmet-host-alias-certificate.ps1`; `host-commands-common.ps1`, which serves
+  `test-unmet-host-commands*.ps1` and `test-unmet-host-deploy*.ps1`; and `host-provision-common.ps1`,
+  which serves `test-unmet-host-provision*.ps1` and `test-unmet-host-bootstrap-sync*.ps1`. Each case is a row of
   [operator.md, Which checks show it](operator.md#which-checks-show-it), and
   [The files that are expected to fail](#the-files-that-are-expected-to-fail) gives which file holds
   which. **The four files that E0.07-T03 edited** (`test-unmet-commands.ps1`,
@@ -1155,22 +1176,44 @@ Its header says so, its `FAIL` lines still say `FAIL`, and a rewrite's keeper MU
 **E0.07-T04-S03 (#0157) adds the cases of
 [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project)**
 (D50, D53, D55), through `keeper-common.ps1`, with the same program, environment, stubs and
-processes as the suite above.
-- **H1 is a registry mode of the existing keeper files**: they run their v0.06 cases once with no
-  registry and once with a registry that holds the box's record alone, and expect the box to behave
-  as v0.06's keeper did, but for ` host=swimcoach` on the box's lines that name a holder
-  ([keeper.md, Log lines](keeper.md#log-lines)).
-- **H2 to H18 are in `conformance/keeper/test-unmet-hosts*.ps1`**, each case's result name starting
-  with its number. **They also hold three cases the architect added before T04** (2026-11-21, on
-  keeper.md as T03 left it): each host's holder writing its own `board-holder-ssh.<project>.log`,
-  the request's log ([state.md, Another host's holder](state.md#another-hosts-holder)); a folder at
-  `hosts.json`'s path giving the pass's `reason=Host registry could not be read: Windows error <n>.`;
-  and a file that fails state.md's rules for the registry giving `the host registry is not valid`
-  ([keeper.md, Hosts](keeper.md#hosts), [Reasons](keeper.md#reasons)).
-- **#0138 is fixed in the same story:** `test-keeper.ps1` and
-  `test-unmet-holder-dies-mid-pass.ps1` remove `board-holder.json` only when it is present, and every
-  other removal in the keeper files of a file that may be absent tolerates its absence the same way,
-  so a case that finds no record does not fail on the cleanup.
+processes as the suite above. **RFC 2119 keywords again.**
+- **H1 is a registry mode of the existing keeper files.** Every keeper file (`test-keeper.ps1`,
+  `test-holder-environment.ps1`, `test-unmet-holder-dies-mid-pass.ps1` and
+  `test-unmet-launch-request-full-paths.ps1`) takes `-Registry None|Box|Both`, `Both` by default.
+  - **`Both` runs the whole file twice, as two child processes**, one in each of the other two
+    modes. Each result line is prefixed `[H1 registry=None]` or `[H1 registry=Box]`, and the summary
+    line is the sum of the two. The file exits 1 if either run exited 1 or crashed, else 2 if
+    either exited 2, else 0.
+  - **`Box` makes each case write the box's record alone**,
+    `{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}`, to
+    `<USERPROFILE>\.agentspace\hosts.json` of its throwaway home, through `Assert-ConformancePath`.
+    **`None` writes no registry.**
+  - **Each file ends with the result `keeper.md#log-lines: The box's lines that name a holder carry
+    host=swimcoach, and no other box line carries a host= field`**, which is H1's "line for line
+    but for ` host=swimcoach`" ([keeper.md, Log lines](keeper.md#log-lines)). Against v0.06's
+    keeper it fails in both modes, by design.
+  - **`keeper-common.ps1` gains the four helpers of the mode**: `Initialize-KeeperRegistryMode`,
+    `Write-CaseRegistry`, `Register-LogLines` and `Get-LogLineProblems`.
+- **H2 to H18 are in two files, with `conformance/keeper/keeper-hosts-common.ps1` as their helper**,
+  dot-sourced after `keeper-common.ps1`, which writes the registry under the throwaway
+  `USERPROFILE` and its own stand-in `ssh-hosts-stub.cmd`, whose holder exits at once or stays alive
+  by the alias on its command line. Each case's result name starts with its number.
+  - **`conformance/keeper/test-unmet-hosts-pass.ps1` holds the one-pass cases:** H2 to H8, H12 to
+    H14, H16 and H18, and X1, the card's case that each host's holder writes its own
+    `board-holder-ssh.<project>.log`, the launch request's log
+    ([keeper.md, The holder's log](keeper.md#the-holders-log);
+    [state.md, Another host's holder](state.md#another-hosts-holder)). **The card's two reasons of
+    a registry that cannot be read are among H12's variants**: a folder at `hosts.json`'s path
+    gives the pass's `reason=Host registry could not be read: Windows error <n>.`, and each file
+    that fails state.md's rules for the registry gives `the host registry is not valid`
+    ([keeper.md, Hosts](keeper.md#hosts), [Reasons](keeper.md#reasons)).
+  - **`conformance/keeper/test-unmet-hosts-watch.ps1` holds the cases of a keeper that watches:**
+    H9, H10, both halves of H11 (`H11a` and `H11b`, by the method of the #0068 file), H15 and H17.
+- **#0138 is fixed in the same story:** the removal of `board-holder.json` in the "record is
+  removed between two passes" case of `test-unmet-holder-dies-mid-pass.ps1` takes
+  `-ErrorAction SilentlyContinue`, so every removal in `conformance/keeper/` of a file that may be
+  absent tolerates its absence. The other such removals, in `test-keeper.ps1` and in the same
+  file, already did on `main`.
 - **What no keeper case shows is live** (D53): that the keeper holds the board on agentspace's own
   host ([Coverage of the operator and the keeper](#coverage-of-the-operator-and-the-keeper)).
 
@@ -1206,21 +1249,32 @@ them. E0.06-T06-S01 removed the file, so each case now has one home.
   suite's result lines and its exit code is the suite's ([The keeper suite](#the-keeper-suite),
   "Output"). Nothing else changed: it checked the same 289 things as before, and it still scans the
   top level of `schemas/` only. The samples E0.04-T04-S01 added bring it to 293, all passing
-  against the package on 2026-11-18. **The three keeper schemas in `schemas/state/` are checked by the
-  keeper suite's case against the files a run writes, not by this check**
+  against the package on 2026-11-18. **No state schema is checked by this check:** the state
+  schemas that have samples are checked by `test-state-schemas.ps1`, below, and the three keeper
+  schemas in `schemas/state/` by the keeper suite's case against the files a run writes
   ([docs/state.md](state.md#open-questions), Q13).
 - **The copy in `scripts/test-schemas.ps1` was the same check**, left in place because a story MUST
   NOT edit a `scripts/test-*.ps1`. E0.06-T06-S01 removed it, so the check has one home.
-- **The state schemas' samples check** (E0.07-T04-S03, #0157; the architect, 2026-11-20, from
-  v0.07-T01), in `conformance/schemas/`. Until it, no state schema was checked against samples:
-  the check above reads the top level of `schemas/` only. It checks every
-  `schemas/state/*.schema.json` that has samples in `schemas/state/samples/`: each valid sample
-  accepted, each sample under `invalid/` rejected for a schema reason, and each schema's `$id` of
-  the state form. E0.07-T01-S01 (#0141) added the first such samples, of the host registry and the
-  project list ([state.md, The host registry](state.md#the-host-registry),
-  [The project list](state.md#the-project-list)). It is of the same kind as the check above: it
-  drives no program, so no variable names one, and the "program that prints nothing" test does not
-  apply to it.
+
+#### `conformance/schemas/test-state-schemas.ps1` (E0.07-T04-S03): neither kind
+
+- **Does:** Runs `Test-Json` in-process on every `schemas/state/*.schema.json` that has samples in
+  `schemas/state/samples/` (E0.07-T04-S03, #0157; the architect, 2026-11-20, from v0.07-T01). Each
+  valid sample is accepted. Each `invalid/` sample is rejected for a schema reason: an unparsable
+  file or a broken schema is a failure, never a rejection. Each such schema declares draft 2020-12,
+  has the state form of `$id`
+  (`https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/<file name>`) and has a title
+  and a description. Every sample names a state schema, and a schema with a valid sample has at
+  least one invalid one. Today the host registry and the project list are covered
+  ([state.md, The host registry](state.md#the-host-registry),
+  [The project list](state.md#the-project-list)), from E0.07-T01-S01's samples (#0141). A state
+  schema with no sample is not checked here.
+- **Loads:** No product code. It reads `schemas\state\` and its `samples\` and nothing else.
+- **Class:** Neither, with no program to name, as for the check above, so the "program that prints
+  nothing" test does not apply to it. `-StateDir <folder>` points it at a scratch copy of
+  `schemas/state`, which is how it was shown to catch a planted bad sample, an invalid sample that
+  validates, an unparsable invalid sample and a wrong `$id`.
+- **The top-level `test-schemas.ps1` still scans `schemas/` only.**
 
 ### The live-box check
 
@@ -1413,21 +1467,32 @@ or the row of [operator.md, Which checks show it](operator.md#which-checks-show-
 | File | Cases it holds | Spec section | Card |
 |---|---|---|---|
 | `conformance/lease-cli/test-unmet-no-capacity.ps1` | C1, C2, C17, C21, C24, C32 | [driver.md, Where it places a lease](driver.md#where-it-places-a-lease); [state.md, The project list](state.md#the-project-list) | #0155 (E0.07-T04-S01) |
-| `conformance/lease-cli/test-unmet-pending-create.ps1` | C5 to C10, C16, C18, C22, C23, C27 to C31 | [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run); [state.md, The host registry](state.md#the-host-registry) | #0155 |
-| `conformance/lease-cli/test-unmet-host-alias-bytes.ps1` | C3, C4, C20 | [driver.md, Where it places a lease](driver.md#where-it-places-a-lease); [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box) | #0155 |
-| `conformance/lease-cli/test-unmet-pending-get-list-release.ps1` | C11 to C15, C19, C25, C26, and a `pending` lease's `release` with a killed placement's leftover files: the lease folder and its alias removed, and a foreign alias file of the same name with no owner mark for the lease kept (the architect, 2026-11-20, from v0.07-T01) | [driver.md, check_pending](driver.md#check_pending), [Release a lease](driver.md#release-a-lease); [state.md, Release, and what it leaves](state.md#release-and-what-it-leaves) | #0155 |
-| `conformance/lease-cli/provision-standin.ps1` | No case: the stand-in run program the files above name in `AGENTSPACE_PROVISION_CMD`, a helper | [driver.md, Conformance cases for v0.07](driver.md#conformance-cases-for-v007) | #0155 |
-| `conformance/lease-cli/harness.ps1`, changed | No case of its own: the default tripwire in `AGENTSPACE_PROVISION_CMD` for every program it starts, and the seeding helper ([The harness](#the-harness)) | [lease-api.md, Environment](lease-api.md#environment); D54 | #0155 |
+| `conformance/lease-cli/test-unmet-pending-create.ps1` | C5, C7 to C10, C16, C18, C23, C27, C28, C30, C31 | [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run), [Where it places a lease](driver.md#where-it-places-a-lease); [state.md, The host registry](state.md#the-host-registry), [The provisioning run's lock](state.md#the-provisioning-runs-lock), [The provisioning run's start](state.md#the-provisioning-runs-start) | #0155 |
+| `conformance/lease-cli/test-unmet-pending-create-long.ps1` | C6 and C29, which share one stand-in run that keeps running for 60 seconds after it recorded | [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run); [state.md, The host registry lock](state.md#the-host-registry-lock), [The provisioning run's start](state.md#the-provisioning-runs-start) | #0155 |
+| `conformance/lease-cli/test-unmet-pending-create-lock.ps1` | C22, with `hosts.lock` held by the check, one hold let go within the 30 seconds and one held past them | [driver.md, Where it places a lease](driver.md#where-it-places-a-lease); [state.md, The host registry lock](state.md#the-host-registry-lock) | #0155 |
+| `conformance/lease-cli/test-unmet-host-alias-bytes.ps1` | C3, C4, C20 | [driver.md, Where it places a lease](driver.md#where-it-places-a-lease); [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box), [The alias file](state.md#the-alias-file) | #0155 |
+| `conformance/lease-cli/test-unmet-pending-get-list-release.ps1` | C11 to C15, C19, C25, C26, and the release of a `pending` lease that a killed placement left files for (the card's comment, 2026-11-20): with its own alias file, the lease folder and the alias are removed and the lease is recorded released; with a foreign alias file of the same name, the file is kept byte for byte, and the release fails with `internal` and changes nothing | [driver.md, check_pending](driver.md#check_pending), [Release a lease](driver.md#release-a-lease); [state.md, Release, and what it leaves](state.md#release-and-what-it-leaves) | #0155 |
+| `conformance/lease-cli/provision-standin.ps1` | No case: the helper the `pending` and `no_capacity` files dot-source, which writes each case's stand-in run (a `.cmd` under the home that records what it is given and makes no host) and reads back what it recorded | [driver.md, Conformance cases for v0.07](driver.md#conformance-cases-for-v007) | #0155 |
+| `conformance/lease-cli/harness.ps1`, changed | No case of its own: the provisioning-run tripwire the lease CLI gets as `AGENTSPACE_PROVISION_CMD`, `Add-ConformanceReadyHost`, `Clear-ConformanceHosts` and `Get-ConformanceTripwireStarts` ([The harness](#the-harness)) | [lease-api.md, Environment](lease-api.md#environment); D54 | #0155 |
+| `lease-check-support.ps1` and the existing lease CLI checks that make a `ready` lease, changed | No case of their own: each seeds a `ready` host with `Add-ConformanceReadyHost` before a `create` that expects `ready`, as D54 needs, and `New-CcReadyLease` does so unless given `-NoHost` | As before | #0155 |
 | `conformance/operator/test-unmet-host-commands*.ps1` and `test-unmet-host-deploy*.ps1` | The rows of [operator.md, Which checks show it](operator.md#which-checks-show-it) for `-Host` and `-All` on each command (their forms, usage errors, host checks and help texts; the box unchanged without `-Host`; `-Host swimcoach` as no `-Host`; `status -All` and `down -All`), a leftover `instance-id.json` ignored, `hosts.lock` held, a project with no record refused, the host registry, `deploy -Host`'s arguments, `StackStatus` (`REVIEW_IN_PROGRESS`, `ROLLBACK_COMPLETE`, `*_IN_PROGRESS`), `stack-parameters.json`'s refusals, `-InstanceType`, the operator's folder per command and its 24-hour sweep, and signing per command | [operator.md, Which host a command acts on](operator.md#which-host-a-command-acts-on), [The host registry, as the operator uses it](operator.md#the-host-registry-as-the-operator-uses-it), [deploy](operator.md#deploy), [The operator's folder, one per command](operator.md#the-operators-folder-one-per-command) | #0156 (E0.07-T04-S02) |
 | `conformance/operator/test-unmet-host-provision*.ps1` and `test-unmet-host-bootstrap-sync*.ps1` | `provision`'s steps, records, log lines (`place done placed=<n>`, `place failed lease=<id> reason=<message>`) and first steps; a held `provision.lock`; the registry failing at steps 3 and 8; a project list that is not valid; `place_pending` with a seeded lease state file; the ready-host rule; `bootstrap`'s ssh, script bytes and failure; `sync -Host` naming the host's alias; `sync -All`'s `system\` and one build, its `Host` lines, a skipped host and its exit code; the `Include` line's failure worded the same by `sync -Host` and `status -Host` | [operator.md, provision](operator.md#provision), [bootstrap](operator.md#bootstrap), [sync](operator.md#sync), [Every host at once: `-All`](operator.md#every-host-at-once--all); [driver.md, place_pending](driver.md#place_pending) | #0156 |
-| `conformance/operator/test-unmet-host-proxy*.ps1` and `test-unmet-host-alias*.ps1` | The ProxyCommand's host (no argument, a host alias, a lease alias of a `ready` host and of one that is not, an unknown alias, an invalid lease state file, an invalid registry), its `instance_id` write, the push stamp per host with the box's where it was, `up -Host <project> -Alias <alias>`; the operator's alias file (its bytes, the `Include` line, a foreign file refused, a lease's release or overwrite leaving it), its refusal without `agentspace-ssh-proxy.exe` beside the operator, and the operator's certificate read with `ssh-keygen -L` | [operator.md, The ProxyCommand](operator.md#the-proxycommand), [From the ProxyCommand](operator.md#from-the-proxycommand), [How the operator reaches a host](operator.md#how-the-operator-reaches-a-host); [state.md, A host's operator alias](state.md#a-hosts-operator-alias), [A host's push stamp](state.md#a-hosts-push-stamp) | #0156 |
-| `conformance/keeper/test-unmet-hosts*.ps1` | H2 to H18; each host's holder writing its own `board-holder-ssh.<project>.log`; the registry's read failures (`Windows error <n>.` for a folder at its path, `the host registry is not valid` for a file that fails state.md's rules) | [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project), [Hosts](keeper.md#hosts); [state.md, Another host's holder](state.md#another-hosts-holder) | #0157 (E0.07-T04-S03) |
-| The existing keeper files, in their registry mode | H1 | [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project), [Log lines](keeper.md#log-lines) | #0157 |
-| `conformance/keeper/test-keeper.ps1` and `test-unmet-holder-dies-mid-pass.ps1`, changed | No case of their own: their removals of `board-holder.json`, and of any other file that may be absent, tolerate its absence | As before ([The keeper suite](#the-keeper-suite)) | #0138, carried by #0157 |
-| `conformance/schemas/`'s state schemas' samples check | Every `schemas/state/*.schema.json` with samples: valid accepted, `invalid/` rejected for a schema reason, `$id` of the state form | [state.md, The host registry](state.md#the-host-registry), [The project list](state.md#the-project-list) | #0157 |
+| `conformance/operator/test-unmet-host-proxy-lookup.ps1` | The ProxyCommand's host by every lookup: no argument, `agentspace`, a host alias in each state and one for a project with no record or a name that is not normalized, a lease alias of a `ready` host and of one that is not, an alias no lease has, no lease state file and one that cannot be read or is not valid, the lease state file never written, and a host registry that is not valid | [operator.md, From the ProxyCommand](operator.md#from-the-proxycommand), [The ProxyCommand](operator.md#the-proxycommand); [state.md, Which host a connection reaches](state.md#which-host-a-connection-reaches) | #0156 (E0.07-T04-S02) |
+| `conformance/operator/test-unmet-host-proxy-instance-id.ps1` | A missing `instance_id` read from the host's own stack and written into that record alone; a record's ID never changed; a missing registry created holding the box's record with its ID; no record ever added; a stack with no `InstanceId` output or none at all; a write that fails not failing the connection | [operator.md, The host registry, as the operator uses it](operator.md#the-host-registry-as-the-operator-uses-it) | #0156 |
+| `conformance/operator/test-unmet-host-proxy-stamp.ps1` | The push stamp per host, the box's where it was; each host pushed once per change; `up -Host <project> -Alias <alias>` and `up -Host swimcoach -Alias <alias>` | [operator.md, The stamp](operator.md#the-stamp); [state.md, A host's push stamp](state.md#a-hosts-push-stamp) | #0156 |
+| `conformance/operator/test-unmet-host-alias-file.ps1` | The operator's alias file: its bytes, written before the first ssh, the `Include` line, a file at its path that is not this host's refused, an own file replaced or left alone, a lease's `create` and `release` leaving it, and the operator never writing agentspace's `known_hosts` or the user's | [operator.md, How the operator reaches a host](operator.md#how-the-operator-reaches-a-host); [state.md, A host's operator alias](state.md#a-hosts-operator-alias), [Agentspace's host keys](state.md#agentspaces-host-keys) | #0156 |
+| `conformance/operator/test-unmet-host-alias-no-proxy-program.ps1` | The operator's alias refused when `agentspace-ssh-proxy.exe` is not beside the operator, a `.cmd` forwarder not meeting the need, and the control with the program copied beside it | [operator.md, How the operator reaches a host](operator.md#how-the-operator-reaches-a-host) | #0156 |
+| `conformance/operator/test-unmet-host-alias-certificate.ps1` | The operator's certificate read with `ssh-keygen -L` against the throwaway CA: its key, signer, key ID, principal, extensions and validity, the key made once, and no output holding the private key | [operator.md, How the operator reaches a host](operator.md#how-the-operator-reaches-a-host); [state.md, The operator's key and certificate](state.md#the-operators-key-and-certificate) | #0156 |
+| `conformance/operator/host-proxy-common.ps1` | No case: the helper the six files above dot-source | [operator.md, The test seam](operator.md#the-test-seam) | #0156 |
+| `conformance/keeper/test-unmet-hosts-pass.ps1` | H2 to H8, H12 to H14, H16, H18, and X1: each host's holder writes its own `board-holder-ssh.<project>.log`. H12's variants hold the registry's two read failures (`Windows error <n>.` for a folder at its path, `the host registry is not valid` for a file that fails state.md's rules) | [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project), [Hosts](keeper.md#hosts), [The hosts of a pass](keeper.md#the-hosts-of-a-pass), [The holder's log](keeper.md#the-holders-log); [state.md, Another host's holder](state.md#another-hosts-holder) | #0157 (E0.07-T04-S03) |
+| `conformance/keeper/test-unmet-hosts-watch.ps1` | H9, H10, H11 (both halves, `H11a` and `H11b`), H15, H17 | [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project), [Watching](keeper.md#watching), [The keeper's wait](keeper.md#the-keepers-wait), [Release grace](keeper.md#release-grace) | #0157 |
+| `conformance/keeper/keeper-hosts-common.ps1` | No case: the helper the two files above dot-source after `keeper-common.ps1`, with the registry's writes and the stand-in `ssh-hosts-stub.cmd` | [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project) | #0157 |
+| `test-keeper.ps1`, `test-holder-environment.ps1`, `test-unmet-holder-dies-mid-pass.ps1` and `test-unmet-launch-request-full-paths.ps1`, in their registry mode (`-Registry None\|Box\|Both`, `Both` by default), with `keeper-common.ps1`'s four new helpers | H1, as each file's closing `keeper.md#log-lines` result in both modes ([A host per project: the keeper's v0.07 cases](#a-host-per-project-the-keepers-v007-cases)) | [keeper.md, Conformance cases for a host per project](keeper.md#conformance-cases-for-a-host-per-project), [Log lines](keeper.md#log-lines) | #0157 |
+| `conformance/keeper/test-unmet-holder-dies-mid-pass.ps1`, changed | No case of its own: its removal of `board-holder.json` between two passes tolerates the file's absence, so every removal in `conformance/keeper/` of a file that may be absent does | As before ([The keeper suite](#the-keeper-suite)) | #0138, carried by #0157 |
+| `conformance/schemas/test-state-schemas.ps1` | Every `schemas/state/*.schema.json` with samples: valid accepted, `invalid/` rejected for a schema reason, draft 2020-12, the state form of `$id`, a title and a description | [state.md, The host registry](state.md#the-host-registry), [The project list](state.md#the-project-list) | #0157 |
 
-- **The state schemas' samples check is not a `test-unmet-*` file**: it checks the package, so no
-  build can fail it ([The schemas check](#the-schemas-check)).
+- **`test-state-schemas.ps1` is not a `test-unmet-*` file**: it checks the package, so no build can
+  fail it ([The schemas check](#the-schemas-check)).
 - **No lease CLI file reaches `place_pending`**: only a provisioning run calls it, and a stand-in
   never does, so its per-lease results are the operator's `provision` cases and E0.07-T05-S01's
   live check of a first agentspace lease ([Coverage of the operator and the keeper](#coverage-of-the-operator-and-the-keeper)).
@@ -1539,33 +1604,35 @@ check that shows it, never "Later".
 **D53's live checks, each with the story that makes it:**
 - **A first agentspace lease answers `pending`, and becomes `ready` once its host's run ends**,
   with `agentspace-host-agentspace` created, set up and recorded `ready` in `hosts.json`:
-  E0.07-T05-S01.
+  E0.07-T05-S01 (#0159).
 - **The lease's alias reaches the new host, and the keeper holds the board there:** E0.07-T05-S01.
 - **After Terry's sign-ins (D52), an agent in a desktop-app session on the lease works a card on
-  the agentspace board:** E0.07-T06-S01, the done-when that waits on the sign-ins, which D55 gives
-  a turn of its own.
+  the agentspace board:** E0.07-T06-S01 (#0160), the done-when that waits on the sign-ins, which
+  D55 gives a turn of its own.
 - **A swimcoach lease created before and after connects to the box as it did**, with its alias file
   byte for byte as v0.06 writes it: E0.07-T05-S01.
 - **`lease create`, `get` and `list` print documents that validate against contract v0's schemas
   throughout:** E0.07-T05-S01.
 - **The `agentbox` change set is empty (D44):** shown live by the template's story, E0.07-T01-S05
-  ([its run record](runs/e0.07-t01-s05.md); [operator.md, Which checks show it](operator.md#which-checks-show-it)).
+  (#0145; [its run record](runs/e0.07-t01-s05.md);
+  [operator.md, Which checks show it](operator.md#which-checks-show-it)), and checked again by
+  E0.07-T05-S01 (#0159) as its step 5 (the architect, 2026-11-21).
 
 | Area | Shown by a case | Not shown by a case, and the live check that shows it |
 |---|---|---|
-| driver.md: `no_capacity`, `pending`, the provisioning run's start, a `pending` lease's `get`, `list` and `release`, and a host's lease alias (C1 to C32) | The four lease CLI files of #0155, through `AGENTSPACE_PROVISION_CMD`'s stand-in ([The files that are expected to fail](#the-files-that-are-expected-to-fail)) | A real detached run outliving the lease command that started it, with its own lines written into `provision.log`, each failed step's line holding the program's own error text: E0.07-T05-S01's live check of `provision` making a real host. The lease becoming `ready`: D53's check of a first agentspace lease |
+| driver.md: `no_capacity`, `pending`, the provisioning run's start, a `pending` lease's `get`, `list` and `release`, and a host's lease alias (C1 to C32) | The six lease CLI files of #0155, through `AGENTSPACE_PROVISION_CMD`'s stand-in (C6 and C29 in `test-unmet-pending-create-long.ps1`, C22 in `test-unmet-pending-create-lock.ps1`; [The files that are expected to fail](#the-files-that-are-expected-to-fail)) | A real detached run outliving the lease command that started it, with its own lines written into `provision.log`, each failed step's line holding the program's own error text: E0.07-T05-S01's live check of `provision` making a real host. The lease becoming `ready`: D53's check of a first agentspace lease |
 | driver.md: place_pending, and a run's records | `test-unmet-host-provision*.ps1`, with a seeded lease state file: one lease per hold of the lock, a killed placement's leftovers removed first, a lease released meanwhile never placed, a missing ProxyCommand program leaving a lease `pending`, and the ready-host rule | A real run placing a real lease: D53's check of a first agentspace lease |
 | operator.md: the command line, `-Host` and `-All`, the host registry, signing, the operator's folder and its sweep | `test-unmet-host-commands*.ps1` and `test-unmet-host-deploy*.ps1` | Every command with `-Host` started from Git Bash (#0027, carried by D55): E0.07-T05-S01's live check. The laptop's AWS sign-in needing no new permission (D44): E0.07-T05-S01's live check, by its run with today's sign-in |
-| operator.md: `deploy -Host`, its arguments, the stack's status, `stack-parameters.json` and `-InstanceType` | `test-unmet-host-deploy*.ps1`, through the stand-in `aws` | `deploy -Host` creating a stack, and the host coming up from it: E0.07-T05-S01's live check. The `agentbox` change set: D53's check, shown by E0.07-T01-S05 |
+| operator.md: `deploy -Host`, its arguments, the stack's status, `stack-parameters.json` and `-InstanceType` | `test-unmet-host-deploy*.ps1`, through the stand-in `aws` | `deploy -Host` creating a stack, and the host coming up from it: E0.07-T05-S01's live check. The `agentbox` change set: D53's check, shown by E0.07-T01-S05 (#0145) and checked again by E0.07-T05-S01 (#0159) as its step 5 |
 | operator.md: `provision`, its steps, records, log lines and locks | `test-unmet-host-provision*.ps1`, run as `provision -Host <project>` with the seam set | `provision` making a real host: E0.07-T05-S01's live check |
 | operator.md: `bootstrap` | `test-unmet-host-bootstrap-sync*.ps1`: its ssh's arguments, the script's bytes on its stdin, and its failure message | `bootstrap` installing the toolchain, and a second run changing nothing that matters: E0.07-T05-S01's live check |
 | operator.md: `sync -Host` and `sync -All` | `test-unmet-host-bootstrap-sync*.ps1`: the host's alias in every ssh and scp, `sync -All`'s `system\` and one build, its `Host` lines, a skipped host, the closing count and its exit code | `sync` on a new host, its copies, the install and the CA it trusts, and `sync -All`'s copies to real hosts: E0.07-T05-S01's live check. `go` and `ssh-keygen` have no seam ([operator.md Q30](operator.md#open-questions)) |
-| operator.md: the operator's alias file and certificate | `test-unmet-host-alias*.ps1`: the alias file's bytes, the `Include` line, a foreign file refused, a lease's release or overwrite leaving it, the refusal without `agentspace-ssh-proxy.exe` beside the operator, the certificate's fields against a throwaway CA, and that the operator never writes agentspace's known-hosts file | A new host accepting the operator's certificate, and its key accepted on first use into agentspace's known-hosts file: E0.07-T05-S01's live check |
-| operator.md: the ProxyCommand's host, and the push stamp per host | `test-unmet-host-proxy*.ps1`: the three lookups and their failures, the `instance_id` write, the stamp per host with the box's where it was | A lease alias reaching the new host: D53's check of the lease's alias. A swimcoach lease connecting to the box as before: D53's check of a swimcoach lease |
+| operator.md: the operator's alias file and certificate | `test-unmet-host-alias-file.ps1`: the alias file's bytes, the `Include` line, a foreign file refused, a lease's `create` and `release` leaving it, and that the operator never writes agentspace's known-hosts file; `test-unmet-host-alias-no-proxy-program.ps1`: the refusal without `agentspace-ssh-proxy.exe` beside the operator; `test-unmet-host-alias-certificate.ps1`: the certificate's fields against a throwaway CA | A new host accepting the operator's certificate, and its key accepted on first use into agentspace's known-hosts file: E0.07-T05-S01's live check |
+| operator.md: the ProxyCommand's host, and the push stamp per host | `test-unmet-host-proxy-lookup.ps1`: the three lookups and their failures; `test-unmet-host-proxy-instance-id.ps1`: the `instance_id` write; `test-unmet-host-proxy-stamp.ps1`: the stamp per host with the box's where it was | A lease alias reaching the new host: D53's check of the lease's alias. A swimcoach lease connecting to the box as before: D53's check of a swimcoach lease |
 | lease-api.md: the documents of `create`, `get` and `list` | The lease CLI's cases that read a document validate it against contract v0's schemas, C5's `pending` and #0155's `no_capacity` among them | The same on Terry's real setup, throughout the live run: D53's check of the documents |
-| keeper.md: a host per project (H1 to H18), each host's holder log and the registry's read failures | `test-unmet-hosts*.ps1`, and the existing keeper files in their registry mode for H1 ([A host per project: the keeper's v0.07 cases](#a-host-per-project-the-keepers-v007-cases)) | The keeper holding the board on agentspace's own host: D53's check of the lease's alias, which includes it |
-| state.md: the host registry's and the project list's schemas | The state schemas' samples check, and every case that seeds or reads the two files | Nothing: no behavior of the two files needs a real host |
-| A desktop-app agent working a card on agentspace's host | No case: it needs Terry's sign-ins (D52) | D53's check of an agent working a card: E0.07-T06-S01 |
+| keeper.md: a host per project (H1 to H18), each host's holder log and the registry's read failures | `test-unmet-hosts-pass.ps1` and `test-unmet-hosts-watch.ps1`, and the existing keeper files in their registry mode for H1 ([A host per project: the keeper's v0.07 cases](#a-host-per-project-the-keepers-v007-cases)) | The keeper holding the board on agentspace's own host: D53's check of the lease's alias, which includes it |
+| state.md: the host registry's and the project list's schemas | `test-state-schemas.ps1`, and every case that seeds or reads the two files | Nothing: no behavior of the two files needs a real host |
+| A desktop-app agent working a card on agentspace's host | No case: it needs Terry's sign-ins (D52) | D53's check of an agent working a card: E0.07-T06-S01 (#0160) |
 
 ## The remaining work
 
