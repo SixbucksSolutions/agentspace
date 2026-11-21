@@ -16,13 +16,18 @@
 //!    it, before anything starts.
 //! 2. Puts the Session Manager plugin's folder and the AWS CLI's folder first on `PATH`, in that
 //!    order ([`proxy_path`]).
-//! 3. Runs `up`'s steps in its own process, in caller mode (D42): the instance ID from the cache or
-//!    the stack, the start-and-wait step of `agentspace-box`, and, unless `AGENTSPACE_NESTED` was
-//!    set as the program started, the token push of `agentspace-push` over the alias. Anything
-//!    they write to standard output goes to standard error.
+//! 3. Finds the host from the argument ([`host`]: no argument is the box, `agentspace-host.<project>`
+//!    is that project's host, a lease alias is looked up in the lease state file, read without its
+//!    lock, and then its project's `ready` host or the box), then runs `up`'s steps on that host in
+//!    its own process, in caller mode (D42): the instance ID from the host's record in the host
+//!    registry or its stack, the start-and-wait step of `agentspace-box`, and, unless
+//!    `AGENTSPACE_NESTED` was set as the program started, the token push of `agentspace-push` over
+//!    the alias, with that host's push stamp (D50). Anything they write to standard output goes to
+//!    standard error.
 //! 4. A failure of step 3 is exit 1, and no tunnel.
-//! 5. Reads the instance ID from the cache again. A cache that is missing, empty or unreadable
-//!    fails, and no tunnel starts.
+//! 5. Reads that host's instance ID from its record again. A registry or a record that cannot be
+//!    read here is not a failure when step 3 has the ID: the connection uses the one it read
+//!    (operator.md, The host registry, as the operator uses it).
 //! 6. Runs the tunnel ([`tunnel`]) with its own standard input and output and exits with its code.
 //!    Before it starts, and before a failure exits, a console on standard error is left with the
 //!    output mode ssh needs (What it MUST NOT do: "Leave the console broken"; Q17).
@@ -33,7 +38,7 @@
 
 #![deny(unsafe_code)]
 
-mod cache;
+pub mod host;
 // The Windows calls, and the only module with `unsafe` (the Windows one, `win.rs`). On any other
 // system `other.rs` stands in, which is NOT THE CONTRACT'S: it exists so that the crate builds and
 // its portable logic is tested on Linux.
@@ -49,17 +54,17 @@ pub mod tunnel;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use agentspace_box::{InstanceIdCache, SystemClock, cache_unreadable, read_cache, start_and_wait};
+use agentspace_box::{SystemClock, start_and_wait};
+use agentspace_hosts::{Host, host_for, is_box};
 use agentspace_operator::{DEFAULT_ALIAS, Parsed, Printer, context_from, diagnostic_from, parse};
 use agentspace_operator_api::{CallerFailure, Context, Failure, Mode, Say};
-use agentspace_push::{COULD_NOT_SEND, Lookup, push_using};
+use agentspace_push::{Lookup, push_to_host_using};
 use agentspace_run::Runner;
 
 pub use agentspace_operator::COULD_NOT_REACH;
-pub use cache::{CACHE_FILE, FileCache};
+pub use host::{HOST_ALIAS_PREFIX, HostCache};
 
 /// The program's file name, which the second-argument refusal names (operator.md, The programs).
 pub const PROGRAM_NAME: &str = "agentspace-ssh-proxy.exe";
@@ -69,11 +74,12 @@ pub const PLUGIN_FOLDER: &str = r"C:\Program Files\Amazon\SessionManagerPlugin\b
 pub const AWS_FOLDER: &str = r"C:\Program Files\Amazon\AWSCLIV2";
 
 /// The variables the program reads, once, as it starts (operator.md, Environment variables).
-const NAMES: [&str; 9] = [
+const NAMES: [&str; 10] = [
     "USERPROFILE",
     "LOCALAPPDATA",
     "SystemRoot",
     "AGENTSPACE_NESTED",
+    "AGENTSPACE_STATE_DIR",
     "AGENTSPACE_DIAGNOSTIC",
     "AGENTSPACE_AWS_CMD",
     "AGENTSPACE_SSH_CMD",
@@ -177,28 +183,31 @@ fn report(say: &Printer, failure: &Failure) {
     }
 }
 
-/// The box's stack, until T03 picks the host's (operator.md, The stack).
-const BOX_STACK: &str = "agentbox";
-
-/// `up`'s steps in caller mode (operator.md, up; What a caller sees): the start-and-wait step, and
-/// the token push unless this is a nested `up`. Returns when the box is ready.
-fn up(ctx: &Context, say: &dyn Say, alias: &str, env: &Arc<Env>) -> Result<(), Failure> {
+/// `up`'s steps in caller mode (operator.md, up; What a caller sees) on `host`: the start-and-wait
+/// step, which reads the instance ID from the host's record or its stack, and the token push with
+/// the host's own stamp unless this is a nested `up`. Returns the instance ID once the host is
+/// ready.
+fn up(
+    ctx: &Context,
+    say: &dyn Say,
+    alias: &str,
+    host: &Host,
+    env: &Arc<Env>,
+) -> Result<String, Failure> {
     let lookup_env = Arc::clone(env);
     let runner = Runner::with_lookup(ctx.clone(), move |name| lookup_env.get(name));
-    let cache = FileCache::new(&ctx.home);
-    let id = start_and_wait(&runner, say, &SystemClock::new(), &cache, BOX_STACK)?;
+    let cache = HostCache::new(&ctx.home, host);
+    let id = start_and_wait(&runner, say, &SystemClock::new(), &cache, &host.stack)?;
     if !ctx.nested {
         let lookup_env = Arc::clone(env);
         let lookup: Arc<Lookup> = Arc::new(move |name| lookup_env.get(name));
-        // The push never fails a command; a panic in it is the "Could not send" warning.
-        let pushed = catch_unwind(AssertUnwindSafe(|| {
-            push_using(ctx, say, &id, alias, false, lookup)
-        }));
-        if pushed.is_err() {
-            let _ = catch_unwind(AssertUnwindSafe(|| say.warning(COULD_NOT_SEND)));
-        }
+        // The box's push is `None`, v0.06's stamp; every other host has a stamp of its own (D50).
+        let push_host = (!is_box(host)).then_some(host.project.as_str());
+        // The push never fails a command; a panic in it is the "Could not send" warning, which
+        // `push_to_host_using` says itself.
+        let _ = push_to_host_using(ctx, say, &id, alias, false, push_host, lookup, &|ssh| ssh);
     }
-    Ok(())
+    Ok(id)
 }
 
 /// Steps 1 to 6. `Ok` is the exit code, which is the tunnel's.
@@ -222,17 +231,29 @@ fn proxy(args: &[OsString], mut env: Env, say: &Printer, diagnostic: bool) -> Re
     platform::set_path(&path);
     env.set("PATH", path.clone());
 
-    // Steps 3 to 5, with standard output sent to standard error.
+    // Steps 3 to 5, with standard output sent to standard error. The host is found after the alias
+    // check, and the registry is read for every argument, so one that is not valid fails here.
     let ctx = context_from(&|name| env.get(name))?;
+    let hosts = agentspace_hosts::read(&ctx.home)
+        .map_err(|error| host::registry_failure(&ctx.home, &error))?;
+    let state_dir = host::state_dir(env.get("AGENTSPACE_STATE_DIR"), &ctx.home);
+    let found = host::choose(alias.as_deref(), &hosts, &state_dir, say)?.clone();
     let env = Arc::new(env);
     let mut stdout_guard = platform::StdoutGuard::new();
-    up(&ctx, say, alias.as_deref().unwrap_or(DEFAULT_ALIAS), &env)?;
-    let cache = FileCache::new(&ctx.home);
-    let id = match read_cache(cache.path(), cache.read()) {
-        Ok(Some(id)) => id,
-        Ok(None) => return Err(cache_unreadable(cache.path())),
-        Err(failure) => return Err(failure),
-    };
+    let read_id = up(
+        &ctx,
+        say,
+        alias.as_deref().unwrap_or(DEFAULT_ALIAS),
+        &found,
+        &env,
+    )?;
+    // Step 5: the record's own ID, which the tunnel MUST target. Architect's to confirm: when the
+    // registry or the record cannot give one here, such as after a write of `up`'s that failed
+    // (which does not fail the connection), the ID `up` read is used rather than a failure.
+    let id = agentspace_hosts::read(&ctx.home)
+        .ok()
+        .and_then(|now| host_for(&now, &found.project).and_then(|h| h.instance_id.clone()))
+        .unwrap_or(read_id);
     // The tunnel's standard output is the ProxyCommand's own.
     stdout_guard.restore();
 

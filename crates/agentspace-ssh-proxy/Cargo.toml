@@ -23,8 +23,10 @@ agentspace-box = { path = "../agentspace-box" }
 agentspace-push = { path = "../agentspace-push" }
 # Every program the ProxyCommand starts gets its environment through this crate (D42).
 agentspace-run = { path = "../agentspace-run" }
-# The cache's atomic replace.
+# The cache's atomic replace, and the lease state file's read, without its lock.
 agentspace-state = { path = "../agentspace-state" }
+# The host registry: the host a connection reaches, and its instance ID (D45, D55).
+agentspace-hosts = { path = "../agentspace-hosts" }
 
 # Only src/win.rs uses it, the one module that calls Windows: the process's PATH and the
 # standard output handle and the console's output mode. The version the other crates already use.
@@ -35,3 +37,5 @@ windows-sys = { version = "=0.61.2", default-features = false, features = ["Win3
 # seam), in one module of tests/proxy.rs.
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+# The tests' stamp and confirmation hash (operator.md, The stamp): the version the other crates use.
+sha2 = { version = "=0.10.9", default-features = false }

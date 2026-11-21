@@ -76,7 +76,7 @@ try {
   } elseif (-not $program) {
     Write-ConformanceResult -Name $nameA -Status FAIL -Reason 'Neither AGENTSPACE_SSH_PROXY_CMD nor its default names a program'
   } else {
-    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile '.agentspace\instance-id.json')), ('{"version":0,"instance_id":"' + $fakeId + '"}'))
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile '.agentspace\hosts.json')), ('{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"' + $fakeId + '"}]}'))
     $awsOk = New-OperatorStandIn -ConformanceHome $h -Name 'aws-ok' -Body @(
       'echo %*>>"%~dp0aws-ok-full.log"',
       'echo %PATH%>>"%~dp0aws-ok-path.log"',

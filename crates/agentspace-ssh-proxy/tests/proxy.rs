@@ -16,6 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+
 const ID_A: &str = "i-1234567890abcdef0";
 const ID_B: &str = "i-fedcba9876543210f";
 
@@ -37,6 +39,8 @@ const SM_PREFIX: &str =
 
 const LONG_AGO: &str = "2020-01-01T00:00:00+00:00";
 const FUTURE: &str = "2999-01-01T00:00:00+00:00";
+/// A time in the lease state file's form (state.md, The lease state file).
+const LEASE_FUTURE: &str = "2999-01-01T00:00:00Z";
 
 const POSIX_A: &str = "1A2B3C4D-5E6F-4A8B-9C0D-1E2F3A4B5C6D_POSIX_FD_STATE";
 const POSIX_B: &str = "FFEEDDCC-BBAA-4099-8877-665544332211_POSIX_FD_STATE";
@@ -89,13 +93,48 @@ impl Sandbox {
         self.home.join(".agentspace")
     }
 
+    /// The host registry, `hosts.json`, which holds each host's instance ID from v0.07 on
+    /// (operator.md, The host registry, as the operator uses it; state.md, The instance ID).
     fn cache_path(&self) -> PathBuf {
+        self.hosts_path()
+    }
+
+    fn hosts_path(&self) -> PathBuf {
+        self.state_dir().join("hosts.json")
+    }
+
+    /// The v0.06 instance-ID cache, retired by v0.07: nothing reads it (state.md).
+    fn retired_cache_path(&self) -> PathBuf {
         self.state_dir().join("instance-id.json")
+    }
+
+    fn leases_path(&self) -> PathBuf {
+        self.state_dir().join("leases.json")
+    }
+
+    /// A host's folder, `hosts\<project>` (state.md, A host's push stamp).
+    fn host_folder(&self, project: &str) -> PathBuf {
+        self.state_dir().join("hosts").join(project)
+    }
+
+    fn box_stamp_path(&self) -> PathBuf {
+        self.state_dir().join("localswim-pushed.json")
+    }
+
+    fn host_stamp_path(&self, project: &str) -> PathBuf {
+        self.host_folder(project).join("localswim-pushed.json")
     }
 }
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
+        // A test may have made the registry read-only.
+        if let Ok(meta) = fs::metadata(self.hosts_path()) {
+            let mut perms = meta.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(self.hosts_path(), perms);
+        }
         let _ = fs::remove_dir_all(&self.root);
     }
 }
@@ -348,17 +387,108 @@ fn plain_script(log: &str) -> String {
 // A run
 // ---------------------------------------------------------------------------------------------
 
+/// What the host registry, `hosts.json`, holds as a case starts (the name is the v0.06 cache's).
 enum Cache {
-    /// A well-formed cache naming the id.
+    /// A well-formed registry whose box record names the id.
     Valid(&'static str),
-    /// These raw bytes as the cache file.
+    /// These raw bytes as the registry file.
     Raw(Vec<u8>),
-    /// A state folder with no cache file.
+    /// A state folder with no registry file.
     Missing,
     /// No state folder at all.
     NoDir,
-    /// A folder where the cache file should be.
+    /// A folder where the registry file should be.
     Folder,
+}
+
+// ---------------------------------------------------------------------------------------------
+// The host registry and the lease state file, as a test writes them (state.md)
+// ---------------------------------------------------------------------------------------------
+
+/// A project that is not the box's, and the instance IDs that tell the hosts apart. None matches
+/// the pattern of a real one.
+const PROJ_A: &str = "orchard";
+const PROJ_B: &str = "quarry";
+const ID_C: &str = "i-abcdef12345678901";
+const ID_D: &str = "i-1111111122222222a";
+
+/// One host record that is not the box's: its project, its state, and its instance ID if known.
+#[derive(Clone, Copy)]
+struct HostRec {
+    project: &'static str,
+    state: &'static str,
+    instance_id: Option<&'static str>,
+}
+
+fn host(project: &'static str, state: &'static str, id: Option<&'static str>) -> HostRec {
+    HostRec {
+        project,
+        state,
+        instance_id: id,
+    }
+}
+
+/// The registry as agentspace writes it: compact JSON, the box's record first, each record's
+/// members in the order project, stack, state, instance_id, then one line feed (state.md).
+fn registry(others: &[HostRec], box_id: Option<&str>) -> String {
+    let mut s = String::from("{\"version\":0,\"hosts\":[");
+    s.push_str("{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"");
+    if let Some(id) = box_id {
+        s.push_str(&format!(",\"instance_id\":\"{id}\""));
+    }
+    s.push('}');
+    for h in others {
+        s.push_str(&format!(
+            ",{{\"project\":\"{p}\",\"stack\":\"agentspace-host-{p}\",\"state\":\"{st}\"",
+            p = h.project,
+            st = h.state
+        ));
+        if let Some(id) = h.instance_id {
+            s.push_str(&format!(",\"instance_id\":\"{id}\""));
+        }
+        s.push('}');
+    }
+    s.push_str("]}\n");
+    s
+}
+
+/// The first lease ID's first eight digits, which end the alias (lease-api.md).
+const LEASE_PREFIX: &str = "aaaaaaaa";
+
+/// A lease alias, `agentspace-<project>-<first 8 hex digits of the id>`.
+fn lease_alias(project: &str, prefix: &str) -> String {
+    format!("agentspace-{project}-{prefix}")
+}
+
+/// A stored `ready` lease record, in a form the state file's schema accepts.
+fn ready_lease(project: &str, prefix: &str, expires_at: &str) -> String {
+    format!(
+        "{{\"id\":\"{prefix}-1111-4111-8111-111111111111\",\"project\":\"{project}\",\"state\":\"ready\",\"platform\":\"linux/arm64\",\"profile\":\"base\",\"size\":\"small\",\"ttl_seconds\":3600,\"created_at\":\"2026-01-01T00:00:00Z\",\"expires_at\":\"{expires_at}\",\"ssh\":{{\"host_alias\":\"{alias}\",\"user\":\"ubuntu\"}},\"driver\":\"ec2\"}}",
+        alias = lease_alias(project, prefix)
+    )
+}
+
+/// A stored `released` lease record: it carries no `ssh`, so it never matches an alias.
+fn released_lease(project: &str, prefix: &str) -> String {
+    format!(
+        "{{\"id\":\"{prefix}-1111-4111-8111-111111111111\",\"project\":\"{project}\",\"state\":\"released\",\"platform\":\"linux/arm64\",\"profile\":\"base\",\"size\":\"small\",\"ttl_seconds\":3600,\"created_at\":\"2026-01-01T00:00:00Z\",\"expires_at\":\"2026-01-01T01:00:00Z\",\"released_at\":\"2026-01-01T00:30:00Z\",\"driver\":\"ec2\"}}"
+    )
+}
+
+fn lease_file(records: &[String]) -> String {
+    format!("{{\"version\":0,\"leases\":[{}]}}\n", records.join(","))
+}
+
+/// A setup that writes the registry and, when given, the lease state file, in the default state
+/// folder, `%USERPROFILE%\.agentspace`.
+fn seed(registry_text: String, leases_text: Option<String>) -> Setup {
+    Box::new(move |sb: &Sandbox| {
+        fs::create_dir_all(sb.state_dir()).unwrap();
+        fs::write(sb.hosts_path(), &registry_text).unwrap();
+        if let Some(text) = &leases_text {
+            fs::write(sb.leases_path(), text).unwrap();
+        }
+    })
 }
 
 enum Stdin {
@@ -377,6 +507,8 @@ struct Case {
     cache: Cache,
     env: Vec<(String, String)>,
     env_remove: Vec<&'static str>,
+    /// Variables set to a folder under the sandbox root, once it exists.
+    env_roots: Vec<(String, String)>,
     path: Option<String>,
     stdin: Stdin,
     spaced: bool,
@@ -393,6 +525,7 @@ impl Case {
             cache: Cache::Valid(ID_A),
             env: Vec::new(),
             env_remove: Vec::new(),
+            env_roots: Vec::new(),
             path: None,
             stdin: Stdin::Null,
             spaced: false,
@@ -451,8 +584,11 @@ fn write_cache(sb: &Sandbox, cache: &Cache) {
         Cache::Missing => fs::create_dir_all(sb.state_dir()).unwrap(),
         Cache::Valid(id) => {
             fs::create_dir_all(sb.state_dir()).unwrap();
+            fs::write(sb.hosts_path(), registry(&[], Some(id))).unwrap();
+            // The v0.06 cache is retired and MUST be ignored, so it is seeded with the same ID
+            // only to keep the box's path comparable with v0.06's.
             fs::write(
-                sb.cache_path(),
+                sb.retired_cache_path(),
                 format!("{{\"version\":0,\"instance_id\":\"{id}\"}}"),
             )
             .unwrap();
@@ -515,6 +651,9 @@ fn run(mut c: Case) -> Out {
     }
     for (k, v) in &c.env {
         cmd.env(k, v);
+    }
+    for (k, folder) in &c.env_roots {
+        cmd.env(k, sb.root.join(folder));
     }
     cmd.stdin(if matches!(c.stdin, Stdin::Null) {
         Stdio::null()
@@ -1490,10 +1629,33 @@ fn a_sign_in_failure_while_rebuilding_the_cache_prints_the_sign_in_message() {
     assert_failure(&o, SIGN_IN);
     assert_stderr_is(&o, &[SIGN_IN]);
 }
+// ---------------------------------------------------------------------------------------------
+// The instance ID: from the host registry, `hosts.json` (operator.md, The host registry, as the
+// operator uses it; state.md, The instance ID). The v0.06 cache, `instance-id.json`, is retired.
+// ---------------------------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------------------------
-// The instance-ID cache
-// ---------------------------------------------------------------------------------------------
+impl Case {
+    /// A case whose state folder holds exactly this registry and, when given, this lease state
+    /// file, in the default state folder.
+    fn seeded(name: &str, registry_text: String, leases_text: Option<String>) -> Case {
+        let mut c = Case::new(name).cache(Cache::NoDir);
+        c.setup = Some(seed(registry_text, leases_text));
+        c
+    }
+}
+
+/// The names of the files in the state folder.
+fn state_names(o: &Out) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(o.sb.state_dir())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
 
 #[test]
 fn the_tunnel_targets_the_cached_id_and_never_another() {
@@ -1504,124 +1666,204 @@ fn the_tunnel_targets_the_cached_id_and_never_another() {
     assert_eq!(
         o.count("cloudformation"),
         0,
-        "a good cache needs no stack call"
+        "a registry that holds the ID needs no stack call"
     );
     assert!(
         o.calls().iter().all(|c| !c.contains(ID_A)),
-        "no call names an id other than the cached one"
+        "no call names an id other than the registry's"
     );
 }
 
 #[test]
-fn a_cache_with_a_byte_order_mark_and_whitespace_is_read() {
+fn a_registry_with_a_byte_order_mark_and_whitespace_is_read() {
     let mut raw = vec![0xEF, 0xBB, 0xBF];
     raw.extend_from_slice(
-        format!("  \r\n {{ \"version\" : 0 ,\r\n \"instance_id\" : \"{ID_B}\" }}\r\n\r\n")
-            .as_bytes(),
+        format!(
+            "  \r\n {{ \"version\" : 0 ,\r\n \"hosts\" : [ {{ \"state\":\"ready\", \"stack\":\"agentbox\", \"project\":\"swimcoach\", \"instance_id\" : \"{ID_B}\" }} ] }}\r\n\r\n"
+        )
+        .as_bytes(),
     );
-    let o = run(Case::new("cache-bom").cache(Cache::Raw(raw)));
+    let o = run(Case::new("registry-bom").cache(Cache::Raw(raw)));
     assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
     assert_eq!(o.target().as_deref(), Some(ID_B));
     assert_eq!(o.count("cloudformation"), 0);
 }
 
-#[test]
-fn a_cache_that_does_not_match_its_schema_is_rebuilt_from_the_stack() {
-    let bad: Vec<(&str, Vec<u8>)> = vec![
+/// Registries that are not valid (state.md, The host registry). A reader never reads one as
+/// missing and never repairs it, so each fails the connection and changes nothing.
+fn invalid_registries() -> Vec<(&'static str, Vec<u8>)> {
+    let box_rec = "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"}";
+    let wrap = |records: &str| format!("{{\"version\":0,\"hosts\":[{records}]}}").into_bytes();
+    vec![
         ("empty", Vec::new()),
         ("whitespace", b"  \r\n".to_vec()),
         ("not-json", b"not json".to_vec()),
-        ("plain-id", ID_A.as_bytes().to_vec()),
         ("array", b"[]".to_vec()),
+        ("version", b"{\"version\":1,\"hosts\":[]}".to_vec()),
         (
-            "version",
-            format!("{{\"version\":1,\"instance_id\":\"{ID_A}\"}}").into_bytes(),
+            "top-extra",
+            format!("{{\"version\":0,\"hosts\":[{box_rec}],\"extra\":true}}").into_bytes(),
         ),
         (
-            "extra",
-            format!("{{\"version\":0,\"instance_id\":\"{ID_A}\",\"extra\":true}}").into_bytes(),
+            "record-extra",
+            wrap(
+                "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"extra\":1}",
+            ),
         ),
         (
-            "short",
-            b"{\"version\":0,\"instance_id\":\"i-123\"}".to_vec(),
-        ),
-        ("no-id", b"{\"version\":0}".to_vec()),
-        (
-            "newline",
-            format!("{{\"version\":0,\"instance_id\":\"{ID_A}\\n\"}}").into_bytes(),
+            "null-id",
+            wrap(
+                "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"instance_id\":null}",
+            ),
         ),
         (
-            "upper",
-            b"{\"version\":0,\"instance_id\":\"I-1234567890ABCDEF0\"}".to_vec(),
+            "short-id",
+            wrap(
+                "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"instance_id\":\"i-123\"}",
+            ),
         ),
-    ];
-    for (name, raw) in bad {
-        let o = run(Case::new(&format!("cache-bad-{name}")).cache(Cache::Raw(raw)));
-        assert_eq!(o.code, Some(0), "{name}; stderr:\n{}", o.err_text());
-        assert_stdout_empty(&o);
+        (
+            "upper-id",
+            wrap(
+                "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"instance_id\":\"I-1234567890ABCDEF0\"}",
+            ),
+        ),
+        (
+            "newline-id",
+            wrap(&format!(
+                "{{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"instance_id\":\"{ID_A}\\n\"}}"
+            )),
+        ),
+        (
+            "bad-state",
+            wrap("{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"stopped\"}"),
+        ),
+        (
+            "duplicate-member",
+            wrap(
+                "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"state\":\"ready\"}",
+            ),
+        ),
+        (
+            "two-for-one-project",
+            wrap(&format!(
+                "{box_rec},{{\"project\":\"{PROJ_A}\",\"stack\":\"agentspace-host-{PROJ_A}\",\"state\":\"ready\"}},{{\"project\":\"{PROJ_A}\",\"stack\":\"agentspace-host-{PROJ_A}\",\"state\":\"creating\"}}"
+            )),
+        ),
+        (
+            "no-box-record",
+            wrap(&format!(
+                "{{\"project\":\"{PROJ_A}\",\"stack\":\"agentspace-host-{PROJ_A}\",\"state\":\"ready\"}}"
+            )),
+        ),
+        ("two-box-records", wrap(&format!("{box_rec},{box_rec}"))),
+        (
+            "box-for-another-project",
+            wrap("{\"project\":\"other\",\"stack\":\"agentbox\",\"state\":\"ready\"}"),
+        ),
+        (
+            "stack-for-another-project",
+            wrap(&format!(
+                "{box_rec},{{\"project\":\"{PROJ_A}\",\"stack\":\"agentspace-host-{PROJ_B}\",\"state\":\"ready\"}}"
+            )),
+        ),
+        (
+            "project-not-normalized",
+            wrap(&format!(
+                "{box_rec},{{\"project\":\"Orchard\",\"stack\":\"agentspace-host-Orchard\",\"state\":\"ready\"}}"
+            )),
+        ),
+        ("not-utf8", vec![0xFF, 0xFE, 0x7B, 0x00, 0x7D, 0x00]),
+        (
+            "the-retired-caches-form",
+            format!("{{\"version\":0,\"instance_id\":\"{ID_A}\"}}").into_bytes(),
+        ),
+    ]
+}
+
+#[test]
+fn a_registry_that_is_not_valid_fails_the_connection_and_is_never_repaired() {
+    for (name, raw) in invalid_registries() {
+        // The box's own path, a host alias and a lease alias: every connection reads the
+        // registry, so every one fails.
+        for (i, args) in [
+            vec![],
+            vec![format!("agentspace-host.{PROJ_A}")],
+            vec![lease_alias(PROJ_A, LEASE_PREFIX)],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let o = run(Case::new(&format!("registry-bad-{name}-{i}"))
+                .args(&arg_refs)
+                .cache(Cache::Raw(raw.clone())));
+            assert_failure(&o, COULD_NOT_REACH);
+            assert_stderr_is(&o, &[COULD_NOT_REACH]);
+            assert!(
+                o.calls().is_empty(),
+                "{name}/{i}: no AWS call is made over a registry that is not valid"
+            );
+            assert_eq!(
+                fs::read(o.sb.hosts_path()).unwrap(),
+                raw,
+                "{name}/{i}: the registry is never rewritten"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_missing_registry_is_the_boxs_record_alone_and_the_id_is_written_atomically() {
+    for (i, cache) in [Cache::Missing, Cache::NoDir].into_iter().enumerate() {
+        let o = run(Case::new(&format!("registry-missing-{i}")).cache(cache));
+        assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
         assert_stderr_is(&o, &[READY]);
         assert_eq!(
             o.calls().first().map(String::as_str),
             Some(
                 "cloudformation describe-stacks --region us-west-2 --output json --stack-name agentbox"
             ),
-            "{name}: the cache is treated as missing"
+            "the box's record has no ID, so the box's stack is read"
         );
-        assert_eq!(o.target().as_deref(), Some(ID_B), "{name}");
-        assert_eq!(
-            fs::read(o.sb.cache_path()).unwrap(),
-            format!("{{\"version\":0,\"instance_id\":\"{ID_B}\"}}").into_bytes(),
-            "{name}: rewritten as compact JSON, UTF-8, no byte order mark, no line ending"
-        );
-    }
-}
-
-#[test]
-fn a_missing_cache_is_rebuilt_and_written_atomically() {
-    for (i, cache) in [Cache::Missing, Cache::NoDir].into_iter().enumerate() {
-        let o = run(Case::new(&format!("cache-missing-{i}")).cache(cache));
-        assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
-        assert_stderr_is(&o, &[READY]);
         assert_eq!(o.target().as_deref(), Some(ID_B));
         assert_eq!(
-            fs::read(o.sb.cache_path()).unwrap(),
-            format!("{{\"version\":0,\"instance_id\":\"{ID_B}\"}}").into_bytes()
+            fs::read(o.sb.hosts_path()).unwrap(),
+            registry(&[], Some(ID_B)).into_bytes(),
+            "the first change writes the box's record with the ID, compact, then one line feed"
         );
-        let names: Vec<String> = fs::read_dir(o.sb.state_dir())
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(
-            names,
-            vec!["instance-id.json".to_string()],
+        assert!(
+            state_names(&o).iter().all(|n| !n.contains(".tmp")),
             "no temporary file is left"
         );
     }
 }
 
 #[test]
-fn the_prototypes_caches_are_never_read() {
-    let mut c = Case::new("cache-prototype").cache(Cache::Missing);
+fn the_retired_caches_and_the_prototypes_are_never_read() {
+    let mut c = Case::new("cache-retired").cache(Cache::Missing);
     c.setup = Some(Box::new(|sb: &Sandbox| {
+        fs::write(
+            sb.retired_cache_path(),
+            format!("{{\"version\":0,\"instance_id\":\"{ID_A}\"}}"),
+        )
+        .unwrap();
         fs::write(sb.state_dir().join("instance-id"), ID_A).unwrap();
         fs::write(sb.work.join(".instance-id"), ID_A).unwrap();
         fs::write(sb.home.join(".instance-id"), ID_A).unwrap();
     }));
     let o = run(c);
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
     assert_eq!(
-        o.code,
-        Some(0),
-        "stderr:
-{}",
-        o.err_text()
+        o.target().as_deref(),
+        Some(ID_B),
+        "nothing migrates: a record without an ID reads the stack again"
     );
-    assert_eq!(o.target().as_deref(), Some(ID_B));
     assert_eq!(o.count("cloudformation describe-stacks"), 1);
 }
 
 #[test]
-fn a_missing_stack_output_is_the_could_not_reach_line_and_writes_no_cache() {
+fn a_missing_stack_output_is_the_could_not_reach_line_and_writes_nothing() {
     let outputs = [
         "{\"Stacks\":[{\"Outputs\":[]}]}",
         "{\"Stacks\":[{}]}",
@@ -1639,7 +1881,7 @@ fn a_missing_stack_output_is_the_could_not_reach_line_and_writes_no_cache() {
             }));
         assert_failure(&o, COULD_NOT_REACH);
         assert_stderr_is(&o, &[COULD_NOT_REACH]);
-        assert!(!o.sb.cache_path().exists(), "no cache is written");
+        assert!(!o.sb.hosts_path().exists(), "no registry is written");
     }
 }
 
@@ -1655,14 +1897,558 @@ fn a_failing_stack_call_is_the_could_not_reach_line() {
 }
 
 #[test]
-fn a_cache_that_cannot_be_opened_is_the_could_not_reach_line_with_no_path() {
-    let o = run(Case::new("cache-folder").cache(Cache::Folder));
+fn a_registry_that_cannot_be_opened_is_the_could_not_reach_line_with_no_path() {
+    let o = run(Case::new("registry-folder").cache(Cache::Folder));
     assert_failure(&o, COULD_NOT_REACH);
     assert_stderr_is(&o, &[COULD_NOT_REACH]);
     assert!(
         o.calls().is_empty(),
-        "no AWS call is made over a cache it cannot read"
+        "no AWS call is made over a registry it cannot read"
     );
+}
+
+#[test]
+fn a_hosts_missing_instance_id_is_read_from_its_stack_and_written_into_its_record_alone() {
+    let before = format!(
+        "{{\"version\":0,\"hosts\":[{{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"}},{{\"project\":\"{PROJ_A}\",\"stack\":\"agentspace-host-{PROJ_A}\",\"state\":\"ready\"}},{{\"project\":\"{PROJ_B}\",\"stack\":\"agentspace-host-{PROJ_B}\",\"state\":\"creating\",\"last_attempt_at\":\"2026-01-01T00:00:00Z\"}}]}}\n"
+    );
+    let after = format!(
+        "{{\"version\":0,\"hosts\":[{{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"}},{{\"project\":\"{PROJ_A}\",\"stack\":\"agentspace-host-{PROJ_A}\",\"state\":\"ready\",\"instance_id\":\"{ID_B}\"}},{{\"project\":\"{PROJ_B}\",\"stack\":\"agentspace-host-{PROJ_B}\",\"state\":\"creating\",\"last_attempt_at\":\"2026-01-01T00:00:00Z\"}}]}}\n"
+    );
+    let o = run(Case::seeded("host-id-from-stack", before, None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")]));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(&o);
+    assert_stderr_is(&o, &[READY]);
+    assert_names_no_host(&o);
+    assert_eq!(
+        o.calls().first().map(String::as_str),
+        Some(
+            format!(
+                "cloudformation describe-stacks --region us-west-2 --output json --stack-name agentspace-host-{PROJ_A}"
+            )
+            .as_str()
+        ),
+        "the host's own stack is read, never the box's"
+    );
+    assert_eq!(o.count("cloudformation"), 1);
+    assert_eq!(o.target().as_deref(), Some(ID_B));
+    assert_eq!(
+        fs::read(o.sb.hosts_path()).unwrap(),
+        after.into_bytes(),
+        "only that record's instance_id is written, and no other member or record changes"
+    );
+    assert!(state_names(&o).iter().all(|n| !n.contains(".tmp")));
+}
+
+#[test]
+fn a_hosts_instance_id_from_its_record_needs_no_stack_call_and_is_never_replaced() {
+    let reg = registry(&[host(PROJ_A, "ready", Some(ID_C))], Some(ID_A));
+    let o = run(Case::seeded("host-id-held", reg.clone(), None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")]));
+    assert_reached(&o, ID_C, &[ID_A, ID_B]);
+    assert_eq!(o.count("cloudformation"), 0);
+    assert_eq!(fs::read(o.sb.hosts_path()).unwrap(), reg.into_bytes());
+}
+
+#[test]
+fn a_registry_write_that_fails_does_not_fail_the_connection() {
+    // A read-only registry cannot be replaced, so the missing ID cannot be written; the
+    // connection uses the ID it read (operator.md, The host registry, as the operator uses it).
+    let reg = registry(&[host(PROJ_A, "ready", None)], Some(ID_A));
+    let mut c = Case::seeded("registry-readonly", reg.clone(), None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")]);
+    let seeding = c.setup.take().unwrap();
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        let mut perms = fs::metadata(sb.hosts_path()).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(sb.hosts_path(), perms).unwrap();
+    }));
+    let o = run(c);
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(&o);
+    assert_stderr_is(&o, &[READY]);
+    assert_eq!(o.target().as_deref(), Some(ID_B));
+    assert_eq!(fs::read(o.sb.hosts_path()).unwrap(), reg.into_bytes());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Which host a connection reaches (operator.md, From the ProxyCommand; D49, D55)
+// ---------------------------------------------------------------------------------------------
+
+/// Backend and host names the caller MUST NOT see: no project, stack or instance (D1).
+fn assert_names_no_host(o: &Out) {
+    let text = o.err_text();
+    for needle in [
+        PROJ_A,
+        PROJ_B,
+        "swimcoach",
+        "agentspace-host",
+        "agentbox",
+        ID_A,
+        ID_B,
+        ID_C,
+        ID_D,
+    ] {
+        assert!(
+            !text.contains(needle),
+            "caller-mode output names {needle:?}:\n{text}"
+        );
+    }
+}
+
+/// The connection reached the host with this instance ID: one ready line, the tunnel to its ID,
+/// and no call that names any of `others`.
+fn assert_reached(o: &Out, id: &str, others: &[&str]) {
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(o);
+    assert_stderr_is(o, &[READY]);
+    assert_names_no_host(o);
+    assert_eq!(o.target().as_deref(), Some(id));
+    assert_eq!(o.tunnel_calls().len(), 1);
+    for other in others {
+        assert!(
+            o.calls().iter().all(|c| !c.contains(other)),
+            "a call names another host's instance"
+        );
+    }
+}
+
+fn two_hosts() -> String {
+    registry(
+        &[
+            host(PROJ_A, "ready", Some(ID_C)),
+            host(PROJ_B, "ready", Some(ID_D)),
+        ],
+        Some(ID_A),
+    )
+}
+
+#[test]
+fn a_host_alias_reaches_that_projects_host() {
+    let describe =
+        format!("ec2 describe-instances --region us-west-2 --output json --instance-ids {ID_C}");
+    let tunnel = format!(
+        "ssm start-session --region us-west-2 --target {ID_C} --document-name AWS-StartSSHSession --parameters portNumber=22"
+    );
+    let o = run(Case::seeded("host-alias-a", two_hosts(), None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")]));
+    assert_reached(&o, ID_C, &[ID_A, ID_B, ID_D]);
+    assert_eq!(
+        o.calls(),
+        vec![describe.clone(), describe, tunnel],
+        "up and the tunnel act on that host's instance"
+    );
+    assert!(o.no_ssh_or_scp());
+
+    let o = run(Case::seeded("host-alias-b", two_hosts(), None)
+        .args(&[&format!("agentspace-host.{PROJ_B}")]));
+    assert_reached(&o, ID_D, &[ID_A, ID_B, ID_C]);
+}
+
+#[test]
+fn a_host_alias_reaches_its_host_whatever_the_records_state() {
+    for state in ["creating", "failed", "ready"] {
+        let reg = registry(&[host(PROJ_A, state, Some(ID_C))], Some(ID_A));
+        let o = run(Case::seeded(&format!("host-alias-{state}"), reg, None)
+            .args(&[&format!("agentspace-host.{PROJ_A}")]));
+        assert_reached(&o, ID_C, &[ID_A]);
+    }
+}
+
+#[test]
+fn a_host_alias_never_reads_the_lease_state_file() {
+    let o = run(Case::seeded(
+        "host-alias-leases",
+        two_hosts(),
+        Some("garbage, not json".to_string()),
+    )
+    .args(&[&format!("agentspace-host.{PROJ_A}")]));
+    assert_reached(&o, ID_C, &[ID_A]);
+}
+
+#[test]
+fn a_host_alias_for_a_project_with_no_record_fails_and_starts_nothing() {
+    for (i, alias) in [
+        "agentspace-host.nosuch".to_string(),
+        format!("agentspace-host.{PROJ_A}x"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let o =
+            run(Case::seeded(&format!("host-alias-none-{i}"), two_hosts(), None).args(&[alias]));
+        assert_failure(&o, COULD_NOT_REACH);
+        assert_stderr_is(&o, &[COULD_NOT_REACH]);
+        assert!(o.calls().is_empty(), "no AWS call, and so no tunnel");
+        assert!(o.no_ssh_or_scp());
+    }
+    // A missing registry holds the box's record alone.
+    let o = run(Case::new("host-alias-no-registry")
+        .cache(Cache::NoDir)
+        .args(&[&format!("agentspace-host.{PROJ_A}")]));
+    assert_failure(&o, COULD_NOT_REACH);
+    assert_stderr_is(&o, &[COULD_NOT_REACH]);
+    assert!(o.calls().is_empty());
+    assert!(
+        !o.sb.hosts_path().exists(),
+        "a failed lookup never adds a record or writes the registry"
+    );
+}
+
+#[test]
+fn a_host_alias_whose_project_is_not_normalized_fails_before_any_call() {
+    for (i, rest) in [
+        "", "Orchard", "ORCHARD", "orchard-", "-orchard", "or_chard", "or.chard",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let o = run(
+            Case::seeded(&format!("host-alias-form-{i}"), two_hosts(), None)
+                .args(&[&format!("agentspace-host.{rest}")]),
+        );
+        assert_failure(&o, COULD_NOT_REACH);
+        assert_stderr_is(&o, &[COULD_NOT_REACH]);
+        assert!(o.calls().is_empty(), "{rest:?}: no AWS call");
+    }
+}
+
+#[test]
+fn a_lease_alias_reaches_its_leases_ready_host() {
+    let leases = lease_file(&[
+        ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE),
+        ready_lease(PROJ_B, "bbbbbbbb", LEASE_FUTURE),
+    ]);
+    let o = run(Case::seeded("lease-a", two_hosts(), Some(leases.clone()))
+        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]));
+    assert_reached(&o, ID_C, &[ID_A, ID_B, ID_D]);
+    assert!(o.no_ssh_or_scp());
+
+    let o = run(Case::seeded("lease-b", two_hosts(), Some(leases))
+        .args(&[&lease_alias(PROJ_B, "bbbbbbbb")]));
+    assert_reached(&o, ID_D, &[ID_A, ID_B, ID_C]);
+}
+
+#[test]
+fn a_lease_alias_does_not_check_the_leases_expiry() {
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", "2020-01-01T00:00:00Z")]);
+    let o = run(Case::seeded("lease-expired", two_hosts(), Some(leases))
+        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]));
+    assert_reached(&o, ID_C, &[ID_A]);
+}
+
+#[test]
+fn a_lease_alias_is_matched_exactly_and_case_sensitively() {
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE)]);
+    for (i, alias) in [
+        lease_alias(PROJ_A, "aaaaaaaa").to_uppercase(),
+        lease_alias(PROJ_A, "aaaaaaab"),
+        format!("{}x", lease_alias(PROJ_A, "aaaaaaaa")),
+        lease_alias(PROJ_A, "aaaaaaaa")
+            .trim_start_matches("agentspace-")
+            .to_string(),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let o = run(Case::seeded(
+            &format!("lease-exact-{i}"),
+            two_hosts(),
+            Some(leases.clone()),
+        )
+        .args(&[alias]));
+        assert_reached(&o, ID_A, &[ID_B, ID_C, ID_D]);
+    }
+}
+
+#[test]
+fn a_lease_alias_with_no_record_reaches_the_box() {
+    // No lease state file at all, an empty one, and one that holds other leases.
+    for (i, leases) in [
+        None,
+        Some(lease_file(&[])),
+        Some(lease_file(&[ready_lease(PROJ_B, "bbbbbbbb", LEASE_FUTURE)])),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let o = run(
+            Case::seeded(&format!("lease-norecord-{i}"), two_hosts(), leases)
+                .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]),
+        );
+        assert_reached(&o, ID_A, &[ID_B, ID_C, ID_D]);
+    }
+}
+
+#[test]
+fn a_leases_alias_that_is_not_stored_ready_never_matches() {
+    // A released record keeps no `ssh`, so its alias matches nothing.
+    let leases = lease_file(&[released_lease(PROJ_A, "aaaaaaaa")]);
+    let o = run(Case::seeded("lease-released", two_hosts(), Some(leases))
+        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]));
+    assert_reached(&o, ID_A, &[ID_C]);
+}
+
+#[test]
+fn a_lease_alias_whose_project_has_no_ready_host_reaches_the_box() {
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE)]);
+    let registries = [
+        // The project has no record.
+        registry(&[host(PROJ_B, "ready", Some(ID_D))], Some(ID_A)),
+        // Its record is creating, or failed.
+        registry(&[host(PROJ_A, "creating", Some(ID_C))], Some(ID_A)),
+        registry(&[host(PROJ_A, "failed", Some(ID_C))], Some(ID_A)),
+    ];
+    for (i, reg) in registries.into_iter().enumerate() {
+        let o = run(
+            Case::seeded(&format!("lease-nohost-{i}"), reg, Some(leases.clone()))
+                .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]),
+        );
+        assert_reached(&o, ID_A, &[ID_C, ID_D]);
+    }
+}
+
+#[test]
+fn a_lease_state_file_that_is_not_readable_or_not_valid_sends_the_connection_to_the_box() {
+    let record = ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE);
+    let bad: Vec<(&str, Vec<u8>)> = vec![
+        ("empty", Vec::new()),
+        ("not-json", b"garbage, not json".to_vec()),
+        ("array", b"[]".to_vec()),
+        (
+            "version",
+            format!("{{\"version\":1,\"leases\":[{record}]}}").into_bytes(),
+        ),
+        (
+            "extra-member",
+            format!("{{\"version\":0,\"leases\":[{record}],\"extra\":1}}").into_bytes(),
+        ),
+        // Two records with one ID are not valid, though the schema cannot refuse them.
+        (
+            "duplicate-id",
+            lease_file(&[record.clone(), record.clone()]).into_bytes(),
+        ),
+        ("not-utf8", vec![0xFF, 0xFE, 0x00, 0x7B, 0x00, 0x7D, 0x00]),
+    ];
+    for (name, raw) in bad {
+        let mut c = Case::seeded(&format!("lease-bad-{name}"), two_hosts(), None)
+            .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]);
+        let seeding = c.setup.take().unwrap();
+        c.setup = Some(Box::new(move |sb: &Sandbox| {
+            seeding(sb);
+            fs::write(sb.leases_path(), &raw).unwrap();
+        }));
+        let o = run(c);
+        assert_reached(&o, ID_A, &[ID_C, ID_D]);
+    }
+    // Something that is not a file, where the file belongs.
+    let mut c = Case::seeded("lease-bad-folder", two_hosts(), None)
+        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]);
+    let seeding = c.setup.take().unwrap();
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        fs::create_dir_all(sb.leases_path()).unwrap();
+    }));
+    let o = run(c);
+    assert_reached(&o, ID_A, &[ID_C, ID_D]);
+}
+
+#[test]
+fn a_lease_state_file_that_is_not_valid_is_named_only_under_diagnostic() {
+    let mut c = Case::seeded("lease-bad-diag", two_hosts(), None)
+        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")])
+        .env("AGENTSPACE_DIAGNOSTIC", "1");
+    let seeding = c.setup.take().unwrap();
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        fs::write(sb.leases_path(), b"garbage, not json").unwrap();
+    }));
+    let o = run(c);
+    // The connection still goes to the box; the extra line names the file and the problem.
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(&o);
+    assert_eq!(o.target().as_deref(), Some(ID_A));
+    assert!(
+        o.err_text().contains("leases.json"),
+        "with AGENTSPACE_DIAGNOSTIC set, a line names the lease state file; stderr:\n{}",
+        o.err_text()
+    );
+}
+
+#[test]
+fn the_lease_state_file_is_never_written_and_never_locked() {
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE)]);
+    let reg = two_hosts();
+    let o = run(
+        Case::seeded("lease-readonly-use", reg.clone(), Some(leases.clone()))
+            .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]),
+    );
+    assert_reached(&o, ID_C, &[ID_A]);
+    assert_eq!(fs::read(o.sb.leases_path()).unwrap(), leases.into_bytes());
+    assert_eq!(fs::read(o.sb.hosts_path()).unwrap(), reg.into_bytes());
+    assert_eq!(
+        state_names(&o),
+        vec!["hosts.json".to_string(), "leases.json".to_string()],
+        "no lock file, temporary file or any other file is made"
+    );
+}
+
+#[test]
+fn agentspace_state_dir_moves_the_lease_state_file_and_nothing_else() {
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE)]);
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
+
+    // The lease is in the moved folder: the registry stays under USERPROFILE.
+    let mut c = Case::seeded("state-dir-moved", two_hosts(), None).args(&[&alias]);
+    let seeding = c.setup.take().unwrap();
+    let text = leases.clone();
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        let moved = sb.root.join("moved-state");
+        fs::create_dir_all(&moved).unwrap();
+        fs::write(moved.join("leases.json"), &text).unwrap();
+    }));
+    let c = c.env_path("AGENTSPACE_STATE_DIR", "moved-state");
+    let o = run(c);
+    assert_reached(&o, ID_C, &[ID_A]);
+
+    // The lease is only in the default folder: the moved folder holds none, so the box answers.
+    let mut c = Case::seeded("state-dir-default", two_hosts(), Some(leases)).args(&[&alias]);
+    let seeding = c.setup.take().unwrap();
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        fs::create_dir_all(sb.root.join("moved-state")).unwrap();
+    }));
+    let c = c.env_path("AGENTSPACE_STATE_DIR", "moved-state");
+    let o = run(c);
+    assert_reached(&o, ID_A, &[ID_C]);
+}
+
+impl Case {
+    /// Sets a variable to a folder under the case's throwaway root, once the sandbox exists.
+    fn env_path(mut self, name: &str, folder: &str) -> Case {
+        self.env_roots.push((name.to_string(), folder.to_string()));
+        self
+    }
+}
+
+#[test]
+fn no_argument_and_the_agentspace_alias_reach_the_box_whatever_the_leases() {
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE)]);
+    let o = run(Case::seeded("box-noarg", two_hosts(), Some(leases.clone())));
+    assert_reached(&o, ID_A, &[ID_B, ID_C, ID_D]);
+    let o = run(Case::seeded("box-agentspace", two_hosts(), Some(leases)).args(&["agentspace"]));
+    assert_reached(&o, ID_A, &[ID_B, ID_C, ID_D]);
+}
+
+#[test]
+fn the_boxs_missing_instance_id_is_read_from_the_box_stack_not_a_hosts() {
+    let reg = registry(&[host(PROJ_A, "ready", Some(ID_C))], None);
+    let o = run(Case::seeded("box-id-from-stack", reg, None));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_eq!(
+        o.calls().first().map(String::as_str),
+        Some(
+            "cloudformation describe-stacks --region us-west-2 --output json --stack-name agentbox"
+        )
+    );
+    assert_eq!(o.target().as_deref(), Some(ID_B));
+    assert_eq!(
+        fs::read(o.sb.hosts_path()).unwrap(),
+        registry(&[host(PROJ_A, "ready", Some(ID_C))], Some(ID_B)).into_bytes(),
+        "only the box's record gains an ID"
+    );
+}
+
+#[test]
+fn a_stopped_host_is_started_and_waited_for_by_its_own_instance_and_its_calls_name_no_host() {
+    let o = run(Case::seeded("host-stopped", two_hosts(), None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")])
+        .aws(Aws {
+            state: "stopped",
+            noise: true,
+            ..Aws::default()
+        }));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(&o);
+    assert_stderr_is(&o, &[STARTING, READY]);
+    assert_names_no_host(&o);
+    assert_eq!(
+        o.count(&format!(
+            "ec2 start-instances --region us-west-2 --output json --instance-ids {ID_C}"
+        )),
+        1
+    );
+    assert!(
+        o.calls()
+            .iter()
+            .all(|c| !c.contains(ID_A) && !c.contains(ID_B) && !c.contains(ID_D)),
+        "no call names another host's instance"
+    );
+    assert_eq!(o.target().as_deref(), Some(ID_C));
+}
+
+#[test]
+fn a_host_that_is_not_available_says_so_without_naming_it() {
+    let o = run(Case::seeded("host-terminated", two_hosts(), None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")])
+        .aws(Aws {
+            state: "terminated",
+            noise: true,
+            ..Aws::default()
+        }));
+    assert_failure(&o, NOT_AVAILABLE);
+    assert_stderr_is(&o, &[NOT_AVAILABLE]);
+    assert_names_no_host(&o);
+}
+
+#[test]
+fn every_failure_of_a_hosts_connection_names_no_project_stack_or_instance() {
+    let cases: Vec<(&str, Aws, &str)> = vec![
+        (
+            "describe",
+            Aws {
+                fail: fail("ec2", "describe-instances", 254, ERR_TEXT),
+                noise: true,
+                ..Aws::default()
+            },
+            COULD_NOT_REACH,
+        ),
+        (
+            "wait",
+            Aws {
+                state: "stopping",
+                wait_code: 255,
+                fail: fail("ec2", "start-instances", 254, ERR_TEXT),
+                noise: true,
+                ..Aws::default()
+            },
+            COULD_NOT_REACH,
+        ),
+    ];
+    for (name, aws, last) in cases {
+        let o = run(
+            Case::seeded(&format!("host-fail-{name}"), two_hosts(), None)
+                .args(&[&format!("agentspace-host.{PROJ_A}")])
+                .aws(aws),
+        );
+        assert_failure(&o, last);
+        assert_names_no_host(&o);
+    }
+    // A tunnel that fails, whose stderr is withheld.
+    let o = run(Case::seeded("host-tunnel-fail", two_hosts(), None)
+        .args(&[&format!("agentspace-host.{PROJ_A}")])
+        .aws(Aws {
+            tunnel_code: 3,
+            tunnel_stderr: true,
+            ..Aws::default()
+        }));
+    assert_eq!(o.code, Some(3));
+    assert_stdout_empty(&o);
+    assert_stderr_is(&o, &[READY, CONN_FAILED]);
+    assert_names_no_host(&o);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1748,53 +2534,38 @@ fn no_scenario_shows_backend_text_to_the_caller() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The instance-ID cache's messages, which only AGENTSPACE_DIAGNOSTIC shows (Laptop files, FA-16)
+// The host registry's messages, which only AGENTSPACE_DIAGNOSTIC shows (operator.md, The host
+// registry, as the operator uses it)
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn a_cache_that_cannot_be_opened_gives_fa16s_message_as_detail() {
-    let o = run(Case::new("cache-folder-diag")
-        .cache(Cache::Folder)
-        .env("AGENTSPACE_DIAGNOSTIC", "1"));
-    assert_eq!(o.code, Some(1));
-    assert_stdout_empty(&o);
-    assert!(o.tunnel_calls().is_empty());
-    let fa16 = format!(
-        "agentspace: Cannot read the instance-ID cache {}; remove it and run the command again.",
-        o.sb.cache_path().display()
-    );
-    assert!(
-        o.err_lines() == vec![COULD_NOT_REACH.to_string(), fa16],
-        "stderr is not the caller's line, then FA-16's message"
-    );
-}
-
-#[test]
-fn a_cache_that_cannot_be_written_is_the_could_not_reach_line() {
-    for (i, diag) in [false, true].into_iter().enumerate() {
-        let mut c = Case::new(&format!("cache-unwritable-{i}")).cache(Cache::NoDir);
-        // A file where the cache's folder belongs: the cache is missing, and cannot be written.
-        c.setup = Some(Box::new(|sb: &Sandbox| {
-            fs::write(sb.state_dir(), b"not a folder").unwrap();
-        }));
-        if diag {
-            c = c.env("AGENTSPACE_DIAGNOSTIC", "1");
-        }
-        let o = run(c);
+fn a_registry_that_cannot_be_read_gives_its_message_as_detail_only_under_diagnostic() {
+    for (i, cache) in [Cache::Folder, Cache::Raw(b"not json".to_vec())]
+        .into_iter()
+        .enumerate()
+    {
+        let o = run(Case::new(&format!("registry-diag-{i}"))
+            .cache(cache)
+            .env("AGENTSPACE_DIAGNOSTIC", "1"));
         assert_eq!(o.code, Some(1));
         assert_stdout_empty(&o);
         assert!(o.tunnel_calls().is_empty());
-        assert_eq!(o.count("cloudformation describe-stacks"), 1);
-        if diag {
-            let write = format!("agentspace: Cannot write {}.", o.sb.cache_path().display());
-            assert!(
-                o.err_lines() == vec![COULD_NOT_REACH.to_string(), write],
-                "stderr is not the caller's line, then the cache's write failure"
-            );
-        } else {
-            assert_failure(&o, COULD_NOT_REACH);
-            assert_stderr_is(&o, &[COULD_NOT_REACH]);
-        }
+        let lines = o.err_lines();
+        assert_eq!(
+            lines.len(),
+            2,
+            "the caller's line, then the detail: {lines:?}"
+        );
+        assert_eq!(lines[0], COULD_NOT_REACH);
+        let prefix = format!(
+            "agentspace: The host registry {} cannot be read: ",
+            o.sb.hosts_path().display()
+        );
+        assert!(
+            lines[1].starts_with(&prefix) && lines[1].ends_with('.'),
+            "the detail is operator.md's message naming the file: {:?}",
+            lines[1]
+        );
     }
 }
 
@@ -1954,4 +2725,325 @@ fn an_empty_nested_variable_is_not_nested() {
     assert_eq!(o.code, Some(0));
     assert_stderr_is(&o, &[READY, HOST_NOT_CONFIRMED]);
     assert_eq!(ssh_calls(&o).len(), 1, "the push ran");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The push goes to the host the connection reaches, with that host's own stamp (D50; operator.md,
+// The token push, When it runs and The stamp; state.md, A host's push stamp)
+// ---------------------------------------------------------------------------------------------
+
+const PUSH_TOKEN: &str = "Dummy_proxy_test_token_0123456789abcdefABCD";
+const PUSH_URL: &str = "http://127.0.0.1:1";
+const PUSH_ZONE: &str = "America/New_York";
+
+fn push_content() -> String {
+    format!("LOCALSWIM_URL={PUSH_URL}\nLOCALSWIM_TOKEN={PUSH_TOKEN}\n")
+}
+
+fn hex(bytes: &[u8], upper: bool) -> String {
+    bytes
+        .iter()
+        .map(|b| {
+            if upper {
+                format!("{b:02X}")
+            } else {
+                format!("{b:02x}")
+            }
+        })
+        .collect()
+}
+
+/// What the box prints for a confirmed push: the SHA-256 of the content it installed.
+fn content_hash() -> String {
+    hex(&Sha256::digest(push_content().as_bytes()), false)
+}
+
+/// The stamp over `<instance ID> LF <zone> LF <content>`, as a stamp file holds it.
+fn stamp_file(instance_id: &str) -> String {
+    let input = format!("{instance_id}\n{PUSH_ZONE}\n{}", push_content());
+    format!(
+        "{{\"version\":0,\"stamp\":\"{}\"}}",
+        hex(&Sha256::digest(input.as_bytes()), true)
+    )
+}
+
+/// An ssh stand-in that logs its arguments, reads its stdin and confirms the token and the zone
+/// as the box does (operator.md, What the box does).
+fn confirming_ssh(sb: &Sandbox) {
+    let mut s = String::new();
+    line(&mut s, "@echo off");
+    line(&mut s, ">>\"%~dp0ssh.log\" echo %*");
+    line(&mut s, "findstr \"^\" >nul 2>nul");
+    line(&mut s, &format!("echo {}  -", content_hash()));
+    line(&mut s, &format!("echo zone {PUSH_ZONE}"));
+    line(&mut s, "exit /b 0");
+    fs::write(sb.standins.join("ssh.cmd"), s).unwrap();
+}
+
+#[derive(Clone, Copy)]
+enum StampAt {
+    TheBox,
+    Host(&'static str),
+}
+
+fn stamp_path(sb: &Sandbox, at: StampAt) -> PathBuf {
+    match at {
+        StampAt::TheBox => sb.box_stamp_path(),
+        StampAt::Host(p) => sb.host_stamp_path(p),
+    }
+}
+
+/// A case with a receipt and a Bot credential, an ssh stand-in that does or does not confirm the
+/// push, and these stamps already on disk.
+fn push_case(
+    name: &str,
+    registry_text: String,
+    leases_text: Option<String>,
+    args: &[&str],
+    confirms: bool,
+    stamps: Vec<(StampAt, String)>,
+) -> Case {
+    let mut c = Case::seeded(name, registry_text, leases_text).args(args);
+    let seeding = c.setup.take().unwrap();
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        push_setup(sb);
+        if confirms {
+            confirming_ssh(sb);
+        }
+        for (at, text) in &stamps {
+            let path = stamp_path(sb, *at);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+    }));
+    c
+}
+
+fn assert_pushed_over(o: &Out, alias: &str) {
+    let calls = ssh_calls(o);
+    assert_eq!(calls.len(), 1, "one push ssh");
+    assert!(
+        calls[0].starts_with(&format!(
+            "-o ClearAllForwardings=yes -o BatchMode=yes {alias} "
+        )),
+        "the push's ssh is not over the alias {alias}"
+    );
+}
+
+fn assert_stamp(o: &Out, at: StampAt, want: Option<String>) {
+    let got = fs::read(stamp_path(&o.sb, at)).ok();
+    assert_eq!(
+        got,
+        want.map(String::into_bytes),
+        "a stamp's bytes: written only after the host confirms, and compact"
+    );
+}
+
+#[test]
+fn a_push_to_a_host_is_over_its_operator_alias_and_writes_that_hosts_stamp() {
+    let alias = format!("agentspace-host.{PROJ_A}");
+    let o = run(push_case(
+        "push-host",
+        two_hosts(),
+        None,
+        &[&alias],
+        true,
+        vec![],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(&o);
+    assert_stderr_is(&o, &[READY]);
+    assert_names_no_host(&o);
+    assert_eq!(o.target().as_deref(), Some(ID_C));
+    assert_pushed_over(&o, &alias);
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stamp_file(ID_C)));
+    assert_stamp(&o, StampAt::TheBox, None);
+    assert_stamp(&o, StampAt::Host(PROJ_B), None);
+    assert!(
+        fs::read_dir(o.sb.host_folder(PROJ_A))
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().contains(".tmp")),
+        "no temporary file is left in the host's folder"
+    );
+}
+
+#[test]
+fn a_host_whose_stamp_matches_is_not_pushed_to() {
+    let o = run(push_case(
+        "push-host-current",
+        two_hosts(),
+        None,
+        &[&format!("agentspace-host.{PROJ_A}")],
+        true,
+        vec![(StampAt::Host(PROJ_A), stamp_file(ID_C))],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stderr_is(&o, &[READY]);
+    assert_eq!(o.target().as_deref(), Some(ID_C));
+    assert!(o.no_ssh_or_scp(), "a current stamp means nothing is sent");
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stamp_file(ID_C)));
+}
+
+#[test]
+fn the_stamp_covers_the_hosts_own_instance_id_from_the_registry() {
+    // A stamp over another instance ID, the box's, does not match this host's.
+    let alias = format!("agentspace-host.{PROJ_A}");
+    let o = run(push_case(
+        "push-host-other-id",
+        two_hosts(),
+        None,
+        &[&alias],
+        true,
+        vec![(StampAt::Host(PROJ_A), stamp_file(ID_A))],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_pushed_over(&o, &alias);
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stamp_file(ID_C)));
+}
+
+#[test]
+fn a_connection_to_one_host_never_reads_or_writes_another_hosts_or_the_boxs_stamp() {
+    let alias = format!("agentspace-host.{PROJ_A}");
+    // The box's and the other host's stamps are over this host's instance ID, so either would
+    // match if it were consulted.
+    let o = run(push_case(
+        "push-host-isolated",
+        two_hosts(),
+        None,
+        &[&alias],
+        true,
+        vec![
+            (StampAt::TheBox, stamp_file(ID_C)),
+            (StampAt::Host(PROJ_B), stamp_file(ID_C)),
+        ],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_pushed_over(&o, &alias);
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stamp_file(ID_C)));
+    assert_stamp(&o, StampAt::TheBox, Some(stamp_file(ID_C)));
+    assert_stamp(&o, StampAt::Host(PROJ_B), Some(stamp_file(ID_C)));
+}
+
+#[test]
+fn the_boxs_connection_reads_and_writes_the_boxs_stamp_alone() {
+    // A host's stamp that would match the box's instance ID is not consulted.
+    let o = run(push_case(
+        "push-box",
+        two_hosts(),
+        None,
+        &[],
+        true,
+        vec![(StampAt::Host(PROJ_A), stamp_file(ID_A))],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stderr_is(&o, &[READY]);
+    assert_eq!(o.target().as_deref(), Some(ID_A));
+    assert_pushed_over(&o, "agentspace");
+    assert_stamp(&o, StampAt::TheBox, Some(stamp_file(ID_A)));
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stamp_file(ID_A)));
+
+    // With the box's own stamp current, nothing is sent.
+    let o = run(push_case(
+        "push-box-current",
+        two_hosts(),
+        None,
+        &[],
+        true,
+        vec![(StampAt::TheBox, stamp_file(ID_A))],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert!(o.no_ssh_or_scp());
+    assert_stamp(&o, StampAt::TheBox, Some(stamp_file(ID_A)));
+}
+
+#[test]
+fn a_lease_alias_pushes_over_itself_with_its_hosts_stamp() {
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
+    let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE)]);
+    let o = run(push_case(
+        "push-lease",
+        two_hosts(),
+        Some(leases.clone()),
+        &[&alias],
+        true,
+        vec![],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stderr_is(&o, &[READY]);
+    assert_names_no_host(&o);
+    assert_eq!(o.target().as_deref(), Some(ID_C));
+    assert_pushed_over(&o, &alias);
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stamp_file(ID_C)));
+    assert_stamp(&o, StampAt::TheBox, None);
+
+    let o = run(push_case(
+        "push-lease-current",
+        two_hosts(),
+        Some(leases),
+        &[&alias],
+        true,
+        vec![(StampAt::Host(PROJ_A), stamp_file(ID_C))],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_eq!(o.target().as_deref(), Some(ID_C));
+    assert!(o.no_ssh_or_scp(), "the host's current stamp means no push");
+}
+
+#[test]
+fn a_lease_alias_that_falls_back_to_the_box_pushes_with_the_boxs_stamp() {
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
+    // No record of the lease: the box answers, and the box's stamp is the one used.
+    let o = run(push_case(
+        "push-lease-box",
+        two_hosts(),
+        None,
+        &[&alias],
+        true,
+        vec![],
+    ));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_eq!(o.target().as_deref(), Some(ID_A));
+    assert_pushed_over(&o, &alias);
+    assert_stamp(&o, StampAt::TheBox, Some(stamp_file(ID_A)));
+    assert_stamp(&o, StampAt::Host(PROJ_A), None);
+}
+
+#[test]
+fn a_host_that_does_not_confirm_keeps_its_stamp_and_the_warning_names_nothing() {
+    let stale = stamp_file(ID_A);
+    let o = run(push_case(
+        "push-host-unconfirmed",
+        two_hosts(),
+        None,
+        &[&format!("agentspace-host.{PROJ_A}")],
+        false,
+        vec![(StampAt::Host(PROJ_A), stale.clone())],
+    ));
+    assert_eq!(o.code, Some(0), "the push never fails the ProxyCommand");
+    assert_stdout_empty(&o);
+    assert_stderr_is(&o, &[READY, HOST_NOT_CONFIRMED]);
+    assert_names_no_host(&o);
+    assert_eq!(ssh_calls(&o).len(), 1);
+    assert_stamp(&o, StampAt::Host(PROJ_A), Some(stale));
+    assert_stamp(&o, StampAt::TheBox, None);
+}
+
+#[test]
+fn a_nested_proxycommand_to_a_host_does_not_push() {
+    let o = run(push_case(
+        "push-host-nested",
+        two_hosts(),
+        None,
+        &[&format!("agentspace-host.{PROJ_A}")],
+        true,
+        vec![],
+    )
+    .env("AGENTSPACE_NESTED", "1"));
+    assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
+    assert_stderr_is(&o, &[READY]);
+    assert_eq!(o.target().as_deref(), Some(ID_C));
+    assert!(o.no_ssh_or_scp());
+    assert_stamp(&o, StampAt::Host(PROJ_A), None);
 }
