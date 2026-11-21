@@ -36,7 +36,7 @@ use crate::files::{Places, cannot_write};
 const PROXY_PROGRAM: &str = "agentspace-ssh-proxy.exe";
 
 /// What the alias file says about itself, after its owner mark.
-const COMMENT: &str = "written by agentspace; it MUST NOT be edited";
+const COMMENT: &str = agentspace_alias::HOST_ALIAS_COMMENT;
 
 fn failure(message: String) -> Failure {
     Failure {

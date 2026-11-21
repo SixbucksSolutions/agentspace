@@ -27,10 +27,10 @@ use crate::cache::registry_failure;
 /// finds the others). Only the `.exe` is looked for.
 const PROXY_PROGRAM: &str = "agentspace-ssh-proxy.exe";
 
-/// The comment of the alias file's owner mark line. It MUST be agentspace-sync's own, so that the
-/// operator and `sync` write the same bytes and neither rewrites the other's alias (operator.md, How
-/// the operator reaches a host: "both commands write the same bytes").
-const COMMENT: &str = "written by agentspace; it MUST NOT be edited";
+/// The comment of the alias file's owner mark line: agentspace-alias's, the text's one home, so that
+/// the operator and `sync` write the same bytes and neither rewrites the other's alias (operator.md,
+/// How the operator reaches a host: "both commands write the same bytes"; architect, 2026-11-21).
+const COMMENT: &str = agentspace_alias::HOST_ALIAS_COMMENT;
 
 /// Where the operator writes a host's alias, and where it finds the program the alias names.
 #[derive(Debug, Clone)]
