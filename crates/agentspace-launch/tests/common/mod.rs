@@ -780,6 +780,7 @@ pub fn start_watched(
         lease_id: lease,
         alias,
         own_exe,
+        log: None,
     };
     // The watcher tells the reaper of any holder a result names, even one the start fails on.
     let mut watch = DirWatch::start(&fx.state, &fx.reaper);
@@ -1331,6 +1332,7 @@ pub fn job_helper() {
         lease_id: LEASE,
         alias: ALIAS,
         own_exe: &testhost,
+        log: None,
     };
     let mut text = format!("control={control_pid} {control_started}\n");
     match starter.start(&req, &matcher) {
@@ -1367,6 +1369,7 @@ pub fn pass_helper() {
         lease_id: LEASE,
         alias: ALIAS,
         own_exe: &testhost,
+        log: None,
     };
     let text = match agentspace_launch::WmiStarter::new().start(&req, &FakeMatcher::stub(&stub)) {
         Started::Holder(rec) => format!("holder={} {}\n", rec.pid, rec.process_started_at),

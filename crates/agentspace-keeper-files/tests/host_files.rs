@@ -9,8 +9,7 @@
 //! is "in the box's file's form": the same members, bytes and reader rules, with the host's own
 //! lease and alias in it.
 //!
-//! The functions that name each host's files are in `host_names_pending.rs`, which is compiled out
-//! until the dev lead has reconciled the names with the implementer's (PENDING-API).
+//! The functions that name each host's files are tested in `host_names.rs`.
 
 use agentspace_keeper_api::HolderRecord;
 use agentspace_keeper_files::{

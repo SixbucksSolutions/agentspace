@@ -170,8 +170,9 @@ pub enum Behavior {
 pub struct StartSeen {
     pub lease_id: String,
     pub alias: String,
-    /// The request's `Debug` text, which holds paths and the lease, never an environment.
-    pub debug: String,
+    /// The request's holder log: `None` for the box's `board-holder-ssh.log`, or the full path of
+    /// another host's log.
+    pub log: Option<PathBuf>,
     /// The holder records that were in the state folder when the start began, by file name.
     pub records_then: Vec<String>,
 }
@@ -693,7 +694,7 @@ impl Starter for Start {
         w.starts.borrow_mut().push(StartSeen {
             lease_id: req.lease_id.to_string(),
             alias: req.alias.to_string(),
-            debug: format!("{req:?}"),
+            log: req.log.map(Path::to_path_buf),
             records_then: w.record_names(),
         });
         let planned = w

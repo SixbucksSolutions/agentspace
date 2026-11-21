@@ -998,14 +998,12 @@ fn v006s_record_is_read_with_v006s_rules() {
     );
 }
 
-// ---- PENDING-API ----
+// ---- The holder's log is its host's (keeper.md, The handshake, steps 1 and 7) ----
 
-/// PENDING-API: what the start request must carry. keeper.md, Starting a holder, item 2 and step
-/// 1: the holder's log is its host's, `board-holder-ssh.log` for the box and
-/// `board-holder-ssh.<project>.log` for another host, and the pinned `StartRequest` has no member
-/// for it on `main`. This test reads the request's `Debug` text, which a field holding the log's
-/// path shows; the dev lead MUST adapt it to the name the implementers gave (a `log` path, or a
-/// host from which the starter makes it).
+/// keeper.md, Starting a holder, item 2 and The handshake, step 1 (architect, 2026-11-21, for
+/// v0.07-T03): the start request names the log of the host it starts on. The box's names none, so
+/// the starter writes `board-holder-ssh.log` as in v0.06, and another host's names
+/// `board-holder-ssh.<project>.log` in the state folder, as a full path.
 #[test]
 fn the_start_request_names_the_log_of_the_host_it_starts_on() {
     let w = World::new();
@@ -1016,13 +1014,53 @@ fn the_start_request_names_the_log_of_the_host_it_starts_on() {
     assert_eq!(ran.exit, 0);
     let starts = w.starts();
     assert_eq!(starts.len(), 2);
-    assert!(
-        starts[0].debug.contains("board-holder-ssh.log")
-            && !starts[0].debug.contains("board-holder-ssh.alpha.log"),
-        "The box's request does not name board-holder-ssh.log"
+    assert_eq!(starts[0].lease_id, s.id);
+    assert_eq!(starts[0].log, None, "The box's request names a log");
+    assert_eq!(starts[1].lease_id, a.id);
+    assert_eq!(
+        starts[1].log.as_deref(),
+        Some(w.state.join("board-holder-ssh.alpha.log").as_path()),
+        "alpha's request does not name board-holder-ssh.alpha.log in the state folder"
     );
-    assert!(
-        starts[1].debug.contains("board-holder-ssh.alpha.log"),
-        "alpha's request does not name board-holder-ssh.alpha.log"
+}
+
+/// Two hosts that are not the box get two holders writing two logs: each start names its own
+/// host's `board-holder-ssh.<project>.log`, and no two starts name the same one.
+#[test]
+fn two_hosts_holders_write_two_logs() {
+    let w = World::new();
+    w.registry(&["alpha", "beta"]);
+    let (a, b) = (lease("alpha", 2), lease("beta", 3));
+    w.set_leases(&[a.clone(), b.clone()]);
+    w.plan(&a, World::hold(200, None));
+    w.plan(&b, World::hold(300, None));
+    let ran = w.pass();
+    assert_eq!(ran.exit, 0);
+    assert_lines(
+        &w,
+        &ran,
+        vec![
+            idle(0, None),
+            started(0, "alpha", &a, 200),
+            started(0, "beta", &b, 300),
+        ],
+    );
+    let logs: Vec<(String, Option<std::path::PathBuf>)> = w
+        .starts()
+        .into_iter()
+        .map(|st| (st.lease_id, st.log))
+        .collect();
+    assert_eq!(
+        logs,
+        vec![
+            (
+                a.id.clone(),
+                Some(w.state.join("board-holder-ssh.alpha.log"))
+            ),
+            (
+                b.id.clone(),
+                Some(w.state.join("board-holder-ssh.beta.log"))
+            ),
+        ]
     );
 }

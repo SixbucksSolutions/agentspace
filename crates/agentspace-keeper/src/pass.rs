@@ -9,6 +9,7 @@ use crate::hosts::{
 };
 use crate::log::{Logger, pass_line, pass_line_host, rotate_ssh_log};
 use agentspace_keeper_api::{HolderRecord, Query, StartRequest, Started, Stopped, Taken};
+use agentspace_keeper_files::holder_ssh_log_file;
 use agentspace_state::{Record, StoreError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -661,11 +662,12 @@ fn start(ctx: &PassContext, deps: &Deps, time: &str, who: &Who, lease: &Ready) -
     if let Some(why) = refusal(ctx, lease.alias) {
         return failed(None, &format!("The holder could not be started: {why}"));
     }
-    // QUESTION: the pinned StartRequest names no holder log, and WmiStarter always writes the
-    // box's `board-holder-ssh.log` into the request and its "exited at once" text, so another
-    // host's start cannot yet name `board-holder-ssh.<project>.log` (keeper.md, The handshake,
-    // steps 1 and 7). Interim: the request is v0.06's for every host, until the starter is given
-    // the host's log by an architect's pin.
+    // The holder's log is its host's (keeper.md, The handshake, steps 1 and 7; architect,
+    // 2026-11-21, for v0.07-T03): another host's start MUST name `board-holder-ssh.<project>.log`
+    // in the state folder, and the box's MUST name none, so its request is v0.06's byte for byte.
+    let host_log = who
+        .files
+        .map(|project| ctx.state_dir.join(holder_ssh_log_file(Some(project))));
     let req = StartRequest {
         state_dir: ctx.state_dir,
         profile: ctx.profile,
@@ -673,6 +675,7 @@ fn start(ctx: &PassContext, deps: &Deps, time: &str, who: &Who, lease: &Ready) -
         lease_id: lease.id,
         alias: lease.alias,
         own_exe: ctx.own_exe,
+        log: host_log.as_deref(),
     };
     let holder = match deps.starter.start(&req, deps.matcher) {
         Started::Holder(h) => h,
