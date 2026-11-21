@@ -131,13 +131,15 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
         'cloudformation describe-stacks agentspace-host-epsilon' = @(New-Step (New-StackDoc -StackName 'agentspace-host-epsilon'))
       })
   }
-  # QUESTION: Does a sign-in failure that ends status -All at once still print the closing count? operator.md, "Every host at once", says only that the sign-in message ends the command at once. Interim: the case accepts the sign-in message as the last or the second-to-last line.
-  Test-HostCase "${e}: #0034's sign-in message ends status -All at once: no later host is reported, and its calls are not made" @('status', '-All') @{
+  # #0034's sign-in message "ends the command at once" (operator.md, "Every host at once: -All"; "Exit
+  # codes"), so it is the last line of stderr, with no closing count after it.
+  Test-HostCase "${e}: #0034's sign-in message ends status -All at once: it is the last line of stderr, with no closing count, no later host is reported, and its calls are not made" @('status', '-All') @{
     Exit = 1
     Calls = @((Get-CallDescribe $idBox), (Get-CallVolumes $idBox), (Get-CallSsm $idBox), (Get-CallDescribe $idA))
     Check = { param($run, $started)
       $lines = @($run.Stderr -split "`n" | Where-Object { $_ -ne '' })
-      if ($lines[-1] -cne $signIn -and $lines[-2] -cne $signIn) { 'The sign-in message is not the end of stderr' }
+      if ($lines[-1] -cne $signIn) { 'The sign-in message is not the last line of stderr' }
+      if ($lines | Where-Object { $_ -match ' hosts failed\.$' }) { 'A closing count was printed after the sign-in failure' }
       if ($lines -contains (Get-HostLine 'gamma' 'creating')) { 'A host after the sign-in failure was reported' }
       if (-not ($lines -contains (Get-HostLine 'agentspace' 'ready'))) { 'The host whose call failed has no Host line' }
     } } -Setup {
@@ -204,11 +206,12 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
       'ec2 stop-instances' = @(New-Step '' $stopDenied 254)
     }
   }
-  Test-HostCase "${e}: #0034's sign-in message ends down -All at once: no later host is touched" @('down', '-All') @{
+  Test-HostCase "${e}: #0034's sign-in message ends down -All at once: it is the last line of stderr, with no closing count, and no later host is touched" @('down', '-All') @{
     Exit = 1; Calls = @((Get-CallStop $idBox), (Get-CallStop $idA))
     Check = { param($run, $started)
       $lines = @($run.Stderr -split "`n" | Where-Object { $_ -ne '' })
-      if ($lines[-1] -cne $signIn -and $lines[-2] -cne $signIn) { 'The sign-in message is not the end of stderr' }
+      if ($lines[-1] -cne $signIn) { 'The sign-in message is not the last line of stderr' }
+      if ($lines | Where-Object { $_ -match ' hosts failed\.$' }) { 'A closing count was printed after the sign-in failure' }
       if ($lines -contains (Get-HostLine 'gamma' 'creating')) { 'A host after the sign-in failure was reached' }
     } } -Setup {
     & $setupAll

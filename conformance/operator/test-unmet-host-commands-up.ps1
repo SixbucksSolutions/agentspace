@@ -126,7 +126,9 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-up.ps1' -Push -Body {
     & $setupTwo
     Hide-Ca
   } -Environment $env1
-  # QUESTION: Does a nested up of a host that is not the box sign nothing? operator.md, "up", step 3, says that a person's up, not nested, makes the key, certificate and alias, and that the ProxyCommand's up never does. Interim: a nested up signs nothing and pushes nothing.
+  # operator.md, "up", step 3: "A person's up of a host that is not the box, not nested, first makes the
+  # operator's key, certificate and alias ... Run by the ProxyCommand, up never does this." A nested up
+  # pushes nothing (AGENTSPACE_NESTED; "Every ssh runs the ProxyCommand"), so it signs and pushes nothing.
   Test-HostCase "${w}: a nested up of a host that is not the box signs nothing and pushes nothing" @('up', '-Host', 'agentspace') @{
     Exit = 0; Calls = (& $upCalls $idA)
     Check = { param($run, $started)

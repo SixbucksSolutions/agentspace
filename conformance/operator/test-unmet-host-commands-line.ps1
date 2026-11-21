@@ -253,7 +253,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
   $f = 'operator.md#command-line: accepted'
   Test-HostCase "${f}: -Host before the command: -Host agentspace down" @('-Host', 'agentspace', 'down') @{
     Exit = 0; Stderr = "Stopping $script:IdA.`n"; Calls = @("ec2 stop-instances --region us-west-2 --output json --instance-ids $script:IdA") } -Setup $twoHosts
-  Test-HostCase "${f}: -Host between the other parameters: down -Quiet -Host agentspace -Quiet is a repeat, so -Host agentspace down -Quiet" @('down', '-Quiet', '-Host', 'agentspace') @{
+  Test-HostCase "${f}: -Host after another parameter: down -Quiet -Host agentspace stops the host and prints nothing"@('down', '-Quiet', '-Host', 'agentspace') @{
     Exit = 0; Stderr = ''; Calls = @("ec2 stop-instances --region us-west-2 --output json --instance-ids $script:IdA") } -Setup $twoHosts
   Test-HostCase "${f}: the parameter names are matched without regard to case: down -hOsT agentspace" @('down', '-hOsT', 'agentspace') @{
     Exit = 0; Stderr = "Stopping $script:IdA.`n"; Calls = @("ec2 stop-instances --region us-west-2 --output json --instance-ids $script:IdA") } -Setup $twoHosts

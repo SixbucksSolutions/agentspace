@@ -28,9 +28,10 @@
 #      logged after `place done placed=<n>`, the foreign file untouched, and the others placed.
 #   4. A lease released while the run was working is never placed, and its record is not changed.
 #   5. The operator run from a folder without agentspace-ssh-proxy.exe (the operator alone, copied under
-#      the home). The box's run, the one that reaches step 9 from such a folder, since a host that is not
-#      the box fails earlier at its own alias, which names the same program: every lease of the project
-#      stays `pending`, each with a `place failed lease=<id>` line, the host stays `ready`; with
+#      the home). The box's run, the one that reaches step 9 from such a folder, since on a host that is
+#      not the box the run fails before step 9, at step 6's operator alias, which needs the same program
+#      (operator.md, provision, step 9): every lease of the project stays `pending`, each with a
+#      `place failed lease=<id>` line, the call succeeds and the host stays `ready`; with
 #      AGENTSPACE_PROXY_COMMAND set the leases are placed with that line and nothing is looked for; with an
 #      agentspace-ssh-proxy.cmd beside the operator they are placed with the interpreter form. Where a
 #      lease that fails is not the only one of its project (operator.md's "the others placed"), case 3's
@@ -44,10 +45,10 @@
 # lock, and a check from outside sees only the files it leaves. The cases above show what a hold per lease
 # gives (a failure costing one lease, a lease released between holds never placed).
 #
-# QUESTION: Does a lease that place_pending leaves `pending` (a per-lease failure inside a call that
-# succeeds) give the warning `agentspace: The pending leases of ... could not be placed`? operator.md,
-# provision, step 9 and "Its log" tie the warning to a failed call. Interim: no warning for a per-lease
-# failure, only its `place failed lease=<id>` line, and the cases assert that.
+# A lease that place_pending leaves `pending` while the call succeeds is logged and not warned: one
+# `place failed lease=<id> reason=<message>` line each, and no `could not be placed` warning; only a
+# failure of the call as a whole warns, with the failure message without its `agentspace: ` prefix and
+# its last period as the warning's <reason> (operator.md, provision, step 9). The cases assert that.
 #
 # SAFETY. See test-unmet-host-provision.ps1. The operator copy is written under the home's root, and a
 # case that runs it points AGENTSPACE_OPERATOR_CMD at it for its own process and restores the value.
@@ -119,6 +120,12 @@ function Get-SeedHome($H, $S, [string]$Seed = 'creating', $Leases = (Get-SeedLea
   Set-HpScenario -H $H -S $S -LockProject 'agentspace' -Scenario @{ aws = $aws; rules = @((Get-HpBootstrapRule)) }
 }
 $distDir = Split-Path -Parent (Get-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD')
+# A copy of an installed program is never made: the cases that copy the operator report SKIPPED when the
+# operator under test is the one in the real profile's .agentspace folder (no AGENTSPACE_OPERATOR_CMD
+# set), since AGENTS.md ("Terry's real files in a review") keeps a check from reading that folder.
+$realAgentspace = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.agentspace'
+$operatorIsInstalled = [IO.Path]::GetFullPath([string](Get-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD')).StartsWith($realAgentspace + '\', [StringComparison]::OrdinalIgnoreCase)
+$installedReason = 'The operator under test is the installed one, which this check does not copy; set AGENTSPACE_OPERATOR_CMD to a build'
 
 # ---- 1. A host made by the run, its pending leases placed --------------------------------------------------
 Invoke-HpInHome -Name "${drv}: a host made by the run" -Body {
@@ -223,7 +230,7 @@ Invoke-HpInHome -Name "${drv}: a foreign file at one lease's alias" -Body {
     $pf = $log.Lines | Where-Object { $_.Step -eq 'place' -and $_.Outcome -eq 'failed' }
     if ($pf.Rest -notmatch "^ lease=$id2 reason=\S.*$") { $p.Add('The failed line is not place failed lease=<id> reason=<message>') }
   }
-  if ($lines | Where-Object { $_ -like '*could not be placed*' }) { $p.Add('A warning was printed for a lease that failed inside a call that succeeded (see the QUESTION in the header)') }
+  if ($lines | Where-Object { $_ -like '*could not be placed*' }) { $p.Add('A warning was printed for a lease that failed inside a call that succeeded: step 9 logs it and does not warn') }
   Write-HpProblems "${drv}: a lease that cannot be placed (a foreign file at its alias) stays pending with place failed lease=<id> reason=<message> logged after place done placed=<n>, the foreign file kept, the others placed, exit 0 (step 2.7; its log)" $p
 }
 
@@ -255,9 +262,10 @@ Invoke-HpInHome -Name "${drv}: a lease released meanwhile" -Body {
 }
 
 # ---- 5. The operator run from a folder without the ProxyCommand program ----------------------------------------
-# A host that is not the box needs agentspace-ssh-proxy.exe beside the operator for its own alias (sync, step 1
-# of "How the operator reaches a host"), so a run for it never reaches step 9 from such a folder: the box's
-# run is the one that does, and its lease aliases name the same program (How each program finds the others).
+# A host that is not the box needs agentspace-ssh-proxy.exe beside the operator for its own alias (step 4 of
+# "How the operator reaches a host", reached in provision's step 6), so a run for it fails before step 9 from
+# such a folder (operator.md, provision, step 9): the box's run is the one that reaches step 9, and its lease
+# aliases name the same program (How each program finds the others).
 $boxProject = 'swimcoach'
 function Get-BoxHome($H, $S) {
   Initialize-HpHome -H $H
@@ -268,6 +276,7 @@ function Get-BoxHome($H, $S) {
   $leases
 }
 function Test-FromCopy([string]$Name, [hashtable]$Extra, [string]$Kind) {
+  if ($operatorIsInstalled) { Write-ConformanceResult -Name $Name -Status SKIPPED -Reason $installedReason; return }
   Invoke-HpInHome -Name $Name -Body {
     param($h, $s)
     $seeds = Get-BoxHome $h $s
@@ -316,7 +325,9 @@ Test-FromCopy "${drv}: a ProxyCommand program missing beside the operator, for t
 Test-FromCopy "${drv}: AGENTSPACE_PROXY_COMMAND replaces the whole line, so the program missing beside the operator is not looked for and the leases are placed" @{ AGENTSPACE_PROXY_COMMAND = "$env:ComSpec /d /c exit 1" } 'override'
 Test-FromCopy "${drv}: with no .exe but an agentspace-ssh-proxy.cmd beside the operator the leases are placed with the interpreter form of the line (How each program finds the others)" @{} 'cmd'
 
-Invoke-HpInHome -Name "${sec}: a run for a host that is not the box, from a folder without agentspace-ssh-proxy.exe" -Body {
+$copyCaseName = "${sec}: a run for a host that is not the box, from a folder without agentspace-ssh-proxy.exe"
+if ($operatorIsInstalled) { Write-ConformanceResult -Name $copyCaseName -Status SKIPPED -Reason $installedReason }
+else { Invoke-HpInHome -Name $copyCaseName -Body {
   param($h, $s)
   Initialize-HpHome -H $h -HostsText (Get-HpHostsText -BoxId $script:HpBoxId -Records @((New-HpRecord 'agentspace' 'creating' '' '2026-01-01T00:00:00Z')))
   Set-HpScenario -H $h -S $s -LockProject 'agentspace' -Scenario @{ aws = (Get-HpHostAws -Project 'agentspace' -Id $script:HpHostId); rules = @((Get-HpBootstrapRule)) }
@@ -342,7 +353,7 @@ Invoke-HpInHome -Name "${sec}: a run for a host that is not the box, from a fold
   $rec = Get-HpRecord $h 'agentspace'
   if ($null -eq $rec -or $rec['state'] -cne 'failed') { $p.Add('The record of a host that was never ready is not failed') }
   Write-HpProblems "${sec}: for a host that is not the box, a run from a folder without agentspace-ssh-proxy.exe fails at sync with the alias's message, starts no ssh, logs sync failed and records failed (step 6; How the operator reaches a host)" $p
-}
+} }
 
 # ---- 6. The call fails as a whole -------------------------------------------------------------------------------
 Invoke-HpInHome -Name "${sec}: a place_pending that fails as a whole" -Body {
@@ -375,12 +386,12 @@ Invoke-HpInHome -Name "${sec}: a place_pending that fails as a whole" -Body {
     if ($pf.Rest -notmatch '^ reason=\S.*$' -or $pf.Rest -match 'lease=') { $p.Add('The line is not place failed reason=<message> with no lease=') }
     else {
       $reason = $pf.Rest.Substring(' reason='.Length)
-      # QUESTION: Is the warning's <reason> the log's reason as it is, or without its last period? The warning
-      # ends "<reason>; the next run places them.", and a reason that ends in a period would then read
-      # ".;". Interim: either is accepted, and nothing else may differ.
+      # The log's reason is the failure message without its `agentspace: ` prefix ("Its log"); the warning's
+      # <reason> is that without its last period as well (operator.md, provision, step 9).
+      $wantReason = if ($reason.EndsWith('.')) { $reason.Substring(0, $reason.Length - 1) } else { $reason }
       $m = if ($lines.Count -gt 0) { [regex]::Match($lines[-1], '^agentspace: The pending leases of ''agentspace'' could not be placed: (.+); the next run places them\.$') } else { $null }
       if ($null -eq $m -or -not $m.Success) { $p.Add('The last line of stderr is not agentspace: The pending leases of ''<project>'' could not be placed: <reason>; the next run places them.') }
-      elseif ($m.Groups[1].Value -cne $reason -and $m.Groups[1].Value -cne $reason.TrimEnd('.')) { $p.Add('The warning''s reason is not the log''s reason') }
+      elseif ($m.Groups[1].Value -cne $wantReason) { $p.Add('The warning''s reason is not the failure message without its agentspace: prefix and its last period') }
     }
   }
   if ($clock.Elapsed.TotalSeconds -lt 25) { $p.Add('It gave up before the lease state lock''s 30 seconds') }

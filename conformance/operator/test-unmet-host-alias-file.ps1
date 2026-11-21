@@ -255,9 +255,13 @@ try {
       Write-ConformanceResult -Name $nameL -Status FAIL -Reason 'Neither AGENTSPACE_CMD nor its default names a program'
     } else {
       $aliasBefore = Get-HpBytesHash $aliasPath
-      $create = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', $project)
+      # A case that can reach `pending` MUST name a stand-in provisioning program, so the lease CLI never
+      # starts the real operator (operator.md, "The test seam", step 8). The host is ready, so it is never run.
+      $provisionStandIn = New-OperatorStandIn -ConformanceHome $h -Name 'provision-tripwire' -Body @('exit /b 0')
+      $create = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', $project) -Environment @{ AGENTSPACE_PROVISION_CMD = $provisionStandIn }
       $doc = $create.Json
       $p = New-HpProblems
+      if ((Get-StandInCallCount -Log (Join-Path $S.Dir 'provision-tripwire-calls.log')) -gt 0) { $p.Add('create started a provisioning run for a ready host') }
       $leaseAlias = $null
       if ($create.ExitCode -ne 0 -or $null -eq $doc -or -not (Test-ConformanceSchema -Json $create.Stdout.TrimEnd("`n") -Schema 'lease.output.schema.json') -or $doc['state'] -cne 'ready') {
         $p.Add('create did not return a ready lease for the host, so the case reached nothing')
