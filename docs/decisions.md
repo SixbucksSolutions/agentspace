@@ -3200,6 +3200,13 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 - **If the private key is lost or exposed, the CA MUST be replaced:** delete both files, run `ca`,
   run `sync` for every host, and re-issue every live lease's certificate. Certificates from the old
   CA stop working on each host once it is synced.
+  - **From v0.07, `sync` cannot reach a host other than the box after a replacement** (architect,
+    2026-11-20, for v0.07-T01, on E0.07-T01-S02's review): its operator certificate comes from the
+    new CA, which that host does not trust yet. The box is reached as before, through the user's
+    own key. A person connects to each other host with their own `id_ed25519`, which every host's
+    first boot installs (`SshPublicKey`), through that host's ProxyCommand, and runs `sync`'s CA
+    step; operator.md gives the steps. Installing the new public key through Session Manager's Run
+    Command, which needs no ssh, is the candidate fix, an open question there.
 
 **Why:**
 - **Superseded by D21.** `%LOCALAPPDATA%` was chosen because it never roams, cannot be redirected
