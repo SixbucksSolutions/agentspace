@@ -2,12 +2,13 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-**The reference for the operator: the laptop-side commands that manage the box (`deploy`, `up`,
-`sync`, `ca`, `down`, `status`, `grow`), the SSH ProxyCommand, and the localswim token push.** It
-is written so that the operator can be rebuilt without reading any of its code (D20, D34). It names
-every command, parameter, message, stream and exit code, the protocol of the token push, the box
-as the laptop sees it, and the AWS calls each command makes. The reasoning behind each rule is in
-[decisions.md](decisions.md), cited as `D<n>`.
+**The reference for the operator: the laptop-side commands that manage agentspace's hosts
+(`deploy`, `up`, `sync`, `bootstrap`, `provision`, `ca`, `down`, `status`, `grow`), the SSH
+ProxyCommand, and the localswim token push.** It is written so that the operator can be rebuilt
+without reading any of its code (D20, D34). It names every command, parameter, message, stream and
+exit code, which host each command and each connection reaches, the protocol of the token push,
+a host as the laptop sees it, and the AWS calls each command makes. The reasoning behind each rule
+is in [decisions.md](decisions.md), cited as `D<n>`.
 
 **What it does not own:**
 - **The lease CLI** (`agentspace lease ...`) is [lease-api.md](lease-api.md)'s. It reaches one
@@ -24,7 +25,10 @@ as the laptop sees it, and the AWS calls each command makes. The reasoning behin
   specify how the box's scripts do it.
 
 **The operator is EC2-specific in v0.** Unlike the lease CLI, it names the backend: it manages
-one EC2 instance through one CloudFormation stack (D8, D9). D1 binds what a lease's client sees,
+one EC2 instance per host, each through a CloudFormation stack of its own (D8, D9, D44). **The box**
+is the host whose stack is `agentbox`, which is swimcoach's host (D43, D55); every other project
+gets a host of its own at its first lease (D48). Every command line without `-Host` acts on the box
+exactly as it did before v0.07 (D49). D1 binds what a lease's client sees,
 and the operator's commands are not such a client. The ProxyCommand is the one part of this page
 that a lease's client sees, so D1 binds it, and everything it runs
 ([What a caller sees](#what-a-caller-sees-d1-card-0087)).
@@ -48,11 +52,20 @@ that a lease's client sees, so D1 binds it, and everything it runs
   [the install folder](#the-install-folder),
   [how each program finds the others](#how-each-program-finds-the-others),
   [what the prototype took from its checkout](#what-the-prototype-took-from-its-checkout),
+  [the operator's folder, one per command](#the-operators-folder-one-per-command),
   [argument style](#argument-style),
   [ProxyCommand lines already on the laptop](#proxycommand-lines-already-on-the-laptop),
   [until v0.06 retires the prototype's entry points](#until-v006-retires-the-prototypes-entry-points)
+- [Which host a command acts on](#which-host-a-command-acts-on):
+  [from the command line](#from-the-command-line),
+  [from the ProxyCommand](#from-the-proxycommand),
+  [the host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it),
+  [how the operator reaches a host](#how-the-operator-reaches-a-host),
+  [every host at once: `-All`](#every-host-at-once--all),
+  [which checks show it](#which-checks-show-it)
 - [Commands](#commands): [the top level](#the-top-level), [`deploy`](#deploy), [`up`](#up),
-  [`sync`](#sync), [`ca`](#ca), [`down`](#down), [`status`](#status), [`grow`](#grow)
+  [`sync`](#sync), [`bootstrap`](#bootstrap), [`provision`](#provision), [`ca`](#ca),
+  [`down`](#down), [`status`](#status), [`grow`](#grow)
 - [Starting the box and waiting for it](#starting-the-box-and-waiting-for-it)
 - [The ProxyCommand](#the-proxycommand)
 - [The token push](#the-token-push)
@@ -70,11 +83,18 @@ that a lease's client sees, so D1 binds it, and everything it runs
   `<checkout>` is the folder of the agentspace repository that holds the operator. Where the
   rewrite keeps what a checkout holds today is
   [Programs and install layout](#programs-and-install-layout)'s.
-- **The box is a host, and a host's platform is a parameter of the contract (D4).** Today there is
-  one host: an EC2 instance running Ubuntu on `linux/arm64`, logged in to as `ubuntu`, with
-  systemd, bash and passwordless `sudo`. Wherever this page names one of those, it is a property
-  of today's box, marked "today's box", and not of the contract. A Windows host (v0.12, #0051)
+- **The box is a host, and a host's platform is a parameter of the contract (D4).** From v0.07 there
+  is one host per project (D25, D43): the box, which is swimcoach's, and one for each other project
+  that has had a lease. Every host today is an EC2 instance from the one template, running Ubuntu
+  on `linux/arm64`, logged in to as `ubuntu`, with systemd, bash and passwordless `sudo` (D44,
+  D46). Wherever this page names one of those, it is a property of today's box, marked "today's
+  box", which every host of v0.07 shares, and not of the contract. A Windows host (v0.12, #0051)
   would answer the same questions in its own way.
+- **"The box" means swimcoach's host alone, and "a host" means any host, the box included.** A rule
+  this page states of the box binds the box; one it states of a host binds every host. Where a
+  rule written before v0.07 says "the box" of something every host now does (start and wait, the
+  push, `sync`'s steps), the command acts on the host [Which host a command acts
+  on](#which-host-a-command-acts-on) gives, and the rule binds that host the same way.
 - **The prototype was `scripts/agentspace.ps1`, run by Windows PowerShell 5.1, and
   `scripts/ssh-proxy.cmd`.** They are named here only where a note says where a requirement came
   from. The rewrite replaced both in v0.06 (#0055, D28) with `agentspace-operator.exe` and
@@ -91,7 +111,7 @@ that a lease's client sees, so D1 binds it, and everything it runs
 ### Command line
 
 ```
-operator <command> [-GiB <n>] [-Alias <alias>] [-Quiet]
+operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet]
 operator -h | --help
 operator <command> -h | --help
 ```
@@ -103,11 +123,13 @@ prototype's entry point is `powershell -NoProfile -File <checkout>\scripts\agent
 which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 
 - **`<command>` is the first positional argument** and MUST be one of `deploy`, `up`, `sync`,
-  `ca`, `down`, `status` and `grow`, whole: it is matched without regard to case, and never as an
-  abbreviation (`st` is unknown).
+  `bootstrap`, `provision`, `ca`, `down`, `status` and `grow`, whole: it is matched without regard
+  to case, and never as an abbreviation (`st` is unknown).
 - **Parameter names are matched without regard to case**, and a value follows its name as the next
-  argument (`-GiB 4`). **The argument after `-GiB` or `-Alias` is its value, whatever it looks
-  like**, so `-Alias -Fx` gives `-Alias` the value `-Fx`, and `-GiB -1` gives `-GiB` the value -1.
+  argument (`-GiB 4`). **The argument after `-GiB`, `-Alias`, `-Host` or `-InstanceType` is its
+  value, whatever it looks like**, so `-Alias -Fx` gives `-Alias` the value `-Fx`, and `-GiB -1`
+  gives `-GiB` the value -1.
+  `-All` and `-Quiet` are switches, and take no value.
   The one exception is help, below. The rewrite MAY accept other spellings the prototype's shell
   accepts (a unique prefix such as `-Q`, `-GiB:4`, `-Command status`, or a common parameter such as
   `-Verbose`, accepted and ignored), and a caller MUST NOT depend on them.
@@ -116,16 +138,29 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   other forms the prototype's shell converts (`0x10` as 16, `1e1` as 10, `2.5` as 2, an empty value
   as 0), and a caller MUST NOT depend on them. Its range is not checked further
   ([grow](#grow); [Q22](#open-questions)).
+- **`-Host`'s value MUST be a project name in the form the lease CLI accepts**
+  ([lease-api.md, Project](lease-api.md#project)): 1 to 32 letters, digits and `-`, starting and
+  ending with a letter or digit, in any case, with surrounding whitespace. It is normalized as the
+  lease CLI normalizes a project (lowercase, whitespace trimmed) before it is used, so
+  `-Host Agentspace` names the project `agentspace`, and every message and file name carries the
+  normalized form. Anything else is a usage error. That the operator accepts the lease CLI's
+  forms, rather than the normalized form alone, is confirmed by the architect, 2026-11-20, for v0.07-T01. A host's stack,
+  `agentspace-host-<project>`, is therefore at most 48 characters (D44; P13, architect,
+  2026-11-20, for v0.07-T01).
+- **`-InstanceType`'s value MUST be an EC2 instance type's form:** it matches
+  `^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*\z`, case-sensitively, such as `m9g.2xlarge` or
+  `m7i.metal-24xl`. Anything else is a usage error. Whether EC2 offers the type is not checked:
+  `cloudformation deploy` refuses one it does not ([deploy](#deploy)). The form is confirmed by the architect, 2026-11-20, for v0.07-T01.
 - **Help is checked first.** An argument `-h` or `--help`, matched without regard to case, asks for
   help wherever it stands, even where a value is expected. Such a command line gets help, whatever
   else it holds: the help of its command when the line names a known command, and the top level's
   otherwise. So `sync -Alias x --help` prints `sync`'s help and exits 0.
   **Which argument is the command, for help** (architect, 2026-11-19, for v0.06, gap FB-11): the
-  line is read from left to right, the argument after `-GiB` or `-Alias` is that parameter's value
-  unless it is `-h` or `--help`, and the command is the first argument that is none of a
-  parameter, a parameter's value and help. A value never names a command, so `-Alias up -h`
-  prints the top level's help, and `-Alias -h up` prints `up`'s. **An argument that starts with
-  `-` and is not a parameter's value counts as a parameter, known or not** (architect,
+  line is read from left to right, the argument after `-GiB`, `-Alias`, `-Host` or `-InstanceType`
+  is that parameter's value unless it is `-h` or `--help`, and the command is the first argument
+  that is none of a parameter, a parameter's value and help. A value never names a command, so
+  `-Alias up -h` prints the top level's help, and `-Alias -h up` prints `up`'s. **An argument that
+  starts with `-` and is not a parameter's value counts as a parameter, known or not** (architect,
   2026-11-19, for E0.06-T01-S01), the same reading as the unknown-parameter row below, so
   `-Foo up -h` prints `up`'s help: help is asked for, so the unknown parameter is never reported.
 - **Every help block on this page is exactly what the rewrite prints, byte for byte**, to stdout,
@@ -140,21 +175,27 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 
   | Problem | Message |
   |---|---|
-  | No command | `agentspace: No command given. The commands are deploy, up, sync, ca, down, status and grow.` |
-  | An unknown command `<arg>` | `agentspace: Unknown command '<arg>'. The commands are deploy, up, sync, ca, down, status and grow.` |
+  | No command | `agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.` |
+  | An unknown command `<arg>` | `agentspace: Unknown command '<arg>'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.` |
   | A second positional argument `<arg>` | `agentspace: Unexpected argument '<arg>'.` |
   | An unknown parameter `<arg>` (an argument that starts with `-` and is not a parameter's value) | `agentspace: Unknown parameter '<arg>'.` |
-  | A parameter given twice, `-Quiet` included | `agentspace: <name> is given more than once.` |
-  | `-GiB` or `-Alias` as the last argument, with no value | `agentspace: <name> needs a value.` |
+  | A parameter given twice, `-Quiet` and `-All` included | `agentspace: <name> is given more than once.` |
+  | `-GiB`, `-Alias`, `-Host` or `-InstanceType` as the last argument, with no value | `agentspace: <name> needs a value.` |
   | A `-GiB` value that is not a decimal integer in range | `agentspace: -GiB MUST be a whole number, not '<arg>'.` |
+  | A `-Host` value that is not a project name in the form above | `agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '<arg>'.` |
+  | An `-InstanceType` value that is not of the form above | `agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '<arg>'.` |
 
-  `<name>` is the parameter as this page spells it (`-GiB`, `-Alias`, `-Quiet`), whatever case was
-  given. `<arg>` is the argument as given, with each control character in it written as `?`, so
-  that the message stays one line.
+  `<name>` is the parameter as this page spells it (`-GiB`, `-Alias`, `-Host`, `-InstanceType`,
+  `-All`, `-Quiet`), whatever case was given. **The two command-list messages, the `-Host` message
+  and the `-InstanceType` message are confirmed by the architect, 2026-11-20, for v0.07-T01**. `<arg>` is the
+  argument as given, with each control character in it written as `?`, so that the message stays
+  one line.
 - **The checks run in this order, and the first failure ends the command:** help; then the
   arguments read from left to right, the first usage error found among them reported (a missing
   command is found only once the whole line is read); then the two `-Alias` checks below, in their
-  order. So `status -GiB abc -Alias bad!` reports the `-GiB` message. **At each argument a
+  order; then the six host checks below, in their order. So `status -GiB abc -Alias bad!` reports
+  the `-GiB` message, `status -Host bad! -GiB abc` reports the `-Host` message, and
+  `ca -Alias x -Host y` reports `agentspace: -Alias applies to up alone.` **At each argument a
   repeated name is found before a missing value** (architect, 2026-11-19, for E0.06-T01-S01, as
   keeper.md's check 1 reads its own), so `status -GiB 1 -GiB` reports `agentspace: -GiB is given
   more than once.`
@@ -164,8 +205,11 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   with `agentspace: SystemRoot is not set, so Windows' programs cannot be found.`, checked in that
   order, before anything else runs and exit 1. Help and usage errors need neither. In caller mode
   either is the "Could not reach the host" line ([What a caller sees](#what-a-caller-sees-d1-card-0087)).
-- **The alias check is part of the command line**, and runs before anything but help and the usage
-  errors, as below.
+- **The alias check and the host checks are part of the command line**, and run before anything
+  but help and the usage errors, as below. **Then, after the home and the system folder, the host
+  is looked up**: every command but `ca` finds its host's record, or every record for `-All`,
+  before it starts any program or makes any AWS call
+  ([From the command line](#from-the-command-line)).
 - Note on where this came from: the prototype's shell binds the command line before the script
   runs, and reports each of these problems as its own error record, with exit 1, and, in the one
   pair tried, the first from the left. The record is not agentspace's message, so this is a
@@ -176,7 +220,10 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 | Parameter | Type | Default | Applies to | Notes |
 |---|---|---|---|---|
 | `-GiB <n>` | Integer | `2` | `grow` | The GiB to add to the root volume. Every command checks its form ([Command line](#command-line)), so `status -GiB abc` is a usage error; every command but `grow` then ignores its value. No range is checked; AWS refuses a size that is not larger ([grow](#grow)). |
-| `-Alias <alias>` | SSH host alias | `agentspace` | `up` | The SSH host alias the token push connects with (D9, card #0057). Any other command given `-Alias` fails. |
+| `-Alias <alias>` | SSH host alias | The host's own alias: `agentspace` for the box, `agentspace-host.<project>` for another host | `up` | The SSH host alias the token push connects with (D9, card #0057). Any other command given `-Alias` fails. Without `-Host` the default is `agentspace`, as before v0.07. |
+| `-Host <project>` | Project name | None: the box | `deploy`, `up`, `sync`, `bootstrap`, `provision` (which requires it), `down`, `status`, `grow` | The project whose host the command acts on (D49, D55). `-Host swimcoach` names the box, and is the same as no `-Host` (P1, architect, 2026-11-20, for v0.07-T01). `ca` given `-Host` fails. [Which host a command acts on](#which-host-a-command-acts-on). |
+| `-InstanceType <type>` | EC2 instance type | None: the stack's previous value | `deploy`, with `-Host` naming a host that is not the box | The instance type the host's stack is deployed with (P13, architect, 2026-11-20, for v0.07-T01). **It is the one way a host that is not the box changes size** (D39, D51, D55); the box is sized through `stack-parameters.json`, as before ([deploy](#deploy), step 2). Any other command given `-InstanceType` fails, and so does `deploy` without `-Host` or with `-Host swimcoach`. |
+| `-All` | Switch | Off | `status`, `down`, `sync` | Every host in the host registry, one at a time ([Every host at once](#every-host-at-once--all)). Any other command given `-All` fails, and so does `-All` with `-Host`. |
 | `-Quiet` | Switch | Off | Every command | Suppresses every message that is not a failure and not `status`'s report, warnings included ([Messages](#messages)). |
 | `-h`, `--help` | Switch | | Every level | Prints the help of the level it is at to stdout and exits 0, doing nothing else. The prototype has no help of its own ([Q2](#open-questions)); the texts below are what the rewrite MUST print, naming the operator `agentspace-operator` ([Programs and install layout](#the-programs)). |
 
@@ -187,8 +234,27 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
    because it lands on ssh's command line, where a leading `-` would be read as an option. `\z`,
    unlike `$`, never matches before a trailing newline, and an empty alias fails. Any other value fails with
    `agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not
-   start with '-'.` The default `agentspace` is checked the same way. Nothing is started before
-   this check, not even an AWS call.
+   start with '-'.` The default is checked the same way, `agentspace` or
+   `agentspace-host.<project>`, which every normalized project makes a valid alias. Nothing is
+   started before this check, not even an AWS call.
+
+**The host checks run next, in this order** (D49, D55; each message is confirmed by the architect, 2026-11-20, for v0.07-T01):
+1. **`-Host` given with `ca`** fails with `agentspace: -Host does not apply to ca.`
+2. **`-All` given with any command but `status`, `down` and `sync`** fails with
+   `agentspace: -All applies to status, down and sync alone.`
+3. **`-Host` and `-All` together** fail with `agentspace: -Host and -All cannot be given together.`
+4. **`provision` without `-Host`** fails with `agentspace: provision needs -Host <project>.`, with
+   `<project>` written as those nine characters.
+5. **`-InstanceType` given with any command but `deploy`** fails with
+   `agentspace: -InstanceType applies to deploy alone.`
+6. **`deploy -InstanceType` without `-Host`, or with `-Host` naming the box** (`swimcoach`, the
+   box's project in every valid host registry, P13) fails with
+   `agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.`,
+   with `<project>` written as those nine characters (P13, architect, 2026-11-20, for v0.07-T01:
+   `-InstanceType` is allowed only with `-Host`; that `-Host swimcoach` counts as no `-Host` here,
+   and the message, are confirmed by the architect, 2026-11-20, for v0.07-T01).
+
+Nothing is started before these checks either, and none reads a file.
 
 ### Streams
 
@@ -203,9 +269,10 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   AWS CLI inherit `up`'s stdin ([Requirements the prototype does not meet
   yet](#requirements-the-prototype-does-not-meet-yet)).
 - **Output of programs the operator runs is passed through as they write it**, for `deploy`,
-  `sync` and `grow`: the AWS CLI's `cloudformation deploy` output, `go build`'s, the box's
-  `install.sh` lines and `grow`'s `df` table reach the operator's stdout or stderr as those
-  programs wrote them. A caller MUST NOT parse that output; it is for a person.
+  `sync`, `bootstrap`, `provision` and `grow`: the AWS CLI's `cloudformation deploy` output,
+  `go build`'s, the host's `install.sh` lines, the bootstrap's output and `grow`'s `df` table
+  reach the operator's stdout or stderr as those programs wrote them. A caller MUST NOT parse
+  that output; it is for a person.
 - **A pass-through call MUST return once the program it runs exits**, with everything that
   program wrote already passed through, as the bullet above says (architect, 2026-11-20, for
   E0.06-T05-S02, #0139). The operator's `deploy` once waited forever after the AWS CLI's
@@ -228,10 +295,14 @@ prototype does for every usage error, the `-Alias` refusals included ([Q1](#open
 closed).
 
 **A failure MUST end the command at once**, with nothing after it run, and MUST print one message
-that starts `agentspace: `. **A failure MUST NOT print a runtime's error record, stack or
-exception text in place of that message.** Where a message carries the system's error text, it is
-the system's own words alone: a runtime's addition, such as Rust's trailing ` (os error <n>)`, is
-dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in some cases
+that starts `agentspace: `. **The one exception is `-All`** ([Every host at
+once](#every-host-at-once--all)): a failure on one host ends that host's part, and the command goes
+on to the next host and exits 1 at its end, unless the failure is #0034's sign-in message, which
+ends it at once (architect, 2026-11-20, for v0.07-T01). **A failure MUST NOT print a runtime's error record,
+stack or exception text in place of that message.** Where a message carries the system's error
+text, it is the system's own words alone: a runtime's addition, such as Rust's trailing
+` (os error <n>)`, is dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in
+some cases
 ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
 
 ### Messages
@@ -241,15 +312,19 @@ dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in some c
   identifier.
 - **A failure starts `agentspace: `**, followed by the text this page gives.
 - **A warning starts `agentspace: ` too**, and does not change the exit code. Only the token push
-  warns.
+  and `provision`'s last step, which places the project's pending leases, warn
+  ([provision](#provision)).
 - **A progress message has no prefix.**
-- **`-Quiet` suppresses progress messages and warnings.** Failures and `status`'s report always
-  print. Output passed through from other programs is not affected by `-Quiet`. **Nor is the
-  detail `AGENTSPACE_DIAGNOSTIC` asks for** (architect, 2026-11-19, for E0.06-T01-S01): it prints
-  only in caller mode, which has no `-Quiet`, and a caller who sets the variable asked for it.
+- **`-Quiet` suppresses progress messages and warnings.** Failures, `status`'s report and the
+  `Host` line that `-All` prints before each host always print. Output passed through from other
+  programs is not affected by `-Quiet`. **Nor is the detail `AGENTSPACE_DIAGNOSTIC` asks for**
+  (architect, 2026-11-19, for E0.06-T01-S01): it prints only in caller mode, which has no
+  `-Quiet`, and a caller who sets the variable asked for it.
 - **Placeholders in this page's message texts:** `<id>` is the instance ID, `<vol>` a volume ID,
   `<fp>` a key fingerprint (`SHA256:...`), and `<user>` the Windows user name, as the value of
-  `USERNAME`, with no domain. Other placeholders are named where they appear.
+  `USERNAME`, with no domain. `<project>` is a normalized project name, and `<stack>` a host's
+  stack name, `agentbox` or `agentspace-host-<project>`. Other placeholders are named where they
+  appear.
 - **Messages carry the instance ID and volume IDs.** A check that captures the operator's stderr
   captures them, and MUST withhold them from anything committed or reported. The repository is
   public.
@@ -261,8 +336,8 @@ dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in some c
   `%SystemRoot%\System32\OpenSSH\ssh.exe` and `scp.exe`. It MUST NOT be found through `PATH`.
   Started from Git Bash, `PATH` finds MSYS's ssh, which runs the ProxyCommand through `/bin/sh`
   and mangles its Windows path (`exec: C:WindowsSystem32cmd.exe: not found`).
-- **So `deploy`, `up`, `sync`, `status` and `grow` MUST work when the operator is started from
-  Git Bash.**
+- **So `deploy`, `up`, `sync`, `bootstrap`, `provision`, `status` and `grow` MUST work when the
+  operator is started from Git Bash**, with or without `-Host` or `-All`.
   That is #0027's done-when, and this requirement closes it once the rewrite meets it.
 - **Source:** in the prototype only the token push's ssh and the CA key's scp are by full path;
   every other ssh and scp is by bare name.
@@ -271,13 +346,14 @@ dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in some c
 
 | Program | Found as | Used by |
 |---|---|---|
-| Windows OpenSSH `ssh.exe`, `scp.exe` | `%SystemRoot%\System32\OpenSSH\`, by full path (#0027) | `sync`, `grow`, the token push |
-| `ssh-keygen.exe` | `%SystemRoot%\System32\OpenSSH\ssh-keygen.exe` | `ca`, and `sync`'s CA check |
+| Windows OpenSSH `ssh.exe`, `scp.exe` | `%SystemRoot%\System32\OpenSSH\`, by full path (#0027) | `sync`, `bootstrap`, `provision`, `grow`, the token push |
+| `ssh-keygen.exe` | `%SystemRoot%\System32\OpenSSH\ssh-keygen.exe` | `ca`; `sync`'s CA check; and, for a host that is not the box, `deploy`'s CA check and the operator's key and certificate ([How the operator reaches a host](#how-the-operator-reaches-a-host)). Like the CA's own steps, the key and the certificate MAY be made without starting it, by any tool that writes state.md's formats |
 | AWS CLI v2 | `C:\Program Files\Amazon\AWSCLIV2\aws.exe`; when that file is missing, `aws` on `PATH`. The tunnel alone has no fallback ([The ProxyCommand](#the-proxycommand), step 6) | Every command but `ca`; the ProxyCommand's tunnel |
 | Session Manager plugin | Found by the AWS CLI on `PATH`; the ProxyCommand puts `C:\Program Files\Amazon\SessionManagerPlugin\bin` first | The ProxyCommand's tunnel |
 | `icacls.exe`, `taskkill.exe` | `%SystemRoot%\System32\`, by full path | `ca`; the token push's time limit. **The rewrite MAY reach either outcome through the Windows API instead, and starts neither then** (architect, 2026-11-19, for v0.06, gap FB-15): `ca`'s steps and the push's step 4 define the outcome, and this row only says how each is found when it is started |
 | `go` | On `PATH` | `sync`, to build the localswim CLI |
 | The operator, `agentspace-operator.exe` | In the ProxyCommand's own folder ([How each program finds the others](#how-each-program-finds-the-others)); a ProxyCommand that runs `up` in its own process starts none. The prototype's ProxyCommand runs `powershell.exe` (Windows PowerShell 5.1), found on `PATH`, with its `agentspace.ps1` | The ProxyCommand, to run `up` |
+| The operator, `agentspace-operator.exe`, as a provisioning run | In the lease CLI's own folder, or the program `AGENTSPACE_PROVISION_CMD` names ([How each program finds the others](#how-each-program-finds-the-others)), by the EC2 driver, which starts `provision -Host <project>` detached ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run); D48, D55) | The driver; the operator itself starts no run of `provision` |
 
 **How the paths are written (A-24):** a path that starts `%SystemRoot%` MUST be built from the value
 of `SystemRoot` as the operator finds it, never from the fixed text `C:\Windows`, which is that
@@ -371,9 +447,40 @@ operation is `wait`**, and `instance-stopped` is the first of its own arguments,
 | `USERNAME`, `COMPUTERNAME` | Read by `ca` and `sync` | The user named in the CA's messages, and the computer named in a new CA's key comment (docs/state.md). |
 | `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`, `AGENTSPACE_TIMEZONE` | Read, each time the operator needs what it names | Name the programs the operator starts in place of the AWS CLI, `ssh` and `scp`, and the zone the token push sends in place of the laptop's. For tests only ([The test seam](#the-test-seam)). |
 | `AGENTSPACE_DIAGNOSTIC` | Read by the ProxyCommand | When it is set to a non-empty value, the ProxyCommand MAY print backend detail to stderr that it otherwise withholds ([What a caller sees](#what-a-caller-sees-d1-card-0087)). |
+| `AGENTSPACE_STATE_DIR` | Read by the ProxyCommand and `provision` | Moves the state folder, where the lease state file is, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). The ProxyCommand reads the lease state file from there to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)), and `provision` places the project's pending leases there ([provision](#provision), step 9). It moves nothing else the operator reads: the host registry, the project list and each host's folder stay under `%USERPROFILE%\.agentspace`, as state.md says. |
+| `AGENTSPACE_SSH_DIR` | Read by `provision`, and by every command that writes a host's operator alias | Moves the ssh folder, where a placed lease's alias file and the `Include` line are written, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). `provision`'s step 9 uses it as `create` does. The operator's own alias for a host is written in the ssh folder it names too ([How the operator reaches a host](#how-the-operator-reaches-a-host)). |
+| `AGENTSPACE_PROXY_COMMAND` | Read by `provision` | The lease CLI's ProxyCommand override ([lease-api.md, Environment](lease-api.md#environment)): `provision`'s step 9 writes it into each placed lease's alias file as `create` would. |
 | `PATH` | Read; the ProxyCommand prepends two folders | Finding `go`, the AWS CLI's fallback, and the Session Manager plugin. |
 
 **The token MUST NOT be in any environment variable the operator sets ([Secrecy](#secrecy)).**
+
+**A provisioning run that the EC2 driver starts does not get the lease CLI's environment** (P12,
+architect, 2026-11-20, for v0.07-T01; [driver.md, Starting a provisioning
+run](driver.md#starting-a-provisioning-run)). `agentspace-detach` starts it with WMI's
+`Win32_Process.Create`, so it gets the logon environment, which Windows gives every process it
+starts that way, with these four set exactly as this list says, and nothing else of the lease
+CLI's (P12 and P15, architect, 2026-11-20, for v0.07-T01; [state.md, The provisioning run's
+start](state.md#the-provisioning-runs-start)):
+- **`USERPROFILE`**, the lease CLI's value, made full against the lease CLI's working folder;
+- **`AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR`**, each in the run's environment if and only if
+  the lease CLI had it set and not empty, made full against the lease CLI's working folder as
+  [state.md, What moves which files](state.md#what-moves-which-files) makes a relative folder full;
+- **`AGENTSPACE_PROXY_COMMAND`**, in the run's environment if and only if the lease CLI had it set
+  and not empty, exactly as it was, since it is a command line and not a folder.
+
+**A value of one of those three that the logon environment holds and the lease CLI did not have is
+removed** (P15, architect, 2026-11-20, for v0.07-T01), so a run never takes a folder or a
+ProxyCommand line that the command which started it did not use.
+
+So **the test seam's variables (`AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`,
+`AGENTSPACE_TIMEZONE`) never reach a detached run**, nor does `AGENTSPACE_DIAGNOSTIC`, and a check
+reaches a run only by running `provision` itself ([The test seam](#the-test-seam), step 8).
+`AGENTSPACE_NESTED` is unset in a detached run, so its `sync` step pushes as every `sync` does.
+**`provision` builds the EC2 driver's `Context` for its step 9 from these variables as the lease
+CLI builds its own**: the state folder, the ssh folder and the ProxyCommand line, from
+`AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` when set, and from
+`USERPROFILE` otherwise (D55, which adds `state_dir` to the `Context`). A run started by a person
+reads the same variables from the person's environment.
 
 ### The test seam
 
@@ -439,8 +546,11 @@ by a real box.
    throwaway folder holding a fake localswim receipt and a fake credential written for the same
    Windows user ([The receipt](#the-receipt); [The Bot credential](#the-bot-credential) says how a
    dummy credential is written), and no real AWS sign-in reachable.
-2. **It writes the instance-ID cache** into the throwaway home, with a made-up ID
-   ([The instance-ID cache](#laptop-files)).
+2. **It writes the host registry**, `hosts.json`, into the throwaway home, with the box's record
+   and a made-up instance ID, and a record for each other host the test needs
+   ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it);
+   its form is [state.md's](state.md#the-host-registry)). Before v0.07 this step wrote the
+   instance-ID cache, which `hosts.json` replaced (D45).
 3. **It writes a stand-in `aws`** that answers the calls `up` makes
    ([Calls by command](#calls-by-command)), as the real CLI would in JSON: an instance that is
    `running`, launched more than 20 minutes ago, so that `up` does not wait
@@ -457,6 +567,22 @@ by a real box.
    tunnel exits at once. `sync`'s stand-ins see the calls of [sync's table](#sync), in its order,
    and `grow`'s the one ssh of [grow](#grow); a stand-in that exits non-zero for one of them
    reaches that step's failure message.
+7. **It runs a command with `-Host <project>` or `-All` the same way**, with the registry of step 2
+   holding the hosts it names: the stand-ins see that host's stack name and instance ID, and the
+   ssh and scp calls name that host's alias. For a host that is not the box, the throwaway home
+   also holds a throwaway CA ([state.md, The CA](state.md#the-ca)), which the operator signs its
+   certificate with ([How the operator reaches a host](#how-the-operator-reaches-a-host)).
+8. **It reaches a provisioning run by running `provision -Host <project>` itself**, with the seam
+   set, never through a detached start, so the run's exit code and streams are the test's to read
+   ([provision](#provision)). **A run the driver starts detached never reaches the seam**: its
+   environment is the logon environment with the four variables set and removed as
+   [Environment variables](#environment-variables) says (P12 and P15, architect, 2026-11-20, for
+   v0.07-T01), so the seam's variables set for the lease CLI are not passed to it. **So a check of
+   the lease CLI that can reach `pending` MUST set `AGENTSPACE_PROVISION_CMD` to a stand-in**
+   ([How each program finds the others](#how-each-program-finds-the-others)), or the driver would
+   start the installed operator against the real AWS. **A stand-in named by
+   `AGENTSPACE_PROVISION_CMD` never calls `place_pending`** (P15, architect, 2026-11-20, for
+   v0.07-T01), so such a check's leases stay `pending`.
 
 **Not covered:** `go`, `ssh-keygen`, `icacls` and `taskkill` have no variable
 ([Q30](#open-questions)).
@@ -465,9 +591,13 @@ by a real box.
   checkout would read it. The crate gives its tests a hidden entry with the `go` finder, the
   localswim folder, the clock, the CA check and the push passed in, and no seam variable is
   added. `sync` finds `go` on `PATH` through a lookup over the process's environment, as the AWS
-  CLI's fallback is found, and reads nothing else of the environment. An instance-ID cache that
-  `deploy` cannot delete or write fails with `agentspace: Cannot write <path>.`; one already
-  missing at the delete is not an error.
+  CLI's fallback is found, and reads nothing else of the environment. A host registry that
+  `deploy` cannot write, when it removes the record's instance ID or writes it again, fails with
+  `agentspace: Cannot write <path>.`; a record with no instance ID at the removal is not an error.
+  (Before v0.07 this rule named the instance-ID cache, which `hosts.json` replaced, D45.)
+- **`ssh-keygen` has no variable, so a test of a host that is not the box runs the real
+  `ssh-keygen.exe`** for the operator's key and certificate, against the throwaway CA in the
+  throwaway home. That signs nothing with the real CA, and reaches no host.
 
 ### Laptop files
 
@@ -481,14 +611,25 @@ history;** where the rewrite keeps each is
 
 | File (as today's prototype has it) | Read by | Written by | What it is |
 |---|---|---|---|
-| `<checkout>\.instance-id` today; `%USERPROFILE%\.agentspace\instance-id.json` as D21 and D40 require | Every command but `ca`; the ProxyCommand | `deploy`; any command that finds it missing | The instance ID, cached from the stack's output ([The instance-ID cache](#laptop-files) below) |
-| `%USERPROFILE%\.agentspace\localswim-pushed.sha256` today; `localswim-pushed.json` beside it as D40 requires | `up` | `up`, `sync` | The push stamp ([The stamp](#the-stamp)) |
-| `%USERPROFILE%\.agentspace\ca\agentspace_ca` | `ca`, `sync` | `ca`, once | The CA's private key (D17) |
-| `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` | `ca`, `sync` | `ca`, once | The CA's public key, which `sync` sends to the box |
-| `%USERPROFILE%\.ssh\id_ed25519.pub` | `deploy` | Never | The user's own public key, passed to the stack as `SshPublicKey` |
-| `%USERPROFILE%\.ssh\config` | The ssh client, for the `agentspace` entry and lease aliases | Never | [The `agentspace` SSH entry](#the-agentspace-ssh-entry) |
-| `%USERPROFILE%\.claude\CLAUDE.md` | `sync` | Never | The user's global instructions for Claude Code, copied to the box |
-| `<checkout>\infra\local.parameters` today; `%USERPROFILE%\.agentspace\stack-parameters.json` as D37 and D40 require | `deploy` | Never | The account-specific stack parameters, which are not committed |
+| `<checkout>\.instance-id`, then `%USERPROFILE%\.agentspace\instance-id.json` (D21, D40), until v0.07 | Nothing, from v0.07 | Nothing, from v0.07 | The instance-ID cache, retired by D45: the host registry's records hold each host's instance ID. No v0.07 program reads, writes or removes the file, and nothing migrates from it; a person MAY delete it |
+| `%USERPROFILE%\.agentspace\hosts.json`, and its lock `hosts.lock` beside it | Every command but `ca`; the ProxyCommand | `deploy`, `provision`; any command that finds a record's instance ID missing, and the ProxyCommand's `up`, which writes that member alone (P13, architect, 2026-11-20, for v0.07-T01); the EC2 driver ([driver.md](driver.md)) | The host registry: one record per host, with its project, stack, state, instance ID and last attempt (D45; [state.md, The host registry](state.md#the-host-registry); [below](#the-host-registry-as-the-operator-uses-it)) |
+| `%USERPROFILE%\.agentspace\projects.json` | `provision` (and the EC2 driver) | Never: a person, or the architect with Terry's yes (D54) | The project list: the projects that MAY have a host made ([state.md, The project list](state.md#the-project-list)) |
+| `%USERPROFILE%\.agentspace\localswim-pushed.sha256` today; `localswim-pushed.json` beside it as D40 requires | `up` | `up`, `sync` | The box's push stamp ([The stamp](#the-stamp)); unchanged by v0.07 (D55, "The box's own files") |
+| `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json` | `up` | `up`, `sync` | Another host's push stamp (D50; [state.md, A host's folder](state.md#a-hosts-folder)) |
+| `%USERPROFILE%\.agentspace\hosts\<project>\id_ed25519`, its `.pub`, and `id_ed25519-cert.pub` | The ssh client, through the host's operator alias | Every command given `-Host`, or `-All`, for a host that is not the box ([How the operator reaches a host](#how-the-operator-reaches-a-host)) | The operator's own key for that host, and its one-hour certificate (D47; [state.md, A host's folder](state.md#a-hosts-folder)). Whether the key's folder holds the public half as `id_ed25519.pub` is state.md's |
+| `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, `provision.lock` | People and checks; `provision`, and the driver, which tries the lock | `provision` alone, which opens the log itself and writes every line of it, its steps' output included; the driver makes the host's folder before a start, and never opens the log (P14, architect, 2026-11-20, for v0.07-T01) | The provisioning run's log and its lock, held for the run's life ([provision](#provision); [state.md, A host's folder](state.md#a-hosts-folder)) |
+| `<ssh folder>\agentspace.d\agentspace-host.<project>` | The ssh client | Every command given `-Host`, or `-All`, for a host that is not the box | The host's operator alias ([state.md, A host's operator alias](state.md#a-hosts-operator-alias)) |
+| `%USERPROFILE%\.agentspace\known_hosts` | The ssh client, through a host alias of a host that is not the box | The ssh client alone, never the operator (D47) | The host keys of every host but the box, each under `agentspace-host.<project>` ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)) |
+| `%USERPROFILE%\.agentspace\ca\agentspace_ca` | `ca`, `sync`; for a host that is not the box, `deploy` and every command that signs the operator's certificate | `ca`, once | The CA's private key (D17), one for every host (D50) |
+| `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` | `ca`, `sync`; `deploy`, when it creates a host's stack | `ca`, once | The CA's public key, which `sync` sends to every host, and `deploy -Host` passes as `CaPublicKey` to the stack it creates for a host that is not the box |
+| `%USERPROFILE%\.ssh\id_ed25519.pub` | `deploy` | Never | The user's own public key, passed as `SshPublicKey` to the box's stack at every deploy and to a new host's stack when it is created ([deploy](#deploy), step 1) |
+| `%USERPROFILE%\.ssh\config` | The ssh client, for the `agentspace` entry and lease aliases | Never, but for agentspace's `Include` line, which every command that writes a host's operator alias, and `provision`'s `place_pending`, add when it is missing, as `create` does ([state.md, The `Include` line](state.md#the-include-line)) | [The `agentspace` SSH entry](#the-agentspace-ssh-entry) |
+| `<state folder>\leases.json`, and its lock `leases.lock` beside it | The ProxyCommand, without the lock, to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)); `provision`'s `place_pending`, under the lock | `provision`'s `place_pending`, which writes a placed lease's record `ready`, one lease per hold of the lock ([provision](#provision), step 9) | The lease state file ([state.md, The lease state file](state.md#the-lease-state-file)), which the lease CLI owns |
+| `%USERPROFILE%\.agentspace\leases\<id>\` and the key and certificate in it | The ssh client, through a lease alias | `provision`'s `place_pending`, for each lease it places, after removing a killed placement's leftovers | A placed lease's folder ([state.md, The lease folder](state.md#the-lease-folder)) |
+| `<ssh folder>\agentspace.d\<alias>`, a lease's alias file | The ssh client | `provision`'s `place_pending`, for each lease it places; never the operator's own commands | A placed lease's alias ([state.md, The alias file](state.md#the-alias-file); [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)) |
+| `%USERPROFILE%\.claude\CLAUDE.md` | `sync` | Never | The user's global instructions for Claude Code, copied to each host |
+| `<checkout>\infra\local.parameters` today; `%USERPROFILE%\.agentspace\stack-parameters.json` as D37 and D40 require | `deploy` | Never | The account-specific stack parameters, which are not committed. Every member goes to the box's stack; only `SubnetId` and `VpcId` go to a new host's stack, and none to an existing host's ([deploy](#deploy), step 2) |
+| `%USERPROFILE%\.agentspace\operator\<hex>\` | `deploy`, `sync`, `provision`, and the programs they start on what is there | Each of those commands, its own folder, removed as it ends; a folder there older than 24 hours is removed by the next such command | The files a command sends: the template, `box\system` and the localswim build ([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout); P13, architect, 2026-11-20, for v0.07-T01) |
 | `<checkout>\infra\agentspace.yaml` | `deploy` | Never | The stack's template ([The stack](#the-stack)) |
 | `<checkout>\box\system\` | `sync` | Never | The box's system files, sent whole |
 | `<checkout>\.build\localswim-linux-arm64` | `sync` | `sync` | The localswim CLI built for today's box |
@@ -498,30 +639,28 @@ history;** where the rewrite keeps each is
 
 **The token is never in any of the operator's own files** ([Secrecy](#secrecy)).
 
-**The instance-ID cache.** **It MUST live under `%USERPROFILE%\.agentspace`**, as the JSON file
-`instance-id.json` (D40), and never in the checkout (D21, which settles [Q7](#open-questions); the file's
-format and rules are docs/state.md's, at [Files in the checkout](state.md#files-in-the-checkout)).
-It is only a cache, rebuilt from the stack's output when it is missing, so a rewrite needs no
-migration from the checkout's copy. The prototype keeps `.instance-id` in the checkout
-([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
-A cache that is empty, holds only whitespace, cannot be parsed as JSON, or does not match its
-schema MUST be treated as missing (state.md). A cache that cannot be opened, such as one access is
-denied to or a folder at its path, MUST fail the command with exactly
-`agentspace: Cannot read the instance-ID cache <path>; remove it and run the command again.`, where
-`<path>` is its full path (architect, 2026-11-19, for v0.06: FA-16). A cache that cannot be
-written fails with `agentspace: Cannot write <path>.`, the form of the operator folder's own line,
-and caller mode's "Could not reach the host" (architect, the same day, for E0.06-T03-S01). A stack with
-no `InstanceId` output MUST fail with `agentspace: Stack 'agentbox' has no InstanceId output.`, and
-write no cache. The prototype writes an empty cache then, and every later command fails with a
-runtime error until `deploy` deletes it ([Q24](#open-questions)).
+**The instance-ID cache was retired by D45.** Until v0.07 the instance ID was cached alone in
+`%USERPROFILE%\.agentspace\instance-id.json` (D21, D40, which settled [Q7](#open-questions)). From
+v0.07 each host's instance ID is a member of its record in the host registry, read from and written
+to it as [The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)
+says, which also gives every message that the cache's rules gave. The cache's rules of v0.06 that
+still bind, now of a record's instance ID: it is only a cache of the stack's `InstanceId` output,
+read from the stack again when it is missing; a stack with no `InstanceId` output fails the command
+and writes no instance ID ([Q24](#open-questions)); and an instance ID that cannot be written fails
+with `agentspace: Cannot write <path>.`
 
 ### The `agentspace` SSH entry
 
-**The operator needs one SSH host alias in the user's OpenSSH client configuration: `agentspace`.**
-`sync`, `grow` and the token push of `sync` connect through it, and so does any `up` started
-without `-Alias`. A person writes the entry once, in their own OpenSSH client configuration, and
-agentspace never writes it ([state.md](state.md#the-include-line)). What the operator needs from
-the entry is this:
+**For the box, the operator needs one SSH host alias in the user's OpenSSH client configuration:
+`agentspace`.** `sync`, `bootstrap`, `grow` and the token push of `sync` connect to the box through
+it, and so does any `up` of the box started without `-Alias`. A person writes the entry once, in
+their own OpenSSH client configuration, and agentspace never writes it
+([state.md](state.md#the-include-line)). **It is the box's alone:** every other host is reached
+through an alias agentspace writes itself, `agentspace-host.<project>`
+([How the operator reaches a host](#how-the-operator-reaches-a-host)), so a new host needs no
+change to the user's configuration and never uses the user's own key (D47). The operator keeps
+using `agentspace` for the box, as D47 allows, and writes no alias or certificate for the box
+(architect, 2026-11-20, for v0.07-T01). What the operator needs from the entry is this:
 
 - **`Host agentspace`**, the alias the operator's own ssh and scp calls name.
 - **It reaches the box through the ProxyCommand with no argument**: the default line of
@@ -555,13 +694,19 @@ the entry is this:
 
 A lease alias is the lease CLI's ([state.md, The alias file](state.md#the-alias-file);
 [lease-api.md](lease-api.md#the-credential)), and runs the same ProxyCommand with the alias after
-it.
+it. A box's lease alias keeps v0.06's bytes, `HostKeyAlias agentspace` and the user's
+`known_hosts` included (D47, D55); a lease alias for another host checks that host's key under
+`agentspace-host.<project>` in agentspace's own known-hosts file ([state.md, A lease alias for a
+host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)).
 
 ### Every ssh runs the ProxyCommand
 
 **Every ssh and scp the operator starts goes through a host alias, and so runs the ProxyCommand,
-which runs `up` again.** That nested `up` is a full `up` but for the push: it reads the instance
-state, starts the box if needed and waits. **It runs inside a ProxyCommand, so it prints the
+which runs `up` again.** That alias is the host's own: `agentspace` for the box, and
+`agentspace-host.<project>` for any other host, whose ProxyCommand line names that alias, so the
+nested `up` acts on the same host ([From the ProxyCommand](#from-the-proxycommand)). That nested
+`up` is a full `up` but for the push: it reads the instance state, starts the host if needed and
+waits. **It runs inside a ProxyCommand, so it prints the
 caller's lines, not a person's** ([What a caller sees](#what-a-caller-sees-d1-card-0087)): its last
 is `The host is ready.`, never `Ready: <id>`. So a `sync` prints one `The host is ready.` line per
 ssh or scp it starts, to stderr, and each one costs a Session Manager session.
@@ -588,7 +733,7 @@ settles [Q10](#open-questions) here, and keeper.md's [Q3, Q8 and Q10](keeper.md#
 |---|---|---|---|---|
 | `agentspace.exe` | The lease CLI, run as `agentspace` | [lease-api.md](lease-api.md) | Console program | `AGENTSPACE_CMD` |
 | `agentspace` | The lease CLI's wrapper for Git Bash and other POSIX shells: it runs `agentspace.exe` from its own folder with its arguments unchanged and MSYS path conversion off, as [lease-api.md, The program](lease-api.md#the-program) allows | lease-api.md | POSIX `sh` script, no extension, with LF line ends and `#!/bin/sh` as its first line, which is what makes Git Bash run a file with no extension | None |
-| `agentspace-operator.exe` | The operator: `deploy`, `up`, `sync`, `ca`, `down`, `status` and `grow` | [Command line](#command-line) | Console program | `AGENTSPACE_OPERATOR_CMD` |
+| `agentspace-operator.exe` | The operator: `deploy`, `up`, `sync`, `bootstrap`, `provision`, `ca`, `down`, `status` and `grow` | [Command line](#command-line) | Console program | `AGENTSPACE_OPERATOR_CMD` |
 | `agentspace-ssh-proxy.exe` | The ProxyCommand | [The ProxyCommand](#the-proxycommand) | Console program | `AGENTSPACE_SSH_PROXY_CMD` |
 | `agentspace-keeper.exe` | The keeper | [keeper.md, Command line](keeper.md#command-line) | Console program | `AGENTSPACE_KEEPER_CMD` |
 | `agentspace-keeper-task.exe` | The keeper task's launcher, which the logon task runs | [keeper.md, The task's launcher](keeper.md#the-tasks-launcher) | Windows program, with no console | None |
@@ -680,12 +825,21 @@ settles [Q10](#open-questions) here, and keeper.md's [Q3, Q8 and Q10](keeper.md#
 **Every program finds another agentspace program in the folder its own executable runs from, by
 the file name in [the table](#the-programs), and never through `PATH`, the working folder, an
 environment variable or a checkout.** This is D8's rule for the ProxyCommand, applied to every
-program (D37).
+program (D37). **The one exception is the program the EC2 driver starts for a provisioning run**
+(P12, architect, 2026-11-20, for v0.07-T01; D55): when `AGENTSPACE_PROVISION_CMD` is set and not
+empty, the lease CLI starts the program it names in place of `agentspace-operator.exe` beside it, a
+relative value made full against the lease CLI's working folder before the detached start. It is
+the lease CLI's own documented variable ([lease-api.md, Environment](lease-api.md#environment)),
+like `AGENTSPACE_PROXY_COMMAND`, and not a conformance naming variable, so
+`AGENTSPACE_OPERATOR_CMD`, which names the operator under test, never names the run's program.
 
 | Program | Finds | For |
 |---|---|---|
 | `agentspace.exe` | `agentspace-ssh-proxy.exe`; when that file is not there, `agentspace-ssh-proxy.cmd`, v0.05's forwarder ([below](#until-v006-retires-the-prototypes-entry-points)) | The default ProxyCommand line ([state.md, The alias file](state.md#the-alias-file)) |
 | `agentspace` (the wrapper) | `agentspace.exe` | Running the lease CLI |
+| `agentspace.exe`, as the EC2 driver | `agentspace-operator.exe`, or the program `AGENTSPACE_PROVISION_CMD` names (the exception above) | Starting a provisioning run, `provision -Host <project>`, detached (D48; [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run); the driver's `Context` carries the program, D55) |
+| `agentspace-operator.exe` | `agentspace-ssh-proxy.exe` | The ProxyCommand line of a host's operator alias ([How the operator reaches a host](#how-the-operator-reaches-a-host)). Only the `.exe` is looked for: v0.06's forwarder exists for lines already written, and no new line names it |
+| `agentspace-operator.exe`, in `provision`'s `place_pending` | `agentspace-ssh-proxy.exe`; when that file is not there, `agentspace-ssh-proxy.cmd`, exactly as `agentspace.exe` finds it, beside the running program's own executable | The default ProxyCommand line of each lease alias `place_pending` writes ([provision](#provision), step 9; P15, architect, 2026-11-20, for v0.07-T01; [state.md, The alias file](state.md#the-alias-file), D8). **When neither is there, placement fails for that lease, which stays `pending`.** `AGENTSPACE_PROXY_COMMAND`, when the run has it, replaces the whole line, and nothing is looked for |
 | `agentspace-ssh-proxy.exe` | `agentspace-operator.exe`, when it runs `up` as a separate program. It MAY instead run `up` in its own process, with the same result | [The ProxyCommand](#the-proxycommand), step 3 |
 | `agentspace-keeper.exe` | Its own file, when the holder's launcher is the keeper's own program again | [keeper.md, Starting a holder](keeper.md#starting-a-holder) |
 | `agentspace-keeper-task.exe` | `agentspace-keeper.exe` | Running the keeper ([keeper.md](keeper.md#the-tasks-launcher)) |
@@ -710,28 +864,31 @@ the place this table gives** (D37; [Laptop files](#laptop-files), [deploy](#depl
 
 | The prototype's | Used by | The rewrite's |
 |---|---|---|
-| `<checkout>\infra\agentspace.yaml`, the stack's template | `deploy` | Carried inside the operator program, built from the repository's `infra\agentspace.yaml`. `deploy` writes it to `%USERPROFILE%\.agentspace\operator\agentspace.yaml` just before the call that reads it, and names that file to the AWS CLI |
-| `<checkout>\box\system\`, the box's system files | `sync` | Carried inside the operator program, built from the repository's `box\system`. `sync` writes them to `%USERPROFILE%\.agentspace\operator\system\`, after removing whatever that folder held, just before the copy, and copies that folder |
+| `<checkout>\infra\agentspace.yaml`, the stack's template | `deploy` | Carried inside the operator program, built from the repository's `infra\agentspace.yaml`. `deploy` writes it to `%USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml`, in its own folder ([below](#the-operators-folder-one-per-command)), just before the call that reads it, and names that file to the AWS CLI |
+| `<checkout>\box\system\`, the box's system files | `sync` | Carried inside the operator program, built from the repository's `box\system`. `sync` writes them to `%USERPROFILE%\.agentspace\operator\<hex>\system\`, in its own folder ([below](#the-operators-folder-one-per-command)), just before the copy, and copies that folder |
 | `<checkout>\schemas\state\leases.state.schema.json` and the keeper's state schemas | The lease CLI and the keeper, to check the state files they read and write | Carried inside each program that checks a file against them |
 | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | `deploy` | `%USERPROFILE%\.agentspace\stack-parameters.json`, JSON written by a person (D40) |
-| `<checkout>\.build\localswim-linux-arm64` | `sync` | `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64` |
-| `<checkout>\.instance-id` | Every command but `ca`; the ProxyCommand | `%USERPROFILE%\.agentspace\instance-id.json` (D21, D40) |
+| `<checkout>\.build\localswim-linux-arm64` | `sync` | `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64`, in its own folder ([below](#the-operators-folder-one-per-command)) |
+| `<checkout>\.instance-id` | Every command but `ca`; the ProxyCommand | `%USERPROFILE%\.agentspace\instance-id.json` (D21, D40) in v0.06; from v0.07, a member of each host's record in `%USERPROFILE%\.agentspace\hosts.json` (D45) |
+| A person's run of the checkout's `box\bootstrap.sh` over `ssh agentspace` | No operator command | Carried inside the operator program, built from the repository's `box\bootstrap.sh`, and sent to the host on an ssh's stdin by `bootstrap` (D46); it is never written to a file on the laptop |
 | `%USERPROFILE%\.agentspace\localswim-pushed.sha256`, not in the checkout | `up`, `sync` | `%USERPROFILE%\.agentspace\localswim-pushed.json` (D40) |
 | `<checkout>`, the folder the CA MUST NOT be inside | `ca`, step 2 | Any git working tree: `ca` fails when the CA's folder, or any folder above it, holds an entry named `.git`, a folder or the file a git worktree has (D37). `<folder>` in that step's message is the working tree's folder. So a home folder that is itself a git working tree, as a repository of the user's own settings files makes it, refuses every CA under it |
 | `<checkout>\scripts\ssh-proxy.cmd`, beside the CLI's code | The lease CLI's default ProxyCommand line | `agentspace-ssh-proxy.exe`, beside `agentspace.exe` (D8) |
 | `<checkout>`, the task's working folder | The keeper's task | `%USERPROFILE%` ([keeper.md, The task's fields](keeper.md#the-tasks-fields)) |
 | `<checkout>`, the main checkout the installer runs from | The keeper's installer | The install folder ([keeper.md, The installer](keeper.md#the-installer)) |
 
-- **The template and `box\system` the operator carries MUST be the repository's own files,
-  embedded as they are at build time, and MUST NOT be re-authored from this page** (D37's
-  addendum, FA-11). They are maintained YAML and shell, not the prototype (D28). What the operator
-  builds and sends to the box at run time, every remote command line included, is the rewrite's
-  own, written from the steps on this page (D34).
+- **The template, `box\system` and `box\bootstrap.sh` the operator carries MUST be the
+  repository's own files, embedded as they are at build time, and MUST NOT be re-authored from
+  this page** (D37's addendum, FA-11, D46). They are maintained YAML and shell, not the prototype
+  (D28). What the operator builds and sends to the box at run time, every remote command line
+  included, is the rewrite's own, written from the steps on this page (D34).
 - **A file the operator writes under `%USERPROFILE%\.agentspace\operator` that cannot be written
   fails the command** before anything reads it, with exactly `agentspace: Cannot write <path>.`,
   where `<path>` is the file's or folder's full path (architect, 2026-11-19, for v0.06, gap FA-16):
   the first one whose creation or write failed, so an `operator` folder that cannot be made is
-  named itself, never a file or folder below it (architect, the same day, for E0.06-T03-S02).
+  named itself, never a file or folder below it (architect, the same day, for E0.06-T03-S02), and
+  nor is a command's own folder below it
+  ([The operator's folder, one per command](#the-operators-folder-one-per-command)).
 - **The localswim checkout that `sync` builds from, `C:\Projects\localswim`, is localswim's, not
   agentspace's**, and this section does not move it ([sync](#sync), step 7).
 
@@ -752,14 +909,47 @@ installed beside it as files:
 The stack parameters file is not carried: it is the account's, written by a person, and never
 committed.
 
+### The operator's folder, one per command
+
+**Each operator command writes what it sends into a folder of its own,
+`%USERPROFILE%\.agentspace\operator\<hex>\`, and removes that folder as it ends** (P13, architect,
+2026-11-20, for v0.07-T01, closing [Q32](#open-questions)). From v0.07 a provisioning run works in
+the background (D48) while a person MAY run `sync` or `deploy`, and a folder per command means
+neither ever sends the other's files, or a folder the other is emptying.
+- **What goes there:** the template `deploy` names to the AWS CLI (`agentspace.yaml`), the
+  `box\system` that `sync` copies (`system\`), and the localswim CLI that `sync` builds
+  (`localswim-linux-arm64`). The bootstrap is sent on an ssh's stdin and never written to a file
+  ([bootstrap](#bootstrap)). Nothing else the operator writes is in it.
+- **`<hex>` is 32 lowercase hexadecimal digits, drawn at random as the command makes the folder**,
+  which it creates new, never reusing a folder that exists. A name that exists is drawn again.
+- **One folder per command line**: a command's steps share it, so `deploy`'s `sync` step and
+  `provision`'s `deploy` and `sync` steps write into their command's folder. A command that sends
+  no file (`up`, `bootstrap`, `ca`, `down`, `status`, `grow`) makes none, and nor does the
+  ProxyCommand.
+- **It is made just before its first file is written**, and removed, with everything in it, as the
+  command ends, whether it succeeded or failed. A folder that cannot be removed then is left, and
+  changes neither the command's messages nor its exit code; the sweep below removes it later.
+- **The sweep:** a command that makes its folder first removes every folder in
+  `%USERPROFILE%\.agentspace\operator\` whose name is 32 lowercase hexadecimal digits and whose
+  creation time is more than 24 hours before now, left by a command that was killed. A folder it
+  cannot remove is left, and changes nothing the command does. The longest command, a provisioning
+  run, takes about ten minutes (D46), so the sweep never reaches a folder a running command still
+  uses. Anything else there, such as what a v0.06
+  operator wrote (`agentspace.yaml`, `system\`, `localswim-linux-arm64`), is left; a person MAY
+  delete it. Which commands sweep, the creation time as the measure, and leaving v0.06's files are
+  confirmed by the architect, 2026-11-20, for v0.07-T01.
+- **Its location and access rules are state.md's** ([state.md, Files in the
+  checkout](state.md#files-in-the-checkout)).
+
 ### Argument style
 
 **The rewrite keeps every command line exactly as the specs give it (D37, B-04).**
 - **The lease CLI keeps its `--name` flags** ([lease-api.md, Command lines](lease-api.md#command-lines)).
 - **The operator, the keeper, the keeper's installer and the task's launcher keep their single-dash
-  names** (`-GiB`, `-Alias`, `-Quiet`; `-Watch`, `-SshExe` and the rest; `-DryRun`, `-Uninstall`),
-  matched as each page says: exactly, without regard to case, with a value as the next argument.
-  The operator keeps `-h` and `--help`. The ProxyCommand keeps its one positional alias.
+  names** (`-GiB`, `-Alias`, `-Host`, `-InstanceType`, `-All`, `-Quiet`; `-Watch`, `-SshExe` and
+  the rest; `-DryRun`, `-Uninstall`), matched as each page says: exactly, without regard to case,
+  with a value as the next argument. The operator keeps `-h` and `--help`. The ProxyCommand keeps
+  its one positional alias.
 - **A single-dash name is a syntax, not PowerShell.** A native program parses it by the rules on
   its page. Spellings that PowerShell's binder also accepts, such as a unique prefix (`-Q`) or a
   value after a colon (`-GiB:4`), MAY be accepted, and a caller MUST NOT depend on them
@@ -788,6 +978,12 @@ still make a connection (D37, B-30).** Three kinds of line exist:
 | The user's `agentspace` entry ([The `agentspace` SSH entry](#the-agentspace-ssh-entry)) | The user, never agentspace | Today, the checkout's `scripts\ssh-proxy.cmd` | By the user, by hand |
 | A lease's alias file, written by the prototype's lease CLI | `create` | The checkout's `scripts\ssh-proxy.cmd` | Never: `renew` does not rewrite it, and `release` removes it |
 | A lease's alias file, written by the rewrite's lease CLI | `create` | The ProxyCommand program beside that CLI | Never, likewise |
+| A host's operator alias, `agentspace-host.<project>` (v0.07) | The operator, before each command that reaches that host | `agentspace-ssh-proxy.exe` beside that operator | By every such command whose bytes differ, so a newer install's operator rewrites it at its next use |
+
+**v0.07 changes no line's format** (D49): a line still names the program, then the alias or
+nothing, and the ProxyCommand finds the host from that alias
+([From the ProxyCommand](#from-the-proxycommand)). So every alias file already on the laptop, and
+the user's entry, keep working, and no line is rewritten for v0.07.
 
 - **Once the rewrite's ProxyCommand is installed, the user's `agentspace` entry SHOULD name it:**
   its `ProxyCommand` is then `"<install>\agentspace-ssh-proxy.exe"`, the full path in double
@@ -873,42 +1069,399 @@ ProxyCommand and the keeper in v0.06 (#0055).** Until v0.06 removes them (D37):
   one made is the other's to renew and release ([state.md, Between the prototype and the
   rewrite](state.md#between-the-prototype-and-the-rewrite)).
 
+## Which host a command acts on
+
+**This section owns which host each command line and each connection acts on, how the operator
+keeps the host registry, how it reaches a host that is not the box, and what `-All` does** (D45,
+D47, D49, D50, D55). The files' forms and access rules are [docs/state.md](state.md)'s, cited by
+section; this section says when the operator reads and writes each. A rule cited
+"architect, 2026-11-20, for v0.07-T01" settles a fact D43 to D55 left open, as the architect ruled
+on it for v0.07's specs.
+
+### From the command line
+
+- **Without `-Host` or `-All`, a command acts on the box: the record whose `stack` is `agentbox`**
+  (D55; P1, architect, 2026-11-20, for v0.07-T01). Its stack, its alias, its push stamp, its AWS
+  calls, its ssh and scp calls and its messages are exactly those this page gave before v0.07, so
+  every command line in the repository and every conformance case keeps its meaning (D49). The one
+  difference is where its instance ID is kept: in the box's record, not in the retired
+  instance-ID cache
+  ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)).
+- **`-Host <project>` acts on the record whose `project` is `<project>`**, compared exactly, both
+  normalized (P1, architect, 2026-11-20, for v0.07-T01). `-Host swimcoach` finds the box's record,
+  and so is the same as no `-Host` in every respect, its alias and push stamp included.
+- **A record is acted on whatever its `state`**, `creating`, `ready` or `failed`. The state governs
+  where a lease is placed and which host a lease's connection reaches (D48, [From the
+  ProxyCommand](#from-the-proxycommand)), not what a person's command can do; `provision` works on a
+  `creating` host through these same steps.
+- **A project with no record fails every command but `provision`**, after the home and system
+  folder checks and before any program starts or any AWS call is made, with
+  `agentspace: Project '<project>' has no host; provision -Host <project> makes one.`
+  (architect, 2026-11-20, for v0.07-T01). **Only `provision` adds a record** ([provision](#provision)), and only
+  for a project in the project list (D54), so a mistyped `-Host` never makes a host. `deploy -Host`
+  creates the stack of a host that has a record and no stack yet (D49), and never a record.
+- **The registry is looked up once per command**, as it starts; `-All` reads every record then
+  ([Every host at once](#every-host-at-once--all)).
+
+**What a command takes from its host:**
+
+| | The box | Any other host |
+|---|---|---|
+| Its record | The one whose `stack` is `agentbox`; its `project` is `swimcoach` (D43) | The one whose `project` is the project |
+| Its stack | `agentbox` (D44) | The record's `stack`: `agentspace-host-<project>` for every record agentspace adds (D44) |
+| The SSH alias its ssh, scp and push use | `agentspace`, the user's own entry ([The `agentspace` SSH entry](#the-agentspace-ssh-entry)) | `agentspace-host.<project>`, the operator's own alias ([How the operator reaches a host](#how-the-operator-reaches-a-host)) |
+| How the operator logs in | The user's key, through the user's entry | The operator's key for that host and a one-hour certificate it signs (D47) |
+| Where its host key is checked | The user's `known_hosts`, under `agentspace` | `%USERPROFILE%\.agentspace\known_hosts`, under `agentspace-host.<project>` (D47) |
+| Its push stamp | `%USERPROFILE%\.agentspace\localswim-pushed.json`, unchanged (D55) | `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json` (D50, D55) |
+| The parameters `deploy` passes | As before v0.07: `SshPublicKey` and every member of `stack-parameters.json`, and no `HostName` and no `CaPublicKey`, so its change set is empty (D39, D44; P5, architect, 2026-11-20, for v0.07-T01) | Creating the stack: `SubnetId` and `VpcId` from `stack-parameters.json`, `SshPublicKey`, `HostName=<stack>` and `CaPublicKey=<the CA's public key>`, every other parameter at the template's default. Updating it: every parameter's previous value, but `InstanceType` when `-InstanceType` is given (P13, architect, 2026-11-20, for v0.07-T01; [deploy](#deploy)) |
+| The `journalctl` hint in start-and-wait's deadline message | `ssh agentspace` | `ssh agentspace-host.<project>` |
+
+### From the ProxyCommand
+
+**The ProxyCommand finds its host from its one argument** (D49; D55's last row; P7, architect,
+2026-11-20, for v0.07-T01), in this order:
+
+1. **No argument: the box.** The user's `agentspace` entry passes none.
+2. **An argument that starts `agentspace-host.`: a host alias.** The rest of it is the project, and
+   the host is that project's record, whatever its `state`, so the operator's own connections reach
+   a host that is still `creating`. A rest that is not a normalized project name (lowercase, the
+   form of [lease-api.md, Project](lease-api.md#project)), or a project with no record, fails as a
+   failed `up` does in caller mode: `agentspace: Could not reach the host. Set
+   AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.`, exit 1, no tunnel.
+3. **Any other argument: a lease alias.** The ProxyCommand reads the lease state file,
+   `<state folder>\leases.json` ([state.md, The lease state file](state.md#the-lease-state-file)),
+   without taking the lease state lock, as the keeper does, and never writes it (D49). It looks for
+   the record whose `ssh.host_alias` equals the argument exactly, case-sensitively. Only a stored
+   `ready` record carries `ssh` (state.md), so a lease in any other state never matches. Then:
+   - **A record is found, and its `project`'s host record is `ready`: that host.**
+   - **A record is found, and its project has no record, or one that is not `ready`: the box.**
+   - **No record is found, or there is no lease state file: the box.**
+   - **The lease state file exists and cannot be read, or is not valid** by state.md's checks: the
+     box (architect, 2026-11-20, for v0.07-T01). That keeps every swimcoach lease connecting as it did before
+     v0.07, when the ProxyCommand never read the file; a lease alias of another host that falls to
+     the box fails ssh's strict host key check under `agentspace-host.<project>`, so it never
+     reaches the wrong machine (P7). With `AGENTSPACE_DIAGNOSTIC` set, the ProxyCommand prints a
+     line naming the file and the problem.
+   - **The lease's expiry is not checked here.** A lease whose certificate has expired is refused
+     by the host's sshd, as before.
+4. **A host registry that cannot be read or is not valid fails the connection** (P9, architect,
+   2026-11-20, for v0.07-T01), with the caller's "Could not reach the host" line, and the detail
+   naming the file only with `AGENTSPACE_DIAGNOSTIC`
+   ([What a caller sees](#what-a-caller-sees-d1-card-0087)).
+
+**What the ProxyCommand then does with that host:** its `up` steps (step 3) act on it, with
+`-Alias` the argument it was given, or `agentspace` when it was given none; they read and write that
+host's instance ID in its record, and push, unless nested, with that host's push stamp (D50). Step
+5 reads that host's instance ID, and step 6 tunnels to it. **So the host a connection reaches and
+the host its push goes to are one answer.** An argument of `agentspace` matches no lease, since no
+lease alias is `agentspace`, and so reaches the box.
+
+**Why the lease's record, rather than the alias's text.** A lease alias is
+`agentspace-<project>-<8 hex digits>`, and a project can hold `-`, so the text alone could name two
+projects; the record names one. No lease alias holds a `.`, so none can start
+`agentspace-host.` (D47).
+
+### The host registry, as the operator uses it
+
+**`%USERPROFILE%\.agentspace\hosts.json` holds one record per host** (D45): its project, its
+stack's name, its state, its cached instance ID and its last attempt's time. Its form, its schema,
+its lock `hosts.lock` and how it is replaced are [state.md, The host
+registry](state.md#the-host-registry)'s.
+
+- **A read takes no lock**: the file is replaced atomically, so a reader sees it whole. **Every
+  change is made under `hosts.lock`**, held from before the read the change starts from until after
+  the file is replaced, by the lease state lock's rules (P10, architect, 2026-11-20, for v0.07-T01).
+  The operator never holds `hosts.lock` while it waits for another lock, and never across an AWS
+  call or an ssh.
+- **A missing file reads as the box's record alone**: project `swimcoach`, stack `agentbox`, state
+  `ready`, no instance ID (D45, D55). **The first change writes that record with the change** (P9),
+  so the box's first command after v0.07 lands reads its instance ID from the `agentbox` stack and
+  writes `hosts.json` holding the box's record with it, as it once wrote the instance-ID cache.
+- **A file that exists and cannot be opened, or is not valid** (its bytes, its JSON, its schema, two
+  records for one project, or anything but exactly one record whose `stack` is `agentbox`, whose
+  `project` is `swimcoach`, by state.md's checks; P9 and P13, architect, 2026-11-20, for
+  v0.07-T01), **fails the command** at once, before any program starts or any AWS call is made,
+  with `agentspace: The host registry <path> cannot be read: <reason>.`, where `<reason>` is one
+  sentence fragment naming the first problem found, or the system's own error text, and holds no
+  line break (the message is confirmed by the architect, 2026-11-20, for v0.07-T01). **It is never read as missing and never
+  repaired**, because it holds state a rebuild would lose. In caller mode the line is "Could not
+  reach the host".
+- **So every command, with `-Host` or without, finds the box's record in a valid registry.** The
+  first write of a missing file always writes it, and nothing removes a record, so only a file a
+  person edited can lack it, and such a file is not valid (P13).
+- **`hosts.lock` not taken within its 30 seconds** fails with
+  `agentspace: The host registry's lock <path> is held by another program; try again.`
+  (architect, 2026-11-20, for v0.07-T01). **A file that cannot be written** fails with
+  `agentspace: Cannot write <path>.` In caller mode both are "Could not reach the host".
+- **A command reads its host's instance ID from its record.** When the record has none, it reads the
+  host's stack's `InstanceId` output (`cloudformation describe-stacks --stack-name <stack>`,
+  [Calls by command](#calls-by-command)), then writes that ID into the same record under
+  `hosts.lock`, changing nothing else in it, and goes on. A stack with no `InstanceId` output fails
+  with `agentspace: Stack '<stack>' has no InstanceId output.`, and writes nothing. A stack that
+  does not exist fails with the AWS CLI's own text ([AWS failures](#aws-failures)).
+- **The ProxyCommand's `up` writes only that: a missing `instance_id`, into its host's existing
+  record**, under `hosts.lock`, as it once wrote the cache (P13, architect, 2026-11-20, for
+  v0.07-T01). It never writes another member of a record, never changes a record that already
+  holds an instance ID, and never adds a record. The box's record that a missing file reads as
+  counts as existing here, so the ProxyCommand's write then creates `hosts.json` holding that record
+  alone, with its instance ID, as any first change does (architect, 2026-11-20, for v0.07-T01). **A write of the
+  ProxyCommand's that fails, or a registry that has become not valid by then, does not fail the
+  connection**, which uses the ID it read (architect, 2026-11-20, for v0.07-T01; [state.md, The
+  instance ID](state.md#the-instance-id)).
+- **What the operator writes in the registry, and nothing more:** a record's `instance_id`, as above
+  and as `deploy` removes and writes it again ([deploy](#deploy), step 5); and, in `provision`
+  alone, a new record and a record's `state`, `last_attempt_at` and `instance_id`, never taking a
+  `ready` record out of `ready` ([provision](#provision); D48). **No other command adds a record
+  or changes a `state`.** The EC2 driver's writes are [driver.md](driver.md)'s.
+- **It is laptop state, never a lease's output** (D45, D1). The operator's own messages MAY name a
+  host's project, stack and instance ID, under [Messages](#messages)' rule.
+- **The project list, `%USERPROFILE%\.agentspace\projects.json`, is read by `provision` alone** of
+  the operator's commands, and never written by agentspace (D54;
+  [state.md, The project list](state.md#the-project-list)). **`provision` reads it only for a
+  project with no record** (P14, architect, 2026-11-20, for v0.07-T01), so a project list that is
+  not valid never fails `provision -Host swimcoach`, or a run on any host that has a record. A
+  missing file lists nothing. A file that cannot be opened or is not valid, read for a project with
+  no record, fails `provision` with
+  `agentspace: The project list <path> cannot be read: <reason>.` (architect, 2026-11-20, for v0.07-T01).
+
+### How the operator reaches a host
+
+**The box is reached through `agentspace`**, the user's entry, with the user's key, exactly as
+before v0.07. D47 lets the operator keep using it there; the operator writes no alias, key or
+certificate for the box (architect, 2026-11-20, for v0.07-T01).
+
+**Any other host is reached through its own alias, `agentspace-host.<project>`, with a key and a
+certificate of the operator's own** (D47; P11, architect, 2026-11-20, for v0.07-T01). **Every
+operator command given `-Host` for a host that is not the box writes that host's alias and signs a
+fresh one-hour certificate for it** (P13 and P15, architect, 2026-11-20, for v0.07-T01), whether
+or not it reaches the host over SSH, so that any such command leaves a person an hour to sign in.
+It does these, in this order, once per command:
+- **Before its first ssh or scp to the host**, for a command that reaches it: `sync`, `bootstrap`,
+  `grow` (before its online step, or after its step 2 when the host is not running), a person's
+  `up` (before its push), and `deploy` and `provision` through their `sync` step.
+- **After its own work**, for `status` and `down`, which reach no host over SSH: after the five
+  lines are printed, or the stop is requested, so a CA that fails its check never keeps a person
+  from seeing or stopping a host. A failure there fails the command, exit 1, and the stop already
+  requested stands (architect, 2026-11-20, for v0.07-T01).
+- **For `sync -All`, for each host that is not the box and that it syncs, as its part with
+  `-Host`** ([Every host at once](#every-host-at-once--all); architect, 2026-11-20, for v0.07-T01), since it
+  connects to each. **`status -All` and `down -All` MUST NOT sign, and MUST NOT write any alias**:
+  they name no host, and the cost guard's stop and its check (D51) MUST NOT fail on the CA's
+  trouble.
+
+The steps:
+
+1. **Checks the CA**, as [sync](#sync)'s step 1 does: `ca`'s steps 1, 2, 3 and 5, each with `ca`'s
+   own message. `sync`'s own step 1 is that check, and is not repeated.
+2. **Makes the operator's key for the host, `%USERPROFILE%\.agentspace\hosts\<project>\id_ed25519`,
+   when it is missing**: an ed25519 key with no passphrase, creating the host's folder if needed,
+   in the formats and under the access rules a lease's key has ([state.md, The
+   key](state.md#the-key); [state.md, A host's folder](state.md#a-hosts-folder)). It makes the key
+   while it holds `hosts.lock`, after looking for `id_ed25519` again once it holds it, so two
+   commands never make two keys ([state.md, The operator's key and
+   certificate](state.md#the-operators-key-and-certificate)). An existing key is never replaced. A
+   failure fails the command with
+   `agentspace: Could not make the operator's key <path>: <tool output>`.
+3. **Signs a fresh certificate for that key with the CA**, written as
+   `hosts\<project>\id_ed25519-cert.pub` and replacing the last one: a user certificate, principal
+   `ubuntu`, key ID `operator-<project>`, valid for one hour (D47, D55). Its fields, its window's
+   back-dating and its bytes are [state.md, A host's folder](state.md#a-hosts-folder)'s. A failure
+   fails the command with
+   `agentspace: Could not sign the operator's certificate for '<project>': <tool output>`.
+4. **Writes the host's operator alias**, `<ssh folder>\agentspace.d\agentspace-host.<project>`, when
+   it is missing or its bytes differ from the ones it would write, and the `Include` line when it is
+   missing, by the rules `create` follows for a lease's alias file and its `Include` line (P11;
+   [state.md, The `Include` line](state.md#the-include-line)). The file's bytes are [state.md, A
+   host's operator alias](state.md#a-hosts-operator-alias)'s: a lease alias's lines, but with the
+   owner mark `# agentspace host <project>; <comment>`, `StrictHostKeyChecking accept-new`,
+   `HostKeyAlias agentspace-host.<project>` and `UserKnownHostsFile` naming agentspace's known-hosts
+   file, the operator's key and certificate, and no `RemoteForward` lines, since the operator holds
+   no board. Its ProxyCommand line names `agentspace-ssh-proxy.exe` in the operator's own folder,
+   then the alias ([How each program finds the others](#how-each-program-finds-the-others)).
+   - **A program that is not there** fails with
+     `agentspace: <path> is missing; the operator's alias for a host needs it beside the operator.`
+   - **A file at the alias's path whose first line is not this host's owner mark** is not
+     agentspace's alias for the host, and is left as it is: the command fails with
+     `agentspace: <path> is not agentspace's alias for '<project>'; it was left as it is.` So is
+     anything there that is not a file, a link included, as for a lease's alias file.
+   - **A file that cannot be written** fails with `agentspace: Cannot write <path>.`
+
+Each of these messages is confirmed by the architect, 2026-11-20, for v0.07-T01.
+
+- **The host's key is checked under its own name, in agentspace's own known-hosts file** (D47).
+  The alias accepts a new key on first use and checks it afterwards; ssh writes it to
+  `%USERPROFILE%\.agentspace\known_hosts` under `agentspace-host.<project>`
+  ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)). **The operator never writes
+  that file, and never writes the user's `known_hosts` for a host that is not the box.** Accepting
+  the first key is sound because the transport is a Session Manager session, opened with the
+  user's AWS sign-in, to the instance ID the registry holds (D47).
+- **A host whose instance was replaced has a new host key, which the alias refuses**, since
+  `accept-new` accepts only a name with no key, and so does every lease alias for that host. A
+  person removes the old key, after making sure the instance was replaced, with
+  `ssh-keygen -R agentspace-host.<project> -f %USERPROFILE%\.agentspace\known_hosts`, the path
+  written out, and the operator's next connection accepts the new one
+  ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)).
+- **Two commands for one host at once**, such as a detached run and a person's
+  `status -Host <project>`, each write the key, the certificate and the alias safely, by
+  [state.md, A host's folder](state.md#a-hosts-folder)'s rules: the key is made under `hosts.lock`
+  and only when still missing, so there is never a second key; a new certificate replaces the old
+  in one rename, so ssh reads one whole certificate, either command's, each valid for an hour; and
+  the alias and the `Include` line are each written through a temporary file moved into place, the
+  alias only when its bytes differ, so both commands write the same bytes and ssh reads a whole
+  file.
+- **No lease's release or overwrite ever matches the operator's alias**, by its owner mark (D55).
+  The operator never removes it: it stays for the host's life, and each command that reaches the
+  host writes it again only when its bytes differ, so a newer install's operator moves it to its
+  own ProxyCommand at its next use.
+- **The ProxyCommand never signs and never writes the alias.** It only finds the host
+  ([From the ProxyCommand](#from-the-proxycommand)). A connection through the alias with a
+  certificate more than an hour old is refused by the host's sshd.
+- **A person's own `ssh agentspace-host.<project>`**, as D52's sign-ins use it, works for the hour
+  after any command that signed. **So a person runs `agentspace-operator status -Host <project>`
+  before signing in over `ssh agentspace-host.<project>`, and again after an hour** (P13,
+  architect, 2026-11-20, for v0.07-T01). `status` never starts a host and changes nothing on it,
+  and its report shows whether the host is running. The sign-in procedure (D52) and the line
+  `provision` ends with ([provision](#provision), step 10) say the same.
+- **The operator's key is a private key**: it MUST NOT be printed, logged or put in any message, and
+  no program gets more of it than its path.
+
+### Every host at once: `-All`
+
+**`status -All`, `down -All` and `sync -All` act on every host in the host registry** (D49, D50,
+D51, D55). Except where D49, D50 and D55 say it, everything in this section is confirmed by the architect, 2026-11-20, for v0.07-T01.
+
+- **The hosts are every record in the registry, in the file's order.** A missing registry is the
+  box's record alone.
+- **Before each host, the command prints `Host      <project> (<stack>), <state>`** to stderr,
+  where `<state>` is the record's `state`, whatever `-Quiet` says, so every line after it until the
+  next is that host's. The label is padded with spaces to 10 characters, as `status`'s are.
+- **Each host's part is that command's own steps with that host**, with the same calls, messages,
+  streams and exit rules as the command run with `-Host <project>`, but that **`status -All` and
+  `down -All` MUST NOT sign a certificate or write an alias for any host**, where `status -Host` and
+  `down -Host` do ([How the operator reaches a host](#how-the-operator-reaches-a-host)).
+- **A host's instance ID is its record's**, or, for a `ready` record without one, read from its
+  stack as every command reads it. **A `creating` or `failed` record without one is skipped:**
+  `status` prints `Instance  none recorded` after its `Host` line, and `down` prints the progress
+  line `Skipping: no instance is recorded for this host.`
+- **`sync -All` syncs only the hosts whose record is `ready`**, and prints the progress line
+  `Skipping: the host is <state>; its next provisioning run syncs it.` for each other. A `creating`
+  or `failed` host's next run syncs it ([provision](#provision)). **A replaced CA does not reach a
+  host that is not the box this way**: [ca](#ca) says why, and how a person recovers each such
+  host.
+- **`sync -All` starts every `ready` host that is stopped, as `sync` does, and stops none.** A
+  turn's close that synced every host stops them afterwards with `down -All` (D51).
+- **`sync -All` writes `system\` and builds the localswim CLI once**, in its one folder ([The
+  operator's folder, one per command](#the-operators-folder-one-per-command)), in the part of the
+  first host it syncs, and every later host's part copies the same files. Step 7's skip or build
+  message prints in that first part alone. A build that fails fails that host's part, and every
+  later host's part fails at the same step with the same message, without building again.
+- **A failure on one host ends that host's part, and the command goes on to the next.** At the end,
+  when any host failed, it prints `agentspace: <n> of <m> hosts failed.`, where `<m>` is the number
+  of records and `<n>` of those that failed, and exits 1. **The exception is #0034's sign-in
+  message, which ends the command at once**, since every later host's AWS call would fail the same
+  way.
+- **`down -All` stops a host whose provisioning run is still working on it**, and that run then
+  fails at its next step. A turn's close (D51) comes after its hosts' runs are done.
+
+### Which checks show it
+
+**Every behavior v0.07 adds to this page is shown either by a conformance case, against stand-ins,
+in E0.07-T04-S02, or by a live check in E0.07-T05-S01** (D53, D55), as the coverage reading for
+v0.07-T01 found. A stand-in cannot show a real key exchange, sshd's trust of the CA, a real
+instance or a real Session Manager session; and `go` and `ssh-keygen` have no seam
+([Q30](#open-questions)).
+
+| Behavior | Shown by |
+|---|---|
+| The command line: `-Host`'s and `-All`'s forms, every new usage error and host check in its order, and every help text byte for byte | Conformance case, E0.07-T04-S02 |
+| Every command line without `-Host` acting on the box exactly as before, each existing case passing with `hosts.json` seeded where the instance-ID cache was | Conformance case, E0.07-T04-S02 |
+| `-Host` picking its host's stack, instance ID and alias for `up`, `down`, `status` and `grow`, and its start and wait (one path or two) | Conformance case, E0.07-T04-S02 |
+| `sync -Host` and `bootstrap -Host` naming the host's alias, `agentspace-host.<project>`, in every ssh and scp they start | Conformance case, E0.07-T04-S02 |
+| `-Host swimcoach` the same as no `-Host` for every command: the `agentbox` stack, the `agentspace` alias, the box's push stamp, and no key, certificate or alias written | Conformance case, E0.07-T04-S02 |
+| `up -Host <project> -Alias <alias>`: the host's instance ID and push stamp, and the push's ssh naming `<alias>`; a signing failure warned with its cause, and exit 0 | Conformance case, E0.07-T04-S02 |
+| A leftover `instance-id.json` ignored: a command reads its host's instance ID from the registry or the stack, never from the file, and leaves the file as it was | Conformance case, E0.07-T04-S02 |
+| `hosts.lock` held by the check past its 30 seconds: a command that would write the registry fails with the lock's message and writes nothing | Conformance case, E0.07-T04-S02 |
+| A project list that is not valid: `provision` for a project with no record fails with the list's message; `provision -Host swimcoach` and a run for a project with a record go on | Conformance case, E0.07-T04-S02 |
+| A project with no record refused by every command but `provision`; `provision` refusing an unlisted project and writing nothing | Conformance case, E0.07-T04-S02 |
+| The host registry: missing read as the box; the first write holding the box's record; an invalid file failing with its name; a missing instance ID read from the stack and written; `deploy`'s removal and write | Conformance case, E0.07-T04-S02 |
+| `deploy -Host`'s `cloudformation deploy` arguments: the existence check first; for a new stack, the stack's name, its tag, `SubnetId` and `VpcId` alone of `stack-parameters.json`, `SshPublicKey`, `HostName`, and `CaPublicKey` with no comment; for an existing stack, no parameter at all; the box's passing every member of the file and neither `HostName` nor `CaPublicKey` | Conformance case, E0.07-T04-S02 |
+| The existence check's `StackStatus`, through the stand-in `aws` (P17 and P19, architect, 2026-11-20, for v0.07-T01): `REVIEW_IN_PROGRESS` takes the create path, with the creation parameters; `ROLLBACK_COMPLETE` fails with the delete message, before any `cloudformation deploy`, and `provision` then records `failed` for a host that was never `ready` and leaves a `ready` host `ready`, the message in its log; a `*_IN_PROGRESS` status fails with the try-later message the same way | Conformance case, E0.07-T04-S02 |
+| `stack-parameters.json` naming `HostName` or `CaPublicKey` refused for the box and for a new host; one lacking `SubnetId` or `VpcId` refused for a new host's stack before any call that changes anything, and not for an existing one | Conformance case, E0.07-T04-S02 |
+| `-InstanceType`: its form, its two host checks in their order (another command; `deploy` without `-Host` or with `-Host swimcoach`), and `deploy -Host <project> -InstanceType <type>` passing `InstanceType=<type>` alone to an existing stack, and with the creation parameters to a new one | Conformance case, E0.07-T04-S02 |
+| The operator's folder per command: `deploy`, `sync` and `provision` each writing into a new `operator\<hex>\` folder that their stand-in `scp` and `aws` see named, never one another's, and removing it as they end, after a failure too; a folder that cannot be written failing with its name | Conformance case, E0.07-T04-S02 |
+| The 24-hour sweep: a `<hex>` folder created more than 24 hours ago removed by the next command that makes its own, a younger one and a folder of another name left | Conformance case, E0.07-T04-S02, with the folders' creation times set by the test |
+| The ProxyCommand writing a missing `instance_id` into its host's record and nothing else, and leaving a record that holds one unchanged | Conformance case, E0.07-T04-S02 |
+| Every command given `-Host` for a host that is not the box, `status` and `down` included, signing a fresh certificate; `status -Host` and `down -Host` signing after their own work | Conformance case, E0.07-T04-S02 |
+| `deploy -Host` creating a stack, and the host coming up from it | Live check, E0.07-T05-S01 |
+| The `agentbox` change set being empty (D44) | Live, by the template's story, E0.07-T01-S05 |
+| `-All` on `status`, `down` and `sync`: the order, the `Host` lines, the skips, going on past a failed host, the closing count, and the sign-in failure ending it; `status -All` and `down -All` signing nothing and writing no alias, with no CA in the throwaway home; `sync -All` writing `system\` and building once | Conformance case, E0.07-T04-S02, for the calls; `sync -All`'s copies to real hosts by the live check, E0.07-T05-S01 |
+| `bootstrap`: its ssh's arguments, the script's bytes on its stdin, and its failure message | Conformance case, E0.07-T04-S02 |
+| `bootstrap` installing the toolchain, and a second run changing nothing that matters | Live check, E0.07-T05-S01 |
+| `provision`: its steps in order, every record it writes (`creating`, `ready`, `failed`, `last_attempt_at`, a kept `instance_id`), its log lines, the programs' output written into the log between them, `place_pending` called after `ready` and its failure warning, and the sign-in line for a host that was not `ready` and never for the box or a `ready` host | Conformance case, E0.07-T04-S02, with a seeded lease state file |
+| `provision`'s first steps in order: the `-Host` checks, then an unlisted project with no record refused with no log, no host's folder and no record; then the log opened; then the lock. A held `provision.lock` gives one `run failed` line in the log, exit 1 and no record written; a folder at the log's path gives exit 1, no record and no lock taken | Conformance case, E0.07-T04-S02 |
+| `place_pending` as [driver.md, place_pending](driver.md#place_pending) gives it: one lease per hold of the lease state lock, a killed placement's leftover files removed first, a lease released meanwhile never placed, and a lease whose ProxyCommand program is missing beside the operator left `pending` with the failure logged, the others placed (P14 and P16, architect, 2026-11-20, for v0.07-T01) | Conformance case, E0.07-T04-S02, with a seeded lease state file and the operator run from a folder without `agentspace-ssh-proxy.exe` for the last |
+| The ready-host rule: `provision` on a `ready` record writing only `last_attempt_at` at its start, keeping `ready` on success with a learned `instance_id` written, and keeping `ready` with the failure logged when a step fails | Conformance case, E0.07-T04-S02 |
+| `provision`'s step 3 and step 8 failing on the registry (`hosts.lock` held past its 30 seconds, a write that fails): `run failed` or `record failed` logged, the record left as the section says, exit 1 | Conformance case, E0.07-T04-S02 |
+| `provision` making a real host; a detached run outliving the lease command that started it, with its own lines and its steps' output written by the run into `provision.log` | Live check, E0.07-T05-S01 |
+| A detached run's environment: the four variables passed, `USERPROFILE` and the relative folders made full, `AGENTSPACE_PROXY_COMMAND` exactly as set, each of the three absent when the lease CLI lacked it, and no seam variable; `AGENTSPACE_PROVISION_CMD` naming the program started | Conformance case of the lease CLI, E0.07-T04-S01, with a stand-in run program that records the names of the variables it got and the values of the four named ones alone, since a test never records the values of a whole environment (AGENTS.md) ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)) |
+| The operator's alias file: its bytes, the `Include` line, a foreign file refused, and a lease's release or overwrite leaving it | Conformance case, E0.07-T04-S02 |
+| The operator's alias refused when `agentspace-ssh-proxy.exe` is not beside the operator: the command fails with its message, and starts no ssh | Conformance case, E0.07-T04-S02, with the operator run from a folder without it |
+| The operator's certificate's fields, read with `ssh-keygen -L` against a throwaway CA | Conformance case, E0.07-T04-S02 |
+| A new host accepting the operator's certificate, and its key accepted on first use into agentspace's known-hosts file | Live check, E0.07-T05-S01; a case shows only that the operator never writes the file |
+| The ProxyCommand's host: no argument, a host alias, a lease alias of a `ready` host, of a host that is not `ready`, an unknown alias, an invalid lease state file, and an invalid registry | Conformance case, E0.07-T04-S02 |
+| The push stamp per host, the box's staying where it was | Conformance case, E0.07-T04-S02 |
+| A lease alias reaching the new host; a swimcoach lease connecting to the box as before | Live check, E0.07-T05-S01 (D53) |
+| `sync` on a new host: the copies, the install and the CA it trusts | Live check, E0.07-T05-S01 |
+| The laptop's AWS sign-in needing no new permission (D44) | Live check, E0.07-T05-S01, by its run with today's sign-in |
+| Every command with `-Host` started from Git Bash (#0027) | Live check, E0.07-T05-S01 (D55 carries #0027 there) |
+
 ## Commands
 
 ### The top level
 
 ```
-operator <command> [-GiB <n>] [-Alias <alias>] [-Quiet]
+operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet]
 operator -h | --help
 ```
 
-**Help:**
+**Help** (architect, 2026-11-20, for v0.07-T01, as every help text v0.07 changes or adds is):
 
 ```
-Usage: agentspace-operator <command> [-GiB <n>] [-Alias <alias>] [-Quiet] [--help]
+Usage: agentspace-operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]
 
-Manages the agentspace box from the laptop: its stack, its power, its system
-files, the SSH CA it trusts, and the localswim Bot token it uses.
+Manages agentspace's hosts from the laptop: each host's stack, its power, its
+system files and toolchain, the SSH CA they trust, and the localswim Bot token
+they use. Without -Host, a command acts on the box, swimcoach's host.
 
 Commands:
-  deploy  Create or update the stack, then run sync
-  up      Start the box if needed, wait until it has patched, push the Bot token
-  sync    Check the CA, install the box's system files, CLAUDE.md and the
-          localswim CLI, and push the Bot token
-  ca      Create the agentspace SSH CA once; later, check it and print it
-  down    Stop the box
-  status  Show the box's state, type, disk and Session Manager reachability
-  grow    Grow the box's disk by -GiB (default 2), and its filesystem with it
+  deploy     Create or update a host's stack, then run sync
+  up         Start a host if needed, wait until it has patched, push the
+             Bot token
+  sync       Check the CA, install a host's system files, CLAUDE.md and the
+             localswim CLI, and push the Bot token
+  bootstrap  Install the agent toolchain on a host; safe to run again
+  provision  Make a project's host: deploy, start, sync and bootstrap it
+  ca         Create the agentspace SSH CA once; later, check it and print it
+  down       Stop a host
+  status     Show a host's state, type, disk and Session Manager reachability
+  grow       Grow a host's disk by -GiB (default 2), and its filesystem with it
 
 Parameters:
-  -GiB <n>        For grow: the GiB to add (default 2)
-  -Alias <alias>  For up: the SSH host alias the token push uses (default agentspace)
-  -Quiet          Print no progress or warnings; failures and status still print
-  -h, --help      Print this help, or a command's, and exit
+  -Host <project>  The project whose host to act on (default: the box);
+                   provision needs it, and ca takes none
+  -All             For status, down and sync: every host, one at a time
+  -GiB <n>         For grow: the GiB to add (default 2)
+  -Alias <alias>   For up: the SSH host alias the token push uses
+                   (default: the host's own)
+  -InstanceType <type>
+                   For deploy -Host: the instance type to give that host
+  -Quiet           Print no progress or warnings; failures and status
+                   still print
+  -h, --help       Print this help, or a command's, and exit
 
-The operator's own messages go to stderr; deploy, sync and grow pass other
-programs' output through. up writes nothing to stdout, so it is safe in an SSH
-ProxyCommand.
+The operator's own messages go to stderr; deploy, sync, bootstrap, provision
+and grow pass other programs' output through. up writes nothing to stdout, so
+it is safe in an SSH ProxyCommand.
 
 Exit codes:
   0  Success
@@ -918,64 +1471,169 @@ Exit codes:
 ### deploy
 
 ```
-operator deploy [-Quiet]
+operator deploy [-Host <project>] [-InstanceType <type>] [-Quiet]
 ```
 
-**Creates or updates the CloudFormation stack, refreshes the instance-ID cache, then runs
-`sync`.**
+**Creates or updates its host's CloudFormation stack, refreshes the host's instance ID in its
+record, then runs `sync`.** Without `-Host` it deploys the box's stack, `agentbox`, exactly as
+before v0.07, with every member of `stack-parameters.json` (D39). With `-Host <project>` it deploys
+the stack the project's record names, and `cloudformation deploy` creates that stack when there is
+none, which is how a new host's stack is made (D44, D49): a record with no stack yet is one
+`provision` added, since no other command adds a record ([From the command
+line](#from-the-command-line)). **A host is never sized by the box's parameters** (P13, architect,
+2026-11-20, for v0.07-T01; D55): a new host's stack takes only `SubnetId` and `VpcId` from
+`stack-parameters.json`, an existing host's stack keeps every parameter's previous value, and a
+host that is not the box changes size only through `-InstanceType`.
 
-1. **Reads the user's public key** from `%USERPROFILE%\.ssh\id_ed25519.pub`, trimmed. A missing,
+**For a host that is not the box, `deploy` first learns whether its stack exists, and in what
+state**, with `cloudformation describe-stacks --stack-name <stack>` ([Calls by
+command](#calls-by-command)), reading `Stacks[0].StackStatus` (P17 and P19, architect, 2026-11-20,
+for v0.07-T01):
+- **No stack**, a failure whose error text holds `does not exist`, without regard to case, **or
+  `REVIEW_IN_PROGRESS`**, a stack that holds a change set and no resources: `deploy` **creates**
+  it, with the creation parameters below.
+- **`CREATE_COMPLETE`, `UPDATE_COMPLETE`, `UPDATE_ROLLBACK_COMPLETE`, `IMPORT_COMPLETE` or
+  `IMPORT_ROLLBACK_COMPLETE`**, the states an update can start from: `deploy` **updates** it.
+- **Any status that ends `_IN_PROGRESS`**, but `REVIEW_IN_PROGRESS`, a stack in the middle of an
+  operation: `deploy` fails with
+  `agentspace: Stack '<stack>' is <status>; try again once that operation has finished.`
+- **`ROLLBACK_COMPLETE`**, which a stack whose first creation failed is left in, which no update
+  can start from, and which holds no instance: `deploy` fails with
+  `agentspace: Stack '<stack>' is ROLLBACK_COMPLETE, which no update can start from. Look at its events, delete it with 'aws cloudformation delete-stack --region us-west-2 --stack-name <stack>', then run 'agentspace-operator provision -Host <project>' again.`
+- **Any other status**, such as `UPDATE_ROLLBACK_FAILED` or `DELETE_FAILED`, which no update can
+  start from and which can still hold the host's instance and its disk: `deploy` fails with
+  `agentspace: Stack '<stack>' is <status>, which no update can start from. Look at its events; it can still hold the host's instance and disk, so do not delete it unless nothing on the host is to be kept.`
+  It names no delete command, since deleting such a stack destroys the host's disk (the dev lead's
+  reading of P17, which names the delete for a stack whose creation failed; architect, 2026-11-20, for v0.07-T01).
+- **No operator command deletes a stack** ([The stack](#the-stack)): a delete is always a person's,
+  after looking at the stack's events.
+
+Each of those three failures comes before any call that changes anything, and its message is the
+step's failure message: in `provision` it is printed and written to the run's log, and `provision`
+records `failed` for a host that was never `ready` and leaves a `ready` host `ready`, as every
+failure of its deploy step does ([provision](#provision)). `deploy` run by itself writes no
+`state`, as no command but `provision` does ([The host registry, as the operator uses
+it](#the-host-registry-as-the-operator-uses-it)). Any other failure of the call fails `deploy`
+under [AWS failures](#aws-failures), #0034's sign-in message first, and an answer with no string
+`Stacks[0].StackStatus` fails with
+`agentspace: Unexpected answer from cloudformation describe-stacks: no Stacks[0].StackStatus.`
+The box's `deploy` makes no such call, as before v0.07. The list of states, the two messages, and
+`deploy` by itself writing no `state`, are confirmed by the architect, 2026-11-20, for v0.07-T01. Below, "the box's stack", "a
+stack it creates" and "a host's stack it updates" are the box's and those two paths; `-Host
+swimcoach` is the box's.
+
+1. **Reads the user's public key** from `%USERPROFILE%\.ssh\id_ed25519.pub`, trimmed, for the
+   box's stack and for a stack it creates, and not for a host's stack it updates: it is the
+   template's `SshPublicKey`, installed for the login user at first boot, for a new host as for the
+   box (P13, architect, 2026-11-20, for v0.07-T01). A missing,
    unreadable or empty file MUST fail with an `agentspace: ` message naming it:
    `agentspace: <path> does not exist.`, `agentspace: Cannot read <path>.` or
    `agentspace: <path> is empty.` (architect, 2026-11-19, for E0.06-T03-S02). A file of whitespace
    alone is empty, since the key is read trimmed. The prototype fails
    with a runtime error for a missing or empty file, and passes an empty key on for a
    whitespace-only one.
-2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\stack-parameters.json`** (D37,
+2. **Reads the stack parameters file, `%USERPROFILE%\.agentspace\stack-parameters.json`**, for the
+   box's stack and for a stack it creates, and not for a host's stack it updates (D37,
    D40; [What the prototype took from its checkout](#programs-and-install-layout); the prototype
    reads `KEY=VALUE` lines from `<checkout>\infra\local.parameters`). A missing file fails with
    `agentspace: Missing <path>; copy infra\stack-parameters.example.json and fill it in.`, where
    `<path>` is the file's full path. A file that cannot be opened, cannot be parsed as JSON, or does
    not match its schema fails with `agentspace: <path> is not a valid stack parameters file:
    <reason>.`, where `<reason>` is one sentence fragment that names the first problem found and
-   holds no line break (architect, 2026-11-19, for v0.06). Each member of `parameters` becomes a
-   parameter override (format: docs/state.md). **A file that names `SshPublicKey`, or names any
-   member twice, is not valid** (architect, 2026-11-19, for E0.06-T03-S02): `deploy` sets
-   `SshPublicKey` itself from step 1, and a file that could override it would put another key on
-   the box with no word said. The `<reason>` names the member. Any stack parameter can be set there, not only
-   `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack
+   holds no line break (architect, 2026-11-19, for v0.06). For the box's stack, each member of
+   `parameters` becomes a parameter override (format: docs/state.md). **A file that names
+   `SshPublicKey`, or names any member twice, is not valid** (architect, 2026-11-19, for
+   E0.06-T03-S02): `deploy` sets `SshPublicKey` itself from step 1, and a file that could override
+   it would put another key on the box with no word said. The `<reason>` names the member. **So is
+   a file that names `HostName` or `CaPublicKey`** (architect, 2026-11-20, for v0.07-T01). That is this page's
+   own check, made by `deploy` after the file matches its schema, which does not forbid them
+   ([state.md, Files in the checkout](state.md#files-in-the-checkout)): `deploy` sets both itself
+   for a host that is not the box, and on the box either would change the `agentbox` stack's names
+   or its first boot, whose change set MUST stay empty (D44). Any stack parameter can be set there,
+   not only `VpcId` and `SubnetId`, so `ImageId` MUST NOT be set there on a live stack
    ([The stack](#the-stack)).
-3. **Prints `Deploying stack 'agentbox' in us-west-2...`.**
-4. **Runs `cloudformation deploy`** ([The AWS side](#calls-by-command)), with its output passed
-   through. A non-zero exit fails with `agentspace: Stack deploy failed; see the stack events in
+   - **The file sizes the box alone** (D39; P13, architect, 2026-11-20, for v0.07-T01, closing
+     [Q31](#open-questions)). For the box's stack every member is passed, as before v0.07, so
+     `InstanceType` there sizes the box. **For a stack it creates, only `SubnetId` and `VpcId` are
+     taken from it**, and every other member is ignored, so the box's `InstanceType` never sizes a
+     new host. A file that does not name both fails a stack it creates with
+     `agentspace: <path> MUST name SubnetId and VpcId for a new host's stack.` before any AWS call
+     that changes anything (the message is confirmed by the architect, 2026-11-20, for v0.07-T01).
+3. **For a stack it creates, checks the CA and reads its public key**: the CA check is
+   [sync](#sync)'s step 1, with its messages, so a host is never deployed to trust a half-made or
+   loosened CA; then it reads `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` and keeps its first
+   two fields, the key type and the base64 key, joined by one space, with no comment and no line
+   ending (P8, architect, 2026-11-20, for v0.07-T01; D44). That is `<CA key>` below. **The comment
+   is dropped because it holds the computer's name** ([state.md, The CA](state.md#the-ca)), and a
+   stack parameter is kept and shown by CloudFormation. The box's stack and a host's stack it
+   updates pass no `CaPublicKey`, so this step is skipped for them; `deploy`'s `sync` step checks
+   the CA for every host.
+4. **Prints `Deploying stack '<stack>' in us-west-2...`, for every stack**, which for the box is
+   `Deploying stack 'agentbox' in us-west-2...`, the line it printed before v0.07. **Then runs
+   `cloudformation deploy`** ([The AWS side](#calls-by-command)), with its output passed through,
+   and with these parameters (P13, architect, 2026-11-20, for v0.07-T01):
+   - **The box's stack:** `SshPublicKey` and every member of the file, as before v0.07, and no
+     `HostName` and no `CaPublicKey`, so its change set is empty (D44; P5).
+   - **A stack it creates:** `SshPublicKey`, `SubnetId` and `VpcId`, `HostName=<stack>` and
+     `CaPublicKey=<CA key>` (D44; P5 and P8, architect, 2026-11-20, for v0.07-T01), so the stack's
+     alarm and tags take the host's name and its first boot trusts the CA before the operator first
+     connects. Every other parameter takes the template's default: `InstanceType` `m9g.xlarge` and
+     `RootVolumeGiB` 8 (D46), never the box's values. With `-InstanceType <type>`,
+     `InstanceType=<type>` is passed too (architect, 2026-11-20, for v0.07-T01).
+   - **A host's stack it updates:** every parameter keeps its previous value, as
+     `UsePreviousValue=true` gives it, which `cloudformation deploy` applies to every parameter it
+     is not passed: so no parameter is passed at all, and `deploy` reads neither the public key,
+     the file nor the CA. **With `-InstanceType <type>`, `InstanceType=<type>` alone is passed**,
+     which is the one way such a host changes size (D39, D51). CloudFormation stops and starts the
+     instance to change its type, and keeps its disk ([The stack](#the-stack)). A provisioning run
+     on a host whose stack exists, a `ready` host's included, takes this path without
+     `-InstanceType`, so its deploy step changes nothing but what a newer template changes (P3).
+     **So a run that a `get` starts on a `ready` host after an operator upgrade applies a changed
+     template to that host unattended**, with whatever that change makes CloudFormation do to its
+     instance, a stop and start included.
+
+   A non-zero exit fails with `agentspace: Stack deploy failed; see the stack events in
    the console.` An expired sign-in MUST fail with #0034's message instead
    ([AWS failures](#aws-failures)).
-5. **Deletes the instance-ID cache, reads the instance ID from the stack's `InstanceId` output,
-   writes the cache again** ([Laptop files](#laptop-files), the instance-ID cache), and prints
-   `Instance: <id>`. The cache is deleted first so that the ID comes from the stack as the deploy
-   left it, never from an older cache. If the read fails, `deploy` fails with no cache on the
-   laptop, and the next command that needs the ID rebuilds it from the stack.
-6. **Runs `sync`**, as if `operator sync` had been run with `deploy`'s own `-Quiet`: **`deploy
-   -Quiet` quiets its `sync` step too** (D36; [Q4](#open-questions), closed), as the `-Quiet` row of
-   [Command line](#command-line) says of every command. **`deploy` MUST exit 1 when `sync`
-   fails.** The prototype runs `sync` as a nested script without `-Quiet`, so `sync`'s messages
-   print, and its failure most likely does not reach `deploy`'s exit code ([Q3](#open-questions));
-   both are [requirements it does not meet yet](#requirements-the-prototype-does-not-meet-yet).
+5. **Removes the instance ID from the host's record, reads the instance ID from the stack's
+   `InstanceId` output, and writes it into the record again** ([The host registry, as the operator
+   uses it](#the-host-registry-as-the-operator-uses-it)), each write under `hosts.lock`, and prints
+   `Instance: <id>`. The ID is removed first so that it comes from the stack as the deploy left
+   it, never from an older record. If the read fails, `deploy` fails with no instance ID in the
+   record, and the next command that needs the ID reads it from the stack. Nothing else in the
+   record changes: `deploy` never sets a `state`.
+6. **Runs `sync`**, as if `operator sync` had been run with `deploy`'s own `-Host` and `-Quiet`:
+   **`deploy -Quiet` quiets its `sync` step too** (D36; [Q4](#open-questions), closed), as the
+   `-Quiet` row of [Command line](#command-line) says of every command. **`deploy` MUST exit 1
+   when `sync` fails.** The prototype runs `sync` as a nested script without `-Quiet`, so
+   `sync`'s messages print, and its failure most likely does not reach `deploy`'s exit code
+   ([Q3](#open-questions)); both are
+   [requirements it does not meet yet](#requirements-the-prototype-does-not-meet-yet).
 
 **Stdout:** the AWS CLI's deploy output, then `sync`'s. **Stderr:** the messages above, then
 `sync`'s. **Exit codes:** 0 and 1.
 
 **`deploy` passes no `ImageId`, so the template's pinned default applies** ([The
-stack](#the-stack)).
+stack](#the-stack)). **`-InstanceType` is `deploy`'s alone**, and only with `-Host` naming a host
+that is not the box ([Command line](#command-line), the host checks 5 and 6).
 
 **Help:**
 
 ```
-Usage: agentspace-operator deploy [-Quiet]
+Usage: agentspace-operator deploy [-Host <project>] [-InstanceType <type>] [-Quiet]
 
-Creates or updates the CloudFormation stack 'agentbox' in us-west-2 from
-its template, with the parameters in ~/.agentspace/stack-parameters.json
-and your ~/.ssh/id_ed25519.pub, then runs sync.
+Creates or updates a host's CloudFormation stack in us-west-2 from its
+template, then runs sync. Without -Host it deploys the box's stack,
+'agentbox', with the parameters in ~/.agentspace/stack-parameters.json and
+your ~/.ssh/id_ed25519.pub. With -Host <project> it deploys that project's
+host's stack: when there is none, it creates it with the SubnetId and VpcId
+in that file, your public key and the SSH CA's public key; when there is
+one, it keeps every parameter as it was.
+
+  -Host <project>       The project whose host to deploy (default: the box).
+  -InstanceType <type>  With -Host, for a host that is not the box: the
+                        instance type to give it, such as m9g.2xlarge. The
+                        box is sized through stack-parameters.json.
 
 Never change the template's ImageId on a live stack: it replaces the instance
 and its disk.
@@ -986,19 +1644,34 @@ Exit codes: 0 success, 1 failure.
 ### up
 
 ```
-operator up [-Alias <alias>] [-Quiet]
+operator up [-Host <project>] [-Alias <alias>] [-Quiet]
 ```
 
-**Makes the box ready for a connection: starts it if it is stopped, waits until its boot-time
+**Makes its host ready for a connection: starts it if it is stopped, waits until its boot-time
 patch run has finished, and pushes the localswim Bot token and the laptop's time zone if they are
-due.** The ProxyCommand runs it before every connection.
+due.** Without `-Host` its host is the box. The ProxyCommand runs it before every connection, on
+the host it found ([From the ProxyCommand](#from-the-proxycommand)).
 
-1. **Reads the instance ID** from the cache, or from the stack's output when the cache is missing,
-   writing the cache then.
-2. **Starts the box and waits for it**, as [Starting the box and waiting for
+1. **Reads the host's instance ID** from its record, or from its stack's output when the record has
+   none, writing it into the record then
+   ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)).
+2. **Starts the host and waits for it**, as [Starting the box and waiting for
    it](#starting-the-box-and-waiting-for-it) says, ending with `Ready: <id>`.
-3. **Pushes the token over `<alias>`**, as [The token push](#the-token-push) says, unless it is
-   a nested `up` ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)).
+3. **Pushes the token over `<alias>`**, as [The token push](#the-token-push) says, with the host's
+   push stamp, unless it is a nested `up` ([Every ssh runs the
+   ProxyCommand](#every-ssh-runs-the-proxycommand)). `<alias>` is `-Alias`, whose default is the
+   host's own alias: `agentspace` for the box, `agentspace-host.<project>` for another host.
+   **`-Alias` and `-Host` MAY be given together**: `-Host` picks the host, its instance ID and its
+   push stamp, and `-Alias` only the alias the push connects with, as the ProxyCommand runs it
+   (architect, 2026-11-20, for v0.07-T01). **A person's `up` of a host that is not the box, not nested, first
+   makes the operator's key, certificate and alias for it** ([How the operator reaches a
+   host](#how-the-operator-reaches-a-host)), whether or not the push is due, as every command given
+   `-Host` does (P13 and P15, architect, 2026-11-20, for v0.07-T01). **A failure there is a push
+   failure, which names its cause and fails nothing**: `up` skips the push, warns
+   `agentspace: Could not send the localswim token, because <cause>; the board will not work on the host this session.`,
+   where `<cause>` is the failing step's message without its `agentspace: ` prefix and its last
+   period, such as the CA check's, and exits 0 (architect, 2026-11-20, for v0.07-T01). Run by the ProxyCommand,
+   `up` never does this.
 
 **Stdout:** nothing, ever. **Stderr:** the messages of steps 2 and 3, and the stderr of the push's
 ssh, which carries its nested ProxyCommand's lines, `The host is ready.` among them
@@ -1011,31 +1684,41 @@ that.
 **Help:**
 
 ```
-Usage: agentspace-operator up [-Alias <alias>] [-Quiet]
+Usage: agentspace-operator up [-Host <project>] [-Alias <alias>] [-Quiet]
 
-Starts the box if it is stopped, waits until its boot-time patch run has
+Starts a host if it is stopped, waits until its boot-time patch run has
 finished, and sends the localswim Bot token and the laptop's time zone if
-either has changed since the last confirmed send.
+either has changed since the last confirmed send. Without -Host it acts on
+the box.
 
-  -Alias <alias>  The SSH host alias the token push connects with
-                  (default agentspace). Letters, digits, '.', '_' and '-',
-                  not starting with '-'.
+  -Host <project>  The project whose host to start (default: the box).
+  -Alias <alias>   The SSH host alias the token push connects with
+                   (default: agentspace for the box, agentspace-host.<project>
+                   for another host). Letters, digits, '.', '_' and '-',
+                   not starting with '-'.
 
 Writes nothing to stdout, so it is safe inside an SSH ProxyCommand.
 A failed token push warns and still exits 0.
 
-Exit codes: 0 the box is ready, 1 failure.
+Exit codes: 0 the host is ready, 1 failure.
 ```
 
 ### sync
 
 ```
-operator sync [-Quiet]
+operator sync [-Host <project> | -All] [-Quiet]
 ```
 
-**Installs the box's system files and the CA's public key, copies the user's `CLAUDE.md`, builds
-and installs the localswim CLI, and pushes the token.** Every connection goes through the
-`agentspace` alias, with forwards cleared.
+**Installs the host's system files and the CA's public key, copies the user's `CLAUDE.md`, builds
+and installs the localswim CLI, and pushes the token.** Without `-Host` its host is the box, and
+every connection goes through the `agentspace` alias, as before v0.07. With `-Host`, every
+connection goes through the host's own alias, `agentspace-host.<project>` for a host that is not
+the box, which the operator writes, with its key and certificate, between steps 1 and 2 ([How the
+operator reaches a host](#how-the-operator-reaches-a-host)). Forwards are cleared on every
+connection. **Below, `agentspace` in a call stands for the host's alias.** `sync -All` runs these
+steps for every host whose record is `ready` ([Every host at once](#every-host-at-once--all)).
+**After the CA is replaced, `sync` reaches the box alone**: a host that is not the box trusts the
+old CA until a person recovers it, as [ca](#ca) says (D17, D50).
 
 1. **Checks the CA**, exactly as `ca` checks an existing one ([ca](#ca), the checks), and fails
    with that check's message before the box is touched. **That is `ca`'s steps 1, 2, 3 and 5, in
@@ -1076,8 +1759,9 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
    - **Otherwise it prints `Building the localswim CLI for linux/arm64...`** and builds
      `./cmd/localswim` from `C:\Projects\localswim` for `linux/arm64` with cgo off, trimmed paths,
      into `<checkout>\.build\localswim-linux-arm64` (the rewrite's place is
-     `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64`). **The build is exactly
-     `go build -trimpath -o <out> ./cmd/localswim`**, run in `C:\Projects\localswim` with
+     `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64`, in the command's own folder,
+     [The operator's folder, one per command](#the-operators-folder-one-per-command)). **The build
+     is exactly `go build -trimpath -o <out> ./cmd/localswim`**, run in `C:\Projects\localswim` with
      `GOOS=linux`, `GOARCH=arm64` and `CGO_ENABLED=0` ([Environment variables](#environment-variables)),
      where `<out>` is the output file's full path, and with no other flag (architect, 2026-11-19,
      for v0.06, gap FB-14). A failed build fails with `agentspace:
@@ -1087,8 +1771,8 @@ and installs the localswim CLI, and pushes the token.** Every connection goes th
      failed.` if that fails.
    - **Installs it as root, mode 0755, at `/usr/local/lib/localswim/localswim`**, and removes the
      staged copy. A failure fails with `agentspace: Installing the localswim CLI failed.`
-8. **Pushes the token over `agentspace`, forced**: the stamp is not compared, so the push always
-   runs ([The token push](#the-token-push)).
+8. **Pushes the token over the host's alias, forced**: the stamp is not compared, so the push always
+   runs, and on success writes the host's own stamp ([The token push](#the-token-push); D50).
 
 **Stdout:** the install's `Installed:` lines, and whatever else the remote steps print on their
 stdout. **Stderr:** the messages above; `go build`'s output; the remote steps' stderr, the
@@ -1102,7 +1786,10 @@ exactly these arguments in this order, its stdout and stderr the operator's, and
 `agentspace` alias, so each runs its own nested ProxyCommand. None of rows 1 to 8 sets `BatchMode`; row 9, the push,
 does ([What the laptop sends](#what-the-laptop-sends)). The local paths
 are full Windows paths, with `%USERPROFILE%` and `<checkout>` written as their values; `<staging>` is the box's staging folder, `/tmp/agentspace-system` on
-today's box.
+today's box. In the rewrite, rows 2 and 7 name the command's own folder in place of the
+`<checkout>` paths: `%USERPROFILE%\.agentspace\operator\<hex>\system` and
+`%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64`
+([The operator's folder, one per command](#the-operators-folder-one-per-command)).
 
 | # | When | Program and arguments | The remote step MUST, on the box |
 |---|---|---|---|
@@ -1126,23 +1813,288 @@ today's box.
 - **So a `sync` starts at least five processes** (1, 2, 3, 4 and 9) and at most nine, and makes as
   many Session Manager sessions.
 
-**After the localswim service on the laptop is updated, `sync` MUST be run again**, so that the
-box's localswim CLI is built from the same source as the service it talks to.
+**After the localswim service on the laptop is updated, `sync` MUST be run again for every host**
+(`sync -All`), so that each host's localswim CLI is built from the same source as the service it
+talks to. **After the CA is replaced, `sync` MUST be run for the box, and every other host MUST be
+recovered by hand**, as [ca](#ca)'s replacement steps say (D17, D50).
 
 **Help:**
 
 ```
-Usage: agentspace-operator sync [-Quiet]
+Usage: agentspace-operator sync [-Host <project> | -All] [-Quiet]
 
 Checks the agentspace SSH CA, then installs box/system and the CA's public key
-on the box, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
+on a host, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
 CLI from C:\Projects\localswim, and sends the localswim Bot token and the
-laptop's time zone. Starts the box first if it is stopped.
+laptop's time zone. Starts the host first if it is stopped. Without -Host it
+acts on the box; -All syncs every ready host, one at a time.
 
-Fails before touching the box if the CA is missing, half-made, mismatched or
+Fails before touching a host if the CA is missing, half-made, mismatched or
 readable by anyone else.
 
 Exit codes: 0 success, 1 failure.
+```
+
+### bootstrap
+
+```
+operator bootstrap [-Host <project>] [-Quiet]
+```
+
+**Runs the toolchain bootstrap on its host, as the login user** (D46, D49). Without `-Host` its
+host is the box. The bootstrap is the repository's `box/bootstrap.sh`, carried inside the operator
+as `box/system` is
+([What the prototype took from its checkout](#what-the-prototype-took-from-its-checkout)), and
+what it installs is [The box's files](#the-boxs-files)'s. **It is safe to run again**, on a new
+host or on the box: a second run installs nothing that is already there, and so on the box it makes
+the box's hand-installed Rust the bootstrap's (D46).
+
+1. **Starts the host and waits for it** ([Starting the box](#starting-the-box-and-waiting-for-it)).
+2. **For a host that is not the box, makes the operator's key, certificate and alias for it**
+   ([How the operator reaches a host](#how-the-operator-reaches-a-host)), the CA check first.
+3. **Prints `Running the toolchain bootstrap on the instance...`** and starts one ssh, as
+   [Programs it starts](#programs-it-starts) says (or through [the test seam](#the-test-seam)):
+
+   ```
+   ssh -o ClearAllForwardings=yes <alias> <remote command>
+   ```
+
+   where `<alias>` is the host's alias, `agentspace` for the box, and `<remote command>` is one
+   argument, the last, quoted as [What the laptop sends](#what-the-laptop-sends) says for Windows,
+   under the same rule for its characters. **The ssh gets a pipe for its stdin, to which the
+   operator writes the bootstrap's bytes, exactly as they are carried, and then closes it**; its
+   stdout and stderr are the operator's, so the bootstrap's output passes through. **On the host,
+   the remote step MUST**, as the login user and never prompting, run the script it reads from its
+   stdin with bash, to its end, and exit with the script's status. The script uses `sudo` where it
+   needs root, which the login user has with no password ([The `agentspace` SSH
+   entry](#the-agentspace-ssh-entry)). Like every remote command, its text is the operator's own
+   (D34).
+4. **A non-zero exit of the ssh, 255 for an ssh that could not connect included, fails** with
+   `agentspace: The toolchain bootstrap failed on the instance.` (architect, 2026-11-20, for v0.07-T01). What the
+   script installed before it failed stays, and a second run picks up from there.
+5. **Prints `Bootstrapped: <id>`** (architect, 2026-11-20, for v0.07-T01).
+
+**There is no time limit of the operator's own**: the bootstrap takes about ten minutes on a new
+host (D46), and its ssh is waited for until it exits. **The ssh's stdin is a pipe the operator
+writes and closes**, never the operator's own stdin, so `bootstrap` reads nothing from a person.
+
+**Stdout:** the bootstrap's stdout. **Stderr:** the messages above, the bootstrap's stderr, and
+the nested ProxyCommand's lines, `The host is ready.` among them
+([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)). **Exit codes:** 0 and 1.
+
+**Help:**
+
+```
+Usage: agentspace-operator bootstrap [-Host <project>] [-Quiet]
+
+Runs the agent toolchain's bootstrap on a host as its login user: gh, Node
+through fnm, Claude Code, Codex, uv, build-essential, and Rust through
+rustup. Starts the host first if it is stopped. Safe to run again. Without
+-Host it acts on the box.
+
+Exit codes: 0 success, 1 failure.
+```
+
+### provision
+
+```
+operator provision -Host <project> [-Quiet]
+```
+
+**Makes a project's host, or makes it again: deploys its stack, starts it and waits, runs `sync`
+and `bootstrap`, records it `ready`, and places the project's pending leases** (D46, D48, D55). The
+EC2 driver starts it detached when a lease needs a host, as `agentspace-operator provision -Host
+<project>` with no other argument, and with the environment [Environment
+variables](#environment-variables) gives a detached run ([driver.md, Starting a provisioning
+run](driver.md#starting-a-provisioning-run); P12, architect, 2026-11-20, for v0.07-T01); **a person
+MAY run it too** (D55), and a run by hand is recorded and logged the same way (P2, architect,
+2026-11-20, for v0.07-T01). `-Host` is required ([Command line](#command-line), the host checks).
+**`provision -Host swimcoach` provisions the box the same way**, through the box's own `deploy`,
+`sync` and `bootstrap`, and its record stays `ready` throughout (step 3); its log and lock are in
+`hosts\swimcoach\` ([state.md, A host's folder](state.md#a-hosts-folder)). **Its deploy step is
+the box's full `deploy`**: it reads `stack-parameters.json` and passes every member of it, so a
+changed `InstanceType` there, or a changed template, is applied to the box, and CloudFormation
+stops and starts the box to change its type ([deploy](#deploy), step 4). **A run on a host whose
+record is `ready` never changes its `state`** (P3, architect, 2026-11-20, for v0.07-T01; D48): a
+host that is not `ready` sends its project's ready leases to the box, where ssh's strict key check
+refuses them, so marking a `ready` host anything else would cut every lease of the project for the
+run's length, and for good if a step failed. `creating` and `failed` apply only to a host that was
+never `ready`. The files the run sends are written in one folder of its own for the whole run
+([The operator's folder, one per command](#the-operators-folder-one-per-command)). The steps, in
+order:
+
+1. **Finds the project's record**, reading the host registry without its lock, after the command
+   line's `-Host` checks. **The project list is read only when there is no record** (P14,
+   architect, 2026-11-20, for v0.07-T01), so a project list that is not valid never fails a run on
+   a host that has a record, the box's included. **A project with no record that is not in the
+   project list is refused** with
+   `agentspace: Project '<project>' has no host and is not in <path>, so no host is made for it.`,
+   where `<path>` is the project list's full path, exit 1, writing nothing, its log and its host's
+   folder included (D54; P2 and P19, architect, 2026-11-20, for v0.07-T01; the message is
+   confirmed by the architect, 2026-11-20, for v0.07-T01). A project with a record is provisioned whatever the list holds (D54).
+   A project list that cannot be read, for a project with no record, fails as [The host registry,
+   as the operator uses it](#the-host-registry-as-the-operator-uses-it) says, writing nothing.
+2. **Opens its log, then takes the run's lock** (P14, P18 and P19, architect, 2026-11-20, for
+   v0.07-T01):
+   - **It opens `%USERPROFILE%\.agentspace\hosts\<project>\provision.log` for append itself**,
+     creating the host's folder and the file if they are missing, and keeps it open until the run
+     ends (its log, below). **A run that cannot open its log exits 1 and writes nothing
+     else**: no record, no lock, no file. It prints
+     `agentspace: Cannot open the provisioning log <path>: <error>.` to its stderr, which for a
+     detached run goes nowhere (the message is confirmed by the architect, 2026-11-20, for v0.07-T01).
+   - **Then it takes the run's lock, `%USERPROFILE%\.agentspace\hosts\<project>\provision.lock`,
+     without waiting**, and holds it until the run ends (D55; P10, architect, 2026-11-20, for
+     v0.07-T01). **A lock another run holds fails the run**: it writes one line to its log,
+     `<time> run failed reason=A provisioning run for '<project>' is already running.`, prints that
+     message as `agentspace: A provisioning run for '<project>' is already running.`, exits 1, and
+     writes no record and nothing else (P18, architect, 2026-11-20, for v0.07-T01). A lock that
+     cannot be taken for any other reason fails the same way, with
+     `agentspace: Cannot take <path>: <error>.` as the message and the line's reason. Both
+     messages are confirmed by the architect, 2026-11-20, for v0.07-T01. The lock file's rules are [state.md, The provisioning
+     run's lock](state.md#the-provisioning-runs-lock)'s.
+3. **Records the run's start, under `hosts.lock`**, re-reading the registry, and sets
+   `last_attempt_at` to now, the run's start, in UTC in state.md's timestamp form (P2, architect,
+   2026-11-20, for v0.07-T01):
+   - **No record:** it adds
+     `{"project":"<project>","stack":"agentspace-host-<project>","state":"creating"}` (D44, D55),
+     with `last_attempt_at`.
+   - **A record that is `creating` or `failed`:** it sets `state` to `creating` too.
+   - **A record that is `ready`: `last_attempt_at` is the only member it writes**, and `state`
+     stays `ready`, so the project's ready leases keep reaching the host while the run works on it
+     (P3, architect, 2026-11-20, for v0.07-T01).
+
+   Then it logs `run begun` and prints `Provisioning the host of '<project>'...`.
+4. **Deploys the host's stack**: [deploy](#deploy)'s existence check and its steps 1 to 5, with
+   `-Host <project>` and never `-InstanceType`, and never its step 6, since step 6 here is `sync`
+   (D46). A host whose stack exists keeps every parameter's previous value (P13), so a run sizes
+   nothing. Its step 5 writes the instance ID into the record.
+5. **Starts the host and waits for it** ([Starting the box](#starting-the-box-and-waiting-for-it)),
+   as `up` does, with no push.
+6. **Runs `sync`**: every step of [sync](#sync), with `-Host <project>`, its forced push included.
+7. **Runs `bootstrap`**: every step of [bootstrap](#bootstrap), with `-Host <project>`.
+8. **Records the host `ready`, under `hosts.lock` alone**: `instance_id` the ID step 4 read,
+   `last_attempt_at` left as step 3 wrote it, and `state` `ready` for a host that was not `ready`;
+   a record that was `ready` keeps `ready`, and only its `instance_id` is updated, when the run
+   learned one that differs (P3, architect, 2026-11-20, for v0.07-T01). Then it releases
+   `hosts.lock` (D48; P10, architect, 2026-11-20, for v0.07-T01). It logs `record done` and prints
+   `Recorded the host of '<project>' as ready.`
+9. **Places the project's pending leases**, by calling the EC2 driver's `place_pending` for the
+   project, which places every `pending` lease of the project as `create` places one, one at a
+   time: it takes the lease state lock once per lease and re-reads the lease state file each time,
+   so no hold spans several placements, and it removes a killed placement's leftover files before
+   it places a lease (D48; P3 and P14, architect, 2026-11-20, for v0.07-T01; [driver.md,
+   place_pending](driver.md#place_pending)). The operator links the driver's crate, and starts no
+   program for this. **The driver's `Context` for the call is built from the run's environment as
+   the lease CLI builds its own**: the state folder, the ssh folder and the ProxyCommand line
+   ([Environment variables](#environment-variables); P12, architect, 2026-11-20, for v0.07-T01).
+   **The default ProxyCommand line names the program found beside the run's own executable**,
+   `agentspace-operator.exe`'s folder, as the lease CLI finds it
+   ([How each program finds the others](#how-each-program-finds-the-others); P15, architect,
+   2026-11-20, for v0.07-T01): when it is not there, placement fails for that lease, which stays
+   `pending`, and the others are placed. `AGENTSPACE_PROXY_COMMAND`, when the run has it, replaces
+   the whole line. It logs `place done`. **A failure here leaves the host
+   `ready` and the leases `pending`**: it logs `place failed` with the reason, warns
+   `agentspace: The pending leases of '<project>' could not be placed: <reason>; the next run places
+   them.`, and the run goes on to step 10 and exits 0 (P3; the warning and the exit code are
+   confirmed by the architect, 2026-11-20, for v0.07-T01). The next run P2's rule allows places them.
+10. **Prints where the sign-in procedure is** (D52), as the run's last line, **only for a host
+    that was not `ready` when the run began, and never for the box**, since a host that was
+    already `ready` has had its sign-ins (the condition is confirmed by the architect, 2026-11-20, for v0.07-T01):
+    `Sign in on this host once, by hand: run 'agentspace-operator status -Host <project>' first and again after an hour, then see "Signing in on a new host" in the agentspace README.`
+    The `status` run signs the one-hour certificate that `ssh agentspace-host.<project>` signs in
+    with ([How the operator reaches a host](#how-the-operator-reaches-a-host); P13, architect,
+    2026-11-20, for v0.07-T01). The procedure is written in the README by the story that makes the
+    first new host (D52); the heading named here, and the line's wording, are confirmed by the architect, 2026-11-20, for v0.07-T01, and that story uses them. It logs `run done`, releases `provision.lock`, and exits 0.
+
+**A host is `ready` for leases before the sign-ins** (D52): `ready` means a connection is expected
+to succeed (lease-api.md, States), not that an agent can work there yet.
+
+**When step 4, 5, 6 or 7 fails**, the run:
+- **Logs `<step> failed` with the step's failure message as its reason** (the step names are below).
+- **Records the failure under `hosts.lock`, for a host that was never `ready`**: `state` `failed`,
+  `last_attempt_at` left as step 3 wrote it, and `instance_id` kept when the run learned one (P2).
+  **A record that was `ready` when the run began is not written at all**: the failure is logged,
+  and the record stays `ready`, with the `last_attempt_at` step 3 wrote (P3, architect, 2026-11-20,
+  for v0.07-T01). A registry that cannot be written then is logged, and changes nothing else.
+- **Prints the step's own failure message as its last line**, releases `provision.lock` and exits 1.
+- **Leaves the project's leases `pending`, never `unsatisfiable`** (D48): a later `create` or `get`
+  for the project starts another run, at most once every 5 minutes (P2; driver.md).
+- An expired AWS sign-in is such a failure, with #0034's message, logged like any other.
+
+**When step 3 or step 8 cannot change the registry** (its lock not taken, or a write that fails),
+the run logs `run failed` or `record failed` with the registry's message, prints that message,
+records nothing more, releases `provision.lock` and exits 1. A run that stopped at step 8 leaves
+the record as step 3 and step 4 left it: `creating` with the instance ID step 4 wrote, or `ready`
+for a host that was `ready`, so the next run P2 allows starts again from step 1.
+
+**A run that is killed**, at any step, ends with no line of its own. **Its lock goes with its
+process**, since the operating system releases it however the run ends ([state.md, The
+provisioning run's lock](state.md#the-provisioning-runs-lock)). **Its record stays as it last
+wrote it**: `creating` for a host that was never `ready`, and `ready` for one that was, with the
+`last_attempt_at` of its start, so the next run P2's rule allows comes at least 5 minutes after
+it. **That run starts at step 1, and every step is safe to run again**: the deploy step finds the
+stack in whatever state the killed run left it (the existence check, [deploy](#deploy)), `sync`
+and `bootstrap` repeat safely, and `place_pending` removes a killed placement's leftover files
+before it places a lease. The killed run's folder under `operator\` is removed by the 24-hour
+sweep ([The operator's folder, one per command](#the-operators-folder-one-per-command)).
+
+**Its log, `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`** (P4, architect, 2026-11-20,
+for v0.07-T01: D55's path wins over D48's `<state folder>\hosts\<project>.log`). **The run opens
+it for append itself, at step 2, and writes every line of it**, a run by hand as a detached one
+(P14, architect, 2026-11-20, for v0.07-T01). The run appends
+one line per step, each line landing whole at the end of the file even when two processes write at
+once, and drops a line it cannot write after 5 tries 50 ms apart, as the keeper does with its own
+([keeper.md, Log lines](keeper.md#log-lines)). A dropped line changes nothing the run does. The
+file's bytes and access rules are [state.md, A host's folder](state.md#a-hosts-folder)'s; it is
+never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
+
+```
+<time> <step> <outcome>[ reason=<reason>]
+```
+
+- **`<time>`** is the time the line is written, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`, the form of the
+  keeper's lines.
+- **`<step>`** is one of `run`, `deploy`, `start`, `sync`, `bootstrap`, `record` and `place`.
+- **`<outcome>`** is `begun` (for `run` alone), `done` or `failed`. A run's lines are `run begun`,
+  then `done` or `failed` for each step it reached, in order, then `run done` when it succeeded.
+  A run whose step 2 found the lock held, or could not take it, writes one line, `run failed`,
+  with no `run begun` before it.
+- **`reason`** is written for `failed` alone, is the last field and runs to the end of the line: the
+  failure message without its `agentspace: ` prefix, with each control character in it written as
+  `?`. It MUST NOT hold the token or any text of the Bot credential ([Secrecy](#secrecy)), which no
+  failure message holds.
+- **Every line of the log is written by the run itself**, its own lines and, between them, the
+  output of the programs its steps run, which the run reads from each program and writes into the
+  log as each was written, keeping each program's own encoding (P14, architect, 2026-11-20, for
+  v0.07-T01; [state.md, The provisioning run's log](state.md#the-provisioning-runs-log)). No other
+  program writes to the log. That output also passes through to the run's stdout and stderr, and
+  its progress messages go to its stderr, as for any command: a run by hand writes them where the
+  person's shell sends them. **A run the driver starts detached has no standard handles**: its
+  stdin, stdout and stderr are null ([driver.md, Starting a provisioning
+  run](driver.md#starting-a-provisioning-run); P14, architect, 2026-11-20, for v0.07-T01), so its
+  log is the only record of it. **A run MUST work whatever its streams are, null included**, and
+  nothing it writes to its stdout or stderr can fail it.
+
+**Stdout:** the output its steps pass through. **Stderr:** the messages above and those of its
+steps. **Its log:** its own lines and its steps' output, as above. **Exit codes:** 0 when the host
+is recorded `ready`, whatever step 9 did; 1 otherwise.
+`-Quiet` quiets every step.
+
+**Help:**
+
+```
+Usage: agentspace-operator provision -Host <project> [-Quiet]
+
+Makes a project's host, or makes it again: deploys its stack, starts it and
+waits, runs sync and bootstrap, records it ready in ~/.agentspace/hosts.json,
+and places the project's pending leases. A project with no host is made only
+if it is listed in ~/.agentspace/projects.json. One run per host at a time;
+each run logs to ~/.agentspace/hosts/<project>/provision.log.
+
+Lease commands start a run on their own when a lease needs a host; you can
+also run it yourself.
+
+Exit codes: 0 the host is ready, 1 failure.
 ```
 
 ### ca
@@ -1269,8 +2221,31 @@ nothing.
 
 **`ca` MUST NOT overwrite, repair or loosen a CA, and MUST NOT change the access rules of an
 existing one.** A person decides what to do; if the private key may have been exposed, the CA is
-replaced: delete both files, run `ca`, run `sync` for every host, and re-issue every live lease's
-certificate (D17).
+replaced: delete both files, run `ca`, run `sync` for the box, recover every other host as below,
+and re-issue every live lease's certificate (D17, D50). **One CA serves every host** (D50), and
+`ca` takes no `-Host`.
+
+**After a replacement, no operator command reaches a host that is not the box** (architect,
+2026-11-20, for v0.07-T01, P19; D17): the operator's certificate for it is signed by the new CA,
+which that host's sshd does not trust, since it still holds the old CA's public key. So `sync`
+cannot bring the new key to it, and every lease alias for it is refused too. The box is reached as
+before, through the user's own key and entry. **A host whose stack does not exist yet** is created
+trusting the new CA ([deploy](#deploy), step 3), and needs nothing. **Every other host is
+recovered by hand, one at a time:**
+1. **The user's own `id_ed25519` is `SshPublicKey` on every host**, installed for the login user at
+   its first boot ([The stack](#the-stack)), so a person connects with it through the host's
+   operator alias, and so through the host's ProxyCommand, with the key given on ssh's command
+   line, such as
+   `ssh -i "%USERPROFILE%\.ssh\id_ed25519" agentspace-host.<project>` from cmd, with the path
+   written out. The operator alias exists for every host the operator has reached.
+2. **Over that connection, the person does `sync`'s CA step by hand**: puts the new CA's public key,
+   `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub`, in place of the old one, as root, at the path
+   the host's sshd trusts (`/etc/ssh/agentspace_ca.pub` on today's box), and reloads sshd, as
+   [What sync installs](#what-sync-installs) does.
+3. **Then runs `agentspace-operator sync -Host <project>`**, which now reaches the host, and
+   installs the rest as every `sync` does.
+
+How the new key could reach every host with no ssh is [Q34](#open-questions).
 
 **Stdout:** nothing. **Stderr:** the messages above. **Exit codes:** 0 and 1.
 
@@ -1293,22 +2268,33 @@ Exit codes: 0 the CA exists and is sound, 1 failure.
 ### down
 
 ```
-operator down [-Quiet]
+operator down [-Host <project> | -All] [-Quiet]
 ```
 
-**Asks EC2 to stop the instance, and prints `Stopping <id>.`** once the request is accepted. It
-does not wait for the stop, and it asks whatever state the instance is in; stopping a stopped
-instance succeeds. Open sessions on the box end with it.
+**Asks EC2 to stop its host's instance, and prints `Stopping <id>.`** once the request is
+accepted. Without `-Host` its host is the box. It does not wait for the stop, and it asks whatever
+state the instance is in; stopping a stopped instance succeeds. Open sessions on the host end with
+it. **`down -All` does this for every host** whose record holds an instance ID, or is `ready`
+([Every host at once](#every-host-at-once--all)), and is one of the cost guard's two tools until
+v0.08 (D49, D51): a turn's close stops every host it used with `down -Host` or `down -All`, and
+confirms with `status -All` that each is `stopped`. **`down -Host` for a host that is not the box
+then writes its alias and signs a fresh one-hour certificate for it** (P13 and P15, architect,
+2026-11-20, for v0.07-T01), after the stop is requested, as [How the operator reaches a
+host](#how-the-operator-reaches-a-host) says; a failure there fails `down`, and the stop already
+requested stands. **`down -All` MUST NOT sign or write an alias for any host**, so the cost guard
+never fails on the CA ([Every host at once](#every-host-at-once--all)).
 
-**Stdout:** nothing. **Stderr:** that line. **Exit codes:** 0 and 1.
+**Stdout:** nothing. **Stderr:** that line, and with `-All` each host's `Host` line. **Exit
+codes:** 0 and 1.
 
 **Help:**
 
 ```
-Usage: agentspace-operator down [-Quiet]
+Usage: agentspace-operator down [-Host <project> | -All] [-Quiet]
 
-Stops the box. Does not wait for it to stop. Open sessions on it end.
-The next ssh agentspace, or any lease connection, starts it again.
+Stops a host, or with -All every host. Does not wait for it to stop. Open
+sessions on it end. The next connection to it, a lease's or the operator's,
+starts it again. Without -Host it stops the box.
 
 Exit codes: 0 the stop was requested, 1 failure.
 ```
@@ -1316,10 +2302,11 @@ Exit codes: 0 the stop was requested, 1 failure.
 ### status
 
 ```
-operator status [-Quiet]
+operator status [-Host <project> | -All] [-Quiet]
 ```
 
-**Prints five lines about the instance, to stderr, whatever `-Quiet` says:**
+**Prints five lines about its host's instance, to stderr, whatever `-Quiet` says.** Without
+`-Host` its host is the box, and the report is exactly as before v0.07:
 
 ```
 Instance  <id>
@@ -1338,17 +2325,54 @@ SSM       <ssm>
 - **`<ssm>`** is `online` when the instance is running and Session Manager reports its agent
   `Online`, `not yet` when it is running and not online, and `-` in every other state.
 
-**`status` never starts the box.** **Stdout:** nothing. **Exit codes:** 0 and 1. **The five
+**`status` never starts a host.** **Stdout:** nothing. **Exit codes:** 0 and 1. **The five
 lines print only once every call they need has succeeded** (architect, 2026-11-19, for
 E0.06-T04-S02): a failed call prints its failure line alone, never a partial report before it.
+
+**`status -Host <project>` prints the same five lines for that host**, and then, for a host that is
+not the box, writes its alias and signs a fresh one-hour certificate for it (P13 and P15,
+architect, 2026-11-20, for v0.07-T01; [How the operator reaches a
+host](#how-the-operator-reaches-a-host)). **So `status -Host <project>` is what a person runs
+before signing in over `ssh agentspace-host.<project>`, and again after an hour.** A failure of
+that signing fails `status` after its report. **`status -All` reports every host in the host
+registry** (D49), each as `-Host` would, after the `Host` line that `-All` prints before each host
+([Every host at once](#every-host-at-once--all)), **but MUST NOT sign or write an alias for any
+host**, so D51's check never fails on the CA. A host whose record is
+`creating` or `failed` and holds no instance ID gets one line, `Instance  none recorded`, after its
+`Host` line, and no AWS call. So, for the box and one other host (architect, 2026-11-20, for v0.07-T01):
+
+```
+Host      swimcoach (agentbox), ready
+Instance  <id>
+State     <state>
+Type      <type>
+Disk      <size> GiB gp3 (<vol>)
+SSM       <ssm>
+Host      agentspace (agentspace-host-agentspace), ready
+Instance  <id>
+State     <state>
+Type      <type>
+Disk      <size> GiB gp3 (<vol>)
+SSM       <ssm>
+```
+
+Each host's five lines print only once that host's calls have succeeded; a host whose call failed
+prints its failure line after its `Host` line, and the report goes on with the next host. **D51's
+check reads it:** a turn's close is done when every host it used shows `State     stopped`.
 
 **Help:**
 
 ```
-Usage: agentspace-operator status [-Quiet]
+Usage: agentspace-operator status [-Host <project> | -All] [-Quiet]
 
-Shows the instance's ID, state, type, root disk size and volume, and whether
-Session Manager can reach it. Never starts the box. Prints to stderr.
+Shows a host's instance ID, state, type, root disk size and volume, and
+whether Session Manager can reach it; with -All, each host's, after a line
+naming it. Never starts a host. Prints to stderr. Without -Host it shows the
+box.
+
+With -Host, for a host that is not the box, it then signs a fresh one-hour
+certificate, so 'ssh agentspace-host.<project>' signs in for the next hour:
+run it before you sign in there, and again after an hour.
 
 Exit codes: 0 success, 1 failure.
 ```
@@ -1356,10 +2380,18 @@ Exit codes: 0 success, 1 failure.
 ### grow
 
 ```
-operator grow [-GiB <n>] [-Quiet]
+operator grow [-Host <project>] [-GiB <n>] [-Quiet]
 ```
 
-**Grows the root volume by `<n>` GiB (default 2), and the root filesystem with it.**
+**Grows its host's root volume by `<n>` GiB (default 2), and the root filesystem with it.** Without
+`-Host` its host is the box. A new host's root volume starts at the template's 8 GiB, and grows
+under the same rule as the box's, each host on its own (D46; AGENTS.md, "Growing the box's disk").
+For a host that is not the box, step 3's ssh goes through the host's alias, after the operator
+makes its key, certificate and alias for it ([How the operator reaches a
+host](#how-the-operator-reaches-a-host)); a failure there fails `grow` with its own message, and the
+volume's change in step 2 stands. **When the host is not running, `grow -Host` still writes its
+alias and signs a fresh certificate**, after step 2, since every command given `-Host` does (P13
+and P15, architect, 2026-11-20, for v0.07-T01).
 
 1. **Reads the root volume's size**, and prints `Growing <vol> from <size> to <new> GiB (EBS allows
    one change per volume every 6 hours)...`, where `<new>` is `<size>` plus `<n>`.
@@ -1373,7 +2405,8 @@ operator grow [-GiB <n>] [-Quiet]
    ssh -o ClearAllForwardings=yes agentspace <remote command>
    ```
 
-   with `<remote command>` one argument, the last, as for [sync's calls](#sync), its stdout and
+   with `agentspace` the host's alias, as in [sync's calls](#sync), and
+   `<remote command>` one argument, the last, as for [sync's calls](#sync), its stdout and
    stderr the operator's. **On the box, the remote step MUST**, as root and never prompting:
    1. Grow the root disk's partition to the end of the disk. A failure here, which is also what
       a partition with nothing to grow gives, does not stop the next step.
@@ -1404,18 +2437,22 @@ ProxyCommand's lines, `The host is ready.` among them
 **Help:**
 
 ```
-Usage: agentspace-operator grow [-GiB <n>] [-Quiet]
+Usage: agentspace-operator grow [-Host <project>] [-GiB <n>] [-Quiet]
 
-Grows the box's root volume by -GiB (default 2) and, if the box is running,
-its filesystem online; a stopped box grows its filesystem at next boot.
-EBS volumes never shrink, and allow one change every 6 hours.
+Grows a host's root volume by -GiB (default 2) and, if the host is running,
+its filesystem online; a stopped host grows its filesystem at next boot.
+EBS volumes never shrink, and allow one change every 6 hours. Without -Host
+it grows the box's.
 
 Exit codes: 0 success, 1 failure.
 ```
 
 ## Starting the box and waiting for it
 
-**`up` and `sync` share one start-and-wait step**, and every nested `up` runs it too.
+**`up` and `sync` share one start-and-wait step**, and every nested `up` runs it too, as do
+`bootstrap` and `provision`. **It acts on the command's host**, with that host's instance ID, and
+its rules and limits bind every host alike (D49). Place never runs it: a lease is never placed
+while a host is made, and the provisioning run does the waiting (D48).
 
 1. **Reads the instance's state.**
    - **`running` or `pending`:** nothing to start.
@@ -1450,7 +2487,9 @@ Exit codes: 0 success, 1 failure.
    - **A message is printed only when it differs from the last one printed**, so a long wait shows
      each phase once.
    - **At the deadline** it fails with `agentspace: <id> was not ready within 15 minutes; check:
-     ssh agentspace journalctl -u agentspace-patch`, whose command is today's box's.
+     ssh agentspace journalctl -u agentspace-patch`, whose command is today's box's. For a host
+     that is not the box, `agentspace` in it is the host's alias, `agentspace-host.<project>`
+     (architect, 2026-11-20, for v0.07-T01).
 4. **Prints `Ready: <id>`.**
 
 **Run by the ProxyCommand, these steps print the caller's lines in place of every message above**
@@ -1465,17 +2504,20 @@ them.
 
 ## The ProxyCommand
 
-**The ProxyCommand is what makes `ssh agentspace`, and `ssh <lease alias>`, start the box and reach
-it with no inbound port.** ssh runs it in place of a TCP connection, and talks SSH over its stdin
-and stdout. D9 makes this path the EC2 driver's.
+**The ProxyCommand is what makes `ssh agentspace`, `ssh <lease alias>` and
+`ssh agentspace-host.<project>` start a host and reach it with no inbound port.** ssh runs it in
+place of a TCP connection, and talks SSH over its stdin and stdout. D9 makes this path the EC2
+driver's. **Which host it reaches is decided by its argument**, as [From the
+ProxyCommand](#from-the-proxycommand) says (D49): no argument is the box, a host alias its host,
+and a lease alias its lease's `ready` host, or the box.
 
 **How ssh runs it.** The `ProxyCommand` line of an alias that reaches the box is the line
 [state.md, The alias file](state.md#the-alias-file) gives: the ProxyCommand program's full path,
 through `cmd.exe` when the program is a `.cmd` or `.bat` file, then the alias. Which program that
 is, and where it lives, is [Programs and install layout](#programs-and-install-layout)'s. The user's own
 `agentspace` entry passes no alias ([The `agentspace` SSH entry](#the-agentspace-ssh-entry)), and a
-lease alias passes its own name, written out literally, never as ssh's `%n` token. The Claude
-desktop app runs the same line through its own proxy program.
+lease alias, or a host's operator alias, passes its own name, written out literally, never as
+ssh's `%n` token. The Claude desktop app runs the same line through its own proxy program.
 
 **Its arguments are the ones the program receives.** A ProxyCommand program that is a `.cmd` or
 `.bat` file receives them as `cmd.exe` splits a batch file's parameters: outside double quotes,
@@ -1498,11 +2540,15 @@ CLI writes holds none ([state.md, The alias file](state.md#the-alias-file)).
 3. **Runs `up`'s steps in caller mode** ([What a caller sees](#what-a-caller-sees-d1-card-0087)),
    with `-Alias <alias>` when it was given an alias, and with anything they write to stdout sent to
    stderr. They check the alias exactly ([Command line](#command-line)), so a bad one fails there
-   before any ssh or tunnel, with the `-Alias` message.
+   before any ssh or tunnel, with the `-Alias` message, and before the lease state file or the
+   host registry is read. **Then they find the host from the alias** ([From the
+   ProxyCommand](#from-the-proxycommand)), and act on that host: its instance ID, its start and
+   wait, and its push stamp (D49, D50).
 4. **If they failed, exits 1**, starting no tunnel.
-5. **Reads the instance ID from the instance-ID cache** ([Laptop files](#laptop-files)), which
-   step 3 has just made sure exists. A cache that is missing, empty or unreadable here fails with
-   the caller's failure message, exit 1, and starts no tunnel.
+5. **Reads that host's instance ID from its record in the host registry**
+   ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)),
+   which step 3 has just made sure holds one. A registry or a record that cannot be read here, or
+   holds no instance ID, fails with the caller's failure message, exit 1, and starts no tunnel.
 6. **Runs the tunnel**, with the ProxyCommand's own stdin and stdout:
 
    ```
@@ -1541,15 +2587,24 @@ app's output.
   pipe and stderr the console, turns those bits off as it starts, and the prototype turns them
   back on as it starts, before each message and as it ends. Whether the rewrite's runtime needs
   the repair is [Q17](#open-questions).
-- **Start the tunnel for an instance other than the cached one.**
+- **Start the tunnel for an instance other than the one its host's record holds**, the host step 3
+  found and made ready.
+- **Write the lease state file, or take its lock** (D49). It reads the file as the keeper does.
 
 **The threat model.** The alias argument comes from a ProxyCommand line the lease CLI wrote
 ([lease-api.md](lease-api.md#fields): `ssh.host_alias`;
-[state.md, The alias file](state.md#the-alias-file)), and the user's own entry passes none.
-Whoever can write a ProxyCommand line already runs commands, since the whole line is run as a
-command (and parsed by `cmd.exe` when it starts with it) before the proxy sees its argument, so
-the proxy does not defend against a hostile line. **`up`'s exact check
-([Command line](#command-line)) MUST be the gate before any ssh.**
+[state.md, The alias file](state.md#the-alias-file)), or the operator wrote for a host
+([How the operator reaches a host](#how-the-operator-reaches-a-host)), and the user's own entry
+passes none. Whoever can write a ProxyCommand line already runs commands, since the whole line is
+run as a command (and parsed by `cmd.exe` when it starts with it) before the proxy sees its
+argument, so the proxy does not defend against a hostile line. **`up`'s exact check
+([Command line](#command-line)) MUST be the gate before any ssh**, and before any file is read
+for the alias. **The lease state file and the host registry are new inputs from v0.07**, and both
+are the user's own laptop state, which only agentspace writes: whoever can change them can already
+change an alias file. The most a changed file can do is send a connection to another of the user's
+own hosts, and every lease alias checks its host's key strictly, so ssh then refuses it (P7). A
+project read from either file reaches a path (`hosts\<project>\`) only after it matches the
+normalized project form, which the files' schemas also require.
 
 ### What a caller sees (D1, card #0087)
 
@@ -1594,7 +2649,7 @@ tunnel:
 | A usage error or an `-Alias` refusal ([Command line](#command-line)) | The same message: none names the backend |
 | `agentspace: Instance <id> is <state>.` | `agentspace: The host is not available, and could not be started.` |
 | `agentspace: <id> was not ready within 15 minutes; check: ...` | `agentspace: The host was not ready within 15 minutes; try again later.` |
-| Any other failure: an AWS call's error text, a cache that cannot be read or written, a stack with no `InstanceId` output, a missing AWS CLI, and any failure this page gives no text for | `agentspace: Could not reach the host. Set AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.` |
+| Any other failure: an AWS call's error text, a host registry that cannot be read or written, a host alias whose project has no record, a stack with no `InstanceId` output, a missing AWS CLI, and any failure this page gives no text for | `agentspace: Could not reach the host. Set AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.` |
 
 **The tunnel.** Its stdout is the connection. **Its stderr MUST be withheld from the caller unless
 `AGENTSPACE_DIAGNOSTIC` is set**, since what the AWS CLI and Session Manager's plugin write there
@@ -1606,7 +2661,8 @@ ProxyCommand then exits with the tunnel's code. A tunnel that cannot be started 
 - **Backend text is** an instance, volume or host ID; a region name; a machine type; a cloud
   instance's state name (`pending`, `running`, `stopping`, `stopped`, `shutting-down` or
   `terminated`) given as that state; the words EC2, AWS, SSM, Session Manager and CloudFormation;
-  the stack's name; the host's operating system or patch tool; and any text of the AWS CLI, of
+  a host's stack's name, `agentbox` or `agentspace-host-<project>`; the host's operating system or
+  patch tool; and any text of the AWS CLI, of
   Session Manager's plugin or of a runtime's error record.
 - **On success the ProxyCommand MUST NOT print backend text.** It prints the caller's progress
   lines above, the push's warnings in their caller form, and nothing else but what
@@ -1643,12 +2699,18 @@ sends only when something has changed.
 
 ### When it runs
 
-- **`up` pushes over its `-Alias`** (default `agentspace`), after it prints `Ready: <id>` (`The
+- **`up` pushes over its `-Alias`** (default the host's own alias: `agentspace` for the box,
+  `agentspace-host.<project>` for another host), after it prints `Ready: <id>` (`The
   host is ready.` in caller mode, [What a caller sees](#what-a-caller-sees-d1-card-0087)), unless
   it is a nested `up` ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)). It
   sends only when the push is due ([The stamp](#the-stamp)).
-- **`sync` pushes over `agentspace`, forced**, as its last step: always, whatever the stamp says.
-  `AGENTSPACE_NESTED` does not stop it.
+- **`sync` pushes over its host's alias (`agentspace` for the box), forced**, as its last step:
+  always, whatever the stamp says. `AGENTSPACE_NESTED` does not stop it.
+- **Each push goes to one host, and reads and writes that host's own stamp** (D50): the host its
+  `up` or `sync` acts on, which in the ProxyCommand is the host its alias reaches ([From the
+  ProxyCommand](#from-the-proxycommand)). So a connection to one host never pushes because of
+  another's stamp, and each host is pushed once per change. **The time zone goes with it to each
+  host** (D50, D32).
 - **`up` over a lease alias pushes with the lease's own key and certificate**, which that alias's
   entry in the SSH client configuration supplies. The push passes no identity option of its own,
   and never goes through the user's `agentspace` entry (D9, card #0057).
@@ -1920,8 +2982,14 @@ checked zone or empty, and `<content>` is the two lines above with their LFs. So
 the instance, the zone, the URL or the token changes, and a stamp written by an operator that
 built its input differently never matches, so the first connection after such a change pushes once.
 
+- **There is one stamp per host** (D50), each over that host's own instance ID, so one stamp for
+  every host would differ at each connection to another host and push every time. The hash's input
+  is unchanged.
 - **The stamp is that hash written as uppercase hex.** How it is stored, and where, is
-  docs/state.md's: `%USERPROFILE%\.agentspace\localswim-pushed.json`, a JSON document (D40). The
+  docs/state.md's: the box's is `%USERPROFILE%\.agentspace\localswim-pushed.json`, a JSON document
+  (D40), unchanged by v0.07 (D55), and another host's is
+  `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json` in the same form
+  ([state.md, A host's folder](state.md#a-hosts-folder)). The
   prototype's is `localswim-pushed.sha256`, the hex alone with no line end, which the rewrite never
   reads, so the first `up` after the change-over pushes once. A stored stamp that matches its
   schema is compared with the computed one exactly.
@@ -1954,7 +3022,8 @@ When the push is due, the laptop:
    -o ClearAllForwardings=yes -o BatchMode=yes <alias> <remote command>
    ```
 
-   - `<alias>` is `up`'s `-Alias`, or `agentspace` for `sync`.
+   - `<alias>` is `up`'s `-Alias`, or for `sync` its host's alias: `agentspace` for the box,
+     `agentspace-host.<project>` for another host.
    - `BatchMode=yes` makes an ssh that would need a prompt fail at once rather than wait for an
      answer: a passphrase, a password, or a host key to confirm. It does not refuse a host key
      that the alias accepts without a prompt, such as the `agentspace` entry's first key
@@ -2135,12 +3204,15 @@ skips; from the command line it cannot happen.
 
 ## The box as the laptop sees it
 
-**This section is the contract between the laptop and today's box.** Every path and tool in it is
-a property of today's box (Ubuntu, systemd, bash), and the box's scripts that carry it out stay
-shell (D28). **The box is changed through `<checkout>\box\system` and `sync`, never by editing the
-box:** every file `sync` puts there ([The box's files](#the-boxs-files)) is replaced by the next
-`sync`, so a change made on the box itself is lost. sshd keeps the first value it reads for a
-keyword, so a new sshd drop-in MUST NOT set a keyword that another drop-in already sets.
+**This section is the contract between the laptop and today's box, and from v0.07 every host
+holds it the same way**: each is made from the one template, gets the same `box\system` through
+`sync` and the same toolchain through `bootstrap` (D44, D46), so "the box" in this section reads as
+"each host". Every path and tool in it is a property of today's box (Ubuntu, systemd, bash), and
+the box's scripts that carry it out stay shell (D28). **The box is changed through
+`<checkout>\box\system` and `sync`, never by editing the box:** every file `sync` puts there
+([The box's files](#the-boxs-files)) is replaced by the next `sync`, so a change made on the box
+itself is lost. sshd keeps the first value it reads for a keyword, so a new sshd drop-in MUST NOT
+set a keyword that another drop-in already sets.
 
 ### What sync installs
 
@@ -2217,11 +3289,24 @@ more is [Q9](#open-questions). The wrapper refuses with a message to stderr and 
 not installed, when the credential file is missing, or when the board's address does not answer,
 which happens whenever no connection holds the board's forwards (D12).
 
-**Not installed by the operator:** the toolchain (gh, Node through fnm, Claude Code, Codex, uv),
-which a person installs once per instance by running a bootstrap script over `ssh agentspace`.
-No operator command runs it. Note on where this came from: the script is `box/bootstrap.sh` in the
-prototype's checkout. The patch run's tools step reports, and continues, when the toolchain
-is missing.
+**Installed by `bootstrap`, not by `sync`: the toolchain** ([bootstrap](#bootstrap); D46). The
+bootstrap is the repository's `box/bootstrap.sh`, run as the login user, and **MUST install**, each
+only when it is missing, so that a second run is safe:
+- gh, Node through fnm, Claude Code, Codex and uv, as it did before v0.07;
+- **Ubuntu's `build-essential`** (gcc, for linking), and **rustup with the stable toolchain,
+  `rustfmt` and `clippy`**, which the box got by hand (D38, D46).
+
+Rust is installed and not promised: the `agent-linux` profile's promise does not change
+([lease-api.md, Profiles](lease-api.md#profiles); D46). Until v0.07 a person ran the script once
+per instance over `ssh agentspace`, and no operator command ran it. The patch run's tools step
+reports, and continues, when the toolchain is missing. **What the script runs to install each is
+its own** (D28); the template story of v0.07 (E0.07-T01-S05) adds Rust and gcc to it.
+
+**A new host's first boot also trusts the CA** (D44): the stack's `CaPublicKey` is installed with
+its sshd drop-in by the first-boot user data, so the operator's certificate is accepted at its first
+connection. `sync` then installs the CA's public key as for the box ([What sync
+installs](#what-sync-installs)), replacing the first boot's copy with the CA file's own bytes, which
+sshd reads the same (P8).
 
 **At every boot, the box grows its root partition and root filesystem to fill the root volume**,
 before any login. That is what lets `grow` leave a stopped box, or a failed online step, to the
@@ -2265,7 +3350,9 @@ SSH is what it is getting ready:
 **The box powers itself off after 60 minutes with no SSH session, no Session Manager session, no
 patch run and less than 6 CPU-seconds of work per 5-minute check (D11).** The instance's shutdown
 behavior is stop, so the next connection starts it again. The stack's alarm stops it too after 3
-hours averaging under 1% CPU, whatever sessions are open ([The stack](#the-stack)).
+hours averaging under 1% CPU, whatever sessions are open ([The stack](#the-stack)). **Both apply to
+every host** (D51): `sync` installs the idle check on each, and each host's stack carries its own
+alarm (D44).
 
 ## The AWS side
 
@@ -2275,20 +3362,34 @@ never committed (D37; docs/state.md).
 
 ### The stack
 
-**One CloudFormation stack, named `agentbox`, in `us-west-2`.** It keeps the project's first name,
-because a stack cannot be renamed without replacing the instance and its disk. The
-operator MUST use that name.
+**One CloudFormation stack per host, in `us-west-2`, every one from the one template** (D44).
+- **The box's stack is named `agentbox`.** It keeps the project's first name, because a stack
+  cannot be renamed without replacing the instance and its disk. The operator MUST use that name
+  for the box.
+- **Every other host's stack is named `agentspace-host-<project>`**, the name its record holds
+  (D44, D55). The project is a normalized lease project ([lease-api.md,
+  Project](lease-api.md#project)), so the name always starts with a letter, as CloudFormation
+  requires, and is at most 48 characters.
+- **Each stack holds its own role, instance profile, security group, instance and alarm**, and
+  nothing is shared between stacks, so deleting one host's stack touches no other (D44). No
+  operator command deletes a stack.
 
 **Parameters:**
 
 | Parameter | Type | Default | Set by | Notes |
 |---|---|---|---|---|
-| `InstanceType` | String | `m9g.xlarge` | The template | Changing it on an update stops and restarts the instance; the disk is kept. |
+| `InstanceType` | String | `m9g.xlarge` | The template; for the box, the stack parameters file; for another host, `deploy -Host <project> -InstanceType <type>` alone (P13, architect, 2026-11-20, for v0.07-T01) | Changing it on an update stops and restarts the instance; the disk is kept. A new host starts at the default, never at the box's value (D55). |
 | `ImageId` | EC2 image ID | A pinned Ubuntu 26.04 LTS arm64 image | The template | MUST NOT be changed on a live stack: it replaces the instance and destroys its disk. |
-| `SubnetId` | Subnet ID | None | The stack parameters file | A subnet that assigns a public IPv4 address at launch, as a default VPC's do. |
-| `VpcId` | VPC ID | None | The stack parameters file | The subnet's VPC. |
+| `SubnetId` | Subnet ID | None | The stack parameters file, for the box and for a stack `deploy` creates | A subnet that assigns a public IPv4 address at launch, as a default VPC's do. |
+| `VpcId` | VPC ID | None | The stack parameters file, for the box and for a stack `deploy` creates | The subnet's VPC. |
 | `RootVolumeGiB` | Number, at least 8 | `8` | The template | The image's minimum. Grown later with `grow`. |
-| `SshPublicKey` | String | None | `deploy`, from `%USERPROFILE%\.ssh\id_ed25519.pub` | Installed for the login user at first boot only ([Q13](#open-questions)). |
+| `SshPublicKey` | String | None | `deploy`, from `%USERPROFILE%\.ssh\id_ed25519.pub`: at every deploy of the box, and when it creates another host's stack (P13) | Installed for the login user at first boot only ([Q13](#open-questions)). |
+| `HostName` | String | `agentbox` | `deploy`, when it creates a host's stack that is not the box's: the stack's name | The alarm's name and the `Name` and `project` tags. Its default reproduces every name the `agentbox` stack had, and the box's `deploy` passes none, so its change set is empty (D44; P5, architect, 2026-11-20, for v0.07-T01). |
+| `CaPublicKey` | String | Empty | `deploy`, when it creates a host's stack that is not the box's: the CA's public key, type and base64 only ([deploy](#deploy), step 3) | When not empty (the condition `HasCaPublicKey`), the first-boot user data writes it to `/etc/ssh/agentspace_ca.pub`, followed by one LF, with its sshd drop-in, so a new host trusts the CA before the operator first connects. The box passes none, so its first boot's user data is unchanged (D44; P5, P8). A public key, which MAY be seen in the stack's parameters. |
+
+**A host's stack that exists, the box's apart, is updated with every parameter's previous value**
+(`UsePreviousValue`), but `InstanceType` when `deploy -Host <project> -InstanceType <type>` gives
+one (P13, architect, 2026-11-20, for v0.07-T01; [deploy](#deploy), step 4).
 
 **Resources:**
 - **An IAM role** for EC2 with the AWS managed policy `AmazonSSMManagedInstanceCore`, and an
@@ -2298,16 +3399,19 @@ operator MUST use that name.
 - **The instance**, in the subnet, with the role, the security group, shutdown behavior `stop`,
   and an encrypted `gp3` root volume of `RootVolumeGiB` that is deleted with the instance. Its
   first-boot user data updates and upgrades packages, installs `git`, `tmux`, `jq`, `ripgrep` and
-  `unzip`, and adds `SshPublicKey` to the login user's authorized keys. Nothing in it runs again
-  after the first boot.
-- **A CloudWatch alarm**, `agentbox-idle-backstop`, on the instance's average `CPUUtilization`:
-  under 1% for 36 periods of 5 minutes (3 hours), with missing data counted as not breaching, and
-  the action of stopping the instance.
+  `unzip`, adds `SshPublicKey` to the login user's authorized keys, and, when `CaPublicKey` is
+  not empty, installs it with its sshd drop-in. Nothing in it runs again after the first boot.
+- **A CloudWatch alarm**, `<HostName>-idle-backstop` (`agentbox-idle-backstop` for the box), on the
+  instance's average `CPUUtilization`: under 1% for 36 periods of 5 minutes (3 hours), with missing
+  data counted as not breaching, and the action of stopping the instance.
 
-**Tags:** the stack is deployed with the tag `project=agentbox`. The instance carries `Name` and
-`project`, both `agentbox`; the role carries `project`; the security group carries `Name`.
+**Tags:** the stack is deployed with the tag `project=<stack>`: `project=agentbox` for the box, as
+before, and `project=agentspace-host-<project>` for another host (architect, 2026-11-20, for v0.07-T01: D44 names
+the instance's tags, not the stack's). The instance carries `Name` and `project`, both `HostName`'s
+value; the role carries `project`; the security group carries `Name`.
 
-**Output:** `InstanceId`, the instance's ID. The operator reads it into its instance-ID cache.
+**Output:** `InstanceId`, the instance's ID. The operator reads it into its host's record in the
+host registry (D45).
 
 **What the laptop's AWS identity needs:** rights to deploy and describe the stack and create its
 IAM role (`CAPABILITY_IAM`) and pass it to the instance (`iam:PassRole`), to create and change the
@@ -2316,21 +3420,31 @@ volume, and to use Session Manager (describe instance information, send a comman
 invocation, start a session). The operator reads no credentials itself: every call uses whatever
 the AWS CLI is signed in with. Today that is an administrator signed in with `aws login`, which
 gives short-lived credentials, whose expiry is #0034's case ([AWS failures](#aws-failures)).
+**A host adds no new permission** (D44): every call a host needs is one the box's commands already
+make, against its own stack and instance, and this list gains no service.
 
 ### Calls by command
 
 **Every call passes `--region us-west-2`; the ones marked JSON also pass `--output json`.** Of
 those, the output is read as [What is read from each answer](#calls-by-command) below says, and
-the rest are checked by their exit code alone. `<id>` is the cached instance ID.
+the rest are checked by their exit code alone. **Every call is per host:** `<stack>` is the
+command's host's stack (`agentbox` for the box) and `<id>` the instance ID in that host's record
+([Which host a command acts on](#which-host-a-command-acts-on)). A command without `-Host` makes
+exactly the calls it made before v0.07, `<stack>` being `agentbox`, but for the folder `deploy`'s
+template is written in.
 
 | Command | AWS CLI calls, in order |
 |---|---|
-| Any but `ca`, and the ProxyCommand, when the instance-ID cache is missing | `cloudformation describe-stacks --stack-name agentbox` (JSON) |
-| `deploy` | `cloudformation deploy --stack-name agentbox --template-file %USERPROFILE%\.agentspace\operator\agentspace.yaml --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags project=agentbox --parameter-overrides SshPublicKey=<key> <each Name=value line>` (output passed through); then `cloudformation describe-stacks --stack-name agentbox` (JSON); then `sync`'s |
+| Any but `ca`, and the ProxyCommand, when the host's record holds no instance ID | `cloudformation describe-stacks --stack-name <stack>` (JSON) |
+| `deploy`, the box | `cloudformation deploy --stack-name <stack> --template-file %USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags project=<stack> --parameter-overrides SshPublicKey=<key> <each Name=value line>` (output passed through); then `cloudformation describe-stacks --stack-name <stack>` (JSON); then `sync`'s. As before v0.07, but for the template's folder ([The operator's folder, one per command](#the-operators-folder-one-per-command)) |
+| `deploy -Host`, a host that is not the box | `cloudformation describe-stacks --stack-name <stack>` (JSON), the existence check ([deploy](#deploy)), and nothing more when its `StackStatus` fails it; then `cloudformation deploy` with the same arguments as the box's up to `--tags project=<stack>`, and then: creating the stack, `--parameter-overrides SshPublicKey=<key> SubnetId=<subnet> VpcId=<vpc> HostName=<stack> CaPublicKey=<CA key>`, with `InstanceType=<type>` last when `-InstanceType` is given, each `Name=value` one argument, `CaPublicKey=<CA key>` included though the key holds a space; updating it, no `--parameter-overrides` at all, or `--parameter-overrides InstanceType=<type>` when `-InstanceType` is given (output passed through); then `cloudformation describe-stacks --stack-name <stack>` (JSON); then `sync`'s. The order of the overrides is confirmed by the architect, 2026-11-20, for v0.07-T01 |
+| `bootstrap` | The start and wait's below, then nothing more from AWS: the bootstrap goes over SSH, whose nested `up` makes its own calls and a tunnel |
+| `provision` | `deploy -Host`'s, or the box's `deploy`'s for `-Host swimcoach`, without its `sync` and never with `-InstanceType`; then the start and wait's; then `sync`'s and `bootstrap`'s. Its first and last steps, the registry and `place_pending`, make none (D48) |
 | `up`, `sync`: [start and wait](#starting-the-box-and-waiting-for-it) | `ec2 describe-instances --instance-ids <id>` (JSON); if stopped, `ec2 start-instances --instance-ids <id>` (JSON); if stopping, `ec2 wait instance-stopped --instance-ids <id>`, then `ec2 start-instances`; `ec2 describe-instances` again, for the launch time, only if it was `running` (FB-09); while waiting, every 5 seconds, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON), and once that is `Online`, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace up: patch check" --parameters commands=<question>` (JSON) and up to 20 of `ssm get-command-invocation --command-id <command id> --instance-id <id>` (JSON) |
 | `sync` | The above, then nothing more from AWS: the rest goes over SSH, and each ssh or scp makes its own nested `up`'s calls and a tunnel |
 | `down` | `ec2 stop-instances --instance-ids <id>` (JSON) |
 | `status` | `ec2 describe-instances --instance-ids <id>` (JSON); `ec2 describe-volumes --volume-ids <vol>` (JSON); if running, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON) |
+| `status -All`, `down -All`, `sync -All` | The single command's calls for each host in turn, in the registry's order, none for a host it skips ([Every host at once](#every-host-at-once--all)). One call never names two instances |
 | `grow` | `ec2 describe-instances --instance-ids <id>` (JSON); `ec2 describe-volumes --volume-ids <vol>` (JSON); `ec2 modify-volume --volume-id <vol> --size <new>` (JSON) |
 | `ca` | None |
 | The ProxyCommand | `up`'s, then `ssm start-session --target <id> --document-name AWS-StartSSHSession --parameters portNumber=22`, the tunnel |
@@ -2348,7 +3462,8 @@ code.
 
 | Call | Members read | Used for |
 |---|---|---|
-| `cloudformation describe-stacks` | `Stacks[0].Outputs`: the element whose `OutputKey` is `InstanceId`, its `OutputValue` | The instance-ID cache. No such element is the "no `InstanceId` output" failure ([Laptop files](#laptop-files)) |
+| `cloudformation describe-stacks` | `Stacks[0].Outputs`: the element whose `OutputKey` is `InstanceId`, its `OutputValue` | The host's record's instance ID. No such element is the "no `InstanceId` output" failure ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)) |
+| `cloudformation describe-stacks`, as `deploy -Host`'s existence check | `Stacks[0].StackStatus` alone | Whether `deploy` creates the stack, updates it or fails ([deploy](#deploy); P17, architect, 2026-11-20, for v0.07-T01). A missing or non-string `StackStatus` fails with `agentspace: Unexpected answer from cloudformation describe-stacks: no Stacks[0].StackStatus.` |
 | `ec2 describe-instances` | `Reservations[0].Instances[0]`: `State.Name`, `LaunchTime` (ISO 8601, compared in UTC), `InstanceType`, `RootDeviceName`, and in `BlockDeviceMappings` the element whose `DeviceName` equals `RootDeviceName`, its `Ebs.VolumeId` | The state, the 20-minute rule, `status`'s type, and the root volume's ID |
 | `ec2 describe-volumes` | `Volumes[0].Size` (GiB) | `status`'s size, and `grow`'s `<size>` |
 | `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
@@ -2365,7 +3480,7 @@ missing or of another form:
 
 | Reader | Members it reads |
 |---|---|
-| The start-and-wait step (`up`, `sync`, the ProxyCommand's `up`) | `State.Name` in its first call; `LaunchTime` in its second, which runs only for a `running` box (FB-09) |
+| The start-and-wait step (`up`, `sync`, `bootstrap`, `provision`, the ProxyCommand's `up`) | `State.Name` in its first call; `LaunchTime` in its second, which runs only for a `running` box (FB-09) |
 | `status` | `State.Name`, `InstanceType`, `RootDeviceName`, and the root volume's `Ebs.VolumeId` |
 | `grow` | `State.Name`, `RootDeviceName`, and the root volume's `Ebs.VolumeId` |
 
@@ -2378,9 +3493,10 @@ E0.06-T03-S01).
 
 **The same form holds for every call's members, with these exceptions** (architect, 2026-11-19,
 for E0.06-T01-S03):
-- **`cloudformation describe-stacks`:** a missing `Stacks[0]` or `Outputs`, or an `InstanceId`
-  output whose value is not a string matching the instance-ID cache's schema, is the "no
-  `InstanceId` output" failure, and no cache is written.
+- **`cloudformation describe-stacks`, read for the instance ID:** a missing `Stacks[0]` or
+  `Outputs`, or an `InstanceId` output whose value is not a string matching the host registry's
+  schema for an instance ID (before v0.07, the instance-ID cache's), is the "no `InstanceId`
+  output" failure, and no instance ID is written.
 - **`ssm get-command-invocation`:** an answer with no string `Status` is not readable yet, and is
   polled again; one that has ended with no `StandardOutputContent` is the empty answer, which
   counts as ready ([Q6](#open-questions)).
@@ -2408,7 +3524,7 @@ behavior in this table.**
 | An expired sign-in during `deploy` prints agentspace's message | The CLI's text, then `Stack deploy failed; see the stack events in the console.` | #0034 |
 | `deploy` exits 1 when its `sync` step fails | Most likely exits 0 | [Q3](#open-questions) |
 | A missing or empty `id_ed25519.pub` fails with an `agentspace: ` message | A runtime error; a whitespace-only file passes an empty key on | [Exit codes](#exit-codes) |
-| An empty instance-ID cache counts as missing, and a stack with no `InstanceId` output fails | Writes an empty cache, after which every command fails with a runtime error until `deploy` | [Q24](#open-questions) |
+| An empty instance-ID cache counts as missing, and a stack with no `InstanceId` output fails. From v0.07 the cache is retired (D45): a stack with no `InstanceId` output still fails and writes nothing, and a host registry that is not valid fails, never counting as missing ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)) | Writes an empty cache, after which every command fails with a runtime error until `deploy` | [Q24](#open-questions) |
 | `sync` with `ssh-keygen.exe` missing fails with `ca`'s step 1 message | No check; another error | [sync](#sync) |
 | A program that needs no input gets an empty or closed stdin | The AWS CLI inherits `up`'s stdin, the SSH client's stream | [Streams](#streams) |
 | An empty or missing URL or token, or one with a CR, LF or NUL, warns "Could not read" and sends nothing | Sends it. The box refuses an empty value, so the laptop warns "did not confirm"; with an LF the box installs the first two lines, a cut token, and the laptop warns "did not confirm"; a CR is removed by the box and the push is confirmed | [What the laptop reads](#what-the-laptop-reads) |
@@ -2421,7 +3537,7 @@ behavior in this table.**
 | The push's 20 seconds cover the write to ssh's stdin | Starts the clock after the write; the content fits in a pipe's buffer, so a blocked write has not been seen | [What the laptop sends](#what-the-laptop-sends) |
 | The AWS CLI, `ssh` and `scp` can be named by `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`, and the push's zone by `AGENTSPACE_TIMEZONE`; a name that cannot be run fails, and never falls back | Reads none of them. It runs the AWS CLI and `ssh` by fixed paths, and its zone override can be reached only by loading its code | [The test seam](#the-test-seam); Q11 and Q12, closed |
 | The ProxyCommand runs `up` in caller mode: the caller's progress lines and failure messages, nothing else on success, the tunnel's stderr withheld; backend detail only with `AGENTSPACE_DIAGNOSTIC`. A nested `up` prints `The host is ready.`, never `Ready: <id>` | Has no caller mode. Prints the instance ID (`Starting <id>...`, `Ready: <id>`, nested or not), EC2 states, Session Manager and patch messages, the push's progress line, and on a failure the AWS CLI's text inside a runtime's error record; passes the tunnel's stderr through | #0087; D1 ([What a caller sees](#what-a-caller-sees-d1-card-0087)) |
-| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id.json`, in JSON (D40) | `.instance-id` in the checkout, the ID alone | D21; Q7, closed ([Laptop files](#laptop-files)) |
+| The instance-ID cache is `%USERPROFILE%\.agentspace\instance-id.json`, in JSON (D40); from v0.07, a member of each host's record in `hosts.json` (D45) | `.instance-id` in the checkout, the ID alone | D21; Q7, closed ([Laptop files](#laptop-files)) |
 | Every usage error prints this page's `agentspace: ` message, and nothing prompts | Its shell's parameter binding answers each one with its own error record (exit 1, as required), which names the script's full path. With stdin closed it does not prompt for a missing command; at a console it was not run | [Q1](#open-questions), closed ([Command line](#command-line)) |
 | `deploy -Quiet` quiets its `sync` step | Runs `sync` without `-Quiet`, so `sync`'s messages print | D36; [Q4](#open-questions), closed ([deploy](#deploy)) |
 | `sync` fails when the box's staging folder cannot be removed, before the copy | Does not check the removal. A partly removed folder takes the copy one level down, and the install then runs whatever install script the removal left, so `sync` can succeed having installed the previous `box/system` | D36; [Q25](#open-questions), closed ([sync](#sync)) |
@@ -2451,7 +3567,7 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q4** | **Closed by D36 (architect, 2026-11-18): `deploy -Quiet` quiets its `sync` step** ([deploy](#deploy), step 6), as the `-Quiet` row of [Command line](#command-line) says of every command. The prototype runs `sync` without `-Quiet`, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. | Closed, D36 |
 | **Q5** | **Later, not blocking:** **Does #0034's mechanism also hit `ssm get-command-invocation` and `ec2 wait`?** The poll discards the CLI's stderr while every error is terminating; under Windows PowerShell 5.1 a stderr line from it (such as an invocation not yet registered) may throw and fail `up` with a raw error instead of polling again. | The behavior to build is stated: a failed poll is polled again, and the wait's exit code is not checked ([Calls by command](#calls-by-command)), so only what the prototype does is open. Later: a run on the laptop |
 | **Q6** | **Later, not blocking:** **Is an empty or unexpected answer to the patch check meant to count as ready?** The prototype ends the wait on anything but `pending`, so a check that fails lets `up` print `Ready` before the patch run has finished, against the rule of [Starting the box](#starting-the-box-and-waiting-for-it). | That section states the behavior to build, today's, and names this as one of its three exceptions, so a stricter wait would be a later change. Later: the architect |
-| **Q7** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace` ([Laptop files](#laptop-files)); the prototype keeps it in the checkout, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. The localswim CLI's build output (`.build\`) is not state, and MAY stay in the checkout. | Closed |
+| **Q7** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace` ([Laptop files](#laptop-files)); the prototype keeps it in the checkout, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. The localswim CLI's build output (`.build\`) is not state, and MAY stay in the checkout. D45 (v0.07) retired the cache: each host's instance ID is now a member of its record in `%USERPROFILE%\.agentspace\hosts.json`. | Closed |
 | **Q8** | **Closed by [docs/state.md](state.md#files-agentspace-reads-and-never-writes) (E0.04-T02-S01).** state.md lists the files the operator reads and agentspace never writes (localswim's receipt and `bot.xml`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry), and `infra\local.parameters` in [Files in the checkout](state.md#files-in-the-checkout); it owns none of their formats. | Closed |
 | **Q9** | **Later, not blocking:** **What characters can a localswim URL and Bot token contain, and what form MUST the URL have?** The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either would break or change it, and it finds the board's address by taking the URL as `http://<host>:<port>...`. The push refuses an empty value and a CR, LF or NUL, and checks nothing else. | The push's refusal is the rule to build. localswim's CLI accepts `LOCALSWIM_URL` only as `http://127.0.0.1:<port>` or `http://localhost:<port>`, with a port from 1 to 65535, and a token made by localswim's documented procedure is 43 base64url characters, so no value localswim makes today holds a character the wrapper's shell reading would change. Later: the architect, with localswim |
 | **Q10** | **Closed by D37 (architect, 2026-11-18).** ~~What are the rewrite's entry points called, and does it keep PowerShell-style parameters (`-GiB`, `-Alias`, `-Quiet`)?~~ The operator is `agentspace-operator.exe` and the ProxyCommand `agentspace-ssh-proxy.exe`, installed with the lease CLI and the keeper in `%USERPROFILE%\.agentspace\bin` ([Programs and install layout](#programs-and-install-layout)). Every command line keeps the style this page gives ([Argument style](#argument-style)). The lease alias files on the laptop that name `<checkout>\scripts\ssh-proxy.cmd` keep working by [ProxyCommand lines already on the laptop](#proxycommand-lines-already-on-the-laptop). | Closed |
@@ -2459,12 +3575,12 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q12** | **Closed by [The test seam](#the-test-seam).** `AGENTSPACE_TIMEZONE` gives the push a zone. | Closed |
 | **Q13** | **Later, not blocking:** **What does `deploy` do when `id_ed25519.pub` has changed?** The key is in the instance's user data, which runs at first boot only, so the new key is never installed; and CloudFormation may stop and start the instance to change user data. | `deploy` passes the key as [deploy](#deploy) says, and what CloudFormation then does is AWS's behavior, not the operator's. Later: a deploy on the laptop, or AWS's documentation |
 | **Q14** | **Later, not blocking:** **Does the box require IMDSv2?** The template sets no metadata options, so whether the instance refuses a metadata request without a session token comes from the image's defaults, and is unobserved. | No operator command and no box step on this page reads instance metadata, so the answer changes nothing a drop-in builds. Later: a look at the instance's metadata options |
-| **Q15** | **Later, not blocking:** **SHOULD the region and the stack name be configurable?** Both are fixed in the prototype, in two places each (the operator and the ProxyCommand). | This page fixes both ([The stack](#the-stack)), which is what a drop-in builds; making them configurable is an addition. Later: the architect; v0.06 |
+| **Q15** | **Later, not blocking:** **SHOULD the region and the stack name be configurable?** Both are fixed in the prototype, in two places each (the operator and the ProxyCommand). | This page fixes both ([The stack](#the-stack)), which is what a drop-in builds; making them configurable is an addition. From v0.07 the stack's name follows the host (D44), `agentbox` for the box and `agentspace-host-<project>` for another, and is still not configurable; the region stays fixed. Later: the architect |
 | **Q16** | **Later, not blocking:** **SHOULD `status` read the volume's type**, rather than print `gp3` as a constant? | [status](#status) states the constant, and the stack makes only `gp3` volumes ([The stack](#the-stack)). Later: the architect |
 | **Q17** | **Later, not blocking:** **Does the rewrite's ProxyCommand still need the console-mode repair?** The damage came from Windows PowerShell 5.1 starting under ssh. A ProxyCommand that never starts it might not need the repair, but this page requires the outcome either way. | [The ProxyCommand](#the-proxycommand) requires the console's state, not the repair, so a drop-in meets it either way. Later: a run on the laptop |
 | **Q18** | **Later, not blocking:** **What does the prototype's runtime write ahead of the push's content?** The box strips a UTF-8 BOM, and the laptop's expected hash ignores one, but whether one is sent today depends on the console's input encoding. | The push works with or without a BOM ([What the box does](#what-the-box-does)), and the rewrite SHOULD send none, so only the prototype's bytes are open. Later: a run on the laptop, with the box's input logged |
 | **Q19** | **Later, not blocking:** **Is a silent skip right when localswim's receipt is missing?** Every other reason the push does not happen warns; this one prints nothing, so a laptop without localswim never learns why the board does not work on the box. | [What the laptop reads](#what-the-laptop-reads) states the behavior to build, the skip, and a warning would be an addition. Later: the architect |
-| **Q20** | **Later, not blocking:** **SHOULD concurrent pushes be serialized?** Two `up`s at once both push and both write the stamp, with no lock. | Both pushes write the same token, so nothing breaks, and each costs only a login ([When it runs](#when-it-runs)). Later: the architect |
+| **Q20** | **Later, not blocking:** **SHOULD concurrent pushes be serialized?** Two `up`s at once both push and both write the stamp, with no lock. | Both pushes write the same token, so nothing breaks, and each costs only a login ([When it runs](#when-it-runs)). From v0.07 each host has its own stamp (D50), so pushes to two hosts never share one. Later: the architect |
 | **Q21** | **Later, not blocking:** **SHOULD `-Quiet` stop suppressing the push's warnings?** It suppresses them in the prototype, so a quiet `sync` hides a token that did not land. | The rule stands for contract v0: `-Quiet` suppresses them ([Messages](#messages); [What the laptop checks](#what-the-laptop-checks)), as the prototype does, and a drop-in builds that. The ProxyCommand never passes `-Quiet`, so a connection always shows them. Only whether a later contract changes the rule is open. Later: the architect |
 | **Q22** | **Later, not blocking:** **SHOULD `-GiB` be checked before AWS is asked?** The prototype passes any integer through, and AWS refuses 0 and below. | [Command line](#command-line) checks its form only, and AWS refuses a size that is not larger before anything changes, which fails `grow` with its error ([grow](#grow)). Later: the architect |
 | **Q23** | **Closed by D36 (architect, 2026-11-18): `grow` fails, exit 1, when the online filesystem step fails** ([grow](#grow), step 3), with a message saying that the volume's change stands and the filesystem grows at next boot. The prototype exits 0, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. | Closed, D36 |
@@ -2474,4 +3590,8 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q27** | **Later, not blocking:** **SHOULD the stamp stay an unsalted hash that covers the token?** It is kept on the laptop, and anyone who can read it can test a guessed token against it. A keyed digest would hide that, but the stamp MUST still change whenever the instance, the zone, the URL or the token does. Its storage is docs/state.md's. | [The stamp](#the-stamp) states the hash to build, and a later change of it costs one push per laptop, since a stamp that does not match only makes the push due. Later: the architect; docs/state.md |
 | **Q28** | **Closed by [What the laptop reads](#what-the-laptop-reads) (E0.04-T05-S01, #0088, 2026-11-18).** It specifies the receipt and `bot.xml` to the byte: where each is, its encoding, the receipt's two members, the CLIXML elements down to the `SS` element that holds the token, the hex, the `CryptUnprotectData` call, and the UTF-16LE plaintext, with what each failure does. It cites localswim's docs where they define a part, and says that the rest is what agentspace relies on without localswim documenting it, observed on throwaway files with a dummy secret. | Closed |
 | **Q29** | **Later, not blocking:** **Does D1 at connect time cover #0034's sign-in message?** The message names AWS and its login command ([AWS failures](#aws-failures)), and a lease's caller who sees it through the ProxyCommand learns the backend ([What a caller sees](#what-a-caller-sees-d1-card-0087)). Whether it MUST be reworded inside the ProxyCommand, with the AWS text behind `AGENTSPACE_DIAGNOSTIC`, is the architect's call. | Contract v0 keeps it as the one exception (A-14): v0's caller runs on the laptop (D8), whose owner already knows the backend and is the one who can sign in again, so it tells nobody anything new. Later: the architect, with a caller off the laptop (#0011) |
-| **Q30** | **Later, not blocking:** **SHOULD the seam also cover `go`, `ssh-keygen`, `icacls` and `taskkill`?** Without it, a check cannot run `sync`'s build step or `ca`'s lockdown against a stand-in; `sync` runs its build when `go` and the localswim checkout are present, and skips it otherwise. | A check can still reach those steps without a stand-in: `sync` skips its build when `go` or the localswim checkout is missing, and `ca` runs against a throwaway home. Later: the architect |
+| **Q30** | **Later, not blocking:** **SHOULD the seam also cover `go`, `ssh-keygen`, `icacls` and `taskkill`?** Without it, a check cannot run `sync`'s build step or `ca`'s lockdown against a stand-in; `sync` runs its build when `go` and the localswim checkout are present, and skips it otherwise. From v0.07 the operator's key and certificate for a host also use `ssh-keygen`. | A check can still reach those steps without a stand-in: `sync` skips its build when `go` or the localswim checkout is missing, and `ca` runs against a throwaway home, as the operator's signing does with a throwaway CA ([The test seam](#the-test-seam)). Later: the architect |
+| **Q31** | **Closed (architect, 2026-11-20, for v0.07-T01, P13).** ~~How is each host sized, with one stack parameters file?~~ A host is never sized by the box's parameters: a new host's stack takes only `SubnetId` and `VpcId` from `stack-parameters.json`, with every other parameter at the template's default; an existing host's stack keeps every parameter's previous value; and a host that is not the box changes size only through `deploy -Host <project> -InstanceType <type>`. Plain `deploy` of the box keeps the file as its sizing path (D39, D55) ([deploy](#deploy)). | Closed |
+| **Q32** | **Closed (architect, 2026-11-20, for v0.07-T01, P13).** ~~Can two commands share the operator's folder at once?~~ None does: each command writes what it sends into `%USERPROFILE%\.agentspace\operator\<hex>\`, a folder of its own that it removes as it ends, and the next command that makes its own removes any such folder older than 24 hours ([The operator's folder, one per command](#the-operators-folder-one-per-command)). So a person MAY run `sync` or `deploy` while a provisioning run works. | Closed |
+| **Q33** | **Closed (architect, 2026-11-20, for v0.07-T01, P17 and P19).** ~~What happens to a host whose first stack creation failed?~~ `deploy -Host`'s existence check reads `Stacks[0].StackStatus`. No stack, or `REVIEW_IN_PROGRESS`, takes the create path; a state an update can start from takes the update path; a `*_IN_PROGRESS` status fails with a message to try again later; and `ROLLBACK_COMPLETE`, or any other state an update cannot start from, fails with a message that names the stack and the `aws cloudformation delete-stack` command that removes it, then says to provision again. `provision` records `failed` for a host that was never `ready`, and a `ready` host stays `ready`. No operator command deletes a stack in v0.07 ([deploy](#deploy)). | Closed |
+| **Q34** | **Later, not blocking:** **How does a replaced CA reach a host that is not the box?** The operator reaches such a host only with a certificate signed by the CA, so once the CA is replaced, `sync` cannot reach a host that still trusts the old one, and a person recovers each by hand with their own key ([ca](#ca); D17). The candidate fix: install the new public key through Session Manager's Run Command as root, as the patch check already reaches a host ([What up waits for](#what-up-waits-for)), so no ssh is needed. A second `IdentityFile` in the operator's alias was ruled out (architect, 2026-11-20, for v0.07-T01, P19). | The recovery by hand is stated in [ca](#ca), and a replacement is rare (D17). Later: the architect |
