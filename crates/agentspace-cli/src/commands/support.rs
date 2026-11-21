@@ -233,6 +233,11 @@ pub struct Paths {
 }
 
 impl Paths {
+    /// Whether the home folder is known: `USERPROFILE` set and not empty.
+    pub fn has_home(&self) -> bool {
+        self.resolved.home.is_some()
+    }
+
     /// A folder as a command uses it: `None` when its variable (or the home under it) is unset,
     /// and the working-folder failure when it is relative and there is no working folder to make
     /// it full against.
@@ -287,7 +292,8 @@ fn text_var(world: &World<'_>, name: &str) -> Option<Result<String, OsString>> {
 /// What the context carries besides the folders, for each command (lease-api.md, Environment).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {
-    /// `create`: the resolved ssh folder and `AGENTSPACE_PROXY_COMMAND`.
+    /// `create`: the resolved ssh folder and `AGENTSPACE_PROXY_COMMAND`. `get`'s check of a
+    /// pending lease asks for the same (driver.md, check_pending: "as for place").
     Place,
     /// `renew`: it reads neither `AGENTSPACE_SSH_DIR` nor `AGENTSPACE_PROXY_COMMAND`
     /// (lease-api.md, Environment; driver.md, Renew a lease, "The CLI passes neither"), so the
@@ -338,6 +344,18 @@ pub fn context(
     // Every command that asks for a context has already resolved the state folder to read the
     // lease state file, so this adds no failure (architect, 2026-11-20, the pin before v0.07-T03).
     let state_dir = state_dir(paths, sub)?.to_path_buf();
+    let operator_program = context_operator_program(world);
+    // The two folder variables as the CLI had them, made full, for the detached start (driver.md,
+    // The detached start): each is `Some` if and only if it is set and not empty, and is then the
+    // folder the CLI itself resolved from it. Architect's to confirm: `renew` reads no
+    // `AGENTSPACE_SSH_DIR` (lease-api.md, Environment), so its context carries none.
+    let state_dir_env = is_set(world, "AGENTSPACE_STATE_DIR").then(|| state_dir.clone());
+    let ssh_dir_env = match purpose {
+        Purpose::Place | Purpose::Release => {
+            is_set(world, "AGENTSPACE_SSH_DIR").then(|| ssh_dir.clone())
+        }
+        Purpose::Renew => None,
+    };
     Ok(Context {
         home,
         ssh_dir,
@@ -345,11 +363,45 @@ pub fn context(
         system_root,
         own_exe: world.own_exe.to_path_buf(),
         state_dir,
-        // E0.07-T03-S01 resolves these three from the CLI's environment (driver.md, C7).
-        operator_program: None,
-        state_dir_env: None,
-        ssh_dir_env: None,
+        operator_program,
+        state_dir_env,
+        ssh_dir_env,
     })
+}
+
+/// Whether a variable is set and not empty, as every folder variable is read (lease-api.md,
+/// Environment).
+fn is_set(world: &World<'_>, name: &str) -> bool {
+    (world.var)(name).is_some_and(|v| !v.is_empty())
+}
+
+/// The program a provisioning run starts (driver.md, The operator program): the full path of
+/// `AGENTSPACE_PROVISION_CMD` when it is set and not empty, else `agentspace-operator.exe` in the
+/// folder the CLI's own executable runs from. A relative path is made full against the world's
+/// working folder, since the run's own working folder is the home folder.
+///
+/// Whether the path names an existing file is the driver's to check, and only when a run is due
+/// (driver.md, Starting a provisioning run, step 3), so a path that names nothing is passed as it
+/// is. `None` only when the path is relative and the working folder cannot be read, which the
+/// driver reads as a program that cannot be found. `AGENTSPACE_OPERATOR_CMD` is not read here.
+pub(super) fn context_operator_program(world: &World<'_>) -> Option<PathBuf> {
+    let named = (world.var)("AGENTSPACE_PROVISION_CMD")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let path = named.unwrap_or_else(|| {
+        world
+            .own_exe
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join("agentspace-operator.exe")
+    });
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        // Architect's to confirm: a relative own executable (tests only; the product's is full) is
+        // made full against the working folder like a relative AGENTSPACE_PROVISION_CMD.
+        world.cwd.map(|cwd| cwd.join(path))
+    }
 }
 
 /// The driver a stored record names, found among the world's drivers by `Driver::name()`. A

@@ -17,15 +17,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentspace_alias::{
     AliasFailure, AliasFailureKind, AliasFile, alias_file_bytes, alias_name, check_alias_owner,
-    default_proxy_command, ensure_include, find_proxy_program, is_valid_alias, lease_file_text,
-    remove_alias, write_alias,
+    default_proxy_command, ensure_include, find_proxy_program, is_valid_alias, known_hosts_text,
+    lease_file_text, remove_alias, write_alias,
 };
 use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
 };
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
+use agentspace_hosts::host_alias;
 
-use crate::reasons::reasons;
 use crate::text::{
     FOREIGN_ALIAS, TRANSPORT_MISSING, alias_check_failed, alias_leftover, alias_setup_failed,
     capitalize, delete_failed, failure, lease_file_name, lease_folder_name, still_there,
@@ -33,7 +33,7 @@ use crate::text::{
 };
 
 /// The certificate's one principal, the returned user and the alias's login user (D3).
-const USER: &str = "ubuntu";
+pub const USER: &str = "ubuntu";
 
 /// The comment of an alias file's owner mark line (state.md, "The alias file").
 const COMMENT: &str = "written by agentspace. Do not edit.";
@@ -82,18 +82,35 @@ fn proxy_command(ctx: &Context, alias: &str, system_root: Option<&str>) -> Resul
         .map_err(|e| transport_failed(&e.0))
 }
 
+/// Which host a lease is placed on, for the host key lines of its alias (docs/state.md, "The alias
+/// file" and "A lease alias for a host that is not the box"; D47).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKey<'a> {
+    /// The box: `HostKeyAlias agentspace` and no `UserKnownHostsFile` line, so its lease aliases
+    /// keep v0.06's bytes exactly.
+    Box,
+    /// Another project's host: `HostKeyAlias agentspace-host.<project>`, then `UserKnownHostsFile`
+    /// naming agentspace's own `known_hosts` by its full path.
+    Other(&'a str),
+}
+
 /// The alias file's bytes for a lease, or the message of the failure that stops the place.
 fn alias_bytes(
     ctx: &Context,
     req: &PlaceRequest,
     alias: &str,
     system_root: Option<&str>,
+    host: HostKey,
 ) -> Result<Vec<u8>, String> {
     let proxy = proxy_command(ctx, alias, system_root)?;
     let home = std::path::absolute(&ctx.home).unwrap_or_else(|_| ctx.home.clone());
     let home = home.to_string_lossy();
     let key_path = lease_file_text(&home, req.id, "id_ed25519");
     let cert_path = lease_file_text(&home, req.id, "id_ed25519-cert.pub");
+    let (host_key_alias, known_hosts) = match host {
+        HostKey::Box => ("agentspace".to_string(), None),
+        HostKey::Other(project) => (host_alias(project), Some(known_hosts_text(&home))),
+    };
     alias_file_bytes(&AliasFile {
         id: req.id,
         comment: COMMENT,
@@ -101,8 +118,8 @@ fn alias_bytes(
         user: USER,
         key_path: &key_path,
         cert_path: &cert_path,
-        host_key_alias: "agentspace",
-        known_hosts: None,
+        host_key_alias: &host_key_alias,
+        known_hosts: known_hosts.as_deref(),
         proxy_command: &proxy,
     })
     .map_err(|e| alias_setup_failed(&e.0))
@@ -165,12 +182,11 @@ fn alias_step_message(f: &AliasFailure) -> String {
     alias_setup_failed(&f.message)
 }
 
-pub fn place(ctx: &Context, req: &PlaceRequest) -> Result<Placed, Failure> {
-    let unmet = reasons(req.platform, req.profile, req.size);
-    if !unmet.is_empty() {
-        return Ok(Placed::Unsatisfiable { reasons: unmet });
-    }
-
+/// Steps 2 to 6 of driver.md's "How it places a lease", for a supported request whose host is
+/// `ready`: the CA check, the credential, the `Include` line and the alias with `host`'s key
+/// lines, then `ready`. `place` and `place_pending` both place a lease through it, so a lease
+/// `place_pending` places is like one `place` made `ready`.
+pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostKey) -> Result<Placed, Failure> {
     // Steps 1 to 4: the CA is checked and never made, an existing key is refused, and the key is
     // made, checked and signed. The credential crate removes what it made when it fails.
     let folder_existed = fs::symlink_metadata(lease_dir(&ctx.home, req.id)).is_ok();
@@ -180,7 +196,7 @@ pub fn place(ctx: &Context, req: &PlaceRequest) -> Result<Placed, Failure> {
 
     // The transport and the alias file's bytes come before the `Include` line: a transport that
     // cannot be found, a line break or an invalid alias name leaves none of it.
-    let bytes = match alias_bytes(ctx, req, &alias, system_root(ctx)) {
+    let bytes = match alias_bytes(ctx, req, &alias, system_root(ctx), host) {
         Ok(bytes) => bytes,
         Err(message) => return Err(undo_place(ctx, req.id, &alias, folder_existed, message)),
     };
@@ -368,7 +384,8 @@ mod tests {
     fn an_override_with_a_line_break_is_refused_in_the_alias_words() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("a\nb"));
-        let e = alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None).unwrap_err();
+        let e =
+            alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None, HostKey::Box).unwrap_err();
         assert_eq!(
             e,
             "The host alias could not be added to the OpenSSH client configuration: the ProxyCommand holds a line break. No lease was recorded."
@@ -379,28 +396,32 @@ mod tests {
     fn the_alias_bytes_carry_the_user_the_paths_and_the_owner_mark() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("proxy 100%"));
-        let bytes = alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None).unwrap();
+        let bytes =
+            alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None, HostKey::Box).unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with(&format!("# agentspace lease {ID}; ")));
         assert!(text.contains("\n  User ubuntu\n"));
         assert!(text.contains("\n  ProxyCommand proxy 100%%\n"));
         assert!(text.contains(&format!("/.agentspace/leases/{ID}/id_ed25519\"")));
+        assert!(text.contains("\n  HostKeyAlias agentspace\n  StrictHostKeyChecking yes\n"));
+        assert!(!text.contains("UserKnownHostsFile"));
     }
 
     #[test]
-    fn an_unsupported_request_answers_before_anything_is_touched() {
+    fn another_hosts_alias_names_its_key_under_its_own_name_in_agentspaces_known_hosts() {
         let dir = tempfile::tempdir().unwrap();
-        let c = ctx(dir.path(), None);
-        let mut r = req(ID);
-        r.platform = "windows/amd64";
-        r.size = "xl";
-        let got = place(&c, &r).unwrap();
-        let Placed::Unsatisfiable { reasons } = got else {
-            panic!("not unsatisfiable");
-        };
-        let codes: Vec<&str> = reasons.iter().map(|r| r.code).collect();
-        assert_eq!(codes, ["unsupported_platform", "unsupported_size"]);
-        assert!(!c.home.exists());
+        let c = ctx(dir.path(), Some("proxy"));
+        let bytes = alias_bytes(
+            &c,
+            &req(ID),
+            "agentspace-swim-3f2a9c1e",
+            None,
+            HostKey::Other("swim"),
+        )
+        .unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("\n  HostKeyAlias agentspace-host.swim\n  UserKnownHostsFile \""));
+        assert!(text.contains("/.agentspace/known_hosts\"\n  StrictHostKeyChecking yes\n"));
     }
 
     #[test]
@@ -408,7 +429,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("p"));
         fs::create_dir_all(&c.home).unwrap();
-        let f = place(&c, &req(ID)).unwrap_err();
+        let f = issue_ready(&c, &req(ID), HostKey::Box).unwrap_err();
         assert_eq!(
             f.message,
             "agentspace's certificate authority has not been set up, so no certificate can be issued. Nothing was changed; the operator sets it up."

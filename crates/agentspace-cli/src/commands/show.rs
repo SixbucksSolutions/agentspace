@@ -1,12 +1,16 @@
 //! `get` and `list` (lease-api.md, `agentspace lease get` and `agentspace lease list`). Neither
-//! takes the lease state lock, writes, or asks a driver (docs/state.md, The lease state lock).
+//! takes the lease state lock or writes (docs/state.md, The lease state lock). `list` asks no
+//! driver, and `get` asks one only to check a pending lease (driver.md, check_pending).
 
-use agentspace_state::{OutputKind, lease_document, list_document, read};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use agentspace_driver_api::LeaseRef;
+use agentspace_state::{OutputKind, Record, lease_document, list_document, read};
 use serde_json::Value;
 
 use super::support::{
-    check_value, check_values, checked, flag, flags, lease_id, not_found, paths, state_dir,
-    store_error,
+    Paths, Purpose, check_value, check_values, checked, context, flag, flags, lease_id, not_found,
+    paths, state_dir, store_error, stored_driver,
 };
 use crate::{LeaseError, ParsedCommand, Sub, World};
 
@@ -22,7 +26,37 @@ pub fn get(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> 
         .iter()
         .find(|r| r.id == id)
         .ok_or_else(|| not_found(&id))?;
-    checked(lease_document(record, now), OutputKind::Lease, Sub::Get)
+    // The document is made from the record as read, before the check, whatever the check does.
+    let doc = checked(lease_document(record, now), OutputKind::Lease, Sub::Get)?;
+    if record.state == "pending" {
+        check_pending(world, &paths, record);
+    }
+    Ok(doc)
+}
+
+/// Asks the stored driver to check a pending lease (driver.md, check_pending). The check changes
+/// nothing `get` prints, so a failure of it, of its context, or of finding its driver is dropped:
+/// `get` MUST NOT fail, print or write because of it. A pending record with no driver, or with one
+/// this program does not have, starts nothing.
+///
+/// Architect's to confirm: the CLI does not bound the call itself, since a `Driver` is not `Send`
+/// and cannot be moved to a thread; the 20 seconds of driver.md's check_pending is the driver's own
+/// to keep, and a panic in it is caught and dropped.
+fn check_pending(world: &World<'_>, paths: &Paths, record: &Record) {
+    if record.driver.is_none() {
+        return;
+    }
+    let Ok(driver) = stored_driver(world, record, Sub::Get) else {
+        return;
+    };
+    let Ok(ctx) = context(world, paths, Sub::Get, Purpose::Place) else {
+        return;
+    };
+    let lease = LeaseRef {
+        id: &record.id,
+        project: &record.project,
+    };
+    let _ = catch_unwind(AssertUnwindSafe(|| driver.check_pending(&ctx, &lease)));
 }
 
 /// `list [--project <name>] [--state <state>]...`: the project, then the states, then the

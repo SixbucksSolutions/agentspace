@@ -564,7 +564,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-fn parse_time(s: &str) -> i64 {
+pub fn parse_time(s: &str) -> i64 {
     let (date, time) = s.split_once('T').expect("A time in ssh-keygen -L has a T");
     let d: Vec<i64> = date.split('-').map(|x| x.parse().unwrap()).collect();
     let t: Vec<i64> = time.split(':').map(|x| x.parse().unwrap()).collect();

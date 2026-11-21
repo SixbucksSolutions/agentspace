@@ -121,30 +121,77 @@ fn release_of_a_released_lease_asks_the_driver_again_and_changes_no_record() {
 }
 
 #[test]
-fn release_of_a_pending_lease_writes_the_record_only() {
-    for drivers in [&["fake"][..], &[][..]] {
-        let mut lab = Lab::new();
-        let handles: Vec<_> = drivers.iter().map(|n| lab.fake(n)).collect();
-        let rec = Rec::pending(ID1, "swim").driver(Some("secret-backend-name"));
-        lab.seed(std::slice::from_ref(&rec));
-        lab.set_now(NOW + 100);
-        let ran = lab.run(&["lease", "release", ID1]);
-        let doc = ran.lease_doc();
-        let want = released_doc(&rec, NOW + 100);
-        assert_eq!(doc, want);
-        assert!(
-            doc.get("expires_at").is_none(),
-            "A pending lease has no expires_at"
-        );
-        assert!(
-            handles.iter().all(|h| h.calls().is_empty()),
-            "No driver is asked"
-        );
-        let mut want_rec = want.clone();
-        want_rec["driver"] = json!("secret-backend-name");
-        assert_eq!(lab.records(), [want_rec], "The driver member stays");
-        assert!(!ran.stdout_text().contains("secret-backend-name"));
-    }
+fn release_of_a_pending_lease_with_a_driver_hands_it_to_that_driver() {
+    // docs/driver.md, Release a lease: from v0.07 a `pending` record with a `driver` is released as
+    // a `ready` one is, so a placement killed part way leaves no key, certificate or alias behind
+    // (pin P16; card #0150's second comment).
+    let mut lab = Lab::new();
+    let h = lab.fake("secret-backend-name");
+    let rec = Rec::pending(ID1, "swim").driver(Some("secret-backend-name"));
+    lab.seed(std::slice::from_ref(&rec));
+    lab.set_now(NOW + 100);
+    h.set_probe(lab::state_probe(lab.state_file()));
+    let ran = lab.run(&["lease", "release", ID1]);
+    let doc = ran.lease_doc();
+    let want = released_doc(&rec, NOW + 100);
+    assert_eq!(doc, want);
+    assert!(
+        doc.get("expires_at").is_none(),
+        "A pending lease has no expires_at"
+    );
+    assert_eq!(h.calls(), both(ID1), "The check, then the release");
+    // The order is a ready lease's: checked while the record is as it was, released after it is
+    // written `released`.
+    let probes = h.probes();
+    assert!(probes[0].contains("\"state\":\"pending\""), "{}", probes[0]);
+    assert!(
+        probes[1].contains("\"state\":\"released\"") && probes[1].contains(&fmt_time(NOW + 100)),
+        "{}",
+        probes[1]
+    );
+    let mut want_rec = want.clone();
+    want_rec["driver"] = json!("secret-backend-name");
+    assert_eq!(lab.records(), [want_rec], "The driver member stays");
+    assert!(!ran.stdout_text().contains("secret-backend-name"));
+}
+
+#[test]
+fn a_failed_release_of_a_pending_lease_is_the_drivers_failure_and_the_record_stays_released() {
+    let (lab, h) = Lab::with_fake();
+    let rec = Rec::pending(ID1, "swim");
+    lab.seed(std::slice::from_ref(&rec));
+    h.script_release(Err(fake_driver::fail(
+        "The lease's credential or alias could not be deleted. Run release again.",
+    )));
+    let ran = lab.run(&["lease", "release", ID1]);
+    ran.internal();
+    assert_eq!(h.calls(), both(ID1));
+    assert_eq!(
+        lab.records()[0]["state"],
+        "released",
+        "As for a ready lease, the record is written before the files are removed"
+    );
+}
+
+#[test]
+fn release_of_a_pending_lease_with_no_driver_writes_the_record_only_and_asks_no_driver() {
+    let (mut lab, h) = Lab::with_fake();
+    let other = lab.fake("other");
+    let rec = Rec::pending(ID1, "swim").driver(None);
+    lab.seed(std::slice::from_ref(&rec));
+    lab.set_now(NOW + 100);
+    let ran = lab.run(&["lease", "release", ID1]);
+    let doc = ran.lease_doc();
+    assert_eq!(doc, released_doc(&rec, NOW + 100));
+    assert!(
+        h.calls().is_empty() && other.calls().is_empty(),
+        "No driver is asked"
+    );
+    assert_eq!(
+        lab.records(),
+        [released_doc(&rec, NOW + 100)],
+        "It still has no driver"
+    );
 }
 
 #[test]
@@ -237,6 +284,29 @@ fn an_unknown_driver_fails_internal_without_naming_it_and_changes_nothing() {
             assert!(handles.iter().all(|h| h.calls().is_empty()), "{what}");
             assert_eq!(lab.state_bytes(), before, "{what}: nothing is recorded");
         }
+    }
+}
+
+#[test]
+fn a_pending_lease_whose_driver_this_build_lacks_fails_internal_as_a_ready_one_does() {
+    // docs/driver.md, Release a lease: a `pending` record with a `driver` is handed to that driver
+    // as a `ready` one is (pin P16), so a driver this build does not have fails the release as it
+    // does for a `ready` lease, without naming it, and the record stays `pending`.
+    for drivers in [&["fake"][..], &[][..], &["ec2x", "other"][..]] {
+        let mut lab = Lab::new();
+        let handles: Vec<_> = drivers.iter().map(|n| lab.fake(n)).collect();
+        lab.seed(&[Rec::pending(ID1, "swim").driver(Some("secret-backend-name"))]);
+        let before = lab.state_bytes();
+        let ran = lab.run(&["lease", "release", ID1]);
+        ran.expect_error("internal", None, Some(&msg_unknown_driver("release")));
+        assert!(!ran.stderr_text().contains("secret-backend-name"));
+        assert!(ran.stdout.is_empty(), "Nothing on stdout");
+        assert!(
+            handles.iter().all(|h| h.calls().is_empty()),
+            "No driver is asked"
+        );
+        assert_eq!(lab.state_bytes(), before, "The record is unchanged");
+        assert_eq!(lab.records()[0]["state"], "pending");
     }
 }
 

@@ -25,7 +25,7 @@ fn a_failure_writes_nothing_to_stdout_and_one_compact_document_and_line_feed_to_
         args(&["frob"]),
         args(&["lease", "create"]),
         args(&["lease", "get", ID, "--ttl", "8h"]),
-        args(&["lease", "create", "--project", "x"]),
+        args(&["lease", "create", "--project", "swimcoach"]),
         args(&["lease", "get", ID]),
         args(&["lease", "renew", ID]),
         args(&["lease", "release", ID]),
@@ -62,7 +62,7 @@ fn every_exit_code_is_in_the_table_and_comes_with_its_error_code() {
         args(&["lease"]),
         args(&["--bogus"]),
         args(&["lease", "create"]),
-        args(&["lease", "create", "--project", "x"]),
+        args(&["lease", "create", "--project", "swimcoach"]),
         args(&["lease", "get", ID]),
         args(&["lease", "list", "--state", "ready"]),
         args(&["lease", "renew", ID, "--ttl", "8h"]),
@@ -198,8 +198,9 @@ fn a_usage_error_carries_a_code_and_a_message_and_a_field_only_in_the_five_cases
 
 #[test]
 fn an_internal_error_carries_only_a_code_and_a_message() {
-    // A create with no CA, in the throwaway home of `command`, fails `internal`.
-    let run = run_str(&["lease", "create", "--project", "x"]);
+    // A create for the box's project with no CA, in the throwaway home of `command`, fails `internal`:
+    // a project with no host and not on the project list is answered `no_capacity` before any CA check.
+    let run = run_str(&["lease", "create", "--project", "swimcoach"]);
     let doc = doc_of(&run);
     assert_eq!(doc.as_object().map(|o| o.len()), Some(2));
     assert_eq!(doc["code"], "internal");
@@ -208,7 +209,7 @@ fn an_internal_error_carries_only_a_code_and_a_message() {
 
 #[test]
 fn the_subcommand_in_an_internal_message_is_lowercase() {
-    let run = run_str(&["LEASE", "CREATE", "--project", "x"]);
+    let run = run_str(&["LEASE", "CREATE", "--project", "swimcoach"]);
     let doc = doc_of(&run);
     assert_eq!(doc["message"], MSG_NO_CA);
 }
@@ -219,7 +220,7 @@ fn a_message_is_in_agentspaces_own_words_with_no_path_and_no_other_programs_text
         args(&["lease", "get", ID]),
         args(&["lease", "release", ID]),
         args(&["lease", "renew", ID]),
-        args(&["lease", "create", "--project", "x"]),
+        args(&["lease", "create", "--project", "swimcoach"]),
     ] {
         let run = run_bin(&line);
         let message = doc_of(&run)["message"]

@@ -16,10 +16,15 @@ use crate::{LeaseError, ParsedCommand, Sub, World};
 /// `release <id>`: the ID, then the records under the lock (or no home), `not_found`, and then by
 /// the stored state, as lease-api.md's table says:
 /// - `unsatisfiable`: nothing changes, and the lease is printed as it is.
-/// - `pending`: the record is written `released`; no driver is asked and no file is touched.
-/// - `ready` (which includes `expired`) and `released`: the driver's `check_release`, then the
-///   record written `released` unless it already is, then the driver's `release`. A failed delete
-///   leaves the record `released`, and a retry finishes the job.
+/// - `pending` with no driver stored: the record is written `released`; no driver is asked and no
+///   file is touched.
+/// - `pending` that carries a driver, `ready` (which includes `expired`) and `released`: the
+///   driver's `check_release`, then the record written `released` unless it already is, then the
+///   driver's `release`. A failed delete leaves the record `released`, and a retry finishes the
+///   job. So a placement killed partway leaves no key, certificate or alias once its lease is
+///   released (lease-api.md, `release`; card #0150). A driver this build lacks fails the release
+///   as for a `ready` lease; with no home folder, a `pending` lease's driver is not asked, and the
+///   record is written `released` all the same.
 pub fn release(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> {
     let id = lease_id(cmd)?;
     let paths = paths(world)?;
@@ -63,8 +68,22 @@ pub fn release(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseErr
         return Err(not_valid_document(Sub::Release));
     }
 
-    if matches!(record.state.as_str(), "ready" | "released") {
-        let driver = stored_driver(world, record, Sub::Release)?;
+    let driver_has_it = match record.state.as_str() {
+        "ready" | "released" => true,
+        "pending" => record.driver.is_some(),
+        _ => false,
+    };
+    let driver = if driver_has_it {
+        Some(stored_driver(world, record, Sub::Release)?)
+    } else {
+        None
+    };
+    // A `pending` lease needs no file, so with no home folder its driver's cleanup is skipped and
+    // the release still succeeds (driver.md, Release a lease, pin P16; lease-api.md, Exit codes
+    // and errors, step 3). A later release of the `released` lease, with the home set, removes
+    // what is left.
+    let driver = driver.filter(|_| record.state != "pending" || paths.has_home());
+    if let Some(driver) = driver {
         let ctx = context(world, &paths, Sub::Release, Purpose::Release)?;
         let lease = LeaseRef {
             id: &id,
