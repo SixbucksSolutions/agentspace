@@ -31,3 +31,7 @@ tempfile = { version = "=3.23.0", default-features = false }
 # The integration tests' own check of a printed document against its schema; the version and
 # features agentspace-state uses, so no reference is ever fetched.
 jsonschema = { version = "=0.60.2", default-features = false }
+# For tests/pending_binary.rs (E0.07-T03-S01, the test author's): the operator's `ca`, run in
+# process to make a throwaway CA, as the EC2 driver's integration tests do.
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-ca = { path = "../agentspace-ca" }

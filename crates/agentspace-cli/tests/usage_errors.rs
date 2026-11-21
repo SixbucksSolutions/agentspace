@@ -850,7 +850,9 @@ fn assert_answer(line: &[&str], sub: &str, id: &str) {
 
 #[test]
 fn every_subcommand_with_a_valid_line_gets_its_commands_answer() {
-    assert_answer(&["lease", "create", "--project", "x"], "create", ID);
+    // The box's project: any other has no host and is answered `no_capacity` (driver.md, Where it
+    // places a lease), which needs no CA.
+    assert_answer(&["lease", "create", "--project", "swimcoach"], "create", ID);
     assert_answer(&["lease", "get", ID], "get", ID);
     assert_answer(&["lease", "renew", ID], "renew", ID);
     assert_answer(&["lease", "renew", ID, "--ttl", "8h"], "renew", ID);

@@ -154,6 +154,31 @@ pub fn delete_failed(why: &str) -> String {
     )
 }
 
+/// driver.md's "The lease's host could not be looked up" message (Where it places a lease),
+/// `<why>` filled in: the host registry, its lock or the project list could not be used.
+pub fn host_lookup_failed(why: &str) -> String {
+    format!("The lease's host could not be looked up: {why}. Nothing was recorded.")
+}
+
+/// driver.md's `no_capacity` message (Where it places a lease), for a project with no host that is
+/// not on the project list. `project` is the normalized project, quoted as every reason quotes.
+pub fn no_capacity(project: &str) -> String {
+    format!(
+        "No capacity can be found for project '{}': it has no host and is not on agentspace's project list.",
+        quote(project)
+    )
+}
+
+/// driver.md's message for an operator program that is not beside the CLI, with
+/// `AGENTSPACE_PROVISION_CMD` unset or empty (Starting a provisioning run, step 3).
+pub const OPERATOR_NOT_BESIDE: &str = "The lease's host cannot be made: agentspace's operator program is not installed beside this program. Nothing was recorded.";
+
+/// driver.md's message for an `AGENTSPACE_PROVISION_CMD` that names no existing file.
+pub const OPERATOR_NAMED_MISSING: &str = "The lease's host cannot be made: the program that AGENTSPACE_PROVISION_CMD names does not exist. Nothing was recorded.";
+
+/// driver.md's message for a `.cmd` or `.bat` program with `SystemRoot` unset or empty.
+pub const OPERATOR_NO_INTERPRETER: &str = "The lease's host cannot be made: Windows' command interpreter cannot be found, because SystemRoot is not set. Nothing was recorded.";
+
 #[cfg(test)]
 mod tests {
     use super::*;

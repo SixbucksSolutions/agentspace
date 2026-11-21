@@ -1,6 +1,10 @@
-//! agentspace-driver-ec2 (docs/driver.md, "The EC2 driver"; docs/decisions.md, D38): the one driver
-//! v0 has. It places, renews and releases a lease on the caller's machine, from the credential
-//! crate and the alias crate, and answers through the pinned `agentspace-driver-api` trait.
+//! agentspace-driver-ec2 (docs/driver.md, "The EC2 driver"; docs/decisions.md, D38, D48): the one
+//! driver v0 has. It places, renews and releases a lease on the caller's machine, from the
+//! credential crate and the alias crate, and answers through the pinned `agentspace-driver-api`
+//! trait. From v0.07 it places a lease by its project's host, through agentspace-hosts, answers
+//! `pending` or `no_capacity` for a project whose host is not `ready`, starts a provisioning run
+//! through agentspace-detach, and places the `pending` leases once a run has made the host
+//! ([`place_pending`]).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
@@ -14,30 +18,66 @@
 
 #![forbid(unsafe_code)]
 
+mod host;
 mod ops;
+mod pending;
 mod reasons;
 mod text;
 
+use std::sync::Arc;
+
+use agentspace_detach::Detach;
 use agentspace_driver_api::{Context, Driver, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
 
-/// The EC2 driver. It holds nothing: everything it needs is in the context of each call.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Ec2Driver;
+/// The driver's name, which the CLI stores with every lease it places (driver.md, The driver's
+/// name). `place_pending` places only the records that carry it.
+pub(crate) const NAME: &str = "ec2";
+
+/// The EC2 driver. It holds only the detached start it uses for a provisioning run: everything
+/// else it needs is in the context of each call.
+#[derive(Clone)]
+pub struct Ec2Driver {
+    detach: Arc<dyn Detach + Send + Sync>,
+}
+
+/// Prints the type's name alone: the detached start has nothing a reader needs.
+impl std::fmt::Debug for Ec2Driver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Ec2Driver { .. }")
+    }
+}
+
+impl Default for Ec2Driver {
+    fn default() -> Self {
+        Ec2Driver::new()
+    }
+}
 
 impl Ec2Driver {
-    /// A new driver.
+    /// A new driver, which starts a provisioning run through WMI's `Win32_Process.Create` on
+    /// Windows (`WmiDetach`), and starts none elsewhere (`NoDetach`).
     pub fn new() -> Self {
-        Ec2Driver
+        #[cfg(windows)]
+        let detach: Arc<dyn Detach + Send + Sync> = Arc::new(agentspace_detach::WmiDetach);
+        #[cfg(not(windows))]
+        let detach: Arc<dyn Detach + Send + Sync> = Arc::new(agentspace_detach::NoDetach);
+        Ec2Driver { detach }
+    }
+
+    /// A driver that starts a provisioning run through `detach`: the seam through which a test
+    /// stands in a fake start.
+    pub fn with_detach(detach: Arc<dyn Detach + Send + Sync>) -> Ec2Driver {
+        Ec2Driver { detach }
     }
 }
 
 impl Driver for Ec2Driver {
     fn name(&self) -> &'static str {
-        "ec2"
+        NAME
     }
 
     fn place(&self, ctx: &Context, req: &PlaceRequest) -> Result<Placed, Failure> {
-        ops::place(ctx, req)
+        host::place(ctx, req, &self.detach)
     }
 
     fn renew(
@@ -53,8 +93,15 @@ impl Driver for Ec2Driver {
         ops::check_release(ctx, lease)
     }
 
+    /// The same for a `ready`, `released` or `pending` lease: the alias file only when its owner
+    /// mark names the lease, then its folder, a missing one being no failure, so a placement that
+    /// was killed part way leaves nothing once its lease is released.
     fn release(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
         ops::release(ctx, lease)
+    }
+
+    fn check_pending(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
+        host::check_pending(ctx, lease, &self.detach)
     }
 }
 
@@ -84,13 +131,11 @@ pub struct PendingFailure {
 /// whole call, such as a lease state file that cannot be read; one lease's failure is in
 /// [`PendingPlaced::failed`] and stops no other.
 ///
-/// A stub pinned by the architect, 2026-11-20, before v0.07-T03 (D55), its result widened from a
-/// count on 2026-11-21 (#0150's and #0152's question 6): it places nothing and fails until
-/// E0.07-T03-S01 builds it.
+/// Each lease is placed under a hold of its own of the lease state lock. A host record that is not
+/// `ready`, or none, places nothing and answers no failure. The call fails as a whole only when the
+/// host record, the lease state lock or the lease state file cannot be had; what it placed before
+/// stays `ready`. A lease that cannot be placed stays `pending`, with every file this call made for
+/// it removed. It starts nothing.
 pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Failure> {
-    let _ = (ctx, project);
-    Err(Failure {
-        message: "Placing the pending leases is not built yet.".to_string(),
-        leftovers: Vec::new(),
-    })
+    pending::place_pending(ctx, project)
 }

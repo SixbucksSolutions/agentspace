@@ -16,10 +16,13 @@ use crate::{LeaseError, ParsedCommand, Sub, World};
 /// `release <id>`: the ID, then the records under the lock (or no home), `not_found`, and then by
 /// the stored state, as lease-api.md's table says:
 /// - `unsatisfiable`: nothing changes, and the lease is printed as it is.
-/// - `pending`: the record is written `released`; no driver is asked and no file is touched.
-/// - `ready` (which includes `expired`) and `released`: the driver's `check_release`, then the
-///   record written `released` unless it already is, then the driver's `release`. A failed delete
-///   leaves the record `released`, and a retry finishes the job.
+/// - `pending` with no driver stored: the record is written `released`; no driver is asked and no
+///   file is touched.
+/// - `pending` that carries a driver, `ready` (which includes `expired`) and `released`: the
+///   driver's `check_release`, then the record written `released` unless it already is, then the
+///   driver's `release`. A failed delete leaves the record `released`, and a retry finishes the
+///   job. So a placement killed partway leaves no key, certificate or alias once its lease is
+///   released (lease-api.md, `release`; card #0150).
 pub fn release(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> {
     let id = lease_id(cmd)?;
     let paths = paths(world)?;
@@ -63,7 +66,12 @@ pub fn release(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseErr
         return Err(not_valid_document(Sub::Release));
     }
 
-    if matches!(record.state.as_str(), "ready" | "released") {
+    let driver_has_it = match record.state.as_str() {
+        "ready" | "released" => true,
+        "pending" => record.driver.is_some(),
+        _ => false,
+    };
+    if driver_has_it {
         let driver = stored_driver(world, record, Sub::Release)?;
         let ctx = context(world, &paths, Sub::Release, Purpose::Release)?;
         let lease = LeaseRef {

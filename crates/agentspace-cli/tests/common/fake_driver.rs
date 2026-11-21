@@ -51,6 +51,11 @@ pub enum Call {
         id: String,
         project: String,
     },
+    /// `Driver::check_pending` was called (E0.07-T03-S01).
+    CheckPending {
+        id: String,
+        project: String,
+    },
 }
 
 /// Runs inside every call and returns a snapshot the test reads afterwards, for instance whether
@@ -67,6 +72,7 @@ struct Shared {
     rollback: VecDeque<Result<(), Failure>>,
     check_release: VecDeque<Result<(), Failure>>,
     release: VecDeque<Result<(), Failure>>,
+    check_pending: VecDeque<Result<(), Failure>>,
     probe: Option<Probe>,
     issue_time: i64,
 }
@@ -106,7 +112,7 @@ impl Handle {
         lock(&self.0).probes.clone()
     }
 
-    /// The `Context` each operation (`place`, `renew`, `check_release`, `release`) received.
+    /// The `Context` each operation (`place`, `renew`, `check_release`, `release`, `check_pending`) received.
     pub fn contexts(&self) -> Vec<Context> {
         lock(&self.0).contexts.clone()
     }
@@ -149,6 +155,11 @@ impl Handle {
 
     pub fn script_release(&self, answer: Result<(), Failure>) {
         lock(&self.0).release.push_back(answer);
+    }
+
+    /// The next `check_pending` answers this; with none scripted, `Ok`.
+    pub fn script_check_pending(&self, answer: Result<(), Failure>) {
+        lock(&self.0).check_pending.push_back(answer);
     }
 }
 
@@ -295,6 +306,21 @@ impl Driver for FakeDriver {
             },
         );
         lock(&self.shared).release.pop_front().unwrap_or(Ok(()))
+    }
+
+    fn check_pending(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
+        self.see(ctx);
+        log(
+            &self.shared,
+            Call::CheckPending {
+                id: lease.id.to_string(),
+                project: lease.project.to_string(),
+            },
+        );
+        lock(&self.shared)
+            .check_pending
+            .pop_front()
+            .unwrap_or(Ok(()))
     }
 }
 

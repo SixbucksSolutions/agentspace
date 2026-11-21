@@ -32,6 +32,8 @@ struct Fake {
     /// Runs inside `renew`, after the renewal is made.
     on_renew: Box<dyn Fn()>,
     rollback_fails: bool,
+    check_fails: bool,
+    check_panics: bool,
 }
 
 impl Fake {
@@ -49,6 +51,8 @@ impl Fake {
             leftovers: Vec::new(),
             on_renew: Box::new(|| {}),
             rollback_fails: false,
+            check_fails: false,
+            check_panics: false,
         }
     }
 }
@@ -134,6 +138,26 @@ impl Driver for Fake {
         self.log
             .borrow_mut()
             .push(format!("check_release {}", lease.id));
+        Ok(())
+    }
+    fn check_pending(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
+        self.log.borrow_mut().push(format!(
+            "check_pending {} {} operator={:?} proxy={:?} ssh={:?}",
+            lease.id,
+            lease.project,
+            ctx.operator_program.as_ref().map(|p| p.file_name()),
+            ctx.proxy_override,
+            ctx.ssh_dir.file_name()
+        ));
+        if self.check_fails {
+            return Err(Failure {
+                message: "The lease's host cannot be made.".to_owned(),
+                leftovers: Vec::new(),
+            });
+        }
+        if self.check_panics {
+            panic!("check_pending panics");
+        }
         Ok(())
     }
     fn release(&self, _ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
@@ -801,4 +825,216 @@ fn release_of_a_ready_lease_with_no_home_fails_with_no_home() {
 fn the_build_holds_the_ec2_driver() {
     let names: Vec<&str> = super::drivers().iter().map(|d| d.name()).collect();
     assert_eq!(names, vec!["ec2"]);
+}
+
+// check_pending, release of a pending lease, and the operator program
+
+/// The log's `check_pending` lines.
+fn checks(log: &Log) -> Vec<String> {
+    log_of(log)
+        .into_iter()
+        .filter(|l| l.starts_with("check_pending"))
+        .collect()
+}
+
+#[test]
+fn get_of_a_pending_lease_checks_it_and_never_writes_the_state_file() {
+    let env = Env::new();
+    env.put(vec![record(ID_A, "pending", Some("fake"))]);
+    let before = std::fs::read(env.state_dir().join("leases.json")).unwrap();
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    let out = env.run(&["lease", "get", ID_A], &drivers, &[]);
+    assert_eq!(doc(&out)["state"], "pending");
+    assert_eq!(
+        checks(&log),
+        vec![format!(
+            "check_pending {ID_A} demo operator=Some(Some(\"agentspace-operator.exe\")) \
+             proxy=None ssh=Some(\".ssh\")"
+        )]
+    );
+    assert_eq!(
+        std::fs::read(env.state_dir().join("leases.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn get_of_a_pending_lease_passes_the_transport_override_and_ssh_folder() {
+    let mut env = Env::new();
+    env.vars
+        .insert("AGENTSPACE_PROXY_COMMAND".to_owned(), "stand-in ssh".into());
+    env.vars.insert(
+        "AGENTSPACE_SSH_DIR".to_owned(),
+        env.dir.path().join("sshdir").into_os_string(),
+    );
+    env.put(vec![record(ID_A, "pending", Some("fake"))]);
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    env.run(&["lease", "get", ID_A], &drivers, &[]);
+    let line = checks(&log).remove(0);
+    assert!(line.contains("proxy=Some(\"stand-in ssh\")"), "{line}");
+    assert!(line.contains("ssh=Some(\"sshdir\")"), "{line}");
+}
+
+#[test]
+fn get_drops_a_check_that_fails_or_panics() {
+    for (fails, panics) in [(true, false), (false, true)] {
+        let env = Env::new();
+        env.put(vec![record(ID_A, "pending", Some("fake"))]);
+        let log = Log::default();
+        let mut fake = Fake::new("fake", &log);
+        fake.check_fails = fails;
+        fake.check_panics = panics;
+        let drivers: Vec<Box<dyn Driver>> = vec![Box::new(fake)];
+        let out = env.run(&["lease", "get", ID_A], &drivers, &[]);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stderr.is_empty());
+        assert_eq!(doc(&out)["state"], "pending");
+        assert_eq!(checks(&log).len(), 1);
+    }
+}
+
+#[test]
+fn get_checks_only_a_pending_lease_with_a_driver_this_build_has() {
+    let env = Env::new();
+    env.put(vec![
+        record(ID_A, "ready", Some("fake")),
+        record(ID_B, "pending", None),
+    ]);
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    env.run(&["lease", "get", ID_A], &drivers, &[]);
+    env.run(&["lease", "get", ID_B], &drivers, &[]);
+    env.put(vec![record(ID_A, "pending", Some("gone"))]);
+    let out = env.run(&["lease", "get", ID_A], &drivers, &[]);
+    assert_eq!(doc(&out)["state"], "pending");
+    assert!(checks(&log).is_empty());
+}
+
+#[test]
+fn get_prints_a_pending_lease_when_its_check_has_no_context() {
+    // No home, so no context: the check is dropped and the lease is printed.
+    let env = Env::without_home();
+    env.put(vec![record(ID_A, "pending", Some("fake"))]);
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    let out = env.run(&["lease", "get", ID_A], &drivers, &[]);
+    assert_eq!(out.exit_code, 0);
+    assert!(checks(&log).is_empty());
+}
+
+#[test]
+fn list_never_checks_a_pending_lease() {
+    let env = Env::new();
+    env.put(vec![record(ID_A, "pending", Some("fake"))]);
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    env.run(&["lease", "list"], &drivers, &[]);
+    assert!(log_of(&log).is_empty());
+}
+
+#[test]
+fn release_of_a_pending_lease_with_a_driver_hands_it_to_the_driver() {
+    let env = Env::new();
+    env.put(vec![record(ID_A, "pending", Some("fake"))]);
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    let d = doc(&env.run(&["lease", "release", ID_A], &drivers, &[]));
+    assert_eq!(d["state"], "released");
+    assert_eq!(
+        log_of(&log),
+        vec![format!("check_release {ID_A}"), format!("release {ID_A}")]
+    );
+    assert_eq!(env.records()[0].state, "released");
+}
+
+#[test]
+fn release_of_a_pending_lease_whose_delete_fails_stays_released_and_a_retry_finishes() {
+    let env = Env::new();
+    env.put(vec![record(ID_A, "pending", Some("fake"))]);
+    let log = Log::default();
+    let fake = Fake::new("fake", &log);
+    fake.release_failures.set(1);
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(fake)];
+    let out = env.run(&["lease", "release", ID_A], &drivers, &[]);
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(env.records()[0].state, "released");
+    let d = doc(&env.run(&["lease", "release", ID_A], &drivers, &[]));
+    assert_eq!(d["state"], "released");
+}
+
+/// The Context's operator program in a world with the given variables, own executable and
+/// working folder.
+fn operator_program_of(
+    vars: &[(&str, &str)],
+    own_exe: &Path,
+    cwd: Option<&Path>,
+) -> Option<PathBuf> {
+    let map: HashMap<String, OsString> = vars
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), OsString::from(*v)))
+        .collect();
+    let var = move |name: &str| map.get(name).cloned();
+    let now = || NOW;
+    let new_id = String::new;
+    let world = World {
+        var: &var,
+        cwd,
+        own_exe,
+        now: &now,
+        new_id: &new_id,
+        drivers: &[],
+    };
+    super::support::context_operator_program(&world)
+}
+
+#[test]
+fn the_operator_program_is_beside_the_cli_by_default() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let exe = dir.path().join("bin").join("agentspace.exe");
+    let beside = dir.path().join("bin").join("agentspace-operator.exe");
+    assert_eq!(
+        operator_program_of(&[], &exe, Some(dir.path())),
+        Some(beside.clone())
+    );
+    // Empty is unset, and AGENTSPACE_OPERATOR_CMD is not read.
+    assert_eq!(
+        operator_program_of(
+            &[
+                ("AGENTSPACE_PROVISION_CMD", ""),
+                ("AGENTSPACE_OPERATOR_CMD", "other.exe")
+            ],
+            &exe,
+            Some(dir.path())
+        ),
+        Some(beside)
+    );
+}
+
+#[test]
+fn the_operator_program_is_agentspace_provision_cmd_made_full() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let exe = dir.path().join("bin").join("agentspace.exe");
+    let full = dir.path().join("stand-in.cmd");
+    assert_eq!(
+        operator_program_of(
+            &[("AGENTSPACE_PROVISION_CMD", full.to_str().unwrap())],
+            &exe,
+            None
+        ),
+        Some(full)
+    );
+    assert_eq!(
+        operator_program_of(
+            &[("AGENTSPACE_PROVISION_CMD", "rel.cmd")],
+            &exe,
+            Some(dir.path())
+        ),
+        Some(dir.path().join("rel.cmd"))
+    );
+    assert_eq!(
+        operator_program_of(&[("AGENTSPACE_PROVISION_CMD", "rel.cmd")], &exe, None),
+        None
+    );
 }

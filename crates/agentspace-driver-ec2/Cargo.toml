@@ -2,7 +2,7 @@
 name = "agentspace-driver-ec2"
 version = "0.5.0"
 edition.workspace = true
-description = "The EC2 driver: places, renews and releases a lease's credential and alias (docs/driver.md; D38)"
+description = "The EC2 driver: places a lease by its project's host, renews and releases its credential and alias, starts a provisioning run and places pending leases (docs/driver.md; D38, D48)"
 publish = false
 
 [lib]
@@ -13,6 +13,12 @@ path = "src/lib.rs"
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-credential = { path = "../agentspace-credential" }
 agentspace-alias = { path = "../agentspace-alias" }
+# The host registry, its lock, the project list and a host's run lock (D45, D54, D55).
+agentspace-hosts = { path = "../agentspace-hosts" }
+# The detached start of a provisioning run (D48, D55).
+agentspace-detach = { path = "../agentspace-detach" }
+# The lease state file and its lock, for place_pending, and the contract's times.
+agentspace-state = { path = "../agentspace-state" }
 
 [dev-dependencies]
 # For the integration tests: throwaway folders, at the version agentspace-credential and
@@ -22,3 +28,8 @@ tempfile = { version = "=3.23.0", default-features = false }
 # (architect, 2026-11-20, for E0.06-T06-S01).
 agentspace-operator-api = { path = "../agentspace-operator-api" }
 agentspace-ca = { path = "../agentspace-ca" }
+# For the integration tests of E0.07-T03-S01 (the test author's): the Detach trait for a fake start,
+# the host registry and its locks to seed and to hold, and the lease state file's JSON to read back.
+agentspace-detach = { path = "../agentspace-detach" }
+agentspace-hosts = { path = "../agentspace-hosts" }
+serde_json = { version = "=1.0.154", default-features = false, features = ["std", "preserve_order"] }
