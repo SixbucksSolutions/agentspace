@@ -17,19 +17,24 @@ use std::time::Duration;
 
 use agentspace_keeper_api::Started;
 use common::{
-    Fixture, control_report, holder_of, pass_userprofile, read_text, report, same_path, start_stub,
-    wait_for,
+    Fixture, control_report, control_report_in, holder_of, read_text, report, same_path,
+    start_in_pass_process, start_stub, wait_for,
 };
 
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
-fn started_report(fx: &Fixture) -> std::collections::HashMap<String, String> {
+/// Names the pass's `USERPROFILE`, the throwaway home, for the stand-in holder to compare its own
+/// with.
+fn expect_the_pass_home(fx: &Fixture) {
     std::fs::write(
         fx.profile.join("spec-expect.txt"),
-        pass_userprofile().to_string_lossy().as_bytes(),
+        fx.home.to_string_lossy().as_bytes(),
     )
     .expect("The expectation file can be made.");
-    let holder = holder_of(start_stub(fx, "stub_report"));
+}
+
+/// The report of the holder with this PID, read from the log it was given.
+fn report_of(fx: &Fixture, pid: u32) -> std::collections::HashMap<String, String> {
     let log = fx.log();
     let text = wait_for(Duration::from_secs(20), || {
         let t = read_text(&log);
@@ -38,10 +43,16 @@ fn started_report(fx: &Fixture) -> std::collections::HashMap<String, String> {
     .expect("The holder reported.");
     let r = report(&text);
     assert!(
-        text.contains(&format!("stub-start pid={}", holder.pid)),
+        text.contains(&format!("stub-start pid={pid}")),
         "The report is the holder's own."
     );
     r
+}
+
+fn started_report(fx: &Fixture) -> std::collections::HashMap<String, String> {
+    expect_the_pass_home(fx);
+    let holder = holder_of(start_stub(fx, "stub_report"));
+    report_of(fx, holder.pid)
 }
 
 #[test]
@@ -115,10 +126,34 @@ fn a_holder_runs_in_the_home_folder_with_nul_for_stdin_and_one_handle_for_both_o
 
 #[test]
 fn the_holder_gets_the_logon_environment_and_never_the_keepers() {
-    // The spec process has, as the keeper does, a changed USERPROFILE, an AGENTSPACE_STATE_DIR and
-    // a variable of the spec's own (common::init). None may reach the holder.
+    // The pass process has, as the keeper does, a changed USERPROFILE, an AGENTSPACE_STATE_DIR and
+    // a variable of the spec's own, given to it when it was started (Fixture::pass_environment).
+    // None may reach the holder.
     let fx = Fixture::new("env");
-    let r = started_report(&fx);
+
+    // The control: a process started with that same environment reports all three, so the
+    // checks below can tell a variable that arrived from one that did not.
+    let control = control_report_in(&fx, 0, Stdio::null(), &fx.home.to_string_lossy(), true);
+    assert_eq!(
+        control.get("probe_var").map(String::as_str),
+        Some("present"),
+        "The control: the probe variable of the pass's environment is seen."
+    );
+    assert_eq!(
+        control.get("state_dir_var").map(String::as_str),
+        Some("present"),
+        "The control: AGENTSPACE_STATE_DIR of the pass's environment is seen."
+    );
+    assert_eq!(
+        control.get("userprofile_is_the_passes").map(String::as_str),
+        Some("true"),
+        "The control: the pass's USERPROFILE is seen."
+    );
+
+    expect_the_pass_home(&fx);
+    let (pid, _) = start_in_pass_process(&fx, "stub_report")
+        .unwrap_or_else(|why| panic!("The start failed: {why}"));
+    let r = report_of(&fx, pid);
     assert_eq!(
         r.get("probe_var").map(String::as_str),
         Some("absent"),

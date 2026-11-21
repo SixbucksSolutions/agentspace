@@ -19,15 +19,17 @@ path = "src/bin/testhost.rs"
 test = false
 
 [dependencies]
+# WMI's Win32_Process.Create, shared with the detached start of a provisioning run (D48, D55).
+agentspace-detach = { path = "../agentspace-detach" }
 agentspace-keeper-api = { path = "../agentspace-keeper-api" }
 # The launch files' bytes and the holder command's matcher (docs/state.md, A holder's launch files).
 agentspace-keeper-files = { path = "../agentspace-keeper-files" }
 # write_atomically, for the request and the result (docs/state.md, Replacing a file).
 agentspace-state = { path = "../agentspace-state" }
 
-# Only the Windows half uses these (src/win/), the only modules with unsafe code. windows-sys is the
-# version the workspace's other crates use; windows is the exact pin every v0.06-T02 story uses for
-# COM, here WMI's Win32_Process.Create.
+# Only the Windows half uses this (src/win/), the only modules with unsafe code. windows-sys is the
+# version the workspace's other crates use. WMI's call, and the windows crate it needs, are
+# agentspace-detach's.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
     "Wdk_System_Threading",
@@ -39,14 +41,6 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_System_JobObjects",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
-] }
-windows = { version = "=0.62.2", features = [
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_Ole",
-    "Win32_System_Rpc",
-    "Win32_System_Variant",
-    "Win32_System_Wmi",
 ] }
 
 [dev-dependencies]

@@ -27,7 +27,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Once, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -69,108 +69,25 @@ pub fn stub_command(name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The environment of the spec process
+// The environment of a pass process
 // ---------------------------------------------------------------------------------------------
 
 /// The variable that a start MUST NOT carry to the holder (keeper.md, Streams and environment).
 pub const PROBE_VAR: &str = "AGENTSPACE_SPEC_PROBE";
 
-/// The throwaway home of this spec process: `agentspace-launch-spec-home-<pid>-<ms>` under the
-/// temp folder. One per process, since the environment that names it is the process's.
-fn home() -> &'static PathBuf {
-    static HOME: OnceLock<PathBuf> = OnceLock::new();
-    HOME.get_or_init(|| {
-        std::env::temp_dir().join(format!(
-            "agentspace-launch-spec-home-{}-{}",
-            std::process::id(),
-            now_ms()
-        ))
-    })
-}
-
-/// The folders of the throwaway home the environment names: the home itself, `LOCALAPPDATA`,
-/// `APPDATA` and `AGENTSPACE_STATE_DIR`.
-fn home_folders() -> [PathBuf; 4] {
-    let home = home();
-    [
-        home.clone(),
-        home.join("local"),
-        home.join("roaming"),
-        home.join("state-probe"),
-    ]
-}
-
-/// How many specs of this process use the throwaway home now.
-static HOME_USERS: Mutex<usize> = Mutex::new(0);
-
-/// A spec's use of the throwaway home. The folders are there while any spec of the process holds
-/// one, and **the last one dropped removes the home**, so a run leaves no
-/// `agentspace-launch-spec-home-*` folder behind. A `Fixture` holds one, and drops it only after it
-/// has ended every process the spec started, since a field is dropped after its owner's `drop`.
-pub struct HomeGuard(());
-
-impl HomeGuard {
-    pub fn new() -> HomeGuard {
-        init();
-        let mut users = HOME_USERS.lock().unwrap_or_else(|e| e.into_inner());
-        for d in home_folders() {
-            fs::create_dir_all(&d).expect("The throwaway home can be made.");
-        }
-        *users += 1;
-        HomeGuard(())
-    }
-}
-
-impl Drop for HomeGuard {
-    fn drop(&mut self) {
-        let mut users = HOME_USERS.lock().unwrap_or_else(|e| e.into_inner());
-        *users = users.saturating_sub(1);
-        if *users > 0 {
-            return;
-        }
-        // Still under the lock, so a spec that starts now waits, then makes the folders again.
-        let home = home();
-        for _ in 0..20 {
-            if fs::remove_dir_all(home).is_ok() || !home.exists() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    }
-}
-
-/// Points `USERPROFILE`, `HOME`, `LOCALAPPDATA` and `APPDATA` of this spec process into a
-/// throwaway home (AGENTSPACE rules for a test that runs a program in process), and sets two
-/// variables that only the keeper's environment has: `AGENTSPACE_STATE_DIR` and a probe. The
-/// folders themselves are made and removed by `HomeGuard`.
+/// Makes the spec process handle Ctrl+C normally, once. A harness may start this process with
+/// Ctrl+C ignored, which every child would inherit and which would hide what a new process group
+/// does, so that only a process started in a new group has it ignored. It changes no variable:
+/// **a spec MUST NOT change its own process's environment** (#0137). What a process needs in its
+/// environment it is given when it is started: `Fixture::pass_environment`.
 pub fn init() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let [home, local, roaming, state] = home_folders();
-        // SAFETY: Called once, before any spec of this binary starts a thread that reads the
-        // environment: every spec calls `init` first, through its `Fixture`.
-        unsafe {
-            std::env::set_var("USERPROFILE", &home);
-            std::env::set_var("HOME", &home);
-            std::env::set_var("LOCALAPPDATA", &local);
-            std::env::set_var("APPDATA", &roaming);
-            std::env::set_var("AGENTSPACE_STATE_DIR", &state);
-            std::env::set_var(PROBE_VAR, "1");
-        }
-        // A harness may start this process with Ctrl+C ignored, which every child would inherit and
-        // which would hide what a new process group does. Handle Ctrl+C normally again, so that
-        // only a process started in a new group has it ignored.
         // SAFETY: A plain Win32 call that takes no pointer.
         unsafe {
             windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 0);
         }
     });
-}
-
-/// What `USERPROFILE` of this spec process is, after `init`: the throwaway home.
-pub fn pass_userprofile() -> PathBuf {
-    init();
-    PathBuf::from(std::env::var_os("USERPROFILE").expect("USERPROFILE is set by init."))
 }
 
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -364,21 +281,22 @@ impl Reaper {
     }
 }
 
-/// A throwaway folder with a state folder and a home folder in it, and the guard that ends every
-/// process the spec started.
+/// A throwaway folder with a state folder and a home folder in it, a throwaway home for a pass
+/// process's environment, and the guard that ends every process the spec started.
 pub struct Fixture {
     pub root: PathBuf,
     pub state: PathBuf,
     pub profile: PathBuf,
+    /// The throwaway home that a pass process's `USERPROFILE` and `HOME` name, with `local`,
+    /// `roaming` and `state-probe` folders in it (`pass_environment`). It is inside `root`, so it
+    /// is removed with it.
+    pub home: PathBuf,
     pub reaper: Reaper,
-    /// The spec's use of the process's throwaway home, dropped after `drop` below has ended the
-    /// spec's processes.
-    _home: HomeGuard,
 }
 
 impl Fixture {
     pub fn new(tag: &str) -> Fixture {
-        let home = HomeGuard::new();
+        init();
         static N: AtomicU32 = AtomicU32::new(0);
         let root = std::env::temp_dir().join(format!(
             "agentspace-launch-spec-{tag}-{}-{}-{}",
@@ -388,15 +306,38 @@ impl Fixture {
         ));
         let state = root.join("state");
         let profile = root.join("profile");
-        fs::create_dir_all(&state).expect("The state folder can be made.");
-        fs::create_dir_all(&profile).expect("The home folder can be made.");
+        let home = root.join("pass-home");
+        for folder in [
+            &state,
+            &profile,
+            &home,
+            &home.join("local"),
+            &home.join("roaming"),
+            &home.join("state-probe"),
+        ] {
+            fs::create_dir_all(folder).expect("A throwaway folder can be made.");
+        }
         Fixture {
             root,
             state,
             profile,
+            home,
             reaper: Reaper::default(),
-            _home: home,
         }
+    }
+
+    /// Gives a process that is about to be started the environment a keeper's pass has, as
+    /// values of that child alone: `USERPROFILE`, `HOME`, `LOCALAPPDATA` and `APPDATA` in the
+    /// throwaway home, and the two variables that only the keeper's environment has,
+    /// `AGENTSPACE_STATE_DIR` and the probe. This spec process's own environment is not changed.
+    pub fn pass_environment<'a>(&self, command: &'a mut Command) -> &'a mut Command {
+        command
+            .env("USERPROFILE", &self.home)
+            .env("HOME", &self.home)
+            .env("LOCALAPPDATA", self.home.join("local"))
+            .env("APPDATA", self.home.join("roaming"))
+            .env("AGENTSPACE_STATE_DIR", self.home.join("state-probe"))
+            .env(PROBE_VAR, "1")
     }
 
     pub fn log(&self) -> PathBuf {
@@ -882,6 +823,56 @@ pub fn holder_of(out: Started) -> HolderRecord {
     }
 }
 
+/// Runs the real starter once, as the stand-in holder `stub`, in a process of its own that has the
+/// environment of a keeper's pass (`Fixture::pass_environment`) as values given to it when it is
+/// started, and not in this spec process, whose environment a spec MUST NOT change (#0137). That
+/// process is the spec binary run again as `pass_helper`. The holder's PID and creation time are
+/// returned and told to the fixture's reaper, and so is any holder the pass's result names when
+/// the start fails.
+pub fn start_in_pass_process(fx: &Fixture, stub: &str) -> Result<(u32, String), String> {
+    let report_path = fx.root.join(format!("pass-report-{}.txt", now_ms()));
+    let mut command = Command::new(stub_exe());
+    command
+        .raw_arg(stub_args("pass_helper"))
+        .env("SPEC_STATE", &fx.state)
+        .env("SPEC_PROFILE", &fx.profile)
+        .env("SPEC_STUB", stub)
+        .env("SPEC_REPORT", &report_path)
+        .current_dir(&fx.profile)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    fx.pass_environment(&mut command);
+    let mut watch = DirWatch::start(&fx.state, &fx.reaper);
+    let mut child = command
+        .spawn()
+        .map_err(|_| "The pass's process could not be started.".to_string())?;
+    let report = wait_for(Duration::from_secs(90), || {
+        fs::read_to_string(&report_path).ok()
+    });
+    if wait_for(Duration::from_secs(20), || child.try_wait().ok().flatten()).is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    watch.stop();
+    let report = report.ok_or_else(|| "The pass's process gave no report.".to_string())?;
+    if let Some(why) = report.lines().find_map(|l| l.strip_prefix("failed=")) {
+        return Err(why.to_string());
+    }
+    let line = report
+        .lines()
+        .find_map(|l| l.strip_prefix("holder="))
+        .ok_or_else(|| "The pass's report names no holder.".to_string())?;
+    let (pid, started) = line
+        .split_once(' ')
+        .ok_or_else(|| "The pass's report names no start time.".to_string())?;
+    let pid: u32 = pid
+        .parse()
+        .map_err(|_| "The pass's report names no process ID.".to_string())?;
+    fx.reaper.track(pid, started);
+    Ok((pid, started.to_string()))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Files with chosen share modes, and the inheritable handles of the spec process
 // ---------------------------------------------------------------------------------------------
@@ -1055,11 +1046,26 @@ pub fn control_report(
     stdin: Stdio,
     expect: &str,
 ) -> HashMap<String, String> {
+    control_report_in(fx, flags, stdin, expect, false)
+}
+
+/// The same, and with `with_pass_environment` the control is given the pass's environment
+/// (`Fixture::pass_environment`) as values of its own, the way a pass process has it. A holder
+/// that sees a variable of the pass reports it, which is how a check on the holder's environment
+/// is shown to be able to see one.
+pub fn control_report_in(
+    fx: &Fixture,
+    flags: u32,
+    stdin: Stdio,
+    expect: &str,
+    with_pass_environment: bool,
+) -> HashMap<String, String> {
     use std::os::windows::process::CommandExt;
     let out = fx.root.join(format!("control-{}.txt", now_ms()));
     let file = File::create(&out).expect("The control's output file can be made.");
     let _ = fs::write(fx.profile.join("spec-expect.txt"), expect);
-    let child = Command::new(stub_exe())
+    let mut command = Command::new(stub_exe());
+    command
         .raw_arg(stub_args("stub_report"))
         .current_dir(&fx.profile)
         .stdin(stdin)
@@ -1067,7 +1073,11 @@ pub fn control_report(
             file.try_clone().expect("The file can be cloned."),
         ))
         .stderr(Stdio::from(file))
-        .creation_flags(flags)
+        .creation_flags(flags);
+    if with_pass_environment {
+        fx.pass_environment(&mut command);
+    }
+    let child = command
         .spawn()
         .expect("The control stand-in can be started.");
     let pid = child.id();
@@ -1334,4 +1344,35 @@ pub fn job_helper() {
     fs::rename(&tmp, &report_path).expect("The report can be put in place.");
     std::thread::sleep(Duration::from_secs(90));
     drop(control);
+}
+
+/// The pass of `start_in_pass_process`: it starts one holder, the stand-in named by `SPEC_STUB`,
+/// through the real starter, writes what it made to the report file, and exits. It reads its paths
+/// from variables only it was given, and the environment it runs in is the one its spec gave it.
+#[test]
+#[ignore = "The process a spec starts as a pass; it is started by that spec."]
+pub fn pass_helper() {
+    let text_of = |k: &str| std::env::var(k).expect("The spec gave this variable.");
+    let (state, profile, report_path, stub) = (
+        PathBuf::from(text_of("SPEC_STATE")),
+        PathBuf::from(text_of("SPEC_PROFILE")),
+        PathBuf::from(text_of("SPEC_REPORT")),
+        text_of("SPEC_STUB"),
+    );
+    let (exe, testhost) = (stub_exe(), testhost());
+    let req = StartRequest {
+        state_dir: &state,
+        profile: &profile,
+        ssh_exe: &exe,
+        lease_id: LEASE,
+        alias: ALIAS,
+        own_exe: &testhost,
+    };
+    let text = match agentspace_launch::WmiStarter::new().start(&req, &FakeMatcher::stub(&stub)) {
+        Started::Holder(rec) => format!("holder={} {}\n", rec.pid, rec.process_started_at),
+        Started::Failed(why) => format!("failed={why}\n"),
+    };
+    let tmp = report_path.with_extension("tmp");
+    fs::write(&tmp, text).expect("The report can be written.");
+    fs::rename(&tmp, &report_path).expect("The report can be put in place.");
 }

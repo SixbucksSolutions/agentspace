@@ -23,8 +23,8 @@ use agentspace_keeper_files::{
 };
 use agentspace_launch::run_launcher;
 use common::{
-    Fixture, format_ms7, look, now_ms, pass_userprofile, read_text, report, running, same_path,
-    stub_command, stub_exe, wait_for,
+    Fixture, format_ms7, look, now_ms, read_text, report, running, same_path, stub_command,
+    stub_exe, wait_for,
 };
 
 const DEADLINE_ERROR: &str =
@@ -97,7 +97,7 @@ fn the_launcher_claims_starts_the_holder_and_answers_with_what_it_read_back() {
     let req = make(&fx, "aa01", "stub_report", in_30_seconds());
     std::fs::write(
         req.profile.join("spec-expect.txt"),
-        pass_userprofile().to_string_lossy().as_bytes(),
+        fx.home.to_string_lossy().as_bytes(),
     )
     .expect("The expectation file can be made.");
     std::fs::write(&req.log, b"OLD LINE\n").expect("The log exists before the start.");
