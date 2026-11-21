@@ -328,6 +328,27 @@ pub fn push_to_host(
     host: Option<&str>,
 ) {
     let lookup: Arc<Lookup> = Arc::new(|name| std::env::var_os(name));
+    push_to_host_using(ctx, say, instance_id, alias, forced, host, lookup, &|ssh| {
+        ssh
+    });
+}
+
+/// [`push_to_host`] over an injectable look-up of the environment, as [`push_using_with_host`] is to
+/// [`push_using_with`], and with `configure` given the push's [`SystemSsh`] before it is used. It
+/// never fails a command: a panic anywhere in the push, which it is not meant to have, becomes the
+/// "Could not send" warning, and the returned [`Outcome`] is then `None`. `push_to_host` builds the
+/// process's look-up and calls this, so a test reaches `host` through here.
+#[allow(clippy::too_many_arguments)]
+pub fn push_to_host_using(
+    ctx: &Context,
+    say: &dyn Say,
+    instance_id: &str,
+    alias: &str,
+    forced: bool,
+    host: Option<&str>,
+    lookup: Arc<Lookup>,
+    configure: &dyn Fn(SystemSsh) -> SystemSsh,
+) -> Option<Outcome> {
     let pushed = std::panic::catch_unwind(AssertUnwindSafe(|| {
         push_using_with_host(
             ctx,
@@ -336,11 +357,15 @@ pub fn push_to_host(
             alias,
             forced,
             lookup,
-            &|ssh| ssh,
+            configure,
             host,
         )
     }));
-    if pushed.is_err() {
-        let _ = std::panic::catch_unwind(AssertUnwindSafe(|| say.warning(COULD_NOT_SEND)));
+    match pushed {
+        Ok(outcome) => Some(outcome),
+        Err(_) => {
+            let _ = std::panic::catch_unwind(AssertUnwindSafe(|| say.warning(COULD_NOT_SEND)));
+            None
+        }
     }
 }

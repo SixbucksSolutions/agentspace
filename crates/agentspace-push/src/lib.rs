@@ -19,9 +19,10 @@
 //! - [`push`]: one push as the operator runs it, never failing a command. [`push_using`] is the
 //!   same over an injectable look-up of the environment, and returns its [`Outcome`].
 //! - [`push_with`]: one push, start to end, never failing; returns its [`Outcome`].
-//! - For a host other than the box (v0.07): [`push_to_host`], [`push_using_with_host`] and
-//!   [`push_with_host`] are the same three with a `host: Option<&str>`, `None` for the box and
-//!   `Some(project)` for another host, which keeps its own stamp ([`stamp_path_for`]).
+//! - For a host other than the box (v0.07): [`push_to_host`], [`push_to_host_using`],
+//!   [`push_using_with_host`] and [`push_with_host`] are the push's entry points over a
+//!   `host: Option<&str>`, `None` for the box and `Some(project)` for another host, which keeps its
+//!   own stamp ([`stamp_path_for`]). A project that is not [`host_name_is_valid`] is refused.
 //! - [`Seams`], holding the three traits and the zone: [`Files`] (with [`FileRead`], and
 //!   [`StdFiles`], a portable `Files` that T02 MAY use or replace), [`Unprotect`] and [`SshRun`]
 //!   (with [`SshResult`]).
@@ -33,7 +34,7 @@
 //!   [`parse_stamp_file`] and [`stamp_file_bytes`]; [`alias_is_valid`], [`remote_command`] and
 //!   [`ssh_args`].
 //! - The warnings' texts, as a person's command prints them: [`COULD_NOT_READ`], [`NO_ZONE`],
-//!   [`TIMED_OUT`], [`NOT_CONFIRMED`], [`zone_not_taken`], [`COULD_NOT_SEND`] and [`BAD_ALIAS`];
+//!   [`TIMED_OUT`], [`NOT_CONFIRMED`], [`zone_not_taken`], [`COULD_NOT_SEND`], [`BAD_ALIAS`] and [`BAD_HOST`];
 //!   and the progress line [`SENDING`]. In caller mode, [`Say`] rewrites `the instance`.
 //!
 //! The zone is `agentspace-zone`'s: [`Seams::zone`] gives it already mapped and checked, and this
@@ -76,7 +77,7 @@ pub use receipt::{Receipt, parse_receipt};
 pub use stamp::{content, parse_stamp_file, stamp, stamp_file_bytes};
 pub use system::{
     DpapiUnprotect, Lookup, SSH_LIMIT, STDOUT_WAIT, SystemFiles, SystemSsh, push, push_to_host,
-    push_using, push_using_with, push_using_with_host,
+    push_to_host_using, push_using, push_using_with, push_using_with_host,
 };
 pub use zeroize::Zeroizing;
 pub use zone::check_zone;
@@ -103,6 +104,11 @@ pub const COULD_NOT_SEND: &str = "agentspace: Could not send the localswim token
 /// An alias that breaks `-Alias`'s rule and still reached the push, by any path but the command
 /// line (architect, 2026-11-19, for E0.06-T01-S04).
 pub const BAD_ALIAS: &str = "agentspace: The SSH host alias for the localswim token is not valid; the board will not work on the box this session.";
+
+/// A host's name that is not the host registry's normalized form, which reached a push for a host
+/// (see [`host_name_is_valid`]). Its text names no path and no value.
+pub const BAD_HOST: &str =
+    "agentspace: The host's name is not valid; the board will not work on that host this session.";
 
 /// The warning for a zone the box did not take.
 pub fn zone_not_taken(zone: &str) -> String {
@@ -324,6 +330,9 @@ pub enum Outcome {
     /// The stored stamp matches: nothing sent, nothing printed.
     NotDue,
     /// [`BAD_ALIAS`]: an alias that breaks `-Alias`'s rule. Nothing read, no [`SENDING`] line.
+    /// Also [`BAD_HOST`]: a host's name that is not the registry's normalized form, which is the
+    /// same kind of skip (a name that breaks its rule, refused before anything is read or written),
+    /// so it has no outcome of its own (architect to confirm, E0.07-T02-S04 review).
     BadAlias,
     /// [`COULD_NOT_SEND`]: an ssh that could not be started, or a stamp that could not be written.
     CouldNotSend,
@@ -370,6 +379,11 @@ pub fn stamp_path(ctx: &Context) -> PathBuf {
 /// `%USERPROFILE%\.agentspace\localswim-pushed.json`. `Some(project)` is that host's,
 /// `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json`. `AGENTSPACE_STATE_DIR` moves
 /// neither. A push for a host MUST read and write its own stamp alone, never the box's.
+///
+/// **The caller MUST pass a normalized project** ([`host_name_is_valid`]): this function does no
+/// check, and a project such as `..` or the empty string resolves to the box's stamp or into
+/// `hosts\` itself. The push entry points that take a host ([`push_with_host`] and the ones built on
+/// it) refuse any other name before they call it.
 pub fn stamp_path_for(ctx: &Context, host: Option<&str>) -> PathBuf {
     let agentspace = ctx.home.join(".agentspace");
     match host {
@@ -379,6 +393,18 @@ pub fn stamp_path_for(ctx: &Context, host: Option<&str>) -> PathBuf {
             .join(project)
             .join("localswim-pushed.json"),
     }
+}
+
+/// Whether `project` is the host registry's normalized form, `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`
+/// with no trailing newline: 1 to 32 bytes of lowercase ASCII letters, digits and hyphens, that
+/// neither begin nor end with a hyphen. A project name MUST pass this before it is a folder name.
+pub fn host_name_is_valid(project: &str) -> bool {
+    let bytes = project.as_bytes();
+    let edge = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    let (Some(&first), Some(&last)) = (bytes.first(), bytes.last()) else {
+        return false;
+    };
+    bytes.len() <= 32 && edge(first) && edge(last) && bytes.iter().all(|&b| edge(b) || b == b'-')
 }
 
 /// The receipt, the token, and so the content; `Err` is the outcome when they cannot be had.
@@ -434,7 +460,8 @@ pub fn push_with(
 /// [`push_with`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or
 /// `Some(project)` for another host, whose own stamp ([`stamp_path_for`]) is the only one the push
 /// reads and writes, its folder created if missing. Nothing else in the push changes (architect,
-/// 2026-11-20, for v0.07-T02).
+/// 2026-11-20, for v0.07-T02). A `project` that is not [`host_name_is_valid`] is refused first:
+/// the [`BAD_HOST`] warning, [`Outcome::BadAlias`], and nothing read or written.
 pub fn push_with_host(
     ctx: &Context,
     say: &dyn Say,
@@ -453,6 +480,12 @@ pub fn push_with_host(
     // `AGENTSPACE_NESTED` stops `up`'s push alone: `sync`'s forced push runs whatever it says.
     if ctx.nested && !forced {
         return Outcome::Nested;
+    }
+    // A host whose name is not the registry's normalized form is refused before anything is read
+    // or written: its name would otherwise reach a folder name (`..` is the box's stamp, the empty
+    // name is `hosts\` itself).
+    if host.is_some_and(|project| !host_name_is_valid(project)) {
+        return warn(BAD_HOST, Outcome::BadAlias);
     }
     // An alias that breaks `-Alias`'s rule, if one ever reaches the push, warns its own fixed
     // text, with no `Sending` line, and skips (the same ruling).

@@ -66,11 +66,19 @@ fn no_file_of_the_crate_changes_the_process_environment() {
         files_under(&dir, &mut files);
         assert!(!files.is_empty(), "The scan found no file under {name}");
         let found = offenders(&dir);
+        // The first offender as a path relative to the crate's folder and its line number: an
+        // absolute path holds the user's name, which a failure message MUST NOT print.
+        let first = found.first().map(|(path, line)| {
+            let relative = path
+                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(path.as_path());
+            format!("{}:{line}", relative.display())
+        });
         assert!(
             found.is_empty(),
-            "{} line(s) under {name} change the process environment, first at {:?}",
+            "{} line(s) under {name} change the process environment, first at {}",
             found.len(),
-            found.first()
+            first.unwrap_or_default()
         );
     }
 }

@@ -6,7 +6,7 @@
 
 mod win_support;
 
-use agentspace_push::{Context, stamp_path, stamp_path_for};
+use agentspace_push::{BAD_HOST, Context, Outcome, stamp_path, stamp_path_for};
 use std::path::PathBuf;
 use win_support::*;
 
@@ -154,4 +154,114 @@ fn a_host_stamp_that_cannot_be_written_warns_could_not_send_and_leaves_the_boxs_
     rig.push_for(&say, DEFAULT_ALIAS, false, Some("alpha"));
     assert_warnings(&say, &[COULD_NOT_SEND], "A stamp that cannot be written");
     assert!(rig.stamp_bytes().is_none(), "The box's stamp was written");
+}
+
+#[test]
+fn push_to_host_gives_the_host_to_the_push_and_leaves_the_boxs_stamp_alone() {
+    let rig = Rig::new();
+    let say = FakeSay::person();
+    let outcome = rig.push_to_host(&say, DEFAULT_ALIAS, false, Some("alpha"));
+    assert_eq!(outcome, Some(Outcome::Pushed));
+    assert_eq!(rig.calls(), 1, "The push for a host sent nothing");
+    assert_eq!(
+        std::fs::read(host_stamp(&rig, "alpha")).ok(),
+        Some(rig.expected_stamp_file(DEFAULT_ZONE)),
+        "The host's stamp is not the expected one"
+    );
+    assert!(rig.stamp_bytes().is_none(), "The box's stamp was written");
+    // And `None` is the box's.
+    let boxs = FakeSay::person();
+    assert_eq!(
+        rig.push_to_host(&boxs, DEFAULT_ALIAS, true, None),
+        Some(Outcome::Pushed)
+    );
+    assert!(rig.stamp_matches(DEFAULT_ZONE), "The box's stamp is wrong");
+}
+
+/// Every file and folder under `dir`, as paths relative to it, sorted.
+fn tree(dir: &std::path::Path) -> Vec<PathBuf> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            out.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+            if path.is_dir() {
+                walk(root, &path, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
+#[test]
+fn a_name_that_is_not_the_registrys_normalized_form_is_refused_and_writes_nothing() {
+    let long = "a".repeat(33);
+    for bad in [
+        "..",
+        ".",
+        "",
+        "A",
+        "a/b",
+        "a\\b",
+        "-a",
+        "a-",
+        "a b",
+        "a\n",
+        "a.b",
+        "\u{e9}",
+        long.as_str(),
+    ] {
+        let rig = Rig::new();
+        let before = tree(&rig.home);
+        let say = FakeSay::person();
+        let outcome = rig.push_to_host(&say, DEFAULT_ALIAS, false, Some(bad));
+        assert_eq!(
+            outcome,
+            Some(Outcome::BadAlias),
+            "A bad name was not refused (length {})",
+            bad.len()
+        );
+        assert_eq!(rig.calls(), 0, "A push was sent for a bad name");
+        assert_warnings(&say, &[BAD_HOST], "A bad host name");
+        assert_eq!(
+            tree(&rig.home),
+            before,
+            "The throwaway home changed for a bad name (length {})",
+            bad.len()
+        );
+        assert!(rig.stamp_bytes().is_none(), "The box's stamp was written");
+        // The lower entry refuses it too.
+        let direct = FakeSay::person();
+        rig.push_for(&direct, DEFAULT_ALIAS, false, Some(bad));
+        assert_eq!(rig.calls(), 0);
+        assert_warnings(&direct, &[BAD_HOST], "A bad host name, direct");
+        assert_eq!(tree(&rig.home), before);
+    }
+}
+
+#[test]
+fn a_name_in_the_registrys_normalized_form_is_not_refused() {
+    let longest = "a".repeat(32);
+    for good in ["a", "0", "alpha", "a-b", "a--b", "9z", longest.as_str()] {
+        let rig = Rig::new();
+        let say = FakeSay::person();
+        let outcome = rig.push_to_host(&say, DEFAULT_ALIAS, false, Some(good));
+        assert_eq!(
+            outcome,
+            Some(Outcome::Pushed),
+            "A valid name was refused (length {})",
+            good.len()
+        );
+    }
+}
+
+#[test]
+fn the_warning_for_a_bad_name_names_no_path() {
+    assert!(BAD_HOST.starts_with("agentspace: The host's name is not valid"));
+    assert!(!BAD_HOST.contains('\\') && !BAD_HOST.contains('/'));
 }

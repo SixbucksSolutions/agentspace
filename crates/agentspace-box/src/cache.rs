@@ -47,6 +47,21 @@ pub fn read_cache(path: &Path, read: impl Into<CacheRead>) -> Result<Option<Stri
 }
 
 /// The cache file, as the program reads and writes it.
+///
+/// **A caller that backs it with `hosts.json`'s `instance_id`** (v0.07-T03; D45, operator.md, The
+/// instance ID) MUST read and validate the registry itself, before [`instance_id`] calls
+/// [`read`](InstanceIdCache::read), and MUST let a registry that is not valid fail the command with
+/// the registry's own message, never through this trait. Its `read` MUST then return only
+/// [`CacheRead::Missing`], for a host whose record holds no `instance_id`, or
+/// `CacheRead::Bytes(cache_bytes(id))`, for one that does. **It MUST NOT return
+/// [`CacheRead::Unopenable`]**: its message ([`cache_unreadable`]) tells a person to remove the
+/// cache file, which MUST NEVER be said of `hosts.json`.
+///
+/// **Its `write`, for a ProxyCommand, MUST swallow its own failure** and return `Ok(())`: a write of
+/// the ProxyCommand's that fails does not fail the connection, which uses the ID it read
+/// (operator.md, The ProxyCommand's `up` writes only that). [`instance_id`] turns any `Err` a
+/// `write` returns into a failed command, so a backing that returns one for a ProxyCommand fails
+/// the connection the specification says it keeps.
 pub trait InstanceIdCache {
     /// The cache's full path, which FA-16's message names.
     fn path(&self) -> &Path;

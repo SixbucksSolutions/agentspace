@@ -542,6 +542,52 @@ impl Rig {
         host: Option<&str>,
     ) -> Duration {
         let ctx = self.context();
+        let (lookup, setup) = self.lookup_and_setup();
+        let started = Instant::now();
+        agentspace_push::push_using_with_host(
+            &ctx,
+            say,
+            INSTANCE,
+            alias,
+            forced,
+            lookup,
+            &|ssh| ssh.with_command_setup(setup.clone()),
+            host,
+        );
+        started.elapsed()
+    }
+
+    /// Runs the push through `push_to_host_using`, the entry `push_to_host` calls, for `host`
+    /// (`None` is the box), and gives what it returned: `None` when the push panicked.
+    pub fn push_to_host(
+        &self,
+        say: &FakeSay,
+        alias: &str,
+        forced: bool,
+        host: Option<&str>,
+    ) -> Option<agentspace_push::Outcome> {
+        let ctx = self.context();
+        let (lookup, setup) = self.lookup_and_setup();
+        agentspace_push::push_to_host_using(
+            &ctx,
+            say,
+            INSTANCE,
+            alias,
+            forced,
+            host,
+            lookup,
+            &|ssh| ssh.with_command_setup(setup.clone()),
+        )
+    }
+
+    /// The push's look-up of the environment, answering from this rig's variables, and the setup
+    /// that starts the stand-in with them in the rig's working folder.
+    fn lookup_and_setup(
+        &self,
+    ) -> (
+        Arc<agentspace_push::Lookup>,
+        impl Fn(&mut Command) + Clone + Send + Sync + 'static,
+    ) {
         let (own, child_env, work) = (self.env.clone(), self.env.clone(), self.work.clone());
         let lookup: Arc<agentspace_push::Lookup> = Arc::new(move |name| {
             own.iter()
@@ -557,18 +603,7 @@ impl Rig {
                 };
             }
         };
-        let started = Instant::now();
-        agentspace_push::push_using_with_host(
-            &ctx,
-            say,
-            INSTANCE,
-            alias,
-            forced,
-            lookup,
-            &|ssh| ssh.with_command_setup(setup.clone()),
-            host,
-        );
-        started.elapsed()
+        (lookup, setup)
     }
 
     /// A push over the default alias, not forced, with a fresh person's `Say`.
