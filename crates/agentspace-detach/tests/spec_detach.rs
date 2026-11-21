@@ -13,7 +13,9 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
 use agentspace_detach::{Detach, NoDetach};
 
@@ -57,6 +59,7 @@ impl Drop for Scratch {
 }
 
 /// Polls until the closure gives a value, or the deadline passes.
+#[cfg(windows)]
 fn wait_for<T>(limit: Duration, mut f: impl FnMut() -> Option<T>) -> Option<T> {
     let end = Instant::now() + limit;
     loop {
@@ -71,6 +74,7 @@ fn wait_for<T>(limit: Duration, mut f: impl FnMut() -> Option<T>) -> Option<T> {
 }
 
 /// The file's one line, once it holds a whole line.
+#[cfg(windows)]
 fn read_line_of(file: &Path) -> Option<String> {
     let text = std::fs::read_to_string(file).ok()?;
     if text.ends_with('\n') {
@@ -331,39 +335,126 @@ mod windows {
         );
     }
 
-    /// A pair whose value is empty means the variable is absent in the started process, even when
-    /// the logon environment holds it (docs/state.md, The provisioning run's start). Architect,
-    /// 2026-11-20, for v0.07-T02: if WMI can only set, a variable set and empty meets the rule, so
-    /// the file MUST say `unset` or `set:` (empty) and MUST NOT say `set:` with anything after it.
+    /// What the helper's one line says about a variable. A value is never kept, so a check can
+    /// report only a name and one of these.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Seen {
+        Set,
+        SetEmpty,
+        Unset,
+    }
+
+    impl Seen {
+        fn of(line: &str) -> Option<Seen> {
+            match line {
+                "unset" => Some(Seen::Unset),
+                "set:" => Some(Seen::SetEmpty),
+                other if other.starts_with("set:") => Some(Seen::Set),
+                _ => None,
+            }
+        }
+
+        fn label(self) -> &'static str {
+            match self {
+                Seen::Set => "set",
+                Seen::SetEmpty => "set-empty",
+                Seen::Unset => "unset",
+            }
+        }
+    }
+
+    /// Starts `write` of `var` through WmiDetach with `env` and says what the started program saw.
+    fn seen_in_started(tag: &str, var: &str, env: &[(&str, &OsStr)]) -> Seen {
+        let scratch = Scratch::new(tag);
+        let out = scratch.path().join("out.txt");
+        start_write(&helper(), &out, var, 0, &[], scratch.path(), env)
+            .unwrap_or_else(|_| panic!("The start for {var} is accepted ({tag})."));
+        let line = wait_for(Duration::from_secs(60), || read_line_of(&out))
+            .unwrap_or_else(|| panic!("The program checking {var} wrote its file ({tag})."));
+        Seen::of(&line)
+            .unwrap_or_else(|| panic!("The program checking {var} wrote an unknown line ({tag})."))
+    }
+
+    /// Architect, 2026-11-20, for v0.07-T02: when a pair is passed, WmiDetach passes the whole
+    /// logon environment with it, so the variables every program needs are still there.
+    #[test]
+    fn path_and_systemroot_are_present_when_a_pair_is_passed() {
+        let (var, value) = unique("WHOLE");
+        for name in ["PATH", "SystemRoot"] {
+            let seen = seen_in_started(
+                &format!("whole-{name}"),
+                name,
+                &[(&var, OsStr::new(&value))],
+            );
+            assert!(
+                seen == Seen::Set,
+                "The variable {name} MUST be set and not empty in a program started with a pair, and was {}.",
+                seen.label()
+            );
+        }
+    }
+
+    /// Architect, 2026-11-20, for v0.07-T02: nothing of the starting process's own environment
+    /// reaches the started program (CreateEnvironmentBlock with bInherit FALSE).
+    ///
+    /// The started program checks one variable, and `detach` passes that same name as its pair, so
+    /// a planted variable set on a starting helper through Command::env cannot be checked absent
+    /// beside another pair. The starting process here is this test process itself, which MUST NOT
+    /// change its environment; it holds the variables cargo sets for a test run, and a logon
+    /// environment never holds them. Each is shown present here first, so the test cannot pass
+    /// because the variable was never there.
+    #[test]
+    fn a_variable_set_only_in_the_starting_process_is_absent_in_the_started_one() {
+        let (var, value) = unique("INHERIT");
+        for name in ["CARGO_PKG_NAME", "CARGO_MANIFEST_DIR"] {
+            assert!(
+                std::env::var_os(name).is_some(),
+                "The test process MUST hold the variable {name} for this test to show anything."
+            );
+            let with_pair = seen_in_started(
+                &format!("inherit-pair-{name}"),
+                name,
+                &[(&var, OsStr::new(&value))],
+            );
+            assert!(
+                with_pair == Seen::Unset,
+                "The starting process's variable {name} reached a program started with a pair (it was {}).",
+                with_pair.label()
+            );
+            let no_pair = seen_in_started(&format!("inherit-none-{name}"), name, &[]);
+            assert!(
+                no_pair == Seen::Unset,
+                "The starting process's variable {name} reached a program started with no pair (it was {}).",
+                no_pair.label()
+            );
+        }
+    }
+
+    /// Architect, 2026-11-20, for v0.07-T02: a pair with an empty value removes the variable the
+    /// logon environment holds (docs/state.md, The provisioning run's start). Removed means
+    /// unset, never set and empty. PATH cannot be planted in the logon environment by a test, so
+    /// the logon variable OS is used, with a control that it is there when another pair is passed.
     #[test]
     fn a_pair_with_an_empty_value_removes_the_variable_from_the_started_program() {
-        let scratch = Scratch::new("empty");
-        let control = scratch.path().join("control.txt");
-        let removed = scratch.path().join("removed.txt");
-        // The control: without the pair, OS is there, so the test can show a difference.
-        start_write(&helper(), &control, "OS", 0, &[], scratch.path(), &[])
-            .expect("The control start is accepted.");
-        start_write(
-            &helper(),
-            &removed,
-            "OS",
-            0,
-            &[],
-            scratch.path(),
-            &[("OS", OsStr::new(""))],
-        )
-        .expect("The start is accepted.");
-        let c = wait_for(Duration::from_secs(60), || read_line_of(&control))
-            .expect("The control wrote its file.");
+        let (var, value) = unique("EMPTY");
+        let control = seen_in_started("empty-control", "OS", &[(&var, OsStr::new(&value))]);
         assert!(
-            c.starts_with("set:"),
-            "The control holds OS, so the test shows something."
+            control == Seen::Set,
+            "The control needs the logon variable OS set and not empty with another pair passed, and it was {}.",
+            control.label()
         );
-        let r = wait_for(Duration::from_secs(60), || read_line_of(&removed))
-            .expect("The program wrote its file.");
+        let removed = seen_in_started("empty-removed", "OS", &[("OS", OsStr::new(""))]);
         assert!(
-            r == "unset" || r == "set:",
-            "The logon environment's variable OS reached the program as a non-empty value."
+            removed == Seen::Unset,
+            "The variable OS MUST be unset in a program started with an empty pair for it, and was {}.",
+            removed.label()
+        );
+        // Only the named variable goes: the rest of the logon environment stays.
+        let other = seen_in_started("empty-other", "PATH", &[("OS", OsStr::new(""))]);
+        assert!(
+            other == Seen::Set,
+            "The variable PATH MUST stay set when only OS is removed, and was {}.",
+            other.label()
         );
     }
 
