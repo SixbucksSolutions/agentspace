@@ -13,18 +13,29 @@ pub(crate) type HostKey = Option<String>;
 /// The registry, read whole, without its lock, from `<home>\.agentspace\hosts.json` (keeper.md,
 /// Hosts). A missing file is the box alone. The error is the `<error>` of keeper.md's reason
 /// `Host registry could not be read: <error>`.
+///
+/// A registry that is not valid by state.md's rules is `the host registry is not valid`. One that
+/// cannot be opened or read (access denied, a folder at its path) MUST NOT be reported as not
+/// valid: it is `the host registry could not be read: Windows error <n>.`, the number alone, never
+/// the system's localized text (keeper.md, Hosts; architect, 2026-11-21, for v0.07-T03, on
+/// #0154's review).
 pub(crate) fn read_registry(home: &Path) -> Result<Hosts, String> {
     agentspace_hosts::read(home).map_err(|e| match e {
-        // A file that is not valid, and something there that is not a file or cannot be opened
-        // or read, which every reader treats as a file that is not valid (state.md, The host
-        // registry).
-        // Architect's to confirm: both read as exactly `the host registry is not valid`, keeper.md's
-        // `<error>` for a file state.md calls not valid, so the line says nothing more of why.
-        HostsError::NotValid(_) | HostsError::Unreadable(_) => {
-            "the host registry is not valid".to_string()
-        }
+        HostsError::NotValid(_) => "the host registry is not valid".to_string(),
+        HostsError::Unreadable(_) => unreadable_error(home),
         other => other.to_string(),
     })
+}
+
+/// The `<error>` of a registry that could not be opened or read. agentspace-hosts' read keeps no
+/// system error number, so the file is opened once more, read-only, for it; `0` stands in should
+/// that open now succeed or give no number, since the text MUST NOT carry the system's message.
+fn unreadable_error(home: &Path) -> String {
+    let n = std::fs::read(agentspace_hosts::hosts_path(home))
+        .err()
+        .and_then(|e| e.raw_os_error())
+        .unwrap_or(0);
+    format!("the host registry could not be read: Windows error {n}.")
 }
 
 /// The box's project: the `project` of the registry's record whose stack is `agentbox`, which a
@@ -177,17 +188,46 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_registry_is_the_box_alone_and_a_folder_is_not_valid() {
+    fn a_missing_registry_is_the_box_alone() {
         let home = tempfile::Builder::new()
             .prefix("agentspace-keeper-unit-hosts-")
             .tempdir()
             .expect("A throwaway folder can be made");
         let hosts = read_registry(home.path()).expect("A missing registry is the seed");
         assert_eq!(hosts, Hosts::seed());
-        std::fs::create_dir_all(home.path().join(".agentspace").join("hosts.json")).unwrap();
+    }
+
+    /// keeper.md, Hosts: a registry that is not valid by state.md's rules is
+    /// `the host registry is not valid`.
+    #[test]
+    fn a_registry_that_is_not_valid_is_named_not_valid() {
+        let home = tempfile::Builder::new()
+            .prefix("agentspace-keeper-unit-hosts-")
+            .tempdir()
+            .expect("A throwaway folder can be made");
+        let dir = home.path().join(".agentspace");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("hosts.json"), b"not json").unwrap();
         assert_eq!(
             read_registry(home.path()),
             Err("the host registry is not valid".to_string())
+        );
+    }
+
+    /// keeper.md, Hosts: a registry that cannot be opened or read MUST NOT be called not valid; it
+    /// is named by the Windows error number alone (architect, 2026-11-21, for v0.07-T03).
+    #[cfg(windows)]
+    #[test]
+    fn a_registry_that_cannot_be_read_is_named_by_the_windows_error_number_alone() {
+        let home = tempfile::Builder::new()
+            .prefix("agentspace-keeper-unit-hosts-")
+            .tempdir()
+            .expect("A throwaway folder can be made");
+        // A folder where the file belongs: opening it is access denied.
+        std::fs::create_dir_all(home.path().join(".agentspace").join("hosts.json")).unwrap();
+        assert_eq!(
+            read_registry(home.path()),
+            Err("the host registry could not be read: Windows error 5.".to_string())
         );
     }
 

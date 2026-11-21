@@ -169,7 +169,12 @@ step 5), and a state folder that cannot be listed ([The hosts of a pass](#the-ho
   [state.md, The host registry](state.md#the-host-registry)'s rules: its bytes, its schema, and
   the rules beyond it, among them that a valid file holds exactly one record whose `stack` is
   `agentbox`, and that record's `project` is `swimcoach` (architect, 2026-11-20, for v0.07-T01).
-  Only a missing file reads as the box alone; a file that is not valid never does.
+  Only a missing file reads as the box alone; a file that is not valid never does. **Its `<error>`
+  is `the host registry is not valid` for a file that is not valid by those rules, and
+  `the host registry could not be read: Windows error <n>.` for one that is not a file or cannot
+  be opened or read**, the number alone, never the system's localized text, as a lock's and the
+  state folder's are; an unreadable registry MUST NOT be reported as not valid (architect,
+  2026-11-21, for v0.07-T03, on #0154's review).
 - **The box is the host whose record's `stack` is `agentbox`**, and its project is that record's
   `project`. Every other record names another host by its `project`. A host is never named by its
   stack or its instance in anything the keeper writes.
