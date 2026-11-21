@@ -81,6 +81,8 @@ try {
     $config = Join-Path $lab.SshDir 'config'
     [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $lab -Path $config), $original)
 
+    # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01).
+    [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'misplaced')
     $run = Invoke-UnmetLease $lab @('create', '--project', 'misplaced')
     $p = Get-UnmetErrorProblems -Run $run -Code 'internal' -Exit 1
     Add-UnmetResult -Name "$include`: An Include line below a Host line makes create fail with internal, exit 1, one error document and no stdout" -Problems $p

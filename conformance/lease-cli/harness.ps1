@@ -21,7 +21,21 @@
 #   Remove-ConformanceHome and Exit-ConformanceRun, plus Invoke-ConformanceProgram, which runs any
 #   program a conformance variable names, Assert-ConformancePath, which every write and delete a check
 #   makes MUST call as the path of that very call, and Assert-ConformanceHomeRoot, which guards the
-#   home's own creation and removal (E0.06-T04-S01, #0110).
+#   home's own creation and removal (E0.06-T04-S01, #0110). E0.07-T04-S01 (#0155) adds
+#   Add-ConformanceReadyHost, which seeds a home's host registry, and Get-ConformanceTripwireStarts,
+#   and gives every lease CLI run a default AGENTSPACE_PROVISION_CMD (below).
+#
+# The provisioning-run tripwire (E0.07-T04-S01, D48, D54; docs/driver.md, "Conformance cases for
+# v0.07", pin P12). Under D48 a lease CLI that places a lease for a project whose host is not ready can
+# start a provisioning run, and a run's default program is agentspace-operator.exe beside the CLI, which
+# in target\dist is the real operator, against the real AWS. So every lease CLI run the harness starts
+# (AGENTSPACE_CMD, through Invoke-AgentspaceCli or Invoke-ConformanceProgram) gets
+# AGENTSPACE_PROVISION_CMD set to a tripwire in the home, a .cmd that records its start beside itself
+# and exits 1 at once, unless the check names another value through -Environment. A check that
+# reaches a run on purpose MUST name its own stand-in. The tripwire is not given to the operator, the
+# ProxyCommand or the keeper, which never start a run, so that no other suite's view of its
+# environment changes. Remove-ConformanceHome reports FAIL when the tripwire was ever started, because
+# a check then reached a run it had not named a stand-in for.
 
 $script:ConformanceRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script:ConformanceSchemas = Join-Path $script:ConformanceRepo 'schemas'
@@ -86,6 +100,40 @@ function Get-ConformanceChildEnvironment {
     $env2[$key] = $Override[$key]
   }
   return $env2
+}
+
+# The provisioning-run tripwire's place: a folder in the home's root, outside the profile, so that no
+# file map of .agentspace or .ssh sees it. Both paths are derived from the root, so a home object that
+# was copied into another runspace needs no extra member.
+function Get-ConformanceTripwirePath {
+  param([Parameter(Mandatory)]$ConformanceHome)
+  Join-Path ([string]$ConformanceHome.Root) 'tripwire\provision-tripwire.cmd'
+}
+
+# Makes the tripwire if it is not there: a .cmd that appends one line to tripwire-started.txt beside
+# itself and exits 1 at once. It prints nothing, reads nothing and records no environment. Called by
+# New-ConformanceHome while it is the only code running, so that a check's parallel runspaces only ever
+# find it. The write is checked at the call.
+function Initialize-ConformanceTripwire {
+  param([Parameter(Mandatory)]$ConformanceHome)
+  $path = Get-ConformanceTripwirePath -ConformanceHome $ConformanceHome
+  if (Test-Path -LiteralPath $path -PathType Leaf) { return $path }
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path (Split-Path -Parent $path)) | Out-Null
+  $text = "@echo off`r`n" +
+    "rem A conformance check reached a provisioning run without naming its own stand-in.`r`n" +
+    "echo started>>`"%~dp0tripwire-started.txt`"`r`n" +
+    "exit /b 1`r`n"
+  [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path), [Text.Encoding]::ASCII.GetBytes($text))
+  return $path
+}
+
+# How many times the tripwire has been started in this home. A check that means to show that a run was
+# not started MAY use it, and Remove-ConformanceHome reports any start as a FAIL.
+function Get-ConformanceTripwireStarts {
+  param([Parameter(Mandatory)]$ConformanceHome)
+  $marker = Join-Path (Split-Path -Parent (Get-ConformanceTripwirePath -ConformanceHome $ConformanceHome)) 'tripwire-started.txt'
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return 0 }
+  return @([IO.File]::ReadAllLines($marker) | Where-Object { $_ -ne '' }).Count
 }
 
 # Starts a program as a separate process, captures its output as bytes, and returns the result.
@@ -178,7 +226,12 @@ function Invoke-ConformanceProgram {
       StdoutBytes = [byte[]]@(); StderrBytes = [byte[]]@(); TimedOut = $false; Json = $null; ErrorJson = $null
     }
   }
-  $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $ConformanceHome -Override $Environment
+  # The lease CLI, and only it, gets the provisioning-run tripwire unless the check names another
+  # value (a stand-in of its own, an empty value, or $null to remove the variable).
+  $runEnvironment = @{}
+  if ($Variable -ceq 'AGENTSPACE_CMD') { $runEnvironment['AGENTSPACE_PROVISION_CMD'] = Initialize-ConformanceTripwire -ConformanceHome $ConformanceHome }
+  foreach ($key in $Environment.Keys) { $runEnvironment[$key] = $Environment[$key] }
+  $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $ConformanceHome -Override $runEnvironment
   $splat = @{ FilePath = $program; Arguments = $Arguments; ChildEnvironment = $childEnv; TimeoutSeconds = $TimeoutSeconds }
   if ($PSBoundParameters.ContainsKey('InputJson')) { $splat['InputText'] = $InputJson }
   $r = Start-ConformanceProcess @splat
@@ -232,6 +285,8 @@ function New-ConformanceHome {
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $h.SshDir) | Out-Null
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $userProfile 'AppData\Local')) | Out-Null
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $userProfile 'AppData\Roaming')) | Out-Null
+    # The provisioning-run tripwire, made here while nothing else runs (see the header).
+    [void](Initialize-ConformanceTripwire -ConformanceHome $h)
     $r = Invoke-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD' -ConformanceHome $h -Arguments @('ca', '-Quiet') -TimeoutSeconds 120
   } catch {
     # The caller never gets the object, so it could not remove the folder: this MUST. The check that
@@ -260,6 +315,13 @@ function New-ConformanceHome {
 function Remove-ConformanceHome {
   param([Parameter(Mandatory)]$ConformanceHome)
   $root = Assert-ConformanceHomeRoot -Root ([string]$ConformanceHome.Root)
+  # A start of the provisioning-run tripwire means a check reached a run it had named no stand-in for.
+  # It is counted and reported by number alone: the tripwire records no argument or variable.
+  $starts = Get-ConformanceTripwireStarts -ConformanceHome $ConformanceHome
+  if ($starts -gt 0) {
+    Write-ConformanceResult -Name 'Remove-ConformanceHome: No provisioning run was started without a stand-in' -Status FAIL `
+      -Reason "A program started the provisioning-run tripwire $starts time(s): a check reached a run without naming its own AGENTSPACE_PROVISION_CMD stand-in"
+  }
   for ($try = 0; $try -lt 5 -and (Test-Path -LiteralPath $root); $try++) {
     try { Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root ([string]$ConformanceHome.Root)) -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 300 }
   }
@@ -291,6 +353,71 @@ function Assert-ConformancePath {
     if (($item.Attributes -band $reparse) -ne 0) { throw "Refusing a path through a junction or symbolic link: $step" }
   }
   return $full
+}
+
+# Seeds the home's host registry (docs/state.md, "The host registry") so that a lease CLI case that
+# places a lease for a project gets `ready` as before D54. Under D54 a home with no projects.json
+# answers `unsatisfiable` with `no_capacity` for a supported create of any project but swimcoach, whose
+# host is the box (a missing hosts.json reads as the box's record alone), so a case that expects
+# `ready` for project P needs a host record for P in state `ready`. Place reads a ready record's
+# `project`, `stack` and `state` alone and makes no AWS call, so the record carries no instance_id.
+# It never touches projects.json: a seeded record is not a project list entry.
+#
+# - Each name is normalized as the contract normalizes a project (trimmed, lower case) and MUST match
+#   the contract's pattern, or this throws, since it is the check's mistake and not the program's.
+# - The box, `swimcoach`, is skipped: its record is the seed, and a case about swimcoach's v0.06 bytes
+#   (C3) needs hosts.json absent, which this keeps. A project that already has a record keeps it as
+#   it is, whatever its state, so a case that seeded a `creating` record of its own is never undone.
+# - When nothing is added the file is not written. When it is, the whole document is written as
+#   state.md says (compact JSON, UTF-8 with no byte order mark, one LF), the box's record first, and
+#   checked against schemas/state/hosts.state.schema.json before it is written. An existing file that
+#   is not valid is never repaired: this throws.
+# - The write is checked at the call (Assert-ConformancePath). The path is %USERPROFILE%\.agentspace\
+#   hosts.json of the HOME, which AGENTSPACE_STATE_DIR does not move.
+# Returns the names it added, as an array (empty when none).
+function Add-ConformanceReadyHost {
+  param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][string[]]$Project)
+  $dir = Join-Path $ConformanceHome.UserProfile '.agentspace'
+  $path = Join-Path $dir 'hosts.json'
+  $records = [System.Collections.Generic.List[object]]::new()
+  if (Test-Path -LiteralPath $path -PathType Leaf) {
+    $text = [IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false))
+    $doc = ConvertFrom-ConformanceJson $text
+    if ($null -eq $doc -or -not (Test-ConformanceSchema -Json $text -Schema 'state/hosts.state.schema.json')) { throw 'Refusing to seed a hosts.json that is not valid.' }
+    # Each record is kept as it was read, its members written in the order of state.md's table.
+    foreach ($r in $doc['hosts']) {
+      $rec = [ordered]@{}
+      foreach ($m in 'project', 'stack', 'state', 'instance_id', 'last_attempt_at') { if ($r.ContainsKey($m)) { $rec[$m] = $r[$m] } }
+      $records.Add($rec)
+    }
+  } else {
+    $records.Add([ordered]@{ project = 'swimcoach'; stack = 'agentbox'; state = 'ready' })
+  }
+  $added = [System.Collections.Generic.List[string]]::new()
+  foreach ($name in $Project) {
+    $p = $name.Trim().ToLowerInvariant()
+    if ($p -cnotmatch '\A[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?\z') { throw "Refusing to seed a host for a project that is not a normalized project name: '$p'." }
+    if (@($records | Where-Object { $_['project'] -ceq $p }).Count -gt 0) { continue }
+    $records.Add([ordered]@{ project = $p; stack = "agentspace-host-$p"; state = 'ready' })
+    $added.Add($p)
+  }
+  if ($added.Count -eq 0) { return , @() }
+  $json = ConvertTo-Json -InputObject ([ordered]@{ version = 0; hosts = @($records) }) -Compress -Depth 10
+  if (-not (Test-ConformanceSchema -Json $json -Schema 'state/hosts.state.schema.json')) { throw 'The seeded hosts.json does not validate against its schema.' }
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $dir) | Out-Null
+  [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path), [Text.UTF8Encoding]::new($false).GetBytes($json + "`n"))
+  return , @($added)
+}
+
+# Removes the home's host registry, so that it reads as the box's record alone again (docs/state.md,
+# "The host registry": a missing hosts.json). For a check that needs a ready host only while it makes
+# its ready leases, and then needs the registry as an unseeded home has it: a `get` of a `pending` lease
+# whose project has a ready host starts a provisioning run (D48), which such a check is not about. It
+# deletes hosts.json and nothing else, checked at the call, and never hosts.lock.
+function Clear-ConformanceHosts {
+  param([Parameter(Mandatory)]$ConformanceHome)
+  $path = Join-Path $ConformanceHome.UserProfile '.agentspace\hosts.json'
+  if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $ConformanceHome -Path $path) -Force }
 }
 
 # Runs the lease CLI, the program AGENTSPACE_CMD names, inside a throwaway home. $Arguments reach it

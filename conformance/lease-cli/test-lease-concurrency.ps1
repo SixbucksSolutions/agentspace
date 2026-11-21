@@ -203,6 +203,11 @@ try {
       if (@($Results | Where-Object { -not $_.Arrived }).Count -ne 0) { $problems.Overlap.Add("$tag`: a process was not released with the others.") }
     }
 
+    # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01). Every project
+    # a ready create below uses gets one, once, before any process runs. The unsatisfiable creates
+    # (conc1..6, gatec, locked) are unsupported requests, which never reach the host registry.
+    [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'ready1', 'ready2', 'ready3', 'mixa', 'mixb', 'gatea', 'gateb', 'lockedready')
+
     # ---- A. Unsatisfiable creates and a reader ------------------------------------------------------
     $roundsA = 8
     for ($round = 1; $round -le $roundsA; $round++) {

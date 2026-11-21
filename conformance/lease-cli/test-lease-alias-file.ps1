@@ -167,6 +167,9 @@ try {
     # directives to the block (state.md, "The alias file"). It reaches the program through the variable
     # lease-api.md, "Environment", documents. create fails like any step that fails: with internal, and
     # leaving no lease folder, no alias file and no record (state.md, "Creation, in order").
+    # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01), so crlf's is
+    # seeded here, before the snapshots below.
+    [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'crlf')
     foreach ($bad in @(
         @{ Name = 'a line feed'; Value = "agentspace-conformance-proxy`nHost evil" },
         @{ Name = 'a carriage return'; Value = "agentspace-conformance-proxy`rHost evil" },
