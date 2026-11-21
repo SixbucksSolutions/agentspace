@@ -40,6 +40,8 @@
 # Output: PASS <check name>, FAIL <check name>: <reason>, then one summary line; exit 0 when every
 # check passed, 1 when any failed, 2 when none failed but any was skipped.
 # Run:  pwsh -NoProfile -File conformance\keeper\test-holder-environment.ps1
+param([ValidateSet('None', 'Box', 'Both')][string]$Registry = 'Both')
+
 $ErrorActionPreference = 'Stop'
 
 if (-not $IsWindows) {
@@ -49,6 +51,7 @@ if (-not $IsWindows) {
 }
 
 . (Join-Path $PSScriptRoot 'keeper-common.ps1')
+Initialize-KeeperRegistryMode $Registry $PSCommandPath $PSBoundParameters
 
 # Resolved before the case, which strips AGENTSPACE_* from the environment.
 $keeperCmd = Resolve-KeeperProgram
@@ -139,4 +142,6 @@ try {
 
 if ($leftBehind -eq 0) { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status PASS }
 else { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status FAIL -Reason "$leftBehind process(es) of this run were still running after the cleanup." }
+$lp = Get-LogLineProblems
+if ($lp.Checked -gt 0) { Write-ConformanceResult -Name "keeper.md#log-lines: The box's lines that name a holder carry host=swimcoach, and no other box line carries a host= field" -Status $(if ($lp.Problems.Count) { 'FAIL' } else { 'PASS' }) -Reason ($lp.Problems -join ' ') }
 Exit-ConformanceRun

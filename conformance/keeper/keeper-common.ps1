@@ -207,6 +207,7 @@ function New-CaseHome {
   $h = [pscustomobject]@{ Root = $temp; UserProfile = $userProfile; StateDir = Join-Path $dir 'state'; SshDir = Join-Path $userProfile '.ssh' }
   New-Item -ItemType Directory -Force -Path @($h.StateDir, $h.SshDir, (Join-Path $userProfile 'AppData\Local'), (Join-Path $userProfile 'AppData\Roaming') | ForEach-Object { Assert-ConformancePath -ConformanceHome $runHome -Path $_ }) | Out-Null
   Set-CaseEnvironment (Get-ConformanceChildEnvironment -ConformanceHome $h)
+  Write-CaseRegistry $h
   $h
 }
 
@@ -259,7 +260,9 @@ function Read-LogLines {
     # Shared the way a reader SHOULD share it (state.md, "The keeper's logs"), so a keeper that is writing is never blocked.
     $fs = [IO.File]::Open($p, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
     try { $text = [IO.StreamReader]::new($fs, [Text.UTF8Encoding]::new($false)).ReadToEnd() } finally { $fs.Dispose() }
-    , @($text -split "`r?`n" | Where-Object { $_ -ne '' })
+    $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
+    Register-LogLines $lines
+    , $lines
   } catch { , @() }
 }
 
@@ -521,4 +524,77 @@ function Find-LaunchSet([string[]]$Names) {
         }
     }
     return $null
+}
+
+# The registry modes (keeper.md, "Conformance cases for a host per project", H1). Every v0.06 case of
+# the keeper runs twice: with no registry (-Registry None), and with a registry that holds the box's
+# record alone, written by the case into <USERPROFILE>\.agentspace\hosts.json of its throwaway home
+# (-Registry Box). -Registry Both, the default of each keeper file, runs the file once for each mode
+# as two child processes and ends each result line with " [H1 registry=<mode>]", after the name (and
+# after the reason of a FAIL or SKIPPED line), so that a name still starts with the spec section it
+# enforces (conformance.md, the result-name rule).
+$script:registryMode = 'None'
+$script:boxRegistryJson = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}'
+
+# Called by each keeper file right after it dot-sources this one, with the file's own -Registry, its
+# $PSCommandPath and its $PSBoundParameters. For None or Box it sets the mode and returns; for Both it
+# runs the file once per mode, prints the combined summary line and exits with the worst code.
+function Initialize-KeeperRegistryMode([string]$Registry, [string]$File, [hashtable]$Bound) {
+  if ($Registry -ne 'Both') { $script:registryMode = $Registry; return }
+  $pass = 0; $fail = 0; $skip = 0; $code = 0
+  foreach ($mode in 'None', 'Box') {
+    $childArgs = @('-NoProfile', '-File', $File, '-Registry', $mode)
+    foreach ($k in $Bound.Keys) {
+      if ($k -eq 'Registry') { continue }
+      if ($Bound[$k] -is [System.Management.Automation.SwitchParameter]) { if ($Bound[$k].IsPresent) { $childArgs += "-$k" } }
+      else { $childArgs += "-$k"; $childArgs += [string]$Bound[$k] }
+    }
+    & (Join-Path $PSHOME 'pwsh.exe') @childArgs 2>&1 | ForEach-Object {
+      $line = [string]$_
+      if ($line -match '^(\d+) passed, (\d+) failed, (\d+) skipped$') { $pass += [int]$Matches[1]; $fail += [int]$Matches[2]; $skip += [int]$Matches[3] }
+      elseif ($line -match '^(PASS|FAIL|SKIPPED) ') { Write-Output "$line [H1 registry=$mode]" }
+      else { Write-Output $line }
+    }
+    $c = $LASTEXITCODE
+    if ($c -eq 1 -or ($c -ne 0 -and $c -ne 2)) { $code = 1 } elseif ($c -eq 2 -and $code -eq 0) { $code = 2 }
+  }
+  if ($pass + $fail + $skip -gt 0) { Write-Output "$pass passed, $fail failed, $skip skipped" }
+  exit $code
+}
+
+# With -Registry Box, writes the registry holding the box's record alone into the case's home, at the
+# path the keeper reads (keeper.md, Hosts). Each write is checked at the call.
+function Write-CaseRegistry($CaseHome) {
+  if ($script:registryMode -ne 'Box') { return }
+  $dir = Join-Path $CaseHome.UserProfile '.agentspace'
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $runHome -Path $dir) | Out-Null
+  [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path (Join-Path $dir 'hosts.json')), $script:boxRegistryJson + "`n")
+}
+
+# The box's log lines, line for line as v0.06 wrote them, but for " host=swimcoach" after pid=<pid> on
+# the lines that name a holder (started, kept, stopped, lost, and a failed that names a lease), whatever
+# the registry mode (keeper.md, Log lines; H1, H15). Every line Read-LogLines returns is registered, and
+# each file reports the problems at its end through Get-LogLineProblems.
+$script:logLinesChecked = 0
+$script:logLineProblems = [System.Collections.Generic.List[string]]::new()
+$script:logLinesSeen = [System.Collections.Generic.HashSet[string]]::new()
+
+function Register-LogLines($Lines) {
+  foreach ($l in $Lines) {
+    if (-not $script:logLinesSeen.Add([string]$l)) { continue }
+    if ($l -notmatch '^\S+ (started|kept|stopped|lost|idle|failed|skipped|rotated|backoff|grace)( |$)') { continue }
+    $action = $Matches[1]
+    $body = ($l -split ' reason=', 2)[0]
+    $script:logLinesChecked++
+    $names = $action -in 'started', 'kept', 'stopped', 'lost' -or ($action -eq 'failed' -and $body -notmatch ' lease=- ')
+    $hasHost = $body -match ' host='
+    $isBox = $body -match ' pid=\S+ host=swimcoach$'
+    if ($names -and -not $isBox) { $script:logLineProblems.Add("A $action line that names a holder lacks its final host=swimcoach.") }
+    elseif (-not $names -and $hasHost) { $script:logLineProblems.Add("A $action line that names no holder carries a host= field.") }
+  }
+}
+
+# Returns @{ Checked = <lines checked>; Problems = <distinct problem texts> }.
+function Get-LogLineProblems {
+  @{ Checked = $script:logLinesChecked; Problems = @($script:logLineProblems | Select-Object -Unique) }
 }

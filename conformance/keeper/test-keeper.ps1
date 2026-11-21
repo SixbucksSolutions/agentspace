@@ -52,7 +52,8 @@
 # Run:  pwsh -NoProfile -File conformance\keeper\test-keeper.ps1 [-SelfCheck] [-Case <wildcard>]
 param(
   [switch]$SelfCheck,
-  [string]$Case = '*'
+  [string]$Case = '*',
+  [ValidateSet('None', 'Box', 'Both')][string]$Registry = 'Both'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,6 +115,7 @@ if (-not $IsWindows) {
 # The helpers the keeper's checks share, and the harness they build on (the program under test, and
 # the environment every child gets). Compiled before any environment variable is changed.
 . (Join-Path $PSScriptRoot 'keeper-common.ps1')
+Initialize-KeeperRegistryMode $Registry $PSCommandPath $PSBoundParameters
 
 # The program under test: its variable first, and only then the default that conformance/defaults.ps1
 # names, both through the harness. Resolved before the first case, which strips AGENTSPACE_* from the environment.
@@ -1003,5 +1005,10 @@ if (-not $SelfCheck) {
   $script:mut = $false
   $script:caseSpec = 'keeper.md#checking-the-keeper'
   Write-Result ($leftBehind -eq 0) 'The run leaves no process behind' "$leftBehind process(es) of this run were still running after the cleanup."
+}
+if (-not $SelfCheck) {
+  $lp = Get-LogLineProblems
+  $script:caseSpec = 'keeper.md#log-lines'
+  if ($lp.Checked -gt 0) { Write-Result ($lp.Problems.Count -eq 0) "The box's lines that name a holder carry host=swimcoach, and no other box line carries a host= field" ($lp.Problems -join ' ') }
 }
 Exit-Run
