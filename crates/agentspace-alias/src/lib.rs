@@ -81,14 +81,36 @@ pub fn lease_file_text(home_full: &str, id: &str, file: &str) -> String {
     path_text(&joined)
 }
 
+/// The path of `<home>\.agentspace\hosts\<project>\<file>` in the alias file's form, written as
+/// [`lease_file_text`] writes a lease's: the home's trailing `\` and `/` dropped, the rest joined as
+/// text, every `\` as `/` and every `%` as `%%`. The result is
+/// `<home>/.agentspace/hosts/<project>/<file>`.
+///
+/// Added at review (architect, 2026-11-20, for v0.07-T02).
+pub fn host_file_text(home_full: &str, project: &str, file: &str) -> String {
+    let trimmed = home_full.trim_end_matches(['\\', '/']);
+    let joined = format!("{trimmed}\\.agentspace\\hosts\\{project}\\{file}");
+    path_text(&joined)
+}
+
+/// The path of `<home>\.agentspace\known_hosts` in the alias file's form, written as
+/// [`lease_file_text`] writes a lease's. The result is `<home>/.agentspace/known_hosts`.
+///
+/// Added at review (architect, 2026-11-20, for v0.07-T02).
+pub fn known_hosts_text(home_full: &str) -> String {
+    let trimmed = home_full.trim_end_matches(['\\', '/']);
+    path_text(&format!("{trimmed}\\.agentspace\\known_hosts"))
+}
+
 /// The values of one alias file. `key_path`, `cert_path` and `known_hosts` are as
 /// `lease_file_text` gives a path, already in the file's form. `proxy_command` is the raw command,
 /// which `alias_file_bytes` escapes.
 ///
 /// A lease on the box passes `host_key_alias` as `agentspace` and `known_hosts` as `None`, and its
 /// bytes are v0.06's. A lease on another host passes `agentspace-host.<project>` and the path of
-/// agentspace's `known_hosts`, which adds the `UserKnownHostsFile` line (docs/state.md, "A lease
-/// alias for a host that is not the box").
+/// agentspace's `known_hosts`, as [`known_hosts_text`] gives it, which adds the
+/// `UserKnownHostsFile` line (docs/state.md, "A lease alias for a host that is not the box").
+/// `host_key_alias` MUST be a valid alias, as [`is_valid_alias`] says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasFile<'a> {
     pub id: &'a str,
@@ -100,6 +122,19 @@ pub struct AliasFile<'a> {
     pub host_key_alias: &'a str,
     pub known_hosts: Option<&'a str>,
     pub proxy_command: &'a str,
+}
+
+/// Whether `project` is a project as the host registry names it,
+/// `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`, with no trailing newline accepted. It is also one plain
+/// path component on Windows (no `.`, so no trailing dot).
+pub(crate) fn is_valid_project(project: &str) -> bool {
+    let bytes = project.as_bytes();
+    let plain = |b: &u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    !bytes.is_empty()
+        && bytes.len() <= 32
+        && bytes.iter().all(|b| plain(b) || *b == b'-')
+        && bytes.first().is_some_and(plain)
+        && bytes.last().is_some_and(plain)
 }
 
 fn has_line_break(s: &str) -> bool {
@@ -131,6 +166,10 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
     }
     if !is_valid_alias(f.alias) {
         return Err(err("the host alias is not a valid name"));
+    }
+    // `HostKeyAlias` is written bare, so it MUST be a valid alias too.
+    if !is_valid_alias(f.host_key_alias) {
+        return Err(err("the host key alias is not a valid name"));
     }
     let proxy = f.proxy_command.replace('%', "%%");
     // The `UserKnownHostsFile` line follows `HostKeyAlias` and is there only for another host's
@@ -172,8 +211,8 @@ pub fn host_alias_name(project: &str) -> String {
     format!("agentspace-host.{project}")
 }
 
-/// The values of one host's operator alias. `key_path`, `cert_path` and `known_hosts` are in the
-/// file's form, as `lease_file_text` gives a path. `proxy_command` is the raw command, which
+/// The values of one host's operator alias. `key_path` and `cert_path` are in the file's form, as
+/// [`host_file_text`] gives them, and `known_hosts` as [`known_hosts_text`] gives it. `proxy_command` is the raw command, which
 /// `host_alias_file_bytes` escapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostAliasFile<'a> {
@@ -186,8 +225,9 @@ pub struct HostAliasFile<'a> {
 }
 
 /// A host's operator alias's bytes, exactly as docs/state.md, "A host's operator alias": UTF-8 with
-/// no byte order mark, each line ending in one LF. A CR or LF in any value, or a project that does
-/// not make a valid alias, is refused and nothing is made.
+/// no byte order mark, each line ending in one LF. A CR or LF in any value, or a project that is not
+/// as the host registry names it (`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`), is refused and nothing
+/// is made.
 pub fn host_alias_file_bytes(f: &HostAliasFile) -> Result<Vec<u8>, AliasError> {
     if has_line_break(f.key_path) || has_line_break(f.cert_path) || has_line_break(f.known_hosts) {
         return Err(err("a path in the alias file holds a line break"));
@@ -199,7 +239,7 @@ pub fn host_alias_file_bytes(f: &HostAliasFile) -> Result<Vec<u8>, AliasError> {
         return Err(err("a value in the alias file holds a line break"));
     }
     let host = host_alias_name(f.project);
-    if f.project.is_empty() || !is_valid_alias(&host) {
+    if !is_valid_project(f.project) || !is_valid_alias(&host) {
         return Err(err("the host alias is not a valid name"));
     }
     let proxy = f.proxy_command.replace('%', "%%");
@@ -474,6 +514,63 @@ mod tests {
             h.project = project;
             assert!(host_alias_file_bytes(&h).is_err(), "{project:?}");
         }
+    }
+
+    #[test]
+    fn a_host_alias_takes_only_a_project_the_host_registry_names() {
+        let long_ok = "a".repeat(32);
+        for project in ["a", "proj", "a-b", "a1", long_ok.as_str()] {
+            let mut h = host();
+            h.project = project;
+            assert!(host_alias_file_bytes(&h).is_ok(), "{project:?}");
+        }
+        // Each of these makes a valid alias name, and none is a registry project. `x.` is the
+        // collision: Windows drops a trailing dot, so it would name the same file as `x`.
+        let long_bad = "a".repeat(33);
+        for project in [
+            "A",
+            "a_b",
+            "a.b",
+            "..",
+            "x.",
+            "-a",
+            "a-",
+            "a\n",
+            "",
+            long_bad.as_str(),
+        ] {
+            let mut h = host();
+            h.project = project;
+            assert!(host_alias_file_bytes(&h).is_err(), "{project:?}");
+        }
+    }
+
+    #[test]
+    fn a_lease_alias_refuses_a_host_key_alias_that_is_not_a_valid_alias() {
+        for bad in ["", "a b", "-x", "a/b", "a\"b", "a%b", "a\\b"] {
+            assert!(alias_file_bytes(&lease(bad, None)).is_err(), "{bad:?}");
+        }
+        assert!(alias_file_bytes(&lease("agentspace-host.p-1", None)).is_ok());
+    }
+
+    #[test]
+    fn host_file_text_and_known_hosts_text_are_written_as_a_lease_files_path_is() {
+        let home = "C:\\Users\\a%b\\";
+        assert_eq!(
+            host_file_text(home, "proj", "id_ed25519-cert.pub"),
+            "C:/Users/a%%b/.agentspace/hosts/proj/id_ed25519-cert.pub"
+        );
+        assert_eq!(
+            known_hosts_text(home),
+            "C:/Users/a%%b/.agentspace/known_hosts"
+        );
+        // The same form as a lease's: only the folder after `.agentspace` differs.
+        let lease_path = lease_file_text(home, "id", "f");
+        assert_eq!(lease_path, "C:/Users/a%%b/.agentspace/leases/id/f");
+        assert!(host_file_text(home, "proj", "f").starts_with("C:/Users/a%%b/.agentspace/"));
+        // A home that ends in a separator gets no further one, as for a lease.
+        assert_eq!(known_hosts_text("C:\\"), "C:/.agentspace/known_hosts");
+        assert_eq!(host_file_text("C:/", "p", "f"), "C:/.agentspace/hosts/p/f");
     }
 
     #[test]

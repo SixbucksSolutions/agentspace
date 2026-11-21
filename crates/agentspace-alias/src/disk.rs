@@ -7,7 +7,8 @@
 
 use crate::windows::{is_link_or_read_only, random_bytes, replace_keeping_rules};
 use crate::{
-    IncludePlan, host_alias_name, host_owner_mark, include_plan, is_valid_alias, owner_mark,
+    IncludePlan, host_alias_name, host_owner_mark, include_plan, is_valid_alias, is_valid_project,
+    owner_mark,
 };
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -411,11 +412,12 @@ pub fn remove_alias(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFa
     remove_owned(ssh_dir, &path, &|b| names_lease(b, id), FOREIGN_WHY)
 }
 
-/// `<ssh folder>\agentspace.d\agentspace-host.<project>` and its name. A project that does not make
-/// a valid alias, or is empty, is refused, so that no path can leave the folder.
+/// `<ssh folder>\agentspace.d\agentspace-host.<project>` and its name. A project that is not as the
+/// host registry names it (`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`) is refused, so that no path can
+/// leave the folder and no two projects share a file (Windows drops a trailing dot).
 fn host_alias_path(ssh_dir: &Path, project: &str) -> Result<(String, PathBuf), AliasFailure> {
     let name = host_alias_name(project);
-    if project.is_empty() || !is_valid_alias(&name) {
+    if !is_valid_project(project) || !is_valid_alias(&name) {
         return Err(io_fail(INVALID_ALIAS_WHY));
     }
     let path = alias_dir(ssh_dir).join(&name);
@@ -461,6 +463,9 @@ pub fn check_host_alias_owner(ssh_dir: &Path, project: &str) -> Result<(), Alias
 /// Removes a host's operator alias. The owner mark is checked first, as [`check_host_alias_owner`]
 /// does, and nothing is deleted when it fails. A missing file is `Ok`. A failure to delete is
 /// [`AliasFailureKind::Io`].
+///
+/// **No agentspace command calls this**: a host's operator alias is never removed by agentspace
+/// (docs/state.md, "A host's operator alias"). It exists for a person's tooling and for tests.
 pub fn remove_host_alias(ssh_dir: &Path, project: &str) -> Result<(), AliasFailure> {
     let (_, path) = host_alias_path(ssh_dir, project)?;
     remove_owned(
@@ -720,6 +725,28 @@ mod tests {
         check_alias_owner(&s.0, "x", ID).unwrap();
         remove_alias(&s.0, "x", ID).unwrap();
         assert!(names(&s.0.join("agentspace.d")).is_empty());
+    }
+
+    #[test]
+    fn a_host_project_the_registry_does_not_name_is_refused_and_nothing_is_written() {
+        let s = scratch();
+        for project in ["A", "a_b", "a.b", "..", "x.", "-a", "a-", "a\n", ""] {
+            let e = write_host_alias(&s.0, project, b"x").unwrap_err();
+            assert_eq!(e.kind, AliasFailureKind::Io, "{project:?}");
+            assert!(
+                check_host_alias_owner(&s.0, project).is_err(),
+                "{project:?}"
+            );
+            assert!(remove_host_alias(&s.0, project).is_err(), "{project:?}");
+        }
+        assert!(names(&s.0).is_empty());
+        // `x` and `x.` would be one file on Windows; only the first is a project.
+        write_host_alias(&s.0, "x", b"# agentspace host x; t\n").unwrap();
+        assert!(write_host_alias(&s.0, "x.", b"# agentspace host x.; t\n").is_err());
+        assert_eq!(
+            fs::read(s.0.join("agentspace.d").join("agentspace-host.x")).unwrap(),
+            b"# agentspace host x; t\n"
+        );
     }
 
     #[test]

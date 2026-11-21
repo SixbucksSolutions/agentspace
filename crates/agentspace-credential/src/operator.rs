@@ -29,7 +29,7 @@ use crate::lease::{
 };
 use crate::platform;
 use crate::{
-    check_unencrypted, has_passphrase, new_key, parse_private, sign_certificate_commented,
+    LeaseKey, check_unencrypted, has_passphrase, new_key, parse_private, sign_certificate_commented,
 };
 
 /// The one principal of the operator's certificate.
@@ -41,12 +41,15 @@ const BAD_PROJECT: &str =
     "The host's project cannot be used to name its folder. Nothing was changed.";
 const KEY_NOT_MADE: &str =
     "The operator's key for the host could not be made. Nothing was changed; try again.";
+/// A file where a folder of the host's path belongs; `{}` is that file, home-relative.
+const FOLDER_IS_FILE: &str = "The operator's key for the host could not be made, because {} is a file where a folder belongs. A person has to move that file. Nothing was changed.";
 const KEY_NOT_MADE_LEFT: &str = "The operator's key for the host could not be made, and some of the files it made could not be deleted.";
 const KEY_UNPROTECTED: &str = "The operator's private key could not be kept from other users, so it was not kept. Nothing was changed.";
 const KEY_UNPROTECTED_LEFT: &str = "The operator's private key could not be kept from other users, and some of the files it made could not be deleted.";
 const LEFTOVER_STUCK: &str = "A file left by an earlier attempt to make the operator's key could not be deleted, so no key was made. Nothing was changed.";
-const SIGN_FAILED: &str =
-    "The operator's certificate for the host could not be signed. Nothing was changed; try again.";
+/// The certificate in place, if there is one, is never changed by a failed signing, so this is true
+/// whether or not files are listed beside it as `leftovers`.
+const SIGN_FAILED: &str = "The operator's certificate for the host could not be signed. The certificate already in place was not changed; try again.";
 
 /// A project as the host registry names it, `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`, which is also
 /// one plain path component.
@@ -67,6 +70,23 @@ fn host_dir(home: &Path, project: &str) -> PathBuf {
 /// A file of the host's folder in its home-relative form.
 fn relative(project: &str, name: &str) -> String {
     format!("~/.agentspace/hosts/{project}/{name}")
+}
+
+/// The first of `~/.agentspace`, `~/.agentspace/hosts` and `~/.agentspace/hosts/<project>`, in its
+/// home-relative form, that exists and is not a folder.
+fn file_in_the_way(home: &Path, project: &str) -> Option<String> {
+    let base = agentspace_dir(home);
+    [
+        (base.clone(), "~/.agentspace".to_string()),
+        (base.join("hosts"), "~/.agentspace/hosts".to_string()),
+        (
+            base.join("hosts").join(project),
+            format!("~/.agentspace/hosts/{project}"),
+        ),
+    ]
+    .into_iter()
+    .find(|(path, _)| fs::metadata(path).is_ok_and(|m| !m.is_dir()))
+    .map(|(_, name)| name)
 }
 
 /// What is at a path, without following a link: whether it exists, and whether it is a plain file.
@@ -132,9 +152,13 @@ pub fn ensure_operator_key(home: &Path, project: &str) -> Result<bool, CredFailu
         return Err(fail(BAD_PROJECT));
     }
     let dir = host_dir(home, project);
-    fs::create_dir_all(&dir).map_err(|_| fail(KEY_NOT_MADE))?;
-    if !dir.is_dir() {
-        return Err(fail(KEY_NOT_MADE));
+    if fs::create_dir_all(&dir).is_err() || !dir.is_dir() {
+        // A file where `.agentspace`, `hosts` or the host's folder belongs is a person's to move;
+        // nothing else is known to be wrong, so that is a plain failure to try again.
+        return Err(match file_in_the_way(home, project) {
+            Some(name) => fail(&FOLDER_IS_FILE.replace("{}", &name)),
+            None => fail(KEY_NOT_MADE),
+        });
     }
 
     let key_path = dir.join(KEY_FILE);
@@ -159,9 +183,35 @@ pub fn ensure_operator_key(home: &Path, project: &str) -> Result<bool, CredFailu
         });
     }
 
+    let key = new_key(&format!("agentspace host {project}")).map_err(|_| fail(KEY_NOT_MADE))?;
+    install_key(project, &dir, &key, &REAL_RULES).map(|()| true)
+}
+
+/// The two platform steps that keep the private key from other users, as a seam so that a unit test
+/// can make each fail. [`REAL_RULES`] is the only value the public functions pass.
+struct KeyRules {
+    /// Makes the private key's file, with its access rules in place before it can be written.
+    create: fn(&Path) -> Option<fs::File>,
+    /// Whether the private key's file has exactly a lease private key's access rules.
+    verify: fn(&Path) -> bool,
+}
+
+const REAL_RULES: KeyRules = KeyRules {
+    create: platform::create_private_file,
+    verify: platform::verify_private_key,
+};
+
+/// Writes `key` into `dir` and checks it, and on any failure deletes every file this call made.
+/// `ensure_operator_key` calls it once the key is known to be missing.
+fn install_key(
+    project: &str,
+    dir: &Path,
+    key: &LeaseKey,
+    rules: &KeyRules,
+) -> Result<(), CredFailure> {
     let mut made: Vec<&str> = Vec::new();
-    match make_key(project, &dir, &mut made) {
-        Ok(()) => Ok(true),
+    match write_key(dir, key, rules, &mut made) {
+        Ok(()) => Ok(()),
         Err(message) => {
             // Newest first, as a failed lease issue removes what it made.
             let mut leftovers = Vec::new();
@@ -185,12 +235,15 @@ pub fn ensure_operator_key(home: &Path, project: &str) -> Result<bool, CredFailu
 
 /// The steps of [`ensure_operator_key`] once the key is known to be missing. `made` is the files
 /// this call has made, so that a failure removes exactly those.
-fn make_key(project: &str, dir: &Path, made: &mut Vec<&'static str>) -> Result<(), &'static str> {
-    let key = new_key(&format!("agentspace host {project}")).map_err(|_| KEY_NOT_MADE)?;
-
+fn write_key(
+    dir: &Path,
+    key: &LeaseKey,
+    rules: &KeyRules,
+    made: &mut Vec<&'static str>,
+) -> Result<(), &'static str> {
     // The private key's file is made with its rules in place, and no byte is written before that.
     let key_path = dir.join(KEY_FILE);
-    let Some(mut file) = platform::create_private_file(&key_path) else {
+    let Some(mut file) = (rules.create)(&key_path) else {
         return Err(KEY_UNPROTECTED);
     };
     made.push(KEY_FILE);
@@ -200,7 +253,7 @@ fn make_key(project: &str, dir: &Path, made: &mut Vec<&'static str>) -> Result<(
     drop(file);
 
     // Checked before the key is kept: its rules, and that it loads with an empty passphrase.
-    if !platform::verify_private_key(&key_path) {
+    if !(rules.verify)(&key_path) {
         return Err(KEY_UNPROTECTED);
     }
     let on_disk = fs::read(&key_path).map_err(|_| KEY_NOT_MADE)?;
@@ -248,10 +301,7 @@ pub fn sign_operator_certificate(home: &Path, project: &str, now: i64) -> Result
     for name in [KEY_FILE, PUB_FILE] {
         let present = fs::metadata(dir.join(name)).is_ok_and(|m| m.is_file());
         if !present {
-            return Err(fail(&format!(
-                "The operator's key {} could not be found, so no certificate was signed. Nothing was changed.",
-                relative(project, name)
-            )));
+            return Err(fail(&missing_key_file(project, name)));
         }
     }
 
@@ -280,6 +330,23 @@ pub fn sign_operator_certificate(home: &Path, project: &str, now: i64) -> Result
             message: SIGN_FAILED.to_string(),
             leftovers,
         }),
+    }
+}
+
+/// The failure for a missing `id_ed25519` or `id_ed25519.pub`. A missing public key has a remedy,
+/// because [`ensure_operator_key`] finds the private key and leaves it alone: a person restores the
+/// public key, or removes the private key so that the next command makes a new pair.
+fn missing_key_file(project: &str, name: &str) -> String {
+    let file = relative(project, name);
+    if name == PUB_FILE {
+        let key = relative(project, KEY_FILE);
+        format!(
+            "The operator's public key {file} could not be found, so no certificate was signed. A person restores it, or removes {key} so that the next command makes a new key. Nothing was changed."
+        )
+    } else {
+        format!(
+            "The operator's key {file} could not be found, so no certificate was signed. Nothing was changed."
+        )
     }
 }
 
