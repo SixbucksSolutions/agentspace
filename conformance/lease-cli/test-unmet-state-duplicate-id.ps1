@@ -62,6 +62,10 @@ try {
   if (-not $lab.CaReady) {
     Write-ConformanceResult -Name "$sec`: A state file that names one lease ID twice is not valid, for every lease command" -Status SKIPPED -Reason "No throwaway CA could be made: $($lab.CaReason)"
   } else {
+    # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01). The two leases'
+    # projects are seeded by New-CcReadyLease; the ready create of the variants below is seeded here,
+    # before any file map.
+    [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'dupid-new')
     $a = New-CcReadyLease -Lab $lab -Project 'dupid-a'
     $b = New-CcReadyLease -Lab $lab -Project 'dupid-b'
     if (-not ($a.Ok -and $b.Ok)) {

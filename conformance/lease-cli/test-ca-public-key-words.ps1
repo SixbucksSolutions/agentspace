@@ -66,6 +66,9 @@ try {
       Write-ConformanceResult -Name "$sec`: Setup, the throwaway CA's public key is an ssh-ed25519 line of the form the spec gives" -Status FAIL -Reason 'It is not, so there is nothing to change'
     } else {
       $w1 = $words[0]; $w2 = $words[1]
+      # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01). capub-bad's
+      # is seeded here, before the file maps below, so that its create still reaches the CA check.
+      [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'capub-bad')
       $lease = New-CcReadyLease -Lab $lab -Project 'capub-a'
       if (-not $lease.Ok) {
         Write-ConformanceResult -Name "$sec`: Setup, a ready lease is made by create under the unchanged CA" -Status FAIL -Reason "create exited $($lease.Run.ExitCode), or did not print a ready lease that validates"

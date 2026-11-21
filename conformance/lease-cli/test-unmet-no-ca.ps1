@@ -60,6 +60,8 @@ function Get-UnmetErrorProblems {
 function New-UnmetReadyLease {
   param([Parameter(Mandatory)]$Lab, [Parameter(Mandatory)][string]$Project)
   $r = [pscustomobject]@{ Ok = $false; Id = ''; Alias = ''; Why = '' }
+  # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01).
+  [void](Add-ConformanceReadyHost -ConformanceHome $Lab -Project $Project)
   $run = Invoke-UnmetLease $Lab @('create', '--project', $Project)
   if ($run.ExitCode -ne 0) { $r.Why = "create exited $($run.ExitCode), not 0"; return $r }
   $doc = $run.Json
@@ -131,6 +133,8 @@ try {
     Write-ConformanceResult -Name "$create`: With no CA, a ready create fails with internal" -Status SKIPPED -Reason "No throwaway CA could be made, so there is none to remove: $($labA.CaReason)"
   } else {
     Remove-UnmetCa $labA
+    # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01).
+    [void](Add-ConformanceReadyHost -ConformanceHome $labA -Project 'noca')
     $run = Invoke-UnmetLease $labA @('create', '--project', 'noca')
     $p = Get-UnmetErrorProblems -Run $run -Code 'internal' -Exit 1
     Add-UnmetResult -Name "$create`: With no CA, a ready create fails with internal, exit 1, one error document and no stdout (state.md#creation-in-order step 1)" -Problems $p

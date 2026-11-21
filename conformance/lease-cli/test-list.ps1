@@ -73,7 +73,16 @@ try {
     return $r.Json
   }
   $r1 = $null; $r2 = $null
-  if ($haveReady) { $r1 = New-Seed 'alpha'; $r2 = New-Seed 'beta' }
+  # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01). The three
+  # unsatisfiable seeds below are unsupported requests, which never reach the host registry.
+  # The hosts are needed for these two creates alone: once they are made the registry is removed again,
+  # because a `get` of the pending alpha lease below would start a provisioning run for a project whose
+  # host is ready (D48), and no case here is about that.
+  if ($haveReady) {
+    [void](Add-ConformanceReadyHost -ConformanceHome $h -Project 'alpha', 'beta')
+    $r1 = New-Seed 'alpha'; $r2 = New-Seed 'beta'
+    Clear-ConformanceHosts -ConformanceHome $h
+  }
   $u1 = New-Seed 'alpha' @('--size', 'xl')
   $u2 = New-Seed 'beta' @('--size', 'xl')
   $u3 = New-Seed 'alpha' @('--platform', 'linux/amd64')

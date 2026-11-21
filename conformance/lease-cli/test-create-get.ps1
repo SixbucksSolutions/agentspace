@@ -109,6 +109,9 @@ function Test-ReadyCreate {
 $h = $null
 try {
   $h = New-ConformanceHome
+  # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01): the one project
+  # every ready create below uses, test-create, gets one. The unsupported creates below never place.
+  [void](Add-ConformanceReadyHost -ConformanceHome $h -Project 'test-create')
   $made = 0                       # Records that creates recorded, to compare with the state file's.
   $badSkip = 'No throwaway CA could be made: ' + $h.CaReason
 

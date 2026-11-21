@@ -60,6 +60,8 @@ function Get-UnmetSuccessProblems {
 function New-UnmetReadyLease {
   param([Parameter(Mandatory)]$Lab, [Parameter(Mandatory)][string]$Project)
   $r = [pscustomobject]@{ Ok = $false; Id = ''; Alias = ''; Why = '' }
+  # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01).
+  [void](Add-ConformanceReadyHost -ConformanceHome $Lab -Project $Project)
   $run = Invoke-UnmetLease $Lab @('create', '--project', $Project)
   if ($run.ExitCode -ne 0) { $r.Why = "create exited $($run.ExitCode), not 0"; return $r }
   $doc = $run.Json

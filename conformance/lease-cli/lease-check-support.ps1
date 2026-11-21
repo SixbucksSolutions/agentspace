@@ -81,8 +81,14 @@ function Invoke-CcLease {
 
 # A ready lease made by `create`. Returns Run, Doc (the parsed stdout, only when Ok) and Ok, which is
 # true only when the run passed Test-CcSuccess and printed a ready lease.
+# Under D54 a lease is `ready` only when its project's host is, and a throwaway home lists no project,
+# so a ready lease needs a `ready` host record for the project: this seeds one first
+# (Add-ConformanceReadyHost, E0.07-T04-S01), and does nothing for swimcoach, whose host is the box, or
+# for a project that already has a record. -NoHost skips the seeding, for a check that has set the
+# host registry up itself.
 function New-CcReadyLease {
-  param([Parameter(Mandatory)]$Lab, [string]$Project = 'conf', [string]$Ttl, [hashtable]$EnvVars = @{})
+  param([Parameter(Mandatory)]$Lab, [string]$Project = 'conf', [string]$Ttl, [hashtable]$EnvVars = @{}, [switch]$NoHost)
+  if (-not $NoHost) { [void](Add-ConformanceReadyHost -ConformanceHome $Lab -Project $Project) }
   $a = @('create', '--project', $Project)
   if ($Ttl) { $a += @('--ttl', $Ttl) }
   $run = Invoke-CcLease -Lab $Lab -Arguments $a -EnvVars $EnvVars

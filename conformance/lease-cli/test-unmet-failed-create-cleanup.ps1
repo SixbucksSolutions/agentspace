@@ -73,6 +73,9 @@ try {
   if (-not $lab.CaReady) {
     Write-ConformanceResult -Name "$sec`: A failed create whose cleanup fails names its leftovers" -Status SKIPPED -Reason "No throwaway CA could be made: $($lab.CaReason)"
   } else {
+    # Under D54 a create is ready only for a project with a ready host (E0.07-T04-S01), so the failed
+    # create's project, cleanup, gets one. The seed create below is an unsupported request.
+    [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'cleanup')
     # Something else that exists, which a failed create MUST NOT change: an unsatisfiable lease's record.
     $seed = Invoke-CcLease $lab @('create', '--project', 'cleanup', '--size', 'l')
     $leases = Join-Path $lab.UserProfile '.agentspace\leases'
