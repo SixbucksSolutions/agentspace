@@ -27,8 +27,10 @@ use crate::cache::registry_failure;
 /// finds the others). Only the `.exe` is looked for.
 const PROXY_PROGRAM: &str = "agentspace-ssh-proxy.exe";
 
-/// The comment of the alias file's owner mark line.
-const COMMENT: &str = "written by agentspace. Do not edit.";
+/// The comment of the alias file's owner mark line. It MUST be agentspace-sync's own, so that the
+/// operator and `sync` write the same bytes and neither rewrites the other's alias (operator.md, How
+/// the operator reaches a host: "both commands write the same bytes").
+const COMMENT: &str = "written by agentspace; it MUST NOT be edited";
 
 /// Where the operator writes a host's alias, and where it finds the program the alias names.
 #[derive(Debug, Clone)]
@@ -83,15 +85,19 @@ pub fn sign_in(
 ) -> Result<(), Failure> {
     agentspace_ca::check_for_sync(ctx, ca_env)?;
 
-    // Step 2: the key, made only while `hosts.lock` is held, so two commands never make two keys.
-    {
+    // Step 2: the key. It is looked for without the lock, so that a command whose key exists never
+    // waits on a provisioning run's `hosts.lock` (architect, 2026-11-21, for v0.07-T03). Only when it
+    // is missing is `hosts.lock` taken, and `ensure_operator_key`, which looks for the key again,
+    // called while it is held, so two commands never make two keys. The lock is held for that alone.
+    let key_path = host_key_path(&ctx.home, project);
+    if !key_path.is_file() {
         let held = agentspace_hosts::lock(&ctx.home).map_err(|e| registry_failure(&ctx.home, e))?;
         let made = ensure_operator_key(&ctx.home, project);
         drop(held);
         made.map_err(|f| {
             could_not_reach(format!(
                 "agentspace: Could not make the operator's key {}: {}",
-                host_key_path(&ctx.home, project).display(),
+                key_path.display(),
                 f.message
             ))
         })?;
@@ -140,8 +146,10 @@ fn write_alias(ctx: &Context, access: &Access, project: &str) -> Result<(), Fail
     .map_err(|_| cannot_write(&alias_path))?;
 
     let config = access.ssh_dir.join("config");
-    // Architect's to confirm: an ssh config that cannot take the Include line fails with `<path>
-    // cannot take agentspace's Include line: <reason>.`, since operator.md gives no text for it.
+    // An `Include` line that cannot be added fails by its kind: `Config`, a configuration a person
+    // has to fix, with its reason, and any other with `Cannot write <config>.` (operator.md, How the
+    // operator reaches a host, step 4; architect, 2026-11-21, for v0.07-T03, on #0152's review).
+    // The words and the `<config>` path are agentspace-sync's for the same failure.
     ensure_include(&access.ssh_dir, unix_now()).map_err(|f| match f.kind {
         AliasFailureKind::Config => could_not_reach(format!(
             "agentspace: {} cannot take agentspace's Include line: {}.",

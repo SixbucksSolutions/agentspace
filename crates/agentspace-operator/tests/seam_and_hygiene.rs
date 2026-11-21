@@ -415,8 +415,7 @@ fn a_cmd_stand_in_for_ssh_gets_the_remote_command_as_one_quoted_argument() {
 
 #[test]
 fn deploy_and_sync_reach_the_sync_crates_functions_and_start_no_program_of_their_own() {
-    // What holds whether agentspace-sync is the pinned stub (`<command> is not built yet.`) or
-    // E0.06-T03-S02's build, which stops in this rig before any program: `deploy` at the missing
+    // agentspace-sync stops in this rig before any program: `deploy` at the missing
     // `id_ed25519.pub`, `sync` at its CA check's missing `ssh-keygen.exe`. The rig gives the run no
     // PATH, so no `sync` can find the real `go`.
     for command in ["deploy", "sync"] {

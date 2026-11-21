@@ -266,6 +266,16 @@ impl Reach for FakeReach {
     ) -> Result<(), Failure> {
         self.record(&format!("sync {}", target_text(target)))
     }
+    fn sync_all(
+        &self,
+        _ctx: &Context,
+        _env: &CaEnv,
+        _say: &dyn Say,
+        _aws: &dyn Aws,
+        _remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.record("sync-all")
+    }
     fn deploy(
         &self,
         _ctx: &Context,

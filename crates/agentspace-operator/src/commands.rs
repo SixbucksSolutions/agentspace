@@ -61,6 +61,17 @@ pub trait Reach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure>;
+    /// `sync -All`: every host's part, its `Host` lines, skips, failed hosts' messages and closing
+    /// count are agentspace-sync's own, which writes `system\` and builds localswim once
+    /// (operator.md, Every host at once; architect, 2026-11-21, for v0.07-T03).
+    fn sync_all(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure>;
     /// `deploy`, with `-InstanceType` when it was given.
     #[allow(clippy::too_many_arguments)]
     fn deploy(
@@ -175,9 +186,10 @@ fn resolve(hosts: &Hosts, project: Option<&str>) -> Result<HostRef, Failure> {
 
 /// Runs a parsed command.
 ///
-/// `ca` and `provision` read no record here: `ca` takes no host, and `provision` finds its own
-/// (operator.md, provision, step 1). Every other command finds its host's record, or every record
-/// for `-All`, before it starts any program or makes any AWS call.
+/// `ca`, `provision` and `sync -All` read no record here: `ca` takes no host, `provision` finds its
+/// own (operator.md, provision, step 1), and `sync -All` reads the registry itself. Every other
+/// command finds its host's record, or every record for `-All`, before it starts any program or
+/// makes any AWS call.
 pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
     match request.command {
         Command::Ca => return parts.reach.ca(parts.ctx, parts.ca_env, parts.say),
@@ -186,6 +198,15 @@ pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
                 parts.ctx,
                 parts.ca_env,
                 request.host.as_deref().unwrap_or(BOX_PROJECT),
+                parts.say,
+                parts.aws,
+                parts.remote,
+            );
+        }
+        Command::Sync if request.all => {
+            return parts.reach.sync_all(
+                parts.ctx,
+                parts.ca_env,
                 parts.say,
                 parts.aws,
                 parts.remote,
@@ -238,10 +259,11 @@ pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
     }
 }
 
-/// `status -All`, `down -All` and `sync -All` (operator.md, Every host at once): every record, in
-/// the file's order, one at a time. Before each host the command prints `Host      <project>
-/// (<stack>), <state>`, whatever `-Quiet` says. Each host's part is that command's own steps with
-/// the host, but `status` and `down` MUST NOT sign a certificate or write an alias.
+/// `status -All` and `down -All` (operator.md, Every host at once): every record, in the file's
+/// order, one at a time. `sync -All` is agentspace-sync's [`Reach::sync_all`], and never comes here.
+/// Before each host the command prints `Host      <project> (<stack>), <state>`, whatever `-Quiet`
+/// says. Each host's part is that command's own steps with the host, but `status` and `down` MUST
+/// NOT sign a certificate or write an alias.
 ///
 /// A failure ends that host's part, and the command goes on to the next. At the end, when any host
 /// failed, it fails with `agentspace: <n> of <m> hosts failed.`. #0034's sign-in message ends the
@@ -264,7 +286,9 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
                     report_status(parts, host)
                 }
             }
-            Command::Down => {
+            // The command line gives `-All` to `status`, `down` and `sync` alone, and `sync -All`
+            // is dispatched to agentspace-sync, so this is `down`.
+            _ => {
                 if host.instance_id.is_none() && host.state != HostState::Ready {
                     parts
                         .say
@@ -272,27 +296,6 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
                     Ok(())
                 } else {
                     stop(parts, host)
-                }
-            }
-            _ => {
-                if host.state == HostState::Ready {
-                    parts.reach.sync(
-                        parts.ctx,
-                        parts.ca_env,
-                        host.target(),
-                        parts.say,
-                        parts.aws,
-                        parts.remote,
-                    )
-                } else {
-                    parts.say.progress(
-                        &format!(
-                            "Skipping: the host is {}; its next provisioning run syncs it.",
-                            host.state.as_str()
-                        ),
-                        None,
-                    );
-                    Ok(())
                 }
             }
         };

@@ -558,3 +558,128 @@ fn grow_for_a_running_host_goes_through_the_hosts_alias_after_signing() {
         "8 GiB plus 3"
     );
 }
+
+// ---- The same sign-in through agentspace-sync and the operator ----
+
+/// The Include line below a Host block, which agentspace-alias refuses as a `Config` failure.
+const INCLUDE_BELOW_A_HOST: &str = "Host other\n  User someone\nInclude agentspace.d/*\n";
+
+#[test]
+fn an_include_line_that_cannot_be_added_gives_sync_and_status_the_same_line() {
+    // `sync -Host` signs through agentspace-sync, `status -Host` through the operator's own sign-in;
+    // the failure is the same one line (operator.md, How the operator reaches a host, step 4;
+    // architect, 2026-11-21, for v0.07-T03).
+    let Some(s) = Signing::new() else { return };
+    let config = s.rig.profile.join(".ssh").join("config");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, INCLUDE_BELOW_A_HOST).unwrap();
+
+    let synced = s.run(&["sync", "-Host", "agentspace"]);
+    assert_eq!(synced.code, Some(1), "{:?}", synced.err());
+    assert_eq!(synced.out(), "");
+    let sync_line = synced.err_lines().last().cloned().unwrap_or_default();
+    assert!(
+        s.rig.calls().is_empty(),
+        "sync signs before its start-and-wait, so nothing was started"
+    );
+
+    let status = s.run(&["status", "-Host", "agentspace"]);
+    assert_eq!(status.code, Some(1), "{:?}", status.err());
+    let err = status.err();
+    assert!(err.starts_with(&status_lines(OTHER_ID)), "{err:?}");
+    let status_line = status.err_lines().last().cloned().unwrap_or_default();
+
+    assert_eq!(sync_line, status_line, "one failure, one line");
+    let prefix = format!(
+        "agentspace: {} cannot take agentspace's Include line: ",
+        config.display()
+    );
+    assert!(sync_line.starts_with(&prefix), "{sync_line:?}");
+    assert!(
+        sync_line.ends_with('.') && sync_line.len() > prefix.len() + 1,
+        "the reason, then a period: {sync_line:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        INCLUDE_BELOW_A_HOST,
+        "the config is left as it was"
+    );
+    assert!(!s.alias().exists(), "no alias without its Include line");
+}
+
+#[test]
+fn sync_and_status_write_the_same_alias_bytes_for_a_host() {
+    // Two commands for one host write the same bytes, so neither rewrites the other's alias
+    // (operator.md, How the operator reaches a host).
+    let Some(s) = Signing::new() else { return };
+    assert_eq!(s.run(&["status", "-Host", "agentspace"]).code, Some(0));
+    let by_status = fs::read(s.alias()).expect("the alias status wrote");
+    s.clear();
+
+    // `sync -Host` writes the alias after its CA check and before its start-and-wait, which this
+    // rig fails, so the run reaches nothing past the host's own instance.
+    s.rig.fail(
+        "ec2-describe-instances",
+        "An error occurred (InvalidInstanceID.NotFound).",
+        254,
+    );
+    let out = s.run(&["sync", "-Host", "agentspace"]);
+    assert_eq!(out.code, Some(1), "{:?}", out.err());
+    let described = s.rig.calls_of("ec2-describe-instances");
+    assert!(
+        !described.is_empty()
+            && described
+                .iter()
+                .all(|c| c.args.contains(&OTHER_ID.to_string())),
+        "the host's own instance is started and waited for"
+    );
+    assert!(s.rig.calls_of("ssh").is_empty() && s.rig.calls_of("scp").is_empty());
+    assert!(
+        s.key().is_file() && s.cert().is_file(),
+        "sync signed for the host"
+    );
+    assert_eq!(
+        fs::read(s.alias()).expect("the alias sync wrote"),
+        by_status,
+        "the same bytes"
+    );
+}
+
+// ---- The operator's key and hosts.lock ----
+
+#[test]
+fn a_command_whose_key_exists_does_not_wait_for_a_held_hosts_lock() {
+    let Some(s) = Signing::new() else { return };
+    assert_eq!(s.run(&["status", "-Host", "agentspace"]).code, Some(0));
+    assert!(s.key().is_file());
+    // Held for the whole run: a command that took it would wait its 30 seconds and fail with the
+    // lock's message, so exit 0 and the report alone show it was never taken. No time is asserted,
+    // since a loaded machine makes a run slow.
+    let held = agentspace_hosts::lock(&s.rig.profile).expect("hosts.lock");
+    let out = s.run(&["status", "-Host", "agentspace"]);
+    drop(held);
+    assert_eq!(out.code, Some(0), "{:?}", out.err());
+    assert_eq!(out.err(), status_lines(OTHER_ID));
+}
+
+#[test]
+fn a_command_whose_key_is_missing_waits_for_hosts_lock_before_making_it() {
+    let Some(s) = Signing::new() else { return };
+    assert!(!s.key().exists());
+    let hold = std::time::Duration::from_secs(4);
+    let held = agentspace_hosts::lock(&s.rig.profile).expect("hosts.lock");
+    let taken = std::time::Instant::now();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(hold);
+        drop(held);
+    });
+    let out = s.run(&["status", "-Host", "agentspace"]);
+    let took = taken.elapsed();
+    releaser.join().unwrap();
+    assert_eq!(out.code, Some(0), "{:?}", out.err());
+    assert!(
+        took >= hold,
+        "the key is made only once hosts.lock is free: {took:?}"
+    );
+    assert!(s.key().is_file(), "the key was made");
+}

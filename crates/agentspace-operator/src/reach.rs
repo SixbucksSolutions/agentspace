@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use agentspace_ca::CaEnv;
-use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Remote, Say};
+use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
 use agentspace_sync::Target;
 
 use crate::Reach;
@@ -80,7 +80,7 @@ impl Env {
 }
 
 /// The real [`Reach`]: the token push, `ca`, a host's key, certificate and alias, and `sync`,
-/// `deploy`, `bootstrap` and `provision`.
+/// `sync -All`, `deploy`, `bootstrap` and `provision`.
 pub struct SystemReach {
     env: Env,
     access: Access,
@@ -156,16 +156,28 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        // QUESTION: agentspace-sync's pinned `deploy` has no parameter for `-InstanceType`, so the
-        // type cannot reach the stack. Interim: a command that names one is refused, never run
-        // without it, since a dropped sizing parameter would deploy the host at the wrong size.
-        if instance_type.is_some() {
-            return Err(Failure {
-                message: "agentspace: deploy -InstanceType is not built yet.".to_string(),
-                caller: CallerFailure::Same,
-            });
-        }
-        agentspace_sync::deploy(ctx, env, target, say, aws, remote)
+        // `-InstanceType` reaches the host's stack through agentspace-sync's
+        // `deploy_with_instance_type` (architect, 2026-11-21, for v0.07-T03).
+        agentspace_sync::deploy_with_instance_type(
+            ctx,
+            env,
+            target,
+            instance_type,
+            say,
+            aws,
+            remote,
+        )
+    }
+
+    fn sync_all(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::sync_all(ctx, env, say, aws, remote)
     }
 
     fn bootstrap(

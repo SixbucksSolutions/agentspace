@@ -1255,36 +1255,36 @@ fn quiet_down_all_still_prints_the_host_lines() {
 }
 
 #[test]
-fn sync_all_syncs_only_ready_hosts_and_skips_the_rest_with_their_state() {
+fn sync_all_is_agentspace_syncs_once_and_the_operator_prints_and_loops_over_nothing() {
+    // `sync -All`'s hosts, `Host` lines, skips and count are agentspace-sync's `sync_all`
+    // (architect, 2026-11-21, for v0.07-T03): the operator calls it once and adds nothing.
     let home = three_hosts("sync-all");
     let rig = Rig::new(&home, false, false, vec![]);
     rig.run(&all_request(Command::Sync)).unwrap();
-    assert_eq!(rig.reach.calls(), vec!["sync box", "sync host:agentspace"]);
-    assert_eq!(
-        rig.say.lines(),
-        vec![
-            "Host      swimcoach (agentbox), ready".to_string(),
-            format!("Host      agentspace ({HOST_STACK}), ready"),
-            "Host      newproject (agentspace-host-newproject), creating".to_string(),
-            "Skipping: the host is creating; its next provisioning run syncs it.".to_string(),
-        ]
-    );
+    assert_eq!(rig.reach.calls(), vec!["sync-all"]);
+    assert!(rig.say.lines().is_empty(), "{:?}", rig.say.lines());
+    assert!(rig.aws.calls().is_empty());
 }
 
 #[test]
-fn sync_all_goes_on_past_a_failed_host_and_exits_1_with_the_count() {
+fn sync_all_fails_with_agentspace_syncs_own_failure_and_nothing_added() {
     let home = three_hosts("sync-all-fails");
     let mut rig = Rig::new(&home, false, false, vec![]);
-    rig.reach = FakeReach::default().failing("sync", "agentspace: Install on the instance failed.");
+    rig.reach = FakeReach::default().failing("sync-all", "agentspace: 2 of 3 hosts failed.");
     let failure = rig.run(&all_request(Command::Sync)).unwrap_err();
     assert_eq!(failure.message, "agentspace: 2 of 3 hosts failed.");
-    assert_eq!(rig.reach.calls().len(), 2, "Every ready host is tried");
-    assert_eq!(
-        rig.say
-            .lines()
-            .iter()
-            .filter(|l| *l == "agentspace: Install on the instance failed.")
-            .count(),
-        2
-    );
+    assert_eq!(rig.reach.calls(), vec!["sync-all"]);
+    assert!(rig.say.lines().is_empty(), "{:?}", rig.say.lines());
+}
+
+#[test]
+fn sync_all_is_dispatched_before_the_operator_reads_the_registry() {
+    // agentspace-sync reads the registry itself, so an invalid one is its failure to give.
+    let home = TempHome::new("sync-all-invalid-registry");
+    let registry = agentspace_hosts::hosts_path(&home.ctx().home);
+    std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
+    std::fs::write(&registry, b"not json").unwrap();
+    let rig = Rig::new(&home, false, false, vec![]);
+    rig.run(&all_request(Command::Sync)).unwrap();
+    assert_eq!(rig.reach.calls(), vec!["sync-all"]);
 }
