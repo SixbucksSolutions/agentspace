@@ -32,9 +32,8 @@ box, today's one instance, is swimcoach's host and keeps every file and every by
 [Agentspace's host keys](#agentspaces-host-keys),
 [A lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box) and
 [Another host's holder](#another-hosts-holder). Every name here is D55's. The rulings this page
-cites as "architect, 2026-11-20, for v0.07-T01" are the dev lead's cross-spec pins that the
-architect confirmed for v0.07's first turn; a rule marked "architect's to confirm" is this page's
-choice where D43 to D55 leave one open, and binds until the architect rules otherwise.
+cites as "architect, 2026-11-20, for v0.07-T01" are the facts D43 to D55 left open, as the
+architect ruled on them for v0.07's first turn.
 
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
@@ -630,7 +629,7 @@ about, leaving every other record's members and values as it read them. The writ
 - **`provision`**: the run's start, its outcome and the instance ID
   ([operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
 - **Every other operator command that needs a host's instance ID**: that record's `instance_id`
-  alone. **No other operator command adds a record** (architect's to confirm): one given `-Host`
+  alone. **No other operator command adds a record** (architect, 2026-11-20, for v0.07-T01): one given `-Host`
   for a project with no record fails, writing nothing, with operator.md's message
   ([Which host a command acts on](operator.md#which-host-a-command-acts-on)).
 - **The ProxyCommand**: a missing `instance_id` alone, into its host's existing record, as
@@ -698,7 +697,7 @@ read from its stack again, as a missing cache was.
   into that record, and only if it still holds none. It never writes another member, never
   replaces an `instance_id`, and never adds a record; it never holds the lock across the call to
   AWS. A write that fails, or a file that has become not valid, does not fail the connection,
-  which uses the ID it read (architect's to confirm).
+  which uses the ID it read (architect, 2026-11-20, for v0.07-T01).
 - **The lease CLI never reads, checks for or needs `instance_id`** (D21): `create` and `get` read
   a record's `project`, `stack` and `state` alone ([driver.md](driver.md#where-it-places-a-lease)).
 - **An `instance_id` that does not match its pattern makes the file not valid**, as above. Unlike
@@ -776,7 +775,7 @@ record it adds agree. A reader SHOULD open it sharing read, write and delete.
 
 **A missing file lists nothing** (D54), so a laptop without one makes no host at all. **Something at
 its path that is not a file, a file that cannot be opened, or a file that is not valid, lists
-nothing either, but is an error** (architect's to confirm): `create` fails with `internal` and
+nothing either, but is an error** (architect, 2026-11-20, for v0.07-T01): `create` fails with `internal` and
 changes nothing, rather than answer a terminal `unsatisfiable` for a project that MAY be listed;
 `provision` fails with a message that names the file ([operator.md](operator.md#provision)).
 **`get` of a `pending` lease never fails over it** (architect, 2026-11-20, for v0.07-T01): it
@@ -1507,7 +1506,7 @@ itself with the CA, never with the user's own key** (D47, D55).
   lease's key is ([The key](#the-key)), with the same line-ending tolerance for a reader. **Its
   comment SHOULD be `agentspace host <project>`**, and MUST hold no line break. Nothing reads it.
 - **It is made once, by the first operator command that signs a certificate for the host and finds
-  `id_ed25519` missing, and kept** (architect's to confirm). The command makes it
+  `id_ed25519` missing, and kept** (architect, 2026-11-20, for v0.07-T01). The command makes it
   while it holds [the host registry lock](#the-host-registry-lock), after looking again for
   `id_ed25519` once it holds the lock, so two commands never make two keys; a leftover
   `id_ed25519.pub` or `id_ed25519-cert.pub` without `id_ed25519` is replaced. **An existing key is
@@ -1529,7 +1528,7 @@ itself with the CA, never with the user's own key** (D47, D55).
   | Valid principals | Exactly one: `ubuntu` |
   | Valid before | The issue time plus one hour, 3600 seconds, exactly |
   | Valid after | MUST NOT be later than the issue time, and SHOULD be 5 minutes before it, as a lease's |
-  | Extensions | A lease certificate's two, `permit-port-forwarding` and `permit-pty` (architect's to confirm) |
+  | Extensions | A lease certificate's two, `permit-port-forwarding` and `permit-pty` (architect, 2026-11-20, for v0.07-T01) |
 
   **Its comment** is any text with no line break, and SHOULD be the public key's comment.
 - **The certificate is renewed by every operator command that names a host other than the box**
@@ -1549,7 +1548,7 @@ itself with the CA, never with the user's own key** (D47, D55).
   always leaves a working `ssh agentspace-host.<project>`. The person's ssh then uses the
   operator's key and certificate through the operator alias
   ([A host's operator alias](#a-hosts-operator-alias)).
-- **A new certificate replaces the old one in one rename** (architect's to confirm): the command
+- **A new certificate replaces the old one in one rename** (architect, 2026-11-20, for v0.07-T01): the command
   copies `id_ed25519.pub` to `sign-<hex>.pub` in the host's folder, signs the copy, which gives
   `sign-<hex>-cert.pub` beside it, moves that over `id_ed25519-cert.pub`, and deletes every
   `sign-<hex>` file whether or not anything failed. So ssh reads the old certificate or the new
@@ -1596,7 +1595,7 @@ Host agentspace-host.<project>
 | `<key path>` | The full path of the host's `id_ed25519`, the home folder joined as text with `.agentspace\hosts\<project>\id_ed25519`, written as a lease alias's `<key path>` is ([The alias file](#the-alias-file)) |
 | `<certificate path>` | The full path of the host's `id_ed25519-cert.pub`, written the same way |
 | `<known_hosts path>` | The full path of [agentspace's `known_hosts`](#agentspaces-host-keys), written the same way |
-| `<proxy command>` | The default ProxyCommand line of [The alias file](#the-alias-file), `"<program>" agentspace-host.<project>`, with `%` written as `%%`. `<program>` is the full path of `agentspace-ssh-proxy.exe` as the operator finds it as [operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others) says. `AGENTSPACE_PROXY_COMMAND`, the lease CLI's variable, does not change it (architect's to confirm) |
+| `<proxy command>` | The default ProxyCommand line of [The alias file](#the-alias-file), `"<program>" agentspace-host.<project>`, with `%` written as `%%`. `<program>` is the full path of `agentspace-ssh-proxy.exe` as the operator finds it as [operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others) says. `AGENTSPACE_PROXY_COMMAND`, the lease CLI's variable, does not change it (architect, 2026-11-20, for v0.07-T01) |
 
 - **It differs from a lease alias only in these:** the owner mark; the `Host` name; `User ubuntu`;
   the operator's key and certificate; `StrictHostKeyChecking accept-new`, so the first connection
@@ -1722,7 +1721,7 @@ before the start (below).
   missing** (architect, 2026-11-20, for v0.07-T01), and never creates or opens the log. **A failure
   to make the folder is a start that fails**: no run is started, and the lease stays `pending`;
   what the driver does then is [driver.md](driver.md#check_pending)'s.
-- **Its working folder is the home folder** (architect's to confirm). The state and ssh folders
+- **Its working folder is the home folder** (architect, 2026-11-20, for v0.07-T01). The state and ssh folders
   it is given are full, so its working folder changes none of the files it uses.
 
 ### A host's push stamp
@@ -2180,7 +2179,7 @@ format. None is committed.
 | `%USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, or `provision`'s deploy step, just before the call that reads it | The AWS CLI's `cloudformation deploy` | With its command's folder |
 | `%USERPROFILE%\.agentspace\operator\<hex>\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, or `provision`'s sync step, just before the copy | `scp`, which copies the folder to the host | With its command's folder |
 | `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box, and so for every host, since each is from the one template | `sync`'s build, or `provision`'s | `scp` | With its command's folder |
-| `%USERPROFILE%\.agentspace\operator\<hex>\bootstrap.sh` | None: a person ran `<checkout>\box\bootstrap.sh` on the box by hand | The bootstrap, the bytes the operator carries, built from the repository's `box\bootstrap.sh` (D46) | `bootstrap` and `provision`, just before the copy, when the operator sends the script as a file (operator.md's choice; architect's to confirm) | `scp` | With its command's folder |
+| `%USERPROFILE%\.agentspace\operator\<hex>\bootstrap.sh` | None: a person ran `<checkout>\box\bootstrap.sh` on the box by hand | The bootstrap, the bytes the operator carries, built from the repository's `box\bootstrap.sh` (D46) | `bootstrap` and `provision`, just before the copy, when the operator sends the script as a file (operator.md's choice; architect, 2026-11-20, for v0.07-T01) | `scp` | With its command's folder |
 
 - **The operator's folder, `%USERPROFILE%\.agentspace\operator`, holds one folder per operator
   command that sends a file, `operator\<hex>\`** (architect, 2026-11-20, for v0.07-T01), where
@@ -2192,7 +2191,7 @@ format. None is committed.
 - **A folder in `operator\` older than 24 hours, left by a killed command, is removed by the next
   operator command that finds it** (architect, 2026-11-20, for v0.07-T01). Its age is counted
   from its creation time, and only a folder whose name is 32 lowercase hex digits is removed this
-  way; any other file or folder there is left alone (architect's to confirm).
+  way; any other file or folder there is left alone (architect, 2026-11-20, for v0.07-T01).
 - **`AGENTSPACE_STATE_DIR` does not move the operator's folder or the stack parameters file**
   ([What moves which files](#what-moves-which-files)). Access rules: inherited.
 - **Nothing reads the files in a command's folder but the programs that command starts**, at the
