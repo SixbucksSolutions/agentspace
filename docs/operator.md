@@ -2553,10 +2553,13 @@ CLI writes holds none ([state.md, The alias file](state.md#the-alias-file)).
    ProxyCommand](#from-the-proxycommand)), and act on that host: its instance ID, its start and
    wait, and its push stamp (D49, D50).
 4. **If they failed, exits 1**, starting no tunnel.
-5. **Reads that host's instance ID from its record in the host registry**
+5. **Takes that host's instance ID from its record in the host registry**
    ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)),
-   which step 3 has just made sure holds one. A registry or a record that cannot be read here, or
-   holds no instance ID, fails with the caller's failure message, exit 1, and starts no tunnel.
+   which step 3 has just made sure holds one; **when the record holds none because step 3's write
+   of it failed, it uses the ID step 3 read from the stack** ([state.md, The
+   instance ID](state.md#the-instance-id): a failed write never fails the connection; architect,
+   2026-11-21, for v0.07-T03, on #0153's review). A registry that cannot be read here, or a host
+   with no ID from either, fails with the caller's failure message, exit 1, and starts no tunnel.
 6. **Runs the tunnel**, with the ProxyCommand's own stdin and stdout:
 
    ```
