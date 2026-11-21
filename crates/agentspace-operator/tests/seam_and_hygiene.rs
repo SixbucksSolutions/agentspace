@@ -14,7 +14,7 @@ use rig::*;
 
 fn cached_rig() -> Rig {
     let rig = Rig::standard();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     rig
 }
 
@@ -325,7 +325,7 @@ fn write_cmd(path: &std::path::Path, lines: &[&str]) {
 #[test]
 fn a_cmd_file_can_stand_in_for_the_aws_cli() {
     let rig = Rig::new();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     let dir = &rig.standins;
     std::fs::write(dir.join("di.json"), full_instance("running", &old_launch())).unwrap();
     std::fs::write(dir.join("dv.json"), "{\"Volumes\":[{\"Size\":8}]}").unwrap();

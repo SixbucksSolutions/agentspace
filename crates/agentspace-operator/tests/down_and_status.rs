@@ -11,7 +11,7 @@ use rig::*;
 
 fn cached_rig() -> Rig {
     let rig = Rig::standard();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     rig
 }
 
@@ -55,7 +55,7 @@ fn down_asks_whatever_state_the_instance_is_in_without_reading_it() {
 }
 
 #[test]
-fn down_without_a_cache_reads_the_stack_and_writes_the_cache() {
+fn down_without_a_registry_reads_the_stack_and_writes_the_registry() {
     let rig = Rig::standard();
     let out = rig.run(&["down"]);
     assert_eq!(out.code, Some(0), "{:?}", out.err());
@@ -63,7 +63,7 @@ fn down_without_a_cache_reads_the_stack_and_writes_the_cache() {
         rig.keys(),
         ["cloudformation-describe-stacks", "ec2-stop-instances"]
     );
-    assert_eq!(rig.cache_bytes(), Some(Rig::cache_file(ID)));
+    assert_eq!(rig.hosts_bytes(), Some(Rig::hosts_file_box(ID)));
     assert_eq!(out.err(), format!("Stopping {ID}.\n"));
 }
 
@@ -290,12 +290,12 @@ fn status_never_starts_the_box_or_changes_anything() {
 }
 
 #[test]
-fn status_without_a_cache_reads_the_stack_first() {
+fn status_without_a_registry_reads_the_stack_first() {
     let rig = Rig::standard();
     let out = rig.run(&["status"]);
     assert_eq!(out.code, Some(0), "{:?}", out.err());
     assert_eq!(rig.keys()[0], "cloudformation-describe-stacks");
-    assert_eq!(rig.cache_bytes(), Some(Rig::cache_file(ID)));
+    assert_eq!(rig.hosts_bytes(), Some(Rig::hosts_file_box(ID)));
 }
 
 #[test]

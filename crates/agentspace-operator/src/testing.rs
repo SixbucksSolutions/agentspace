@@ -14,7 +14,7 @@ use agentspace_operator_api::{
 };
 use serde_json::Value;
 
-use crate::{Reach, Report};
+use crate::{Reach, Report, Target};
 
 /// A throwaway folder under the temp folder, removed when it drops.
 pub(crate) struct TempHome(PathBuf);
@@ -96,6 +96,9 @@ impl Say for FakeSay {
 impl Report for FakeSay {
     fn report(&self, line: &str) {
         self.lines.borrow_mut().push(line.to_string());
+    }
+    fn failure(&self, failure: &Failure) {
+        self.lines.borrow_mut().push(failure.message.clone());
     }
 }
 
@@ -198,14 +201,16 @@ impl Remote for FakeRemote {
 #[derive(Default)]
 pub(crate) struct FakeReach {
     pub(crate) calls: RefCell<Vec<String>>,
-    pub(crate) fail: Option<String>,
+    /// The commands (by their recorded name) that fail, and the message each fails with.
+    pub(crate) fail: Vec<(String, String)>,
 }
 
 impl FakeReach {
     fn record(&self, text: &str) -> Result<(), Failure> {
         self.calls.borrow_mut().push(text.to_string());
-        match &self.fail {
-            Some(message) => Err(Failure {
+        let name = text.split(' ').next().unwrap_or_default();
+        match self.fail.iter().find(|(n, _)| n == name) {
+            Some((_, message)) => Err(Failure {
                 message: message.clone(),
                 caller: CallerFailure::Same,
             }),
@@ -213,38 +218,90 @@ impl FakeReach {
         }
     }
 
+    pub(crate) fn failing(mut self, name: &str, message: &str) -> Self {
+        self.fail.push((name.to_string(), message.to_string()));
+        self
+    }
+
     pub(crate) fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
     }
 }
 
+fn target_text(target: Target<'_>) -> String {
+    match target {
+        Target::Box => "box".to_string(),
+        Target::Host(project) => format!("host:{project}"),
+    }
+}
+
 impl Reach for FakeReach {
-    fn push(&self, _ctx: &Context, _say: &dyn Say, instance_id: &str, alias: &str) {
-        self.calls
-            .borrow_mut()
-            .push(format!("push {instance_id} {alias}"));
+    fn push(
+        &self,
+        _ctx: &Context,
+        _say: &dyn Say,
+        instance_id: &str,
+        alias: &str,
+        host: Option<&str>,
+    ) {
+        self.calls.borrow_mut().push(format!(
+            "push {instance_id} {alias} {}",
+            host.unwrap_or("-")
+        ));
     }
     fn ca(&self, _ctx: &Context, _env: &CaEnv, _say: &dyn Say) -> Result<(), Failure> {
         self.record("ca")
+    }
+    fn access(&self, _ctx: &Context, _env: &CaEnv, project: &str) -> Result<(), Failure> {
+        self.record(&format!("access {project}"))
     }
     fn sync(
         &self,
         _ctx: &Context,
         _env: &CaEnv,
+        target: Target<'_>,
         _say: &dyn Say,
         _aws: &dyn Aws,
         _remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        self.record("sync")
+        self.record(&format!("sync {}", target_text(target)))
     }
     fn deploy(
         &self,
         _ctx: &Context,
         _env: &CaEnv,
+        target: Target<'_>,
+        instance_type: Option<&str>,
         _say: &dyn Say,
         _aws: &dyn Aws,
         _remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        self.record("deploy")
+        self.record(&format!(
+            "deploy {} {}",
+            target_text(target),
+            instance_type.unwrap_or("-")
+        ))
+    }
+    fn bootstrap(
+        &self,
+        _ctx: &Context,
+        _env: &CaEnv,
+        target: Target<'_>,
+        _say: &dyn Say,
+        _aws: &dyn Aws,
+        _remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.record(&format!("bootstrap {}", target_text(target)))
+    }
+    fn provision(
+        &self,
+        _ctx: &Context,
+        _env: &CaEnv,
+        project: &str,
+        _say: &dyn Say,
+        _aws: &dyn Aws,
+        _remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.record(&format!("provision {project}"))
     }
 }

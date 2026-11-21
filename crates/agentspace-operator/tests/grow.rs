@@ -12,7 +12,7 @@ use rig::*;
 
 fn cached_rig() -> Rig {
     let rig = Rig::standard();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     rig
 }
 
@@ -369,13 +369,13 @@ fn quiet_hides_the_progress_but_not_the_remote_steps_output_nor_a_failure() {
 }
 
 #[test]
-fn grow_without_a_cache_reads_the_stack_first() {
+fn grow_without_a_registry_reads_the_stack_first() {
     let rig = Rig::standard();
     rig.instance("stopped");
     let out = rig.run(&["grow"]);
     assert_eq!(out.code, Some(0), "{:?}", out.err());
     assert_eq!(rig.keys()[0], "cloudformation-describe-stacks");
-    assert_eq!(rig.cache_bytes(), Some(Rig::cache_file(ID)));
+    assert_eq!(rig.hosts_bytes(), Some(Rig::hosts_file_box(ID)));
 }
 
 #[test]

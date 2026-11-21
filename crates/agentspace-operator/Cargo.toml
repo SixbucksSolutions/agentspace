@@ -21,6 +21,14 @@ agentspace-push = { path = "../agentspace-push" }
 agentspace-ca = { path = "../agentspace-ca" }
 agentspace-sync = { path = "../agentspace-sync" }
 agentspace-state = { path = "../agentspace-state" }
+# The host registry, the host a command acts on, and a host's paths (D45, D49, D55).
+agentspace-hosts = { path = "../agentspace-hosts" }
+# -Host's value is a project in the lease CLI's form (operator.md, Command line).
+agentspace-values = { path = "../agentspace-values" }
+# The operator's key and certificate, and a host's operator alias (operator.md, How the operator
+# reaches a host).
+agentspace-credential = { path = "../agentspace-credential" }
+agentspace-alias = { path = "../agentspace-alias" }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 
 [dev-dependencies]

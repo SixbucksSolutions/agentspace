@@ -109,6 +109,11 @@ impl Report for Printer {
     fn report(&self, line: &str) {
         self.write_line(line);
     }
+
+    /// A host's failure under `-All`: the same line [`Printer::failure`] prints.
+    fn failure(&self, failure: &Failure) {
+        Printer::failure(self, failure);
+    }
 }
 
 impl Say for Printer {

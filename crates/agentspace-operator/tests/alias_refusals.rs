@@ -11,7 +11,16 @@ use cli::*;
 
 #[test]
 fn alias_is_refused_with_any_command_but_up() {
-    for command in ["deploy", "sync", "ca", "down", "status", "grow"] {
+    for command in [
+        "deploy",
+        "sync",
+        "bootstrap",
+        "provision",
+        "ca",
+        "down",
+        "status",
+        "grow",
+    ] {
         assert_failure(&[command, "-Alias", "devbox"], ALIAS_APPLIES);
         // Whatever the value is, the first check runs first.
         assert_failure(&[command, "-Alias", "bad!"], ALIAS_APPLIES);
@@ -126,6 +135,26 @@ fn the_pattern_is_case_sensitive_and_ascii_only_so_every_good_alias_passes() {
     ] {
         assert_reaches_command(&["up", "-Alias", alias], "up");
     }
+}
+
+#[test]
+fn up_with_a_host_takes_an_alias_too_and_the_alias_checks_still_run_first() {
+    // `-Alias` and `-Host` MAY be given together (operator.md, up, step 3). The alias is checked
+    // before the host checks and before the registry is looked up.
+    assert_failure(&["up", "-Host", "x", "-Alias", "bad!"], ALIAS_INVALID);
+    assert_failure(&["up", "-Alias", "bad!", "-All"], ALIAS_INVALID);
+    assert_failure(
+        &["status", "-Alias", "x", "-Host", "y", "-All"],
+        ALIAS_APPLIES,
+    );
+    assert_failure(&["ca", "-Alias", "x", "-Host", "y"], ALIAS_APPLIES);
+    assert_failure(&["provision", "-Alias", "x"], ALIAS_APPLIES);
+    assert_failure(&["provision", "-Alias", "bad!"], ALIAS_APPLIES);
+    // A host name that is a valid alias too: the alias passes, and the host is then looked up.
+    assert_failure(
+        &["up", "-Host", "x", "-Alias", "custom.alias"],
+        &no_host("x"),
+    );
 }
 
 #[test]

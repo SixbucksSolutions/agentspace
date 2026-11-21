@@ -37,6 +37,8 @@ use windows_sys::Win32::Security::Cryptography::{
 pub const ID: &str = "i-1234567890abcdef0";
 /// A second one, for a test that needs the cache to say something else than the stack does.
 pub const OTHER_ID: &str = "i-fedcba9876543210f";
+/// A third one, for a test with the box and two more hosts.
+pub const THIRD_ID: &str = "i-abcdef1234567890a";
 /// A made-up volume ID.
 pub const VOL: &str = "vol-1234567890abcdef0";
 /// The written text of #0034's message (operator.md, AWS failures).
@@ -166,6 +168,35 @@ pub fn iso_ago(seconds_ago: i64) -> String {
 /// An old launch time: more than 20 minutes ago, so `up` does not wait.
 pub fn old_launch() -> String {
     "2020-01-01T00:00:00+00:00".to_string()
+}
+
+// ---------------------------------------------------------------------------------------------
+// The host registry's records (docs/state.md, The host registry)
+// ---------------------------------------------------------------------------------------------
+
+/// A record as state.md writes it: compact, the members in its table's order.
+pub fn rec(project: &str, stack: &str, state: &str, id: Option<&str>) -> String {
+    let mut r = format!("{{\"project\":\"{project}\",\"stack\":\"{stack}\",\"state\":\"{state}\"");
+    if let Some(id) = id {
+        r.push_str(&format!(",\"instance_id\":\"{id}\""));
+    }
+    r.push('}');
+    r
+}
+
+/// The box's record: project `swimcoach`, stack `agentbox`, `ready` (D43, D55).
+pub fn box_rec(id: Option<&str>) -> String {
+    rec("swimcoach", "agentbox", "ready", id)
+}
+
+/// The record of another host: its stack is `agentspace-host-<project>` (D44).
+pub fn host_rec(project: &str, state: &str, id: Option<&str>) -> String {
+    rec(project, &format!("agentspace-host-{project}"), state, id)
+}
+
+/// The registry's document: `{"version":0,"hosts":[...]}` and one LF.
+pub fn hosts_doc(records: &[String]) -> Vec<u8> {
+    format!("{{\"version\":0,\"hosts\":[{}]}}\n", records.join(",")).into_bytes()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -477,31 +508,79 @@ impl Rig {
         self.profile.join(".agentspace")
     }
 
-    pub fn cache_path(&self) -> PathBuf {
+    /// The retired instance-ID cache (D45). No v0.07 command reads, writes or removes it; a test
+    /// that leaves one shows that.
+    pub fn leftover_cache_path(&self) -> PathBuf {
         self.state_dir().join("instance-id.json")
     }
 
-    pub fn write_cache(&self, id: &str) {
+    pub fn write_leftover_cache(&self, id: &str) {
         fs::create_dir_all(self.state_dir()).expect("the state folder");
         fs::write(
-            self.cache_path(),
+            self.leftover_cache_path(),
             format!("{{\"version\":0,\"instance_id\":\"{id}\"}}"),
         )
-        .expect("the cache");
+        .expect("the leftover cache");
     }
 
-    pub fn write_cache_bytes(&self, bytes: &[u8]) {
+    pub fn leftover_cache_bytes(&self) -> Option<Vec<u8>> {
+        fs::read(self.leftover_cache_path()).ok()
+    }
+
+    // ---- the host registry (docs/state.md, The host registry) ----
+
+    pub fn hosts_path(&self) -> PathBuf {
+        self.state_dir().join("hosts.json")
+    }
+
+    pub fn write_hosts(&self, records: &[String]) {
+        self.write_hosts_bytes(&hosts_doc(records));
+    }
+
+    pub fn write_hosts_bytes(&self, bytes: &[u8]) {
         fs::create_dir_all(self.state_dir()).expect("the state folder");
-        fs::write(self.cache_path(), bytes).expect("the cache");
+        fs::write(self.hosts_path(), bytes).expect("the host registry");
     }
 
-    pub fn cache_bytes(&self) -> Option<Vec<u8>> {
-        fs::read(self.cache_path()).ok()
+    pub fn hosts_bytes(&self) -> Option<Vec<u8>> {
+        fs::read(self.hosts_path()).ok()
     }
 
-    /// The exact bytes of a cache that holds `id`.
-    pub fn cache_file(id: &str) -> Vec<u8> {
-        format!("{{\"version\":0,\"instance_id\":\"{id}\"}}").into_bytes()
+    /// The registry as the box alone, with `id` as its instance ID: what v0.06's
+    /// `write_cache(id)` was, after D45 (the retired cache's members are a record's).
+    pub fn write_box_id(&self, id: &str) {
+        self.write_hosts(&[box_rec(Some(id))]);
+    }
+
+    /// The registry of the box and one more host, each with an instance ID.
+    pub fn write_box_and(&self, project: &str, state: &str, box_id: &str, id: Option<&str>) {
+        self.write_hosts(&[box_rec(Some(box_id)), host_rec(project, state, id)]);
+    }
+
+    /// A host's folder, `hosts\<project>` under the state folder.
+    pub fn host_dir(&self, project: &str) -> PathBuf {
+        self.state_dir().join("hosts").join(project)
+    }
+
+    /// The host's operator alias file in the default ssh folder.
+    pub fn host_alias_path(&self, project: &str) -> PathBuf {
+        self.profile
+            .join(".ssh")
+            .join("agentspace.d")
+            .join(format!("agentspace-host.{project}"))
+    }
+
+    /// Whether the rig's home holds any sign of the operator's key, certificate or alias for a host.
+    pub fn signed_anything(&self) -> bool {
+        self.state_dir().join("hosts").exists()
+            || self.profile.join(".ssh").join("agentspace.d").exists()
+            || self.profile.join(".ssh").join("config").exists()
+    }
+
+    /// The exact bytes of a registry that holds the box's record with `id`, as a first change
+    /// writes it (state.md: compact JSON, members in the table's order, one LF).
+    pub fn hosts_file_box(id: &str) -> Vec<u8> {
+        hosts_doc(&[box_rec(Some(id))])
     }
 
     pub fn stamp_path(&self) -> PathBuf {
@@ -685,8 +764,31 @@ impl Rig {
             env: Vec::new(),
             hold_stdin: false,
             real_windows: false,
+            exe: None,
             timeout: Duration::from_secs(90),
         }
+    }
+
+    /// A copy of the operator in a folder of the rig's own, with a file named
+    /// `agentspace-ssh-proxy.exe` beside it, which is all a host's operator alias needs to name
+    /// (operator.md, How each program finds the others: a program finds its siblings beside its
+    /// own executable). Run the operator from it with [`Op::exe`]. The proxy file is never run.
+    pub fn operator_with_proxy(&self) -> PathBuf {
+        let dir = self.root().join("install");
+        fs::create_dir_all(&dir).expect("an install folder");
+        let operator = dir.join("agentspace-operator.exe");
+        fs::copy(env!("CARGO_BIN_EXE_agentspace-operator"), &operator).expect("a copy");
+        fs::write(dir.join("agentspace-ssh-proxy.exe"), b"not a program").expect("a stand-in");
+        operator
+    }
+
+    /// A copy of the operator with no proxy beside it.
+    pub fn operator_without_proxy(&self) -> PathBuf {
+        let dir = self.root().join("install-bare");
+        fs::create_dir_all(&dir).expect("an install folder");
+        let operator = dir.join("agentspace-operator.exe");
+        fs::copy(env!("CARGO_BIN_EXE_agentspace-operator"), &operator).expect("a copy");
+        operator
     }
 
     /// Runs the command and returns what it did.
@@ -726,10 +828,17 @@ pub struct Op<'a> {
     env: Vec<(String, Option<OsString>)>,
     hold_stdin: bool,
     real_windows: bool,
+    exe: Option<PathBuf>,
     timeout: Duration,
 }
 
 impl Op<'_> {
+    /// Runs this copy of the operator in place of the one cargo built.
+    pub fn exe(mut self, path: impl AsRef<Path>) -> Self {
+        self.exe = Some(path.as_ref().to_path_buf());
+        self
+    }
+
     pub fn env(mut self, name: &str, value: impl AsRef<OsStr>) -> Self {
         self.env
             .push((name.to_string(), Some(value.as_ref().to_os_string())));
@@ -761,7 +870,10 @@ impl Op<'_> {
 
     pub fn run(self) -> Out {
         let rig = self.rig;
-        let mut c = Command::new(env!("CARGO_BIN_EXE_agentspace-operator"));
+        let mut c = match &self.exe {
+            Some(path) => Command::new(path),
+            None => Command::new(env!("CARGO_BIN_EXE_agentspace-operator")),
+        };
         c.args(&self.args).env_clear().current_dir(&rig.work);
         c.env("USERPROFILE", &rig.profile)
             .env("HOME", &rig.home)
