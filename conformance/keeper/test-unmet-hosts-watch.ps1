@@ -150,7 +150,8 @@ try {
     Write-Registry @((New-HostRecord $boxProject), (New-HostRecord $pProject))
     Write-Leases @((New-HostLease $boxProject 'b1' $farFuture), (New-HostLease $pProject 'c1' $farFuture))
     $graceSeconds = 8
-    $proc = Start-Watch @('-IntervalSeconds', '1', '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '1', '-FastFailureSeconds', '600', '-ReleaseGraceSeconds', "$graceSeconds") $stub
+    $intervalSeconds = 1
+    $proc = Start-Watch @('-IntervalSeconds', "$intervalSeconds", '-BackoffBaseSeconds', '1', '-BackoffMaxSeconds', '1', '-FastFailureSeconds', '600', '-ReleaseGraceSeconds', "$graceSeconds") $stub
     try {
       $both = Wait-Until { @(Select-ActionLines (Read-LogLines) 'started').Count -ge 2 } 60 $proc
       if (-not $both) { Add-HostCheck $false 'The keeper starts a holder on each host' "Started lines seen: $(@(Select-ActionLines (Read-LogLines) 'started').Count)."; return }
@@ -171,6 +172,12 @@ try {
       $startIdx = @(0..($log.Count - 1) | Where-Object { $log[$_] -cmatch ' started ' -and $log[$_] -cmatch ' host=agentspace\z' })[1]
       $gap = ((Get-LogTime $log[$startIdx]) - (Get-LogTime $log[$iGrace])).TotalSeconds
       Add-HostCheck ($gap -ge ($graceSeconds - 2)) "No holder starts on agentspace until its grace has run: the start is at least $graceSeconds seconds, less rounding, after the grace line" "The start came $gap seconds after the grace line."
+      # keeper.md, The keeper's wait: the start comes at the first pass after the grace. The bound is the grace,
+      # plus one -IntervalSeconds for the pass that falls just short of the grace's end, plus a slack of 10 seconds:
+      # 2 for the log's whole-second times (one rounding at each of the two lines), and the rest for the box's turn
+      # and the start's own handshake, which come before the started line in a pass, and a loaded machine.
+      $slackSeconds = 10
+      Add-HostCheck ($gap -le ($graceSeconds + $intervalSeconds + $slackSeconds)) "agentspace's holder is restarted at the first pass after its grace: no later than the grace, one interval and $slackSeconds seconds of slack after the grace line" "The start came $gap seconds after the grace line, later than $($graceSeconds + $intervalSeconds + $slackSeconds)."
       Add-HostCheck (Test-HostLine $log[$startIdx] 'started' (Get-HostLeaseId 'c2') (Get-HostAlias $pProject 'c2') ([string](Read-HostRecord $pProject)['pid']) $pProject) 'The new holder goes through the other ready lease' "Line: $($log[$startIdx])"
       $keptBetween = @($log[($iStop + 1)..($startIdx - 1)] | Where-Object { $_ -cmatch ' kept ' -and $_ -cmatch ' host=swimcoach\z' })
       Add-HostCheck ($keptBetween.Count -ge 4) 'The box''s kept lines go on, every interval, while agentspace waits: at least 4 before agentspace''s start' "Box kept lines between the stop and the start: $($keptBetween.Count)."

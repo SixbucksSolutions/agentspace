@@ -530,7 +530,9 @@ function Find-LaunchSet([string[]]$Names) {
 # the keeper runs twice: with no registry (-Registry None), and with a registry that holds the box's
 # record alone, written by the case into <USERPROFILE>\.agentspace\hosts.json of its throwaway home
 # (-Registry Box). -Registry Both, the default of each keeper file, runs the file once for each mode
-# as two child processes and prefixes each result line with "[H1 registry=<mode>]".
+# as two child processes and ends each result line with " [H1 registry=<mode>]", after the name (and
+# after the reason of a FAIL or SKIPPED line), so that a name still starts with the spec section it
+# enforces (conformance.md, the result-name rule).
 $script:registryMode = 'None'
 $script:boxRegistryJson = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}'
 
@@ -550,7 +552,7 @@ function Initialize-KeeperRegistryMode([string]$Registry, [string]$File, [hashta
     & (Join-Path $PSHOME 'pwsh.exe') @childArgs 2>&1 | ForEach-Object {
       $line = [string]$_
       if ($line -match '^(\d+) passed, (\d+) failed, (\d+) skipped$') { $pass += [int]$Matches[1]; $fail += [int]$Matches[2]; $skip += [int]$Matches[3] }
-      elseif ($line -match '^(PASS|FAIL|SKIPPED) ') { Write-Output ($line -replace '^(PASS|FAIL|SKIPPED) ', "`$1 [H1 registry=$mode] ") }
+      elseif ($line -match '^(PASS|FAIL|SKIPPED) ') { Write-Output "$line [H1 registry=$mode]" }
       else { Write-Output $line }
     }
     $c = $LASTEXITCODE

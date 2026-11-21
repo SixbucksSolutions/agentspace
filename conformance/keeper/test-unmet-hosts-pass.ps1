@@ -287,6 +287,21 @@ try {
     }
     Add-HostCheck ((& $stamp $lockPath) -ceq $lockStamp) 'With hosts.lock held: hosts.lock is never written' 'The lock file''s length or time stamps changed.'
     Add-HostCheck ((& $stamp $regPath) -ceq $stampBefore -and ([Convert]::ToBase64String([IO.File]::ReadAllBytes($regPath)) -ceq [Convert]::ToBase64String($bytesBefore))) 'With hosts.lock held: The registry''s bytes and time stamps are unchanged' 'The pass wrote the registry.'
+    # Phase C: the case has released hosts.lock, which stays in the state folder where the case made it. One more pass
+    # holds the same: it runs, and writes neither the registry nor hosts.lock.
+    Reset-HostsState
+    $lockStamp = & $stamp $lockPath
+    $code = Invoke-Keeper $now
+    Add-HostCheck ($code -eq 0 -and @(Select-ActionLines (Read-LogLines) 'started').Count -eq 2) 'After hosts.lock is released: A pass exits 0 and starts both holders' "The exit code was $code. Started lines seen: $(@(Select-ActionLines (Read-LogLines) 'started').Count)."
+    Add-HostCheck ((& $stamp $lockPath) -ceq $lockStamp) 'After hosts.lock is released: hosts.lock is never written' 'The lock file''s length or time stamps changed.'
+    Add-HostCheck ((& $stamp $regPath) -ceq $stampBefore -and ([Convert]::ToBase64String([IO.File]::ReadAllBytes($regPath)) -ceq [Convert]::ToBase64String($bytesBefore))) 'After hosts.lock is released: The registry''s bytes and time stamps are unchanged' 'The pass wrote the registry.'
+    # Phase D: the case removes hosts.lock. A pass after that never creates it again.
+    Reset-HostsState
+    Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path $lockPath) -Force -ErrorAction SilentlyContinue
+    $code = Invoke-Keeper $now
+    Add-HostCheck ($code -eq 0 -and @(Select-ActionLines (Read-LogLines) 'started').Count -eq 2) 'After hosts.lock is removed: A pass exits 0 and starts both holders' "The exit code was $code. Started lines seen: $(@(Select-ActionLines (Read-LogLines) 'started').Count)."
+    Add-HostCheck (-not (Test-Path -LiteralPath $lockPath)) 'After hosts.lock is removed: A missing hosts.lock is never created' 'The pass created hosts.lock.'
+    Add-HostCheck ((& $stamp $regPath) -ceq $stampBefore -and ([Convert]::ToBase64String([IO.File]::ReadAllBytes($regPath)) -ceq [Convert]::ToBase64String($bytesBefore))) 'After hosts.lock is removed: The registry''s bytes and time stamps are unchanged' 'The pass wrote the registry.'
   } }
 
   # H14. Another host's holder log over 1 MiB is rotated, after the box's.
