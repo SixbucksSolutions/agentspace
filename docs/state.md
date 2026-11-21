@@ -1639,13 +1639,15 @@ D48's `<state folder>\hosts\<project>.log` is not used.
   cannot open its log exits 1 and writes nothing else.** The driver never opens the log or passes
   the run a handle to it: a process created through WMI's `Win32_Process.Create` cannot be handed
   one, and the starting program gives the run no stdout and no stderr
-  ([The provisioning run's start](#the-provisioning-runs-start)). **The output of the programs the
-  run starts is written through the run into its log** (architect, 2026-11-20, for v0.07-T01).
-  That output keeps each program's own encoding.
+  ([The provisioning run's start](#the-provisioning-runs-start)). **The log holds the run's own
+  lines alone**, a failed step's line carrying the failure message in full, the program's own
+  error text included; the programs' other output goes to the run's own streams, not the log
+  (architect, 2026-11-21, for v0.07-T03, replacing the T01 ruling that copied it;
+  [operator.md, provision](operator.md#provision)).
 - **Opened for append, sharing read, write and delete**, as the keeper's logs are, so a reader, a
   second writer or a run by hand never blocks a run. A reader SHOULD share the same.
-- **Written by `provision` alone**, whether the driver started it or a person ran it, with the
-  output of the programs it runs; **never by the driver**, which neither creates nor opens it
+- **Written by `provision` alone**, whether the driver started it or a person ran it; **never by
+  the driver**, which neither creates nor opens it
   (architect, 2026-11-20, for v0.07-T01). **Read by people.**
   No program of agentspace reads it. **Never rotated or removed** by agentspace.
 - **It MUST NOT hold a secret**, nor the CA's comment, nor a whole `aws` or `ssh` command line

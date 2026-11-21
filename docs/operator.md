@@ -2065,11 +2065,16 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
   failure message without its `agentspace: ` prefix, with each control character in it written as
   `?`. It MUST NOT hold the token or any text of the Bot credential ([Secrecy](#secrecy)), which no
   failure message holds.
-- **Every line of the log is written by the run itself**, its own lines and, between them, the
-  output of the programs its steps run, which the run reads from each program and writes into the
-  log as each was written, keeping each program's own encoding (P14, architect, 2026-11-20, for
-  v0.07-T01; [state.md, The provisioning run's log](state.md#the-provisioning-runs-log)). No other
-  program writes to the log. That output also passes through to the run's stdout and stderr, and
+- **Every line of the log is written by the run itself, and is one of its own lines**
+  ([state.md, The provisioning run's log](state.md#the-provisioning-runs-log)). No other program
+  writes to the log. **A step that fails logs its whole failure message as the line's `reason`**,
+  and for a program the step ran that message carries the program's own error text, as every
+  operator failure does ([AWS failures](#aws-failures)), so the log holds what a person needs to
+  see why a run failed. **The programs' other output is not copied into the log**: the operator
+  hands each program's stdout and stderr to its own, so it goes to the run's streams (architect,
+  2026-11-21, for v0.07-T03, replacing P14's "the output of the programs between its own lines",
+  which the pinned `Aws` and `Remote` cannot carry; copying it is [Q35](#open-questions)). That
+  output passes through to the run's stdout and stderr, and
   its progress messages go to its stderr, as for any command: a run by hand writes them where the
   person's shell sends them. **A run the driver starts detached has none of the CLI's standard
   handles**: its stdin, stdout and stderr are its hidden console's, which nothing reads or writes
@@ -3628,3 +3633,4 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q32** | **Closed (architect, 2026-11-20, for v0.07-T01, P13).** ~~Can two commands share the operator's folder at once?~~ None does: each command writes what it sends into `%USERPROFILE%\.agentspace\operator\<hex>\`, a folder of its own that it removes as it ends, and the next command that makes its own removes any such folder older than 24 hours ([The operator's folder, one per command](#the-operators-folder-one-per-command)). So a person MAY run `sync` or `deploy` while a provisioning run works. | Closed |
 | **Q33** | **Closed (architect, 2026-11-20, for v0.07-T01, P17 and P19).** ~~What happens to a host whose first stack creation failed?~~ `deploy -Host`'s existence check reads `Stacks[0].StackStatus`. No stack, or `REVIEW_IN_PROGRESS`, takes the create path; a state an update can start from takes the update path; a `*_IN_PROGRESS` status fails with a message to try again later; and `ROLLBACK_COMPLETE`, or any other state an update cannot start from, fails with a message that names the stack and the `aws cloudformation delete-stack` command that removes it, then says to provision again. `provision` records `failed` for a host that was never `ready`, and a `ready` host stays `ready`. No operator command deletes a stack in v0.07 ([deploy](#deploy)). | Closed |
 | **Q34** | **Later, not blocking:** **How does a replaced CA reach a host that is not the box?** The operator reaches such a host only with a certificate signed by the CA, so once the CA is replaced, `sync` cannot reach a host that still trusts the old one, and a person recovers each by hand with their own key ([ca](#ca); D17). The candidate fix: install the new public key through Session Manager's Run Command as root, as the patch check already reaches a host ([What up waits for](#what-up-waits-for)), so no ssh is needed. A second `IdentityFile` in the operator's alias was ruled out (architect, 2026-11-20, for v0.07-T01, P19). | The recovery by hand is stated in [ca](#ca), and a replacement is rare (D17). Later: the architect |
+| **Q35** | **Later, not blocking:** **SHOULD the provisioning log also hold the output of the programs the run starts?** v0.07-T01 ruled it SHOULD, but the pinned `Aws` and `Remote` hand each program's streams to the operator's own, so the run cannot read them, and v0.07-T03 kept the run's own lines alone, each failed step's line carrying the program's error text ([provision](#provision); architect, 2026-11-21). A detached run's streams are a hidden console nobody reads, so a program's progress output is lost there. | Later: the architect, if T05's live run shows a failure the log does not explain; the change is the run setting its own standard handles to the log before it starts a program |
