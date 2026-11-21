@@ -8,11 +8,10 @@
 //! content and whether the run's lock and the registry's lock are held, which is how a test sees
 //! what a record said while a step ran. The failures are in `provision_failures`.
 //!
-//! **The last step calls the EC2 driver's `place_pending`**, which on this branch is the
-//! architect's stub until #0150 merges: it fails, and the run goes on. A test that needs it to
-//! succeed is marked `#[ignore = "needs #0150's place_pending"]`; the others accept either
-//! outcome of that step, or make the whole call fail with a lease state file that is not valid,
-//! which fails it before and after #0150 alike (driver.md, place_pending, step 2.2).
+//! **The last step calls the EC2 driver's `place_pending`** (#0150). The tests of what it
+//! placed and left pending run against it; the others accept either outcome of that step, or make
+//! the whole call fail with a lease state file that is not valid (driver.md, place_pending,
+//! step 2.2).
 #![cfg(windows)]
 
 mod common;
@@ -367,7 +366,6 @@ fn a_quiet_run_prints_nothing_of_its_own_and_still_writes_its_log() {
 }
 
 #[test]
-#[ignore = "needs #0150's place_pending"]
 fn a_run_whose_leases_were_placed_logs_place_done_and_warns_of_nothing() {
     let rig = prov_rig(Kind::NoRecord);
     rig.run(|rig| {
@@ -406,7 +404,7 @@ const LEASE_OTHER: &str = "c0ffee00-1234-4abc-8def-0123456789ab";
 #[test]
 fn a_failed_place_pending_is_logged_with_its_reason_warned_and_the_run_still_succeeds() {
     // A lease state file that is not valid fails the whole call (driver.md, place_pending, step
-    // 2.2), as the architect's stub fails it on this branch: so this holds before and after #0150.
+    // 2.2).
     let rig = prov_rig(Kind::NoRecord);
     rig.write_home(
         ".agentspace/leases.json",
@@ -465,7 +463,6 @@ fn a_failed_place_pending_is_logged_with_its_reason_warned_and_the_run_still_suc
 }
 
 #[test]
-#[ignore = "needs #0150's place_pending"]
 fn place_pendings_result_is_logged_as_the_count_placed_then_one_line_per_lease_left_pending() {
     // Two pending leases of the project, and one of another project, which step 9 never names.
     // Lease A cannot be placed: a folder stands where its alias file goes, so removing a killed
