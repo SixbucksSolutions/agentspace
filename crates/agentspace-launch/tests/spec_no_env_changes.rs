@@ -8,27 +8,31 @@
 //! have a variable gives it to a process it starts, as a value of that child alone, or passes the
 //! value to the code under test as an argument.
 //!
-//! **This scan reads the source of every file under `tests/`, this one included, and fails on the
-//! name of either function that changes the environment, in any spelling:** a path to it, a
-//! `use` of it, a call to it, or a renamed import of it, in code or in a comment. It looks for
-//! the names, not for a full path, so no way of reaching them hides from it. The two names are
-//! built from pieces below, so that this file does not hold them whole and the scan has no
-//! exemption for itself.
+//! **This scan reads the source of every file under `tests/`, this one included, and under
+//! `src/`, since a test reaches the crate's own code, and fails on the name of any function that
+//! changes the environment, in any spelling:** a path to it, a `use` of it, a call to it, or a
+//! renamed import of it, in code or in a comment. The names are Rust's two, Windows' call that
+//! sets a variable (in either of its `A` and `W` forms) and the C runtime's (with its
+//! underscored forms), as `names` builds them. It looks for the names, not for a full path, so no
+//! way of reaching them hides from it. The names are built from pieces below, so that this file
+//! does not hold them whole and the scan has no exemption for itself.
 //!
 //! **The scan has a control**: it is run over a planted file in a throwaway folder under the
-//! temp folder, written with each spelling, and it MUST find each one, or the scan has shown
-//! nothing.
+//! temp folder, written with each spelling of each name, and it MUST find each one, or the scan
+//! has shown nothing.
 #![cfg(windows)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The two names, in pieces so that this file does not contain either whole.
-fn names() -> [String; 2] {
+/// The names, in pieces so that this file does not contain any whole.
+fn names() -> [String; 4] {
     [
         format!("{}_{}", "set", "var"),
         format!("{}_{}", "remove", "var"),
+        format!("{}{}", "SetEnvironment", "Variable"),
+        format!("{}{}", "put", "env"),
     ]
 }
 
@@ -73,7 +77,9 @@ fn offenders(dir: &Path) -> Vec<(PathBuf, usize, String)> {
 
 #[test]
 fn no_test_of_the_crate_changes_its_own_environment() {
-    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let tests = crate_dir.join("tests");
+    let src = crate_dir.join("src");
     let mut files = Vec::new();
     files_under(&tests, &mut files);
     assert!(
@@ -87,26 +93,38 @@ fn no_test_of_the_crate_changes_its_own_environment() {
             .any(|f| f.file_name().is_some_and(|n| n == "mod.rs")),
         "The scan reaches the files in the tests' folders."
     );
-    let found = offenders(&tests);
+    let mut sources = Vec::new();
+    files_under(&src, &mut sources);
+    assert!(
+        sources.iter().any(|f| f.ends_with("lib.rs"))
+            && sources
+                .iter()
+                .any(|f| f.ends_with(Path::new("win").join("wmi.rs"))),
+        "The scan reads the crate's source, its folders included ({} files found).",
+        sources.len()
+    );
+    let mut found = offenders(&tests);
+    found.extend(offenders(&src));
     let report: Vec<String> = found
         .iter()
         .map(|(file, line, name)| {
             format!(
                 "{} line {line}: {name}",
-                file.strip_prefix(&tests).unwrap_or(file).display()
+                file.strip_prefix(crate_dir).unwrap_or(file).display()
             )
         })
         .collect();
     assert!(
         found.is_empty(),
-        "A test changes its own process's environment (#0137), which it MUST NOT: {}.",
+        "A test, or the code it runs, changes its own process's environment (#0137), which it \
+         MUST NOT: {}.",
         report.join("; ")
     );
 }
 
 #[test]
 fn the_scan_finds_each_spelling_in_a_planted_file() {
-    let [set, remove] = names();
+    let [set, remove, windows, crt] = names();
     let dir = std::env::temp_dir().join(format!(
         "agentspace-launch-spec-scan-{}-{}",
         std::process::id(),
@@ -126,6 +144,12 @@ fn the_scan_finds_each_spelling_in_a_planted_file() {
         format!("    {set} (\"A\", \"b\");"),
         format!("unsafe {{ std::env::{remove}(\"A\"); }}"),
         format!("// The old way was env::{set}."),
+        format!("unsafe {{ {windows}W(name.as_ptr(), value.as_ptr()) }};"),
+        format!("use windows_sys::Win32::System::Environment::{windows}W;"),
+        format!("unsafe {{ {windows}A(b\"A\\0\".as_ptr(), b\"b\\0\".as_ptr()) }};"),
+        format!("    fn {crt}(s: *const c_char) -> c_int;"),
+        format!("unsafe {{ _{crt}_s(a.as_ptr(), b.as_ptr()) }};"),
+        format!("// libc::{crt} would do it too."),
     ];
     for (i, spelling) in spellings.iter().enumerate() {
         // Some in the planted folder, some in a folder inside it.
@@ -146,6 +170,12 @@ fn the_scan_finds_each_spelling_in_a_planted_file() {
         spellings.len(),
         "The scan finds each planted spelling once, and not the clean file."
     );
+    for name in names() {
+        assert!(
+            found.iter().any(|(_, _, n)| *n == name),
+            "The planted files hold the name {name}, and the scan finds it."
+        );
+    }
     for i in 0..spellings.len() {
         let name = format!("planted_{i}.rs");
         assert!(

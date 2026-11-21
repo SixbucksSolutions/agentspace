@@ -9,7 +9,7 @@
 //! | Item | What it is |
 //! |---|---|
 //! | `Detach` | The trait: `start` creates `program` with `args`, in the working folder `cwd`, with the variables `env` on top of the logon environment, and returns once the process is created, never waiting for it. |
-//! | `WmiDetach` | Windows only. It creates the process through WMI's `Win32_Process.Create`, so no job object of the caller or of any process above it holds it, with no window and no standard handles. |
+//! | `WmiDetach` | Windows only. It creates the process through WMI's `Win32_Process.Create`, so no job object of the caller or of any process above it holds it, with a hidden console window in a new process group, whose standard handles are never the caller's. |
 //! | `NoDetach` | Every system. Its `start` always refuses. |
 //! | `wmi::create` | Windows only. The `Win32_Process.Create` call itself, which agentspace-launch's starter shares (D42). |
 //!
@@ -19,6 +19,8 @@
 //! - a program, an argument or a working folder that holds a NUL, and a program or an argument
 //!   that holds a double quote, a carriage return or a line feed, none of which a Windows command
 //!   line can carry;
+//! - a program that is not a full path, an empty one included: driver.md's program is always a
+//!   full path, and a relative one would be read against WMI's folder rather than the caller's;
 //! - a variable whose name is empty or holds a NUL or `=`, and a value that holds a NUL.
 //!
 //! The messages name the argument by its place and the variable by its name, and never print an
@@ -26,11 +28,23 @@
 //!
 //! # The command line
 //!
-//! The program and every argument are quoted for Windows' command line, each between double
-//! quotes, as `CommandLineToArgvW` reads them: in an argument, the backslashes at its end are
+//! **The program is always quoted, and an argument is quoted only when it is empty or holds a
+//! space, a tab or a character outside printable ASCII (0x21 to 0x7E)** (architect, 2026-11-20,
+//! for v0.07-T02). So driver.md's line is exactly `"<program>" provision -Host <project>`, and a
+//! `.cmd` program run through `cmd.exe /d /c` receives `provision`, `-Host` and `<project>` as
+//! they are. A quoted argument is read by `CommandLineToArgvW` with the backslashes at its end
 //! doubled, so that its closing quote stays a quote (no argument holds a quote, so no other
-//! backslash precedes one). The program is the command line's first word, which Windows reads up
-//! to the next quote with no escapes, so its backslashes are kept as they are.
+//! backslash precedes one); an unquoted argument holds no quote and no space, so it needs no
+//! escaping. The program is the command line's first word, which Windows reads up to the next
+//! quote with no escapes, so its backslashes are kept as they are.
+//!
+//! # The bound
+//!
+//! **`WmiDetach` waits for `Win32_Process.Create` at most 10 seconds, in one try** (architect,
+//! 2026-11-20, for v0.07-T02). A call that has not returned by then is abandoned on its own
+//! thread, and `start` answers `Win32_Process.Create could not be called: The call did not return
+//! within 10 seconds.` The abandoned thread owns all it uses, and ends when the call returns
+//! (the `wmi` module's docs).
 //!
 //! # The environment
 //!
@@ -70,6 +84,12 @@ mod logon;
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
+use std::sync::mpsc;
+use std::time::Duration;
+
+/// How long `WmiDetach` waits for `Win32_Process.Create` (the crate's docs, The bound).
+#[cfg(windows)]
+const CREATE_BOUND: Duration = Duration::from_secs(10);
 
 /// Starting a program that outlives the call.
 pub trait Detach {
@@ -77,6 +97,11 @@ pub trait Detach {
     /// `env` set on top of the logon environment, and returns once the process is created; it
     /// never waits for it. A pair whose value is empty makes that variable absent. An `Err` is the
     /// reason, in agentspace's words.
+    ///
+    /// `WmiDetach`'s `start` is bounded: it waits for `Win32_Process.Create` at most 10 seconds,
+    /// in one try, and a call that has not returned by then is abandoned, with the `Err`
+    /// `Win32_Process.Create could not be called: The call did not return within 10 seconds.`
+    /// (the crate's docs, The bound).
     fn start(
         &self,
         program: &Path,
@@ -100,8 +125,10 @@ impl Detach for NoDetach {
 }
 
 /// The detached start through WMI's `Win32_Process.Create`: outside every job object of the
-/// caller and above it, with no window and no standard handles, in the logon environment with
-/// `env` applied to it (the crate's docs, The environment).
+/// caller and above it, with a hidden console window in a new process group
+/// (`CREATE_NEW_PROCESS_GROUP`), whose standard handles are never the caller's, in the logon
+/// environment with `env` applied to it (the crate's docs, The environment), and bounded at 10
+/// seconds (the crate's docs, The bound).
 #[cfg(windows)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WmiDetach;
@@ -115,27 +142,85 @@ impl Detach for WmiDetach {
         cwd: &Path,
         env: &[(&str, &OsStr)],
     ) -> Result<(), String> {
-        let call = Call::new(program, args, cwd, env)?;
-        let environment = if call.pairs.is_empty() {
-            Vec::new()
-        } else {
-            environment(logon::environment()?, &call.pairs)
-        };
-        // The call initializes COM on a thread of its own, so a caller's own COM apartment, of
-        // whatever kind, never meets it.
-        let thread = std::thread::Builder::new()
-            .name("agentspace-detach-create".to_string())
-            .spawn(move || wmi::create(&call.command_line, &call.directory, &environment))
-            .map_err(|e| format!("A thread for Win32_Process.Create could not be started: {e}"))?;
-        let answer = thread
-            .join()
-            .map_err(|_| "Win32_Process.Create ended without an answer.".to_string())?;
-        match answer {
-            Ok(0) => Ok(()),
-            Ok(code) => Err(returned(code)),
-            Err(error) => Err(format!("Win32_Process.Create could not be called: {error}")),
-        }
+        let call = prepare(Call::new(program, args, cwd, env)?, logon::environment)?;
+        within(CREATE_BOUND, move || {
+            wmi::create(
+                &call.command_line,
+                &call.directory,
+                &call.environment,
+                call.create_flags,
+            )
+        })
     }
+}
+
+/// What `WmiDetach` passes to `wmi::create` for one checked call.
+#[cfg(windows)]
+struct Prepared {
+    command_line: OsString,
+    directory: OsString,
+    environment: Vec<OsString>,
+    create_flags: Option<u32>,
+}
+
+/// The arguments of `wmi::create` for `call`: its own process group always, and the whole block
+/// only when a pair is given, `logon` being read for it then alone (the crate's docs, The
+/// environment). With no pair, no block is passed.
+#[cfg(windows)]
+fn prepare(
+    call: Call,
+    logon: impl FnOnce() -> Result<Vec<OsString>, String>,
+) -> Result<Prepared, String> {
+    let environment = if call.pairs.is_empty() {
+        Vec::new()
+    } else {
+        environment(logon()?, &call.pairs)
+    };
+    Ok(Prepared {
+        command_line: call.command_line,
+        directory: call.directory,
+        environment,
+        create_flags: Some(wmi::CREATE_NEW_PROCESS_GROUP),
+    })
+}
+
+/// Runs one `Win32_Process.Create` call on a thread of its own, so a caller's own COM apartment,
+/// of whatever kind, never meets it, and waits for it up to `bound`, in one try. A call that has
+/// not returned by then is abandoned: its thread is never joined, and what it returns later is
+/// never read (the crate's docs, The bound).
+fn within<F>(bound: Duration, call: F) -> Result<(), String>
+where
+    F: FnOnce() -> Result<u32, String> + Send + 'static,
+{
+    let (answer, receive) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("agentspace-detach-create".to_string())
+        .spawn(move || {
+            // Nobody reads the answer of an abandoned call.
+            let _ = answer.send(call());
+        })
+        .map_err(|e| format!("A thread for Win32_Process.Create could not be started: {e}"))?;
+    let answer = match receive.recv_timeout(bound) {
+        Ok(answer) => answer,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(not_within(bound)),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            return Err("Win32_Process.Create ended without an answer.".to_string());
+        }
+    };
+    match answer {
+        Ok(0) => Ok(()),
+        Ok(code) => Err(returned(code)),
+        Err(error) => Err(format!("Win32_Process.Create could not be called: {error}")),
+    }
+}
+
+/// The error of a call that reached its bound: `The call did not return within 10 seconds.` for
+/// `WmiDetach`'s.
+fn not_within(bound: Duration) -> String {
+    format!(
+        "The call did not return within {} seconds.",
+        bound.as_secs_f64()
+    )
 }
 
 /// A nonzero `ReturnValue` of `Win32_Process.Create`, with what WMI documents it to mean.
@@ -209,6 +294,9 @@ impl Call {
                     .to_string(),
             );
         }
+        if !program.is_absolute() {
+            return Err("The program must be named by its full path.".to_string());
+        }
         for (index, arg) in args.iter().enumerate() {
             let place = index + 1;
             if arg.contains('\0') {
@@ -250,17 +338,28 @@ impl Call {
     }
 }
 
-/// `"<program>" "<arg 1>" "<arg 2>" ...`, read back by `CommandLineToArgvW` as exactly the
-/// program and the arguments (the crate's docs, The command line). No input holds a quote.
+/// `"<program>" <arg 1> <arg 2> ...`, each argument quoted only when it needs it, read back by
+/// `CommandLineToArgvW` as exactly the program and the arguments (the crate's docs, The command
+/// line). No input holds a quote.
 fn command_line(program: &Path, args: &[&str]) -> OsString {
     let mut line = OsString::from("\"");
     line.push(program.as_os_str());
     line.push("\"");
     for arg in args {
         line.push(" ");
-        line.push(quote(arg));
+        if needs_quotes(arg) {
+            line.push(quote(arg));
+        } else {
+            line.push(arg);
+        }
     }
     line
+}
+
+/// An argument that is empty or holds a space, a tab or a character outside printable ASCII
+/// (0x21 to 0x7E).
+fn needs_quotes(arg: &str) -> bool {
+    arg.is_empty() || arg.chars().any(|c| !('\x21'..='\x7e').contains(&c))
 }
 
 /// One argument between double quotes, its trailing backslashes doubled.
@@ -289,6 +388,12 @@ fn breaks_a_command_line(text: &OsStr) -> bool {
 mod tests {
     use super::*;
 
+    /// A full path on this system.
+    #[cfg(windows)]
+    const FULL: &str = r"C:\x\run.exe";
+    #[cfg(not(windows))]
+    const FULL: &str = "/x/run";
+
     fn call(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<Call, String> {
         let env: Vec<(&str, &OsStr)> = env.iter().map(|(n, v)| (*n, OsStr::new(*v))).collect();
         Call::new(Path::new(program), args, Path::new(r"C:\w"), &env)
@@ -302,18 +407,53 @@ mod tests {
         assert_eq!(why, "A detached start is only on Windows.");
     }
 
+    /// Architect, 2026-11-20, for v0.07-T02: the program always quoted, an argument only when it
+    /// needs it, so driver.md's lines come out exactly.
     #[test]
-    fn the_program_and_every_argument_are_quoted() {
-        let c = call(
-            r"C:\Program Files\x\run.exe",
-            &["provision", "-Host", "my project", ""],
-            &[],
-        )
-        .unwrap();
+    fn the_program_is_quoted_and_an_argument_only_when_it_needs_it() {
+        let line = |program: &str, args: &[&str]| command_line(Path::new(program), args);
         assert_eq!(
-            c.command_line,
-            r#""C:\Program Files\x\run.exe" "provision" "-Host" "my project" """#
+            line(
+                r"C:\Program Files\x\run.exe",
+                &["provision", "-Host", "proj"]
+            ),
+            r#""C:\Program Files\x\run.exe" provision -Host proj"#
         );
+        assert_eq!(
+            line(
+                r"C:\W\system32\cmd.exe",
+                &["/d", "/c", r"C:\a b\s.cmd", "provision", "-Host", "proj"]
+            ),
+            r#""C:\W\system32\cmd.exe" /d /c "C:\a b\s.cmd" provision -Host proj"#
+        );
+        assert_eq!(
+            line(
+                r"C:\W\system32\cmd.exe",
+                &["/d", "/c", r"C:\ab\s.cmd", "provision", "-Host", "proj"]
+            ),
+            r#""C:\W\system32\cmd.exe" /d /c C:\ab\s.cmd provision -Host proj"#
+        );
+        assert_eq!(
+            line(
+                r"C:\p.exe",
+                &["my project", "", "a\tb", "caf\u{e9}", r"C:\a\"]
+            ),
+            "\"C:\\p.exe\" \"my project\" \"\" \"a\tb\" \"caf\u{e9}\" C:\\a\\"
+        );
+        assert_eq!(
+            line(r"C:\p.exe", &[r"C:\a b\", r"\\s\x y\\"]),
+            r#""C:\p.exe" "C:\a b\\" "\\s\x y\\\\""#
+        );
+    }
+
+    #[test]
+    fn an_argument_needs_quotes_when_empty_or_outside_printable_ascii() {
+        for plain in ["provision", "-Host", "x", r"C:\a\", "!~", "a&b"] {
+            assert!(!needs_quotes(plain), "{plain}");
+        }
+        for quoted in ["", " ", "a b", "a\tb", "\u{7f}", "\u{e9}", "\u{1}"] {
+            assert!(needs_quotes(quoted), "{quoted:?}");
+        }
     }
 
     #[test]
@@ -330,28 +470,47 @@ mod tests {
         for bad in ["a\"b", "a\rb", "a\nb"] {
             let why = call(bad, &[], &[]).err().unwrap();
             assert!(why.starts_with("The program's path holds"), "{why}");
-            let why = call("p", &["ok", bad], &[]).err().unwrap();
+            let why = call(FULL, &["ok", bad], &[]).err().unwrap();
             assert!(why.starts_with("Argument 2 holds a double quote"), "{why}");
             assert!(!why.contains(bad));
         }
     }
 
+    /// A relative or empty program is refused before any call into Windows: driver.md's program
+    /// is always a full path.
+    #[test]
+    fn a_program_that_is_not_a_full_path_is_refused() {
+        for relative in ["", "run.exe", r"x\run.exe", r".\run.exe", r"..\run.exe"] {
+            let why = call(relative, &["provision"], &[]).err();
+            assert_eq!(
+                why.as_deref(),
+                Some("The program must be named by its full path."),
+                "{relative:?}"
+            );
+        }
+        #[cfg(windows)]
+        for not_full in [r"\x\run.exe", r"C:run.exe"] {
+            assert!(call(not_full, &[], &[]).is_err(), "{not_full}");
+        }
+        assert!(call(FULL, &["provision"], &[]).is_ok());
+    }
+
     #[test]
     fn a_nul_in_the_program_an_argument_or_the_folder_is_refused() {
         assert!(call("a\0b", &[], &[]).is_err());
-        assert!(call("p", &["a\0b"], &[]).is_err());
-        assert!(Call::new(Path::new("p"), &[], Path::new("C:\\a\0b"), &[]).is_err());
+        assert!(call(FULL, &["a\0b"], &[]).is_err());
+        assert!(Call::new(Path::new(FULL), &[], Path::new("C:\\a\0b"), &[]).is_err());
     }
 
     #[test]
     fn a_bad_variable_name_or_value_is_refused_without_its_value() {
-        let why = call("p", &[], &[("", "v")]).err().unwrap();
+        let why = call(FULL, &[], &[("", "v")]).err().unwrap();
         assert_eq!(why, "An environment variable's name is empty.");
         for name in ["A=B", "=C:", "A\0B"] {
-            let why = call("p", &[], &[(name, "v")]).err().unwrap();
+            let why = call(FULL, &[], &[(name, "v")]).err().unwrap();
             assert!(why.contains("holds a NUL or an equals sign"), "{why}");
         }
-        let why = call("p", &[], &[("NAME", "sec\0ret")]).err().unwrap();
+        let why = call(FULL, &[], &[("NAME", "sec\0ret")]).err().unwrap();
         assert_eq!(
             why,
             "The value of the environment variable NAME holds a NUL."
@@ -447,5 +606,102 @@ mod tests {
             "Win32_Process.Create returned 9: the path was not found."
         );
         assert_eq!(returned(77), "Win32_Process.Create returned 77.");
+    }
+
+    /// Architect, 2026-11-20, for v0.07-T02: the call is bounded in one try, and a call that does
+    /// not return in time is abandoned. The call here blocks until the test lets it go, up to 5
+    /// seconds, so an unbounded wait would answer `Ok` after it instead.
+    #[test]
+    fn a_call_that_does_not_return_within_the_bound_is_abandoned() {
+        let (release, wait) = mpsc::channel::<()>();
+        let begun = std::time::Instant::now();
+        let answer = within(Duration::from_millis(100), move || {
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+            Ok(0)
+        });
+        let took = begun.elapsed();
+        drop(release);
+        assert_eq!(
+            answer,
+            Err(
+                "Win32_Process.Create could not be called: The call did not return within 0.1 \
+                 seconds."
+                    .to_string()
+            )
+        );
+        assert!(took >= Duration::from_millis(100), "{took:?}");
+        assert!(took < Duration::from_millis(600), "{took:?}");
+    }
+
+    #[test]
+    fn the_bound_of_wmi_detach_gives_the_specs_message() {
+        assert_eq!(
+            not_within(Duration::from_secs(10)),
+            "The call did not return within 10 seconds."
+        );
+        #[cfg(windows)]
+        assert_eq!(CREATE_BOUND, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_call_that_returns_in_time_gives_its_answer() {
+        let bound = Duration::from_secs(5);
+        assert_eq!(within(bound, || Ok(0)), Ok(()));
+        assert_eq!(
+            within(bound, || Ok(9)),
+            Err("Win32_Process.Create returned 9: the path was not found.".to_string())
+        );
+        assert_eq!(
+            within(bound, || Err("No.".to_string())),
+            Err("Win32_Process.Create could not be called: No.".to_string())
+        );
+    }
+
+    /// The arguments `WmiDetach` gives `wmi::create`, as the request they make.
+    #[cfg(windows)]
+    fn startup_names(prepared: &Prepared) -> Vec<&'static str> {
+        wmi::request(
+            &prepared.command_line,
+            &prepared.directory,
+            &prepared.environment,
+            prepared.create_flags,
+        )
+        .startup
+        .iter()
+        .map(wmi::Startup::name)
+        .collect()
+    }
+
+    /// With `env` empty, no block is passed and the logon environment is not even read; the start
+    /// is in a new process group all the same.
+    #[cfg(windows)]
+    #[test]
+    fn an_empty_env_passes_no_block() {
+        let read = std::cell::Cell::new(false);
+        let logon = || {
+            read.set(true);
+            Ok(vec![OsString::from("OS=x")])
+        };
+        let prepared = prepare(call(FULL, &["a"], &[]).unwrap(), logon).unwrap();
+        assert!(!read.get(), "The logon environment was read for no pair.");
+        assert!(prepared.environment.is_empty());
+        assert_eq!(startup_names(&prepared), ["ShowWindow", "CreateFlags"]);
+        assert_eq!(prepared.create_flags, Some(512));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_pair_passes_the_whole_block_in_a_new_process_group() {
+        let logon = || Ok(vec![OsString::from("OS=x")]);
+        let prepared = prepare(call(FULL, &[], &[("A", "1")]).unwrap(), logon).unwrap();
+        assert_eq!(
+            prepared.environment,
+            [OsString::from("OS=x"), OsString::from("A=1")]
+        );
+        assert_eq!(
+            startup_names(&prepared),
+            ["ShowWindow", "CreateFlags", "EnvironmentVariables"]
+        );
+        assert_eq!(prepared.create_flags, Some(512));
     }
 }

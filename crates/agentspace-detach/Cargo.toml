@@ -18,14 +18,16 @@ name = "detach-test-helper"
 path = "src/bin/detach-test-helper.rs"
 test = false
 
-# Only the Windows half uses this (src/wmi.rs and src/logon.rs, the only modules with unsafe
-# code): WMI's Win32_Process.Create, and the logon environment from CreateEnvironmentBlock. It is
-# the exact pin agentspace-launch used for WMI before the call moved here.
+# Only the Windows half uses this (src/wmi.rs and src/logon.rs, the only library modules with
+# unsafe code): WMI's Win32_Process.Create, and the logon environment from CreateEnvironmentBlock.
+# It is the exact pin agentspace-launch used for WMI before the call moved here. The test helper's
+# `ctrlc` mode uses its console calls (Win32_System_Console).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.62.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Com",
+    "Win32_System_Console",
     "Win32_System_Environment",
     "Win32_System_Ole",
     "Win32_System_Rpc",

@@ -22,7 +22,8 @@ use std::ffi::OsStr;
 
 /// One create call of the launcher, unbounded: the bound is the caller's.
 pub(crate) fn create(command_line: &str, directory: &str) -> Create {
-    match agentspace_detach::wmi::create(OsStr::new(command_line), OsStr::new(directory), &[]) {
+    match agentspace_detach::wmi::create(OsStr::new(command_line), OsStr::new(directory), &[], None)
+    {
         Ok(code) => Create::Returned(code),
         Err(error) => Create::Threw(error),
     }

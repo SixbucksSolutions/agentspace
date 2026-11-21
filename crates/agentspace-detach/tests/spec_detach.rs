@@ -6,7 +6,8 @@
 //! `write <file> <var> <delay-ms>` sleeps, then writes one line `set:<value>` or `unset` for the
 //! variable `<var>`; `detach <file> <var> <value> <delay-ms>` reads one line from stdin, starts
 //! `write` of its own exe through `WmiDetach` with the environment `[(var, value)]` and the file's
-//! folder as its working directory, prints `started` or `refused: <message>`, and sleeps.
+//! folder as its working directory, prints `started` or `refused: <message>`, and sleeps;
+//! `ctrlc <file>` writes `handled` or `ignored` for a Ctrl+C it sends its own console.
 //!
 //! Every file a test makes is in a throwaway folder under the temp folder, removed at the end. A
 //! test MUST NOT print a captured environment's values, so a mismatch is reported by name only.
@@ -627,6 +628,134 @@ mod windows {
     #[test]
     fn an_env_name_with_an_equals_sign_is_refused() {
         assert_refused("envnameeq", None, &[], &[("A=B", OsStr::new("value"))]);
+    }
+
+    /// A relative or empty program is refused before any call into Windows (driver.md's program
+    /// is always a full path).
+    #[test]
+    fn a_program_that_is_not_a_full_path_is_refused() {
+        let name = helper()
+            .file_name()
+            .map(PathBuf::from)
+            .expect("The helper has a file name.");
+        assert_refused("progrelative", Some(&name), &[], &[]);
+        let why = WmiDetach
+            .start(Path::new(""), &["provision"], &std::env::temp_dir(), &[])
+            .err();
+        assert_eq!(
+            why.as_deref(),
+            Some("The program must be named by its full path.")
+        );
+    }
+
+    /// A nonzero `ReturnValue` of `Win32_Process.Create` is an Err: a full path that names no
+    /// file is WMI's 9, the path not found.
+    #[test]
+    fn a_program_that_does_not_exist_is_an_err_naming_return_value_9() {
+        let scratch = Scratch::new("missing");
+        let program = scratch.path().join("no such program.exe");
+        let why = WmiDetach
+            .start(&program, &["provision"], scratch.path(), &[])
+            .expect_err("A start of a program that does not exist is an Err.");
+        assert!(
+            why.starts_with("Win32_Process.Create returned 9"),
+            "The Err names ReturnValue 9: {why}"
+        );
+    }
+
+    /// The `.cmd` stand-in: it writes the first three arguments it receives, `%1`, `%2` and `%3`
+    /// as cmd.exe gives them, quotes and all, each on its own line, to `args.txt` beside itself,
+    /// through a temporary file and a move, so a reader sees all three lines or none.
+    const STAND_IN: &str = "@echo off\r\n\
+        (\r\n\
+        echo(%1\r\n\
+        echo(%2\r\n\
+        echo(%3\r\n\
+        ) > \"%~dp0args.tmp\"\r\n\
+        move /y \"%~dp0args.tmp\" \"%~dp0args.txt\" >nul\r\n";
+
+    /// driver.md: a `.cmd` program is run as `cmd.exe /d /c "<program>" provision -Host <project>`,
+    /// and receives exactly `provision`, `-Host` and the project (architect, 2026-11-20, for
+    /// v0.07-T02: an argument is quoted only when it needs it).
+    fn a_cmd_stand_in_receives_the_three_arguments_in(scratch: &Scratch, folder: &Path) {
+        std::fs::create_dir_all(folder).expect("The stand-in's folder can be made.");
+        let script = folder.join("stand-in.cmd");
+        std::fs::write(&script, STAND_IN).expect("The stand-in can be written.");
+        let root = std::env::var_os("SystemRoot").expect("SystemRoot is set on Windows.");
+        let cmd = PathBuf::from(root).join("System32").join("cmd.exe");
+        let script_arg = script.to_string_lossy().to_string();
+        WmiDetach
+            .start(
+                &cmd,
+                &["/d", "/c", &script_arg, "provision", "-Host", "proj"],
+                scratch.path(),
+                &[],
+            )
+            .expect("The start of cmd.exe is accepted.");
+        let out = folder.join("args.txt");
+        let text = wait_for(Duration::from_secs(60), || {
+            std::fs::read_to_string(&out).ok()
+        })
+        .expect("The stand-in wrote the arguments it received.");
+        let got: Vec<&str> = text.lines().map(str::trim_end).collect();
+        assert_eq!(got, ["provision", "-Host", "proj"]);
+    }
+
+    #[test]
+    fn a_cmd_stand_in_started_through_cmd_receives_exactly_its_three_arguments() {
+        let scratch = Scratch::new("cmd");
+        let folder = scratch.path().join("standin");
+        a_cmd_stand_in_receives_the_three_arguments_in(&scratch, &folder);
+    }
+
+    #[test]
+    fn a_cmd_stand_in_in_a_folder_with_a_space_receives_exactly_its_three_arguments() {
+        let scratch = Scratch::new("cmd-space");
+        let folder = scratch.path().join("a stand in folder");
+        a_cmd_stand_in_receives_the_three_arguments_in(&scratch, &folder);
+    }
+
+    /// Starts the helper's `ctrlc` mode with `start` and reads its one line.
+    fn ctrl_c_seen(tag: &str, start: impl FnOnce(&Path, &Path) -> Result<(), String>) -> String {
+        let scratch = Scratch::new(tag);
+        let out = scratch.path().join("ctrlc.txt");
+        start(&out, scratch.path())
+            .unwrap_or_else(|e| panic!("The start is accepted ({tag}): {e}"));
+        wait_for(Duration::from_secs(60), || read_line_of(&out))
+            .unwrap_or_else(|| panic!("The ctrlc helper wrote its file ({tag})."))
+    }
+
+    /// driver.md, The detached start: the run starts in a new process group (architect,
+    /// 2026-11-20, for v0.07-T02). The observable is Windows' own: a process created with
+    /// `CREATE_NEW_PROCESS_GROUP` starts with Ctrl+C disabled, so a Ctrl+C sent to its console
+    /// never reaches its handler. The control is the same helper created through `wmi::create`
+    /// with no flags, as agentspace-launch creates its launcher, whose handler does see it, so
+    /// the difference is the flag alone.
+    #[test]
+    fn a_program_started_through_wmi_detach_is_in_a_new_process_group() {
+        let detached = ctrl_c_seen("ctrlc-detach", |out, cwd| {
+            let out = out.to_string_lossy().to_string();
+            WmiDetach.start(&helper(), &["ctrlc", &out], cwd, &[])
+        });
+        let control = ctrl_c_seen("ctrlc-control", |out, cwd| {
+            let mut line = std::ffi::OsString::from("\"");
+            line.push(helper().as_os_str());
+            line.push("\" ctrlc \"");
+            line.push(out.as_os_str());
+            line.push("\"");
+            match agentspace_detach::wmi::create(&line, cwd.as_os_str(), &[], None)? {
+                0 => Ok(()),
+                code => Err(format!("ReturnValue {code}")),
+            }
+        });
+        assert_eq!(
+            control, "handled",
+            "With no flags, the helper's handler sees the Ctrl+C, so the check can tell."
+        );
+        assert_eq!(
+            detached, "ignored",
+            "A program started through WmiDetach MUST be in a new process group, with Ctrl+C disabled."
+        );
     }
 
     #[test]

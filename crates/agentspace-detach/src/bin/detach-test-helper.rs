@@ -9,11 +9,17 @@
 //!   `started` and flushes, then sleeps up to 60 seconds, since the test is expected to kill it.
 //!   On a refusal it prints `refused: <message>` and exits 1. On a system other than Windows it
 //!   starts through `NoDetach`, which refuses.
+//! - `ctrlc <file>` (Windows only) records whether this process ignores Ctrl+C, which is how a
+//!   process created with `CREATE_NEW_PROCESS_GROUP` starts (Windows' `CreateProcess` docs: the
+//!   new process group's root has Ctrl+C disabled). It adds a handler, sends a Ctrl+C to every
+//!   process on its own console, itself included, and writes to `<file>` one line: `handled` when
+//!   the handler saw it within 3 seconds, `ignored` when not, or `error` when the Ctrl+C could not
+//!   be sent. It exits 0, or 1 when it cannot write the file.
 //!
 //! Anything else exits 2. `<file>` is made full against the working folder first, so the program
 //! it starts writes the same file from its own working folder.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use agentspace_detach::Detach;
 use std::ffi::{OsStr, OsString};
@@ -35,9 +41,60 @@ fn main() {
                 _ => 2,
             }
         }
+        #[cfg(windows)]
+        [mode, file] if *mode == "ctrlc" => {
+            match std::fs::write(file, format!("{}\n", console::ctrl_c())) {
+                Ok(()) => 0,
+                Err(_) => 1,
+            }
+        }
         _ => 2,
     };
     std::process::exit(code);
+}
+
+/// The `ctrlc` mode's one Windows call pair, the helper's only unsafe code.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod console {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+    use windows::Win32::Foundation::{FALSE, TRUE};
+    use windows::Win32::System::Console::{
+        CTRL_C_EVENT, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+    };
+    use windows::core::BOOL;
+
+    static SEEN: AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "system" fn handler(event: u32) -> BOOL {
+        if event == CTRL_C_EVENT {
+            SEEN.store(true, Ordering::SeqCst);
+            TRUE
+        } else {
+            FALSE
+        }
+    }
+
+    /// `handled`, `ignored` or `error` (the program's docs, `ctrlc`).
+    pub fn ctrl_c() -> &'static str {
+        // SAFETY: adds a handler that lives as long as the program; it touches an atomic alone.
+        if unsafe { SetConsoleCtrlHandler(Some(handler), true) }.is_err() {
+            return "error";
+        }
+        // SAFETY: a plain call; group 0 is every process on this process's console.
+        if unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) }.is_err() {
+            return "error";
+        }
+        let end = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < end {
+            if SEEN.load(Ordering::SeqCst) {
+                return "handled";
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        "ignored"
+    }
 }
 
 fn delay_of(text: &OsStr) -> Option<Duration> {
