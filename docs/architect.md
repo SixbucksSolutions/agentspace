@@ -90,6 +90,10 @@ first.**
    in its owning doc first. T06's sweep found four (a process tool the card's keep-list missed, a
    crate's test stand-in the done-when would have failed on, the interop check with no peer left,
    and the one `box/system` edit), and the dev lead started with all four settled.
+   - **A ruling about what a check or a program does MUST come from reading it, not from its name
+     or a grep hit** (v0.07-T01). The sweep ruled that `test-schemas.ps1` would check the new state
+     schemas' samples; it reads only the top-level `schemas/`, and the dev lead found it by
+     planting a sample. The ruling was corrected on the card.
 3. **If the turn uses the box:** size it for the turn's peak while it is stopped (AGENTS.md,
    "Sizing the box before it runs agents"), and plan its size-down at the turn's close. v0.06-T01's
    `m9g.4xlarge` stayed until T05 resized it, because only a deploy changes the size.
@@ -124,6 +128,26 @@ first.**
 queue** (v0.06-T05: an 80-minute wait). When his answer comes, read each linked session's state
 and every open PR before acting on the answer. A message that arrives late describes the moment it
 was sent.
+
+## A turn that writes specs
+
+**Learned in v0.07-T01, where four specs were written in parallel against one set of pinned
+names.**
+- **The dev lead keeps a pins file of the facts two or more specs share** that the layout decision
+  leaves open, and sends each to the architect. A writer states a pin, or its own choice, marked
+  "architect's to confirm" until the architect rules.
+- **The architect rules on each pin as it arrives, and records in the decision it touches any
+  ruling that changes one** (D44, D48, D55 in T01).
+- **Every confirmed mark becomes the ruling's citation before the merge**, in one commit the
+  architect asks for after the review, so no published spec carries an open mark. The architect
+  diffs that commit against the reviewed head before it merges.
+- **Writers that start before the pins are ruled need a follow-up pass.** In T01 every spec needed
+  one, because rulings reached a mid-turn dev lead late: a message to a busy session waits in its
+  queue. A dev lead MAY hold a writer until the pins it depends on are ruled, when that is cheaper
+  than a second pass.
+- **A spec that links into another story's new sections merges after it**, and the architect
+  checks every anchor resolves on `main` before each such merge, and every link between the specs
+  once all are in (1,954 in T01).
 
 ## Live checks on Terry's laptop and the box
 
@@ -199,6 +223,10 @@ reads before it prints it").
   PowerShell string with `\a` or `\v` in a path wrote a bell and a vertical tab into a handoff on
   2026-11-19, and it went unseen until the next edit (fixed in 689ccac). Before a docs commit:
   `git grep -nP "[\x00-\x08\x0B\x0C\x0E-\x1F]" -- "*.md"` MUST find nothing.
+- **The architect's own rulings and card comments carry a time only when it was read from the
+  clock** (v0.07-T01). The architect stamped its rulings to the dev lead "3:20pm" to "4:05pm"
+  without reading one; git put them at 3:18pm to 3:38pm, and the dev lead's clock read 3:42pm
+  after two of them. Three card comments were corrected; none reached the repository.
 - **Times and SHAs come only from a command's output.** A dev lead's guessed "2:01am" was 1:58am
   by the clock (v0.06-T05).
 

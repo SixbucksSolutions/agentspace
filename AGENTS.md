@@ -13,7 +13,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
 
 - **Where it stands:** [docs/handoff-v0.06.md](docs/handoff-v0.06.md), the architect's handoff
   after v0.06, for the architect who starts v0.07. It is final, and v0.06 is closed (2026-11-20).
-  An agent picking agentspace up SHOULD read it first.
+  An agent picking agentspace up SHOULD read it first, then
+  [docs/handoff-v0.07.md](docs/handoff-v0.07.md), the draft live record of v0.07, refreshed at
+  each turn's close.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with
   [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and [docs/handoff-mvp.md](docs/handoff-mvp.md),
