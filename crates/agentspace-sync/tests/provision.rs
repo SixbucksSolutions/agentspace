@@ -10,7 +10,9 @@
 //!
 //! **The last step calls the EC2 driver's `place_pending`**, which on this branch is the
 //! architect's stub until #0150 merges: it fails, and the run goes on. A test that needs it to
-//! succeed is marked `#[ignore]`; the others accept either outcome of that step.
+//! succeed is marked `#[ignore = "needs #0150's place_pending"]`; the others accept either
+//! outcome of that step, or make the whole call fail with a lease state file that is not valid,
+//! which fails it before and after #0150 alike (driver.md, place_pending, step 2.2).
 #![cfg(windows)]
 
 mod common;
@@ -83,43 +85,43 @@ fn check_own_lines(rig: &Rig, project: &str) -> Vec<LogLine> {
     lines
 }
 
-/// Where each program's output sits in the log: between the run's own lines that bracket its step.
-fn check_output_in_log(rig: &Rig, project: &str) {
+/// The log holds the run's own lines alone (operator.md, provision, Its log; state.md, The
+/// provisioning run's log; architect, 2026-11-21, for v0.07-T03): every line is one of them, and
+/// the programs' output, which goes to the run's streams, is not in it.
+fn check_log_holds_own_lines_alone(rig: &Rig, project: &str) {
     let text = rig.provision_log(project).unwrap_or_default();
-    let all: Vec<&str> = text.lines().collect();
-    let at = |what: &str| all.iter().position(|l| l.contains(what));
-    let own = |name: &str| {
-        all.iter()
-            .position(|l| common::provlog::parse_log_line(l).is_some_and(|p| p.name() == name))
-    };
-    let order = [
-        own("run begun"),
-        at(DEPLOY_OUT),
-        own("deploy done"),
-        own("start done"),
-        at(INSTALL_OUT),
-        own("sync done"),
-        at(BOOTSTRAP_OUT),
-        own("bootstrap done"),
-        own("record done"),
-    ];
     rig.check(
-        order.iter().all(Option::is_some)
-            && order.windows(2).all(|w| w[0].unwrap_or(0) < w[1].unwrap_or(0)),
-        &format!("The programs' output MUST be written into the log between the run's own lines, as each step wrote it; positions {order:?} in a log of:\n{text}"),
+        !text.is_empty()
+            && text
+                .lines()
+                .all(|l| common::provlog::parse_log_line(l).is_some()),
+        &format!("Every line of the log MUST be one of the run's own lines:\n{text}"),
     );
+    for out in [DEPLOY_OUT, INSTALL_OUT, BOOTSTRAP_OUT] {
+        rig.check(
+            !text.contains(out),
+            &format!("The programs' output MUST NOT be copied into the log, and `{out}` is in it"),
+        );
+    }
 }
 
 #[test]
-fn the_programs_output_is_written_into_the_log_between_the_runs_own_lines() {
+fn the_log_holds_the_runs_own_lines_alone_and_the_programs_output_goes_to_its_streams() {
     let rig = prov_rig(Kind::NoRecord);
-    rig.run(|rig| {
+    let Some(out) = rig.run(|rig| {
         let say = rig.say();
         rig.succeeded(rig.do_provision(&say, PROJECT), "provision");
-        check_output_in_log(rig, PROJECT);
-    });
+        check_log_holds_own_lines_alone(rig, PROJECT);
+    }) else {
+        return;
+    };
+    for line in [DEPLOY_OUT, INSTALL_OUT, BOOTSTRAP_OUT] {
+        assert!(
+            out.stdout.contains(line),
+            "Each program's output MUST pass through to the run's stdout: `{line}` is missing"
+        );
+    }
 }
-
 #[test]
 fn a_new_hosts_run_records_it_creating_then_ready_and_runs_every_step_in_order() {
     let rig = prov_rig(Kind::NoRecord);
@@ -129,7 +131,7 @@ fn a_new_hosts_run_records_it_creating_then_ready_and_runs_every_step_in_order()
         rig.succeeded(rig.do_provision(&say, PROJECT), "provision");
         let log = rig.log();
 
-        // The log's own lines; the programs' output between them is the next test's.
+        // The log's own lines; that it holds nothing else is another test's.
         check_own_lines(rig, PROJECT);
 
         // The messages, the sign-in line last.
@@ -371,14 +373,158 @@ fn a_run_whose_leases_were_placed_logs_place_done_and_warns_of_nothing() {
     rig.run(|rig| {
         let say = rig.say();
         rig.succeeded(rig.do_provision(&say, PROJECT), "provision");
-        let names = rig.own_log_names(PROJECT);
+        let lines = rig.own_log_lines(PROJECT);
+        let names: Vec<String> = lines.iter().map(LogLine::name).collect();
         rig.check(
             names.len() == 8 && names[6] == "place done" && names[7] == "run done",
             &format!("A run MUST log `place done` after `record done`, then `run done`: {names:?}"),
         );
         rig.check(
+            lines[6].field.as_deref() == Some("placed=0"),
+            "With no pending lease, `place done` MUST log that it placed none",
+        );
+        rig.check(
             say.warnings().is_empty(),
             "A run whose leases were placed warns of nothing",
+        );
+    });
+}
+
+// ---------------------------------------------------------------- Step 9's result in the log
+
+/// A lease state file record of a `pending` lease of `project`, placed by the EC2 driver.
+fn pending_lease(id: &str, project: &str) -> String {
+    format!(
+        "{{\"id\":\"{id}\",\"project\":\"{project}\",\"state\":\"pending\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\"ttl_seconds\":28800,\"created_at\":\"2026-11-21T08:00:00Z\",\"driver\":\"ec2\"}}"
+    )
+}
+
+const LEASE_A: &str = "8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01";
+const LEASE_B: &str = "1f2e3d4c-5b6a-4978-8a1b-2c3d4e5f6a7b";
+const LEASE_OTHER: &str = "c0ffee00-1234-4abc-8def-0123456789ab";
+
+#[test]
+fn a_failed_place_pending_is_logged_with_its_reason_warned_and_the_run_still_succeeds() {
+    // A lease state file that is not valid fails the whole call (driver.md, place_pending, step
+    // 2.2), as the architect's stub fails it on this branch: so this holds before and after #0150.
+    let rig = prov_rig(Kind::NoRecord);
+    rig.write_home(
+        ".agentspace/leases.json",
+        b"this is not a lease state file\n",
+    );
+    rig.run(|rig| {
+        let say = rig.say();
+        rig.succeeded(rig.do_provision(&say, PROJECT), "provision");
+        let lines = rig.own_log_lines(PROJECT);
+        let names: Vec<String> = lines.iter().map(LogLine::name).collect();
+        rig.same_list(
+            "The run's own lines",
+            &names,
+            &svec(&[
+                "run begun",
+                "deploy done",
+                "start done",
+                "sync done",
+                "bootstrap done",
+                "record done",
+                "place failed",
+                "run done",
+            ]),
+        );
+        let place = &lines[6];
+        let reason = place.reason.clone().unwrap_or_default();
+        rig.check(
+            place.field.is_none() && !reason.is_empty() && !reason.starts_with("agentspace: "),
+            "A whole call's failure MUST be one `place failed` line with its message, unprefixed, as the reason",
+        );
+        rig.same_list(
+            "The warnings",
+            &say.warnings(),
+            &[format!(
+                "agentspace: The pending leases of '{PROJECT}' could not be placed: {}; the next run places them.",
+                reason.trim_end_matches('.')
+            )],
+        );
+        rig.check(
+            rig.record(PROJECT).state.as_str() == "ready",
+            "A failed step 9 MUST leave the host `ready`",
+        );
+        rig.check(
+            say.events
+                .borrow()
+                .last()
+                .is_some_and(|(_, t)| *t == sign_in_line(PROJECT)),
+            "The run goes on to step 10 after a failed step 9: the sign-in line is its last",
+        );
+        rig.check(
+            std::fs::read(rig.home_path(".agentspace/leases.json")).ok()
+                == Some(b"this is not a lease state file\n".to_vec()),
+            "A failed step 9 MUST leave the lease state file as it was",
+        );
+    });
+}
+
+#[test]
+#[ignore = "needs #0150's place_pending"]
+fn place_pendings_result_is_logged_as_the_count_placed_then_one_line_per_lease_left_pending() {
+    // Two pending leases of the project, and one of another project, which step 9 never names.
+    // Lease A cannot be placed: a folder stands where its alias file goes, so removing a killed
+    // placement's leftovers fails it (driver.md, place_pending, step 2.4). Lease B is placed or
+    // not, as the throwaway home allows; either way the log names it rightly.
+    let rig = prov_rig(Kind::NoRecord);
+    let leases = format!(
+        "{{\"version\":0,\"leases\":[{},{},{}]}}\n",
+        pending_lease(LEASE_A, PROJECT),
+        pending_lease(LEASE_OTHER, "otherproject"),
+        pending_lease(LEASE_B, PROJECT)
+    );
+    rig.write_home(".agentspace/leases.json", leases.as_bytes());
+    rig.mkdir_home(&format!(".ssh/agentspace.d/agentspace-{PROJECT}-8d41b6a2"));
+    rig.run(|rig| {
+        let say = rig.say();
+        rig.succeeded(rig.do_provision(&say, PROJECT), "provision");
+        let lines = rig.own_log_lines(PROJECT);
+        let names: Vec<String> = lines.iter().map(LogLine::name).collect();
+        rig.check(
+            names.len() >= 9
+                && names[5] == "record done"
+                && names[6] == "place done"
+                && names.last().map(String::as_str) == Some("run done"),
+            &format!("Step 9 MUST log `place done` after `record done`, its lease lines after it, then `run done`: {names:?}"),
+        );
+        let placed: usize = lines[6]
+            .field
+            .as_deref()
+            .and_then(|f| f.strip_prefix("placed="))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(usize::MAX);
+        let failed: Vec<&LogLine> = lines[7..lines.len() - 1].iter().collect();
+        rig.check(
+            failed.iter().all(|l| l.name() == "place failed" && l.reason.is_some()),
+            "Each line between `place done` and `run done` MUST be a lease left pending, with why",
+        );
+        let ids: Vec<String> = failed
+            .iter()
+            .map(|l| l.field.clone().unwrap_or_default())
+            .collect();
+        rig.check(
+            placed + failed.len() == 2,
+            &format!("The count placed and the leases left MUST be the project's two pending leases: placed={placed}, left {ids:?}"),
+        );
+        rig.check(
+            ids.first().map(String::as_str) == Some(&*format!("lease={LEASE_A}"))
+                && ids.iter().all(|i| *i == format!("lease={LEASE_A}") || *i == format!("lease={LEASE_B}")),
+            &format!("The leases left MUST be named by ID, in the order tried, and never another project's: {ids:?}"),
+        );
+        rig.check(
+            !say.warnings().iter().any(|w| w.contains("could not be placed")),
+            "A call that returned MUST NOT warn as a failed whole call does",
+        );
+        let text = std::fs::read_to_string(rig.home_path(".agentspace/leases.json")).unwrap_or_default();
+        let at = text.find(LEASE_A).unwrap_or(0);
+        rig.check(
+            text[at..].split('}').next().is_some_and(|r| r.contains("\"state\":\"pending\"")),
+            "A lease that could not be placed MUST stay pending",
         );
     });
 }

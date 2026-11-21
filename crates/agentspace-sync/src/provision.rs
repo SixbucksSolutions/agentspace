@@ -26,6 +26,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use agentspace_ca::CaEnv;
+use agentspace_driver_ec2::PendingPlaced;
 use agentspace_hosts::{BOX_PROJECT, Host, HostState, RunLock, Target};
 use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
 
@@ -48,8 +49,17 @@ struct Log {
 impl Log {
     /// Writes `<time> <step> <outcome>[ reason=<reason>]` and one LF, in one write, retried.
     fn line(&self, step: &str, outcome: &str, reason: Option<&str>) {
+        self.line_with(step, outcome, None, reason);
+    }
+
+    /// [`Log::line`], with `field` (one `name=value` with no space) after the outcome.
+    fn line_with(&self, step: &str, outcome: &str, field: Option<&str>, reason: Option<&str>) {
         let time = agentspace_state::format_time(agentspace_state::now());
         let mut text = format!("{time} {step} {outcome}");
+        if let Some(field) = field {
+            text.push(' ');
+            text.push_str(field);
+        }
         if let Some(reason) = reason {
             text.push_str(" reason=");
             text.push_str(&log_reason(reason));
@@ -78,6 +88,21 @@ pub(crate) fn log_reason(message: &str) -> String {
         .unwrap_or(message)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
+}
+
+/// A value as a log line's field: each control character and space written `?`, so the field
+/// stays one word.
+fn log_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_control() || c.is_whitespace() {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -216,6 +241,11 @@ pub(crate) fn driver_context(
         .map_err(|_| step_failed("agentspace: The state and ssh folders cannot be found."))?;
     let state_dir = paths.state_dir.unwrap_or_else(|| home.join(".agentspace"));
     let ssh_dir = paths.ssh_dir.unwrap_or_else(|| home.join(".ssh"));
+    // Each is the variable made full when the run had it set and not empty, else `None`
+    // (driver.md, The detached start, C7), as the lease CLI fills its own.
+    let is_set = |name: &str| env(name).is_some_and(|v| !v.is_empty());
+    let state_dir_env = is_set("AGENTSPACE_STATE_DIR").then(|| state_dir.clone());
+    let ssh_dir_env = is_set("AGENTSPACE_SSH_DIR").then(|| ssh_dir.clone());
     let proxy_override =
         match env("AGENTSPACE_PROXY_COMMAND").filter(|v| !v.is_empty()) {
             None => None,
@@ -239,18 +269,43 @@ pub(crate) fn driver_context(
         state_dir,
         // place_pending starts no provisioning run, so it needs no program for one.
         operator_program: None,
+        state_dir_env,
+        ssh_dir_env,
     })
 }
 
-/// The pinned name of the driver's step, the only one this crate calls.
+/// The pinned name of the driver's step, the only one this crate calls. `Err` is a failure of the
+/// whole call; one lease's failure is in the result's `failed`.
 fn place_pending(
     driver_ctx: &agentspace_driver_api::Context,
     project: &str,
-) -> Result<usize, Failure> {
+) -> Result<PendingPlaced, Failure> {
     agentspace_driver_ec2::place_pending(driver_ctx, project).map_err(|f| Failure {
         message: format!("agentspace: {}", f.message),
         caller: agentspace_operator_api::CallerFailure::Same,
     })
+}
+
+/// Step 9's lines for a call that returned: `place done placed=<n>`, then one
+/// `place failed lease=<id> reason=<message>` per lease left `pending`, in the order it was tried.
+// QUESTION: operator.md's line form has no field for the count or a lease's ID, and the T03 ruling
+// says to log `placed` and one line per failed lease (its ID and message). Interim: the count as
+// `placed=<n>` after `done`, and each lease as `lease=<id>` before its `reason`, the reason last.
+fn log_placed(log: &Log, placed: &PendingPlaced) {
+    log.line_with(
+        "place",
+        "done",
+        Some(&format!("placed={}", placed.placed)),
+        None,
+    );
+    for lease in &placed.failed {
+        log.line_with(
+            "place",
+            "failed",
+            Some(&format!("lease={}", log_field(&lease.lease_id))),
+            Some(&lease.message),
+        );
+    }
 }
 
 /// The run, steps 1 to 10.
@@ -348,7 +403,7 @@ pub(crate) fn run(
 
     // Step 9: a failure leaves the host ready and the leases pending, and the run exits 0.
     match driver_context(ctx, env).and_then(|d| place_pending(&d, project)) {
-        Ok(_) => log.line("place", "done", None),
+        Ok(placed) => log_placed(&log, &placed),
         Err(f) => {
             log.failed("place", &f);
             say.warning(&format!(
@@ -442,6 +497,16 @@ mod tests {
         assert_eq!(d.ssh_dir, home.join(".ssh"));
         assert_eq!(d.proxy_override, None);
         assert_eq!(d.operator_program, None);
+        assert_eq!(d.state_dir_env, None);
+        assert_eq!(d.ssh_dir_env, None);
+        // Set but empty is the same as unset.
+        let empty = |name: &str| match name {
+            "AGENTSPACE_STATE_DIR" | "AGENTSPACE_SSH_DIR" => Some(OsString::new()),
+            _ => None,
+        };
+        let d = driver_context(&ctx, &empty).unwrap();
+        assert_eq!((d.state_dir_env, d.ssh_dir_env), (None, None));
+        assert_eq!(d.state_dir, home.join(".agentspace"));
         let state = dir.path().join("state");
         let ssh = dir.path().join("ssh");
         let (s, h) = (state.clone(), ssh.clone());
@@ -457,6 +522,58 @@ mod tests {
         assert_eq!(d.state_dir, state);
         assert_eq!(d.ssh_dir, ssh);
         assert_eq!(d.proxy_override.as_deref(), Some("proxy %h"));
+        // Each variable the run had is passed on, made full, so the driver's detached start passes
+        // it on if and only if the run had it (driver.md, C7).
+        assert_eq!(d.state_dir_env.as_deref(), Some(state.as_path()));
+        assert_eq!(d.ssh_dir_env.as_deref(), Some(ssh.as_path()));
+        // A relative value is made full against the working folder.
+        let relative = |name: &str| match name {
+            "AGENTSPACE_STATE_DIR" => Some(OsString::from("rel-state")),
+            _ => None,
+        };
+        let d = driver_context(&ctx, &relative).unwrap();
+        let made = d.state_dir_env.expect("the state folder variable was set");
+        assert!(made.is_absolute() && made.ends_with("rel-state"));
+        assert_eq!(made, d.state_dir);
+        assert_eq!(d.ssh_dir_env, None);
+    }
+
+    #[test]
+    fn place_pendings_result_is_logged_as_a_count_then_one_line_per_lease_it_left() {
+        let dir = Scratch::new("provision-placed");
+        let path = dir.path().join("provision.log");
+        let log = open_log(&path).unwrap();
+        log_placed(
+            &log,
+            &PendingPlaced {
+                placed: 2,
+                failed: vec![
+                    agentspace_driver_ec2::PendingFailure {
+                        lease_id: "8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01".to_string(),
+                        message: "agentspace: The CA failed its check.\nThe lease stays pending."
+                            .to_string(),
+                    },
+                    agentspace_driver_ec2::PendingFailure {
+                        lease_id: "1f2e3d4c-5b6a-4978-8a1b-2c3d4e5f6a7b".to_string(),
+                        message: "The alias file is not agentspace's.".to_string(),
+                    },
+                ],
+            },
+        );
+        log_placed(&log, &PendingPlaced::default());
+        drop(log);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let rests: Vec<&str> = text.lines().map(|l| l.split_once(' ').unwrap().1).collect();
+        assert_eq!(
+            rests,
+            [
+                "place done placed=2",
+                "place failed lease=8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01 reason=The CA failed its check.?The lease stays pending.",
+                "place failed lease=1f2e3d4c-5b6a-4978-8a1b-2c3d4e5f6a7b reason=The alias file is not agentspace's.",
+                "place done placed=0",
+            ]
+        );
+        assert_eq!(log_field("a b\tc"), "a?b?c");
     }
 
     #[test]

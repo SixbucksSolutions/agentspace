@@ -1,8 +1,8 @@
 //! A provisioning run's log, read by a test (E0.07-T03-S03; operator.md, provision, Its log).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. A line is
-//! `<time> <step> <outcome>[ reason=<reason>]`; the programs' output sits between a run's own
-//! lines, and a test tells the two apart by the form.
+//! `<time> <step> <outcome>[ reason=<reason>]`. The log holds the run's own lines alone: the
+//! programs' output goes to the run's streams, not the log (architect, 2026-11-21, for v0.07-T03).
 #![allow(dead_code)]
 
 use std::fs;
@@ -16,6 +16,8 @@ pub struct LogLine {
     pub time: i64,
     pub step: String,
     pub outcome: String,
+    /// The field between the outcome and the reason: `placed=<n>` or `lease=<id>`, for step 9.
+    pub field: Option<String>,
     pub reason: Option<String>,
 }
 
@@ -48,13 +50,34 @@ pub fn parse_log_line(line: &str) -> Option<LogLine> {
         Some((o, r)) => (o, Some(r.to_string())),
         None => (rest, None),
     };
+    // Step 9's result: `place done placed=<n>`, and `place failed lease=<id>` for each lease it
+    // left pending (the dev lead's interim reading of the T03 ruling, pending its wording).
+    let (outcome, field) = match outcome.split_once(' ') {
+        Some((o, f)) => (o, Some(f.to_string())),
+        None => (outcome, None),
+    };
     if !["begun", "done", "failed"].contains(&outcome) {
         return None;
+    }
+    if let Some(f) = &field {
+        let fits = match (step, outcome) {
+            ("place", "done") => f
+                .strip_prefix("placed=")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+            ("place", "failed") => f
+                .strip_prefix("lease=")
+                .is_some_and(|id| !id.is_empty() && !id.contains(' ')),
+            _ => false,
+        };
+        if !fits {
+            return None;
+        }
     }
     Some(LogLine {
         time,
         step: step.to_string(),
         outcome: outcome.to_string(),
+        field,
         reason,
     })
 }

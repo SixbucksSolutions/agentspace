@@ -343,3 +343,152 @@ fn a_control_character_in_a_failure_is_written_as_a_question_mark_in_the_log() {
         );
     });
 }
+
+// ---------------------------------------------------------------- The program's error text
+
+/// A failed AWS call of `step` whose CLI wrote `error` (on stderr, or on stdout when `on_stdout`):
+/// the step's failure message is `agentspace: ` and the CLI's own text, and the run's log line for
+/// the step carries that whole message as its reason (operator.md, provision, Its log; AWS
+/// failures; architect, 2026-11-21, for v0.07-T03).
+fn aws_error_text_case(
+    step: &'static str,
+    call: &'static str,
+    error: &'static str,
+    on_stdout: bool,
+) {
+    let rig = prov_rig_with(Kind::NoRecord, |rig| {
+        let (out, err) = if on_stdout {
+            (format!("{error}\\n"), String::new())
+        } else {
+            (String::new(), format!("{error}\\n"))
+        };
+        rig.rule("aws", 0, call, 254, &out, &err);
+    });
+    rig.run(move |rig| {
+        let say = rig.say();
+        let f = rig.failure(rig.do_provision(&say, PROJECT), "provision");
+        rig.same(
+            "The failure's message",
+            &f.message,
+            &format!("agentspace: {error}"),
+        );
+        let lines = rig.own_log_lines(PROJECT);
+        let last = lines.last();
+        rig.check(
+            last.is_some_and(|l| l.name() == format!("{step} failed")),
+            &format!("The run's last line MUST be `{step} failed`"),
+        );
+        rig.same(
+            "The failed step's log reason",
+            last.and_then(|l| l.reason.as_deref()).unwrap_or(""),
+            error,
+        );
+        rig.check(
+            rig.record(PROJECT).state.as_str() == "failed",
+            "The new host MUST be recorded failed",
+        );
+    });
+}
+
+#[test]
+fn a_failed_existence_checks_log_line_holds_the_aws_clis_error_text() {
+    aws_error_text_case(
+        "deploy",
+        "describe-stacks",
+        "An error occurred (AccessDenied) when calling the DescribeStacks operation: STANDIN-STACKS-ERROR-TEXT",
+        false,
+    );
+}
+
+#[test]
+fn a_failed_starts_log_line_holds_the_aws_clis_error_text() {
+    aws_error_text_case(
+        "start",
+        "describe-instances",
+        "An error occurred (UnauthorizedOperation) when calling the DescribeInstances operation: STANDIN-INSTANCES-ERROR-TEXT",
+        false,
+    );
+}
+
+#[test]
+fn an_aws_cli_error_written_on_stdout_alone_reaches_the_log_line_too() {
+    aws_error_text_case(
+        "deploy",
+        "describe-stacks",
+        "STANDIN-STDOUT-ERROR-TEXT: the service refused the call",
+        true,
+    );
+}
+
+// ---------------------------------------------------------------- Step 8's registry write
+
+/// Clears the read-only mark the stand-in set, so the throwaway rig can be removed.
+struct Writable(std::path::PathBuf);
+
+impl Drop for Writable {
+    fn drop(&mut self) {
+        if let Ok(meta) = std::fs::metadata(&self.0) {
+            let mut perms = meta.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            let _ = std::fs::set_permissions(&self.0, perms);
+        }
+    }
+}
+
+#[test]
+fn a_registry_write_that_fails_at_step_8_logs_record_failed_and_leaves_the_record_creating() {
+    // The bootstrap's ssh, the run's last program, makes hosts.json read-only, so step 8's replace
+    // of it fails (operator.md, provision, "When step 3 or step 8 cannot change the registry").
+    let rig = prov_rig_with(Kind::NoRecord, |rig| {
+        rig.readonly_at("ssh", 3, "", &rig.hosts_json_path());
+    });
+    rig.run(|rig| {
+        let _writable = Writable(rig.hosts_json_path());
+        let say = rig.say();
+        let f = rig.failure(rig.do_provision(&say, PROJECT), "provision");
+        let want = format!("agentspace: Cannot write {}.", rig.hosts_json_path().display());
+        same_message(rig, "The failure's message", &f.message, &want);
+        let lines = rig.own_log_lines(PROJECT);
+        let names: Vec<String> = lines.iter().map(|l| l.name()).collect();
+        rig.same_list(
+            "The run's own lines",
+            &names,
+            &svec(&[
+                "run begun",
+                "deploy done",
+                "start done",
+                "sync done",
+                "bootstrap done",
+                "record failed",
+            ]),
+        );
+        rig.check(
+            lines.last().and_then(|l| l.reason.as_deref())
+                == f.message.strip_prefix("agentspace: "),
+            "`record failed`'s reason MUST be the registry's message",
+        );
+        let record = rig.record(PROJECT);
+        rig.check(
+            record.state.as_str() == "creating" && record.instance_id.as_deref() == Some(ID2),
+            &format!(
+                "A run that stopped at step 8 MUST leave the record `creating` with the instance ID step 4 wrote, and it is {}",
+                record.state.as_str()
+            ),
+        );
+        rig.check(
+            !say.progress_lines().iter().any(|l| {
+                l.starts_with("Recorded the host") || l.starts_with("Sign in on this host")
+            }) && !say.warnings().iter().any(|w| w.contains("could not be placed")),
+            "A run that stopped at step 8 MUST record nothing more and go no further",
+        );
+        rig.check(
+            matches!(agentspace_hosts::try_run_lock(&rig.home, PROJECT), Ok(Some(_))),
+            "provision.lock MUST be released when step 8 fails",
+        );
+        rig.check(
+            rig.command_folders().is_empty(),
+            "The run's folder MUST be removed as the run ends",
+        );
+    });
+}

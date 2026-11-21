@@ -33,9 +33,10 @@
 //!   (`host.rs`), and reach the box over `agentspace`, as in v0.06. **`sync_all`** is `sync -All`
 //!   (`syncing.rs`). Each command writes what it sends into a folder of its own under the
 //!   operator's, removed as the command ends (`folder.rs`).
-//! - **The library reads no environment variable but `PATH`, only to find `go`, and
-//!   `AGENTSPACE_SSH_DIR`, only to find the ssh folder**, and takes every other path from the
-//!   [`Context`]. It writes to stdout and stderr only through [`Say`] and the streams the spec
+//! - **The library reads no environment variable but `PATH`, only to find `go`,
+//!   `AGENTSPACE_SSH_DIR`, only to find the ssh folder, and, in [`provision`] alone,
+//!   `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` for its last
+//!   step's driver context**, and takes every other path from the [`Context`]. It writes to stdout and stderr only through [`Say`] and the streams the spec
 //!   passes through (`sync -All`'s `Host` lines and its failed hosts' messages, and the passed-through
 //!   output of the programs it starts), and never panics on bad input.
 //! - **A test MUST NOT reach the real `go` or `C:\Projects\localswim`** (operator.md, The test
@@ -343,7 +344,9 @@ pub fn bootstrap_using(
 /// logging to its `provision.log`. `project` is normalized, as the operator's `-Host` gives it.
 ///
 /// Step 9's driver context reads `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and
-/// `AGENTSPACE_PROXY_COMMAND` from the process's environment (operator.md, Environment variables).
+/// `AGENTSPACE_PROXY_COMMAND` from the process's environment (operator.md, Environment variables),
+/// as its detached start gave them, and carries the two folders' variables, made full when set
+/// and not empty, as its `state_dir_env` and `ssh_dir_env` (driver.md, The detached start, C7).
 pub fn provision(
     ctx: &Context,
     ca_env: &CaEnv,

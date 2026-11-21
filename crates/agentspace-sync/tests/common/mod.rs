@@ -340,6 +340,8 @@ pub struct Rig {
     watched: RefCell<Vec<PathBuf>>,
     /// Lock files each stand-in tries to open at each call (parent only).
     probed: RefCell<Vec<PathBuf>>,
+    /// The stand-ins' read-only actions, as `readonly=` lines (parent only).
+    readonly: RefCell<Vec<(String, String)>>,
     /// Whether the ssh stand-in keeps each call's whole standard input (parent only).
     capture_stdin: Cell<bool>,
     /// The copy of the test binary the child runs from, beside which a file for the operator's
@@ -427,6 +429,7 @@ impl Rig {
             confirm: RefCell::new(None),
             watched: RefCell::new(Vec::new()),
             probed: RefCell::new(Vec::new()),
+            readonly: RefCell::new(Vec::new()),
             capture_stdin: Cell::new(false),
             operator_exe: RefCell::new(None),
             _tmp: tmp,
@@ -537,6 +540,15 @@ impl Rig {
             ));
     }
 
+    /// Makes the `n`th call of `prog` (0 for any) whose arguments contain `contains` set the file
+    /// at `path` read-only before it answers, so that the next replace of that file fails.
+    pub fn readonly_at(&self, prog: &str, n: u32, contains: &str, path: &Path) {
+        self.readonly.borrow_mut().push((
+            prog.to_string(),
+            format!("readonly={n}{US}{contains}{US}{}", path.display()),
+        ));
+    }
+
     /// Makes the CA in the throwaway home, as `ca` does.
     pub fn make_ca(&self) {
         if self.child {
@@ -636,6 +648,12 @@ impl Rig {
                 ));
                 if let Some(c) = self.confirm.borrow().as_ref() {
                     text.push_str(&format!("confirm={c}\n"));
+                }
+            }
+            for (p, line) in self.readonly.borrow().iter() {
+                if p == prog {
+                    text.push_str(line);
+                    text.push('\n');
                 }
             }
             if let Some(v) = rules.get(prog) {
