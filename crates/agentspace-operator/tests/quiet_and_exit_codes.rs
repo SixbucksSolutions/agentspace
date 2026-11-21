@@ -36,6 +36,15 @@ fn corpus() -> Vec<Vec<&'static str>> {
         vec!["-Quiet", "status"],
         vec!["-Quiet", "bogus"],
         vec!["-Quiet", "-h"],
+        vec!["bootstrap"],
+        vec!["provision"],
+        vec!["provision", "-Host", "x"],
+        vec!["status", "-Host", "bad!"],
+        vec!["status", "-Host", "x", "-All"],
+        vec!["ca", "-Host", "x"],
+        vec!["up", "-All"],
+        vec!["deploy", "-InstanceType", "m9g.xlarge"],
+        vec!["status", "-Host", "x"],
     ]
 }
 
@@ -163,9 +172,15 @@ fn quiet_does_not_suppress_help() {
 #[test]
 fn quiet_is_accepted_by_every_command_and_in_any_case() {
     for command in COMMANDS {
-        assert_reaches_command(&[command, "-Quiet"], command);
-        assert_reaches_command(&["-quiet", command], command);
-        assert_reaches_command(&[command, "-QUIET"], command);
+        let base = command_args(command);
+        for place in ["-Quiet", "-QUIET", "-quiet"] {
+            let mut after = base.clone();
+            after.push(place);
+            assert_reaches_command(&after, command);
+            let mut before = vec![place];
+            before.extend(base.iter().copied());
+            assert_reaches_command(&before, command);
+        }
     }
 }
 

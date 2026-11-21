@@ -211,6 +211,12 @@ pub fn host_alias_name(project: &str) -> String {
     format!("agentspace-host.{project}")
 }
 
+/// The comment of a host's operator alias's owner mark line. It is the one home of that text: every
+/// writer of a host's alias (the operator's `-Host` commands and agentspace-sync's) MUST use it, so
+/// they write the same bytes and none rewrites another's alias (operator.md, How the operator
+/// reaches a host; architect, 2026-11-21, for v0.07-T03).
+pub const HOST_ALIAS_COMMENT: &str = "written by agentspace; it MUST NOT be edited";
+
 /// The values of one host's operator alias. `key_path` and `cert_path` are in the file's form, as
 /// [`host_file_text`] gives them, and `known_hosts` as [`known_hosts_text`] gives it. `proxy_command` is the raw command, which
 /// `host_alias_file_bytes` escapes.

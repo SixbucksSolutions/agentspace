@@ -27,8 +27,14 @@ fn the_extractor_finds_every_level_in_the_doc() {
         assert!(text.ends_with('\n') && !text.contains('\r'), "{level}");
         assert!(text.lines().count() >= 5, "{level} is more than a stub");
     }
-    assert!(help_text("top").contains("Commands:\n  deploy  Create or update the stack"));
+    assert!(help_text("top").contains("Commands:\n  deploy     Create or update a host's stack"));
     assert!(help_text("ca").contains("%USERPROFILE%\\.agentspace\\ca"));
+    // v0.07's additions are in the extracted text, so a byte comparison below shows them.
+    assert!(help_text("top").contains("[-Host <project> | -All]"));
+    assert!(help_text("top").contains("-InstanceType <type>"));
+    assert!(help_text("bootstrap").starts_with("Usage: agentspace-operator bootstrap "));
+    assert!(help_text("provision").starts_with("Usage: agentspace-operator provision -Host "));
+    assert!(help_text("deploy").contains("-InstanceType <type>  With -Host"));
 }
 
 #[test]
@@ -55,7 +61,17 @@ fn help_and_commands_are_matched_without_regard_to_case() {
         assert_help(&["status", spelling], "status");
     }
     for command in [
-        "UP", "Up", "uP", "SYNC", "Deploy", "CA", "Down", "STATUS", "Grow",
+        "UP",
+        "Up",
+        "uP",
+        "SYNC",
+        "Deploy",
+        "CA",
+        "Down",
+        "STATUS",
+        "Grow",
+        "BOOTSTRAP",
+        "Provision",
     ] {
         assert_help(&[command, "-h"], &command.to_lowercase());
     }
@@ -64,9 +80,7 @@ fn help_and_commands_are_matched_without_regard_to_case() {
 #[test]
 fn each_help_text_is_the_doc_text_with_a_line_feed_after_every_line() {
     // The explicit form of FA-13, beside the byte comparison.
-    for level in [
-        "top", "deploy", "up", "sync", "ca", "down", "status", "grow",
-    ] {
+    for level in std::iter::once("top").chain(COMMANDS) {
         let args: Vec<&str> = if level == "top" {
             vec!["--help"]
         } else {
@@ -100,6 +114,42 @@ fn help_wins_over_every_usage_error_and_refusal_on_the_line() {
     assert_line_help("grow -GiB -h", "grow");
     assert_line_help("-GiB abc -Quiet -Quiet --HELP", "top");
     assert_line_help("bogus -x extra -GiB -h", "top");
+}
+
+#[test]
+fn help_wins_over_every_new_usage_error_and_host_check() {
+    // The host checks come after help as well (operator.md, Command line: help is checked first).
+    assert_line_help("provision -h", "provision");
+    assert_line_help("provision --help -Host", "provision");
+    assert_line_help("ca -Host y -h", "ca");
+    assert_line_help("up -All -h", "up");
+    assert_line_help("status -Host y -All --help", "status");
+    assert_line_help("deploy -InstanceType m9g.xlarge -h", "deploy");
+    assert_line_help("grow -InstanceType bad -Host -All -h", "grow");
+    assert_line_help("bootstrap -Host bad! -h", "bootstrap");
+    assert_line_help("-Host bad! -All -All -InstanceType -h", "top");
+}
+
+#[test]
+fn the_new_parameters_follow_the_same_rule_for_which_argument_is_the_command() {
+    // FB-11 for -Host and -InstanceType: the argument after either is its value unless it is
+    // help; -All takes no value, so what follows it can be the command.
+    assert_line_help("-Host up -h", "top");
+    assert_line_help("-Host -h up", "up");
+    assert_line_help("-InstanceType deploy -h", "top");
+    assert_line_help("-InstanceType -h deploy", "deploy");
+    assert_line_help("-Host x deploy -h", "deploy");
+    assert_line_help("-host provision -H", "top");
+    assert_line_help("-HOST -H provision", "provision");
+    assert_line_help("-All up -h", "up");
+    assert_line_help("-All -Host x bootstrap -h", "bootstrap");
+    assert_line_help("-instancetype m9g.xlarge -Host x deploy --help", "deploy");
+    // A value that looks like a parameter is still a value.
+    assert_line_help("-Host -All status -h", "status");
+    assert_line_help("-InstanceType -Quiet grow -h", "grow");
+    // As the last argument's value position, help is still asked for.
+    assert_line_help("status -Host -h", "status");
+    assert_line_help("deploy -InstanceType -h", "deploy");
 }
 
 #[test]
@@ -171,7 +221,7 @@ fn help_is_matched_without_regard_to_case_in_a_value_position() {
 #[test]
 fn help_starts_no_program_and_writes_nothing() {
     // The three seam variables name nothing (Home::command); a program started would show.
-    for level in ["top", "up", "sync", "grow"] {
+    for level in ["top", "up", "sync", "grow", "bootstrap", "provision"] {
         let args: Vec<&str> = if level == "top" {
             vec!["-h"]
         } else {

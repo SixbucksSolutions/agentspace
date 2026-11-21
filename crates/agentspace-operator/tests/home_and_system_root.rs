@@ -55,7 +55,7 @@ fn losses(how: Gone) -> [(Option<Gone>, Option<Gone>); 3] {
 fn every_command_fails_without_a_home() {
     for command in COMMANDS {
         for how in BOTH {
-            let r = run_without(&[command], Some(how), None);
+            let r = run_without(&command_args(command), Some(how), None);
             assert_failure_run(
                 &format!("{command}, USERPROFILE {how:?}"),
                 &r,
@@ -69,7 +69,7 @@ fn every_command_fails_without_a_home() {
 fn every_command_fails_without_a_system_folder() {
     for command in COMMANDS {
         for how in BOTH {
-            let r = run_without(&[command], None, Some(how));
+            let r = run_without(&command_args(command), None, Some(how));
             assert_failure_run(
                 &format!("{command}, SystemRoot {how:?}"),
                 &r,
@@ -84,7 +84,7 @@ fn the_home_is_checked_before_the_system_folder() {
     for command in COMMANDS {
         for profile in BOTH {
             for system_root in BOTH {
-                let r = run_without(&[command], Some(profile), Some(system_root));
+                let r = run_without(&command_args(command), Some(profile), Some(system_root));
                 assert_failure_run(
                     &format!("{command}, USERPROFILE {profile:?}, SystemRoot {system_root:?}"),
                     &r,
@@ -121,9 +121,13 @@ fn the_check_applies_with_any_parameter_and_any_case() {
 #[test]
 fn quiet_does_not_hide_either_failure() {
     for command in COMMANDS {
-        let r = run_without(&[command, "-Quiet"], Some(Gone::Unset), None);
+        let mut after = command_args(command);
+        after.push("-Quiet");
+        let r = run_without(&after, Some(Gone::Unset), None);
         assert_failure_run(&format!("{command} -Quiet"), &r, USERPROFILE_UNSET);
-        let r = run_without(&["-Quiet", command], None, Some(Gone::Empty));
+        let mut before = vec!["-Quiet"];
+        before.extend(command_args(command));
+        let r = run_without(&before, None, Some(Gone::Empty));
         assert_failure_run(&format!("-Quiet {command}"), &r, SYSTEMROOT_UNSET);
     }
 }
@@ -157,6 +161,10 @@ fn usage_errors_need_neither() {
         ("status -Quiet -Quiet", given_twice("-Quiet")),
         ("status -GiB", needs_value("-GiB")),
         ("status -GiB abc", not_a_number("abc")),
+        ("status -Host bad!", not_a_project("bad!")),
+        ("deploy -InstanceType bad", not_an_instance_type("bad")),
+        ("status -Host", needs_value("-Host")),
+        ("status -All -All", given_twice("-All")),
     ];
     for (line, message) in cases {
         for how in BOTH {
@@ -169,6 +177,50 @@ fn usage_errors_need_neither() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn the_host_checks_need_neither_and_run_before_the_home() {
+    // The `-Alias` checks and the host checks are part of the command line (operator.md, Command
+    // line): they run before the home and the system folder, and read no file.
+    let cases = [
+        ("ca -Host y", HOST_NOT_FOR_CA),
+        ("up -All", ALL_APPLIES),
+        ("status -Host y -All", HOST_AND_ALL),
+        ("provision", PROVISION_NEEDS_HOST),
+        ("grow -InstanceType m9g.xlarge", INSTANCE_TYPE_APPLIES),
+        ("deploy -InstanceType m9g.xlarge", INSTANCE_TYPE_NEEDS_HOST),
+        (
+            "deploy -Host swimcoach -InstanceType m9g.xlarge",
+            INSTANCE_TYPE_NEEDS_HOST,
+        ),
+    ];
+    for (line, message) in cases {
+        for how in BOTH {
+            for (profile, system_root) in losses(how) {
+                let r = run_without(&words(line), profile, system_root);
+                assert_failure_run(
+                    &format!("{line:?}, {profile:?} {system_root:?}"),
+                    &r,
+                    message,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_command_that_names_a_host_still_needs_the_home_before_the_registry_is_looked_up() {
+    // The host is looked up after the home and the system folder (operator.md, Command line), so
+    // a missing home is reported, never "has no host".
+    for how in BOTH {
+        let r = run_without(&["status", "-Host", "agentspace"], Some(how), None);
+        assert_failure_run("status -Host, home", &r, USERPROFILE_UNSET);
+        let r = run_without(&["status", "-All"], None, Some(how));
+        assert_failure_run("status -All, system root", &r, SYSTEMROOT_UNSET);
+        let r = run_without(&["provision", "-Host", "agentspace"], Some(how), None);
+        assert_failure_run("provision -Host, home", &r, USERPROFILE_UNSET);
     }
 }
 

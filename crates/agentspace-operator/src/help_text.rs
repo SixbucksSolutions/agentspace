@@ -5,41 +5,61 @@
 //! Each text MUST equal its block in docs/operator.md, with a line feed after every line, the last
 //! included and no carriage return (gap FA-13). A change to either MUST change both.
 
-pub(crate) const TOP: &str = r##"Usage: agentspace-operator <command> [-GiB <n>] [-Alias <alias>] [-Quiet] [--help]
+pub(crate) const TOP: &str = r##"Usage: agentspace-operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]
 
-Manages the agentspace box from the laptop: its stack, its power, its system
-files, the SSH CA it trusts, and the localswim Bot token it uses.
+Manages agentspace's hosts from the laptop: each host's stack, its power, its
+system files and toolchain, the SSH CA they trust, and the localswim Bot token
+they use. Without -Host, a command acts on the box, swimcoach's host.
 
 Commands:
-  deploy  Create or update the stack, then run sync
-  up      Start the box if needed, wait until it has patched, push the Bot token
-  sync    Check the CA, install the box's system files, CLAUDE.md and the
-          localswim CLI, and push the Bot token
-  ca      Create the agentspace SSH CA once; later, check it and print it
-  down    Stop the box
-  status  Show the box's state, type, disk and Session Manager reachability
-  grow    Grow the box's disk by -GiB (default 2), and its filesystem with it
+  deploy     Create or update a host's stack, then run sync
+  up         Start a host if needed, wait until it has patched, push the
+             Bot token
+  sync       Check the CA, install a host's system files, CLAUDE.md and the
+             localswim CLI, and push the Bot token
+  bootstrap  Install the agent toolchain on a host; safe to run again
+  provision  Make a project's host: deploy, start, sync and bootstrap it
+  ca         Create the agentspace SSH CA once; later, check it and print it
+  down       Stop a host
+  status     Show a host's state, type, disk and Session Manager reachability
+  grow       Grow a host's disk by -GiB (default 2), and its filesystem with it
 
 Parameters:
-  -GiB <n>        For grow: the GiB to add (default 2)
-  -Alias <alias>  For up: the SSH host alias the token push uses (default agentspace)
-  -Quiet          Print no progress or warnings; failures and status still print
-  -h, --help      Print this help, or a command's, and exit
+  -Host <project>  The project whose host to act on (default: the box);
+                   provision needs it, and ca takes none
+  -All             For status, down and sync: every host, one at a time
+  -GiB <n>         For grow: the GiB to add (default 2)
+  -Alias <alias>   For up: the SSH host alias the token push uses
+                   (default: the host's own)
+  -InstanceType <type>
+                   For deploy -Host: the instance type to give that host
+  -Quiet           Print no progress or warnings; failures and status
+                   still print
+  -h, --help       Print this help, or a command's, and exit
 
-The operator's own messages go to stderr; deploy, sync and grow pass other
-programs' output through. up writes nothing to stdout, so it is safe in an SSH
-ProxyCommand.
+The operator's own messages go to stderr; deploy, sync, bootstrap, provision
+and grow pass other programs' output through. up writes nothing to stdout, so
+it is safe in an SSH ProxyCommand.
 
 Exit codes:
   0  Success
   1  Failure or usage error; the message on stderr says which
 "##;
 
-pub(crate) const DEPLOY: &str = r##"Usage: agentspace-operator deploy [-Quiet]
+pub(crate) const DEPLOY: &str = r##"Usage: agentspace-operator deploy [-Host <project>] [-InstanceType <type>] [-Quiet]
 
-Creates or updates the CloudFormation stack 'agentbox' in us-west-2 from
-its template, with the parameters in ~/.agentspace/stack-parameters.json
-and your ~/.ssh/id_ed25519.pub, then runs sync.
+Creates or updates a host's CloudFormation stack in us-west-2 from its
+template, then runs sync. Without -Host it deploys the box's stack,
+'agentbox', with the parameters in ~/.agentspace/stack-parameters.json and
+your ~/.ssh/id_ed25519.pub. With -Host <project> it deploys that project's
+host's stack: when there is none, it creates it with the SubnetId and VpcId
+in that file, your public key and the SSH CA's public key; when there is
+one, it keeps every parameter as it was.
+
+  -Host <project>       The project whose host to deploy (default: the box).
+  -InstanceType <type>  With -Host, for a host that is not the box: the
+                        instance type to give it, such as m9g.2xlarge. The
+                        box is sized through stack-parameters.json.
 
 Never change the template's ImageId on a live stack: it replaces the instance
 and its disk.
@@ -47,33 +67,61 @@ and its disk.
 Exit codes: 0 success, 1 failure.
 "##;
 
-pub(crate) const UP: &str = r##"Usage: agentspace-operator up [-Alias <alias>] [-Quiet]
+pub(crate) const UP: &str = r##"Usage: agentspace-operator up [-Host <project>] [-Alias <alias>] [-Quiet]
 
-Starts the box if it is stopped, waits until its boot-time patch run has
+Starts a host if it is stopped, waits until its boot-time patch run has
 finished, and sends the localswim Bot token and the laptop's time zone if
-either has changed since the last confirmed send.
+either has changed since the last confirmed send. Without -Host it acts on
+the box.
 
-  -Alias <alias>  The SSH host alias the token push connects with
-                  (default agentspace). Letters, digits, '.', '_' and '-',
-                  not starting with '-'.
+  -Host <project>  The project whose host to start (default: the box).
+  -Alias <alias>   The SSH host alias the token push connects with
+                   (default: agentspace for the box, agentspace-host.<project>
+                   for another host). Letters, digits, '.', '_' and '-',
+                   not starting with '-'.
 
 Writes nothing to stdout, so it is safe inside an SSH ProxyCommand.
 A failed token push warns and still exits 0.
 
-Exit codes: 0 the box is ready, 1 failure.
+Exit codes: 0 the host is ready, 1 failure.
 "##;
 
-pub(crate) const SYNC: &str = r##"Usage: agentspace-operator sync [-Quiet]
+pub(crate) const SYNC: &str = r##"Usage: agentspace-operator sync [-Host <project> | -All] [-Quiet]
 
 Checks the agentspace SSH CA, then installs box/system and the CA's public key
-on the box, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
+on a host, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
 CLI from C:\Projects\localswim, and sends the localswim Bot token and the
-laptop's time zone. Starts the box first if it is stopped.
+laptop's time zone. Starts the host first if it is stopped. Without -Host it
+acts on the box; -All syncs every ready host, one at a time.
 
-Fails before touching the box if the CA is missing, half-made, mismatched or
+Fails before touching a host if the CA is missing, half-made, mismatched or
 readable by anyone else.
 
 Exit codes: 0 success, 1 failure.
+"##;
+
+pub(crate) const BOOTSTRAP: &str = r##"Usage: agentspace-operator bootstrap [-Host <project>] [-Quiet]
+
+Runs the agent toolchain's bootstrap on a host as its login user: gh, Node
+through fnm, Claude Code, Codex, uv, build-essential, and Rust through
+rustup. Starts the host first if it is stopped. Safe to run again. Without
+-Host it acts on the box.
+
+Exit codes: 0 success, 1 failure.
+"##;
+
+pub(crate) const PROVISION: &str = r##"Usage: agentspace-operator provision -Host <project> [-Quiet]
+
+Makes a project's host, or makes it again: deploys its stack, starts it and
+waits, runs sync and bootstrap, records it ready in ~/.agentspace/hosts.json,
+and places the project's pending leases. A project with no host is made only
+if it is listed in ~/.agentspace/projects.json. One run per host at a time;
+each run logs to ~/.agentspace/hosts/<project>/provision.log.
+
+Lease commands start a run on their own when a lease needs a host; you can
+also run it yourself.
+
+Exit codes: 0 the host is ready, 1 failure.
 "##;
 
 pub(crate) const CA: &str = r##"Usage: agentspace-operator ca [-Quiet]
@@ -89,27 +137,35 @@ repairs or overwrites a CA. Run it without "Run as administrator".
 Exit codes: 0 the CA exists and is sound, 1 failure.
 "##;
 
-pub(crate) const DOWN: &str = r##"Usage: agentspace-operator down [-Quiet]
+pub(crate) const DOWN: &str = r##"Usage: agentspace-operator down [-Host <project> | -All] [-Quiet]
 
-Stops the box. Does not wait for it to stop. Open sessions on it end.
-The next ssh agentspace, or any lease connection, starts it again.
+Stops a host, or with -All every host. Does not wait for it to stop. Open
+sessions on it end. The next connection to it, a lease's or the operator's,
+starts it again. Without -Host it stops the box.
 
 Exit codes: 0 the stop was requested, 1 failure.
 "##;
 
-pub(crate) const STATUS: &str = r##"Usage: agentspace-operator status [-Quiet]
+pub(crate) const STATUS: &str = r##"Usage: agentspace-operator status [-Host <project> | -All] [-Quiet]
 
-Shows the instance's ID, state, type, root disk size and volume, and whether
-Session Manager can reach it. Never starts the box. Prints to stderr.
+Shows a host's instance ID, state, type, root disk size and volume, and
+whether Session Manager can reach it; with -All, each host's, after a line
+naming it. Never starts a host. Prints to stderr. Without -Host it shows the
+box.
+
+With -Host, for a host that is not the box, it then signs a fresh one-hour
+certificate, so 'ssh agentspace-host.<project>' signs in for the next hour:
+run it before you sign in there, and again after an hour.
 
 Exit codes: 0 success, 1 failure.
 "##;
 
-pub(crate) const GROW: &str = r##"Usage: agentspace-operator grow [-GiB <n>] [-Quiet]
+pub(crate) const GROW: &str = r##"Usage: agentspace-operator grow [-Host <project>] [-GiB <n>] [-Quiet]
 
-Grows the box's root volume by -GiB (default 2) and, if the box is running,
-its filesystem online; a stopped box grows its filesystem at next boot.
-EBS volumes never shrink, and allow one change every 6 hours.
+Grows a host's root volume by -GiB (default 2) and, if the host is running,
+its filesystem online; a stopped host grows its filesystem at next boot.
+EBS volumes never shrink, and allow one change every 6 hours. Without -Host
+it grows the box's.
 
 Exit codes: 0 success, 1 failure.
 "##;

@@ -46,8 +46,28 @@ fn an_unknown_command_is_named_as_given() {
 #[test]
 fn commands_are_whole_never_abbreviations() {
     for abbreviation in [
-        "st", "stat", "statu", "d", "dep", "u", "s", "gro", "do", "c", "ups", "statuss", "growth",
+        "st",
+        "stat",
+        "statu",
+        "d",
+        "dep",
+        "u",
+        "s",
+        "gro",
+        "do",
+        "c",
+        "ups",
+        "statuss",
+        "growth",
         "ca1",
+        "b",
+        "boot",
+        "bootstra",
+        "bootstrapp",
+        "p",
+        "prov",
+        "provisio",
+        "provisions",
     ] {
         assert_failure(&[abbreviation], &unknown_command(abbreviation));
     }
@@ -153,7 +173,8 @@ fn every_command_checks_gib_s_form() {
     // `status -GiB abc` is a usage error, and every command but grow then ignores the value.
     for command in COMMANDS {
         assert_line_fails(&format!("{command} -GiB abc"), &not_a_number("abc"));
-        reaches_the_stub(&format!("{command} -GiB 7"), command);
+        let line = format!("{} -GiB 7", command_args(command).join(" "));
+        reaches_the_stub(&line, command);
     }
 }
 
@@ -296,8 +317,8 @@ fn commands_are_matched_without_regard_to_case() {
                 }
             })
             .collect();
-        reaches_the_stub(&upper, command);
-        reaches_the_stub(&mixed, command);
+        reaches_the_stub(&command_args(&upper).join(" "), command);
+        reaches_the_stub(&command_args(&mixed).join(" "), command);
     }
 }
 

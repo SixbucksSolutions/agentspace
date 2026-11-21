@@ -12,10 +12,39 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 /// The text every unknown-command and no-command message ends with.
-pub const COMMANDS_SENTENCE: &str = "The commands are deploy, up, sync, ca, down, status and grow.";
+pub const COMMANDS_SENTENCE: &str =
+    "The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.";
 pub const ALIAS_APPLIES: &str = "agentspace: -Alias applies to up alone.";
 pub const ALIAS_INVALID: &str = "agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'.";
-pub const COMMANDS: [&str; 7] = ["deploy", "up", "sync", "ca", "down", "status", "grow"];
+pub const COMMANDS: [&str; 9] = [
+    "deploy",
+    "up",
+    "sync",
+    "bootstrap",
+    "provision",
+    "ca",
+    "down",
+    "status",
+    "grow",
+];
+
+/// The host checks' messages (docs/operator.md, Command line, "The host checks run next").
+pub const HOST_NOT_FOR_CA: &str = "agentspace: -Host does not apply to ca.";
+pub const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alone.";
+pub const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
+pub const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
+pub const INSTANCE_TYPE_APPLIES: &str = "agentspace: -InstanceType applies to deploy alone.";
+pub const INSTANCE_TYPE_NEEDS_HOST: &str = "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.";
+
+/// A command line that names `command` and holds nothing else that its checks need: `provision`
+/// requires `-Host`, so it gets one (operator.md, the host checks, check 4).
+pub fn command_args(command: &str) -> Vec<&str> {
+    if command.eq_ignore_ascii_case("provision") {
+        vec![command, "-Host", "x"]
+    } else {
+        vec![command]
+    }
+}
 
 pub fn no_command() -> String {
     format!("agentspace: No command given. {COMMANDS_SENTENCE}")
@@ -37,6 +66,19 @@ pub fn needs_value(name: &str) -> String {
 }
 pub fn not_a_number(arg: &str) -> String {
     format!("agentspace: -GiB MUST be a whole number, not '{arg}'.")
+}
+pub fn not_a_project(arg: &str) -> String {
+    format!(
+        "agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '{arg}'."
+    )
+}
+pub fn not_an_instance_type(arg: &str) -> String {
+    format!(
+        "agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '{arg}'."
+    )
+}
+pub fn no_host(project: &str) -> String {
+    format!("agentspace: Project '{project}' has no host; provision -Host {project} makes one.")
 }
 
 /// What one run of the program gave.
@@ -194,12 +236,11 @@ pub fn assert_failure_run(shown: &str, r: &Run, message: &str) {
 /// A command line that passes every check reaches its command. In the harness's throwaway home no
 /// instance-ID cache exists and the seam's three variables name nothing, so each command that
 /// needs the AWS CLI stops at its first call with the seam's own failure, and `ca` stops at its
-/// first step, the missing `ssh-keygen.exe` of the throwaway `SystemRoot`. `deploy` and `sync` are
-/// the sync crate's: [`assert_reaches_sync_crate`] checks what holds whether that crate is still
-/// its stub or E0.06-T03-S02's build.
+/// first step, the missing `ssh-keygen.exe` of the throwaway `SystemRoot`. `deploy`, `sync`,
+/// `bootstrap` and `provision` are agentspace-sync's: see [`assert_reaches_sync_crate`].
 pub fn assert_reaches_command<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], command: &str) {
-    if command == "deploy" || command == "sync" {
-        assert_reaches_sync_crate(args);
+    if matches!(command, "deploy" | "sync" | "bootstrap" | "provision") {
+        assert_reaches_sync_crate(args, command);
         return;
     }
     let home = Home::new();
@@ -222,38 +263,60 @@ pub fn assert_reaches_command<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], com
     assert_failure_run(&format!("{args:?}"), &r, &expected);
 }
 
-/// `deploy` or `sync` reaches the sync crate, and fails there in the throwaway home, whether that
-/// crate is the pinned stub (`<command> is not built yet.`) or E0.06-T03-S02's build (`deploy`
-/// stops at the missing `id_ed25519.pub`, `sync` at its CA check's missing `ssh-keygen.exe`). What
-/// holds for both: exit 1, nothing on stdout, one `agentspace: ` line on stderr, and no program of
-/// the seam started (each names nothing, so a start would fail with the seam's own line).
+/// `deploy`, `sync`, `bootstrap` or `provision` reaches agentspace-sync, and stops there in the
+/// throwaway home at the earliest step the home cannot meet, with that step's own message
+/// (docs/operator.md, deploy, sync, bootstrap, provision):
+/// - `deploy` (the box's) at its step 1, the missing `%USERPROFILE%\.ssh\id_ed25519.pub`;
+/// - `sync` at its step 1, the CA check's missing `ssh-keygen.exe`;
+/// - `bootstrap` at its step 1, the start-and-wait's first AWS call, which the seam's AWS CLI,
+///   naming nothing, cannot make;
+/// - `provision -Host <project>`, a project with no record, at its step 1: the project is not in
+///   the missing project list.
 ///
-/// `PATH` names an empty folder ([`Home::command`]), so no run of `sync` can find the real `go`.
-pub fn assert_reaches_sync_crate<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S]) {
-    let r = run(args);
-    let shown = format!("{args:?}");
-    assert_eq!(
-        r.code,
-        Some(1),
-        "{shown}: exit code; stderr was {:?}",
-        r.err()
-    );
-    assert_eq!(r.out(), "", "{shown}: stdout MUST be empty on a failure");
-    let err = r.err();
-    assert_eq!(
-        err.lines().count(),
-        1,
-        "{shown}: one line on stderr, not {:?}",
-        err
-    );
-    assert!(
-        err.starts_with("agentspace: ") && err.ends_with('\n'),
-        "{shown}: the failure is one agentspace: line: {err:?}"
-    );
-    assert!(
-        !err.contains("which cannot be run"),
-        "{shown}: a program of the seam was started: {err:?}"
-    );
+/// Each is exit 1, the one line, nothing on stdout and nothing written in the home. `PATH` names an
+/// empty folder ([`Home::command`]), so no run can find the real `go`, and none gets as far as the
+/// localswim checkout.
+pub fn assert_reaches_sync_crate<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], command: &str) {
+    let home = Home::new();
+    let r = home.run(args);
+    let profile = home.path().join("profile");
+    let expected = match command {
+        "deploy" => format!(
+            "agentspace: {} does not exist.",
+            profile.join(".ssh").join("id_ed25519.pub").display()
+        ),
+        "sync" => format!(
+            "agentspace: {} is missing; install the Windows OpenSSH client.",
+            home.path()
+                .join("systemroot")
+                .join("System32")
+                .join("OpenSSH")
+                .join("ssh-keygen.exe")
+                .display()
+        ),
+        "bootstrap" => format!(
+            "agentspace: AGENTSPACE_AWS_CMD names {}, which cannot be run.",
+            home.missing_program().display()
+        ),
+        "provision" => {
+            let words: Vec<String> = args
+                .iter()
+                .map(|a| a.as_ref().to_string_lossy().into_owned())
+                .collect();
+            let project = words
+                .iter()
+                .position(|w| w.eq_ignore_ascii_case("-Host"))
+                .and_then(|i| words.get(i + 1))
+                .map(|p| p.trim().to_lowercase())
+                .expect("provision is given -Host");
+            format!(
+                "agentspace: Project '{project}' has no host and is not in {}, so no host is made for it.",
+                profile.join(".agentspace").join("projects.json").display()
+            )
+        }
+        other => panic!("{other} is not one of agentspace-sync's commands"),
+    };
+    assert_failure_run(&format!("{args:?}"), &r, &expected);
 }
 
 /// A command line given as a string of words, and the failure it MUST give.
@@ -329,7 +392,10 @@ pub fn help_blocks() -> &'static HashMap<String, String> {
                 });
                 continue;
             }
-            if line.trim_end() == "**Help:**" {
+            // `**Help:**` for a command; the top level's marker names the architect's ruling
+            // (`**Help** (architect, ...):`), so a marker that starts `**Help** (` counts too.
+            let marker = line.trim_end();
+            if marker == "**Help:**" || marker.starts_with("**Help** (") {
                 let level = level.clone().expect("a Help block under a level heading");
                 // The fence opens on the next non-empty line.
                 let mut fence = lines.next().expect("a fence after Help:");

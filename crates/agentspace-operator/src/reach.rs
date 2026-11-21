@@ -9,12 +9,14 @@ use std::sync::Arc;
 
 use agentspace_ca::CaEnv;
 use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
+use agentspace_sync::Target;
 
 use crate::Reach;
+use crate::access::Access;
 
 /// Every variable the program reads, by name. The context's, `ca`'s, the seam's four, `PATH`
 /// (the AWS CLI's fallback), and `AGENTSPACE_DIAGNOSTIC`.
-const VARIABLES: [&str; 14] = [
+const VARIABLES: [&str; 15] = [
     "USERPROFILE",
     "LOCALAPPDATA",
     "SystemRoot",
@@ -29,6 +31,7 @@ const VARIABLES: [&str; 14] = [
     "AGENTSPACE_SSH_CMD",
     "AGENTSPACE_SCP_CMD",
     "AGENTSPACE_TIMEZONE",
+    "AGENTSPACE_SSH_DIR",
 ];
 
 /// The program's environment as it started: the variables it reads, copied once from a lookup
@@ -76,27 +79,50 @@ impl Env {
     }
 }
 
-/// The real [`Reach`]: the token push, `ca`, `sync` and `deploy`.
+/// The real [`Reach`]: the token push, `ca`, a host's key, certificate and alias, and `sync`,
+/// `sync -All`, `deploy`, `bootstrap` and `provision`.
 pub struct SystemReach {
     env: Env,
+    access: Access,
 }
 
 impl SystemReach {
+    /// The reach of the process: the ssh folder is `AGENTSPACE_SSH_DIR` made full against the
+    /// working folder, or `<home>\.ssh`, and the operator's own executable is the file the system
+    /// started.
     pub fn new(env: Env) -> Self {
-        SystemReach { env }
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let ssh_dir = agentspace_state::resolve_paths(&env.lookup(), &cwd)
+            .ok()
+            .and_then(|paths| paths.ssh_dir)
+            .unwrap_or_default();
+        let own_exe = std::env::current_exe().ok();
+        SystemReach {
+            env,
+            access: Access { ssh_dir, own_exe },
+        }
     }
 }
 
 impl Reach for SystemReach {
-    fn push(&self, ctx: &Context, say: &dyn Say, instance_id: &str, alias: &str) {
+    fn push(
+        &self,
+        ctx: &Context,
+        say: &dyn Say,
+        instance_id: &str,
+        alias: &str,
+        host: Option<&str>,
+    ) {
         // The push never fails a command, and runs unforced (operator.md, The token push).
-        let _ = agentspace_push::push_using(
+        let _ = agentspace_push::push_using_with_host(
             ctx,
             say,
             instance_id,
             alias,
             false,
             Arc::new(self.env.lookup()),
+            &|ssh| ssh,
+            host,
         );
     }
 
@@ -104,26 +130,78 @@ impl Reach for SystemReach {
         agentspace_ca::ca(ctx, env, say)
     }
 
+    fn access(&self, ctx: &Context, env: &CaEnv, project: &str) -> Result<(), Failure> {
+        crate::access::sign_in(ctx, env, &self.access, project)
+    }
+
     fn sync(
         &self,
         ctx: &Context,
         env: &CaEnv,
+        target: Target<'_>,
         say: &dyn Say,
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        agentspace_sync::sync(ctx, env, agentspace_sync::Target::Box, say, aws, remote)
+        agentspace_sync::sync(ctx, env, target, say, aws, remote)
     }
 
     fn deploy(
         &self,
         ctx: &Context,
         env: &CaEnv,
+        target: Target<'_>,
+        instance_type: Option<&str>,
         say: &dyn Say,
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        agentspace_sync::deploy(ctx, env, agentspace_sync::Target::Box, say, aws, remote)
+        // `-InstanceType` reaches the host's stack through agentspace-sync's
+        // `deploy_with_instance_type` (architect, 2026-11-21, for v0.07-T03).
+        agentspace_sync::deploy_with_instance_type(
+            ctx,
+            env,
+            target,
+            instance_type,
+            say,
+            aws,
+            remote,
+        )
+    }
+
+    fn sync_all(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::sync_all(ctx, env, say, aws, remote)
+    }
+
+    fn bootstrap(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        target: Target<'_>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::bootstrap(ctx, env, target, say, aws, remote)
+    }
+
+    fn provision(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        project: &str,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::provision(ctx, env, project, say, aws, remote)
     }
 }
 

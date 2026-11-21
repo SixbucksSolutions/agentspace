@@ -2,10 +2,9 @@
 //! and `up` with `AGENTSPACE_NESTED` set.
 
 use super::*;
-use crate::cache::FileInstanceIdCache;
 use crate::cli::{DEFAULT_ALIAS, DEFAULT_GIB};
 use crate::testing::{FakeAws, FakeClock, FakeReach, FakeRemote, FakeSay, TempHome};
-use agentspace_box::cache_bytes;
+use agentspace_hosts::hosts_path;
 use agentspace_operator_api::AwsError;
 use serde_json::json;
 
@@ -33,12 +32,57 @@ fn ping(status: &str) -> Value {
     json!({"InstanceInformationList": [{"PingStatus": status}]})
 }
 
-/// A throwaway home that already holds the instance-ID cache.
-fn home_with_cache(name: &str) -> TempHome {
+const OTHER_ID: &str = "i-fedcba9876543210f";
+
+fn record(project: &str, state: HostState, instance_id: Option<&str>) -> Record {
+    Record {
+        project: project.to_string(),
+        stack: agentspace_hosts::stack_name(project),
+        state,
+        instance_id: instance_id.map(str::to_string),
+        last_attempt_at: None,
+    }
+}
+
+/// A throwaway home that holds this host registry.
+fn home_with_registry(name: &str, hosts: &Hosts) -> TempHome {
     let home = TempHome::new(name);
-    let cache = FileInstanceIdCache::new(&home.ctx());
-    cache.write(&cache_bytes(ID)).unwrap();
+    let h = home.ctx().home;
+    let held = agentspace_hosts::lock(&h).unwrap();
+    agentspace_hosts::write(&h, hosts, &held).unwrap();
     home
+}
+
+/// A throwaway home whose host registry holds the box's record with an instance ID.
+fn home_with_cache(name: &str) -> TempHome {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    home_with_registry(name, &hosts)
+}
+
+/// A throwaway home whose host registry holds the box's record and the `agentspace` project's host,
+/// each with an instance ID of its own.
+fn home_with_two_hosts(name: &str, state: HostState) -> TempHome {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", state, Some(OTHER_ID)));
+    home_with_registry(name, &hosts)
+}
+
+fn host_request(command: Command, project: &str) -> Request {
+    Request {
+        host: Some(project.to_string()),
+        ..request(command)
+    }
+}
+
+fn all_request(command: Command) -> Request {
+    Request {
+        all: true,
+        ..request(command)
+    }
 }
 
 struct Rig {
@@ -47,7 +91,6 @@ struct Rig {
     remote: FakeRemote,
     clock: FakeClock,
     reach: FakeReach,
-    cache: FileInstanceIdCache,
     ctx: Context,
     ca_env: CaEnv,
 }
@@ -76,7 +119,6 @@ impl Rig {
             remote: FakeRemote::new(exit),
             clock: FakeClock::new(),
             reach: FakeReach::default(),
-            cache: FileInstanceIdCache::new(&ctx),
             ctx,
             ca_env: CaEnv::default(),
         }
@@ -93,7 +135,6 @@ impl Rig {
                 aws: &self.aws,
                 remote: &self.remote,
                 clock: &self.clock,
-                cache: &self.cache,
                 reach: &self.reach,
             },
         )
@@ -106,6 +147,9 @@ fn request(command: Command) -> Request {
         gib: DEFAULT_GIB,
         alias: DEFAULT_ALIAS.to_string(),
         alias_given: false,
+        host: None,
+        all: false,
+        instance_type: None,
         quiet: false,
     }
 }
@@ -134,7 +178,7 @@ fn up_starts_nothing_for_a_box_running_a_long_time_and_pushes_over_the_default_a
         ]
     );
     assert_eq!(rig.say.lines(), vec![format!("Ready: {ID}")]);
-    assert_eq!(rig.reach.calls(), vec![format!("push {ID} agentspace")]);
+    assert_eq!(rig.reach.calls(), vec![format!("push {ID} agentspace -")]);
 }
 
 #[test]
@@ -150,7 +194,7 @@ fn up_pushes_over_the_alias_it_was_given() {
     req.alias = "lease-a.b_c".to_string();
     req.alias_given = true;
     rig.run(&req).unwrap();
-    assert_eq!(rig.reach.calls(), vec![format!("push {ID} lease-a.b_c")]);
+    assert_eq!(rig.reach.calls(), vec![format!("push {ID} lease-a.b_c -")]);
 }
 
 #[test]
@@ -210,7 +254,7 @@ fn up_starts_a_stopped_box_waits_for_it_and_then_pushes() {
         rig.say.lines(),
         vec![format!("Starting {ID}..."), format!("Ready: {ID}")]
     );
-    assert_eq!(rig.reach.calls(), vec![format!("push {ID} agentspace")]);
+    assert_eq!(rig.reach.calls(), vec![format!("push {ID} agentspace -")]);
 }
 
 #[test]
@@ -234,8 +278,11 @@ fn up_rebuilds_a_missing_cache_from_the_stack_and_writes_it() {
         rig.aws.calls()[0],
         "cloudformation describe-stacks --stack-name agentbox"
     );
-    let written = std::fs::read(rig.cache.path()).unwrap();
-    assert_eq!(agentspace_box::parse_cache(&written).as_deref(), Some(ID));
+    // The first change writes the registry, holding the box's record with the ID.
+    let hosts = agentspace_hosts::read(&rig.ctx.home).unwrap();
+    assert_eq!(hosts.hosts.len(), 1);
+    assert_eq!(hosts.hosts[0].instance_id.as_deref(), Some(ID));
+    assert_eq!(hosts.hosts[0].stack, "agentbox");
 }
 
 #[test]
@@ -247,25 +294,62 @@ fn a_stack_with_no_instance_id_output_fails_and_writes_no_cache() {
         failure.message,
         "agentspace: Stack 'agentbox' has no InstanceId output."
     );
-    assert!(!rig.cache.path().exists());
+    assert!(
+        !hosts_path(&rig.ctx.home).exists(),
+        "No registry is written"
+    );
     assert!(rig.reach.calls().is_empty());
 }
 
 #[test]
-fn an_unopenable_cache_fails_with_fa16s_message_and_no_aws_call() {
-    let home = TempHome::new("up-unopenable");
+fn a_registry_that_is_not_valid_fails_every_host_command_with_its_name_and_no_aws_call() {
+    for command in [
+        Command::Up,
+        Command::Down,
+        Command::Status,
+        Command::Grow,
+        Command::Sync,
+        Command::Deploy,
+        Command::Bootstrap,
+    ] {
+        let home = TempHome::new("registry-invalid");
+        let rig = Rig::new(&home, false, false, vec![]);
+        let path = hosts_path(&rig.ctx.home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{\"version\":0,\"hosts\":[]}").unwrap();
+        let failure = rig.run(&request(command)).unwrap_err();
+        assert!(
+            failure.message.starts_with(&format!(
+                "agentspace: The host registry {} cannot be read: ",
+                path.display()
+            )),
+            "{command:?}: {}",
+            failure.message
+        );
+        assert_eq!(failure.caller, CallerFailure::CouldNotReach);
+        assert!(rig.aws.calls().is_empty(), "{command:?}");
+        assert!(rig.reach.calls().is_empty(), "{command:?}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"{\"version\":0,\"hosts\":[]}"
+        );
+    }
+}
+
+#[test]
+fn ca_and_provision_read_no_registry() {
+    let home = TempHome::new("registry-ca");
     let rig = Rig::new(&home, false, false, vec![]);
-    std::fs::create_dir_all(rig.cache.path()).unwrap();
-    let failure = rig.run(&request(Command::Up)).unwrap_err();
+    let path = hosts_path(&rig.ctx.home);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"not json").unwrap();
+    rig.run(&request(Command::Ca)).unwrap();
+    rig.run(&host_request(Command::Provision, "agentspace"))
+        .unwrap();
     assert_eq!(
-        failure.message,
-        format!(
-            "agentspace: Cannot read the instance-ID cache {}; remove it and run the command again.",
-            rig.cache.path().display()
-        )
+        rig.reach.calls(),
+        vec!["ca".to_string(), "provision agentspace".to_string()]
     );
-    assert!(rig.aws.calls().is_empty());
-    assert!(rig.reach.calls().is_empty());
 }
 
 #[test]
@@ -708,17 +792,499 @@ fn the_remote_command_obeys_fa15s_rule_and_installs_nothing() {
 
 #[test]
 fn ca_sync_and_deploy_go_to_their_libraries_and_their_failures_pass_through() {
-    for command in [Command::Ca, Command::Sync, Command::Deploy] {
+    for (command, called) in [
+        (Command::Ca, "ca"),
+        (Command::Sync, "sync box"),
+        (Command::Deploy, "deploy box -"),
+        (Command::Bootstrap, "bootstrap box"),
+    ] {
         let home = TempHome::new("reach");
         let mut rig = Rig::new(&home, false, false, vec![]);
         rig.run(&request(command)).unwrap();
-        assert_eq!(rig.reach.calls(), vec![command.name().to_string()]);
+        assert_eq!(rig.reach.calls(), vec![called.to_string()]);
         assert!(rig.aws.calls().is_empty());
-        rig.reach = FakeReach {
-            fail: Some("agentspace: It failed.".to_string()),
-            ..FakeReach::default()
-        };
+        rig.reach = FakeReach::default()
+            .failing(called.split(' ').next().unwrap(), "agentspace: It failed.");
         let failure = rig.run(&request(command)).unwrap_err();
         assert_eq!(failure.message, "agentspace: It failed.");
     }
+}
+
+// ---- -Host ----
+
+const HOST_STACK: &str = "agentspace-host-agentspace";
+const HOST_ALIAS: &str = "agentspace-host.agentspace";
+
+#[test]
+fn a_project_with_no_record_fails_every_command_but_ca_and_provision_before_anything_starts() {
+    for command in [
+        Command::Up,
+        Command::Down,
+        Command::Status,
+        Command::Grow,
+        Command::Sync,
+        Command::Deploy,
+        Command::Bootstrap,
+    ] {
+        let home = home_with_cache("no-record");
+        let rig = Rig::new(&home, false, false, vec![]);
+        let failure = rig.run(&host_request(command, "nobody")).unwrap_err();
+        assert_eq!(
+            failure.message,
+            "agentspace: Project 'nobody' has no host; provision -Host nobody makes one.",
+            "{command:?}"
+        );
+        assert!(rig.aws.calls().is_empty(), "{command:?}");
+        assert!(rig.reach.calls().is_empty(), "{command:?}");
+        assert!(rig.remote.calls.borrow().is_empty(), "{command:?}");
+    }
+}
+
+#[test]
+fn up_of_another_host_uses_its_stack_its_record_its_alias_and_its_stamp() {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Creating, None));
+    let home = home_with_registry("up-host", &hosts);
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            ok(
+                json!({"Stacks": [{"Outputs": [{"OutputKey": "InstanceId", "OutputValue": OTHER_ID}]}]}),
+            ),
+            ok(instance("running")),
+            ok(instance("running")),
+        ],
+    );
+    rig.run(&host_request(Command::Up, "agentspace")).unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![
+            format!("cloudformation describe-stacks --stack-name {HOST_STACK}"),
+            format!("ec2 describe-instances --instance-ids {OTHER_ID}"),
+            format!("ec2 describe-instances --instance-ids {OTHER_ID}"),
+        ]
+    );
+    // The key, certificate and alias come before the push, and the push names the host's alias and
+    // its own stamp.
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "access agentspace".to_string(),
+            format!("push {OTHER_ID} {HOST_ALIAS} agentspace"),
+        ]
+    );
+    // The ID is written into that record alone, and nothing else in it changes.
+    let read = agentspace_hosts::read(&rig.ctx.home).unwrap();
+    assert_eq!(read.hosts[0].instance_id.as_deref(), Some(ID));
+    assert_eq!(read.hosts[1].instance_id.as_deref(), Some(OTHER_ID));
+    assert_eq!(read.hosts[1].state, HostState::Creating);
+}
+
+#[test]
+fn up_with_host_swimcoach_is_the_same_as_no_host() {
+    let home = home_with_cache("up-swimcoach");
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(instance("running"))],
+    );
+    rig.run(&host_request(Command::Up, "swimcoach")).unwrap();
+    assert_eq!(rig.reach.calls(), vec![format!("push {ID} agentspace -")]);
+}
+
+#[test]
+fn up_of_another_host_pushes_over_the_alias_given_and_a_nested_up_signs_and_pushes_nothing() {
+    let home = home_with_two_hosts("up-host-alias", HostState::Ready);
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(instance("running"))],
+    );
+    let mut req = host_request(Command::Up, "agentspace");
+    req.alias = "mine".to_string();
+    req.alias_given = true;
+    rig.run(&req).unwrap();
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "access agentspace".to_string(),
+            format!("push {OTHER_ID} mine agentspace")
+        ]
+    );
+
+    let home = home_with_two_hosts("up-host-nested", HostState::Ready);
+    let rig = Rig::new(
+        &home,
+        false,
+        true,
+        vec![ok(instance("running")), ok(instance("running"))],
+    );
+    rig.run(&host_request(Command::Up, "agentspace")).unwrap();
+    assert!(rig.reach.calls().is_empty());
+}
+
+#[test]
+fn a_failure_to_sign_in_for_up_is_a_push_failure_that_names_its_cause_and_exits_0() {
+    let home = home_with_two_hosts("up-host-no-ca", HostState::Ready);
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(instance("running"))],
+    );
+    rig.reach =
+        FakeReach::default().failing("access", "agentspace: The CA does not exist; run ca.");
+    rig.run(&host_request(Command::Up, "agentspace")).unwrap();
+    assert_eq!(
+        rig.say.lines(),
+        vec![
+            format!("Ready: {OTHER_ID}"),
+            "agentspace: Could not send the localswim token, because The CA does not exist; run ca; the board will not work on the host this session."
+                .to_string(),
+        ]
+    );
+    assert_eq!(rig.reach.calls(), vec!["access agentspace".to_string()]);
+}
+
+#[test]
+fn the_deadline_message_names_the_hosts_alias_for_a_host_that_is_not_the_box() {
+    let box_failure = {
+        let home = home_with_cache("deadline-box");
+        let mut answers = vec![ok(instance("pending"))];
+        answers.extend((0..300).map(|_| ok(json!({"InstanceInformationList": []}))));
+        let rig = Rig::new(&home, false, false, answers);
+        rig.run(&request(Command::Up)).unwrap_err()
+    };
+    assert_eq!(
+        box_failure.message,
+        format!(
+            "agentspace: {ID} was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch"
+        )
+    );
+    let home = home_with_two_hosts("deadline-host", HostState::Ready);
+    let mut answers = vec![ok(instance("pending"))];
+    answers.extend((0..300).map(|_| ok(json!({"InstanceInformationList": []}))));
+    let rig = Rig::new(&home, false, false, answers);
+    let failure = rig
+        .run(&host_request(Command::Up, "agentspace"))
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        format!(
+            "agentspace: {OTHER_ID} was not ready within 15 minutes; check: ssh {HOST_ALIAS} journalctl -u agentspace-patch"
+        )
+    );
+    assert!(rig.reach.calls().is_empty());
+}
+
+#[test]
+fn down_of_another_host_stops_its_instance_and_then_signs() {
+    let home = home_with_two_hosts("down-host", HostState::Ready);
+    let rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
+    rig.run(&host_request(Command::Down, "agentspace")).unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![format!("ec2 stop-instances --instance-ids {OTHER_ID}")]
+    );
+    assert_eq!(rig.say.lines(), vec![format!("Stopping {OTHER_ID}.")]);
+    assert_eq!(rig.reach.calls(), vec!["access agentspace".to_string()]);
+}
+
+#[test]
+fn a_failed_sign_in_after_down_fails_it_and_the_stop_stands_and_the_box_never_signs() {
+    let home = home_with_two_hosts("down-host-no-ca", HostState::Ready);
+    let mut rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
+    rig.reach =
+        FakeReach::default().failing("access", "agentspace: The CA does not exist; run ca.");
+    let failure = rig
+        .run(&host_request(Command::Down, "agentspace"))
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        "agentspace: The CA does not exist; run ca."
+    );
+    assert_eq!(rig.say.lines(), vec![format!("Stopping {OTHER_ID}.")]);
+
+    let home = home_with_two_hosts("down-box", HostState::Ready);
+    let rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
+    rig.run(&host_request(Command::Down, "swimcoach")).unwrap();
+    assert!(rig.reach.calls().is_empty());
+}
+
+#[test]
+fn status_of_another_host_reports_it_and_then_signs_and_a_failure_there_follows_the_report() {
+    let home = home_with_two_hosts("status-host", HostState::Ready);
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("stopped")), ok(volume(8))],
+    );
+    rig.reach =
+        FakeReach::default().failing("access", "agentspace: The CA does not exist; run ca.");
+    let failure = rig
+        .run(&host_request(Command::Status, "agentspace"))
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        "agentspace: The CA does not exist; run ca."
+    );
+    assert_eq!(
+        rig.say.lines(),
+        vec![
+            format!("Instance  {OTHER_ID}"),
+            "State     stopped".to_string(),
+            "Type      m9g.xlarge".to_string(),
+            format!("Disk      8 GiB gp3 ({VOLUME})"),
+            "SSM       -".to_string(),
+        ]
+    );
+    assert_eq!(
+        rig.aws.calls()[0],
+        format!("ec2 describe-instances --instance-ids {OTHER_ID}")
+    );
+}
+
+#[test]
+fn grow_of_another_host_signs_before_its_ssh_and_names_the_hosts_alias() {
+    let home = home_with_two_hosts("grow-host", HostState::Ready);
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(volume(8)), ok(json!({}))],
+    );
+    rig.run(&host_request(Command::Grow, "agentspace")).unwrap();
+    assert_eq!(rig.reach.calls(), vec!["access agentspace".to_string()]);
+    let calls = rig.remote.calls.borrow();
+    assert_eq!(
+        calls[0].0,
+        vec!["-o", "ClearAllForwardings=yes", HOST_ALIAS]
+    );
+    assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+}
+
+#[test]
+fn grow_of_a_host_that_is_not_running_still_signs_and_a_failure_leaves_the_volume_changed() {
+    let home = home_with_two_hosts("grow-host-stopped", HostState::Ready);
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("stopped")), ok(volume(8)), ok(json!({}))],
+    );
+    rig.run(&host_request(Command::Grow, "agentspace")).unwrap();
+    assert_eq!(rig.reach.calls(), vec!["access agentspace".to_string()]);
+    assert!(rig.remote.calls.borrow().is_empty());
+
+    let home = home_with_two_hosts("grow-host-no-ca", HostState::Ready);
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(volume(8)), ok(json!({}))],
+    );
+    rig.reach =
+        FakeReach::default().failing("access", "agentspace: The CA does not exist; run ca.");
+    let failure = rig
+        .run(&host_request(Command::Grow, "agentspace"))
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        "agentspace: The CA does not exist; run ca."
+    );
+    assert!(rig.aws.calls()[2].starts_with("ec2 modify-volume"));
+    assert!(rig.remote.calls.borrow().is_empty());
+}
+
+#[test]
+fn sync_deploy_bootstrap_and_provision_name_their_host() {
+    let home = home_with_two_hosts("targets", HostState::Ready);
+    let rig = Rig::new(&home, false, false, vec![]);
+    rig.run(&host_request(Command::Sync, "agentspace")).unwrap();
+    rig.run(&host_request(Command::Sync, "swimcoach")).unwrap();
+    rig.run(&host_request(Command::Bootstrap, "agentspace"))
+        .unwrap();
+    rig.run(&host_request(Command::Deploy, "agentspace"))
+        .unwrap();
+    let mut with_type = host_request(Command::Deploy, "agentspace");
+    with_type.instance_type = Some("m9g.2xlarge".to_string());
+    rig.run(&with_type).unwrap();
+    rig.run(&host_request(Command::Provision, "agentspace"))
+        .unwrap();
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "sync host:agentspace",
+            "sync box",
+            "bootstrap host:agentspace",
+            "deploy host:agentspace -",
+            "deploy host:agentspace m9g.2xlarge",
+            "provision agentspace",
+        ]
+    );
+    assert!(rig.aws.calls().is_empty());
+}
+
+// ---- -All ----
+
+fn three_hosts(name: &str) -> TempHome {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    hosts
+        .hosts
+        .push(record("newproject", HostState::Creating, None));
+    home_with_registry(name, &hosts)
+}
+
+#[test]
+fn status_all_reports_every_host_in_the_files_order_and_signs_nothing() {
+    let home = three_hosts("status-all");
+    let rig = Rig::new(
+        &home,
+        true,
+        false,
+        vec![
+            ok(instance("stopped")),
+            ok(volume(8)),
+            ok(instance("stopped")),
+            ok(volume(8)),
+        ],
+    );
+    rig.run(&all_request(Command::Status)).unwrap();
+    let lines = rig.say.lines();
+    assert_eq!(lines[0], "Host      swimcoach (agentbox), ready");
+    assert_eq!(lines[1], format!("Instance  {ID}"));
+    assert_eq!(
+        lines[6],
+        format!("Host      agentspace ({HOST_STACK}), ready")
+    );
+    assert_eq!(lines[7], format!("Instance  {OTHER_ID}"));
+    assert_eq!(
+        lines[12..],
+        [
+            "Host      newproject (agentspace-host-newproject), creating",
+            "Instance  none recorded"
+        ]
+    );
+    assert!(rig.reach.calls().is_empty(), "status -All signs nothing");
+    assert_eq!(rig.aws.calls().len(), 4, "No call for the skipped host");
+}
+
+#[test]
+fn status_all_goes_on_past_a_failed_host_and_counts_it() {
+    let home = three_hosts("status-all-fails");
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            Err(AwsError::Failed("No such instance.".to_string())),
+            ok(instance("running")),
+            ok(volume(8)),
+            ok(ping("Online")),
+        ],
+    );
+    let failure = rig.run(&all_request(Command::Status)).unwrap_err();
+    assert_eq!(failure.message, "agentspace: 1 of 3 hosts failed.");
+    let lines = rig.say.lines();
+    assert_eq!(lines[0], "Host      swimcoach (agentbox), ready");
+    assert_eq!(lines[1], "agentspace: No such instance.");
+    assert_eq!(
+        lines[2],
+        format!("Host      agentspace ({HOST_STACK}), ready")
+    );
+    assert_eq!(lines[3], format!("Instance  {OTHER_ID}"));
+}
+
+#[test]
+fn a_sign_in_failure_ends_an_all_command_at_once() {
+    let home = three_hosts("status-all-sign-in");
+    let rig = Rig::new(&home, false, false, vec![Err(AwsError::SignIn)]);
+    let failure = rig.run(&all_request(Command::Status)).unwrap_err();
+    assert_eq!(failure.message, agentspace_operator_api::SIGN_IN_MESSAGE);
+    assert_eq!(
+        rig.say.lines(),
+        vec!["Host      swimcoach (agentbox), ready"]
+    );
+    assert_eq!(rig.aws.calls().len(), 1);
+}
+
+#[test]
+fn down_all_stops_each_host_that_has_an_instance_and_skips_the_rest_and_signs_nothing() {
+    let home = three_hosts("down-all");
+    let rig = Rig::new(&home, false, false, vec![ok(json!({})), ok(json!({}))]);
+    rig.run(&all_request(Command::Down)).unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![
+            format!("ec2 stop-instances --instance-ids {ID}"),
+            format!("ec2 stop-instances --instance-ids {OTHER_ID}"),
+        ]
+    );
+    assert_eq!(
+        rig.say.lines(),
+        vec![
+            "Host      swimcoach (agentbox), ready".to_string(),
+            format!("Stopping {ID}."),
+            format!("Host      agentspace ({HOST_STACK}), ready"),
+            format!("Stopping {OTHER_ID}."),
+            "Host      newproject (agentspace-host-newproject), creating".to_string(),
+            "Skipping: no instance is recorded for this host.".to_string(),
+        ]
+    );
+    assert!(rig.reach.calls().is_empty(), "down -All signs nothing");
+}
+
+#[test]
+fn quiet_down_all_still_prints_the_host_lines() {
+    let home = three_hosts("down-all-quiet");
+    let rig = Rig::new(&home, true, false, vec![ok(json!({})), ok(json!({}))]);
+    rig.run(&all_request(Command::Down)).unwrap();
+    assert_eq!(rig.say.lines().len(), 3);
+}
+
+#[test]
+fn sync_all_is_agentspace_syncs_once_and_the_operator_prints_and_loops_over_nothing() {
+    // `sync -All`'s hosts, `Host` lines, skips and count are agentspace-sync's `sync_all`
+    // (architect, 2026-11-21, for v0.07-T03): the operator calls it once and adds nothing.
+    let home = three_hosts("sync-all");
+    let rig = Rig::new(&home, false, false, vec![]);
+    rig.run(&all_request(Command::Sync)).unwrap();
+    assert_eq!(rig.reach.calls(), vec!["sync-all"]);
+    assert!(rig.say.lines().is_empty(), "{:?}", rig.say.lines());
+    assert!(rig.aws.calls().is_empty());
+}
+
+#[test]
+fn sync_all_fails_with_agentspace_syncs_own_failure_and_nothing_added() {
+    let home = three_hosts("sync-all-fails");
+    let mut rig = Rig::new(&home, false, false, vec![]);
+    rig.reach = FakeReach::default().failing("sync-all", "agentspace: 2 of 3 hosts failed.");
+    let failure = rig.run(&all_request(Command::Sync)).unwrap_err();
+    assert_eq!(failure.message, "agentspace: 2 of 3 hosts failed.");
+    assert_eq!(rig.reach.calls(), vec!["sync-all"]);
+    assert!(rig.say.lines().is_empty(), "{:?}", rig.say.lines());
+}
+
+#[test]
+fn sync_all_is_dispatched_before_the_operator_reads_the_registry() {
+    // agentspace-sync reads the registry itself, so an invalid one is its failure to give.
+    let home = TempHome::new("sync-all-invalid-registry");
+    let registry = agentspace_hosts::hosts_path(&home.ctx().home);
+    std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
+    std::fs::write(&registry, b"not json").unwrap();
+    let rig = Rig::new(&home, false, false, vec![]);
+    rig.run(&all_request(Command::Sync)).unwrap();
+    assert_eq!(rig.reach.calls(), vec!["sync-all"]);
 }

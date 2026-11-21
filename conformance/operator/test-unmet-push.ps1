@@ -101,8 +101,8 @@ try {
   } else {
     # The throwaway home: the instance-ID cache, a fake receipt and a fake DPAPI-protected credential.
     $agentspaceDir = Join-Path $h.UserProfile '.agentspace'
-    # The cache and the stamp are the rewrite's JSON files (D40; docs/state.md).
-    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'instance-id.json')), ('{"version":0,"instance_id":"' + $fakeId + '"}'))
+    # The stamp is the rewrite's JSON file (D40; docs/state.md); the instance ID is the box's record in the host registry (docs/state.md, hosts.json; D45).
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'hosts.json')), ('{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"' + $fakeId + '"}]}'))
     $stamp = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $agentspaceDir 'localswim-pushed.json')
     $lsDir = Join-Path $h.UserProfile 'AppData\Local\localswim-v2'
     $credDir = Join-Path $lsDir 'cred'

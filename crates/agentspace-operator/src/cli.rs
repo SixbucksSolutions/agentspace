@@ -4,7 +4,9 @@
 //!
 //! [`parse`] checks, in this order, and the first failure ends the command: help; the arguments
 //! read from left to right, the first usage error found among them reported (a missing command is
-//! found only once the whole line is read); then the two `-Alias` checks.
+//! found only once the whole line is read); then the two `-Alias` checks; then the six host checks.
+
+use agentspace_hosts::BOX_PROJECT;
 
 use crate::help_text;
 
@@ -14,6 +16,8 @@ pub enum Command {
     Deploy,
     Up,
     Sync,
+    Bootstrap,
+    Provision,
     Ca,
     Down,
     Status,
@@ -22,10 +26,12 @@ pub enum Command {
 
 impl Command {
     /// Every command, in operator.md's order.
-    pub const ALL: [Command; 7] = [
+    pub const ALL: [Command; 9] = [
         Command::Deploy,
         Command::Up,
         Command::Sync,
+        Command::Bootstrap,
+        Command::Provision,
         Command::Ca,
         Command::Down,
         Command::Status,
@@ -38,6 +44,8 @@ impl Command {
             Command::Deploy => "deploy",
             Command::Up => "up",
             Command::Sync => "sync",
+            Command::Bootstrap => "bootstrap",
+            Command::Provision => "provision",
             Command::Ca => "ca",
             Command::Down => "down",
             Command::Status => "status",
@@ -70,6 +78,8 @@ pub fn help(level: HelpLevel) -> &'static str {
         HelpLevel::Command(Command::Deploy) => help_text::DEPLOY,
         HelpLevel::Command(Command::Up) => help_text::UP,
         HelpLevel::Command(Command::Sync) => help_text::SYNC,
+        HelpLevel::Command(Command::Bootstrap) => help_text::BOOTSTRAP,
+        HelpLevel::Command(Command::Provision) => help_text::PROVISION,
         HelpLevel::Command(Command::Ca) => help_text::CA,
         HelpLevel::Command(Command::Down) => help_text::DOWN,
         HelpLevel::Command(Command::Status) => help_text::STATUS,
@@ -87,6 +97,13 @@ pub struct Request {
     pub alias: String,
     /// Whether `-Alias` was given.
     pub alias_given: bool,
+    /// `-Host`, in its normalized form (lowercase, trimmed). `swimcoach` names the box, and is the
+    /// same as no `-Host` (P1).
+    pub host: Option<String>,
+    /// `-All`: every host in the host registry.
+    pub all: bool,
+    /// `-InstanceType`. Only `deploy -Host` of a host that is not the box takes it.
+    pub instance_type: Option<String>,
     pub quiet: bool,
 }
 
@@ -107,8 +124,15 @@ pub const DEFAULT_GIB: i32 = 2;
 /// The default `-Alias`.
 pub const DEFAULT_ALIAS: &str = "agentspace";
 
-const COMMANDS_TEXT: &str = "The commands are deploy, up, sync, ca, down, status and grow.";
+const COMMANDS_TEXT: &str =
+    "The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.";
 const ALIAS_APPLIES: &str = "agentspace: -Alias applies to up alone.";
+const HOST_WITH_CA: &str = "agentspace: -Host does not apply to ca.";
+const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alone.";
+const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
+const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
+const INSTANCE_TYPE_APPLIES: &str = "agentspace: -InstanceType applies to deploy alone.";
+const INSTANCE_TYPE_NEEDS_HOST: &str = "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.";
 const ALIAS_INVALID: &str = "agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'.";
 
 /// Which parameter an argument names, matched without regard to case.
@@ -116,7 +140,10 @@ const ALIAS_INVALID: &str = "agentspace: -Alias MUST be an SSH host alias of let
 enum Param {
     Gib,
     Alias,
+    Host,
+    InstanceType,
     Quiet,
+    All,
 }
 
 impl Param {
@@ -125,8 +152,14 @@ impl Param {
             Some(Param::Gib)
         } else if arg.eq_ignore_ascii_case("-Alias") {
             Some(Param::Alias)
+        } else if arg.eq_ignore_ascii_case("-Host") {
+            Some(Param::Host)
+        } else if arg.eq_ignore_ascii_case("-InstanceType") {
+            Some(Param::InstanceType)
         } else if arg.eq_ignore_ascii_case("-Quiet") {
             Some(Param::Quiet)
+        } else if arg.eq_ignore_ascii_case("-All") {
+            Some(Param::All)
         } else {
             None
         }
@@ -137,12 +170,15 @@ impl Param {
         match self {
             Param::Gib => "-GiB",
             Param::Alias => "-Alias",
+            Param::Host => "-Host",
+            Param::InstanceType => "-InstanceType",
             Param::Quiet => "-Quiet",
+            Param::All => "-All",
         }
     }
 
     fn takes_value(self) -> bool {
-        !matches!(self, Param::Quiet)
+        !matches!(self, Param::Quiet | Param::All)
     }
 }
 
@@ -159,7 +195,8 @@ fn shown(arg: &str) -> String {
 }
 
 /// Which help a line that holds a help argument gets (gap FB-11): the line is read from left to
-/// right, the argument after `-GiB` or `-Alias` is that parameter's value unless it is help, an
+/// right, the argument after `-GiB`, `-Alias`, `-Host` or `-InstanceType` is that parameter's value
+/// unless it is help, an
 /// argument that starts with `-` and is not a value counts as a parameter, known or not, and the
 /// command is the first argument that is none of a parameter, a parameter's value and help.
 fn help_level(args: &[String]) -> HelpLevel {
@@ -217,6 +254,20 @@ fn parse_gib(value: &str) -> Option<i32> {
     i32::try_from(signed).ok()
 }
 
+/// `^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*\z`, case-sensitively: an EC2 instance type's form.
+fn valid_instance_type(value: &str) -> bool {
+    let part = |p: &str| {
+        let b = p.as_bytes();
+        let plain = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+        b.first().is_some_and(|&c| plain(c)) && b.iter().all(|&c| plain(c) || c == b'-')
+    };
+    // The class `[a-z0-9-]` holds no `.`, so the one dot is the one the pattern names.
+    match value.split_once('.') {
+        Some((family, size)) => part(family) && part(size),
+        None => false,
+    }
+}
+
 /// `^[A-Za-z0-9._-]+\z`, case-sensitively, and not starting with `-`.
 fn valid_alias(alias: &str) -> bool {
     !alias.is_empty()
@@ -235,9 +286,14 @@ pub fn parse(args: &[String]) -> Parsed {
     let mut command: Option<Command> = None;
     let mut gib: Option<i32> = None;
     let mut alias: Option<String> = None;
+    let mut host: Option<String> = None;
+    let mut instance_type: Option<String> = None;
     let mut quiet = false;
+    let mut all = false;
     let mut seen_gib = false;
     let mut seen_alias = false;
+    let mut seen_host = false;
+    let mut seen_instance_type = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -247,7 +303,10 @@ pub fn parse(args: &[String]) -> Parsed {
             let seen = match p {
                 Param::Gib => &mut seen_gib,
                 Param::Alias => &mut seen_alias,
+                Param::Host => &mut seen_host,
+                Param::InstanceType => &mut seen_instance_type,
                 Param::Quiet => &mut quiet,
+                Param::All => &mut all,
             };
             // At each argument a repeated name is found before a missing value, so
             // `-GiB 1 -GiB` reports the repeat.
@@ -273,6 +332,24 @@ pub fn parse(args: &[String]) -> Parsed {
                             ));
                         }
                     },
+                    Param::Host => match agentspace_values::project(value) {
+                        Ok(project) => host = Some(project),
+                        Err(_) => {
+                            return Parsed::Failure(format!(
+                                "agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '{}'.",
+                                shown(value)
+                            ));
+                        }
+                    },
+                    Param::InstanceType => {
+                        if !valid_instance_type(value) {
+                            return Parsed::Failure(format!(
+                                "agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '{}'.",
+                                shown(value)
+                            ));
+                        }
+                        instance_type = Some(value.clone());
+                    }
                     _ => alias = Some(value.clone()),
                 }
             }
@@ -307,11 +384,34 @@ pub fn parse(args: &[String]) -> Parsed {
         return Parsed::Failure(ALIAS_INVALID.to_string());
     }
 
+    // The six host checks, in their order (D49, D55).
+    if host.is_some() && command == Command::Ca {
+        return Parsed::Failure(HOST_WITH_CA.to_string());
+    }
+    if all && !matches!(command, Command::Status | Command::Down | Command::Sync) {
+        return Parsed::Failure(ALL_APPLIES.to_string());
+    }
+    if host.is_some() && all {
+        return Parsed::Failure(HOST_AND_ALL.to_string());
+    }
+    if command == Command::Provision && host.is_none() {
+        return Parsed::Failure(PROVISION_NEEDS_HOST.to_string());
+    }
+    if instance_type.is_some() && command != Command::Deploy {
+        return Parsed::Failure(INSTANCE_TYPE_APPLIES.to_string());
+    }
+    if instance_type.is_some() && host.as_deref().is_none_or(|h| h == BOX_PROJECT) {
+        return Parsed::Failure(INSTANCE_TYPE_NEEDS_HOST.to_string());
+    }
+
     Parsed::Run(Request {
         command,
         gib: gib.unwrap_or(DEFAULT_GIB),
         alias,
         alias_given,
+        host,
+        all,
+        instance_type,
         quiet,
     })
 }
@@ -337,7 +437,7 @@ mod tests {
         assert!(matches!(p(&["STATUS"]), Parsed::Run(r) if r.command == Command::Status));
         assert_eq!(
             fails(&["st"]),
-            "agentspace: Unknown command 'st'. The commands are deploy, up, sync, ca, down, status and grow."
+            "agentspace: Unknown command 'st'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
         );
     }
 
@@ -345,7 +445,7 @@ mod tests {
     fn usage_errors_have_their_texts() {
         assert_eq!(
             fails(&[]),
-            "agentspace: No command given. The commands are deploy, up, sync, ca, down, status and grow."
+            "agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
         );
         assert_eq!(
             fails(&["up", "down"]),
@@ -436,7 +536,7 @@ mod tests {
         );
         assert_eq!(
             fails(&["foo", "-GiB", "abc"]),
-            "agentspace: Unknown command 'foo'. The commands are deploy, up, sync, ca, down, status and grow."
+            "agentspace: Unknown command 'foo'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
         );
         assert_eq!(
             fails(&["-GiB", "abc"]),
@@ -531,6 +631,231 @@ mod tests {
             fails(&["up", "-Alias", "a", "-alias"]),
             "agentspace: -Alias is given more than once."
         );
+    }
+
+    fn run(line: &[&str]) -> Request {
+        match p(line) {
+            Parsed::Run(r) => r,
+            other => panic!("expected a run for {line:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn host_all_and_instance_type_are_read_and_the_host_is_normalized() {
+        let r = run(&["status", "-host", "  Agentspace "]);
+        assert_eq!(r.host.as_deref(), Some("agentspace"));
+        assert!(!r.all);
+        assert!(run(&["sync", "-ALL"]).all);
+        let r = run(&[
+            "deploy",
+            "-Host",
+            "agentspace",
+            "-InstanceType",
+            "m9g.2xlarge",
+        ]);
+        assert_eq!(r.instance_type.as_deref(), Some("m9g.2xlarge"));
+        assert_eq!(run(&["bootstrap"]).command, Command::Bootstrap);
+        assert_eq!(
+            run(&["provision", "-Host", "x"]).command,
+            Command::Provision
+        );
+        // `-Host swimcoach` and `-Host` with an `-Alias` are read as given.
+        let r = run(&["up", "-Host", "swimcoach", "-Alias", "mine"]);
+        assert_eq!(r.host.as_deref(), Some("swimcoach"));
+        assert!(r.alias_given);
+    }
+
+    #[test]
+    fn a_value_after_host_or_instance_type_is_taken_whatever_it_looks_like() {
+        assert_eq!(
+            fails(&["status", "-Host", "-All"]),
+            "agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '-All'."
+        );
+        assert_eq!(
+            fails(&["deploy", "-InstanceType", "-Host"]),
+            "agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '-Host'."
+        );
+    }
+
+    #[test]
+    fn the_new_usage_errors_have_their_texts() {
+        assert_eq!(fails(&["up", "-Host"]), "agentspace: -Host needs a value.");
+        assert_eq!(
+            fails(&["up", "-InstanceType"]),
+            "agentspace: -InstanceType needs a value."
+        );
+        assert_eq!(
+            fails(&["up", "-host", "a", "-HOST", "b"]),
+            "agentspace: -Host is given more than once."
+        );
+        assert_eq!(
+            fails(&["status", "-All", "-all"]),
+            "agentspace: -All is given more than once."
+        );
+        for bad in ["", "-a", "a-", "a b!", "a_b", &"a".repeat(33)] {
+            assert_eq!(
+                fails(&["status", "-Host", bad]),
+                format!(
+                    "agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '{bad}'."
+                ),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            run(&["status", "-Host", &"a".repeat(32)])
+                .host
+                .unwrap()
+                .len(),
+            32
+        );
+        for bad in [
+            "m9g",
+            "M9g.xlarge",
+            "m9g.",
+            ".xlarge",
+            "m9g.x.y",
+            "-m9g.x",
+            "m9g.-x",
+            "m9g.x ",
+            "",
+        ] {
+            assert_eq!(
+                fails(&["deploy", "-Host", "p", "-InstanceType", bad]),
+                format!(
+                    "agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '{bad}'."
+                ),
+                "{bad:?}"
+            );
+        }
+        for good in ["m9g.2xlarge", "m7i.metal-24xl", "t3.micro", "a.b"] {
+            assert!(
+                run(&["deploy", "-Host", "p", "-InstanceType", good])
+                    .instance_type
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn the_host_checks_run_in_their_order_after_the_alias_checks() {
+        assert_eq!(
+            fails(&["ca", "-Host", "y"]),
+            "agentspace: -Host does not apply to ca."
+        );
+        // `-Alias` comes first, then the host checks.
+        assert_eq!(
+            fails(&["ca", "-Alias", "x", "-Host", "y"]),
+            "agentspace: -Alias applies to up alone."
+        );
+        // 1 before 2: `ca -Host y -All`.
+        assert_eq!(
+            fails(&["ca", "-Host", "y", "-All"]),
+            "agentspace: -Host does not apply to ca."
+        );
+        // 2 before 3: `-All` with a command it does not apply to is found before `-Host` with it.
+        for command in ["up", "deploy", "grow", "ca", "bootstrap", "provision"] {
+            assert_eq!(
+                fails(&[command, "-All"]),
+                "agentspace: -All applies to status, down and sync alone.",
+                "{command}"
+            );
+        }
+        assert_eq!(
+            fails(&["up", "-All", "-Host", "y"]),
+            "agentspace: -All applies to status, down and sync alone."
+        );
+        assert_eq!(
+            fails(&["status", "-Host", "y", "-All"]),
+            "agentspace: -Host and -All cannot be given together."
+        );
+        assert_eq!(
+            fails(&["provision"]),
+            "agentspace: provision needs -Host <project>."
+        );
+        assert_eq!(
+            fails(&["provision", "-All"]),
+            "agentspace: -All applies to status, down and sync alone."
+        );
+        assert_eq!(
+            fails(&["up", "-InstanceType", "m9g.xlarge"]),
+            "agentspace: -InstanceType applies to deploy alone."
+        );
+        assert_eq!(
+            fails(&["provision", "-InstanceType", "m9g.xlarge"]),
+            "agentspace: provision needs -Host <project>."
+        );
+        let needs = "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.";
+        assert_eq!(fails(&["deploy", "-InstanceType", "m9g.xlarge"]), needs);
+        assert_eq!(
+            fails(&[
+                "deploy",
+                "-Host",
+                "SwimCoach",
+                "-InstanceType",
+                "m9g.xlarge"
+            ]),
+            needs
+        );
+    }
+
+    #[test]
+    fn a_usage_error_in_an_argument_comes_before_the_host_checks() {
+        assert_eq!(
+            fails(&["ca", "-Host", "y", "-GiB", "abc"]),
+            "agentspace: -GiB MUST be a whole number, not 'abc'."
+        );
+        assert_eq!(
+            fails(&["status", "-Host", "bad!", "-GiB", "abc"]),
+            "agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not 'bad!'."
+        );
+        assert!(fails(&["-Host", "y"]).starts_with("agentspace: No command given."));
+    }
+
+    #[test]
+    fn help_reads_host_and_instance_type_values_as_values() {
+        assert_eq!(p(&["-Host", "up", "-h"]), Parsed::Help(HelpLevel::Top));
+        assert_eq!(
+            p(&["-InstanceType", "-h", "deploy"]),
+            Parsed::Help(HelpLevel::Command(Command::Deploy))
+        );
+        assert_eq!(
+            p(&["-All", "status", "-h"]),
+            Parsed::Help(HelpLevel::Command(Command::Status))
+        );
+        assert_eq!(
+            p(&["bootstrap", "-Host", "x", "--help"]),
+            Parsed::Help(HelpLevel::Command(Command::Bootstrap))
+        );
+    }
+
+    /// Every `**Help` marker of docs/operator.md's Commands section is followed by one fenced
+    /// block: the top level's marker is `**Help** (...)`, every command's `**Help:**`.
+    #[test]
+    fn each_help_text_is_the_block_in_operator_md_byte_for_byte() {
+        let doc = include_str!("../../../docs/operator.md").replace("\r\n", "\n");
+        let commands = doc.split_once("\n## Commands\n").unwrap().1;
+        let commands = commands.split_once("\n## ").unwrap().0;
+        let mut blocks = Vec::new();
+        let mut lines = commands.lines();
+        while let Some(line) = lines.next() {
+            if line.starts_with("**Help") {
+                assert_eq!(lines.by_ref().find(|l| !l.is_empty()), Some("```"));
+                let mut block = String::new();
+                for body in lines.by_ref().take_while(|l| *l != "```") {
+                    block.push_str(body);
+                    block.push('\n');
+                }
+                blocks.push(block);
+            }
+        }
+        let mut levels = vec![HelpLevel::Top];
+        levels.extend(Command::ALL.map(HelpLevel::Command));
+        assert_eq!(blocks.len(), levels.len(), "One block per level");
+        // Doc order: the top level, then deploy, up, sync, bootstrap, provision, ca, down, status,
+        // grow, which is `Command::ALL`'s order.
+        for (block, level) in blocks.iter().zip(levels) {
+            assert_eq!(help(level), block, "{level:?}");
+        }
     }
 
     #[test]

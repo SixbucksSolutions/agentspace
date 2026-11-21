@@ -23,7 +23,7 @@ const NO_ZONE: &str =
 /// A rig with a cache, an old running box, a receipt and a credential.
 fn pushing_rig() -> Rig {
     let rig = Rig::standard();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     rig.localswim();
     rig
 }
@@ -518,7 +518,7 @@ fn an_empty_agentspace_nested_does_not_count_as_set() {
 #[test]
 fn no_receipt_means_no_push_and_no_message() {
     let rig = Rig::standard();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     let out = rig.run(&["up"]);
     assert_eq!(out.code, Some(0));
     assert_eq!(out.err(), format!("Ready: {ID}\n"));

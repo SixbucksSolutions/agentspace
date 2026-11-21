@@ -1,4 +1,4 @@
-//! `up`: the instance-ID cache, and the start-and-wait step, through the test seam's stand-ins
+//! `up`: the start-and-wait step, through the test seam's stand-ins
 //! (docs/operator.md: up, Laptop files, Starting the box and waiting for it, Calls by command,
 //! AWS failures, What is read from each answer). No push is due in any test here: there is no
 //! localswim receipt in the throwaway `LOCALAPPDATA`, so the push is skipped without a message.
@@ -23,10 +23,10 @@ fn ssm_describe_args() -> Vec<String> {
     )
 }
 
-/// The stack's answers and a cache that names the box, then `up`.
+/// The stack's answers and a registry whose box record holds the instance ID.
 fn cached_rig() -> Rig {
     let rig = Rig::standard();
-    rig.write_cache(ID);
+    rig.write_box_id(ID);
     rig
 }
 
@@ -65,188 +65,24 @@ fn the_second_describe_is_for_the_launch_time_and_runs_only_for_a_running_box() 
 }
 
 #[test]
-fn a_cache_that_holds_an_id_is_trusted_over_the_stack() {
+fn a_record_that_holds_an_id_is_trusted_over_the_stack() {
     let rig = cached_rig();
-    rig.write_cache(OTHER_ID);
+    rig.write_box_id(OTHER_ID);
     let out = rig.run(&["up"]);
     assert_eq!(out.code, Some(0), "{:?}", out.err());
     assert_eq!(out.err(), format!("Ready: {OTHER_ID}\n"));
     assert!(
         !rig.keys()
             .contains(&"cloudformation-describe-stacks".to_string()),
-        "a good cache means no stack call"
+        "a record with an instance ID means no stack call"
     );
     for c in rig.calls() {
         assert!(c.args.contains(&OTHER_ID.to_string()), "{:?}", c.key);
     }
 }
 
-// ---- The cache ----
-
-#[test]
-fn a_missing_cache_is_rebuilt_from_the_stacks_output_and_written_exactly() {
-    let rig = Rig::standard();
-    let out = rig.run(&["up"]);
-    assert_eq!(out.code, Some(0), "{:?}", out.err());
-    assert_eq!(
-        rig.keys().first().map(String::as_str),
-        Some("cloudformation-describe-stacks")
-    );
-    assert_eq!(
-        rig.calls()[0].args,
-        aws_args(
-            "cloudformation",
-            "describe-stacks",
-            &["--stack-name", "agentbox"]
-        )
-    );
-    assert_eq!(
-        rig.cache_bytes(),
-        Some(Rig::cache_file(ID)),
-        "UTF-8, compact JSON, no byte order mark, no line ending (state.md)"
-    );
-    assert!(
-        rig.tmp_files().is_empty(),
-        "the atomic replace leaves no temporary file"
-    );
-    assert_eq!(out.err(), format!("Ready: {ID}\n"));
-}
-
-#[test]
-fn every_kind_of_unusable_cache_counts_as_missing_and_is_rebuilt() {
-    let cases: Vec<(&str, Vec<u8>)> = vec![
-        ("empty", Vec::new()),
-        ("whitespace", b"  \r\n\t ".to_vec()),
-        ("not JSON", b"not json".to_vec()),
-        ("the prototype's plain id", ID.as_bytes().to_vec()),
-        ("an empty object", b"{}".to_vec()),
-        ("an array", b"[]".to_vec()),
-        ("null", b"null".to_vec()),
-        (
-            "a wrong version",
-            br#"{"version":1,"instance_id":"i-1234567890abcdef0"}"#.to_vec(),
-        ),
-        (
-            "no version",
-            br#"{"instance_id":"i-1234567890abcdef0"}"#.to_vec(),
-        ),
-        (
-            "a short id",
-            br#"{"version":0,"instance_id":"i-123"}"#.to_vec(),
-        ),
-        (
-            "an upper-case id",
-            br#"{"version":0,"instance_id":"i-1234567890ABCDEF0"}"#.to_vec(),
-        ),
-        (
-            "an id with a trailing line feed",
-            b"{\"version\":0,\"instance_id\":\"i-1234567890abcdef0\\n\"}".to_vec(),
-        ),
-        (
-            "an id that is not a string",
-            br#"{"version":0,"instance_id":7}"#.to_vec(),
-        ),
-        (
-            "an extra member",
-            br#"{"version":0,"instance_id":"i-1234567890abcdef0","extra":1}"#.to_vec(),
-        ),
-        ("UTF-16", {
-            let mut b = vec![0xFF, 0xFE];
-            b.extend(utf16le(
-                r#"{"version":0,"instance_id":"i-1234567890abcdef0"}"#,
-            ));
-            b
-        }),
-    ];
-    for (what, bytes) in cases {
-        let rig = Rig::standard();
-        rig.write_cache_bytes(&bytes);
-        let out = rig.run(&["up"]);
-        assert_eq!(out.code, Some(0), "{what}: stderr {:?}", out.err());
-        assert_eq!(
-            rig.keys().first().map(String::as_str),
-            Some("cloudformation-describe-stacks"),
-            "{what}: treated as missing, so the stack is asked"
-        );
-        assert_eq!(
-            rig.cache_bytes(),
-            Some(Rig::cache_file(ID)),
-            "{what}: rebuilt"
-        );
-        assert!(rig.tmp_files().is_empty(), "{what}");
-    }
-}
-
-#[test]
-fn a_cache_with_a_byte_order_mark_and_whitespace_is_read() {
-    let rig = Rig::standard();
-    let mut bytes = vec![0xEF, 0xBB, 0xBF];
-    bytes.extend_from_slice(
-        format!("\r\n {{ \"version\" : 0 ,\n \"instance_id\" : \"{OTHER_ID}\" }}\n").as_bytes(),
-    );
-    rig.write_cache_bytes(&bytes);
-    let out = rig.run(&["up"]);
-    assert_eq!(out.code, Some(0), "{:?}", out.err());
-    assert!(
-        !rig.keys()
-            .contains(&"cloudformation-describe-stacks".to_string()),
-        "a readable cache means no stack call"
-    );
-    assert_eq!(out.err(), format!("Ready: {OTHER_ID}\n"));
-}
-
-#[test]
-fn a_cache_that_cannot_be_opened_fails_every_command_with_fa_16s_message() {
-    for command in [vec!["up"], vec!["down"], vec!["status"], vec!["grow"]] {
-        let rig = Rig::standard();
-        std::fs::create_dir_all(rig.cache_path()).expect("a folder at the cache's path");
-        let out = rig.run(&command);
-        let message = format!(
-            "agentspace: Cannot read the instance-ID cache {}; remove it and run the command again.",
-            rig.cache_path().display()
-        );
-        assert_fails_with(&out, &message, &format!("{command:?}"));
-        assert_eq!(out.err().lines().count(), 1, "{command:?}");
-        assert!(
-            rig.calls().is_empty(),
-            "{command:?}: nothing is started before the cache is read"
-        );
-        assert!(
-            rig.cache_path().is_dir(),
-            "{command:?}: the folder is left as it was"
-        );
-    }
-}
-
-#[test]
-fn a_stack_with_no_instance_id_output_fails_and_writes_no_cache() {
-    let answers = [
-        r#"{"Stacks":[{"Outputs":[{"OutputKey":"Other","OutputValue":"x"}]}]}"#,
-        r#"{"Stacks":[{}]}"#,
-        r#"{"Stacks":[]}"#,
-        r#"{}"#,
-        r#"{"Stacks":[{"Outputs":[{"OutputKey":"InstanceId","OutputValue":"not an id"}]}]}"#,
-        r#"{"Stacks":[{"Outputs":[{"OutputKey":"InstanceId","OutputValue":7}]}]}"#,
-    ];
-    for answer in answers {
-        for command in [vec!["up"], vec!["down"], vec!["status"], vec!["grow"]] {
-            let rig = Rig::standard();
-            rig.ok("cloudformation-describe-stacks", answer);
-            let out = rig.run(&command);
-            assert_fails_with(
-                &out,
-                "agentspace: Stack 'agentbox' has no InstanceId output.",
-                &format!("{command:?} with {answer}"),
-            );
-            assert_eq!(
-                rig.keys(),
-                ["cloudformation-describe-stacks"],
-                "{command:?}: nothing runs after the failure"
-            );
-            assert_eq!(rig.cache_bytes(), None, "{command:?}: no cache is written");
-        }
-    }
-}
+// The registry's cases (a missing, unreadable or invalid file; a missing instance ID) are in
+// `host_registry.rs`.
 
 // ---- Starting the box ----
 
@@ -742,7 +578,7 @@ fn an_expired_sign_in_gets_agentspaces_own_message_at_every_call_up_makes() {
         ] {
             let rig = Rig::standard();
             if !no_cache {
-                rig.write_cache(ID);
+                rig.write_box_id(ID);
             }
             rig.instance(state);
             rig.fail(key, form, 255);

@@ -7,7 +7,7 @@
 //! - [`parse`] reads a command line into [`Parsed`]: help ([`HelpLevel`]), a [`Request`] to run,
 //!   or the whole `agentspace: ` line of a usage error or an `-Alias` refusal.
 //! - [`help`] gives the help text of a [`HelpLevel`], byte for byte as operator.md gives it.
-//! - [`Command`] names the seven commands; [`Command::name`] is operator.md's spelling.
+//! - [`Command`] names the nine commands; [`Command::name`] is operator.md's spelling.
 //! - [`Printer`] implements the pinned [`Say`] for a person's command and for caller mode, to any
 //!   writer, and prints a [`Failure`] with [`Printer::failure`].
 //! - [`context_from`] builds the pinned [`Context`] from an injectable variable lookup, or fails
@@ -19,8 +19,9 @@
 //! - [`run`] is the program: it parses, checks the home and the system folder, prints and
 //!   dispatches, and returns the exit code, 0 or 1.
 //! - [`dispatch`] is where a parsed command runs, over [`Parts`]: the pinned [`Aws`], [`Remote`]
-//!   and [`Say`], a [`Clock`], the instance-ID cache ([`FileInstanceIdCache`]), a [`Report`] for
-//!   `status`'s lines and a [`Reach`] for the token push, `ca`, `sync` and `deploy`. [`up`],
+//!   and [`Say`], a [`Clock`], a [`Report`] for `status`'s lines and a [`Reach`] for the token
+//!   push, `ca`, a host's key, certificate and alias, `sync`, `deploy`, `bootstrap` and
+//!   `provision`. The instance ID is the host registry's ([`HostCache`]). [`up`],
 //!   [`down`], [`status`] and [`grow`] are the commands themselves.
 //! - [`Env`] is the program's environment as it started, copied once from a lookup; [`run`]
 //!   builds the [`Context`], the [`CaEnv`] and every program's seam variables from it.
@@ -32,6 +33,7 @@
 
 #![forbid(unsafe_code)]
 
+mod access;
 mod cache;
 mod cli;
 mod commands;
@@ -45,14 +47,16 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 
+pub use access::Access;
 pub use agentspace_box::{Clock, InstanceIdCache, SystemClock};
 pub use agentspace_ca::CaEnv;
 pub use agentspace_operator_api::{
     Aws, CallerFailure, CallerLine, Context, Failure, Mode, Remote, Say,
 };
-pub use cache::{FileInstanceIdCache, cache_path};
+pub use agentspace_sync::Target;
+pub use cache::HostCache;
 pub use cli::{Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, Parsed, Request, help, parse};
-pub use commands::{Parts, Reach, Report, dispatch, down, grow, status, up};
+pub use commands::{HostRef, Parts, Reach, Report, dispatch, down, grow, status, up};
 pub use reach::{Env, SystemReach};
 pub use say::{COULD_NOT_REACH, NOT_AVAILABLE, NOT_READY, Printer, caller_warning};
 
@@ -157,7 +161,6 @@ pub fn run(
                 // through (operator.md, Starting the box and waiting for it, step 1).
                 let runner = agentspace_run::Runner::with_lookup(context.clone(), env.lookup())
                     .passing_ignored_stderr();
-                let cache = FileInstanceIdCache::new(&context);
                 let reach = SystemReach::new(env);
                 let clock = SystemClock::new();
                 dispatch(
@@ -170,7 +173,6 @@ pub fn run(
                         aws: &runner,
                         remote: &runner,
                         clock: &clock,
-                        cache: &cache,
                         reach: &reach,
                     },
                 )
@@ -365,7 +367,12 @@ mod tests {
         let no_home = "agentspace: USERPROFILE is not set, so there is no home folder.\n";
         let no_root = "agentspace: SystemRoot is not set, so Windows' programs cannot be found.\n";
         for c in Command::ALL {
-            let line = [c.name()];
+            // `provision` needs `-Host`, which a usage error would otherwise report first.
+            let line: Vec<&str> = if c == Command::Provision {
+                vec![c.name(), "-Host", "agentspace"]
+            } else {
+                vec![c.name()]
+            };
             // USERPROFILE unset or empty, SystemRoot present or not: the home is checked first.
             for pairs in [
                 vec![("SystemRoot", "C:\\Windows")],
