@@ -207,11 +207,13 @@ name = "agentspace-ssh-proxy"
 version = "0.6.0"
 dependencies = [
  "agentspace-box",
+ "agentspace-hosts",
  "agentspace-operator",
  "agentspace-operator-api",
  "agentspace-push",
  "agentspace-run",
  "agentspace-state",
+ "sha2",
  "windows-sys",
 ]
 
