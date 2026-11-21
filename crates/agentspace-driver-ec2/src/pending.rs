@@ -21,10 +21,10 @@ use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed};
 use agentspace_hosts::{self as hosts, HostState, HostsError};
 use agentspace_state::{Record, Ssh, StoreError, format_time};
 
-use crate::NAME;
 use crate::host::registry_why;
 use crate::ops::{self, HostKey};
-use crate::text::failure;
+use crate::text::{failure, with_leftovers};
+use crate::{NAME, PendingFailure, PendingPlaced};
 
 /// What follows a failure of the whole call: what it placed before stays `ready`.
 const REST_STAY: &str = "The leases not yet placed stay pending.";
@@ -107,8 +107,14 @@ fn place_one(
 /// `No lease was recorded.`, which is `create`'s ending: here the lease is recorded and stays
 /// `pending`, so that ending is said so.
 fn lease_failure(lease_id: String, f: Failure) -> PendingFailure {
-    let message = match f.message.strip_suffix("No lease was recorded.") {
-        Some(head) => format!("{head}The lease stays pending."),
+    const CREATE_END: &str = "No lease was recorded.";
+    const PENDING_END: &str = "The lease stays pending.";
+    let message = match f.message.rfind(CREATE_END) {
+        Some(at) => format!(
+            "{}{PENDING_END}{}",
+            &f.message[..at],
+            &f.message[at + CREATE_END.len()..]
+        ),
         None => f.message,
     };
     PendingFailure { lease_id, message }
@@ -129,7 +135,7 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
         hosts::host_for(&registry, project).cloned()
     };
     let Some(record) = record.filter(|h| h.state == HostState::Ready) else {
-        return Ok(0);
+        return Ok(PendingPlaced::default());
     };
     let host = if hosts::is_box(&record) {
         HostKey::Box
@@ -139,7 +145,7 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
 
     // Step 2: one lease per hold of the lease state lock.
     let mut tried = HashSet::new();
-    let mut placed = 0;
+    let mut result = PendingPlaced::default();
     loop {
         let guard = agentspace_state::lock(&ctx.state_dir).map_err(store_failure)?;
         let mut file = agentspace_state::read(&ctx.state_dir).map_err(store_failure)?;
@@ -153,22 +159,51 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
         let id = file.leases[index].id.clone();
         tried.insert(id.clone());
         // A lease that fails here has had every file this call made for it removed already.
-        if let Ok((host_alias, user, expires_at)) = place_one(ctx, &file.leases[index], host) {
-            let lease = &mut file.leases[index];
-            lease.state = "ready".to_string();
-            lease.expires_at = Some(format_time(expires_at));
-            lease.ssh = Some(Ssh { host_alias, user });
-            if agentspace_state::write(&ctx.state_dir, &file, &guard).is_ok() {
-                placed += 1;
-            } else {
-                // The lease stays `pending`, so its files go as release removes them; what cannot
-                // be removed goes with the next placement's leftovers or the lease's release.
-                let _ = ops::release(ctx, &LeaseRef { id: &id, project });
+        match place_one(ctx, &file.leases[index], host) {
+            Err(f) => result.failed.push(lease_failure(id, f)),
+            Ok((host_alias, user, expires_at)) => {
+                let lease = &mut file.leases[index];
+                lease.state = "ready".to_string();
+                lease.expires_at = Some(format_time(expires_at));
+                lease.ssh = Some(Ssh { host_alias, user });
+                match agentspace_state::write(&ctx.state_dir, &file, &guard) {
+                    Ok(()) => result.placed += 1,
+                    Err(e) => {
+                        // The lease stays `pending`, so its files go as release removes them; what
+                        // cannot be removed is named, and goes with the next placement's leftovers
+                        // or the lease's release.
+                        let left = ops::release(ctx, &LeaseRef { id: &id, project })
+                            .err()
+                            .map(|f| f.leftovers)
+                            .unwrap_or_default();
+                        result.failed.push(write_failure(id, &e, &left));
+                    }
+                }
             }
         }
         drop(guard);
     }
-    Ok(placed)
+    Ok(result)
+}
+
+/// What a lease whose `ready` record could not be written reports: the records' why, then what
+/// the release of its files could not remove, then that it stays `pending`.
+fn write_failure(lease_id: String, e: &StoreError, left: &[String]) -> PendingFailure {
+    let why = match e {
+        StoreError::Busy => "the lease records are busy",
+        StoreError::CannotLock(why)
+        | StoreError::Unreadable(why)
+        | StoreError::NotValid(why)
+        | StoreError::Unwritable(why) => why.as_str(),
+    };
+    let message = with_leftovers(
+        format!("The lease records could not be written: {why}."),
+        left,
+    );
+    PendingFailure {
+        lease_id,
+        message: format!("{message} The lease stays pending."),
+    }
 }
 
 #[cfg(test)]
@@ -216,18 +251,47 @@ mod tests {
     }
 
     #[test]
+    fn a_places_ending_becomes_pendings_even_before_its_leftovers() {
+        let f = failure(
+            "It failed. No lease was recorded.".to_string(),
+            vec!["~/x".to_string()],
+        );
+        let p = lease_failure(A.to_string(), f);
+        assert_eq!(
+            p.message,
+            "It failed. The lease stays pending. Still there: ~/x."
+        );
+        let f = failure("It failed. No lease was recorded.".to_string(), Vec::new());
+        assert_eq!(
+            lease_failure(A.to_string(), f).message,
+            "It failed. The lease stays pending."
+        );
+    }
+
+    #[test]
+    fn a_write_failure_names_the_why_and_the_leftovers_and_ends_pending() {
+        let e = StoreError::Unwritable("the state folder is a file".to_string());
+        let p = write_failure(A.to_string(), &e, &["~/x".to_string()]);
+        assert_eq!(p.lease_id, A);
+        assert_eq!(
+            p.message,
+            "The lease records could not be written: the state folder is a file. Still there: ~/x. The lease stays pending."
+        );
+    }
+
+    #[test]
     fn a_host_that_is_not_ready_or_has_no_record_places_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path());
         let path = write_state(&c, &[pending(A, "other", Some("ec2"))]);
         let before = fs::read(&path).unwrap();
-        assert_eq!(place_pending(&c, "other"), Ok(0));
+        assert_eq!(place_pending(&c, "other"), Ok(PendingPlaced::default()));
         fs::write(
             c.home.join(".agentspace").join("hosts.json"),
             r#"{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"other","stack":"agentspace-host-other","state":"creating"}]}"#,
         )
         .unwrap();
-        assert_eq!(place_pending(&c, "other"), Ok(0));
+        assert_eq!(place_pending(&c, "other"), Ok(PendingPlaced::default()));
         assert_eq!(fs::read(&path).unwrap(), before);
     }
 
@@ -280,7 +344,10 @@ mod tests {
             ],
         );
         let before = fs::read(&path).unwrap();
-        assert_eq!(place_pending(&c, "swimcoach"), Ok(0));
+        let done = place_pending(&c, "swimcoach").unwrap();
+        assert_eq!(done.placed, 0);
+        let ids: Vec<&str> = done.failed.iter().map(|f| f.lease_id.as_str()).collect();
+        assert_eq!(ids, [A, B]);
         assert_eq!(fs::read(&path).unwrap(), before);
     }
 
@@ -297,7 +364,10 @@ mod tests {
         fs::create_dir_all(&aliases).unwrap();
         let alias = aliases.join("agentspace-swimcoach-3f2a9c1e");
         fs::write(&alias, format!("# agentspace lease {A}; x\nHost y\n")).unwrap();
-        assert_eq!(place_pending(&c, "swimcoach"), Ok(0));
+        let done = place_pending(&c, "swimcoach").unwrap();
+        assert_eq!(done.placed, 0);
+        assert_eq!(done.failed.len(), 1);
+        assert_eq!(done.failed[0].lease_id, A);
         assert!(!folder.exists());
         assert!(!alias.exists());
     }
@@ -311,7 +381,11 @@ mod tests {
         fs::create_dir_all(&aliases).unwrap();
         let alias = aliases.join("agentspace-swimcoach-3f2a9c1e");
         fs::write(&alias, b"# a person's file\n").unwrap();
-        assert_eq!(place_pending(&c, "swimcoach"), Ok(0));
+        let done = place_pending(&c, "swimcoach").unwrap();
+        assert_eq!(done.placed, 0);
+        assert_eq!(done.failed.len(), 1);
+        assert_eq!(done.failed[0].lease_id, A);
+        assert_eq!(done.failed[0].message, crate::text::FOREIGN_ALIAS);
         assert!(alias.exists());
     }
 }

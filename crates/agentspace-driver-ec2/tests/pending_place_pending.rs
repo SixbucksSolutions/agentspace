@@ -11,8 +11,8 @@ mod common;
 #[path = "common/pending.rs"]
 mod pending;
 
-use agentspace_driver_api::{Driver, LeaseRef};
-use agentspace_driver_ec2::place_pending;
+use agentspace_driver_api::{Driver, Failure, LeaseRef};
+use agentspace_driver_ec2::{PendingPlaced, place_pending};
 use common::*;
 use pending::*;
 use serde_json::{Value, json};
@@ -38,6 +38,27 @@ fn world() -> Fx {
 /// The record as the lease CLI wrote it, as a document.
 fn as_written(l: &L) -> Value {
     serde_json::from_str(&l.json()).expect("A record is JSON")
+}
+
+/// What a call answered, as how many it placed and the ID of each lease it could not place. A
+/// lease that cannot be placed MUST be in `failed`, never an `Err` of the whole call, and each
+/// failure's message is plain: agentspace's own words, with no path.
+#[track_caller]
+fn outcome(fx: &Fx, got: Result<PendingPlaced, Failure>) -> (usize, Vec<String>) {
+    let got = match got {
+        Ok(got) => got,
+        Err(f) => panic!("The call failed as a whole: {}", f.message),
+    };
+    for f in &got.failed {
+        fx.assert_plain(&f.message);
+    }
+    let failed = got.failed.iter().map(|f| f.lease_id.clone()).collect();
+    (got.placed, failed)
+}
+
+/// `n` placed and the leases `failed` left pending.
+fn was(n: usize, failed: &[&str]) -> (usize, Vec<String>) {
+    (n, failed.iter().map(|id| id.to_string()).collect())
 }
 
 /// Checks a lease that was placed: `ready`, with an expiry that is its certificate's valid-before
@@ -97,7 +118,7 @@ fn it_places_every_pending_lease_of_the_project_and_leaves_every_other_record_al
     let t0 = now();
     let got = place_pending(&fx.ctx, PROJECT);
     let t1 = now();
-    assert_eq!(got, Ok(2));
+    assert_eq!(outcome(&fx, got), was(2, &[]));
 
     assert_placed(&fx, &a, t0, t1, true);
     assert_placed(&fx, &b, t0, t1, true);
@@ -131,10 +152,10 @@ fn it_places_every_pending_lease_of_the_project_and_leaves_every_other_record_al
 fn a_second_call_places_nothing() {
     let fx = world();
     fx.write_leases(&[L::pending(A, PROJECT)]);
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(1));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     let after = fx.leases_bytes();
     let files = fx.snapshot();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[]));
     assert_eq!(fx.leases_bytes(), after);
     assert_eq!(fx.snapshot(), files);
 }
@@ -147,7 +168,7 @@ fn a_lease_released_while_pending_is_never_placed() {
     let pending = L::pending(B, PROJECT);
     fx.write_leases(&[released.clone(), pending.clone()]);
     let t0 = now();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(1));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     let t1 = now();
     assert_eq!(fx.lease_value(A), as_written(&released));
     assert!(!fx.has_files_of(PROJECT, A));
@@ -162,7 +183,10 @@ fn the_boxs_pending_leases_are_placed_with_the_boxs_alias() {
     let l = L::pending(A, "swimcoach");
     fx.write_leases(std::slice::from_ref(&l));
     let t0 = now();
-    assert_eq!(place_pending(&fx.ctx, "swimcoach"), Ok(1));
+    assert_eq!(
+        outcome(&fx, place_pending(&fx.ctx, "swimcoach")),
+        was(1, &[])
+    );
     let t1 = now();
     assert_placed(&fx, &l, t0, t1, false);
     assert!(
@@ -178,7 +202,7 @@ fn a_transport_override_is_the_proxy_command_of_the_alias() {
     let l = L::pending(A, PROJECT);
     fx.write_leases(std::slice::from_ref(&l));
     let t0 = now();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(1));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     assert_placed(&fx, &l, t0, now(), true);
 }
 
@@ -190,7 +214,7 @@ fn it_uses_the_state_folder_the_context_names_and_no_other() {
     write_leases(&elsewhere, &[L::pending(A, PROJECT)]);
     let before = fs::read(elsewhere.join("leases.json")).unwrap();
     // The context's own folder has none: a missing file means no leases.
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[]));
     assert_eq!(fs::read(elsewhere.join("leases.json")).unwrap(), before);
     assert!(!fx.has_files_of(PROJECT, A));
 }
@@ -209,7 +233,7 @@ fn a_host_that_is_not_ready_or_has_no_record_places_nothing() {
         fx.write_leases(&[L::pending(A, PROJECT)]);
         let leases = fx.leases_bytes();
         let hosts = fx.hosts_bytes();
-        assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+        assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[]));
         assert_eq!(fx.leases_bytes(), leases);
         assert_eq!(fx.hosts_bytes(), hosts, "The registry is never written");
         assert!(!fx.has_files_of(PROJECT, A));
@@ -264,9 +288,9 @@ fn a_lease_that_fails_stays_pending_and_the_others_are_still_placed() {
         let foreign = plant_foreign_alias(&fx, PROJECT, A);
         let t0 = now();
         assert_eq!(
-            place_pending(&fx.ctx, PROJECT),
-            Ok(1),
-            "first {failing_first}"
+            outcome(&fx, place_pending(&fx.ctx, PROJECT)),
+            was(1, &[A]),
+            "first {failing_first}: one placed, the other named in failed"
         );
         let t1 = now();
         assert_eq!(
@@ -297,7 +321,7 @@ fn a_foreign_alias_with_another_leases_owner_mark_is_kept_too() {
         alias_for(PROJECT, A)
     );
     fs::write(fx.alias_file_of(PROJECT, A), foreign.as_bytes()).unwrap();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[A]));
     assert_eq!(fx.lease_value(A)["state"], "pending");
     assert_eq!(
         fs::read(fx.alias_file_of(PROJECT, A)).unwrap(),
@@ -313,7 +337,10 @@ fn a_missing_ca_fails_each_lease_and_is_never_created() {
     fx.write_hosts(&[H::ready(PROJECT)]);
     fx.write_leases(&[L::pending(A, PROJECT), L::pending(B, PROJECT)]);
     let before = fx.leases_bytes();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+    assert_eq!(
+        outcome(&fx, place_pending(&fx.ctx, PROJECT)),
+        was(0, &[A, B])
+    );
     assert_eq!(fx.leases_bytes(), before);
     assert!(
         !fx.ca_dir().exists(),
@@ -328,7 +355,7 @@ fn a_ca_that_fails_a_check_fails_the_lease_and_nothing_is_changed() {
     fs::write(fx.ca_dir().join("agentspace_ca.pub"), b"not a key\n").unwrap();
     fx.write_leases(&[L::pending(A, PROJECT)]);
     let before = fx.leases_bytes();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[A]));
     assert_eq!(fx.leases_bytes(), before);
     assert!(!fx.has_files_of(PROJECT, A));
 }
@@ -340,7 +367,7 @@ fn a_default_transport_program_that_is_not_there_fails_the_lease() {
     fx.write_hosts(&[H::ready(PROJECT)]);
     fx.write_leases(&[L::pending(A, PROJECT)]);
     let before = fx.leases_bytes();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(0));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[A]));
     assert_eq!(fx.leases_bytes(), before, "The lease stays pending");
     assert!(
         !fx.has_files_of(PROJECT, A),
@@ -350,7 +377,7 @@ fn a_default_transport_program_that_is_not_there_fails_the_lease() {
     // A transport override replaces the whole line, and the program is then not looked for.
     fx.ctx.proxy_override = Some("my-transport --stdio".to_string());
     let t0 = now();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(1));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     assert_placed(&fx, &L::pending(A, PROJECT), t0 - 1, now() + 1, true);
 }
 
@@ -385,8 +412,8 @@ fn a_killed_placements_leftovers_are_removed_first_and_the_lease_is_placed() {
         }
         let t0 = now();
         assert_eq!(
-            place_pending(&fx.ctx, PROJECT),
-            Ok(1),
+            outcome(&fx, place_pending(&fx.ctx, PROJECT)),
+            was(1, &[]),
             "alias left {leave_alias}"
         );
         assert_placed(&fx, &l, t0, now(), true);
@@ -412,7 +439,7 @@ fn it_waits_for_the_lease_state_lock_and_then_places() {
     });
     let begun = Instant::now();
     let t0 = now();
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(1));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     let waited = begun.elapsed();
     releaser.join().unwrap();
     assert!(
@@ -426,7 +453,7 @@ fn it_waits_for_the_lease_state_lock_and_then_places() {
 fn it_lets_go_of_the_lease_state_lock_when_it_is_done() {
     let fx = world();
     fx.write_leases(&[L::pending(A, PROJECT), L::pending(B, PROJECT)]);
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(2));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(2, &[]));
     let again = hold_lease_lock(&fx.ctx.state_dir);
     drop(again);
 }
@@ -459,7 +486,7 @@ fn a_placed_lease_is_renewed_and_released_like_any_ready_lease() {
     let fx = world();
     let l = L::pending(A, PROJECT);
     fx.write_leases(std::slice::from_ref(&l));
-    assert_eq!(place_pending(&fx.ctx, PROJECT), Ok(1));
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     let first = expires_of(&fx.lease_value(A));
     let d = agentspace_driver_ec2::Ec2Driver::new();
     let lease = LeaseRef {

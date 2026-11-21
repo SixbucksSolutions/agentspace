@@ -1026,8 +1026,10 @@ fn a_help_like_value_after_an_equals_is_a_value_and_does_not_end_the_line() {
 
 #[test]
 fn a_valid_line_never_prints_help_and_a_failed_one_prints_nothing_on_stdout() {
+    // The box's project with no CA fails: any other project has no host and is answered
+    // `no_capacity`, a success (driver.md, Where it places a lease).
     for line in [
-        args(&["lease", "create", "--project", "x"]),
+        args(&["lease", "create", "--project", "swimcoach"]),
         args(&["lease", "get", ID]),
         args(&["lease", "renew", ID]),
         args(&["lease", "release", ID]),

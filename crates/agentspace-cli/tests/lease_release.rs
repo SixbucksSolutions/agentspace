@@ -288,6 +288,29 @@ fn an_unknown_driver_fails_internal_without_naming_it_and_changes_nothing() {
 }
 
 #[test]
+fn a_pending_lease_whose_driver_this_build_lacks_fails_internal_as_a_ready_one_does() {
+    // docs/driver.md, Release a lease: a `pending` record with a `driver` is handed to that driver
+    // as a `ready` one is (pin P16), so a driver this build does not have fails the release as it
+    // does for a `ready` lease, without naming it, and the record stays `pending`.
+    for drivers in [&["fake"][..], &[][..], &["ec2x", "other"][..]] {
+        let mut lab = Lab::new();
+        let handles: Vec<_> = drivers.iter().map(|n| lab.fake(n)).collect();
+        lab.seed(&[Rec::pending(ID1, "swim").driver(Some("secret-backend-name"))]);
+        let before = lab.state_bytes();
+        let ran = lab.run(&["lease", "release", ID1]);
+        ran.expect_error("internal", None, Some(&msg_unknown_driver("release")));
+        assert!(!ran.stderr_text().contains("secret-backend-name"));
+        assert!(ran.stdout.is_empty(), "Nothing on stdout");
+        assert!(
+            handles.iter().all(|h| h.calls().is_empty()),
+            "No driver is asked"
+        );
+        assert_eq!(lab.state_bytes(), before, "The record is unchanged");
+        assert_eq!(lab.records()[0]["state"], "pending");
+    }
+}
+
+#[test]
 fn a_ready_record_without_a_driver_fails_the_same_way_when_there_is_no_ec2_driver() {
     let lab = Lab::new();
     lab.seed(&[Rec::ready(ID1, "swim").driver(None)]);

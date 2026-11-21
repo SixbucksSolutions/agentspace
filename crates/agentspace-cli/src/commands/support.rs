@@ -233,6 +233,11 @@ pub struct Paths {
 }
 
 impl Paths {
+    /// Whether the home folder is known: `USERPROFILE` set and not empty.
+    pub fn has_home(&self) -> bool {
+        self.resolved.home.is_some()
+    }
+
     /// A folder as a command uses it: `None` when its variable (or the home under it) is unset,
     /// and the working-folder failure when it is relative and there is no working folder to make
     /// it full against.
@@ -340,6 +345,17 @@ pub fn context(
     // lease state file, so this adds no failure (architect, 2026-11-20, the pin before v0.07-T03).
     let state_dir = state_dir(paths, sub)?.to_path_buf();
     let operator_program = context_operator_program(world);
+    // The two folder variables as the CLI had them, made full, for the detached start (driver.md,
+    // The detached start): each is `Some` if and only if it is set and not empty, and is then the
+    // folder the CLI itself resolved from it. Architect's to confirm: `renew` reads no
+    // `AGENTSPACE_SSH_DIR` (lease-api.md, Environment), so its context carries none.
+    let state_dir_env = is_set(world, "AGENTSPACE_STATE_DIR").then(|| state_dir.clone());
+    let ssh_dir_env = match purpose {
+        Purpose::Place | Purpose::Release => {
+            is_set(world, "AGENTSPACE_SSH_DIR").then(|| ssh_dir.clone())
+        }
+        Purpose::Renew => None,
+    };
     Ok(Context {
         home,
         ssh_dir,
@@ -348,10 +364,15 @@ pub fn context(
         own_exe: world.own_exe.to_path_buf(),
         state_dir,
         operator_program,
-        // QUESTION for the follow-up: the CLI fills these two (ce0967f; driver.md, C7).
-        state_dir_env: None,
-        ssh_dir_env: None,
+        state_dir_env,
+        ssh_dir_env,
     })
+}
+
+/// Whether a variable is set and not empty, as every folder variable is read (lease-api.md,
+/// Environment).
+fn is_set(world: &World<'_>, name: &str) -> bool {
+    (world.var)(name).is_some_and(|v| !v.is_empty())
 }
 
 /// The program a provisioning run starts (driver.md, The operator program): the full path of

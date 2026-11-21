@@ -210,15 +210,14 @@ fn the_context_names_the_resolved_folders_and_the_variables_the_cli_had() {
         assert_eq!(ctx.home, lab.home);
         assert_eq!(ctx.ssh_dir, lab.ssh);
         assert_eq!(ctx.state_dir, lab.state);
-        assert_eq!(
-            ctx.state_dir_env,
-            Some(lab.state.clone()),
-            "The CLI had the variable"
+        // Checked by name, and a mismatch never prints a value.
+        assert!(
+            ctx.state_dir_env == Some(lab.state.clone()),
+            "state_dir_env is not the state folder the CLI had"
         );
-        assert_eq!(
-            ctx.ssh_dir_env,
-            Some(lab.ssh.clone()),
-            "The CLI had the variable"
+        assert!(
+            ctx.ssh_dir_env == Some(lab.ssh.clone()),
+            "ssh_dir_env is not the ssh folder the CLI had"
         );
         assert_eq!(
             ctx.proxy_override.as_deref(),
@@ -241,12 +240,21 @@ fn the_folder_variables_the_cli_did_not_have_are_none_in_the_context() {
             }
         }
         lab.set_var("AGENTSPACE_PROXY_COMMAND", "");
+        // With no AGENTSPACE_STATE_DIR the records are read from the home's default folder, so the
+        // lab seeds them there.
+        lab.state = lab.home.join(".agentspace");
         let (get, create) = contexts_of_get_and_create(&lab, &h);
         for ctx in [get, create] {
             assert_eq!(ctx.state_dir, lab.home.join(".agentspace"), "empty {empty}");
             assert_eq!(ctx.ssh_dir, lab.home.join(".ssh"), "empty {empty}");
-            assert_eq!(ctx.state_dir_env, None, "empty {empty}");
-            assert_eq!(ctx.ssh_dir_env, None, "empty {empty}");
+            assert!(
+                ctx.state_dir_env.is_none(),
+                "state_dir_env is set, empty {empty}"
+            );
+            assert!(
+                ctx.ssh_dir_env.is_none(),
+                "ssh_dir_env is set, empty {empty}"
+            );
             assert_eq!(ctx.proxy_override, None, "empty {empty}");
         }
     }
@@ -273,9 +281,15 @@ fn a_relative_folder_variable_is_made_full_in_the_context_against_the_working_fo
         .lease_doc();
     for ctx in h.contexts() {
         assert_eq!(ctx.state_dir, lab.cwd.join("state-rel"));
-        assert_eq!(ctx.state_dir_env, Some(lab.cwd.join("state-rel")));
+        assert!(
+            ctx.state_dir_env == Some(lab.cwd.join("state-rel")),
+            "state_dir_env is not the relative folder made full"
+        );
         assert_eq!(ctx.ssh_dir, lab.cwd.join("ssh-rel"));
-        assert_eq!(ctx.ssh_dir_env, Some(lab.cwd.join("ssh-rel")));
+        assert!(
+            ctx.ssh_dir_env == Some(lab.cwd.join("ssh-rel")),
+            "ssh_dir_env is not the relative folder made full"
+        );
     }
 }
 

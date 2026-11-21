@@ -158,7 +158,9 @@ fn error_codes_are_the_six_of_the_table() {
 #[test]
 fn execute_in_returns_the_exit_code_of_the_error_code_for_each_line() {
     let cases: [(&[&str], i32); 9] = [
-        (&["lease", "create", "--project", "x"], 1),
+        // The box's project with no CA fails `internal`: any other project has no host and is
+        // answered `no_capacity`, which needs no CA (driver.md, Where it places a lease).
+        (&["lease", "create", "--project", "swimcoach"], 1),
         (&["lease", "list"], 0),
         (&["lease", "get", ID], 3),
         (&[], 2),
