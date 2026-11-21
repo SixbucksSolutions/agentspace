@@ -2051,7 +2051,7 @@ file's bytes and access rules are [state.md, A host's folder](state.md#a-hosts-f
 never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
 
 ```
-<time> <step> <outcome>[ reason=<reason>]
+<time> <step> <outcome>[ placed=<n>][ lease=<id>][ reason=<reason>]
 ```
 
 - **`<time>`** is the time the line is written, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`, the form of the
@@ -2065,6 +2065,12 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
   failure message without its `agentspace: ` prefix, with each control character in it written as
   `?`. It MUST NOT hold the token or any text of the Bot credential ([Secrecy](#secrecy)), which no
   failure message holds.
+- **Step 9, `place`, logs what `place_pending` did** (architect, 2026-11-21, for v0.07-T03): when
+  the call succeeds, `place done placed=<n>`, `<n>` the number of leases it placed, then one
+  `place failed lease=<id> reason=<message>` for each lease it left `pending`, in the order it
+  tried them, `<id>` the lease's normalized ID. When the call fails as a whole, one
+  `place failed reason=<message>`, with the warning above. `placed` and `lease` appear on `place`
+  lines alone.
 - **Every line of the log is written by the run itself, and is one of its own lines**
   ([state.md, The provisioning run's log](state.md#the-provisioning-runs-log)). No other program
   writes to the log. **A step that fails logs its whole failure message as the line's `reason`**,

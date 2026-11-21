@@ -288,9 +288,7 @@ fn place_pending(
 
 /// Step 9's lines for a call that returned: `place done placed=<n>`, then one
 /// `place failed lease=<id> reason=<message>` per lease left `pending`, in the order it was tried.
-// QUESTION: operator.md's line form has no field for the count or a lease's ID, and the T03 ruling
-// says to log `placed` and one line per failed lease (its ID and message). Interim: the count as
-// `placed=<n>` after `done`, and each lease as `lease=<id>` before its `reason`, the reason last.
+/// The form is operator.md's, provision, "Its log" (architect, 2026-11-21, for v0.07-T03).
 fn log_placed(log: &Log, placed: &PendingPlaced) {
     log.line_with(
         "place",
