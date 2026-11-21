@@ -191,7 +191,7 @@ pub fn sync_using(
 
     // Step 2: start the box and wait for it, ending with `Ready: <id>`.
     let cache = FileCache::new(&places);
-    let instance_id = agentspace_box::start_and_wait(aws, say, seams.clock, &cache)?;
+    let instance_id = agentspace_box::start_and_wait(aws, say, seams.clock, &cache, STACK)?;
 
     // Step 3: remove the staging folder, then copy box\system there whole. A failed removal fails
     // before the copy, since a folder left behind would take the copy one level down (D36). The
@@ -360,7 +360,7 @@ pub fn deploy_using(
     // read from the stack's output and written again. A failed read leaves no cache.
     let cache = FileCache::new(&places);
     cache.delete()?;
-    let instance_id = agentspace_box::instance_id_from_stack(aws)?;
+    let instance_id = agentspace_box::instance_id_from_stack(aws, STACK)?;
     cache.write(&agentspace_box::cache_bytes(&instance_id))?;
     say.progress(&format!("Instance: {instance_id}"), None);
 

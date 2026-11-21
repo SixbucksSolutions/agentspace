@@ -85,11 +85,15 @@ pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
     }
 }
 
+/// The box's stack, which every command acts on until T03 picks the host's (operator.md, The stack).
+const BOX_STACK: &str = "agentbox";
+
 /// `up` (operator.md, up): reads the instance ID, starts the box and waits for it, ending with
 /// `Ready: <id>`, then pushes the token over `alias` unless this is a nested `up`
 /// (`AGENTSPACE_NESTED` was set as the program started). The push never fails the command.
 pub fn up(parts: &Parts, alias: &str) -> Result<(), Failure> {
-    let id = agentspace_box::start_and_wait(parts.aws, parts.say, parts.clock, parts.cache)?;
+    let id =
+        agentspace_box::start_and_wait(parts.aws, parts.say, parts.clock, parts.cache, BOX_STACK)?;
     if !parts.ctx.nested {
         parts.reach.push(parts.ctx, parts.say, &id, alias);
     }
@@ -99,7 +103,7 @@ pub fn up(parts: &Parts, alias: &str) -> Result<(), Failure> {
 /// `down` (operator.md, down): asks EC2 to stop the instance, whatever state it is in, and prints
 /// `Stopping <id>.` once the request is accepted. It does not wait.
 pub fn down(parts: &Parts) -> Result<(), Failure> {
-    let id = agentspace_box::instance_id(parts.aws, parts.cache)?;
+    let id = agentspace_box::instance_id(parts.aws, parts.cache, BOX_STACK)?;
     parts.aws.call(&Call {
         service: "ec2",
         operation: "stop-instances",
@@ -249,7 +253,7 @@ fn ssm_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 /// `status` (operator.md, status): five lines about the instance, to stderr, whatever `-Quiet`
 /// says. It never starts the box, and prints nothing when a call fails.
 pub fn status(parts: &Parts) -> Result<(), Failure> {
-    let id = agentspace_box::instance_id(parts.aws, parts.cache)?;
+    let id = agentspace_box::instance_id(parts.aws, parts.cache, BOX_STACK)?;
     let instance = describe_instance(parts.aws, &id, true)?;
     let size = volume_size(parts.aws, &instance.volume_id)?;
     let ssm = if instance.state == "running" {
@@ -294,7 +298,7 @@ growpart $disk $part; resize2fs $dev && df -h /'";
 /// `grow` (operator.md, grow): grows the root volume by `gib` GiB, and the root filesystem with
 /// it, online when the instance is running.
 pub fn grow(parts: &Parts, gib: i32) -> Result<(), Failure> {
-    let id = agentspace_box::instance_id(parts.aws, parts.cache)?;
+    let id = agentspace_box::instance_id(parts.aws, parts.cache, BOX_STACK)?;
     let instance = describe_instance(parts.aws, &id, false)?;
     let size = volume_size(parts.aws, &instance.volume_id)?;
     let new = size + i64::from(gib);

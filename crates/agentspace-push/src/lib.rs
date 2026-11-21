@@ -19,6 +19,9 @@
 //! - [`push`]: one push as the operator runs it, never failing a command. [`push_using`] is the
 //!   same over an injectable look-up of the environment, and returns its [`Outcome`].
 //! - [`push_with`]: one push, start to end, never failing; returns its [`Outcome`].
+//! - For a host other than the box (v0.07): [`push_to_host`], [`push_using_with_host`] and
+//!   [`push_with_host`] are the same three with a `host: Option<&str>`, `None` for the box and
+//!   `Some(project)` for another host, which keeps its own stamp ([`stamp_path_for`]).
 //! - [`Seams`], holding the three traits and the zone: [`Files`] (with [`FileRead`], and
 //!   [`StdFiles`], a portable `Files` that T02 MAY use or replace), [`Unprotect`] and [`SshRun`]
 //!   (with [`SshResult`]).
@@ -26,7 +29,7 @@
 //!   zeroes it when dropped.
 //! - The steps, for a caller that needs one alone: [`receipt_path`], [`parse_receipt`] and
 //!   [`Receipt`]; [`credential_path`], [`parse_credential_blob`] and [`read_token`];
-//!   [`check_zone`], the zone's guard; [`content`]; [`stamp`], [`stamp_path`],
+//!   [`check_zone`], the zone's guard; [`content`]; [`stamp`], [`stamp_path`], [`stamp_path_for`],
 //!   [`parse_stamp_file`] and [`stamp_file_bytes`]; [`alias_is_valid`], [`remote_command`] and
 //!   [`ssh_args`].
 //! - The warnings' texts, as a person's command prints them: [`COULD_NOT_READ`], [`NO_ZONE`],
@@ -72,8 +75,8 @@ pub use credential::{parse_credential_blob, read_token};
 pub use receipt::{Receipt, parse_receipt};
 pub use stamp::{content, parse_stamp_file, stamp, stamp_file_bytes};
 pub use system::{
-    DpapiUnprotect, Lookup, SSH_LIMIT, STDOUT_WAIT, SystemFiles, SystemSsh, push, push_using,
-    push_using_with,
+    DpapiUnprotect, Lookup, SSH_LIMIT, STDOUT_WAIT, SystemFiles, SystemSsh, push, push_to_host,
+    push_using, push_using_with, push_using_with_host,
 };
 pub use zeroize::Zeroizing;
 pub use zone::check_zone;
@@ -359,7 +362,23 @@ pub fn credential_path(credential_directory: &str) -> PathBuf {
 /// The stamp file's path, `%USERPROFILE%\.agentspace\localswim-pushed.json`, which
 /// `AGENTSPACE_STATE_DIR` does not move.
 pub fn stamp_path(ctx: &Context) -> PathBuf {
-    ctx.home.join(".agentspace").join("localswim-pushed.json")
+    stamp_path_for(ctx, None)
+}
+
+/// The stamp file's path for one host (docs/state.md, The push stamp; A host's push stamp; architect,
+/// 2026-11-20, for v0.07-T02). `None` is the box, whose stamp is v0.06's,
+/// `%USERPROFILE%\.agentspace\localswim-pushed.json`. `Some(project)` is that host's,
+/// `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json`. `AGENTSPACE_STATE_DIR` moves
+/// neither. A push for a host MUST read and write its own stamp alone, never the box's.
+pub fn stamp_path_for(ctx: &Context, host: Option<&str>) -> PathBuf {
+    let agentspace = ctx.home.join(".agentspace");
+    match host {
+        None => agentspace.join("localswim-pushed.json"),
+        Some(project) => agentspace
+            .join("hosts")
+            .join(project)
+            .join("localswim-pushed.json"),
+    }
 }
 
 /// The receipt, the token, and so the content; `Err` is the outcome when they cannot be had.
@@ -409,6 +428,22 @@ pub fn push_with(
     forced: bool,
     seams: &Seams,
 ) -> Outcome {
+    push_with_host(ctx, say, instance_id, alias, forced, seams, None)
+}
+
+/// [`push_with`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or
+/// `Some(project)` for another host, whose own stamp ([`stamp_path_for`]) is the only one the push
+/// reads and writes, its folder created if missing. Nothing else in the push changes (architect,
+/// 2026-11-20, for v0.07-T02).
+pub fn push_with_host(
+    ctx: &Context,
+    say: &dyn Say,
+    instance_id: &str,
+    alias: &str,
+    forced: bool,
+    seams: &Seams,
+    host: Option<&str>,
+) -> Outcome {
     let warn = |text: &str, outcome: Outcome| {
         say.warning(text);
         outcome
@@ -435,7 +470,7 @@ pub fn push_with(
     // the command line.
     let zone = check_zone((seams.zone)().as_deref());
     let computed = stamp(instance_id, &zone, &content);
-    let path = stamp_path(ctx);
+    let path = stamp_path_for(ctx, host);
     if !is_due(seams.files, &path, &computed, forced) {
         return Outcome::NotDue;
     }

@@ -59,9 +59,6 @@ pub trait InstanceIdCache {
     fn write(&self, bytes: &[u8]) -> Result<(), Failure>;
 }
 
-/// The stack's name (operator.md, The stack).
-const STACK: &str = "agentbox";
-
 /// The instance ID in a cache's bytes, or `None` for every case that MUST be treated as missing:
 /// empty, only whitespace, not UTF-8, not JSON, or not matching
 /// `schemas/state/instance-id.state.schema.json` (`{"version":0,"instance_id":"<id>"}` and no
@@ -102,20 +99,21 @@ pub fn cache_unreadable(path: &Path) -> Failure {
     }
 }
 
-/// The stack's `InstanceId` output: `cloudformation describe-stacks --stack-name agentbox`
-/// (JSON), and in `Stacks[0].Outputs` the element whose `OutputKey` is `InstanceId`, its
+/// The stack's `InstanceId` output: `cloudformation describe-stacks --stack-name <stack>`
+/// (JSON), `stack` being a host's stack name, `agentbox` for the box or
+/// `agentspace-host-<project>` for any other (operator.md, The stack; D44, D55), and in `Stacks[0].Outputs` the element whose `OutputKey` is `InstanceId`, its
 /// `OutputValue` (operator.md, Calls by command).
 ///
-/// No such element fails with `agentspace: Stack 'agentbox' has no InstanceId output.` So does a
+/// No such element fails with `agentspace: Stack '<stack>' has no InstanceId output.` So does a
 /// missing `Stacks[0]` or `Outputs`, and an `InstanceId` output whose value is not a string
 /// matching the cache's schema (the architect's ruling of 2026-11-19 for E0.06-T01-S03, in Calls
 /// by command): no cache is written that every later read would treat as missing. A failed call
 /// fails under AWS failures.
-pub fn instance_id_from_stack(aws: &dyn Aws) -> Result<String, Failure> {
+pub fn instance_id_from_stack(aws: &dyn Aws, stack: &str) -> Result<String, Failure> {
     let answer = aws.call(&Call {
         service: "cloudformation",
         operation: "describe-stacks",
-        args: &["--stack-name", STACK],
+        args: &["--stack-name", stack],
         output: Output::Json,
     })?;
     answer
@@ -131,23 +129,27 @@ pub fn instance_id_from_stack(aws: &dyn Aws) -> Result<String, Failure> {
         .filter(|id| is_instance_id(id))
         .map(str::to_string)
         .ok_or_else(|| Failure {
-            message: format!("agentspace: Stack '{STACK}' has no InstanceId output."),
+            message: format!("agentspace: Stack '{stack}' has no InstanceId output."),
             caller: CallerFailure::CouldNotReach,
         })
 }
 
 /// The instance ID (operator.md, up, step 1): from the cache, or, when it counts as missing, from
-/// the stack's output, writing the cache then. A cache that cannot be opened fails at once, with
-/// FA-16's message and no AWS call. A stack with no `InstanceId` output writes no cache.
+/// the output of `stack`, the host's stack, writing the cache then. A cache that cannot be opened
+/// fails at once, with FA-16's message and no AWS call. A stack with no `InstanceId` output writes no cache.
 ///
 /// A cache that cannot be written fails the command with the message [`InstanceIdCache::write`]
 /// gave, and a caller always sees "Could not reach the host" for it, whatever `caller` that
 /// failure named (operator.md, What a caller sees: "a cache that cannot be read or written").
-pub fn instance_id(aws: &dyn Aws, cache: &dyn InstanceIdCache) -> Result<String, Failure> {
+pub fn instance_id(
+    aws: &dyn Aws,
+    cache: &dyn InstanceIdCache,
+    stack: &str,
+) -> Result<String, Failure> {
     if let Some(id) = read_cache(cache.path(), cache.read())? {
         return Ok(id);
     }
-    let id = instance_id_from_stack(aws)?;
+    let id = instance_id_from_stack(aws, stack)?;
     cache.write(&cache_bytes(&id)).map_err(|failure| Failure {
         caller: CallerFailure::CouldNotReach,
         ..failure
@@ -308,7 +310,7 @@ mod tests {
     fn a_good_cache_makes_no_call() {
         let aws = stack_with(json!([]));
         let file = File(CacheRead::Bytes(cache_bytes(ID)), RefCell::new(Vec::new()));
-        assert_eq!(instance_id(&aws, &file).unwrap(), ID);
+        assert_eq!(instance_id(&aws, &file, "agentbox").unwrap(), ID);
         assert!(aws.1.borrow().is_empty());
         assert!(file.1.borrow().is_empty());
     }
@@ -327,7 +329,7 @@ mod tests {
                 {"OutputKey":"InstanceId","OutputValue":ID}
             ]));
             let file = File(read, RefCell::new(Vec::new()));
-            assert_eq!(instance_id(&aws, &file).unwrap(), ID);
+            assert_eq!(instance_id(&aws, &file, "agentbox").unwrap(), ID);
             assert_eq!(
                 *aws.1.borrow(),
                 vec!["cloudformation describe-stacks --stack-name agentbox"]
@@ -340,7 +342,7 @@ mod tests {
     fn an_unopenable_cache_fails_with_no_call() {
         let aws = stack_with(json!([{"OutputKey":"InstanceId","OutputValue":ID}]));
         let file = File(CacheRead::Unopenable, RefCell::new(Vec::new()));
-        let failure = instance_id(&aws, &file).unwrap_err();
+        let failure = instance_id(&aws, &file, "agentbox").unwrap_err();
         assert_eq!(
             failure,
             cache_unreadable(Path::new("/tmp/home/.agentspace/instance-id.json"))
@@ -363,7 +365,7 @@ mod tests {
         ] {
             let aws = Stack(Ok(answer), RefCell::new(Vec::new()));
             let file = File(CacheRead::Missing, RefCell::new(Vec::new()));
-            let failure = instance_id(&aws, &file).unwrap_err();
+            let failure = instance_id(&aws, &file, "agentbox").unwrap_err();
             assert_eq!(
                 failure.message,
                 "agentspace: Stack 'agentbox' has no InstanceId output."
@@ -382,7 +384,7 @@ mod tests {
             RefCell::new(Vec::new()),
         );
         let file = File(CacheRead::Missing, RefCell::new(Vec::new()));
-        let failure = instance_id(&aws, &file).unwrap_err();
+        let failure = instance_id(&aws, &file, "agentbox").unwrap_err();
         assert_eq!(
             failure.message,
             "agentspace: Stack with id agentbox does not exist"
@@ -391,7 +393,7 @@ mod tests {
         assert!(file.1.borrow().is_empty());
 
         let aws = Stack(Err(AwsError::SignIn), RefCell::new(Vec::new()));
-        let failure = instance_id(&aws, &file).unwrap_err();
+        let failure = instance_id(&aws, &file, "agentbox").unwrap_err();
         assert_eq!(failure.caller, CallerFailure::Same);
     }
 
@@ -414,7 +416,7 @@ mod tests {
         }
         let aws = stack_with(json!([{"OutputKey":"InstanceId","OutputValue":ID}]));
         assert_eq!(
-            instance_id(&aws, &Denied).unwrap_err().message,
+            instance_id(&aws, &Denied, "agentbox").unwrap_err().message,
             "agentspace: Cannot write x."
         );
     }
@@ -445,7 +447,7 @@ mod tests {
             CallerFailure::CouldNotReach,
         ] {
             let aws = stack_with(json!([{"OutputKey":"InstanceId","OutputValue":ID}]));
-            let failure = instance_id(&aws, &Wrong(caller)).unwrap_err();
+            let failure = instance_id(&aws, &Wrong(caller), "agentbox").unwrap_err();
             assert_eq!(
                 failure.message,
                 "agentspace: Cannot write the instance-ID cache x."

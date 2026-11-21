@@ -8,7 +8,7 @@
 
 use crate::{
     COULD_NOT_SEND, Context, FileRead, Files, Outcome, Say, Seams, SshResult, SshRun, Unprotect,
-    push_with, read_file,
+    push_with_host, read_file,
 };
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -260,6 +260,32 @@ pub fn push_using_with(
     lookup: Arc<Lookup>,
     configure: &dyn Fn(SystemSsh) -> SystemSsh,
 ) -> Outcome {
+    push_using_with_host(
+        ctx,
+        say,
+        instance_id,
+        alias,
+        forced,
+        lookup,
+        configure,
+        None,
+    )
+}
+
+/// [`push_using_with`] for one host: `host` is `None` for the box, or `Some(project)` for another
+/// host, which keeps its own stamp ([`crate::stamp_path_for`]) and never reads or writes the box's
+/// (architect, 2026-11-20, for v0.07-T02).
+#[allow(clippy::too_many_arguments)]
+pub fn push_using_with_host(
+    ctx: &Context,
+    say: &dyn Say,
+    instance_id: &str,
+    alias: &str,
+    forced: bool,
+    lookup: Arc<Lookup>,
+    configure: &dyn Fn(SystemSsh) -> SystemSsh,
+    host: Option<&str>,
+) -> Outcome {
     let ssh = configure(SystemSsh::with_lookup(ctx, Arc::clone(&lookup)));
     let zone = move || {
         let value = lookup(TIMEZONE_VAR).map(|v| v.to_string_lossy().into_owned());
@@ -271,7 +297,7 @@ pub fn push_using_with(
         ssh: &ssh,
         zone: &zone,
     };
-    push_with(ctx, say, instance_id, alias, forced, &seams)
+    push_with_host(ctx, say, instance_id, alias, forced, &seams, host)
 }
 
 /// One token push (operator.md, The token push), as `up` and `sync` run it. **It never fails a
@@ -286,9 +312,33 @@ pub fn push_using_with(
 /// when the push ends. A panic anywhere in the push, which it is not meant to have, becomes the
 /// "Could not send" warning rather than a failed command.
 pub fn push(ctx: &Context, say: &dyn Say, instance_id: &str, alias: &str, forced: bool) {
+    push_to_host(ctx, say, instance_id, alias, forced, None);
+}
+
+/// [`push`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or `Some(project)`
+/// for another host, whose own stamp ([`crate::stamp_path_for`]) is the only one the push reads and
+/// writes, its folder created if missing (architect, 2026-11-20, for v0.07-T02). It never fails a
+/// command either.
+pub fn push_to_host(
+    ctx: &Context,
+    say: &dyn Say,
+    instance_id: &str,
+    alias: &str,
+    forced: bool,
+    host: Option<&str>,
+) {
     let lookup: Arc<Lookup> = Arc::new(|name| std::env::var_os(name));
     let pushed = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        push_using(ctx, say, instance_id, alias, forced, lookup)
+        push_using_with_host(
+            ctx,
+            say,
+            instance_id,
+            alias,
+            forced,
+            lookup,
+            &|ssh| ssh,
+            host,
+        )
     }));
     if pushed.is_err() {
         let _ = std::panic::catch_unwind(AssertUnwindSafe(|| say.warning(COULD_NOT_SEND)));

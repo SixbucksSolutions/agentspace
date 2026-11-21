@@ -4,9 +4,11 @@
 //!
 //! One rig is one throwaway world: a home, a `LOCALAPPDATA` laid out as operator.md says, a folder
 //! of stand-ins, and a working folder, all under the temp folder. It points `USERPROFILE`, `HOME`,
-//! `LOCALAPPDATA` and `APPDATA` of the test process at them, sets the seam's variables, and takes a
-//! lock so that two tests of one file never share the process environment. A rig puts everything
-//! back when it drops.
+//! `LOCALAPPDATA` and `APPDATA` of the ssh stand-in at them, and holds the seam's variables. **A rig
+//! MUST NOT change its own process's environment** (#0137): it keeps its variables as values,
+//! hands them to the push through its look-up of the environment, and gives each to the stand-in
+//! through `Command::env` ([`Rig::push`]). It takes a lock so that two tests of one file never share
+//! the working folder, which it changes for the push's stand-in and puts back when it drops.
 //!
 //! **A test MUST NOT print a captured environment's values, nor the token.** Every helper here
 //! reports a mismatch by name or count.
@@ -18,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use agentspace_operator_api::{CallerLine, Context, Mode, Say};
@@ -221,7 +223,7 @@ pub const INSTANCE: &str = "i-00000000000000000";
 pub const DEFAULT_BASE: &str = "http://127.0.0.1:18811";
 pub const DEFAULT_ALIAS: &str = "conformance-push-alias";
 pub const DEFAULT_ZONE: &str = "America/New_York";
-/// Planted in the test process's environment, so that every stand-in could inherit them.
+/// Planted in the environment the stand-in is started with, so that the push has to remove them.
 pub const PLANTED_FD_STATE: [&str; 2] = [
     "0F1E2D3C_4B5A_6978_8796_A5B4C3D2E1F0_POSIX_FD_STATE",
     "lower_case_posix_fd_state",
@@ -246,7 +248,8 @@ pub fn dummy_token() -> String {
 pub struct Rig {
     _guard: MutexGuard<'static, ()>,
     saved_cwd: PathBuf,
-    saved_env: Vec<(String, Option<OsString>)>,
+    /// The variables of this rig's world, by name: a value, or `None` for one that is removed.
+    env: Vec<(String, Option<OsString>)>,
     owned: Vec<Child>,
     _root: tempfile::TempDir,
     pub home: PathBuf,
@@ -284,7 +287,7 @@ impl Rig {
         let mut rig = Rig {
             _guard: guard,
             saved_cwd: std::env::current_dir().expect("the working folder"),
-            saved_env: Vec::new(),
+            env: Vec::new(),
             owned: Vec::new(),
             _root: root,
             home,
@@ -323,19 +326,14 @@ impl Rig {
 
     // ---- the environment ----
 
-    /// Sets (or, for `None`, removes) a variable of the test process, to be put back on drop.
+    /// Sets (or, for `None`, removes) a variable of this rig's world. The test process's own
+    /// environment is never touched: the push reads the value through its look-up, and the
+    /// stand-in is started with it.
     pub fn set_env(&mut self, name: &str, value: Option<&std::ffi::OsStr>) {
-        if !self.saved_env.iter().any(|(n, _)| n == name) {
-            self.saved_env
-                .push((name.to_string(), std::env::var_os(name)));
-        }
-        // SAFETY: every test of a file holds the rig's lock for its whole run, so no other test
-        // thread reads or writes the environment while this runs.
-        unsafe {
-            match value {
-                Some(v) => std::env::set_var(name, v),
-                None => std::env::remove_var(name),
-            }
+        let value = value.map(OsString::from);
+        match self.env.iter_mut().find(|(n, _)| n == name) {
+            Some(entry) => entry.1 = value,
+            None => self.env.push((name.to_string(), value)),
         }
     }
 
@@ -527,11 +525,49 @@ impl Rig {
         }
     }
 
-    /// Runs the push and gives how long it took.
+    /// Runs the push for the box and gives how long it took.
     pub fn push(&self, say: &FakeSay, alias: &str, forced: bool) -> Duration {
+        self.push_for(say, alias, forced, None)
+    }
+
+    /// Runs the push for `host` (`None` is the box) and gives how long it took. The push's look-up
+    /// of the environment answers from this rig's variables, and the stand-in is started with
+    /// them and in the rig's working folder, so the test process's environment is never read or
+    /// changed.
+    pub fn push_for(
+        &self,
+        say: &FakeSay,
+        alias: &str,
+        forced: bool,
+        host: Option<&str>,
+    ) -> Duration {
         let ctx = self.context();
+        let (own, child_env, work) = (self.env.clone(), self.env.clone(), self.work.clone());
+        let lookup: Arc<agentspace_push::Lookup> = Arc::new(move |name| {
+            own.iter()
+                .find(|(n, _)| n == name)
+                .and_then(|(_, v)| v.clone())
+        });
+        let setup = move |cmd: &mut Command| {
+            cmd.current_dir(&work);
+            for (name, value) in &child_env {
+                match value {
+                    Some(v) => cmd.env(name, v),
+                    None => cmd.env_remove(name),
+                };
+            }
+        };
         let started = Instant::now();
-        agentspace_push::push(&ctx, say, INSTANCE, alias, forced);
+        agentspace_push::push_using_with_host(
+            &ctx,
+            say,
+            INSTANCE,
+            alias,
+            forced,
+            lookup,
+            &|ssh| ssh.with_command_setup(setup.clone()),
+            host,
+        );
         started.elapsed()
     }
 
@@ -638,15 +674,6 @@ impl Drop for Rig {
             let _ = child.wait();
         }
         let _ = std::env::set_current_dir(&self.saved_cwd);
-        for (name, value) in self.saved_env.iter().rev() {
-            // SAFETY: the rig's lock is still held (`_guard` drops after this).
-            unsafe {
-                match value {
-                    Some(v) => std::env::set_var(name, v),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
     }
 }
 

@@ -73,8 +73,14 @@ pub mod api {
 
     /// The rebuild from `cloudformation describe-stacks`: the ID, and the exact bytes of the cache
     /// to write (T03 writes them). A failure gives no bytes, so no cache is written.
+    /// The box's stack, `agentbox`.
     pub fn rebuild_cache(aws: &FakeAws) -> Result<(String, Vec<u8>), Failure> {
-        agentspace_box::instance_id_from_stack(aws).map(|id| {
+        rebuild_cache_for(aws, "agentbox")
+    }
+
+    /// The same rebuild from the stack named `stack`, a host's.
+    pub fn rebuild_cache_for(aws: &FakeAws, stack: &str) -> Result<(String, Vec<u8>), Failure> {
+        agentspace_box::instance_id_from_stack(aws, stack).map(|id| {
             let bytes = agentspace_box::cache_bytes(&id);
             (id, bytes)
         })
@@ -116,8 +122,14 @@ pub mod api {
 
     /// `up`'s steps 1 and 2 (operator.md, up): the instance ID from the cache, or from the stack
     /// when the cache counts as missing, writing the cache then; then the start-and-wait step.
+    /// The box's, whose stack is `agentbox`.
     pub fn up(sim: &Sim, cache: &FakeCache) -> Result<String, Failure> {
-        agentspace_box::start_and_wait(&sim.aws, &sim.say, &*sim.clock, cache)
+        up_for(sim, cache, "agentbox")
+    }
+
+    /// The same two steps for the host whose stack is `stack`.
+    pub fn up_for(sim: &Sim, cache: &FakeCache, stack: &str) -> Result<String, Failure> {
+        agentspace_box::start_and_wait(&sim.aws, &sim.say, &*sim.clock, cache, stack)
     }
 }
 
