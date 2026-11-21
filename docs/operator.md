@@ -1287,6 +1287,12 @@ The steps:
      `agentspace: <path> is not agentspace's alias for '<project>'; it was left as it is.` So is
      anything there that is not a file, a link included, as for a lease's alias file.
    - **A file that cannot be written** fails with `agentspace: Cannot write <path>.`
+   - **An `Include` line that cannot be added** fails by the kind of the failure
+     (agentspace-alias's `AliasFailureKind`), with
+     `<config>` the ssh folder's `config` file's full path: a `Config` failure, a configuration a
+     person has to fix, with `agentspace: <config> cannot take agentspace's Include line: <why>.`,
+     `<why>` being agentspace-alias's reason, and an `Io` failure with
+     `agentspace: Cannot write <config>.` (architect, 2026-11-21, for v0.07-T03, on #0152's review).
 
 Each of these messages is confirmed by the architect, 2026-11-20, for v0.07-T01.
 
@@ -2051,7 +2057,7 @@ file's bytes and access rules are [state.md, A host's folder](state.md#a-hosts-f
 never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
 
 ```
-<time> <step> <outcome>[ reason=<reason>]
+<time> <step> <outcome>[ placed=<n>][ lease=<id>][ reason=<reason>]
 ```
 
 - **`<time>`** is the time the line is written, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`, the form of the
@@ -2065,6 +2071,12 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
   failure message without its `agentspace: ` prefix, with each control character in it written as
   `?`. It MUST NOT hold the token or any text of the Bot credential ([Secrecy](#secrecy)), which no
   failure message holds.
+- **Step 9, `place`, logs what `place_pending` did** (architect, 2026-11-21, for v0.07-T03): when
+  the call succeeds, `place done placed=<n>`, `<n>` the number of leases it placed, then one
+  `place failed lease=<id> reason=<message>` for each lease it left `pending`, in the order it
+  tried them, `<id>` the lease's normalized ID. When the call fails as a whole, one
+  `place failed reason=<message>`, with the warning above. `placed` and `lease` appear on `place`
+  lines alone.
 - **Every line of the log is written by the run itself, and is one of its own lines**
   ([state.md, The provisioning run's log](state.md#the-provisioning-runs-log)). No other program
   writes to the log. **A step that fails logs its whole failure message as the line's `reason`**,

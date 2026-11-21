@@ -31,6 +31,10 @@ const MAX_NAME: usize = 255;
 /// The stack parameter `deploy` sets itself, from `%USERPROFILE%\.ssh\id_ed25519.pub`, which the
 /// file MUST NOT name (operator.md, deploy, step 2).
 const DEPLOYS_OWN_PARAMETER: &str = "SshPublicKey";
+/// The stack parameters `deploy` sets itself for a host that is not the box, which the file MUST
+/// NOT name either: on the box either would change the `agentbox` stack's names or its first
+/// boot, whose change set MUST stay empty (operator.md, deploy, step 2; D44).
+const DEPLOYS_OWN_FOR_A_HOST: [&str; 2] = ["HostName", "CaPublicKey"];
 
 /// Reads and checks the file at `path`, returning its parameters as `(name, value)` in the file's
 /// order.
@@ -94,6 +98,17 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
     // of its rules, so this refuses only what they missed.
     if !schema_accepts(&value) {
         return Err("it does not match its schema".to_string());
+    }
+    // operator.md's own check, made after the schema, which does not forbid them (architect,
+    // 2026-11-20, for v0.07-T01).
+    if let Some((name, _)) = out
+        .iter()
+        .find(|(name, _)| DEPLOYS_OWN_FOR_A_HOST.contains(&name.as_str()))
+    {
+        // Architect's to confirm: the reason's wording.
+        return Err(format!(
+            "it names the parameter {name}, which deploy sets itself for a host that is not the box"
+        ));
     }
     Ok(out)
 }
@@ -423,6 +438,24 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    /// `deploy` sets `HostName` and `CaPublicKey` itself for a host, and on the box either would
+    /// change its change set, so a file that names either is refused.
+    #[test]
+    fn a_file_that_names_host_name_or_ca_public_key_is_refused() {
+        for name in ["HostName", "CaPublicKey"] {
+            let text = format!(r#"{{"version":0,"parameters":{{"VpcId":"v","{name}":"x"}}}}"#);
+            assert_eq!(
+                reason(&text),
+                format!(
+                    "it names the parameter {name}, which deploy sets itself for a host that is not the box"
+                )
+            );
+        }
+        assert!(
+            parse(br#"{"version":0,"parameters":{"Hostname":"x","CaPublicKeys":"y"}}"#).is_ok()
         );
     }
 

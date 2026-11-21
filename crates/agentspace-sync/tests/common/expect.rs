@@ -57,13 +57,13 @@ pub fn timeline_of(log: &Log, extra_keep: impl Fn(&str) -> bool) -> Vec<String> 
     })
 }
 
-fn is_ssh(r: &Rec, rig: &Rig, what: &str) -> String {
+fn is_ssh(r: &Rec, rig: &Rig, what: &str, alias: &str) -> String {
     rig.check(
         r.args.len() == 4
             && r.args[0] == "-o"
             && r.args[1] == "ClearAllForwardings=yes"
-            && r.args[2] == "agentspace",
-        &format!("{what}: an ssh MUST be `-o ClearAllForwardings=yes agentspace <remote command>`, the command one argument and the last, with no other option"),
+            && r.args[2] == alias,
+        &format!("{what}: an ssh MUST be `-o ClearAllForwardings=yes {alias} <remote command>`, the command one argument and the last, with no other option"),
     );
     let cmd = r.args[3].clone();
     rig.check(
@@ -77,8 +77,65 @@ fn is_ssh(r: &Rec, rig: &Rig, what: &str) -> String {
     cmd
 }
 
-/// Checks the ssh, scp and go calls of a finished `sync` and what they saw.
+/// Where `sync` writes what it sends (operator.md, The operator's folder, one per command).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Folder {
+    /// v0.06's fixed folder, `%USERPROFILE%\.agentspace\operator`.
+    Fixed,
+    /// The command's own folder, `%USERPROFILE%\.agentspace\operator\<hex>`, 32 lowercase hex
+    /// digits.
+    PerCommand,
+    /// Either of them.
+    Either,
+}
+
+/// The command's own folder's `<hex>` in a path, when the path is `...\operator\<hex>\...`.
+pub fn command_folder_of(path: &str) -> Option<String> {
+    let p = path.replace('/', "\\");
+    let at = p.to_ascii_lowercase().find("\\operator\\")? + "\\operator\\".len();
+    let hex = p.get(at..at + 32)?;
+    let after = p.get(at + 32..at + 33);
+    (hex.bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && after == Some("\\"))
+    .then(|| hex.to_string())
+}
+
+/// The path with the command's own folder's `<hex>` taken out, as the fixed folder's path reads.
+/// With `Folder::PerCommand` a path that has none is returned as a marker that no path matches.
+pub fn resolve(rig: &Rig, path: &str, folder: Folder, what: &str) -> String {
+    match (command_folder_of(path), folder) {
+        (Some(hex), Folder::PerCommand | Folder::Either) => {
+            path.replace('/', "\\").replace(&format!("\\{hex}"), "")
+        }
+        (None, Folder::PerCommand) => {
+            rig.check(
+                false,
+                &format!("{what}: the path MUST be in the command's own folder `operator\\<hex>\\`, and it is `{path}`"),
+            );
+            unreachable!()
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// Checks the ssh, scp and go calls of a finished `sync` over `agentspace`, and what they saw. What
+/// it sends is in the command's own folder, as operator.md, The operator's folder, one per command,
+/// says of every command, the box's included (v0.07).
 pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
+    check_calls_with(rig, log, claude, built, "agentspace", Folder::PerCommand);
+}
+
+/// Checks the ssh, scp and go calls of a finished `sync` over the SSH host alias `alias`, and what
+/// they saw, with what it sends written in `folder`.
+pub fn check_calls_with(
+    rig: &Rig,
+    log: &Log,
+    claude: bool,
+    built: bool,
+    alias: &str,
+    folder: Folder,
+) {
     let home = rig.home.clone();
     let ca_pub = home
         .join(".agentspace")
@@ -100,7 +157,7 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
     );
 
     // ssh 1: remove the staging folder.
-    let c1 = is_ssh(ssh[0], rig, "Call 1");
+    let c1 = is_ssh(ssh[0], rig, "Call 1", alias);
     rig.check(
         c1.contains(STAGING) && c1.contains("rm"),
         "Call 1 MUST remove the staging folder /tmp/agentspace-system",
@@ -113,10 +170,11 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
             && s1.args[1] == "ClearAllForwardings=yes"
             && s1.args[2] == "-q"
             && s1.args[3] == "-r"
-            && s1.args[5] == format!("agentspace:{STAGING}"),
-        "Call 2 MUST be `scp -o ClearAllForwardings=yes -q -r <system folder> agentspace:/tmp/agentspace-system`",
+            && s1.args[5] == format!("{alias}:{STAGING}"),
+        &format!("Call 2 MUST be `scp -o ClearAllForwardings=yes -q -r <system folder> {alias}:/tmp/agentspace-system`"),
     );
-    rig.same_path("Call 2's source", &s1.args[4], &operator.join("system"));
+    let source = resolve(rig, &s1.args[4], folder, "Call 2's source");
+    rig.same_path("Call 2's source", &source, &operator.join("system"));
     // scp 2: the CA's public key.
     let s2 = scp[1];
     rig.check(
@@ -124,12 +182,12 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
             && s2.args[0] == "-o"
             && s2.args[1] == "ClearAllForwardings=yes"
             && s2.args[2] == "-q"
-            && s2.args[4] == format!("agentspace:{STAGING}/agentspace_ca.pub"),
-        "Call 3 MUST be `scp -o ClearAllForwardings=yes -q <ca pub> agentspace:/tmp/agentspace-system/agentspace_ca.pub`",
+            && s2.args[4] == format!("{alias}:{STAGING}/agentspace_ca.pub"),
+        &format!("Call 3 MUST be `scp -o ClearAllForwardings=yes -q <ca pub> {alias}:/tmp/agentspace-system/agentspace_ca.pub`"),
     );
     rig.same_path("Call 3's source", &s2.args[3], &ca_pub);
     // ssh 2: the install, as root, removing the staging folder only after it.
-    let c4 = is_ssh(ssh[1], rig, "Call 4");
+    let c4 = is_ssh(ssh[1], rig, "Call 4", alias);
     let at_install = c4.find("install.sh");
     let at_rm = c4.rfind("rm");
     rig.check(
@@ -144,7 +202,7 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
     let mut next_ssh = 2;
     let mut next_scp = 2;
     if claude {
-        let c5 = is_ssh(ssh[next_ssh], rig, "Call 5");
+        let c5 = is_ssh(ssh[next_ssh], rig, "Call 5", alias);
         rig.check(
             c5.contains(".claude")
                 && c5.contains("mkdir")
@@ -158,8 +216,8 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
                 && s.args[0] == "-o"
                 && s.args[1] == "ClearAllForwardings=yes"
                 && s.args[2] == "-q"
-                && s.args[4] == "agentspace:.claude/CLAUDE.md",
-            "Call 6 MUST be `scp -o ClearAllForwardings=yes -q <CLAUDE.md> agentspace:.claude/CLAUDE.md`",
+                && s.args[4] == format!("{alias}:.claude/CLAUDE.md"),
+            &format!("Call 6 MUST be `scp -o ClearAllForwardings=yes -q <CLAUDE.md> {alias}:.claude/CLAUDE.md`"),
         );
         rig.same_path(
             "Call 6's source",
@@ -183,12 +241,13 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
                 && s.args[0] == "-o"
                 && s.args[1] == "ClearAllForwardings=yes"
                 && s.args[2] == "-q"
-                && s.args[4] == "agentspace:/tmp/localswim",
-            "Call 7 MUST be `scp -o ClearAllForwardings=yes -q <built CLI> agentspace:/tmp/localswim`",
+                && s.args[4] == format!("{alias}:/tmp/localswim"),
+            &format!("Call 7 MUST be `scp -o ClearAllForwardings=yes -q <built CLI> {alias}:/tmp/localswim`"),
         );
+        let source = resolve(rig, &s.args[3], folder, "Call 7's source");
         rig.same_path(
             "Call 7's source",
-            &s.args[3],
+            &source,
             &operator.join("localswim-linux-arm64"),
         );
         let snap = log.file_snap("scp", (next_scp + 1) as u32);
@@ -197,7 +256,7 @@ pub fn check_calls(rig: &Rig, log: &Log, claude: bool, built: bool) {
             snap.len() == 1 && snap[0].2 == fnv(built_bytes),
             "Call 7 MUST copy the file the build wrote",
         );
-        let c8 = is_ssh(ssh[next_ssh], rig, "Call 8");
+        let c8 = is_ssh(ssh[next_ssh], rig, "Call 8", alias);
         rig.check(
             c8.contains("/usr/local/lib/localswim/localswim")
                 && c8.contains("/tmp/localswim")

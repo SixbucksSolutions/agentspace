@@ -405,9 +405,11 @@ fn an_operator_folder_that_cannot_be_written_fails_before_anything_is_copied() {
 }
 
 #[test]
-fn a_system_folder_that_cannot_be_replaced_fails_before_the_copy() {
-    // A file inside the old system folder is held open without sharing, so the folder cannot be
-    // removed (operator.md: sync removes whatever that folder held before it writes the files).
+fn a_v0_06_system_folder_that_is_held_open_does_not_stop_a_sync_that_writes_its_own_folder() {
+    // Until v0.07 sync removed whatever the operator's `system` folder held before it wrote the
+    // files, and a file held open there failed it. From v0.07 each command writes into a folder of
+    // its own, and what a v0.06 operator left is left alone (operator.md, The operator's folder,
+    // one per command), so the same held file changes nothing.
     let rig = Rig::new(false);
     rig.make_ca();
     rig.write_home(".agentspace/operator/system/held.txt", b"held");
@@ -425,18 +427,14 @@ fn a_system_folder_that_cannot_be_replaced_fails_before_the_copy() {
             )
             .unwrap();
         let say = rig.say();
-        let f = rig.failure(rig.do_sync(&say), "sync");
+        let result = rig.do_sync(&say);
         drop(held);
+        rig.succeeded(result, "sync");
+        let log = rig.log();
         rig.check(
-            f.message.starts_with("agentspace: Cannot write ") && f.message.ends_with('.'),
-            &format!(
-                "The failure MUST be `agentspace: Cannot write <path>.`; it was `{}`",
-                f.message
-            ),
-        );
-        rig.check(
-            rig.log().calls("scp").is_empty(),
-            "Nothing may be copied from a folder that could not be replaced",
+            log.calls("scp").len() == 2
+                && common::expect::command_folder_of(&log.calls("scp")[0].args[4]).is_some(),
+            "sync MUST copy box/system from the command's own folder",
         );
     });
 }

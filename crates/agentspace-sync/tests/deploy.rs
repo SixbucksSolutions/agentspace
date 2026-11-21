@@ -1,5 +1,5 @@
 //! `deploy` (docs/operator.md, deploy steps 1 to 6; AWS failures; Calls by command, The stack,
-//! the instance-ID cache in Laptop files; docs/state.md, Files in the checkout, the stack
+//! the host registry in Laptop files and The operator's folder, one per command; docs/state.md, Files in the checkout, the stack
 //! parameters file).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. Each test runs `deploy` in a child of the
@@ -21,11 +21,29 @@ fn template_path(rig: &Rig) -> PathBuf {
         .join("agentspace.yaml")
 }
 
-fn cache_path(rig: &Rig) -> PathBuf {
-    rig.home.join(".agentspace").join("instance-id.json")
-}
-
+/// The AWS CLI's `cloudformation deploy` arguments for the box. From v0.07 the template is in the
+/// command's own folder, `operator\<hex>\agentspace.yaml`, whose `<hex>` only the call knows, so
+/// this reads the template's path from the deploy call the stand-in logged, checks that it is
+/// there, and expects it in that place (operator.md, Calls by command; The operator's folder, one
+/// per command).
 fn deploy_args(rig: &Rig, params: &[&str]) -> Vec<String> {
+    let log = rig.log();
+    let actual: Vec<String> = log
+        .calls("aws")
+        .into_iter()
+        .find(|c| c.args.get(1).map(String::as_str) == Some("deploy"))
+        .map(|c| c.args.clone())
+        .unwrap_or_default();
+    let template = match actual.iter().position(|a| a == "--template-file") {
+        Some(i) if i + 1 < actual.len() => actual[i + 1].clone(),
+        _ => String::new(),
+    };
+    let in_place = resolve(rig, &template, Folder::PerCommand, "The template file");
+    rig.same_path(
+        "The template file named to the AWS CLI",
+        &in_place,
+        &template_path(rig),
+    );
     let mut v = svec(&[
         "cloudformation",
         "deploy",
@@ -35,7 +53,7 @@ fn deploy_args(rig: &Rig, params: &[&str]) -> Vec<String> {
         "agentbox",
         "--template-file",
     ]);
-    v.push(template_path(rig).to_string_lossy().into_owned());
+    v.push(template);
     v.extend(svec(&[
         "--capabilities",
         "CAPABILITY_IAM",
@@ -102,7 +120,7 @@ fn deploy_makes_its_calls_in_order_and_runs_sync_last() {
                     "agentbox",
                 ]),
             );
-            // sync starts the box named by the new stack output, not by the old cache.
+            // sync starts the box named by the new stack output, not by the old one the record held.
             rig.same_list("The first call of sync's start-and-wait", &aws[2].args, &describe_instances_args(ID2));
 
             // The template is written before the call that reads it, and is the repository's.
@@ -112,13 +130,21 @@ fn deploy_makes_its_calls_in_order_and_runs_sync_last() {
                 snap.len() == 1 && snap[0].1 == want.len() as u64 && snap[0].2 == fnv(&want),
                 "The template file MUST exist, byte for byte the repository's infra/agentspace.yaml, when the deploy call starts",
             );
-            rig.same_path("The template file named to the AWS CLI", &snap[0].0, &template_path(rig));
+            let in_place = resolve(rig, &snap[0].0, Folder::PerCommand, "The template file");
+            rig.same_path("The template file named to the AWS CLI", &in_place, &template_path(rig));
 
-            // The cache: the new ID, as compact JSON, UTF-8, no byte order mark, no line ending.
-            let cache = fs::read(cache_path(rig)).unwrap();
+            // The registry: the box's record holds the new ID, and nothing else of it changed. The
+            // retired cache is neither read nor written (operator.md, Laptop files).
+            let record = rig.record("swimcoach");
             rig.check(
-                cache == format!("{{\"version\":0,\"instance_id\":\"{ID2}\"}}").as_bytes(),
-                "The instance-ID cache MUST hold the new ID as compact JSON with no line ending",
+                record.instance_id.as_deref() == Some(ID2)
+                    && record.state.as_str() == "ready"
+                    && record.last_attempt_at.is_none(),
+                "The box's record MUST hold the new instance ID, and deploy MUST change nothing else in it",
+            );
+            rig.check(
+                !rig.home_path(".agentspace/instance-id.json").exists(),
+                "No v0.07 program writes the retired instance-ID cache",
             );
 
             // The messages, and where they stand among the calls.
@@ -192,7 +218,10 @@ fn deploy_accepts_a_byte_order_mark_and_json_whitespace_in_the_parameters_file()
 }
 
 #[test]
-fn deploy_replaces_a_stale_template_and_an_old_cache() {
+fn deploy_sends_its_own_template_and_leaves_what_a_v0_06_operator_wrote_alone() {
+    // The template a v0.06 operator left in the operator's folder is never sent: each command writes
+    // its own, the embedded one, in a folder of its own (operator.md, The operator's folder, one per
+    // command: what a v0.06 operator wrote is left).
     let rig = Rig::new(false);
     rig.make_ca();
     rig.with_deploy_inputs();
@@ -207,7 +236,11 @@ fn deploy_replaces_a_stale_template_and_an_old_cache() {
         let snap = rig.log().file_snap("aws", 1);
         rig.check(
             snap.len() == 1 && snap[0].2 == fnv(&want),
-            "A template in the operator's folder MUST be replaced by the embedded one at each deploy",
+            "The template sent MUST be the embedded one at each deploy, whatever a v0.06 operator left",
+        );
+        rig.check(
+            fs::read(template_path(rig)).unwrap() == b"a template somebody edited by hand",
+            "What a v0.06 operator left in the operator's folder MUST be left alone",
         );
     });
 }
@@ -427,15 +460,18 @@ fn step_2_a_template_that_cannot_be_written_fails_before_aws_is_called() {
     let rig = Rig::new(false);
     rig.make_ca();
     rig.with_deploy_inputs();
-    // A folder where the template has to be.
-    rig.mkdir_home(".agentspace/operator/agentspace.yaml");
+    // A file where the operator's folder has to be: the first folder that cannot be made is named
+    // itself, never one below it, and nor is a command's own folder (operator.md, What the
+    // prototype took from its checkout, FA-16).
+    rig.write_home(".agentspace/operator", b"a file where a folder belongs");
     rig.run(|rig| {
         let say = rig.say();
         let f = rig.failure(rig.do_deploy(&say), "deploy");
+        let operator = rig.home.join(".agentspace").join("operator");
         rig.same(
             "The failure message",
             &f.message,
-            &format!("agentspace: Cannot write {}.", template_path(rig).display()),
+            &format!("agentspace: Cannot write {}.", operator.display()),
         );
         nothing_started(rig, "An unwritable template");
     });
@@ -548,9 +584,8 @@ fn the_pinned_deploy_is_that_deploy_when_no_go_is_on_path() {
             &describe_instances_args(ID2),
         );
         rig.check(
-            fs::read(cache_path(rig)).unwrap()
-                == format!("{{\"version\":0,\"instance_id\":\"{ID2}\"}}").as_bytes(),
-            "The instance-ID cache MUST hold the new ID",
+            rig.record("swimcoach").instance_id.as_deref() == Some(ID2),
+            "The box's record MUST hold the new ID",
         );
         rig.same_list(
             "Its sync's messages and calls",
@@ -565,7 +600,7 @@ fn the_pinned_deploy_is_that_deploy_when_no_go_is_on_path() {
 // ---------------------------------------------------------------- Step 5: the instance ID
 
 #[test]
-fn step_5_a_stack_with_no_instance_id_output_fails_and_writes_no_cache() {
+fn step_5_a_stack_with_no_instance_id_output_fails_and_leaves_the_record_with_none() {
     let rig = Rig::new(false);
     rig.make_ca();
     rig.with_deploy_inputs();
@@ -586,8 +621,8 @@ fn step_5_a_stack_with_no_instance_id_output_fails_and_writes_no_cache() {
             "agentspace: Stack 'agentbox' has no InstanceId output.",
         );
         rig.check(
-            !cache_path(rig).exists(),
-            "No cache may be written, and the old one MUST be gone (it is deleted first)",
+            rig.record("swimcoach").instance_id.is_none(),
+            "No instance ID may be written, and the old one MUST be gone (it is removed first)",
         );
         rig.check(
             rig.log().remote_calls().is_empty() && rig.log().calls("aws").len() == 2,
@@ -597,7 +632,7 @@ fn step_5_a_stack_with_no_instance_id_output_fails_and_writes_no_cache() {
 }
 
 #[test]
-fn step_5_a_failed_read_of_the_stack_fails_and_leaves_no_cache() {
+fn step_5_a_failed_read_of_the_stack_fails_and_leaves_the_record_with_none() {
     let rig = Rig::new(false);
     rig.make_ca();
     rig.with_deploy_inputs();
@@ -618,8 +653,8 @@ fn step_5_a_failed_read_of_the_stack_fails_and_leaves_no_cache() {
             "agentspace: describe failed stand-in line",
         );
         rig.check(
-            !cache_path(rig).exists(),
-            "If the read fails, deploy fails with no cache on the laptop",
+            rig.record("swimcoach").instance_id.is_none(),
+            "If the read fails, deploy fails with no instance ID in the record",
         );
     });
 }
@@ -627,7 +662,7 @@ fn step_5_a_failed_read_of_the_stack_fails_and_leaves_no_cache() {
 // ---------------------------------------------------------------- Step 6: sync
 
 #[test]
-fn step_6_deploy_fails_when_its_sync_fails_and_the_cache_stays() {
+fn step_6_deploy_fails_when_its_sync_fails_and_the_instance_id_stays_in_the_record() {
     let rig = Rig::new(false);
     rig.make_ca();
     rig.with_deploy_inputs();
@@ -641,9 +676,8 @@ fn step_6_deploy_fails_when_its_sync_fails_and_the_cache_stays() {
             "agentspace: Removing the old staging folder on the instance failed.",
         );
         rig.check(
-            fs::read(cache_path(rig)).unwrap()
-                == format!("{{\"version\":0,\"instance_id\":\"{ID2}\"}}").as_bytes(),
-            "The stack was deployed, so its cache stays",
+            rig.record("swimcoach").instance_id.as_deref() == Some(ID2),
+            "The stack was deployed, so its instance ID stays in the record",
         );
     });
 }

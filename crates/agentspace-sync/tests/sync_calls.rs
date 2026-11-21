@@ -174,11 +174,19 @@ fn sync_builds_the_localswim_cli_exactly_as_fb14_gives_it() {
         let log = rig.log();
         let go = log.calls("go");
         rig.check(go.len() == 1, "sync MUST run go once");
+        // From v0.07 the build's output is in the command's own folder (operator.md, The operator's
+        // folder, one per command).
         let out = rig
             .home
             .join(".agentspace")
             .join("operator")
             .join("localswim-linux-arm64");
+        let built_in = resolve(
+            rig,
+            &go[0].args[3],
+            Folder::PerCommand,
+            "The build's output file",
+        );
         rig.check(
             go[0].args.len() == 5
                 && go[0].args[0] == "build"
@@ -187,7 +195,7 @@ fn sync_builds_the_localswim_cli_exactly_as_fb14_gives_it() {
                 && go[0].args[4] == "./cmd/localswim",
             "The build MUST be exactly `go build -trimpath -o <out> ./cmd/localswim`, with no other flag",
         );
-        rig.same_path("The build's output file", &go[0].args[3], &out);
+        rig.same_path("The build's output file", &built_in, &out);
         rig.same_folder(
             "The folder the build runs in, the localswim checkout",
             &go[0].cwd,
@@ -363,7 +371,9 @@ fn sync_with_a_quiet_say_prints_nothing_of_its_own() {
 fn the_box_system_folder_sync_copies_is_byte_identical_to_the_repositorys() {
     let rig = Rig::new(false);
     rig.make_ca();
-    // Whatever the operator's folder held MUST be gone: a stale file, and a stale folder.
+    // What a v0.06 operator left in the operator's folder is left alone, and never reaches the
+    // copy: the command writes into a folder of its own (operator.md, The operator's folder, one
+    // per command: "Anything else there ... is left").
     rig.write_home(".agentspace/operator/system/stale-file.txt", b"old");
     rig.write_home(
         ".agentspace/operator/system/stale-dir/deeper/old.sh",
@@ -376,10 +386,18 @@ fn the_box_system_folder_sync_copies_is_byte_identical_to_the_repositorys() {
         let (arg, entries) = log
             .dir_snap("scp", 1)
             .expect("The first scp MUST copy a folder that exists when it starts");
+        let source = resolve(rig, &arg, Folder::PerCommand, "The folder the first scp copies");
         rig.same_path(
             "The folder the first scp copies",
-            &arg,
+            &source,
             &rig.home.join(".agentspace").join("operator").join("system"),
+        );
+        rig.check(
+            rig.home_path(".agentspace/operator/system/stale-file.txt").is_file()
+                && rig
+                    .home_path(".agentspace/operator/system/stale-dir/deeper/old.sh")
+                    .is_file(),
+            "What a v0.06 operator left in the operator's folder MUST be left alone",
         );
         let want = listing(&repo_root().join("box").join("system"));
         rig.check(!want.is_empty(), "The repository's box/system is empty here");

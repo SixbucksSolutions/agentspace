@@ -54,9 +54,21 @@ fn main() {
     let mut rules: Vec<Vec<String>> = Vec::new();
     let mut confirm = String::new();
     let mut stdin_file = String::new();
+    let mut stdin_dir = String::new();
+    let mut watches: Vec<String> = Vec::new();
+    let mut probes: Vec<String> = Vec::new();
+    let mut readonly: Vec<Vec<String>> = Vec::new();
     for line in cfg.lines() {
-        if let Some(v) = line.strip_prefix("log=") {
+        if let Some(v) = line.strip_prefix("readonly=") {
+            readonly.push(v.split(US).map(|s| s.to_string()).collect());
+        } else if let Some(v) = line.strip_prefix("log=") {
             log = v.to_string();
+        } else if let Some(v) = line.strip_prefix("watch=") {
+            watches.push(v.to_string());
+        } else if let Some(v) = line.strip_prefix("probe=") {
+            probes.push(v.to_string());
+        } else if let Some(v) = line.strip_prefix("stdin_dir=") {
+            stdin_dir = v.to_string();
         } else if let Some(v) = line.strip_prefix("rule=") {
             rules.push(v.split(US).map(|s| s.to_string()).collect());
         } else if let Some(v) = line.strip_prefix("confirm=") {
@@ -100,6 +112,32 @@ fn main() {
     rec.extend(args.iter().cloned());
     append(&log, &(rec.join(&US.to_string()) + "\n"));
 
+    // The content of each watched file as it is when this program is called, so a test sees what a
+    // record said at each call. A file that cannot be read is `<missing>`.
+    for w in &watches {
+        let content = match fs::read(w) {
+            Ok(b) => String::from_utf8_lossy(&b)
+                .replace('\r', "\\r")
+                .replace('\n', "\\n"),
+            Err(_) => "<missing>".to_string(),
+        };
+        append(&log, &format!("WATCH{US}{stem}{US}{n}{US}{w}{US}{content}\n"));
+    }
+    // Whether each probed lock file is held by another handle: opening it for reading and writing
+    // with the default sharing fails while a holder has it open with no sharing.
+    for p in &probes {
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(p)
+            .is_err()
+            && Path::new(p).exists();
+        append(
+            &log,
+            &format!("PROBE{US}{stem}{US}{n}{US}{p}{US}{}\n", if held { "held" } else { "free" }),
+        );
+    }
+
     for a in &args {
         let p = Path::new(a);
         if p.is_absolute() && p.exists() {
@@ -130,10 +168,31 @@ fn main() {
 
     let joined = args.join(" ");
     let batch = joined.contains("BatchMode=yes");
+
+    // `readonly=<n>US<contains>US<path>`: the `n`th call (0 for any) whose arguments contain
+    // `contains` makes the file at `path` read-only, so that the next replace of it fails.
+    for r in &readonly {
+        if r.len() < 3 {
+            continue;
+        }
+        let rn: u32 = r[0].parse().unwrap_or(0);
+        if (rn == 0 || rn == n) && (r[1].is_empty() || joined.contains(&r[1])) {
+            if let Ok(meta) = fs::metadata(&r[2]) {
+                let mut perms = meta.permissions();
+                perms.set_readonly(true);
+                let _ = fs::set_permissions(&r[2], perms);
+            }
+        }
+    }
     let mut stdin_bytes = Vec::new();
     if batch && !stdin_file.is_empty() {
         let _ = std::io::stdin().read_to_end(&mut stdin_bytes);
         let _ = fs::write(&stdin_file, &stdin_bytes);
+    } else if !stdin_dir.is_empty() {
+        // Every call's whole standard input, to `<dir>/<program>-<n>.stdin`: the bootstrap's
+        // script reaches ssh on a pipe the operator writes and closes.
+        let _ = std::io::stdin().read_to_end(&mut stdin_bytes);
+        let _ = fs::write(Path::new(&stdin_dir).join(format!("{stem}-{n}.stdin")), &stdin_bytes);
     }
 
     let mut code = 0i32;
