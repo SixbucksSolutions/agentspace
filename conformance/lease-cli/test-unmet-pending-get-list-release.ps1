@@ -366,7 +366,7 @@ try {
 
   # ---- C13: a get never fails and never waits over the host files ----------------------------------------------
   $c13 = @(
-    @{ Name = 'hosts.json is not JSON'; Hosts = '{"version":0,"hosts":['; Projects = $null; Provision = 'standin'; Lock = $false },
+    @{ Name = 'hosts.json is not JSON, and the project is listed'; Hosts = '{"version":0,"hosts":['; Projects = ('{"version":0,"projects":[{"name":"agentspace","approved":"2026-11-20"}]}' + "`n"); Provision = 'standin'; Lock = $false },
     @{ Name = 'hosts.json is valid by its schema but holds no record for the box'; Hosts = '{"version":0,"hosts":[{"project":"agentspace","stack":"agentspace-host-agentspace","state":"ready"}]}'; Projects = $null; Provision = 'standin'; Lock = $false },
     @{ Name = 'AGENTSPACE_PROVISION_CMD names no file, with a run due'; Hosts = 'creating'; Projects = $null; Provision = 'missing'; Lock = $false },
     @{ Name = 'the check holds hosts.lock, with a run due'; Hosts = 'ready'; Projects = $null; Provision = 'standin'; Lock = $true },

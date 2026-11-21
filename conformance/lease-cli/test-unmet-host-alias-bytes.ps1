@@ -232,7 +232,7 @@ try {
     # ---- C3: swimcoach, no hosts.json: v0.06's bytes ---------------------------------------------------
     Reset-PgCase $lab
     $si = New-PgStandIn $lab
-    $r = New-CcReadyLease -Lab $lab -Project 'swimcoach' -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
+    $r = New-CcReadyLease -Lab $lab -Project 'swimcoach' -NoHost -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
     $starts = Wait-PgNoStart $si
     $bytes = if ($r.Ok) { Get-PgAliasBytes $lab $r.Doc } else { $null }
     Test-Cc "C3 ($aliasBox): A create for swimcoach with no hosts.json answers ready, and the alias file is v0.06's, byte for byte: HostKeyAlias agentspace and no UserKnownHostsFile" {
@@ -257,7 +257,7 @@ try {
     Write-PgHosts $lab @((New-PgHostRecord 'swimcoach' 'ready'), (New-PgHostRecord 'agentspace' 'ready'))
     $hostsBefore = Get-PgHostsHash $lab
     $si = New-PgStandIn $lab
-    $r = New-CcReadyLease -Lab $lab -Project 'swimcoach' -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
+    $r = New-CcReadyLease -Lab $lab -Project 'swimcoach' -NoHost -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
     $starts = Wait-PgNoStart $si
     $bytes = if ($r.Ok) { Get-PgAliasBytes $lab $r.Doc } else { $null }
     Test-Cc "C3 ($aliasOther): With another ready host in hosts.json, a swimcoach lease still has v0.06's bytes (the record whose stack is agentbox gives the box's form), starts nothing and leaves hosts.json as it was" {
@@ -276,7 +276,7 @@ try {
     Write-PgHosts $lab @((New-PgHostRecord 'swimcoach' 'ready'), (New-PgHostRecord 'agentspace' 'ready'))
     $hostsBefore = Get-PgHostsHash $lab
     $si = New-PgStandIn $lab
-    $r = New-CcReadyLease -Lab $lab -Project 'agentspace' -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
+    $r = New-CcReadyLease -Lab $lab -Project 'agentspace' -NoHost -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
     $starts = Wait-PgNoStart $si
     $bytes = if ($r.Ok) { Get-PgAliasBytes $lab $r.Doc } else { $null }
     Test-Cc "C4 ($aliasOther): A create for a project whose record is ready and is not the box answers ready, with HostKeyAlias agentspace-host.<project> and then UserKnownHostsFile, byte for byte, and no instance_id in the record" {
@@ -316,7 +316,7 @@ try {
     Reset-PgCase $lab
     Write-PgHosts $lab @((New-PgHostRecord 'swimcoach' 'ready'), (New-PgHostRecord 'lab-host' 'ready'))
     $si = New-PgStandIn $lab
-    $r = New-CcReadyLease -Lab $lab -Project 'Lab-Host' -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
+    $r = New-CcReadyLease -Lab $lab -Project 'Lab-Host' -NoHost -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
     $starts = Wait-PgNoStart $si
     $bytes = if ($r.Ok) { Get-PgAliasBytes $lab $r.Doc } else { $null }
     Test-Cc "C4 ($aliasOther): A project given with capitals and a hyphen is normalized, and the alias names agentspace-host.lab-host" {
@@ -343,7 +343,7 @@ try {
       $hostsBefore = Get-PgHostsHash $lab
       $pendingBefore = ConvertTo-CcCanonical (Get-CcRecord $lab $pending['id'])
       $si = New-PgStandIn $lab
-      $r = New-CcReadyLease -Lab $lab -Project 'agentspace' -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
+      $r = New-CcReadyLease -Lab $lab -Project 'agentspace' -NoHost -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
       $starts = Wait-PgNoStart $si
       Test-Cc "C20 ($wherePlaces): A create for a ready host's project, while another lease of it is pending, answers ready and starts nothing, $($v.Name), and changes neither the registry nor the pending lease" {
         if (-not $r.Ok) { return "The create gave $(Format-CcRun $r.Run)" }

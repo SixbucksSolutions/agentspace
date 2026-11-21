@@ -413,7 +413,7 @@ function Get-PvUnsatisfiableDocProblems {
   if ($doc -is [hashtable]) {
     if ($doc['state'] -cne 'unsatisfiable') { $p.Add("The lease's state is '$($doc['state'])', not unsatisfiable") }
     if ($doc['project'] -cne $Project) { $p.Add('The lease is for another project') }
-    $got = @($doc['reasons'] | ForEach-Object { [string]$_['code'] })
+    $got = @($doc['reasons'] | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_['code'] })
     if (($got -join ',') -cne ($Codes -join ',')) { $p.Add("The reason codes are [$($got -join ', ')], not [$($Codes -join ', ')]") }
     foreach ($r in @($doc['reasons'] | Where-Object { $null -ne $_ })) { if (-not (Test-CcNoBackendWords ([string]$r['message']))) { $p.Add("The $($r['code']) message names a backend, a location or a machine") } }
   }

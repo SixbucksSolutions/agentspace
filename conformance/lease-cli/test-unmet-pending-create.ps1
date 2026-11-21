@@ -132,7 +132,9 @@ Use-PvLab -Name "$start C8: After a create that started the run, a second create
   $first = Invoke-PvLease -Lab $lab -Arguments @('create', '--project', 'agentspace') -StandIn $standIn
   $p = Get-PvPendingDocProblems -Run $first -Project 'agentspace'
   foreach ($x in (Get-PvStartedOnceProblems -StandIn $standIn -Project 'agentspace')) { $p.Add($x) }
-  $time = [string](Get-PvHostRecord $lab 'agentspace')['last_attempt_at']
+  $rec = Get-PvHostRecord $lab 'agentspace'
+  if ($null -eq $rec) { $p.Add('hosts.json holds no record for the project after the first create'); return , $p }
+  $time = [string]$rec['last_attempt_at']
   $hash = Get-PvHostsHash $lab
   $second = Invoke-PvLease -Lab $lab -Arguments @('create', '--project', 'agentspace') -StandIn $standIn
   foreach ($x in (Get-PvPendingDocProblems -Run $second -Project 'agentspace')) { $p.Add("second create: $x") }
@@ -143,7 +145,8 @@ Use-PvLab -Name "$start C8: After a create that started the run, a second create
   Start-Sleep -Seconds 3
   $n = @(Get-PvStartedLines $standIn).Count
   if ($n -ne 1) { $p.Add("The stand-in was started $n times in all, not once") }
-  if ([string](Get-PvHostRecord $lab 'agentspace')['last_attempt_at'] -cne $time) { $p.Add('last_attempt_at changed') }
+  $rec = Get-PvHostRecord $lab 'agentspace'
+  if ($null -eq $rec -or [string]$rec['last_attempt_at'] -cne $time) { $p.Add('last_attempt_at changed') }
   if ((Get-PvHostsHash $lab) -ne $hash) { $p.Add('hosts.json was written') }
   return , $p
 }
