@@ -9,22 +9,12 @@ use crate::HOLDER_RECORD_FILE;
 /// The box's holder log, in the state folder.
 const BOX_SSH_LOG: &str = "board-holder-ssh.log";
 
-/// Whether `s` is a normalized project name, `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`
-/// (lease-api.md, Project). Hand-written, so that no `$` can let a trailing LF through. Lowercase
-/// only: a caller lowercases first where a name is compared without regard to case.
+/// Whether `s` is a normalized project name (lease-api.md, Project). It MUST be the host
+/// registry's own rule, so it is `agentspace_hosts::is_normalized_project` itself, never a copy
+/// that could drift from it. Lowercase only: a caller lowercases first where a name is compared
+/// without regard to case.
 pub fn is_project_name(s: &str) -> bool {
-    let b = s.as_bytes();
-    let edge = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
-    match b.len() {
-        0 => false,
-        1 => edge(b[0]),
-        n => {
-            n <= 32
-                && edge(b[0])
-                && edge(b[n - 1])
-                && b[1..n - 1].iter().all(|&c| edge(c) || c == b'-')
-        }
-    }
+    agentspace_hosts::is_normalized_project(s)
 }
 
 /// The holder record's file name for a host: `board-holder.json` for the box (`None`),

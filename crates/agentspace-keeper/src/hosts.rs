@@ -48,29 +48,29 @@ pub(crate) fn host_of(hosts: &Hosts, project: &str) -> HostKey {
 }
 
 /// The names in the state folder, those that are not UTF-8 left out. The error is the
-/// `<error>` of `The pass stopped on an error: <error>`.
-// Architect's to confirm: that `<error>` is `The state folder '<path>' could not be listed:
-// <the system's error>`, which keeper.md leaves unworded.
+/// `<error>` of `The pass stopped on an error: <error>`: `The state folder could not be listed:
+/// Windows error <n>.`, the number alone, never the system's localized text (keeper.md, The hosts
+/// of a pass; architect, 2026-11-21, for v0.07-T03, on #0154's review).
 pub(crate) fn list_state_folder(state_dir: &Path) -> Result<Vec<String>, String> {
-    let entries = std::fs::read_dir(state_dir).map_err(|e| {
-        format!(
-            "The state folder '{}' could not be listed: {e}",
-            state_dir.display()
-        )
-    })?;
+    let entries = std::fs::read_dir(state_dir).map_err(|e| listing_error(&e))?;
     let mut names = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            format!(
-                "The state folder '{}' could not be listed: {e}",
-                state_dir.display()
-            )
-        })?;
+        let entry = entry.map_err(|e| listing_error(&e))?;
         if let Ok(name) = entry.file_name().into_string() {
             names.push(name);
         }
     }
     Ok(names)
+}
+
+/// The `<error>` of a listing that failed. Listing a folder fails only with a system error, so the
+/// number is always there; `0` stands in should one ever lack it, since the text MUST NOT carry
+/// the system's localized message.
+fn listing_error(e: &std::io::Error) -> String {
+    format!(
+        "The state folder could not be listed: Windows error {}.",
+        e.raw_os_error().unwrap_or(0)
+    )
 }
 
 /// The projects of the other hosts' records among `names` (keeper.md, The hosts of a pass, item
@@ -188,6 +188,28 @@ mod tests {
         assert_eq!(
             read_registry(home.path()),
             Err("the host registry is not valid".to_string())
+        );
+    }
+
+    /// keeper.md, The hosts of a pass: an unlistable state folder's `<error>` names the Windows
+    /// error by its number alone, never the system's localized text.
+    #[cfg(windows)]
+    #[test]
+    fn an_unlistable_state_folder_is_named_by_the_windows_error_number_alone() {
+        let root = tempfile::Builder::new()
+            .prefix("agentspace-keeper-unit-list-")
+            .tempdir()
+            .expect("A throwaway folder can be made");
+        let missing = root.path().join("no-such-folder");
+        assert_eq!(
+            list_state_folder(&missing),
+            Err("The state folder could not be listed: Windows error 3.".to_string())
+        );
+        let file = root.path().join("a-file");
+        std::fs::write(&file, b"").expect("A throwaway file can be written");
+        assert_eq!(
+            list_state_folder(&file),
+            Err("The state folder could not be listed: Windows error 267.".to_string())
         );
     }
 }
