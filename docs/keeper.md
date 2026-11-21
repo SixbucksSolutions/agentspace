@@ -607,7 +607,9 @@ v0.07-T01), the same answer the ProxyCommand reaches for the lease's alias
   box's record is `board-holder.json`, and the keeper never reads, writes or removes that file.
 - **A state folder that cannot be listed ends the pass** with `failed lease=- alias=- pid=-
   reason=The pass stopped on an error: <error>` and exit 1, every holder and record left as they
-  are.
+  are. Its `<error>` is `The state folder could not be listed: Windows error <n>.`, the number
+  alone, never the system's localized text, as a lock's is (architect, 2026-11-21, for
+  v0.07-T03, on #0154's review).
 - **Item 3 is how the keeper does what state.md gives it**: it removes a record left for a host it
   no longer holds through, and nothing else removes one
   ([state.md, Another host's holder](state.md#another-hosts-holder)). Each host's record and log
