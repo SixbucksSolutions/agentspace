@@ -295,7 +295,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `...\hosts\<project>\id_ed25519`, `id_ed25519.pub` | [The operator's key](#the-operators-key-and-certificate) for that host | The first operator command that signs a certificate for the host | `ssh`, through the operator alias; the operator, to sign | Never |
 | `...\hosts\<project>\id_ed25519-cert.pub` | [The operator's certificate](#the-operators-key-and-certificate) for that host, key ID `operator-<project>`, one hour | Every operator command that names a host other than the box, `status -Host` included, and every one that connects through the host's operator alias | `ssh` | Never; replaced by the next command's |
 | `...\hosts\<project>\sign-<hex>.pub`, `sign-<hex>-cert.pub` | Signing's temporary files | The same | None | At once |
-| `...\hosts\<project>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, the output of the programs it runs included; never the driver | People | Never |
+| `...\hosts\<project>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, its own lines alone (architect, 2026-11-21, for v0.07-T03); never the driver | People | Never |
 | `...\hosts\<project>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; the driver, which only tries it | None; it is held, not read | Never |
 | `...\hosts\<project>\localswim-pushed.json` | [A host's push stamp](#a-hosts-push-stamp), for every host but the box | `up -Host`, `sync -Host`, `sync -All`, `provision` | `up -Host` | Never |
 | `...\hosts\<project>\localswim-pushed.json.<hex>.tmp` | Its temporary file | The same | None | At once |
@@ -1719,8 +1719,9 @@ before the start (below).
   corrected for v0.07-T02, [driver.md, Starting a provisioning
   run](driver.md#starting-a-provisioning-run)), since a process created through WMI's
   `Win32_Process.Create` cannot be handed a file handle. **The run writes its own log**, opening
-  the host's [`provision.log`](#the-provisioning-runs-log) for append as its first step, and the
-  output of the programs it starts is written through it into that log.
+  the host's [`provision.log`](#the-provisioning-runs-log) for append as its first step, and
+  writes its own lines alone there; the programs it starts write to its own streams (architect,
+  2026-11-21, for v0.07-T03).
 - **Before the start, the driver, in the starting program, creates `hosts\<project>\` if it is
   missing** (architect, 2026-11-20, for v0.07-T01), and never creates or opens the log. **A failure
   to make the folder is a start that fails**: no run is started, and the lease stays `pending`;
