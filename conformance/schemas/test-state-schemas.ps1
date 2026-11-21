@@ -55,8 +55,13 @@ function Test-Document([string]$Json, [string]$SchemaPath) {
   }
 }
 
+# The state.md section that owns a state schema; a schema the map does not name is cited by the page.
+function Get-SpecFor([string]$Stem) {
+  switch ($Stem) { 'hosts.state' { 'state.md#the-host-registry' } 'projects.state' { 'state.md#the-project-list' } default { 'state.md' } }
+}
+
 $schemas = @(Get-ChildItem -LiteralPath $schemaDir -Filter '*.schema.json' -File | Sort-Object Name)
-if (-not $schemas) { Write-Result $false 'state.md#schemas: The state schemas are found' "No schemas found in $schemaDir"; Exit-Run }
+if (-not $schemas) { Write-Result $false 'state.md: The state schemas are found' "No schemas found in $schemaDir"; Exit-Run }
 $stems = $schemas | ForEach-Object { $_.Name -replace '\.schema\.json$', '' }
 
 # Every sample MUST belong to a schema, so a misnamed one is never silently skipped.
@@ -64,7 +69,7 @@ foreach ($dir in $sampleDir, $invalidDir) {
   if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
   foreach ($f in Get-ChildItem -LiteralPath $dir -Filter '*.json' -File) {
     $owner = $stems | Where-Object { $f.Name.StartsWith("$_.") }
-    Write-Result ([bool]$owner) "state.md#schemas: Sample $($f.Name) names a state schema" "Sample $($f.Name) in $dir names no schema"
+    Write-Result ([bool]$owner) "$(if ($owner) { Get-SpecFor @($owner)[0] } else { 'state.md' }): Sample $($f.Name) names a state schema" "Sample $($f.Name) in $dir names no schema"
   }
 }
 
@@ -75,20 +80,20 @@ foreach ($schema in $schemas) {
   if ($good.Count -eq 0 -and $bad.Count -eq 0) { continue }
 
   $doc = Get-Content -Raw -LiteralPath $schema.FullName | ConvertFrom-Json -AsHashtable
-  Write-Result ($doc['$schema'] -eq 'https://json-schema.org/draft/2020-12/schema') "state.md#schemas: $($schema.Name) declares draft 2020-12"
-  Write-Result ($doc['$id'] -ceq "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/$($schema.Name)") "state.md#schemas: $($schema.Name) has its state v0 `$id" "Its `$id is $($doc['$id'])."
-  Write-Result ([bool]$doc['title'] -and [bool]$doc['description']) "state.md#schemas: $($schema.Name) has a title and a description"
+  Write-Result ($doc['$schema'] -eq 'https://json-schema.org/draft/2020-12/schema') "$(Get-SpecFor $stem): $($schema.Name) declares draft 2020-12"
+  Write-Result ($doc['$id'] -ceq "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/$($schema.Name)") "$(Get-SpecFor $stem): $($schema.Name) has its state v0 `$id" "Its `$id is $($doc['$id'])."
+  Write-Result ([bool]$doc['title'] -and [bool]$doc['description']) "$(Get-SpecFor $stem): $($schema.Name) has a title and a description"
 
   foreach ($s in $good) {
     $r = Test-Document (Get-Content -Raw -LiteralPath $s.FullName) $schema.FullName
-    Write-Result ($r -eq 'valid') "state.md#schemas: $($s.Name) validates" "The result was: $r."
+    Write-Result ($r -eq 'valid') "$(Get-SpecFor $stem): $($s.Name) validates" "The result was: $r."
   }
   if ($good.Count -ge 1) {
-    Write-Result ($bad.Count -ge 1) "state.md#schemas: $($schema.Name) has at least one invalid document" "It has $($bad.Count)."
+    Write-Result ($bad.Count -ge 1) "$(Get-SpecFor $stem): $($schema.Name) has at least one invalid document" "It has $($bad.Count)."
   }
   foreach ($s in $bad) {
     $r = Test-Document (Get-Content -Raw -LiteralPath $s.FullName) $schema.FullName
-    Write-Result ($r -eq 'invalid') "state.md#schemas: invalid/$($s.Name) is rejected for a schema reason" "The result was: $r."
+    Write-Result ($r -eq 'invalid') "$(Get-SpecFor $stem): invalid/$($s.Name) is rejected for a schema reason" "The result was: $r."
   }
 }
 

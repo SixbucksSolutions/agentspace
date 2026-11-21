@@ -233,7 +233,7 @@ try {
       @{ Name = 'a file whose agentbox record''s project is not swimcoach'; Error = $invalid; Make = { Write-Registry @([ordered]@{ project = 'other'; stack = 'agentbox'; state = 'ready' }, $good.P) } },
       @{ Name = 'a file whose stack names another project'; Error = $invalid; Make = { Write-Registry @($good.Box, [ordered]@{ project = $pProject; stack = 'agentspace-host-swimcoach'; state = 'ready' }) } },
       @{ Name = 'a folder in its place'; Error = $null; Make = {
-          Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Get-RegistryPath)) -Force
+          Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Get-RegistryPath)) -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path (Assert-ConformancePath -ConformanceHome $runHome -Path (Get-RegistryPath)) | Out-Null } })
     foreach ($v in $variants) {
       & $v.Make

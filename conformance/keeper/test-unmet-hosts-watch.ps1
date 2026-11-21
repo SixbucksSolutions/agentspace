@@ -82,10 +82,11 @@ function Invoke-LostCase([string]$Id, [string]$LostProject, [string]$LostTag, [s
       # No pass runs while the lock is held, so the records and the log are read at a point between two passes.
       $recLost = Read-HostRecord $LostProject
       $recKept = Read-HostRecord $KeptProject
+      if (-not $recLost -or -not $recKept) { Add-HostCheck $false 'Both hosts'' records are there between two passes' 'A host''s record was missing after the pass that started both holders.'; return }
       $keptRecordPath = Get-HostRecordPath $KeptProject
       $keptRecordBefore = [IO.File]::ReadAllText($keptRecordPath)
       $mark = (Read-LogLines).Count
-      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Get-HostRecordPath $LostProject)) -Force
+      Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $runHome -Path (Get-HostRecordPath $LostProject)) -Force -ErrorAction SilentlyContinue
       $held.Dispose(); $held = $null
       $three = Wait-Until { (Get-LinesAfterCount (Read-LogLines) $mark).Count -ge 3 } 60 $proc
       $after = Get-LinesAfterCount (Read-LogLines) $mark

@@ -540,7 +540,7 @@ reach no provisioning run**: the bullets below give the rules.
     (E0.07-T04-S01, #0155; D48, pin P12): `<Root>\tripwire\provision-tripwire.cmd`, which appends
     one line to `tripwire-started.txt` beside itself and exits 1 at once. A run's default program is
     `agentspace-operator.exe` beside the CLI, the real operator in `target\dist`
-    ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)), so no lease
+    ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)), so a lease
     CLI case MUST NOT be able to start it. A check MAY replace the value with `-Environment` (its
     own stand-in; an empty value or `$null` removes it), and a check that reaches a run on purpose
     MUST name its own stand-in ([lease-api.md, Environment](lease-api.md#environment)). The
