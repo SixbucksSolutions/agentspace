@@ -185,6 +185,10 @@ reads before it prints it").
      code SHOULD say which tests it breaks, and the story that builds the code fixes them.
 4. **Prove a harness before calling a defect.** In v0.05 a no-stdout run first "showed" exit 0,
    because the harness gave the child a hidden console; with no console the build was right.
+   **Before a conformance run against a build, check that every `AGENTSPACE_*_CMD` names a file
+   that exists** (v0.07-T02): `cargo xtask dist` writes to the checkout's own `target\dist`, not
+   under `CARGO_TARGET_DIR`, and a variable naming a missing file failed #99's push file 0 of 1
+   until it named the right folder, where it passed 20 of 20.
 5. **After a rebase,** check the new head with `git range-diff` and a diff of the story's own files
    against the head reviewed.
 6. **The identifier scan** over the diff, every commit message and the PR body, with each pattern
