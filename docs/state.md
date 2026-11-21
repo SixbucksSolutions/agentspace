@@ -21,6 +21,19 @@ rather than restating it:
 - **What the keeper does with its files, its log lines and its locks:** keeper.md, at
   [Log lines](keeper.md#log-lines), [Locks](keeper.md#locks) and
   [Starting a holder](keeper.md#starting-a-holder).
+- **When the driver starts a provisioning run, what the run does, and which host an operator
+  command acts on:** [driver.md](driver.md) and [operator.md](operator.md) (D48, D49). This page
+  owns the files they read and write.
+
+**A host per project (v0.07, D43 to D55).** Each project's leases are placed on its own host. The
+box, today's one instance, is swimcoach's host and keeps every file and every byte v0.06 gave it
+(D43); every other host adds the files of [The host registry](#the-host-registry),
+[The project list](#the-project-list), [A host's folder](#a-hosts-folder),
+[Agentspace's host keys](#agentspaces-host-keys),
+[A lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box) and
+[Another host's holder](#another-hosts-holder). Every name here is D55's. The rulings this page
+cites as "architect, 2026-11-20, for v0.07-T01" are the facts D43 to D55 left open, as the
+architect ruled on them for v0.07's first turn.
 
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
@@ -60,10 +73,15 @@ the conformance file for each of these points passes against it. The last column
   [replacing a file](#replacing-a-file)
 - [Every file at a glance](#every-file-at-a-glance)
 - [The lease state file](#the-lease-state-file)
-- [A lease's credential](#a-leases-credential)
+- [The host registry](#the-host-registry)
+- [The project list](#the-project-list)
+- [A lease's credential](#a-leases-credential), with
+  [a lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box) and
+  [agentspace's host keys](#agentspaces-host-keys)
+- [A host's folder](#a-hosts-folder), with [a host's operator alias](#a-hosts-operator-alias)
 - [The CA](#the-ca)
 - [The push stamp](#the-push-stamp)
-- [The keeper's files](#the-keepers-files)
+- [The keeper's files](#the-keepers-files), with [another host's holder](#another-hosts-holder)
 - [Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)
 - [Files in the checkout](#files-in-the-checkout)
 - [Project tooling](#project-tooling)
@@ -88,8 +106,10 @@ the conformance file for each of these points passes against it. The last column
   the laptop MUST live under it, never under `%LOCALAPPDATA%` or `%APPDATA%`: the Claude desktop
   app redirects writes there into its package cache, where no process outside the app sees them
   (D21). The exceptions are the files in `~\.ssh` that the OpenSSH client reads, and the files in
-  the checkout that are not state ([Files in the checkout](#files-in-the-checkout)). The
-  instance-ID cache is state, so D21 puts it here too.
+  the checkout that are not state ([Files in the checkout](#files-in-the-checkout)). The host
+  registry, the project list, each host's folder and agentspace's own `known_hosts` are state, so
+  D21 puts them here too (D45, D47, D54, D55). They replace the instance-ID cache, which was here
+  until v0.07 ([Files in the checkout](#files-in-the-checkout)).
 - **`<state folder>`** is the folder that `AGENTSPACE_STATE_DIR` names when it is set and not
   empty, and `%USERPROFILE%\.agentspace` otherwise.
 - **`<ssh folder>`** is the folder that `AGENTSPACE_SSH_DIR` names when it is set and not empty,
@@ -103,11 +123,16 @@ the conformance file for each of these points passes against it. The last column
   writes it into a file** (the alias file, or a holder's launch request), because the program that
   later reads that file runs in another working folder. The prototype writes such a path as given
   ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
+  The same holds for a host's operator alias ([A host's operator alias](#a-hosts-operator-alias)),
+  and for the folder variables a provisioning run is started with, `USERPROFILE` among them, which
+  are made full before the start ([The provisioning run's start](#the-provisioning-runs-start)).
 - **A value that names an existing file, not a folder,** makes every command that needs that
   folder fail with `internal`, writing nothing in it.
 - **Every folder on this page is created when it is first needed**, by whichever writer needs it,
   with the access rules it inherits, unless its own section says otherwise. A missing folder is
-  never an error for a reader: it means the files in it do not exist.
+  never an error for a reader: it means the files in it do not exist. That includes
+  `%USERPROFILE%\.agentspace\hosts\` and each host's folder in it
+  ([A host's folder](#a-hosts-folder)).
 
 ### What moves which files
 
@@ -118,22 +143,32 @@ starts; unset or empty means the default. What each means to the lease CLI is
 | Variable | Moves | Does not move |
 |---|---|---|
 | `USERPROFILE` | Everything on this page under `%USERPROFILE%`: `.agentspace` and all in it, and `.ssh`; and `.aws`, which the AWS CLI reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | The checkout; `%LOCALAPPDATA%`; and where a program finds agentspace's other programs, which is its own folder ([operator.md](operator.md#how-each-program-finds-the-others)) |
-| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)) | The lease folders, the CA, the push stamp, the instance-ID cache, the stack parameters file, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
-| `AGENTSPACE_SSH_DIR` | `config`, its backups, `agentspace.d` and the alias files, for `create` and `release` | `known_hosts`, and the user's own key; ssh itself reads neither variable |
+| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)), and another host's holder record and holder log among them ([Another host's holder](#another-hosts-holder)) | The lease folders, the CA, the push stamps (the box's and every host's), the host registry and its lock, the project list, every host's folder, agentspace's `known_hosts`, the retired instance-ID cache, the stack parameters file, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
+| `AGENTSPACE_SSH_DIR` | `config`, its backups, `agentspace.d` and the alias files, for `create` and `release`, and `config`, its backups and `agentspace.d` for the operator; and a host's operator alias and its temporary file, for the operator's commands that write it ([A host's operator alias](#a-hosts-operator-alias)) | The user's `known_hosts`, agentspace's `known_hosts`, and the user's own key; ssh itself reads neither variable |
 | `LOCALAPPDATA` | The localswim receipt, which the operator reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | Anything agentspace writes |
 
 - **A check that isolates the lease CLI completely MUST set `USERPROFILE` to a throwaway folder**,
   and make a CA there with the operator's `ca` first ([operator.md](operator.md#ca)). Setting
   `AGENTSPACE_STATE_DIR` alone leaves the lease folders, and the CA they are signed with, in the
   real profile. This settles [lease-api.md Q9](lease-api.md#open-questions).
-- **A check that moves `USERPROFILE` and runs the operator's `up`, or connects through a lease's
-  alias, loses the AWS sign-in**, because the AWS CLI that the operator and the ProxyCommand run
-  finds `%USERPROFILE%\.aws` through the same variable. Such a check MUST NOT expect a connection
-  to reach the box.
+- **A check that moves `USERPROFILE` and runs the operator's `up`, or any other operator command
+  that calls AWS (`deploy`, `sync`, `bootstrap`, `provision` among them), or connects through a
+  lease's alias or a host's operator alias, loses the AWS sign-in**, because the AWS CLI that the
+  operator and the ProxyCommand run finds `%USERPROFILE%\.aws` through the same variable. Such a
+  check MUST NOT expect a connection to reach any host.
+- **A provisioning run that the driver starts is given the starting program's `USERPROFILE`, and
+  each of its `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` if and only
+  if the starting program has it set and not empty**; a value of one of those three that the logon
+  environment holds and the starting program does not is removed (architect, 2026-11-20, for
+  v0.07-T01). So the run uses the
+  files of the command that started it
+  ([The provisioning run's start](#the-provisioning-runs-start)).
 - **The OpenSSH client does not read `USERPROFILE` or `AGENTSPACE_SSH_DIR`.** An alias written into
   a moved `<ssh folder>` is usable only by an ssh pointed at the alias file itself with `-F`, or
   at a config of its own whose `Include` names that `agentspace.d` by its full path, since a
   relative `Include` resolves against the user's own `~/.ssh` ([The `Include` line](#the-include-line)).
+  **Agentspace's `known_hosts` is named in an alias by its full path**
+  ([Agentspace's host keys](#agentspaces-host-keys)), so it is found wherever the alias is read.
 - Note on where this came from: in the prototype, every lease and operator script reads
   `$env:USERPROFILE`, and the CA check it starts inherits the variable. The operator's `deploy` and
   `sync` find the user's public key and `CLAUDE.md` through the shell's home variable instead, and
@@ -199,31 +234,34 @@ has been observed there.
 **Two files are replaced differently, each for its own reason:**
 - **An alias file's temporary file is in `<ssh folder>`, not in `agentspace.d` beside it**, and is
   moved into `agentspace.d`. The `Include` line reads every file in `agentspace.d`, so a temporary
-  file there would be read by ssh as configuration ([The alias file](#the-alias-file)).
+  file there would be read by ssh as configuration ([The alias file](#the-alias-file)). A host's
+  operator alias is written the same way ([A host's operator alias](#a-hosts-operator-alias)).
 - **`config` is replaced in a way that keeps its own access rules** (`ReplaceFile` on Windows),
   not by a plain rename, which would give it the temporary file's rules. Windows OpenSSH checks
   those rules ([The `Include` line](#the-include-line)). Its owner becomes the user running
   `create`, which OpenSSH accepts (corrected by the architect, 2026-11-19, from E0.05-T02-S03:
   `ReplaceFile` keeps the access list, not the owner).
 
-**A reader of the lease state file MUST open it sharing read, write and delete access**, so that it
-never blocks a POSIX rename (step 2), and so sees the old file or the new one, never part of either.
+**A reader of the lease state file, or of the host registry, MUST open it sharing read, write and
+delete access**, so that it never blocks a POSIX rename (step 2), and so sees the old file or the
+new one, never part of either.
 A classic `MoveFileEx` writer, the prototype's among them, is still blocked by any open handle, and
 its retry below covers that. **A reader
 of any other file replaced this way SHOULD share the same**; the keeper's readers of its own JSON
 files share read only, and the writer's retry below covers them
 ([Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)).
 **A writer whose rename fails because another process holds the file without sharing delete MAY
-retry, and MUST stop retrying within 10 seconds for the lease state file and 5 seconds for the
-keeper's JSON files**, then fail. A retry of the lease state file runs under
-[the lease state lock](#the-lease-state-lock), so its time is part of the time the command holds
-the lock, and of the 30 seconds another changing command waits for it; it adds no wait of its own
-to that limit. The prototype retries every 20 milliseconds for 10 seconds (the lease state file)
+retry, and MUST stop retrying within 10 seconds for the lease state file and the host registry,
+and 5 seconds for the keeper's JSON files**, then fail. A
+retry of the lease state file runs under [the lease state lock](#the-lease-state-lock), so its
+time is part of the time the command holds the lock, and of the 30 seconds another changing
+command waits for it; it adds no wait of its own to that limit. A retry of the host registry runs
+under [the host registry lock](#the-host-registry-lock) the same way. The prototype retries every 20 milliseconds for 10 seconds (the lease state file)
 or every 50 milliseconds for 5 seconds (the keeper's JSON files).
 
 **Every other write on this page is one attempt, with no retry:** `config`'s replace, its backup
-and a new `config`, the alias file's move, the key pair, signing, the certificate's move, and every
-deletion. A failure there fails the command at once, as its section says. The prototype reads
+and a new `config`, the alias file's move, a host's operator alias's move, the key pair (a
+lease's or a host's operator key), signing, the certificate's move, and every deletion. A failure there fails the command at once, as its section says. The prototype reads
 `config` and an existing alias file whole, sharing read only, and so does not block ssh, which only
 reads them.
 
@@ -233,7 +271,8 @@ one for the file it stands in for, and nothing in the prototype removes it later
 
 **A replace never creates a folder** (architect, 2026-11-19, for E0.06-T01-S07). The writer
 creates the folder first where its section says it does (the state folder, `%USERPROFILE%\.agentspace`
-for the push stamp); a replace into a folder that is missing fails, and leaves nothing behind.
+for the push stamp and the host registry, a host's folder for that host's push stamp); a replace
+into a folder that is missing fails, and leaves nothing behind.
 `agentspace-state`'s `write_atomically` is that replace, for every file the rewrite writes this way.
 
 ## Every file at a glance
@@ -244,34 +283,54 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | Path | What it is | Written by | Read by | Removed |
 |---|---|---|---|---|
 | `%USERPROFILE%\.agentspace\` | The agentspace folder (D21) | The first writer | Everything below | Never |
-| `<state folder>\leases.json` | [The lease state file](#the-lease-state-file) | `create`, `renew`, `release` | Every lease command; the keeper | Never |
-| `<state folder>\leases.lock` | [The lease state lock](#the-lease-state-lock) | Every lease command that changes leases | None; it is held, not read | Never |
+| `<state folder>\leases.json` | [The lease state file](#the-lease-state-file) | `create`, `renew`, `release`; a provisioning run, through `place_pending` | Every lease command; the keeper; the ProxyCommand; a provisioning run | Never |
+| `<state folder>\leases.lock` | [The lease state lock](#the-lease-state-lock) | Every lease command that changes leases; a provisioning run, through `place_pending` | None; it is held, not read | Never |
 | `<state folder>\leases.json.<hex>.tmp` | The state file's temporary file | The same | None | At once |
+| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`; an operator command that caches a host's instance ID; the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock. Never `list`, `renew` or `release` | Never |
+| `%USERPROFILE%\.agentspace\hosts.lock` | [The host registry lock](#the-host-registry-lock) | Every writer of `hosts.json` | None; it is held, not read | Never |
+| `%USERPROFILE%\.agentspace\hosts.json.<hex>.tmp` | The host registry's temporary file | The same | None | At once |
+| `%USERPROFILE%\.agentspace\projects.json` | [The project list](#the-project-list) (D54) | A person, or the architect with Terry's yes; never agentspace | The driver and `provision`, for a project with no host | Never |
+| `%USERPROFILE%\.agentspace\hosts\` | The folder of host folders | The first writer of a host's folder | Everything in it | Never |
+| `%USERPROFILE%\.agentspace\hosts\<project>\` | [A host's folder](#a-hosts-folder) | The first writer of a file in it; the driver, if it is missing, before it starts a provisioning run, which is not started if the folder cannot be made ([The provisioning run's start](#the-provisioning-runs-start)) | The operator; ssh | Never |
+| `...\hosts\<project>\id_ed25519`, `id_ed25519.pub` | [The operator's key](#the-operators-key-and-certificate) for that host | The first operator command that signs a certificate for the host | `ssh`, through the operator alias; the operator, to sign | Never |
+| `...\hosts\<project>\id_ed25519-cert.pub` | [The operator's certificate](#the-operators-key-and-certificate) for that host, key ID `operator-<project>`, one hour | Every operator command that names a host other than the box, `status -Host` included, and every one that connects through the host's operator alias | `ssh` | Never; replaced by the next command's |
+| `...\hosts\<project>\sign-<hex>.pub`, `sign-<hex>-cert.pub` | Signing's temporary files | The same | None | At once |
+| `...\hosts\<project>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, the output of the programs it runs included; never the driver | People | Never |
+| `...\hosts\<project>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; the driver, which only tries it | None; it is held, not read | Never |
+| `...\hosts\<project>\localswim-pushed.json` | [A host's push stamp](#a-hosts-push-stamp), for every host but the box | `up -Host`, `sync -Host`, `sync -All`, `provision` | `up -Host` | Never |
+| `...\hosts\<project>\localswim-pushed.json.<hex>.tmp` | Its temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\leases\` | The folder of lease folders | The first `create` that issues a credential | `renew`, `release` | Never |
 | `%USERPROFILE%\.agentspace\leases\<id>\` | [The lease folder](#the-lease-folder) | `create` | `renew`, `release`, ssh | `release` |
 | `...\leases\<id>\id_ed25519`, `id_ed25519.pub` | [The key](#the-key) | `create` | `ssh`; `renew` | `release` |
 | `...\leases\<id>\id_ed25519-cert.pub` | [The certificate](#the-certificate) | `create`, `renew` | `ssh` | `release` |
 | `...\leases\<id>\renew-<hex>.pub`, `renew-<hex>-cert.pub` | [Renewal](#renewal)'s temporary files | `renew` | None | At once |
 | `...\leases\<id>\renew-<hex>-previous-cert.pub` | [Renewal](#renewal)'s copy of the previous certificate, kept until the record is written; the prototype makes none | `renew` | `renew`, to put it back | At once |
-| `<ssh folder>\config` | [The `Include` line](#the-include-line), in the user's own file | `create`, once | `ssh` | Never |
-| `<ssh folder>\config.agentspace-backup-<time>` | The config as it was before the line was added | `create`, once | A person | Never |
-| `<ssh folder>\config.agentspace-tmp-<hex>` | The config's temporary file | `create` | None | At once, except when a replace failed with the config gone |
-| `<ssh folder>\agentspace.d\` | The folder of alias files | `create` | `ssh`, through the `Include` line | Never |
-| `<ssh folder>\agentspace.d\<alias>` | [The alias file](#the-alias-file) | `create` | `ssh`; `release` | `release` |
-| `<ssh folder>\<alias>.agentspace-tmp-<hex>` | The alias file's temporary file | `create` | None | At once |
-| `%USERPROFILE%\.ssh\known_hosts` | [The host key](#the-host-key) | `ssh`, never agentspace | `ssh` | Never |
-| `%USERPROFILE%\.agentspace\ca\` | [The CA](#the-ca)'s folder | `ca`, once | `ca`, `sync`, `create`, `renew` | Never |
-| `...\ca\agentspace_ca`, `agentspace_ca.pub` | The CA's key pair | `ca`, once | The same | Never |
-| `%USERPROFILE%\.agentspace\localswim-pushed.json` | [The push stamp](#the-push-stamp) (D40; the prototype's is `localswim-pushed.sha256`) | `up`, `sync` | `up` | Never |
+| `<ssh folder>\config` | [The `Include` line](#the-include-line), in the user's own file | `create`, once; the operator, before a host's operator alias | `ssh` | Never |
+| `<ssh folder>\config.agentspace-backup-<time>` | The config as it was before the line was added | `create`, once; the operator, before a host's operator alias | A person | Never |
+| `<ssh folder>\config.agentspace-tmp-<hex>` | The config's temporary file | `create`; the operator, before a host's operator alias | None | At once, except when a replace failed with the config gone |
+| `<ssh folder>\agentspace.d\` | The folder of alias files | `create`; the operator, before a host's operator alias | `ssh`, through the `Include` line | Never |
+| `<ssh folder>\agentspace.d\<alias>` | [The alias file](#the-alias-file); for a host that is not the box, [in that form](#a-lease-alias-for-a-host-that-is-not-the-box) | `create`; a provisioning run, through `place_pending` | `ssh`; `release` | `release` |
+| `<ssh folder>\<alias>.agentspace-tmp-<hex>` | The alias file's temporary file | The same | None | At once |
+| `<ssh folder>\agentspace.d\agentspace-host.<project>` | [A host's operator alias](#a-hosts-operator-alias) (D47, D55) | Every operator command that names a host other than the box, `status -Host` included, and every one that connects to the host through it | `ssh`; the operator, to compare its bytes | Never |
+| `<ssh folder>\agentspace-host.<project>.agentspace-tmp-<hex>` | The operator alias's temporary file | The same | None | At once |
+| `%USERPROFILE%\.ssh\known_hosts` | [The host key](#the-host-key), the box's | `ssh`, never agentspace | `ssh` | Never |
+| `%USERPROFILE%\.agentspace\known_hosts` | [Agentspace's host keys](#agentspaces-host-keys), every other host's (D47) | `ssh`, never agentspace | `ssh` | Never |
+| `%USERPROFILE%\.agentspace\ca\` | [The CA](#the-ca)'s folder | `ca`, once | `ca`, `sync`, `create`, `renew`, a provisioning run's `place_pending`, and every operator command that signs its own certificate | Never |
+| `...\ca\agentspace_ca`, `agentspace_ca.pub` | The CA's key pair | `ca`, once | The same; `deploy -Host`, for `agentspace_ca.pub` | Never |
+| `%USERPROFILE%\.agentspace\localswim-pushed.json` | [The push stamp](#the-push-stamp), the box's (D40; the prototype's is `localswim-pushed.sha256`) | `up`, `sync`, each for the box | `up`, for the box | Never |
 | `%USERPROFILE%\.agentspace\localswim-pushed.json.<hex>.tmp` | The push stamp's temporary file | `up`, `sync` | None | At once |
-| `%USERPROFILE%\.agentspace\instance-id.json` | [The instance-ID cache](#files-in-the-checkout) (D40), a requirement the prototype does not meet: it keeps the file in the checkout | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. Never the lease CLI (D21) | By `deploy`, which writes it again |
-| `%USERPROFILE%\.agentspace\instance-id.json.<hex>.tmp` | The instance-ID cache's temporary file | The same as the cache | None | At once |
-| `%USERPROFILE%\.agentspace\stack-parameters.json` | [The stack parameters file](#files-in-the-checkout) (D40), which the prototype keeps in the checkout as `infra\local.parameters` | A person | `deploy` | Never |
-| `%USERPROFILE%\.agentspace\operator\` and what is in it | [The operator's folder](#files-in-the-checkout): the template, the box's files and the localswim CLI, written out for the programs that read them | `deploy`, `sync` | The AWS CLI, `scp` | Never; each file is replaced at its next use |
-| `<state folder>\board-holder.json` | [The holder record](#the-holder-record) | The keeper | The keeper | The keeper |
+| `%USERPROFILE%\.agentspace\instance-id.json` | The instance-ID cache, retired by v0.07 into the host registry's `instance_id` (D45; [Files in the checkout](#files-in-the-checkout)) | Nothing, from v0.07 | Nothing, from v0.07 | Never by agentspace; a person MAY delete it |
+| `%USERPROFILE%\.agentspace\instance-id.json.<hex>.tmp` | The retired cache's temporary file, which a killed v0.06 command MAY have left | Nothing, from v0.07 | None | Never by agentspace |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` | [The stack parameters file](#files-in-the-checkout) (D40), which the prototype keeps in the checkout as `infra\local.parameters` | A person | Plain `deploy` of the box; `deploy -Host` and `provision`, only when they create a host's stack, and then only `SubnetId` and `VpcId` | Never |
+| `%USERPROFILE%\.agentspace\operator\` | [The operator's folder](#files-in-the-checkout), which holds one folder per running operator command | The first operator command that sends a file | Nothing; each command reads only its own folder in it | Never |
+| `%USERPROFILE%\.agentspace\operator\<hex>\` and what is in it | One operator command's folder: the template, the box's files, the localswim CLI and the bootstrap script, written out for the programs it starts | The one operator command that made it: `deploy`, `sync`, `bootstrap` or `provision` | The AWS CLI, `scp`, as that command starts them | By that command, as it ends; one older than 24 hours, left by a killed command, by the next operator command that finds it |
+| `<state folder>\board-holder.json` | [The holder record](#the-holder-record), the box's | The keeper | The keeper | The keeper |
 | `<state folder>\board-holder.json.<hex>.tmp` | The holder record's temporary file | The keeper | None | At once |
-| `<state folder>\board-holder.log` | [The keeper's log](#the-keepers-logs) | The keeper | People | Never |
-| `<state folder>\board-holder-ssh.log`, `.log.1` | The holder's output | The holder | People | Replaced by rotation |
+| `<state folder>\board-holder.<project>.json` | [Another host's holder](#another-hosts-holder) record | The keeper | The keeper | The keeper |
+| `<state folder>\board-holder.<project>.json.<hex>.tmp` | Its temporary file | The keeper | None | At once |
+| `<state folder>\board-holder.log` | [The keeper's log](#the-keepers-logs), for every host | The keeper | People | Never |
+| `<state folder>\board-holder-ssh.log`, `.log.1` | The box's holder's output | The holder | People | Replaced by rotation |
+| `<state folder>\board-holder-ssh.<project>.log`, `.log.1` | [Another host's holder](#another-hosts-holder)'s output | The holder | People | Replaced by rotation |
 | `<state folder>\board-holder.lock`, `board-holder-keeper.lock` | [The keeper's lock files](#the-keepers-lock-files) | The keeper | The keeper | Never |
 | `<state folder>\board-holder-launch.<hex>.json`, `.claim`, `.result.json` | [A holder's launch files](#a-holders-launch-files) | The keeper and its launcher | The same | The keeper, in the same pass; a late launcher's result file never |
 | `<state folder>\board-holder-launch.<hex>.json.<hex>.tmp`, `board-holder-launch.<hex>.result.json.<hex>.tmp` | The launch request's and result's temporary files | The keeper and its launcher | None | At once |
@@ -283,7 +342,12 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 
 `<hex>` is 32 lowercase hex digits, new for each file (a GUID without hyphens); `<id>` is a lease
 ID, always in its normalized lowercase form ([lease-api.md](lease-api.md#lease-id)); `<alias>` is
-the lease's `ssh.host_alias` ([lease-api.md](lease-api.md#fields)).
+the lease's `ssh.host_alias` ([lease-api.md](lease-api.md#fields)); `<project>` is a project in its
+normalized form, `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$` ([lease-api.md](lease-api.md#project)),
+the `project` of a record in [the host registry](#the-host-registry). **A file named for a host
+names it by that project, never by its stack:** `agentspace-host.<project>`, with a dot, is the
+operator alias's name and the host's key's name in `known_hosts`, and `agentspace-host-<project>`,
+with a hyphen, is only ever the stack's name (D44, D47, D55).
 
 ## The lease state file
 
@@ -368,14 +432,32 @@ point (2026-11-18):
   with `internal`, change nothing, and its message MUST NOT name the stored driver** (D1;
   [lease-api.md](lease-api.md#exit-codes-and-errors)). The prototype's message names it.
 - **A `pending` or `unsatisfiable` record without `driver`** needs none: `release` of a `pending`
-  record asks no driver, and nothing asks one about an `unsatisfiable` record
+  record without one asks no driver, and nothing asks one about an `unsatisfiable` record
   ([driver.md](driver.md#release-a-lease)).
 
 **How each command changes it:**
 - **`create`** appends one record. It writes `id`, `project`, `state`, `platform`, `profile`,
   `size`, `ttl_seconds` and `created_at`, then `expires_at` and `ssh` for a `ready` lease or
   `reasons` for an `unsatisfiable` one, then `driver`. **An `unsatisfiable` lease's record is all
-  `create` writes**: it carries `driver`, no file is made for it, and no CA check is run.
+  `create` writes**: it carries `driver`, no file is made for it, and no CA check is run. **From
+  v0.07 a `pending` lease's record is all `create` writes too** (D48): the common fields and
+  `driver`, and no file. **`create` checks the CA before it answers `pending`**, by the five checks
+  of [Its checks](#its-checks), as before it issues, and a CA that fails them fails `create` as for
+  a `ready` lease, writing no record (architect, 2026-11-20, for v0.07-T01). It is answered for a project whose host is not `ready`, and an
+  `unsatisfiable` lease with the one reason `no_capacity` for a project that has no host and is not
+  on [the project list](#the-project-list) (D54); which answer `create` gives is
+  [driver.md](driver.md#where-it-places-a-lease)'s.
+- **A provisioning run, through the EC2 driver's `place_pending`, changes a `pending` record to
+  `ready`** (D48; architect, 2026-11-20, for v0.07-T01). **It takes [the lease state
+  lock](#the-lease-state-lock) once for each lease it places, and re-reads the file each time**
+  (architect, 2026-11-20, for v0.07-T01): under the lock it re-reads the file, issues that lease's credential and
+  alias as [Creation, in order](#creation-in-order) says, and then, in one write, sets `state` to
+  `ready` and adds `expires_at` and `ssh`, before it releases the lock and takes it again for the
+  next lease. So no hold spans several placements. It keeps every other member as it was: `id`,
+  `project`, `platform`, `profile`, `size`, `ttl_seconds`, `created_at` and `driver`. **A record
+  that is not `pending` when the run re-reads the file for it under the lock is skipped, and never
+  changed by the run**, so a lease released meanwhile is never placed. Which leases it places, and in what steps, is
+  [driver.md](driver.md#place_pending)'s.
 - **`created_at` and the certificate's issue time are separate readings of the clock**, each
   truncated to the whole second, and either MAY come first
   ([lease-api.md](lease-api.md#fields)). The prototype reads `created_at` after signing.
@@ -387,7 +469,10 @@ point (2026-11-18):
   release left, which the prototype does not
   ([Release, and what it leaves](#release-and-what-it-leaves)). **`release` of an
   `unsatisfiable` record** changes nothing.
-- **`get` and `list` MUST NOT write it, and the keeper MUST NOT write it either.**
+- **`get` and `list` MUST NOT write it, and the keeper and the ProxyCommand MUST NOT write it
+  either.** `get`'s `check_pending` MAY start a provisioning run, which writes it later in a
+  process of its own ([driver.md](driver.md#check_pending)); `get` itself never does (card #0143,
+  D48).
 - **This page requires no single reading of the clock per command.** The prototype reads it
   separately for the expiry check, for `released_at` and for the state it prints, each truncated
   to the second; how `expired` is decided is [lease-api.md](lease-api.md#states)'s.
@@ -422,8 +507,282 @@ it asks any driver anything.
 folder, if needed, and the file. No command deletes the file, and no command forgets a lease in v0
 ([lease-api.md](lease-api.md#states)). **Access rules:** inherited.
 
-**Who reads it:** every lease command, and the keeper, which reads it without taking the lock
-([keeper.md#locks](keeper.md#locks)).
+**Who reads it:** every lease command; a provisioning run, under the lock; and the keeper and the
+ProxyCommand, which read it without taking the lock and never write it
+([keeper.md#locks](keeper.md#locks); [operator.md, The ProxyCommand](operator.md#the-proxycommand)).
+The ProxyCommand reads it only to find the record whose `ssh.host_alias` is its argument, and so
+the host that lease is on ([Which host a connection reaches](#which-host-a-connection-reaches)).
+**A reader that finds the file missing, or not valid, reads no lease from it**; what the
+ProxyCommand then does is operator.md's.
+
+## The host registry
+
+**`%USERPROFILE%\.agentspace\hosts.json` says which host serves which project (D45, D55).** It
+holds one record per host: its project, its stack's name, its state, its instance ID once known,
+and the start time of its last provisioning run. It is laptop state, never output (D1): no lease
+command prints anything from it, nor names it in a message. Its schema is
+[`schemas/state/hosts.state.schema.json`](../schemas/state/hosts.state.schema.json), draft 2020-12
+and strict (D20), carried inside every program that reads it, and where this section and the
+schema disagree, both are wrong and MUST be fixed together.
+
+**The document** is `{"version":0,"hosts":[<record>, ...]}`:
+- **`version`** is the integer `0`. A reader MUST refuse any other value as an invalid file.
+- **`hosts`** is an array of records, in the order they were added. The box's record, which the
+  seed (below) puts first, stays first.
+
+**A record** is an object with these members, and no others:
+
+| Member | Required | Value |
+|---|---|---|
+| `project` | Yes | The project the host serves, in the lease contract's normalized form ([lease-api.md](lease-api.md#project)): `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\n)` |
+| `stack` | Yes | The host's CloudFormation stack (D44): `agentbox` for the box, `agentspace-host-<project>` for every other host, so at most 48 characters, 16 for the prefix and 32 for the project (D44; architect, 2026-11-20, for v0.07-T01). `^(agentbox\|agentspace-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?)$(?!\n)` |
+| `state` | Yes | `creating`, `ready` or `failed` ([Its states](#its-states)) |
+| `instance_id` | No | The host's EC2 instance ID, cached from its stack's `InstanceId` output: `^i-([0-9a-f]{8}\|[0-9a-f]{17})$(?!\n)`. Absent until a writer has read it ([The instance ID](#the-instance-id)) |
+| `last_attempt_at` | No | The start time of the host's last provisioning run, UTC, in the contract's form `YYYY-MM-DDTHH:MM:SSZ` ([lease-api.md](lease-api.md#times)). Absent while no run has been started |
+
+`(?!\n)` after `$` means the value MUST NOT end in a line feed, which a bare `$` would allow; each
+pattern in the schema ends that way, as the contract's output schemas' do. The `\|` in the table
+is a `|` in the pattern.
+
+- **An optional member is absent or holds a value of its form. `null` is never accepted** for one:
+  a record with `"instance_id":null` is not valid, and a writer that has no value for a member
+  leaves it out.
+- **A `ready` record need not carry `instance_id`**, and the seed's has none.
+- **`last_attempt_at` is kept as the string it is stored as**, as the lease state file's times
+  are. **A time that matches the pattern but names no real instant**, such as
+  `2026-02-30T00:00:00Z`, **makes the file not valid**, as it makes the lease state file not valid
+  ([The lease state file](#the-lease-state-file)); so does a leap second, `:60`.
+
+**What makes a file not valid, beyond its schema.** A file that validates against the schema is
+still not valid when any of these holds, though the schema cannot refuse it:
+1. **Two records share a `project`.** Projects are compared as the normalized strings they are
+   stored as. This is the lease state file's rule for two records with one `id`, and a reader
+   treats such a file as it treats one that fails its schema (below).
+2. **A record's `stack` is `agentspace-host-<p>` with `<p>` other than that record's own
+   `project`**, such as `{"project":"agentspace","stack":"agentspace-host-swimcoach",...}`. The
+   project inside the stack's name MUST equal the record's `project`, exactly.
+3. **The file holds no record whose `stack` is `agentbox`, holds two, or holds one whose
+   `project` is not `swimcoach`.** A valid file holds exactly one record whose `stack` is
+   `agentbox`, and that record's `project` is `swimcoach` (architect, 2026-11-20, for v0.07-T01).
+   The box is swimcoach's host (D43, D55), and the seed is its record; nothing in agentspace
+   removes a record, so only a person's edit can break this. Without the rule a missing box record
+   would read as a swimcoach with no host.
+
+**Its bytes:** the lease state file's, in every point ([The lease state file](#the-lease-state-file)).
+- **Written as UTF-8 without a byte order mark, as compact JSON with no whitespace outside strings,
+  followed by one LF.** A writer writes each record's members in the order of the table above; a
+  reader MUST NOT depend on member order.
+- **Read tolerantly (D20):** a reader MUST accept a leading UTF-8 byte order mark and any amount of
+  JSON whitespace. Bytes that are not valid UTF-8 make the file not valid.
+- **An object that names one member twice makes the file not valid**, whichever value a parser
+  would keep. A `version` written as `0.0` is form only, accepted, and written back as `0`.
+- **Checked against the schema, and against the three rules above, on every read and before every
+  write.** A change that would not be valid is not written.
+
+**The seed: a missing file reads as the box's record alone** (D45, D55):
+
+```
+{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}
+```
+
+- **A reader that finds no file reads that document**, and writes nothing. Reading never creates
+  the file.
+- **The first change writes the seed's record with it** (D45, D55): under
+  [the host registry lock](#the-host-registry-lock), a writer that finds no file starts from the
+  seed, makes its change, and writes the whole document. So the box's record is first in every
+  file agentspace writes.
+
+**Only a missing file reads as the seed. A file that is not valid is an error, never a missing
+file** (architect, 2026-11-20, for v0.07-T01). It holds state that a rebuild from the seed would
+lose, such as a host that is `creating`, so a reader MUST NOT read it as the seed:
+- **`create`** fails with `internal` and changes nothing, as for a lease state file that is not
+  valid; its message is [driver.md](driver.md#where-it-places-a-lease)'s. That `internal` is
+  `create`'s alone.
+- **`get` of a `pending` lease never fails over the host registry**, nor over the project list: it
+  prints the lease as it would otherwise, and starts no provisioning run
+  ([driver.md](driver.md#check_pending); architect, 2026-11-20, for v0.07-T01). `get` of a lease
+  in any other state does not read the file.
+- **The operator's commands and the ProxyCommand** fail with a message that names the file
+  ([operator.md](operator.md#which-host-a-command-acts-on)).
+- **The keeper** logs that it cannot read the file and keeps every holder as it is, as for its
+  other inputs ([keeper.md](keeper.md)).
+- **`list`, `renew` and `release` never read it**, so none of them fails because it is missing,
+  cannot be read or is not valid.
+- **Nothing in agentspace repairs, rewrites or removes a file that is not valid.** A person
+  decides.
+
+**Something at `hosts.json` that is not a file, such as a folder, or a file that cannot be opened,
+is not a missing file.** Every reader treats it as a file that is not valid, above.
+
+**Replaced atomically** ([Replacing a file](#replacing-a-file)), through
+`hosts.json.<hex>.tmp` in `%USERPROFILE%\.agentspace`, written through to the disk and flushed
+before the rename. A writer MUST hold [the host registry lock](#the-host-registry-lock) from before
+it reads the file until after the rename, and MUST change only the record or records its change is
+about, leaving every other record's members and values as it read them. The writer creates
+`%USERPROFILE%\.agentspace` first if it is missing.
+
+**Who writes it**, each under its lock and each only as [Its states](#its-states) and
+[The instance ID](#the-instance-id) say:
+- **The driver**, in `create` and in `get`'s `check_pending`: it adds a listed project's record and
+  records the start of a run ([driver.md](driver.md#where-it-places-a-lease)). `get` writes nothing
+  else, and never the lease state file.
+- **`provision`**: the run's start, its outcome and the instance ID
+  ([operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
+- **Every other operator command that needs a host's instance ID**: that record's `instance_id`
+  alone. **No other operator command adds a record** (architect, 2026-11-20, for v0.07-T01): one given `-Host`
+  for a project with no record fails, writing nothing, with operator.md's message
+  ([Which host a command acts on](operator.md#which-host-a-command-acts-on)).
+- **The ProxyCommand**: a missing `instance_id` alone, into its host's existing record, as
+  [The instance ID](#the-instance-id) says. It never writes another member and never adds a
+  record.
+
+**Who reads it:** the driver, in `create` and in `get` of a `pending` lease; every operator
+command that acts on a host, to find it, and `status -All`, `down -All` and `sync -All` for
+every record; and the ProxyCommand and the keeper, without its lock
+([Which host a connection reaches](#which-host-a-connection-reaches)), but for the ProxyCommand's
+write of a missing `instance_id`, which it makes under the lock. **`list`, `renew` and
+`release` never read it.** No program prints it, or any record's members, to a lease command's
+output (D1).
+
+- **`AGENTSPACE_STATE_DIR` does not move it**, nor its lock: every state folder on the machine
+  shares one host registry, because hosts are shared ([What moves which files](#what-moves-which-files)).
+- **Access rules:** inherited.
+- **No command deletes the file, and nothing in agentspace removes a record from it** in v0.07: a
+  host is kept (D25).
+
+### Its states
+
+**A record's `state` says whether the host can take leases**, and is written only as this table
+says. When a run is started, and the 5-minute rule between runs, are
+[driver.md](driver.md#check_pending)'s and [operator.md](operator.md#provision)'s; this table is
+what each writer records.
+
+| From | To | Written by, and when |
+|---|---|---|
+| No record | `creating`, without `last_attempt_at` unless a run is started | The driver, in `create` or in `get`'s `check_pending`, for a project with no record that is on [the project list](#the-project-list) (architect, 2026-11-20, for v0.07-T01). When it starts a run in the same call, the record is written with `last_attempt_at` in that same write (the next row). `provision`, run by hand for such a project, adds the same record with `last_attempt_at` |
+| `creating` or `failed` | `creating`, with `last_attempt_at` set to now | The driver, in the same locked write in which it decides to start a run; `provision`, at its start, once it holds [the run's lock](#the-provisioning-runs-lock) (architect, 2026-11-20, for v0.07-T01) |
+| `creating` | `ready`, with `instance_id` | `provision`, when every step has succeeded |
+| `creating` | `failed` | `provision`, when a step has failed. `last_attempt_at` stays the run's start, and an `instance_id` the run learned is kept |
+| `ready` | `ready`, with `last_attempt_at` set to now | The driver, when it starts a run for a host that is `ready` (`check_pending`, for a pending lease of that project; architect, 2026-11-20, for v0.07-T01), and `provision` at its start on such a host. **The run never changes a `ready` record's `state`**: it keeps `ready` on success, writing the `instance_id` if it learned one, and on a failed step logs the failure and leaves `ready` (architect, 2026-11-20, for v0.07-T01; D48) |
+
+- **No writer changes a record to a state the table does not name.** In particular nothing in
+  agentspace moves a record out of `ready`, and nothing removes a record. **`creating` and
+  `failed` apply only to a host that was never `ready`**, and a run on a `ready` host, and the
+  driver that starts it, write only `last_attempt_at` at its start (architect, 2026-11-20, for
+  v0.07-T01; D48). A host that is not `ready` sends its project's ready leases to the box, where
+  ssh refuses them ([Which host a connection reaches](#which-host-a-connection-reaches)).
+- **`creating` means a run is under way, or one died with the record still `creating`.**
+  Whether a run is under way is told by [the run's lock](#the-provisioning-runs-lock), never by
+  the record: a run killed before it recorded its outcome leaves `creating`, and a later `create`
+  or `get` starts the next run once `last_attempt_at` is 5 minutes old (D48).
+- **`failed` is never a reason to answer `unsatisfiable`** (D48): a lease of that project stays
+  `pending`, and the next run MAY succeed.
+- **The only record with the stack `agentbox` that agentspace ever adds is the seed's.** Every
+  record a writer adds has the stack `agentspace-host-<project>`, with its own project.
+
+### The instance ID
+
+**A record's `instance_id` is a cache of its stack's `InstanceId` output** (D45), and replaces the
+instance-ID cache, `instance-id.json`, which v0.07 retires
+([Files in the checkout](#files-in-the-checkout)). Nothing migrates: a record without one has it
+read from its stack again, as a missing cache was.
+- **An operator command that needs a host's instance ID and finds its record without one reads the
+  stack's `InstanceId` output and writes it into that record**, under the lock, changing nothing
+  else. `deploy` writes it from the output after every deploy, replacing the one the record held,
+  and so does `provision`'s deploy step ([operator.md](operator.md#deploy)).
+- **The ProxyCommand MAY write a missing `instance_id` into its host's existing record, and
+  nothing else** (architect, 2026-11-20, for v0.07-T01), as the retired cache was written: when the
+  record it reaches holds no `instance_id`, it reads the stack's output, then takes
+  [the host registry lock](#the-host-registry-lock), reads the file again, and writes the ID only
+  into that record, and only if it still holds none. It never writes another member, never
+  replaces an `instance_id`, and never adds a record; it never holds the lock across the call to
+  AWS. A write that fails, or a file that has become not valid, does not fail the connection,
+  which uses the ID it read (architect, 2026-11-20, for v0.07-T01).
+- **The lease CLI never reads, checks for or needs `instance_id`** (D21): `create` and `get` read
+  a record's `project`, `stack` and `state` alone ([driver.md](driver.md#where-it-places-a-lease)).
+- **An `instance_id` that does not match its pattern makes the file not valid**, as above. Unlike
+  the retired cache's, it is never read as missing, because the file holds more than the cache did.
+
+### Which host a connection reaches
+
+**The host a lease is on, and so the host a connection through its alias reaches, is found from
+the files on this page** (D49, D55; architect, 2026-11-20, for v0.07-T01, the dev lead's pin P7):
+- **A host's operator alias, `agentspace-host.<project>`, reaches that project's host**, whatever
+  its record's state.
+- **A lease alias reaches the host of the lease whose `ssh.host_alias` it is**: the record in the
+  lease state file with that alias, then its `project`'s record in the host registry, if that
+  record is `ready`. **Otherwise, the box**: when no lease record has that alias, when the
+  project has no record, or when its record is not `ready`.
+- **A ProxyCommand given no alias reaches the box**, as the user's own `agentspace` entry does.
+- **A fallback to the box is refused by ssh** for a lease whose host is not the box, because its
+  alias checks the key under `agentspace-host.<project>` in agentspace's `known_hosts`, and the box's
+  key is never there under that name
+  ([A lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box)).
+  So a connection never reaches the wrong machine.
+- **The ProxyCommand and the keeper read the lease state file and the host registry without their
+  locks.** Neither writes the lease state file, the keeper never writes the host registry, and the
+  ProxyCommand writes it only to cache a missing `instance_id`, under its lock
+  ([The instance ID](#the-instance-id)).
+
+## The project list
+
+**`%USERPROFILE%\.agentspace\projects.json` lists the projects that may have a host made (D54,
+D55).** A host costs money while it exists, so a mistyped project MUST NOT make one. It governs only
+making a host: a project that has a record in [the host registry](#the-host-registry) is placed by
+that record, listed or not. Its schema is
+[`schemas/state/projects.state.schema.json`](../schemas/state/projects.state.schema.json), draft
+2020-12 and strict (D20), carried inside every program that reads it, and where this section and
+the schema disagree, both are wrong and MUST be fixed together.
+
+**The document** is `{"version":0,"projects":[<entry>, ...]}`:
+- **`version`** is the integer `0`. A reader MUST refuse any other value as an invalid file.
+- **`projects`** is an array of entries, each an object with exactly these two members:
+
+| Member | Value |
+|---|---|
+| `name` | The project, in the lease contract's normalized form: `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\n)` |
+| `approved` | The date Terry approved it, `YYYY-MM-DD`: `^[0-9]{4}-(0[1-9]\|1[0-2])-(0[1-9]\|[12][0-9]\|3[01])$(?!\n)` |
+
+- **A project is listed when an entry's `name` equals the lease's normalized project, exactly.** A
+  reader MUST NOT normalize a stored name: one that is not in the normalized form fails the schema.
+- **A date that matches the pattern but names no real day**, such as `2026-02-30`, `2026-04-31`
+  or `2026-02-29`, **makes the file not valid**, as a time that names no real instant makes the
+  lease state file not valid. Days are counted in the proleptic Gregorian calendar.
+- **Nothing in agentspace compares `approved` with the clock.** It records when Terry's yes was
+  given; a date in the future is valid.
+- **Two entries with one `name` make the file not valid**, though the schema cannot refuse it, as
+  two host records with one project do.
+- **An object that names one member twice makes the file not valid.**
+
+**Who writes it: a person, or the architect with Terry's yes, never agentspace** (D54). Every
+entry takes Terry's yes, recorded as its `approved` date. No agentspace program creates, changes
+or removes it, and none offers to. For v0.07 it holds `agentspace` alone (D54); swimcoach needs no
+entry, since its host is the box.
+- **A person writes it, so a reader MUST accept a UTF-8 byte order mark, and whitespace and line
+  endings that JSON allows**, as for the stack parameters file. Bytes that are not valid UTF-8
+  make the file not valid. For example:
+
+  ```
+  {"version":0,"projects":[{"name":"agentspace","approved":"2026-11-20"}]}
+  ```
+
+  The architect writes it as compact JSON followed by one LF.
+**Who reads it, and when:** the driver, in `create` and in `get`'s `check_pending`, and
+`provision`, each only for a project with no record in the host registry
+([driver.md](driver.md#where-it-places-a-lease); [operator.md](operator.md#provision)). A reader
+reads it while it holds [the host registry lock](#the-host-registry-lock), so its answer and the
+record it adds agree. A reader SHOULD open it sharing read, write and delete.
+
+**A missing file lists nothing** (D54), so a laptop without one makes no host at all. **Something at
+its path that is not a file, a file that cannot be opened, or a file that is not valid, lists
+nothing either, but is an error** (architect, 2026-11-20, for v0.07-T01): `create` fails with `internal` and
+changes nothing, rather than answer a terminal `unsatisfiable` for a project that MAY be listed;
+`provision` fails with a message that names the file ([operator.md](operator.md#provision)).
+**`get` of a `pending` lease never fails over it** (architect, 2026-11-20, for v0.07-T01): it
+starts no run and answers as it would otherwise.
+
+- **`AGENTSPACE_STATE_DIR` does not move it.** **Access rules:** inherited; agentspace sets none.
+- **Never removed by agentspace.**
 
 ## A lease's credential
 
@@ -432,7 +791,8 @@ folder, if needed, and the file. No command deletes the file, and no command for
 (D7, D9, D10).** What a caller is promised about them is
 [lease-api.md](lease-api.md#the-credential)'s; this section says what the files are, byte for byte
 where it matters, and how each step makes and removes them. Everything here is done by the v0
-driver ([driver.md](driver.md)), inside the lease command that calls it.
+driver ([driver.md](driver.md)), inside the lease command that calls it, or, from v0.07, inside a
+provisioning run that places a `pending` lease through the driver's `place_pending` (D48).
 
 ### The lease folder
 
@@ -556,8 +916,18 @@ a letter or digit first and at most 128 characters ([The holder record](#the-hol
 guards its own input. Every alias `create` generates passes all three, so they differ only for an
 alias a person writes by hand, which reaches the operator alone, never the keeper's record.
 
-**Its bytes, exactly:** UTF-8 without a byte order mark, each line ending in one LF, the last
-included, and every line after the second indented by two spaces:
+**`agentspace.d` holds a second kind of file from v0.07: a host's operator alias,
+`agentspace-host.<project>`** ([A host's operator alias](#a-hosts-operator-alias); D47, D55). Its
+name passes the alias pattern above and the operator's `-Alias` check, and holds a dot, which no
+lease alias does: a lease alias is `agentspace-`, a project of letters, digits and `-`, `-` and
+eight hex digits. So no lease alias ever equals an operator alias's name, and the two kinds are
+told apart by their owner marks as well (below).
+
+**Its bytes, exactly, for a lease on the box:** UTF-8 without a byte order mark, each line ending
+in one LF, the last included, and every line after the second indented by two spaces. These are
+v0.06's bytes, and a lease on the box keeps them from v0.07 on (D47, D53, D55); a lease on any
+other host adds one line, as [A lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box)
+says, and is otherwise the same:
 
 ```
 # agentspace lease <id>; <comment>
@@ -612,11 +982,23 @@ Host <alias>
 - **If the program is not in that folder, `create` MUST fail with `internal`**, as for any alias
   step that fails ([Creation, in order](#creation-in-order)), and say in agentspace's own words that
   the lease's way to reach its host cannot be found ([lease-api.md](lease-api.md#messages)).
+- **A provisioning run's `place_pending` finds `<program>` of the default line as the lease CLI
+  does, beside the running program's own executable** (D8; architect, 2026-11-20, for v0.07-T01),
+  by the same rule and in the same form as the `<program>` row above says, and nowhere else. The run is
+  `agentspace-operator.exe`, which D37 puts beside the lease CLI and the ProxyCommand program in
+  every install and in `target\dist`. **If the program is not there, `place_pending` fails for
+  that lease as `create` does above, and the lease stays `pending`**
+  ([Creation, in order](#creation-in-order)). `AGENTSPACE_PROXY_COMMAND`, when the lease CLI that
+  started the run had it set, still replaces the whole line, as the next bullet says
+  ([The provisioning run's start](#the-provisioning-runs-start)). **A stand-in named by
+  `AGENTSPACE_PROVISION_CMD` never calls `place_pending`.**
 - **`AGENTSPACE_PROXY_COMMAND`, when set and not empty, replaces the whole line**, and the program
   is then not looked for ([lease-api.md](lease-api.md#environment)).
-- **`create` MUST NOT read, check for or need the instance-ID cache**, with or without the
-  override: the ProxyCommand reads it when a connection is made (D21;
-  [driver.md](driver.md#how-it-is-reached)).
+- **`create` MUST NOT read, check for or need a host's instance ID**, with or without the
+  override: it reads a host registry record's `project`, `stack` and `state` alone, and the
+  ProxyCommand reads `instance_id` when a connection is made (D21, D45;
+  [The instance ID](#the-instance-id); [driver.md](driver.md#how-it-is-reached)). Until v0.07 this
+  rule named the instance-ID cache, which v0.07 retires.
 - **What a check can see of the default line, and so all that conformance asserts of it:** it has
   one of the two forms above; `<program>` is the full path of a file that exists; the interpreter
   form is used when, and only when, that file's extension is `.cmd` or `.bat`; and the line ends
@@ -637,6 +1019,11 @@ Host <alias>
   Release and overwrite are decided by it. The prototype matches `# agentspace lease (\S+);` at the
   start of the line, and compares both the prefix and the ID without regard to case; a reader MUST
   accept at least the exact form.
+- **A host's operator alias carries another owner mark, `# agentspace host <project>; <comment>`**
+  ([A host's operator alias](#a-hosts-operator-alias)), **and it is never a lease's owner mark**:
+  `# agentspace host ` does not start with `# agentspace lease `, so a lease's `create`, overwrite
+  or `release` that meets an operator alias treats it as a file with no owner mark, and changes
+  nothing (below). The match MUST stay so, whatever case rule a reader uses.
 - **A path or ProxyCommand that holds a CR or LF MUST be refused**, writing nothing, because a line
   break would add directives to the block. **So MUST any other value the file holds** (the ID, the
   comment, the alias and the user), since each sits on one line (architect, 2026-11-19, for
@@ -654,22 +1041,77 @@ Host <alias>
   `agentspace.d`** in one attempt ([Replacing a file](#replacing-a-file)). The temporary file MUST
   NOT be put in `agentspace.d`, because the `Include` glob reads every file there.
 - **The writer MUST NOT put any file but alias files in `agentspace.d`.** A person's own file there
-  is read by ssh like an alias file, and agentspace never deletes or replaces it.
+  is read by ssh like an alias file, and agentspace never deletes or replaces it. The operator's
+  host aliases are the one other kind of file agentspace puts there
+  ([A host's operator alias](#a-hosts-operator-alias)).
 
 **When the alias file already exists**, the writer reads its first line:
 - **It names this lease, and its bytes equal the new ones:** nothing is written.
 - **It names this lease, with other bytes:** it is replaced.
 - **It names another lease, or it has no owner mark:** the writer MUST fail and change nothing.
+  A host's operator alias's mark is no lease owner mark, so it is this case.
   Two kept leases never share an alias ([lease-api.md](lease-api.md#fields)), so this means a
   foreign file, a lease recorded in another state folder, or one a killed `create` left with no
   record ([Creation, in order](#creation-in-order)). **`create` then fails with `internal`, and
   MUST NOT draw another ID:** the file may be a person's, and an ID is drawn again only for the
   alias of a record ([lease-api.md](lease-api.md#fields)). This settles the second half of
   [Q9](#open-questions); the prototype does the same.
+- **A provisioning run's `place_pending` first removes an alias file whose owner mark names the
+  `pending` lease it is about to place** (architect, 2026-11-20, for v0.07-T01), since only a killed placement can
+  have left it: a `pending` lease has no alias by contract
+  ([Creation, in order](#creation-in-order)). The cases above then meet only a file that names
+  another lease, or has no owner mark, and the placement fails on it, leaving the lease `pending`.
 - **Something at that path that is not a file**, such as a folder, makes the write fail, and
   `create` fails with `internal`. **A symbolic link or other reparse point there is never
   followed, replaced or removed**: `create`, and `release`'s step 1, treat it as a foreign file
   (architect, 2026-11-19, from E0.05-T02-S03).
+
+### A lease alias for a host that is not the box
+
+**A lease placed on a host that is not the box has an alias file in the form above, with the host's
+key named in two lines instead of one** (D47, D55): `HostKeyAlias agentspace-host.<project>`, and
+one more line straight after it, `UserKnownHostsFile "<known_hosts path>"`. Its bytes, exactly,
+under the same rules as the box's (UTF-8 without a byte order mark, each line ending in one LF,
+every line after the second indented by two spaces):
+
+```
+# agentspace lease <id>; <comment>
+Host <alias>
+  User <user>
+  IdentityFile "<key path>"
+  CertificateFile "<certificate path>"
+  IdentitiesOnly yes
+  HostKeyAlias agentspace-host.<project>
+  UserKnownHostsFile "<known_hosts path>"
+  StrictHostKeyChecking yes
+  ProxyCommand <proxy command>
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+  RemoteForward 127.0.0.1:8811 127.0.0.1:8811
+  RemoteForward 127.0.0.1:53147 127.0.0.1:53147
+```
+
+| Placeholder | Value |
+|---|---|
+| `<project>` | The lease's `project`, which is the `project` of the host registry record the lease is placed on |
+| `<known_hosts path>` | The full path of [agentspace's `known_hosts`](#agentspaces-host-keys), written as `<key path>` is: the home folder joined as text with `.agentspace\known_hosts`, then every `\` written as `/` and every `%` as `%%`, as in `C:/Users/<user name>/.agentspace/known_hosts` |
+| Every other | As for the box's alias, above |
+
+- **Which form `create` writes is decided by the record the lease is placed on**: the record whose
+  `stack` is `agentbox` gives the box's form, byte for byte as v0.06 writes it, and every other
+  `ready` record gives this one ([Which host a connection reaches](#which-host-a-connection-reaches)).
+  A provisioning run's `place_pending` writes this form for the host it made.
+- **`StrictHostKeyChecking yes` stays**: a lease alias never accepts a new key. The key is put in
+  agentspace's `known_hosts` by the operator's first connection to the host, during its
+  provisioning run, before the record is `ready` ([Agentspace's host keys](#agentspaces-host-keys)).
+- **The owner mark, the ProxyCommand line and its default, the temporary file, the access rules,
+  the rules for an alias file that already exists and the order of writing and removal are the
+  box's alias's**, above, and `release` removes it the same way. The ProxyCommand line names the
+  lease's alias, as for the box, and the ProxyCommand finds the host from the lease
+  ([Which host a connection reaches](#which-host-a-connection-reaches); D49).
+- **`renew` changes nothing in it**, as for every alias. A lease keeps the form it was placed with.
+- **A path that holds a CR or LF is refused, writing nothing**, as for the other paths: the
+  `<known_hosts path>` too.
 
 ### The `Include` line
 
@@ -744,6 +1186,14 @@ tabs and CRs from both ends of each line, and looks at the lines in order:
 - **Access rules of the backup and the temporary file:** inherited from `<ssh folder>`; agentspace
   sets none.
 
+**The operator makes sure of the line too, before it writes a host's operator alias**, by exactly
+these steps and with the same backup, temporary file, failures and refusals (architect,
+2026-11-20, for v0.07-T01, the dev lead's pin P11): a config where the line is below the first
+block, or that is a link or read-only and lacks the line, fails the operator's command, which changes nothing in the
+config and says that a person has to add or move the line. What the operator prints then is
+[operator.md](operator.md)'s. Every rule in this section that names `create` binds the operator
+the same way, but for the lease-api.md messages.
+
 **Nothing else in the config is agentspace's.** The user's own `agentspace` entry is the
 operator's ([operator.md](operator.md#the-agentspace-ssh-entry)); agentspace reads it only through
 ssh, and never writes it.
@@ -753,13 +1203,42 @@ config unless a person removes the line.
 
 ### The host key
 
-**An alias file checks the host's key under the name `agentspace` (`HostKeyAlias agentspace`,
-`StrictHostKeyChecking yes`), and agentspace never writes that key.** On today's box it is in
+**A lease alias for the box checks the box's key under the name `agentspace` (`HostKeyAlias
+agentspace`, `StrictHostKeyChecking yes`), and agentspace never writes that key.** Every other
+host's key is in [agentspace's own `known_hosts`](#agentspaces-host-keys) instead (D47). The box's is in
 `%USERPROFILE%\.ssh\known_hosts`, put there by ssh the first time the user connected through their
 own `agentspace` entry, which accepts a new key ([operator.md, "The `agentspace` SSH
 entry"](operator.md#the-agentspace-ssh-entry)). Without it, every login through
 a lease alias is refused. A host whose key changes needs that entry replaced by a person. Whether
 `create` SHOULD check for it is [Q3](#open-questions).
+
+### Agentspace's host keys
+
+**`%USERPROFILE%\.agentspace\known_hosts` holds the key of every host but the box, each under
+its own name, `agentspace-host.<project>`, and only ssh writes it** (D47, D55). It never holds the box's
+key: the operator reaches the box through the user's own `agentspace` entry and writes no operator
+alias for it ([operator.md](operator.md)), and the box's lease aliases never read it.
+- **Written by `ssh`, never by agentspace.** The first connection through a host's operator alias,
+  which accepts a new key (`StrictHostKeyChecking accept-new`), makes ssh add the host's key under
+  `agentspace-host.<project>`, creating the file if it is missing
+  ([A host's operator alias](#a-hosts-operator-alias)). A provisioning run connects that way before
+  it records the host `ready`, so the key is there before any lease alias needs it.
+- **Read by `ssh`**, through the `UserKnownHostsFile` line of the host's operator alias and of every
+  lease alias for that host, which name it by its full path
+  ([A lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box)).
+  Those aliases check strictly, so a lease alias whose host's key is not there is refused by ssh.
+- **agentspace MUST NOT read, write, move or remove it**, and its format is OpenSSH's. Nothing in
+  agentspace causes ssh to write the user's `%USERPROFILE%\.ssh\known_hosts` for a host that is
+  not the box: every alias agentspace writes for such a host names this file.
+- **A host whose key changes**, such as one whose instance was replaced, **is refused by every
+  alias, the operator's included**, since `accept-new` accepts only a name with no key. A person
+  removes the old line, with `ssh-keygen -R agentspace-host.<project> -f <its full path>`, and the
+  next operator connection accepts the new key.
+- **`USERPROFILE` moves it; `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` do not**
+  ([What moves which files](#what-moves-which-files)).
+- **Access rules:** what ssh gives a file it creates in `%USERPROFILE%\.agentspace`, inherited;
+  agentspace sets none.
+- **Never removed by agentspace.**
 
 ### Creation, in order
 
@@ -778,6 +1257,28 @@ Then `create` writes the record ([The lease state file](#the-lease-state-file)).
 **For a lease that is `unsatisfiable`, `create` writes only the record**, with its reasons and
 `driver`. It runs no CA check and makes no file, so a laptop with no CA still gets an
 `unsatisfiable` answer.
+
+**For a lease that is `pending`, `create` writes only the record too** (D48), with `driver`: no
+lease folder, no key, no certificate and no alias. **It first checks the CA by the five checks of
+[Its checks](#its-checks)**, as step 1 does for a `ready` lease, and a CA that fails them fails
+`create` as for a `ready` lease, with the same message and no record (architect, 2026-11-20, for
+v0.07-T01). What
+it writes to the host registry, if anything, is in [the host registry's states](#its-states).
+
+**A provisioning run places a `pending` lease by the same six steps**, through the EC2 driver's
+`place_pending`, and then writes the record `ready`
+([The lease state file](#the-lease-state-file); [driver.md](driver.md#place_pending)). **It takes
+the lease state lock once for each lease** (architect, 2026-11-20, for v0.07-T01): under it, it re-reads the
+state file, skips the lease if its record is no longer `pending`, and otherwise places it and
+writes its record before it releases the lock. The six steps and every rule below bind it as they
+bind `create`, with one exception: **before step 2, it removes an alias file at the lease's alias whose owner mark names that ID,
+then that ID's lease folder, with everything in it** (architect, 2026-11-20, for v0.07-T01), since only a
+killed placement can have left them: a `pending` lease has none by contract. Step 2's refusal of
+an existing key then finds none. An alias file there that names another lease, or has no owner
+mark, is not removed, and step 6 fails on it ([The alias file](#the-alias-file)). A removal that
+fails is a failed step. **A failure at any step leaves the record `pending`**, never
+`unsatisfiable` (D48), and removes every file and folder that placement made, as for a failed
+`create`.
 
 **What `create` says when a step fails is lease-api.md's** ([Messages](lease-api.md#messages)),
 under the rules for an `internal` message there, which forbid a path, the user's name and another
@@ -850,7 +1351,8 @@ written, and put back if that write fails. `id_ed25519-cert.pub` MUST NOT ever b
 
 ### Release, and what it leaves
 
-**`release` of a lease whose stored state is `ready` or `released` removes its files** (D10):
+**`release` of a lease whose stored state is `ready` or `released`, or `pending` with a `driver`,
+removes its files** (D10; architect, 2026-11-20, for v0.07-T01):
 1. **The alias file, `<ssh folder>\agentspace.d\<alias>`**, if it exists and is a file. A missing
    alias file is not an error.
 2. **The lease folder, `%USERPROFILE%\.agentspace\leases\<id>\`**, with everything in it, if it
@@ -892,8 +1394,21 @@ go before the lease folder, so that an alias never points at a key that is gone.
 - **`release` MUST NOT need a CA, and MUST NOT make a CA check.**
 - **`release` MUST NOT change `<ssh folder>\config`.** The `Include` line stays, on purpose: it is
   how the next lease's alias is found.
-- **`release` of a `pending` record** writes `released`, and touches no file, since a `pending`
-  lease has none.
+- **`release` of a `pending` record that carries a `driver` hands it to that driver's release, as
+  for a `ready` one** (architect, 2026-11-20, for v0.07-T01; [driver.md](driver.md#release-a-lease)):
+  under the lease state lock it checks the alias file's owner mark, writes `released`, then removes
+  the alias file at the lease's alias only if its owner mark names this lease, then the lease's
+  folder with everything in it. A missing file or folder is not a failure. Only a killed placement
+  can have left them, since a `pending` lease has none by contract. It reads neither the host
+  registry nor the project list. **With no home folder, the cleanup is skipped and the release still
+  succeeds**, since a `pending` lease needs no file. A later `release` of the `released` record,
+  with the home set, removes what is left, as for any `released` record. A `pending` record with no
+  `driver` asks none and touches no file. A provisioning run that reads the lease state file
+  afterwards finds the record `released`, and never places it
+  ([The lease state file](#the-lease-state-file)).
+- **A killed placement's leftovers for a record still `pending` are also removed first by that
+  lease's next placement** (architect, 2026-11-20, for v0.07-T01;
+  [Creation, in order](#creation-in-order)).
 
 **What release leaves:**
 - **The certificate stays valid until it expires**, on every host that trusts the CA, for anyone
@@ -905,7 +1420,10 @@ go before the lease folder, so that an alias never points at a key that is gone.
   folder.
 - **The keeper's holder, if it was holding the board's forwards through this lease's alias**, until
   the keeper's next pass stops it and logs that it did
-  ([keeper.md#log-lines](keeper.md#log-lines)).
+  ([keeper.md#log-lines](keeper.md#log-lines)). That is the holder of the lease's host, the box's
+  or [another host's](#another-hosts-holder).
+- **The lease's host, its record in the host registry, and every file in its folder.** Releasing a
+  lease never changes a host (D25).
 
 ### Between the prototype and the rewrite
 
@@ -944,6 +1462,284 @@ describes.
 **Both MUST take the same lock** ([The lease state lock](#the-lease-state-lock)), so that neither
 changes the file under the other.
 
+## A host's folder
+
+**`%USERPROFILE%\.agentspace\hosts\<project>\` holds what the operator keeps for one host (D47,
+D48, D50, D55)**, where `<project>` is the host's record's `project`:
+
+| File | What it is | Section |
+|---|---|---|
+| `id_ed25519`, `id_ed25519.pub` | The operator's key for this host | [The operator's key and certificate](#the-operators-key-and-certificate) |
+| `id_ed25519-cert.pub` | The operator's certificate, key ID `operator-<project>`, valid one hour | The same |
+| `provision.log` | The provisioning run's log, which the run opens for append as its first step, creating it if it is missing | [The provisioning run's log](#the-provisioning-runs-log) |
+| `provision.lock` | The provisioning run's lock: held while a run is running | [The provisioning run's lock](#the-provisioning-runs-lock) |
+| `localswim-pushed.json` | The host's push stamp, for every host but the box | [A host's push stamp](#a-hosts-push-stamp) |
+
+- **The folder is created by the first writer of a file in it**, `%USERPROFILE%\.agentspace\hosts\`
+  with it, as [The home folder](#the-home-folder) says. **The driver also creates the folder, if it
+  is missing, before it starts a provisioning run** (architect, 2026-11-20, for v0.07-T01), and a
+  failure to create it is a start that fails: no run is started, and the lease stays `pending`
+  ([The provisioning run's start](#the-provisioning-runs-start)). **The driver never creates or
+  opens `provision.log`**: the run does, as its first step
+  ([The provisioning run's log](#the-provisioning-runs-log)). A missing folder means its files do not
+  exist. **The folder is never removed by agentspace**, nor is any file in it but the temporary
+  files their sections name. A provisioning run is started with no files of its own
+  ([The provisioning run's start](#the-provisioning-runs-start)).
+- **`AGENTSPACE_STATE_DIR` does not move it**, nor any file in it ([What moves which
+  files](#what-moves-which-files)): a provisioning run started from one state folder and a command
+  run from another share the host's lock and log.
+- **Access rules:** the folder's are inherited from `%USERPROFILE%\.agentspace`, and so are its
+  files', but for the private key's ([The operator's key and certificate](#the-operators-key-and-certificate)).
+- **The writer MUST NOT put any other file in it.** A person's file there is left alone.
+- **The box MAY have a folder too, `hosts\swimcoach\`**, when a run is started for it; it then holds the same files under the same rules, but for the push stamp,
+  which stays the box's own ([The push stamp](#the-push-stamp)).
+- **Something at `hosts\` or `hosts\<project>\` that is not a folder** fails every command that
+  needs a file in it, writing nothing there, as [The home folder](#the-home-folder) says of any
+  folder.
+
+### The operator's key and certificate
+
+**The operator reaches a host as `ubuntu` with a key of its own and a certificate it signs for
+itself with the CA, never with the user's own key** (D47, D55).
+
+- **The key is an ed25519 key pair in OpenSSH's formats, without a passphrase**, exactly as a
+  lease's key is ([The key](#the-key)), with the same line-ending tolerance for a reader. **Its
+  comment SHOULD be `agentspace host <project>`**, and MUST hold no line break. Nothing reads it.
+- **It is made once, by the first operator command that signs a certificate for the host and finds
+  `id_ed25519` missing, and kept** (architect, 2026-11-20, for v0.07-T01). The command makes it
+  while it holds [the host registry lock](#the-host-registry-lock), after looking again for
+  `id_ed25519` once it holds the lock, so two commands never make two keys; a leftover
+  `id_ed25519.pub` or `id_ed25519-cert.pub` without `id_ed25519` is replaced. **An existing key is
+  never replaced**: an `id_ed25519` that does not load with an empty passphrase, or is not ed25519,
+  fails the command with a message that names the file, and a person removes it
+  ([operator.md](operator.md)). The writer MUST check that a new key loads with an empty passphrase
+  before it signs.
+- **The private key's access rules are a lease private key's** (architect, 2026-11-20, for
+  v0.07-T01, the dev lead's pin P11): OpenSSH-safe, readable by no principal but the user,
+  `SYSTEM` and `Administrators`, and, when the writer sets them itself, exactly the three entries of
+  [The lease folder](#the-lease-folder). The public key and the certificate are not secret.
+- **The certificate is an OpenSSH user certificate for that key, signed by [the CA](#the-ca)**, in
+  the format and with the content of a lease's [certificate](#the-certificate), but for these
+  fields:
+
+  | Field | Value |
+  |---|---|
+  | Key ID | `operator-<project>` (D47, D55) |
+  | Valid principals | Exactly one: `ubuntu` |
+  | Valid before | The issue time plus one hour, 3600 seconds, exactly |
+  | Valid after | MUST NOT be later than the issue time, and SHOULD be 5 minutes before it, as a lease's |
+  | Extensions | A lease certificate's two, `permit-port-forwarding` and `permit-pty` (architect, 2026-11-20, for v0.07-T01) |
+
+  **Its comment** is any text with no line break, and SHOULD be the public key's comment.
+- **The certificate is renewed by every operator command that names a host other than the box**
+  (`-Host <project>`), `status -Host` included, whether or not it connects (architect, 2026-11-20,
+  for v0.07-T01), **and by every operator command that connects through the host's operator alias**, such
+  as `sync -All` (architect, 2026-11-20, for v0.07-T01). Each
+  signs a fresh one-hour certificate first, after checking the CA by [Its checks](#its-checks), and
+  fails, connecting to nothing, if the CA is not usable. A command that runs longer than an hour
+  signs again before it connects again; a connection already open stays open, since the
+  certificate is checked only when a connection is made.
+- **A person signing in over `ssh agentspace-host.<project>`** (D52) first runs an operator command
+  for that host, and runs one again once an hour has passed: operator.md and D52's procedure in the
+  README say which, `agentspace-operator status -Host <project>` (architect, 2026-11-20, for
+  v0.07-T01). **That command, as every operator command that names a host other than the box,
+  writes the host's operator alias and signs a fresh certificate** (architect, 2026-11-20, for
+  v0.07-T01), so it
+  always leaves a working `ssh agentspace-host.<project>`. The person's ssh then uses the
+  operator's key and certificate through the operator alias
+  ([A host's operator alias](#a-hosts-operator-alias)).
+- **A new certificate replaces the old one in one rename** (architect, 2026-11-20, for v0.07-T01): the command
+  copies `id_ed25519.pub` to `sign-<hex>.pub` in the host's folder, signs the copy, which gives
+  `sign-<hex>-cert.pub` beside it, moves that over `id_ed25519-cert.pub`, and deletes every
+  `sign-<hex>` file whether or not anything failed. So ssh reads the old certificate or the new
+  one, never part of either, and two commands for one host at once each leave a whole certificate.
+  A command killed between the steps leaves its `sign-<hex>` files, which nothing reads
+  ([Q4](#open-questions)).
+- **Neither the key nor the certificate is ever a lease's**, and no lease command reads, writes or
+  removes them.
+
+### A host's operator alias
+
+**`<ssh folder>\agentspace.d\agentspace-host.<project>` is the operator's way to reach a host**
+(D47, D55), one file per host, written with the same rules as a lease's alias file, but for what
+this section says (architect, 2026-11-20, for v0.07-T01, the dev lead's pin P11). **It is written
+by every operator command that names a host other than the box, `status -Host` included, whether
+or not it connects** (architect, 2026-11-20, for v0.07-T01), **and by every operator command that connects to a
+host through it**. A person's own `ssh agentspace-host.<project>` uses it too, as D52's sign-ins
+do, and is let in only while the certificate the last operator command signed is valid, an hour at
+most; a person gets a fresh one by running `agentspace-operator status -Host <project>` first, as
+[The operator's key and certificate](#the-operators-key-and-certificate) says.
+
+**Its bytes, exactly:** UTF-8 without a byte order mark, each line ending in one LF, the last
+included, and every line after the second indented by two spaces:
+
+```
+# agentspace host <project>; <comment>
+Host agentspace-host.<project>
+  User ubuntu
+  IdentityFile "<key path>"
+  CertificateFile "<certificate path>"
+  IdentitiesOnly yes
+  HostKeyAlias agentspace-host.<project>
+  UserKnownHostsFile "<known_hosts path>"
+  StrictHostKeyChecking accept-new
+  ProxyCommand <proxy command>
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+```
+
+| Placeholder | Value |
+|---|---|
+| `<project>` | The host's record's `project` |
+| `<comment>` | Any text without a line break. It SHOULD say that agentspace wrote the file and that it MUST NOT be edited |
+| `<key path>` | The full path of the host's `id_ed25519`, the home folder joined as text with `.agentspace\hosts\<project>\id_ed25519`, written as a lease alias's `<key path>` is ([The alias file](#the-alias-file)) |
+| `<certificate path>` | The full path of the host's `id_ed25519-cert.pub`, written the same way |
+| `<known_hosts path>` | The full path of [agentspace's `known_hosts`](#agentspaces-host-keys), written the same way |
+| `<proxy command>` | The default ProxyCommand line of [The alias file](#the-alias-file), `"<program>" agentspace-host.<project>`, with `%` written as `%%`. `<program>` is the full path of `agentspace-ssh-proxy.exe` as the operator finds it as [operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others) says. `AGENTSPACE_PROXY_COMMAND`, the lease CLI's variable, does not change it (architect, 2026-11-20, for v0.07-T01) |
+
+- **It differs from a lease alias only in these:** the owner mark; the `Host` name; `User ubuntu`;
+  the operator's key and certificate; `StrictHostKeyChecking accept-new`, so the first connection
+  adds the host's key ([Agentspace's host keys](#agentspaces-host-keys)); and no `RemoteForward`
+  line, since the operator holds no board (D47).
+- **The owner mark is the first line, `# agentspace host `, the project, `;`, one space, then the
+  comment**, written exactly so. A reader recognizes an operator alias by a first line, up to the
+  first LF, that starts with `# agentspace host `, followed by a project and a `;`. Neither mark
+  ever matches the other ([The alias file](#the-alias-file)), so no lease's `create`, overwrite or
+  `release` ever changes or removes an operator alias, and the operator never changes or removes a
+  lease's alias.
+- **A value that holds a CR or LF MUST be refused, writing nothing**, as for a lease alias.
+- **Written by a command that names the host whether or not it connects, and always before the
+  command's first connection to the host, through a temporary file,
+  `<ssh folder>\agentspace-host.<project>.agentspace-tmp-<hex>`, moved into `agentspace.d`** in one
+  attempt ([Replacing a file](#replacing-a-file)), after the command has made sure of
+  [the `Include` line](#the-include-line). Access rules: inherited from `<ssh folder>`, and MUST be
+  OpenSSH-safe.
+- **When the file already exists**, the operator reads its first line:
+  - **It names this host, and its bytes equal the new ones:** nothing is written.
+  - **It names this host, with other bytes:** it is replaced.
+  - **It names another host, carries a lease's owner mark, or has no owner mark:** the command
+    MUST fail and change nothing; the file may be a person's.
+  - **Something at that path that is not a file**, or a symbolic link or other reparse point,
+    fails the command, and is never followed, replaced or removed.
+- **`AGENTSPACE_SSH_DIR` moves it**, as it moves lease aliases; how the operator points its own ssh
+  at it then is operator.md's.
+- **Never removed by agentspace**: a host is kept (D25).
+
+### The provisioning run's log
+
+**`%USERPROFILE%\.agentspace\hosts\<project>\provision.log` is the log of every provisioning run
+for that host** (D48, as D55 moves it; architect, 2026-11-20, for v0.07-T01, the dev lead's pin P4).
+D48's `<state folder>\hosts\<project>.log` is not used.
+- **Appended to and never rewritten in place**, one line per step, each a UTC time in the form
+  `YYYY-MM-DDTHH:MM:SSZ` as keeper.md's log lines carry it ([keeper.md](keeper.md#log-lines)),
+  then the step's text. The run writes its own lines as UTF-8 without a byte order mark, each
+  ending in one LF. What each line says is [operator.md](operator.md#provision)'s.
+- **The run opens `provision.log` for append itself, as its first step, creating it if it is
+  missing, and writes every line there** (architect, 2026-11-20, for v0.07-T01). **A run that
+  cannot open its log exits 1 and writes nothing else.** The driver never opens the log or passes
+  the run a handle to it: a process created through WMI's `Win32_Process.Create` cannot be handed
+  one, and the starting program gives the run no stdout and no stderr
+  ([The provisioning run's start](#the-provisioning-runs-start)). **The output of the programs the
+  run starts is written through the run into its log** (architect, 2026-11-20, for v0.07-T01).
+  That output keeps each program's own encoding.
+- **Opened for append, sharing read, write and delete**, as the keeper's logs are, so a reader, a
+  second writer or a run by hand never blocks a run. A reader SHOULD share the same.
+- **Written by `provision` alone**, whether the driver started it or a person ran it, with the
+  output of the programs it runs; **never by the driver**, which neither creates nor opens it
+  (architect, 2026-11-20, for v0.07-T01). **Read by people.**
+  No program of agentspace reads it. **Never rotated or removed** by agentspace.
+- **It MUST NOT hold a secret**, nor the CA's comment, nor a whole `aws` or `ssh` command line
+  ([The CA](#its-files); operator.md, Secrecy).
+
+### The provisioning run's lock
+
+**`%USERPROFILE%\.agentspace\hosts\<project>\provision.lock` is held for the whole life of a
+provisioning run, so a held lock means a run is running** (D55).
+- **Holding it means having the file open with no sharing**, for reading and writing, creating it
+  if it is missing, as [the lease state lock](#the-lease-state-lock) is held; the taker creates the
+  host's folder first if it is missing. **The file is never deleted, its content is empty and
+  meaningless, and the handle MUST NOT be inheritable**, so no program the run starts holds it.
+  The operating system releases it however the run ends, so a killed run leaves the lock free.
+- **It is always taken without waiting** (architect, 2026-11-20, for v0.07-T01, the dev lead's pin
+  P2): one try, which either has it or finds it held.
+  - **`provision` takes it right after its first step, opening
+    [its log](#the-provisioning-runs-log), and before it writes anything else, and holds it until
+    it has recorded its outcome and called `place_pending`.** A `provision` that finds it held
+    writes one line to its log saying that a run is already running, writes no record and nothing
+    else, and exits 1 ([operator.md](operator.md#provision); architect, 2026-11-20, for v0.07-T01).
+  - **The driver tries it, and releases it at once if it got it**, only to learn whether a run is
+    running ([driver.md](driver.md#check_pending)).
+  - **A failure to open it other than its being held**, such as access denied, or a folder at its
+    path, is not a free lock: the taker treats it as a failure of its own and starts or runs
+    nothing.
+- **Which other operator commands refuse to run while it is held is operator.md's**
+  ([Which host a command acts on](operator.md#which-host-a-command-acts-on)). A missing file is a
+  lock nobody holds.
+
+### The provisioning run's start
+
+**The driver starts a provisioning run detached, and the start uses no file of its own** (D48,
+D55's `agentspace-detach`; architect, 2026-11-20, for v0.07-T01, the dev lead's pin P12). It is
+started with WMI's `Win32_Process.Create`, which returns the run's process ID, and nothing on this
+page records that ID: [the run's lock](#the-provisioning-runs-lock) is the run's proof of life.
+There are no launch files, no claim and no result file for a run, so a start that is killed or
+fails leaves nothing behind in the host's folder but the folder itself, which the driver makes
+before the start (below).
+- **The program it starts** is named by `AGENTSPACE_PROVISION_CMD`, when that is set and not empty
+  in the lease CLI, as the program's full path; a relative value is made full against the lease
+  CLI's working folder before the start, as [The home folder](#the-home-folder) makes a relative
+  folder full. Otherwise it is `agentspace-operator.exe` in the folder the lease CLI's own
+  executable runs from. **It is never `AGENTSPACE_OPERATOR_CMD`.** What the variable means to the
+  lease CLI is [lease-api.md](lease-api.md#environment)'s, and the run's command line,
+  `provision -Host <project>`, is [operator.md](operator.md#provision)'s.
+- **The run's environment is the user's logon environment, with these four exactly as this list
+  says** (architect, 2026-11-20, for v0.07-T01):
+  - **`USERPROFILE`**, as the starting program has it, made full against the starting program's
+    working folder ([The home folder](#the-home-folder)).
+  - **`AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR`**, each in the run's environment if and only
+    if the starting program has it set and not empty, each made full
+    ([The home folder](#the-home-folder)).
+  - **`AGENTSPACE_PROXY_COMMAND`**, in the run's environment if and only if the starting program
+    has it set and not empty, passed exactly as the starting program has it. It is a command line,
+    not a folder, and is never made full.
+  - **A value of one of those three that the logon environment holds and the starting program does
+    not is removed**, so the run never takes a folder or a ProxyCommand line that the command which
+    started it did not use.
+- **So a run uses the files of the command that started it** (architect, 2026-11-20, for
+  v0.07-T01): its `place_pending` places the pending leases of that command's lease state file,
+  writes their aliases into that command's `<ssh folder>`, and writes that command's
+  `AGENTSPACE_PROXY_COMMAND` as their ProxyCommand line when it had one, and otherwise the default
+  line, which names the ProxyCommand program found beside the run's own executable
+  ([The alias file](#the-alias-file)). Pending leases recorded under another `AGENTSPACE_STATE_DIR` wait for a
+  `create` or `get` from there to start the next run.
+- **The starting program gives the run no stdout and no stderr**: both are null
+  (architect, 2026-11-20, for v0.07-T01), since a process created through WMI's
+  `Win32_Process.Create` cannot be handed a file handle. **The run writes its own log**, opening
+  the host's [`provision.log`](#the-provisioning-runs-log) for append as its first step, and the
+  output of the programs it starts is written through it into that log.
+- **Before the start, the driver, in the starting program, creates `hosts\<project>\` if it is
+  missing** (architect, 2026-11-20, for v0.07-T01), and never creates or opens the log. **A failure
+  to make the folder is a start that fails**: no run is started, and the lease stays `pending`;
+  what the driver does then is [driver.md](driver.md#check_pending)'s.
+- **Its working folder is the home folder** (architect, 2026-11-20, for v0.07-T01). The state and ssh folders
+  it is given are full, so its working folder changes none of the files it uses.
+
+### A host's push stamp
+
+**`%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json` records the last token push
+that host confirmed, for every host but the box** (D50, D55). The box's stays
+`%USERPROFILE%\.agentspace\localswim-pushed.json`.
+- **Its form, schema, bytes, temporary file name (`localswim-pushed.json.<hex>.tmp`, in the host's
+  folder), atomic replace, access rules and reading rules are [the push stamp](#the-push-stamp)'s**,
+  in every point, and so is what it is the hash of, which covers the host's own instance ID
+  ([operator.md](operator.md#the-stamp)).
+- **Written by** `up -Host <project>`, `sync -Host <project>`, `sync -All` and `provision`, only
+  after that host confirms the push, creating the host's folder if needed. **Read by** `up -Host
+  <project>`, to decide whether a push to that host is due. A command acting on the box reads and
+  writes the box's stamp alone, and one acting on another host never reads or writes the box's.
+- **Nothing locks it**, as nothing locks the box's ([Concurrency](#what-nothing-locks)).
+- **Never removed by agentspace.** A person MAY delete it to force that host's next push.
+
 ## The CA
 
 **The SSH certificate authority of agentspace is one ed25519 key pair on the laptop, owner-only
@@ -970,6 +1766,14 @@ their access rules, and what a usable CA is. Signing leaves the laptop with card
   MUST NOT write the comment, or the public key line that carries it, to a log, to output, to a
   lease's files or to the repo. A doc or a check MUST show it as `<computer name>`, never a real
   one. A rewrite MAY drop the computer name from a CA it creates, since nothing reads the comment.
+- **The stack parameter `CaPublicKey` carries the public key without its comment** (D44;
+  architect, 2026-11-20, for v0.07-T01, the dev lead's pin P8): its first two fields only,
+  `<type> <base64>`, split as [Its checks](#its-checks), check 4, splits them, joined by one space,
+  with no comment and no line ending. `deploy -Host`, or `provision`'s deploy step, derives it from
+  `agentspace_ca.pub` when it creates a host's stack; a stack that exists keeps its previous value
+  ([Files in the checkout](#files-in-the-checkout)). A stack parameter is kept and shown by
+  CloudFormation, so the comment MUST NOT reach it. `sync` later replaces the host's copy with the
+  public key file's own bytes, as it does on the box (D44).
 - **Neither `AGENTSPACE_STATE_DIR` nor any other agentspace variable moves it**; `USERPROFILE`
   does ([What moves which files](#what-moves-which-files)).
 - **The folder MUST NOT be inside a folder that OneDrive syncs** (the `OneDrive`,
@@ -1035,8 +1839,12 @@ check:
   MAY check that the public key parses before it compares the words, and MAY treat a public key
   of fewer than two words, or a private key that is not ed25519, as any of those checks' failures
   (architect, 2026-11-19, for E0.05-T01-S04).
-- **Who checks it:** `ca` after every run, `sync` before it sends the public key to a host, and
-  `create` and `renew` before they sign (D17; [operator.md](operator.md#ca)). `release` never
+- **Who checks it:** `ca` after every run, `sync` before it sends the public key to a host, `create`
+  and `renew` before they sign, `create` before it answers `pending` (architect, 2026-11-20, for v0.07-T01), a
+  provisioning run's `place_pending` before it signs a lease's
+  certificate, `deploy -Host` before it derives `CaPublicKey`, and every operator command before it
+  signs its own certificate for a host (D17, D47; [operator.md](operator.md#ca);
+  [The operator's key and certificate](#the-operators-key-and-certificate)). `release` never
   checks it.
 - **`create` and `renew` make these five checks and no others.** The folder's place, outside
   OneDrive and any git working tree ([Its files](#its-files)), is `ca`'s to check. The prototype's `create` and `renew`, which run `ca`, also refuse
@@ -1054,20 +1862,25 @@ check:
 
 | File | Read by | For |
 |---|---|---|
-| `agentspace_ca` | `ssh-keygen -s`, run by `create` and `renew` | Signing a lease's certificate |
-| `agentspace_ca` | `ca`, `sync`, `create`, `renew` | The checks above |
-| `agentspace_ca.pub` | `ca`, `sync`, `create`, `renew` | The checks above |
-| `agentspace_ca.pub` | `sync` | Sent to the box as its trusted CA ([operator.md](operator.md#what-sync-installs)) |
+| `agentspace_ca` | `ssh-keygen -s`, run by `create`, `renew` and a provisioning run's `place_pending` | Signing a lease's certificate |
+| `agentspace_ca` | `ssh-keygen -s`, run by every operator command that signs its own certificate for a host | Signing the operator's own certificate for that host ([The operator's key and certificate](#the-operators-key-and-certificate)) |
+| `agentspace_ca` | `ca`, `sync`, `create`, `renew`, `place_pending`, `deploy -Host`, and every operator command that signs | The checks above |
+| `agentspace_ca.pub` | The same | The checks above |
+| `agentspace_ca.pub` | `sync` | Sent to each host as its trusted CA, the box included ([operator.md](operator.md#what-sync-installs); D50) |
+| `agentspace_ca.pub` | `deploy -Host` | Its first two fields, as the stack parameter `CaPublicKey` ([Its files](#its-files)) |
 
 **Its lifetime:** created once, never removed by agentspace. If the private key is lost or exposed,
 a person replaces the CA as D17 says: deletes both files, runs `ca`, runs `sync` for every host,
-and re-issues every live lease's certificate.
+which `sync -All` does (D50), and re-issues every live lease's certificate.
 
 ## The push stamp
 
 **`%USERPROFILE%\.agentspace\localswim-pushed.json` records the last token push the box
 confirmed** (D9, D32). What it is the hash of, when a push is due, and when it is written are
-operator.md's ([The stamp](operator.md#the-stamp)); this section owns how it is stored.
+operator.md's ([The stamp](operator.md#the-stamp)); this section owns how it is stored. **From
+v0.07 the stamp is kept per host (D50):** this file stays the box's, at this path and in this form
+(D55), and every other host's is in its own folder
+([A host's push stamp](#a-hosts-push-stamp)), under every rule of this section.
 
 - **It is JSON (D40, architect, 2026-11-19, for v0.06):** `{"version":0,"stamp":"<64 hex>"}`,
   where the stamp's digits are uppercase. Its schema is
@@ -1081,8 +1894,9 @@ operator.md's ([The stamp](operator.md#the-stamp)); this section owns how it is 
   change-over finds no stamp and pushes once, which changes nothing on the box. A person MAY
   delete the old file once the prototype is gone. **The prototype is gone** (removed from the
   repository by E0.06-T06-S01, 2026-11-20), so a person MAY delete it now.
-- **Written by:** `up` and `sync`, only after the box confirms the push, creating
-  `%USERPROFILE%\.agentspace` if needed. **Read by:** `up`, to decide whether a push is due.
+- **Written by:** `up` and `sync` acting on the box (without `-Host`, with `-Host swimcoach`, or
+  `sync -All`), only after the box confirms the push, creating `%USERPROFILE%\.agentspace` if
+  needed. **Read by:** `up` acting on the box, to decide whether a push is due.
 - **It MUST be replaced atomically** ([Replacing a file](#replacing-a-file)), through
   `localswim-pushed.json.<hex>.tmp`. The prototype overwrites its own file in place, so a reader
   can see it empty or part written; the prototype itself warns and pushes nothing then
@@ -1100,7 +1914,8 @@ operator.md's ([The stamp](operator.md#the-stamp)); this section owns how it is 
 
 ## The keeper's files
 
-**The keeper holds the board's forwards through one ready lease (D30).** What it does with each
+**The keeper holds the board's forwards through one ready lease per host (D30, D50).** What it does
+with each
 file, when, and why, is keeper.md's: its log lines and its rotation are
 [keeper.md#log-lines](keeper.md#log-lines), its locks [keeper.md#locks](keeper.md#locks), and the
 launch handshake [keeper.md#starting-a-holder](keeper.md#starting-a-holder). This section owns each
@@ -1115,8 +1930,8 @@ missing. **Access rules, for every keeper file:** inherited; the keeper sets non
   followed by one LF.
 - **Replaced atomically** through `<its name>.<hex>.tmp` in the same folder
   ([Replacing a file](#replacing-a-file)): `board-holder.json.<hex>.tmp`,
-  `board-holder-launch.<hex>.json.<hex>.tmp` and `board-holder-launch.<hex>.result.json.<hex>.tmp`,
-  where the two `<hex>` are separate values. A rename that fails because the file is in use is
+  `board-holder.<project>.json.<hex>.tmp`, `board-holder-launch.<hex>.json.<hex>.tmp` and
+  `board-holder-launch.<hex>.result.json.<hex>.tmp`, where the two `<hex>` are separate values. A rename that fails because the file is in use is
   tried again every 50 milliseconds for up to 5 seconds.
 - **Read whole.** A reader SHOULD share read, write and delete; the prototype's keeper and launcher
   share read only, which the writer's retry covers
@@ -1126,8 +1941,9 @@ missing. **Access rules, for every keeper file:** inherited; the keeper sets non
 
 ### The holder record
 
-**`<state folder>\board-holder.json` names the holder the keeper started, and is absent when there
-is none.** Its schema is
+**`<state folder>\board-holder.json` names the holder the keeper started on the box, and is absent
+when there is none.** Every other host's holder has a record of its own in this same form
+([Another host's holder](#another-hosts-holder)). Its schema is
 [`schemas/state/board-holder.state.schema.json`](../schemas/state/board-holder.state.schema.json),
 strict, as a writer MUST write it.
 
@@ -1157,6 +1973,35 @@ strict, as a writer MUST write it.
 - **The PID and the start time together are the holder's identity**; the record never names a
   process by its PID alone.
 
+### Another host's holder
+
+**The keeper holds one holder per host (D50), and every host but the box has its own record and
+its own holder log, named by its project** (D55; architect, 2026-11-20, for v0.07-T01, the dev
+lead's pin P6):
+
+| File | What it is | In the form of |
+|---|---|---|
+| `<state folder>\board-holder.<project>.json` | The record of the holder the keeper started on that host, absent when there is none | [The holder record](#the-holder-record), with its schema, `board-holder.state.schema.json` |
+| `<state folder>\board-holder.<project>.json.<hex>.tmp` | Its temporary file | The keeper's JSON files' |
+| `<state folder>\board-holder-ssh.<project>.log` | That holder's output | `board-holder-ssh.log` ([The keeper's logs](#the-keepers-logs)) |
+| `<state folder>\board-holder-ssh.<project>.log.1` | Its rotation | `board-holder-ssh.log.1` |
+
+- **`<project>` is the host's record's `project`** in [the host registry](#the-host-registry). The
+  box's files keep their names, `board-holder.json` and `board-holder-ssh.log`, with no project in
+  them, so swimcoach's side reads as v0.06 left it (D55). `board-holder.swimcoach.json` is never
+  written.
+- **Every rule of the box's file of the same kind binds each**: its bytes, schema, reading rules,
+  atomic replace and retry, share modes, access rules, writer, reader and lifetime. The record's
+  `lease_id` and `alias` name a lease on that host.
+- **A launch request for a holder on that host names that host's log** in its `log` member
+  ([A holder's launch files](#a-holders-launch-files)), so the launch files need no project in
+  their names.
+- **One of each of these serves every host:** `board-holder.log`, the launch files, the two lock
+  files and the task launcher's error log. One pass at a time serves every host.
+- **`AGENTSPACE_STATE_DIR` moves them**, as it moves every keeper file.
+- **A record left for a host the keeper no longer holds through** is removed by the keeper as
+  [keeper.md](keeper.md) says; nothing else removes one.
+
 ### A holder's launch files
 
 **Each start of a holder uses three files, named by one new `<hex>`**
@@ -1175,7 +2020,7 @@ strict, as a writer MUST write it.
 |---|---|
 | `application` | The full path of the program the holder runs: the ssh program, or `cmd.exe` for a batch stand-in |
 | `command_line` | The holder's whole command line |
-| `log` | The full path of `board-holder-ssh.log`, which the holder's output is appended to |
+| `log` | The full path of the holder's log, which its output is appended to: `board-holder-ssh.log` for the box, `board-holder-ssh.<project>.log` for another host ([Another host's holder](#another-hosts-holder)) |
 | `directory` | The holder's working folder, as a full path: the home folder |
 | `not_after` | The launcher's deadline, UTC, as `YYYY-MM-DDTHH:MM:SS.fffffffZ` (seven fraction digits) |
 | `result` | The full path of the result file |
@@ -1279,19 +2124,23 @@ and the install folder and its programs are
 
 ## Files agentspace reads and never writes
 
-**These belong to the user, to ssh, to the AWS CLI or to localswim.** agentspace reads them, or
+**These belong to the user, to ssh, to the AWS CLI or to localswim**, but for the project list,
+which a person writes in agentspace's folder and whose format is this page's
+([The project list](#the-project-list)). agentspace reads them, or
 starts a program that reads them, and MUST NOT write,
 move or delete them. Their formats are their owners', and this page names only what agentspace
 relies on. This settles [operator.md Q8](operator.md#open-questions): docs/state.md lists them,
-and owns none of their formats.
+and owns none of their formats but the project list's.
 
 | Path | Owner | Read by | What agentspace relies on |
 |---|---|---|---|
 | `%USERPROFILE%\.ssh\config`, outside the `Include` line | The user | `ssh` | The user's `agentspace` entry ([operator.md](operator.md#the-agentspace-ssh-entry)) |
 | `%USERPROFILE%\.ssh\known_hosts` | `ssh` | `ssh` | The box's host key under `agentspace` ([The host key](#the-host-key)) |
+| `%USERPROFILE%\.agentspace\known_hosts` | `ssh` | `ssh` | Every other host's key under `agentspace-host.<project>` ([Agentspace's host keys](#agentspaces-host-keys)) |
+| `%USERPROFILE%\.agentspace\projects.json` | A person, or the architect with Terry's yes | The driver and `provision` | The projects that may have a host made ([The project list](#the-project-list)) |
 | `%USERPROFILE%\.ssh\id_ed25519` | The user | `ssh`, through the `agentspace` entry | Logging in to the box as the user, not as a lease |
 | `%USERPROFILE%\.ssh\id_ed25519.pub` | The user | The operator's `deploy` | One line, the user's public key, trimmed ([operator.md](operator.md#deploy)) |
-| `%USERPROFILE%\.claude\CLAUDE.md` | The user | The operator's `sync` | Copied to the box as it is ([operator.md](operator.md#sync)) |
+| `%USERPROFILE%\.claude\CLAUDE.md` | The user | The operator's `sync`, and `provision` through it | Copied to each host as it is, the box included ([operator.md](operator.md#sync); D50) |
 | `%USERPROFILE%\.aws\` | The user, through the AWS CLI | The AWS CLI that the operator and the ProxyCommand run | The AWS sign-in; agentspace reads nothing in it itself. The AWS CLI finds it through `USERPROFILE`, so moving that variable loses the sign-in ([What moves which files](#what-moves-which-files)) |
 | `%LOCALAPPDATA%\localswim-v2\service.json`, the receipt | The localswim service: whoever cold-starts it writes the receipt; no localswim document names its writer | The operator's token push, in `up` and `sync` | Its `base` and `credential_directory` members; the format is [operator.md, The receipt](operator.md#the-receipt)'s |
 | `bot.xml` in the folder the receipt's `credential_directory` names | The localswim launch procedure, which makes it beside the Human credential, `human.xml`, at each cold start | The token push, after the receipt | The Bot token in it; the format is [operator.md, The Bot credential](operator.md#the-bot-credential)'s |
@@ -1315,48 +2164,55 @@ The prototype's operator keeps three files in the checkout it runs from, and the
 programs read the stack's template, the box's files and the state schemas from there too. This
 section gives each file's place in the rewrite, all under `%USERPROFILE%\.agentspace`, and its
 format. None is committed.
-- **Only the instance-ID cache is state, and D21 requires it under `%USERPROFILE%\.agentspace`**
+- **Only the instance-ID cache was state, and D21 requires it under `%USERPROFILE%\.agentspace`**
   (architect, 2026-11-18, which settles [Q1](#open-questions)); the prototype keeps it in the
   checkout, and [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet)
-  lists that.
+  lists that. **v0.07 retires the cache into the host registry's `instance_id`** (D45; below).
 - **D21 lets build output stay in a checkout, and the rewrite still keeps none there**, since a
   compiled operator has no checkout to find. The operator's folder holds what it writes out for
   the programs it starts.
 
 | Path | The prototype's | Format | Written by | Read by | Removed |
 |---|---|---|---|---|---|
-| `%USERPROFILE%\.agentspace\instance-id.json` | `<checkout>\.instance-id`, the ID alone in ASCII | JSON; see below | Any operator command that finds it missing; `deploy` | Every operator command but `ca`; the ProxyCommand, when a connection is made. The lease CLI MUST NOT read or need it ([driver.md](driver.md#how-it-is-reached), D21) | By `deploy`, which writes it again |
-| `%USERPROFILE%\.agentspace\stack-parameters.json` | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | JSON; see below | A person | `deploy` | Never |
-| `%USERPROFILE%\.agentspace\operator\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, just before the call that reads it | The AWS CLI's `cloudformation deploy` | Never; replaced by each `deploy` |
-| `%USERPROFILE%\.agentspace\operator\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, just before the copy, after removing whatever the folder held | `scp`, which copies the folder to the box | Never; emptied and written again by each `sync` |
-| `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box | `sync`'s build | `scp` | Never; replaced by each build |
+| `%USERPROFILE%\.agentspace\instance-id.json` | `<checkout>\.instance-id`, the ID alone in ASCII | Retired by v0.07 (D45); v0.06's JSON, below | Nothing, from v0.07 | Nothing, from v0.07; a host's instance ID is its record's `instance_id` ([The instance ID](#the-instance-id)) | Never by agentspace; a person MAY delete it |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | JSON; see below | A person | Plain `deploy` of the box; `deploy -Host` and `provision` when they create a host's stack, for `SubnetId` and `VpcId` alone | Never |
+| `%USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, or `provision`'s deploy step, just before the call that reads it | The AWS CLI's `cloudformation deploy` | With its command's folder |
+| `%USERPROFILE%\.agentspace\operator\<hex>\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, or `provision`'s sync step, just before the copy | `scp`, which copies the folder to the host | With its command's folder |
+| `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box, and so for every host, since each is from the one template | `sync`'s build, or `provision`'s | `scp` | With its command's folder |
+| `%USERPROFILE%\.agentspace\operator\<hex>\bootstrap.sh` | None: a person ran `<checkout>\box\bootstrap.sh` on the box by hand | The bootstrap, the bytes the operator carries, built from the repository's `box\bootstrap.sh` (D46) | `bootstrap` and `provision`, just before the copy, when the operator sends the script as a file (operator.md's choice; architect, 2026-11-20, for v0.07-T01) | `scp` | With its command's folder |
 
-- **The operator's folder, `%USERPROFILE%\.agentspace\operator`, is created by the first command
-  that writes in it.** `AGENTSPACE_STATE_DIR` does not move it or the stack parameters file
+- **The operator's folder, `%USERPROFILE%\.agentspace\operator`, holds one folder per operator
+  command that sends a file, `operator\<hex>\`** (architect, 2026-11-20, for v0.07-T01), where
+  `<hex>` is new for each command. A command creates the operator's folder if it is missing,
+  creates its own folder in it, writes there only what it sends, and removes its own folder, with
+  everything in it, as it ends, whether or not it succeeded. **So a detached provisioning run and a
+  person's command never share a folder**, and no command empties or replaces a file another
+  command is sending.
+- **A folder in `operator\` older than 24 hours, left by a killed command, is removed by the next
+  operator command that finds it** (architect, 2026-11-20, for v0.07-T01). Its age is counted
+  from its creation time, and only a folder whose name is 32 lowercase hex digits is removed this
+  way; any other file or folder there is left alone (architect, 2026-11-20, for v0.07-T01).
+- **`AGENTSPACE_STATE_DIR` does not move the operator's folder or the stack parameters file**
   ([What moves which files](#what-moves-which-files)). Access rules: inherited.
-- **Nothing reads the files in the operator's folder but the programs the operator starts**, at
-  the step that wrote them. A file a person changes there is replaced at its next use, so the box
-  and the stack are changed only through the repository and a new build.
+- **Nothing reads the files in a command's folder but the programs that command starts**, at the
+  step that wrote them. Each command writes its own files fresh, so the box and the stack are
+  changed only through the repository and a new build.
 
-- **The cache's file name, `instance-id.json`, is this page's choice** ([Q14](#open-questions)):
-  D21 says only that it lives under `%USERPROFILE%\.agentspace`, and D40 makes it JSON. It is
-  moved by `USERPROFILE` and by no other variable ([What moves which files](#what-moves-which-files)).
-- **The instance-ID cache is JSON (D40, architect, 2026-11-19, for v0.06):**
-  `{"version":0,"instance_id":"<id>"}`, with the ID exactly as the stack's `InstanceId` output
-  gives it. Its schema is
-  [`schemas/state/instance-id.state.schema.json`](../schemas/state/instance-id.state.schema.json),
-  carried inside the operator and the ProxyCommand.
-  - **It is written as UTF-8 with no byte order mark, as compact JSON with no line ending, and
-    replaced atomically** ([Replacing a file](#replacing-a-file)), through
-    `instance-id.json.<hex>.tmp`. A reader MUST accept a byte order mark and whitespace that JSON
-    allows.
-  - **A file that is empty, cannot be parsed, or does not match the schema MUST be treated as
-    missing**, so the command rebuilds it from the stack. A file that cannot be opened, such as one
-    access is denied to or a folder at its path, fails as operator.md says
-    ([Laptop files](operator.md#laptop-files)).
-  - **The rewrite MUST NOT read the prototype's caches**, `<checkout>\.instance-id` or a plain
-    `instance-id` under `%USERPROFILE%\.agentspace`. It is only a cache, so the rewrite's first
-    command rebuilds its own from the stack, and needs no migration.
+- **The instance-ID cache, `%USERPROFILE%\.agentspace\instance-id.json`, is retired by v0.07
+  (D45).** A host's instance ID is cached in its host registry record's `instance_id` instead
+  ([The instance ID](#the-instance-id)).
+  - **From v0.07 no program of agentspace reads, writes, checks for or removes the file**, nor its
+    temporary files, and nothing migrates from it: the box's record has its instance ID read from
+    the `agentbox` stack again, as a missing cache had.
+  - **A laptop's old copy is left alone**, whatever it holds: it is never read as the box's
+    instance ID, never rebuilt and never deleted by agentspace. A person MAY delete it.
+  - **What the file was, as history (D40, architect, 2026-11-19, for v0.06):**
+    `{"version":0,"instance_id":"<id>"}`, UTF-8 with no byte order mark, compact JSON with no line
+    ending, replaced atomically through `instance-id.json.<hex>.tmp`, with its schema in
+    [`schemas/state/instance-id.state.schema.json`](../schemas/state/instance-id.state.schema.json).
+    Its name was this page's choice ([Q14](#open-questions)). The rewrite never read the
+    prototype's caches, `<checkout>\.instance-id` or a plain `instance-id` under
+    `%USERPROFILE%\.agentspace`, and v0.07's programs read none of the three.
 - **The stack parameters file, `stack-parameters.json`, holds the account's stack parameters, so it
   MUST NOT be committed** (D40, architect, 2026-11-19, for v0.06; the prototype's is
   `<checkout>\infra\local.parameters`).
@@ -1374,6 +2230,19 @@ format. None is committed.
   - **The rewrite MUST NOT read `infra\local.parameters`.** Moving its values into
     `stack-parameters.json` is a one-time step of v0.06's cutover, and no agentspace program
     converts it.
+  - **One file serves every host in v0.07, and its form does not change, but a host is never sized
+    by the box's parameters** (architect, 2026-11-20, for v0.07-T01; D55). Whose values the file
+    supplies, and when:
+    - **Plain `deploy` of the box** uses every parameter in it, as today (D39).
+    - **When `deploy -Host <project>`, or `provision`'s deploy step, creates a host's stack**, the
+      file supplies `SubnetId` and `VpcId` alone. Every other parameter in it, `InstanceType`
+      among them, is not used for that stack; the others are the template's defaults, or the
+      values operator.md gives (`SshPublicKey`, `HostName`, `CaPublicKey`).
+    - **For a host's stack that exists**, `deploy -Host <project>` and `provision`'s deploy step
+      pass every parameter's previous value, and read nothing from the file.
+    - **A host's size changes only through `deploy -Host <project> -InstanceType <type>`.** The
+      command lines are [operator.md](operator.md#deploy)'s; this page says only whose values the
+      file supplies.
 
 ## Project tooling
 
@@ -1401,7 +2270,11 @@ and MUST NOT touch the real profile (D34).
 change to a lease's credential and alias.** `create`, `renew` and `release` take it before they
 read the state file, and hold it until the file is written, so the driver's work on the lease
 folder, the `Include` line and the alias file all happens under it. Each first creates
-`<state folder>` if it is missing, then opens the lock in it.
+`<state folder>` if it is missing, then opens the lock in it. **A provisioning run's
+`place_pending` takes it the same way, once for each lease it places**, waits for it as a lease
+command does, and holds it from before it re-reads the state file for that lease until after it
+has written that lease's record, so no hold spans several placements (architect, 2026-11-20, for v0.07-T01;
+[driver.md](driver.md#place_pending)).
 
 - **Holding the lock means having `leases.lock` open with no sharing**: on Windows, share mode 0
   (`FileShare.None`), for reading and writing, creating the file if it is missing. **Every
@@ -1423,7 +2296,55 @@ folder, the `Include` line and the alias file all happens under it. Each first c
   behavior to copy (#0041, point 1).
 - **`create` holds it through the whole of issuing**, the CA check and signing included, which
   makes a concurrent `renew` or `release` wait ([lease-api.md Q11](lease-api.md#open-questions)).
-- **`get` and `list` MUST NOT take it, and the keeper MUST NOT take it either.**
+- **`get` and `list` MUST NOT take it, and the keeper and the ProxyCommand MUST NOT take it
+  either.**
+
+### The host registry lock
+
+**`%USERPROFILE%\.agentspace\hosts.lock` serializes every change to [the host
+registry](#the-host-registry)** (D45, D55), and follows every rule of
+[the lease state lock](#the-lease-state-lock) (architect, 2026-11-20, for v0.07-T01, the dev
+lead's pin P10):
+- **Holding it means having `hosts.lock` open with no sharing**, for reading and writing,
+  creating it if it is missing, after creating `%USERPROFILE%\.agentspace` if that is missing.
+  The file is never deleted, its content is empty and meaningless, and the handle MUST NOT be
+  inheritable.
+- **A taker that cannot open it because another process holds it keeps trying for up to 30
+  seconds, and MUST NOT wait longer.** Any other failure to open it fails the taker at once, and is
+  never reported as busy.
+- **`get`'s `check_pending` tries it without waiting**, once, and starts nothing when it is held,
+  so `get` never waits for it (architect, 2026-11-20, for v0.07-T01); the rest of what it does is
+  [driver.md](driver.md#check_pending)'s.
+- **Every writer of `hosts.json` holds it from before it reads the file until after the rename**,
+  and holds it for no longer than its decision and its write take: never while a provisioning run
+  runs, and never across a call to AWS. While it holds it, it waits for no other lock. A reader
+  of the project list for a project with no host reads it under this lock too
+  ([The project list](#the-project-list)), and a command that makes a host's operator key makes it
+  under this lock ([The operator's key and certificate](#the-operators-key-and-certificate)).
+- **The keeper MUST NOT take it, and the ProxyCommand takes it only to write a missing
+  `instance_id`** ([The instance ID](#the-instance-id)). Both read `hosts.json` without it, seeing
+  the file as it was before or after a change ([Replacing a file](#replacing-a-file)).
+- **`list`, `renew` and `release` never take it.**
+- **Every state folder shares it**: it is not moved by `AGENTSPACE_STATE_DIR`.
+
+### The order of the locks
+
+**Three of agentspace's locks can be held together, and are waited for only in this order:
+[the provisioning run's lock](#the-provisioning-runs-lock), then [the lease state
+lock](#the-lease-state-lock), then [the host registry lock](#the-host-registry-lock)**
+(architect, 2026-11-20, for v0.07-T01, the dev lead's pin P10). A program that holds a later one
+MUST NOT wait for an earlier one, so no two programs wait for each other.
+- **A try without waiting is outside the order**, and cannot deadlock: the driver, holding the
+  lease state lock and the host registry lock in `create`, MAY try a host's provisioning run's lock
+  and releases it at once, and `get`'s `check_pending` tries the host registry lock without
+  waiting.
+- **A provisioning run ends in this order:** holding its own lock throughout, it takes the host
+  registry lock alone to record `ready` and the instance ID, and releases it; then `place_pending`
+  takes the lease state lock once for each lease it places, releasing it after each; then the run
+  releases its own lock. It never holds the host
+  registry lock while it waits for the lease state lock.
+- **The keeper's two locks are outside this order**: the keeper takes none of these three, and no
+  holder of these three takes the keeper's.
 
 ### What two commands at once can see
 
@@ -1434,12 +2355,28 @@ folder, the `Include` line and the alias file all happens under it. Each first c
 | `renew` | `ssh` reads the old certificate or the new one, never a part of either, since the new one arrives by one rename |
 | `release` | `ssh` finds the alias file gone before the key, never the reverse. A session already open stays open. `get` sees the lease `released` before its files are gone, in the order this page asks of the rewrite, and after, in the prototype's ([Release, and what it leaves](#release-and-what-it-leaves)) |
 | Commands with different `AGENTSPACE_STATE_DIR` values | Two separate state files with separate locks, but one set of lease folders and, with one `<ssh folder>`, one `agentspace.d`. They do not exclude each other. IDs are random, so their folders never collide, but their aliases can; the second `create` then fails on the first's alias file ([The alias file](#the-alias-file)) |
+| Two `create`s, or a `create` and a `get`, for one project with no `ready` host | A second `create` waits for the host registry lock; a `get` tries it without waiting, and starts nothing when it is held. Either, once it has the lock, finds the record the first added or changed, and starts no second run: the first run holds its lock, or `last_attempt_at` is less than 5 minutes old ([Its states](#its-states)). Both leases are `pending`, and one run places both |
+| A provisioning run's `place_pending`, and a `create`, `renew` or `release` | Each waits for the lease state lock, which `place_pending` takes once for each lease it places, re-reading the state file each time, so no hold of it spans several placements. A lease released before `place_pending` re-reads the state file for it is skipped and never placed; one released after it was placed is released as any `ready` lease is |
+| A provisioning run, and `get` or `list` | `get` and `list` see a placed lease `pending` before the run's write and `ready` after it, never part of either |
+| A provisioning run, and the ProxyCommand or the keeper | They read `hosts.json` and the lease state file without their locks, so they see each as it was before one of the run's writes or as it is after it, never part of either. A record the run makes `ready` comes before any lease it places, so neither finds a `ready` lease on a host that is not yet `ready` |
+| A provisioning run, and an operator command on the same host by hand | Their writes to `hosts.json` wait for each other at its lock. Whether the command runs at all while the run's lock is held is operator.md's ([The provisioning run's lock](#the-provisioning-runs-lock)) |
+| Commands with different `AGENTSPACE_STATE_DIR` values, from v0.07 | One host registry, one lock on it, one project list and one folder per host, but separate lease state files. A run places only the pending leases of the state file of the command that started it ([The provisioning run's start](#the-provisioning-runs-start)) |
 | A person editing `<ssh folder>\config` | The `Include` line is inserted only when it is missing. A save made after `create` read the config and before its backup fails the backup's hash check, and `create` changes nothing; a save made after the backup and before the replace is lost, though the backup holds the earlier content ([Q5](#open-questions)) |
 
 ### What nothing locks
 
-- **The push stamp.** Two `up`s at once can both push and both write it, last writer winning; each
-  writes the same value ([operator.md Q20](operator.md#open-questions)).
+- **The push stamp, the box's and every host's.** Two `up`s at once on one host can both push and
+  both write its stamp, last writer winning; each writes the same value
+  ([operator.md Q20](operator.md#open-questions)). Commands on different hosts write different
+  stamps.
+- **A host's operator certificate and operator alias.** Two commands on one host at once can each
+  sign and move a certificate, and each write the same alias bytes; each move is one rename, so ssh
+  reads a whole file either way. The key itself is made under the host registry lock
+  ([The operator's key and certificate](#the-operators-key-and-certificate)).
+- **The provisioning run's log**, which every writer appends to, sharing.
+- **The operator's folder.** From v0.07 two operator commands can run at once, such as a
+  provisioning run beside a person's `sync`, and need no lock there: each writes only its own
+  `operator\<hex>\` ([Files in the checkout](#files-in-the-checkout); [Q15](#open-questions)).
 - **The CA.** Two `ca`s that both find no CA can both try to create it; the second `ssh-keygen`
   fails on the first's key, and `ca` then fails. Nothing else writes the CA.
 - **The keeper's files outside its two locks.** The keeper's locks, and how the keeper and its
@@ -1493,10 +2430,10 @@ none blocks building a drop-in of contract v0.
 
 | | Question | Settled by |
 |---|---|---|
-| **Q1** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace`, and the prototype's copy in the checkout is a requirement it does not meet ([Files in the checkout](#files-in-the-checkout)). A rewrite needs no migration, since the cache is rebuilt from the stack's output. The localswim CLI's build output is not state, and MAY stay in the checkout ([operator.md Q7](operator.md#open-questions)). | Closed |
+| **Q1** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace`, and the prototype's copy in the checkout is a requirement it does not meet ([Files in the checkout](#files-in-the-checkout)). A rewrite needs no migration, since the cache is rebuilt from the stack's output. The localswim CLI's build output is not state, and MAY stay in the checkout ([operator.md Q7](operator.md#open-questions)). From v0.07 the cache is retired into the host registry's `instance_id` (D45), which lives there too ([The host registry](#the-host-registry)). | Closed |
 | **Q2** | **Later, not blocking:** **Does every part of agentspace find the home folder through `USERPROFILE`?** The lease CLI and the operator's state paths do. The operator's `deploy` and `sync` use the shell's home variable, and the task launcher uses the profile folder the operating system reports; whether those follow a changed `USERPROFILE` is unverified, so a check that moves `USERPROFILE` can still reach the real `id_ed25519.pub`, `CLAUDE.md` or launcher error log. | [The home folder](#the-home-folder) states the rule to build, that agentspace MUST read the home folder from `USERPROFILE`, so only what the prototype's operator and launcher do is open. Later: a run on the laptop |
 | **Q3** | **Later, not blocking:** **SHOULD `create` check that `known_hosts` holds the box's key under `agentspace`?** Without it every login through the alias is refused, and the lease is still `ready`. Today a person's first `ssh agentspace` makes the entry. | [Creation, in order](#creation-in-order) has no such check and [The host key](#the-host-key) says agentspace never writes the key, so a drop-in builds today's behavior, and a check would be an addition. Later: the architect; [driver.md](driver.md#open-questions) (its Q7) |
-| **Q4** | **Later, not blocking:** **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | Nothing reads the leftovers again, so a cleanup of them is an addition that no other behavior waits on. Later: the architect; [keeper.md](keeper.md#open-questions) for the launch files |
+| **Q4** | **Later, not blocking:** **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. From v0.07 they include `hosts.json.<hex>.tmp`, `agentspace-host.<project>.agentspace-tmp-<hex>`, and a host's push stamp's and signing's temporary files (`sign-<hex>`) ([A host's folder](#a-hosts-folder)). A provisioning run's start leaves no file, and an operator command's own folder, `operator\<hex>\`, is removed by a later command once it is 24 hours old ([Files in the checkout](#files-in-the-checkout)). Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | Nothing reads the leftovers again, so a cleanup of them is an addition that no other behavior waits on. Later: the architect; [keeper.md](keeper.md#open-questions) for the launch files |
 | **Q5** | **Later, not blocking:** **SHOULD inserting the `Include` line re-check the config just before it replaces it?** A person's save between the backup and the replace is lost today. The window is short and the insertion happens once per config. | [The `Include` line](#the-include-line) states today's steps, and the window they leave is short and comes once per config. Later: the architect |
 | **Q6** | **Later, not blocking:** **Which access rules does `ssh-keygen` give the files it writes, on every Windows build?** On 2026-11-18 (OpenSSH_for_Windows 9.5p2, Windows 11 build 26300), a run on throwaway files saw a protected list on each: a private key with `SYSTEM` and `Administrators` full control and the user modify, and a public key or certificate with the same and `Everyone` read, whatever the folder passed down. That covers a lease's `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, and the CA's `agentspace_ca.pub`, which agentspace never re-locks. Whether another build or OpenSSH version differs is open. **What a rewrite that sets the lease key's rules itself MUST set is settled** (E0.04-T04-S01, 2026-11-18) in [The lease folder](#the-lease-folder), which closes [lease-api.md Q12](lease-api.md#open-questions). | What a build that sets the lease key's rules itself MUST set is stated in [The lease folder](#the-lease-folder), so what each build's `ssh-keygen` does is an observation, not a rule to build. Later: a run on each supported build |
 | **Q7** | **Later, not blocking:** **What does the prototype's alias test leave if it is killed?** It works in `%USERPROFILE%\.agentspace\tmp-test-lease-alias-<time>` and removes it at its end; a killed run leaves the folder. It is tooling, but it is the only test that writes into the real `.agentspace` outside `leases`. | The test is project tooling, not the product ([Project tooling](#project-tooling)), so a drop-in has nothing to build for it. Later: the conformance suite (E0.04-T02-S04) |
@@ -1506,4 +2443,5 @@ none blocks building a drop-in of contract v0.
 | **Q11** | **Later, not blocking:** **What SHOULD a `renew` killed between moving the new certificate into place and writing the record leave?** The certificate then outlives or falls short of the recorded `expires_at` until the next `renew` or `release`. Writing the record first moves the window rather than closing it. lease-api.md's atomicity covers a failed command, and says nothing of a killed one. | lease-api.md's atomicity covers a failed command and not a killed one, and the next `renew` or `release` puts the certificate and the record back in step, so a drop-in can be built without the answer. Later: the architect |
 | **Q12** | **Closed (E0.04-T04-S01, 2026-11-18): when the line has to be added to a `config` that is a symbolic link, another reparse point, or read-only, `create` fails with `internal` before it backs the config up, and writes nothing through the link** ([The `Include` line](#the-include-line)). Whether the prototype meets that is unobserved; a run on the laptop shows it. | Closed |
 | **Q13** | **Closed (E0.04-T03-S02, 2026-11-18): the keeper suite checks the keeper's JSON files against their schemas.** The case "The files a keeper run writes match the state schemas" (`conformance/keeper/test-keeper.ps1`) is described in [docs/conformance.md](conformance.md#the-keeper-suite), which owns what it checks. The prototype's schemas check (`scripts/test-schemas.ps1`, moved to `conformance/schemas/test-schemas.ps1`) still scans only the top level of `schemas/`, and no longer needs to look in `schemas/state/`. | Closed |
-| **Q14** | **Later, not blocking:** **Is `instance-id` the right name for the cache under `%USERPROFILE%\.agentspace`, and SHOULD `AGENTSPACE_STATE_DIR` move it?** D21 names the folder and no file. This page keeps the prototype's name without its dot, with `.json` since D40, and leaves the cache where the stamp and the CA are, out of the state folder's reach, since the ProxyCommand and every lease alias's default ProxyCommand read it without any agentspace variable. | This page picks the name and leaves the cache out of `AGENTSPACE_STATE_DIR`'s reach ([What moves which files](#what-moves-which-files)), so a drop-in builds that. Later: the architect |
+| **Q14** | **Closed by D45 (v0.07): overcome by events.** It asked whether `instance-id` was the right name for the cache under `%USERPROFILE%\.agentspace`, and whether `AGENTSPACE_STATE_DIR` SHOULD move it. v0.07 retires the cache into the host registry's `instance_id`, and the registry, `hosts.json` (D45, D55), stays out of `AGENTSPACE_STATE_DIR`'s reach for the same reason the cache did: the ProxyCommand reads it without any agentspace variable, and every state folder shares the hosts ([The host registry](#the-host-registry)). | Closed |
+| **Q15** | **Closed (architect, 2026-11-20, for v0.07-T01): each operator command writes what it sends into a folder of its own, `%USERPROFILE%\.agentspace\operator\<hex>\`, and removes it as it ends; a folder there older than 24 hours, left by a killed command, is removed by the next command that finds it** ([Files in the checkout](#files-in-the-checkout)). It asked: **What keeps two operator commands on two hosts from writing the operator's folder at once?** Until v0.07 one person ran one operator command at a time on one box. From v0.07 a provisioning run, started detached by the driver, can run its `sync` and `bootstrap` steps while a person runs `sync` on the box, or while a second run makes another host, and with one shared folder each would empty and rewrite `operator\system\`, rebuild `localswim-linux-arm64` and replace the template there. Each wrote the same bytes, but one's emptying could land while the other's `scp` was reading. | Closed |

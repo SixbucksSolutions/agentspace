@@ -1,0 +1,7 @@
+{
+  "version": 0,
+  "hosts": [
+    { "project": "swimcoach", "stack": "agentbox", "state": "ready", "instance_id": "i-0123456789abcdef0", "last_attempt_at": "2026-11-20T18:30:00Z" },
+    { "project": "agentspace", "stack": "agentspace-host-agentspace", "state": "ready", "instance_id": "i-0fedcba9876543210", "last_attempt_at": "2026-11-20T19:05:42Z" }
+  ]
+}

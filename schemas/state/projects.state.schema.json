@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/projects.state.schema.json",
+  "title": "Project list (laptop, written by a person)",
+  "description": "%USERPROFILE%\\.agentspace\\projects.json (D54, D55): the projects that may have a host made, each with the date Terry approved it. Written by a person, read by the driver and the operator, and never added to by agentspace on its own. It governs only making a host: a project that has a host in hosts.json is placed whether it is listed or not. A missing file lists nothing. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). A file in which two entries share a name is not valid, though this schema cannot refuse it. See docs/state.md, \"The project list\".",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "projects"],
+  "properties": {
+    "version": {
+      "description": "The format's version. 0 until a change that an older reader would misread.",
+      "const": 0
+    },
+    "projects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "approved"],
+      "properties": {
+        "name": {
+          "description": "The normalized project name, in the lease contract's form.",
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\\n)"
+        },
+        "approved": {
+          "description": "The date Terry approved the project, as YYYY-MM-DD.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$(?!\\n)"
+        }
+      }
+    }
+  }
+}
