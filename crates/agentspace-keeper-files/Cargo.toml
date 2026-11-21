@@ -11,6 +11,8 @@ path = "src/lib.rs"
 
 [dependencies]
 agentspace-keeper-api = { path = "../agentspace-keeper-api" }
+# The normalized project rule, the host registry's own (D55).
+agentspace-hosts = { path = "../agentspace-hosts" }
 # The versions and features agentspace-state uses (Cargo.lock): preserve_order keeps a file's
 # members in the order state.md lists them, and jsonschema has no default features, so its
 # validator never fetches a reference (D38).

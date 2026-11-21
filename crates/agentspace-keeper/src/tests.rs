@@ -374,12 +374,20 @@ fn pass(world: &World, place: &Place) -> Ran {
     pass_with(world, place, Some(NOW), None)
 }
 
+/// ` host=swimcoach` on the box's lines that name a holder, and nothing on its others
+/// (keeper.md, A pass's line).
+fn box_host(lease: &str) -> &'static str {
+    if lease == "-" { "" } else { " host=swimcoach" }
+}
+
 fn line(action: &str, lease: &str, alias: &str, pid: &str) -> String {
-    format!("{NOW_TEXT} {action} lease={lease} alias={alias} pid={pid}\n")
+    let host = box_host(lease);
+    format!("{NOW_TEXT} {action} lease={lease} alias={alias} pid={pid}{host}\n")
 }
 
 fn failed(lease: &str, alias: &str, pid: &str, reason: &str) -> String {
-    format!("{NOW_TEXT} failed lease={lease} alias={alias} pid={pid} reason={reason}\n")
+    let host = box_host(lease);
+    format!("{NOW_TEXT} failed lease={lease} alias={alias} pid={pid}{host} reason={reason}\n")
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1320,4 +1328,183 @@ fn watch_takes_the_keeper_lock_once_and_ends_at_max_passes() {
     assert_eq!(calls.iter().filter(|c| *c == "keeper lock").count(), 1);
     assert_eq!(calls.first().map(String::as_str), Some("keeper lock"));
     assert!(!calls.iter().any(|c| c.starts_with("sleep")));
+}
+
+// ---------------------------------------------------------------------------------------------
+// A turn per host (keeper.md, The hosts of a pass; D50). The fake records serve the box; another
+// host's record is its real file in the throwaway state folder, through `Records`' defaults.
+
+const ALPHA_REGISTRY: &str = r#"{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"alpha","stack":"agentspace-host-alpha","state":"ready"}]}"#;
+
+fn write_registry(place: &Place, doc: &str) {
+    let dir = place.profile.join(".agentspace");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hosts.json"), doc).unwrap();
+}
+
+/// A ready lease of `project`.
+fn project_lease(id: &str, project: &str, alias: &str) -> String {
+    lease(id, "ready", Some("2026-11-18T06:00:00Z"), alias)
+        .replace(r#""project":"demo""#, &format!(r#""project":"{project}""#))
+}
+
+#[test]
+fn a_pass_starts_a_holder_on_each_host_the_boxs_first_each_in_its_own_record() {
+    let (w, p) = (World::new(), Place::new());
+    write_registry(&p, ALPHA_REGISTRY);
+    write_leases(
+        &p.state,
+        &[
+            project_lease(ID_A, "swimcoach", ALIAS_A),
+            project_lease(ID_B, "alpha", ALIAS_B),
+        ],
+    );
+    let r = pass(&w, &p);
+    assert_eq!(r.exit_code, 0);
+    let starts: Vec<String> = w
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("start "))
+        .collect();
+    assert_eq!(
+        starts,
+        vec![format!("start {ID_A}"), format!("start {ID_B}")]
+    );
+    let log = p.log();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 2, "{log}");
+    assert!(lines[0].contains(" started ") && lines[0].ends_with(" host=swimcoach"));
+    assert!(lines[1].contains(&format!(" started lease={ID_B} ")));
+    assert!(lines[1].ends_with(" host=alpha"));
+    assert!(
+        w.record.borrow().is_some(),
+        "The box's record is the box's own"
+    );
+    assert!(p.state.join("board-holder.alpha.json").is_file());
+    assert!(!p.state.join("board-holder.swimcoach.json").exists());
+}
+
+#[test]
+fn a_lease_whose_host_is_not_ready_is_on_the_box() {
+    let (w, p) = (World::new(), Place::new());
+    write_registry(
+        &p,
+        &ALPHA_REGISTRY.replace(r#""state":"ready"}]"#, r#""state":"creating"}]"#),
+    );
+    write_leases(&p.state, &[project_lease(ID_B, "alpha", ALIAS_B)]);
+    let r = pass(&w, &p);
+    assert_eq!(r.action, Action::Started(holder(4242, ID_A, ALIAS_A)));
+    assert!(w.called(&format!("start {ID_B}")));
+    assert_eq!(p.log().lines().count(), 1);
+    assert!(!p.state.join("board-holder.alpha.json").exists());
+}
+
+#[test]
+fn a_host_whose_record_is_in_the_state_folder_gets_a_turn_and_its_idle_line_names_it() {
+    let (w, p) = (World::new(), Place::new());
+    // A record of a host the registry does not name, whose process is gone.
+    std::fs::write(
+        p.state.join("board-holder.zeta.json"),
+        format!(
+            r#"{{"pid":77,"process_started_at":"{STARTED_AT}","lease_id":"{ID_A}","alias":"{ALIAS_A}"}}"#
+        ),
+    )
+    .unwrap();
+    let r = pass(&w, &p);
+    assert_eq!(r.exit_code, 0);
+    assert_eq!(
+        p.log(),
+        format!(
+            "{NOW_TEXT} idle lease=- alias=- pid=-\n{NOW_TEXT} idle lease=- alias=- pid=- host=zeta\n"
+        )
+    );
+    assert!(
+        !p.state.join("board-holder.zeta.json").exists(),
+        "An untrusted record is removed"
+    );
+}
+
+#[test]
+fn a_holder_on_a_host_that_left_ready_is_stopped_and_the_boxs_is_kept() {
+    let (w, p) = (World::new(), Place::new());
+    w.trusted(holder(10, ID_A, ALIAS_A));
+    // alpha's holder, trusted, in its own record; alpha is not in the registry, so alpha's lease
+    // is on the box, and no longer on alpha.
+    w.processes.borrow_mut().insert(20, running(STARTED_AT));
+    std::fs::write(
+        p.state.join("board-holder.alpha.json"),
+        format!(
+            r#"{{"pid":20,"process_started_at":"{STARTED_AT}","lease_id":"{ID_B}","alias":"{ALIAS_B}"}}"#
+        ),
+    )
+    .unwrap();
+    write_leases(
+        &p.state,
+        &[
+            project_lease(ID_A, "swimcoach", ALIAS_A),
+            project_lease(ID_B, "alpha", ALIAS_B),
+        ],
+    );
+    let r = pass(&w, &p);
+    assert_eq!(r.action, Action::Kept(holder(10, ID_A, ALIAS_A)));
+    let log = p.log();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 2, "{log}");
+    assert_eq!(lines[0], line("kept", ID_A, ALIAS_A, "10").trim_end());
+    assert_eq!(
+        lines[1],
+        format!("{NOW_TEXT} stopped lease={ID_B} alias={ALIAS_B} pid=20 host=alpha")
+    );
+    assert!(w.called("stop 20"));
+    assert!(!w.called("stop 10"));
+    assert!(!p.state.join("board-holder.alpha.json").exists());
+    assert!(!w.calls().iter().any(|c| c.starts_with("start ")));
+}
+
+#[test]
+fn a_registry_that_is_not_valid_fails_the_pass_and_touches_no_holder() {
+    let (w, p) = (World::new(), Place::new());
+    w.trusted(holder(10, ID_A, ALIAS_A));
+    write_registry(&p, "not json");
+    let r = pass(&w, &p);
+    assert_eq!(r.exit_code, 1);
+    assert_eq!(r.action, Action::Failed);
+    assert_eq!(
+        p.log(),
+        failed(
+            "-",
+            "-",
+            "-",
+            "Host registry could not be read: the host registry is not valid"
+        )
+    );
+    assert!(!w.called("read record"));
+    assert!(!w.called("stop 10"));
+    assert!(w.record.borrow().is_some());
+}
+
+#[test]
+fn the_box_failing_its_turn_does_not_stop_another_hosts_turn() {
+    let (w, p) = (World::new(), Place::new());
+    write_registry(&p, ALPHA_REGISTRY);
+    // The box's record is untrusted and cannot be removed: its turn ends on that error.
+    *w.record.borrow_mut() = Some(holder(10, ID_A, ALIAS_A));
+    *w.remove_fails.borrow_mut() = Some("denied".into());
+    write_leases(&p.state, &[project_lease(ID_B, "alpha", ALIAS_B)]);
+    let r = pass(&w, &p);
+    assert_eq!(r.exit_code, 1, "The run exits 1 once the pass has ended");
+    let log = p.log();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 2, "{log}");
+    assert_eq!(
+        format!("{}\n", lines[0]),
+        failed(
+            "-",
+            "-",
+            "-",
+            "The pass stopped on an error: The record could not be removed: denied"
+        )
+    );
+    assert!(lines[1].contains(&format!(" started lease={ID_B} ")));
+    assert!(lines[1].ends_with(" host=alpha"));
 }

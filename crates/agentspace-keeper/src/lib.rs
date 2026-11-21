@@ -2,11 +2,12 @@
 //!
 //! RFC 2119 keywords in this crate's comments, and the capitals are load-bearing.
 //!
-//! `agentspace-keeper.exe` holds the board's forwards through one ready lease (keeper.md, What
-//! the keeper does). This crate is its portable half: the command line, one pass, and the log
-//! lines. What a pass asks of Windows is behind the pinned boundary in `agentspace-keeper-api`,
-//! and the holder record's file is behind [`Records`], this crate's own trait (D42, the
-//! architect's ruling for E0.06-T01-S06).
+//! `agentspace-keeper.exe` holds the board's forwards on each host through one ready lease of
+//! that host (keeper.md, What the keeper does; D50). This crate is its portable half: the command
+//! line, one pass with a turn per host, and the log lines. What a pass asks of Windows is behind
+//! the pinned boundary in `agentspace-keeper-api`, and each host's holder record is behind
+//! [`Records`], this crate's own trait (D42, the architect's ruling for E0.06-T01-S06). The host
+//! registry is read through `agentspace-hosts`, without its lock (keeper.md, Hosts).
 //!
 //! # The public API
 //!
@@ -30,6 +31,7 @@
 
 mod args;
 mod front;
+mod hosts;
 mod log;
 mod pass;
 mod records;
@@ -43,20 +45,56 @@ pub use front::{Env, run};
 pub use pass::{Action, PassContext, PassReport, run_pass};
 pub use records::FileRecords;
 
-/// `<state folder>\board-holder.json`, the holder record (docs/state.md, The holder record).
+/// The holder records: `<state folder>\board-holder.json` for the box (docs/state.md, The holder
+/// record), and `<state folder>\board-holder.<project>.json` for another host (state.md, Another
+/// host's holder).
 ///
 /// The real one is [`FileRecords`], over `agentspace-keeper-files` and `agentspace-state`
 /// (E0.06-T03-S04, #0129); a pass is tested against a fake.
+///
+/// `read`, `write` and `remove` are the box's record, as in v0.06. The `_host` methods take the
+/// host as `agentspace-keeper-files` names one, `None` for the box and `Some(project)` for another
+/// host; a pass calls only them. Their defaults (E0.07-T03-S05) give the box's to the three
+/// methods above, and another host's to that host's real file in the state folder, so a fake of
+/// v0.06's three methods still serves the box, and another host's record is a file a test can
+/// see in its throwaway state folder.
 pub trait Records {
-    /// The record, or `None` when there is none. A record that cannot be read or parsed, or
-    /// whose members do not have their forms, MUST be read as `None` (state.md, The holder
+    /// The box's record, or `None` when there is none. A record that cannot be read or parsed,
+    /// or whose members do not have their forms, MUST be read as `None` (state.md, The holder
     /// record).
     fn read(&self, state_dir: &Path) -> Option<HolderRecord>;
-    /// Writes the record, replacing any other atomically. The error is the `<error>` of
+    /// Writes the box's record, replacing any other atomically. The error is the `<error>` of
     /// keeper.md's two texts for a record that cannot be written.
     fn write(&self, state_dir: &Path, record: &HolderRecord) -> Result<(), String>;
-    /// Removes the record. A record that is already gone MUST be `Ok`.
+    /// Removes the box's record. A record that is already gone MUST be `Ok`.
     fn remove(&self, state_dir: &Path) -> Result<(), String>;
+
+    /// A host's record, read as [`Records::read`] reads the box's.
+    fn read_host(&self, state_dir: &Path, project: Option<&str>) -> Option<HolderRecord> {
+        match project {
+            None => self.read(state_dir),
+            Some(_) => records::read_file(state_dir, project),
+        }
+    }
+    /// Writes a host's record, as [`Records::write`] writes the box's.
+    fn write_host(
+        &self,
+        state_dir: &Path,
+        project: Option<&str>,
+        record: &HolderRecord,
+    ) -> Result<(), String> {
+        match project {
+            None => self.write(state_dir, record),
+            Some(_) => records::write_file(state_dir, project, record),
+        }
+    }
+    /// Removes a host's record, as [`Records::remove`] removes the box's.
+    fn remove_host(&self, state_dir: &Path, project: Option<&str>) -> Result<(), String> {
+        match project {
+            None => self.remove(state_dir),
+            Some(_) => records::remove_file(state_dir, project),
+        }
+    }
 }
 
 /// What a pass works through: the pinned keeper boundary and the record.

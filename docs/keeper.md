@@ -169,7 +169,12 @@ step 5), and a state folder that cannot be listed ([The hosts of a pass](#the-ho
   [state.md, The host registry](state.md#the-host-registry)'s rules: its bytes, its schema, and
   the rules beyond it, among them that a valid file holds exactly one record whose `stack` is
   `agentbox`, and that record's `project` is `swimcoach` (architect, 2026-11-20, for v0.07-T01).
-  Only a missing file reads as the box alone; a file that is not valid never does.
+  Only a missing file reads as the box alone; a file that is not valid never does. **Its `<error>`
+  is `the host registry is not valid` for a file that is not valid by those rules, and
+  `Windows error <n>.` for one that is not a file or cannot be opened or read**, the number
+  alone, never the system's localized text, as a lock's and the state folder's are, so its line
+  reads `Host registry could not be read: Windows error <n>.`; an unreadable registry MUST NOT be
+  reported as not valid (architect, 2026-11-21, for v0.07-T03, on #0154's review).
 - **The box is the host whose record's `stack` is `agentbox`**, and its project is that record's
   `project`. Every other record names another host by its `project`. A host is never named by its
   stack or its instance in anything the keeper writes.
@@ -1531,7 +1536,7 @@ and so MUST a holder left running because its record could not be written.
 | Where | Reason |
 |---|---|
 | The lease state cannot be read | `Lease state could not be read: <error>` |
-| The host registry cannot be read | `Host registry could not be read: <error>`, where `<error>` says why, `the host registry is not valid` for a file [state.md](state.md#the-host-registry) calls not valid, one without exactly one `agentbox` record whose project is `swimcoach` included ([Hosts](#hosts)) |
+| The host registry cannot be read | `Host registry could not be read: <error>`, where `<error>` says why: `the host registry is not valid` for a file [state.md](state.md#the-host-registry) calls not valid, one without exactly one `agentbox` record whose project is `swimcoach` included, and `Windows error <n>.`, the number alone, for one that is not a file or cannot be opened or read (architect, 2026-11-21, for v0.07-T03, on #0154's review) ([Hosts](#hosts)) |
 | An error a pass does not handle, the matcher's self-check included | `The pass stopped on an error: <error>`; for the matcher, `<error>` is `The holder command matcher failed its own checks: <case>; <case>` |
 | `board-holder.lock` is held | `locked` |
 | A start | `The holder could not be started: <reason>`, where `<reason>` is from [Before the start](#before-the-start) or [The handshake](#the-handshake) |

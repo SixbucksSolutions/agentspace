@@ -22,18 +22,24 @@
 //! | `Claim`, `serialize_claim`, `parse_claim` | The line of `board-holder-launch.<hex>.claim`: `launcher <pid>` or `abandoned`, then LF. |
 //! | `serialize_keeper_pid`, `keeper_pid_digits`, `parse_keeper_pid` | The PID line of `board-holder-keeper.lock`, and a second keeper's reading of it (`KEEPER_PID_READ_BYTES`). |
 //! | `HolderMatcher` | The pinned `agentspace_keeper_api::Matcher`: `holder_command`, `is_holder` and `self_check`, for the system's `<System32>` folder, plus `program` and `cmd_exe`. `split_command_line` is its splitter, as `CommandLineToArgvW` splits. |
+//! | `holder_record_file`, `holder_record_tmp_file`, `holder_ssh_log_file`, `holder_ssh_log_rotated_file`, `project_of_holder_record_file`, `is_project_name` | Each host's holder files by D55's names (state.md, Another host's holder). They take `Option<&str>`, the host's project: `None` is the box, whose names are v0.06's. A record's form is the same for every host, so `serialize_holder_record` and `parse_holder_record` serve them all. |
 //! | `NotValid` | Why a writer refused a document, or a strict reader refused a file. |
 //! | The file names | `HOLDER_RECORD_FILE`, `PASS_LOCK_FILE`, `KEEPER_LOCK_FILE`, `launch_request_file`, `claim_file`, `result_file`. |
 
 #![forbid(unsafe_code)]
 
 mod holder_record;
+mod hosts;
 mod json;
 mod launch;
 mod lock;
 mod matcher;
 
 pub use holder_record::{parse_holder_record, serialize_holder_record};
+pub use hosts::{
+    holder_record_file, holder_record_tmp_file, holder_ssh_log_file, holder_ssh_log_rotated_file,
+    is_project_name, project_of_holder_record_file,
+};
 pub use launch::{
     Claim, LaunchRequest, LaunchResult, parse_claim, parse_launch_request, parse_launch_result,
     serialize_claim, serialize_launch_request, serialize_launch_result,

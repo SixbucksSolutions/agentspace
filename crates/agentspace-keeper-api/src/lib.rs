@@ -93,6 +93,13 @@ pub struct StartRequest<'a> {
     pub alias: &'a str,
     /// The keeper's own program, which the launcher runs as (D42).
     pub own_exe: &'a Path,
+    /// The holder's log, a full path: the log of the host the holder is started on (keeper.md,
+    /// The handshake, steps 1 and 7; architect, 2026-11-21, for v0.07-T03). `None` is the box's
+    /// `board-holder-ssh.log` in `state_dir`, so a caller that names no log MUST get the same
+    /// request bytes and messages as before this member existed. Another host's start MUST name
+    /// its own `board-holder-ssh.<project>.log`, which the starter writes into the launch request
+    /// and names in its "exited at once" reason.
+    pub log: Option<&'a Path>,
 }
 
 /// The outcome of a start.

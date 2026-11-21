@@ -170,6 +170,7 @@ fn the_pass_in_the_job() {
         lease_id: "0a1b2c3d-0000-4000-8000-000000000001",
         alias: ALIAS,
         own_exe: &own,
+        log: None,
     };
     let out = WmiStarter::new().start(&req, &HolderMatcher::new(system32()));
     let text = match out {

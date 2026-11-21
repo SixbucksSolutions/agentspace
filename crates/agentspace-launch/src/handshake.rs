@@ -40,7 +40,15 @@ const NO_ANSWER: &str = "The launcher did not answer within 35 seconds.";
 const WITHDRAWN: &str = "Its request was withdrawn, so no holder was started.";
 const UNRECORDED: &str = "A launcher claimed the request, or it could not be withdrawn, and no \
                           answer came in 60 more seconds, so a holder may be running unrecorded.";
-const EXITED: &str = "The holder exited at once; see board-holder-ssh.log.";
+/// Step 7's reason for a holder that is not running, naming the host's own log by its file name
+/// (keeper.md, The handshake, step 7): `board-holder-ssh.log` for the box.
+fn exited(log: &Path) -> String {
+    let name = log
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| log.to_string_lossy().into_owned());
+    format!("The holder exited at once; see {name}.")
+}
 const UNREAD_LINE: &str = "The holder started, but its command line could not be read back to \
                            check it, so it runs unrecorded.";
 const UNOPENED: &str =
@@ -92,10 +100,18 @@ pub(crate) fn start(
     let profile = windows_separators(req.profile);
     let ssh_exe = windows_separators(req.ssh_exe);
     let application = windows_separators(application);
+    // The holder's log is the host's (keeper.md, The handshake, step 1): the request's own, or the
+    // box's `board-holder-ssh.log` in the state folder when it names none. It is a path of the
+    // request too, so it is written with backslashes like the rest.
+    let log = match req.log {
+        Some(log) => windows_separators(log),
+        None => state_dir.join(HOLDER_LOG_FILE),
+    };
     let req = &StartRequest {
         state_dir: &state_dir,
         profile: &profile,
         ssh_exe: &ssh_exe,
+        log: Some(&log),
         ..*req
     };
     let application = application.as_path();
@@ -148,14 +164,13 @@ fn handshake(
     let deadline_ms = clock
         .utc_now_ms()
         .saturating_add(DEADLINE.as_millis() as i64);
+    // `start` always fills the log in; the box's file stands in for a caller that bypassed it.
+    let box_log = req.state_dir.join(HOLDER_LOG_FILE);
+    let log = req.log.unwrap_or(&box_log);
     let launch = LaunchRequest {
         application: application.to_string_lossy().into_owned(),
         command_line: matcher.holder_command(req.ssh_exe, req.alias),
-        log: req
-            .state_dir
-            .join(HOLDER_LOG_FILE)
-            .to_string_lossy()
-            .into_owned(),
+        log: log.to_string_lossy().into_owned(),
         directory: req.profile.to_string_lossy().into_owned(),
         not_after: format_ticks(ms_to_ticks(deadline_ms)),
         result: result.to_string_lossy().into_owned(),
@@ -237,11 +252,13 @@ fn handshake(
     let command_line = match pass.query(pid) {
         Query::Running(info) if info.process_started_at == process_started_at => info.command_line,
         Query::CannotOpen(_) => return failed(UNOPENED),
-        Query::Running(_) | Query::Gone => return failed(EXITED),
+        Query::Running(_) | Query::Gone => return failed(&exited(log)),
     };
     match command_line {
         None => return failed(UNREAD_LINE),
-        Some(line) if !matcher.is_holder(&line, req.ssh_exe, req.alias) => return failed(EXITED),
+        Some(line) if !matcher.is_holder(&line, req.ssh_exe, req.alias) => {
+            return failed(&exited(log));
+        }
         Some(_) => {}
     }
     Started::Holder(HolderRecord {
@@ -458,6 +475,11 @@ mod tests {
     }
 
     fn run(pass: &FakePass) -> Started {
+        run_with_log(pass, None)
+    }
+
+    /// A start whose request names this holder log, or none (the box's).
+    fn run_with_log(pass: &FakePass, log: Option<&Path>) -> Started {
         let ssh = ssh();
         let own = own();
         let profile = profile();
@@ -468,8 +490,28 @@ mod tests {
             lease_id: "0a1b2c3d-0000-4000-8000-000000000001",
             alias: ALIAS,
             own_exe: &own,
+            log,
         };
         start(pass, &req, &matcher(), &ssh)
+    }
+
+    /// A fake create that keeps the launch request it finds, and answers as `answer` says.
+    fn keeping_request(
+        pass: &FakePass,
+        answer: Option<LaunchResult>,
+    ) -> std::rc::Rc<RefCell<Option<LaunchRequest>>> {
+        let seen: std::rc::Rc<RefCell<Option<LaunchRequest>>> = Default::default();
+        let keep = seen.clone();
+        pass.on_create(move |p, _, _| {
+            let bytes = std::fs::read(p.file(launch_request_file(HEX))).unwrap();
+            *keep.borrow_mut() = Some(parse_launch_request(&bytes).unwrap());
+            if let Some(answer) = &answer {
+                create_claim(&p.file(claim_file(HEX)), Claim::Launcher(77)).unwrap();
+                write_result(p, answer);
+            }
+            Create::Returned(0)
+        });
+        seen
     }
 
     fn write_result(pass: &FakePass, result: &LaunchResult) {
@@ -797,6 +839,94 @@ mod tests {
         }
     }
 
+    /// Steps 1 and 7 (keeper.md; architect, 2026-11-21, for v0.07-T03): a request that names no
+    /// log is the box's, `board-holder-ssh.log` in the state folder, in the launch request and in
+    /// the "exited at once" reason, exactly as before the request could name one.
+    #[test]
+    fn a_request_naming_no_log_writes_and_names_the_boxs_log() {
+        let scratch = Scratch::new("boxlog");
+        let pass = FakePass::new(&scratch);
+        *pass.query.borrow_mut() = Query::Gone;
+        let seen = keeping_request(&pass, Some(started()));
+        assert_eq!(
+            run_with_log(&pass, None),
+            Started::Failed(
+                "The holder could not be started: The holder exited at once; see \
+                 board-holder-ssh.log."
+                    .to_string()
+            )
+        );
+        let request = seen.borrow().clone().unwrap();
+        assert_eq!(
+            request.log,
+            scratch
+                .path()
+                .join("board-holder-ssh.log")
+                .to_string_lossy()
+        );
+        assert_eq!(pass.removed_names(), ORDER);
+    }
+
+    /// Steps 1 and 7 (keeper.md; architect, 2026-11-21, for v0.07-T03): another host's start
+    /// writes that host's log into the launch request, as a full path with backslashes, and names
+    /// it in the "exited at once" reason. The launch files keep their names, with no host in them.
+    #[test]
+    fn a_request_naming_a_hosts_log_writes_and_names_that_log() {
+        let scratch = Scratch::new("hostlog");
+        let pass = FakePass::new(&scratch);
+        *pass.query.borrow_mut() = Query::Gone;
+        let seen = keeping_request(&pass, Some(started()));
+        let given = PathBuf::from(
+            scratch
+                .path()
+                .join("board-holder-ssh.alpha.log")
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        assert_eq!(
+            run_with_log(&pass, Some(&given)),
+            Started::Failed(
+                "The holder could not be started: The holder exited at once; see \
+                 board-holder-ssh.alpha.log."
+                    .to_string()
+            )
+        );
+        let request = seen.borrow().clone().unwrap();
+        assert_eq!(
+            request.log,
+            scratch
+                .path()
+                .join("board-holder-ssh.alpha.log")
+                .to_string_lossy()
+        );
+        assert!(!request.log.contains('/'), "{}", request.log);
+        assert_eq!(pass.removed_names(), ORDER);
+    }
+
+    /// Two hosts' starts give their holders two logs: each request names its own host's.
+    #[test]
+    fn two_hosts_starts_name_two_logs() {
+        let mut logs = Vec::new();
+        for log in [None, Some("board-holder-ssh.alpha.log")] {
+            let scratch = Scratch::new("twologs");
+            let pass = FakePass::new(&scratch);
+            let seen = keeping_request(&pass, Some(started()));
+            let given = log.map(|name| scratch.path().join(name));
+            assert!(matches!(
+                run_with_log(&pass, given.as_deref()),
+                Started::Holder(_)
+            ));
+            let request = seen.borrow().clone().unwrap();
+            let name = Path::new(&request.log)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            logs.push(name);
+        }
+        assert_eq!(logs, ["board-holder-ssh.log", "board-holder-ssh.alpha.log"]);
+    }
+
     /// Step 7 (keeper.md; architect, 2026-11-19, for E0.06-T02-S04): a holder still running by
     /// PID and creation time whose command line cannot be read back has not exited. The start
     /// fails saying it runs unrecorded, and nothing stops it: the handshake only looks at it.
@@ -963,6 +1093,7 @@ mod tests {
             lease_id: "0a1b2c3d-0000-4000-8000-000000000001",
             alias: ALIAS,
             own_exe: &own,
+            log: None,
         };
         assert!(matches!(
             start(&pass, &req, &Verbatim, &ssh),
@@ -1006,6 +1137,7 @@ mod tests {
             lease_id: "0a1b2c3d-0000-4000-8000-000000000001",
             alias: ALIAS,
             own_exe: &own,
+            log: None,
         };
         let _ = start(&pass, &req, &matcher(), &matcher().program(&ssh));
         let request = seen.borrow().clone().unwrap();

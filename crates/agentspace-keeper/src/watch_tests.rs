@@ -15,6 +15,8 @@ use std::time::Duration;
 
 const BASE_SECS: i64 = 1_795_000_000;
 const LEASE: &str = "0a0a0a0a-1111-4222-a333-444455556666";
+const ALPHA_LEASE: &str = "0b0b0b0b-1111-4222-a333-444455556666";
+const ALPHA_ALIAS: &str = "agentspace-alpha-0b0b0b0b";
 const ALIAS: &str = "agentspace-demo-0a0a0a0a";
 
 struct FakeClock {
@@ -53,6 +55,11 @@ struct World {
     reads: Cell<u32>,
     keeper_lock: RefCell<Option<Taken>>,
     pass_locks: Cell<u32>,
+    /// A second host, `alpha`, `ready` in the registry with a ready lease of its own, whose every
+    /// start fails.
+    alpha: Cell<bool>,
+    /// Each holder's alias, by PID.
+    aliases: RefCell<HashMap<u32, String>>,
 }
 
 impl World {
@@ -72,6 +79,8 @@ impl World {
             reads: Cell::new(0),
             keeper_lock: RefCell::new(None),
             pass_locks: Cell::new(0),
+            alpha: Cell::new(false),
+            aliases: RefCell::new(HashMap::new()),
         })
     }
 }
@@ -104,7 +113,14 @@ impl Processes for W {
         if alive {
             Query::Running(ProcessInfo {
                 process_started_at: started_at(pid),
-                command_line: Some(format!("holder {ALIAS}")),
+                command_line: Some(format!(
+                    "holder {}",
+                    self.0
+                        .aliases
+                        .borrow()
+                        .get(&pid)
+                        .map_or(ALIAS, String::as_str)
+                )),
             })
         } else {
             Query::Gone
@@ -123,7 +139,14 @@ impl Starter for W {
         if self.0.fail_starts.borrow().contains(&n) {
             return Started::Failed("The holder could not be started: It failed.".to_string());
         }
+        if req.alias == ALPHA_ALIAS {
+            return Started::Failed("The holder could not be started: It failed.".to_string());
+        }
         let pid = 100 + n;
+        self.0
+            .aliases
+            .borrow_mut()
+            .insert(pid, req.alias.to_string());
         let life = {
             let l = self.0.lifetimes.borrow();
             l.get(n as usize - 1).copied().flatten()
@@ -200,6 +223,24 @@ fn watch(world: &Rc<World>, extra: &[&str]) -> Ran {
         "expires_at": "2036-11-19T10:00:00Z",
         "ssh": {"host_alias": ALIAS, "user": "ubuntu"}
     }]});
+    let mut leases = leases;
+    if world.alpha.get() {
+        if let Some(list) = leases["leases"].as_array_mut() {
+            list.push(serde_json::json!({
+                "id": ALPHA_LEASE, "project": "alpha", "state": "ready",
+                "platform": "linux/arm64", "profile": "agent-linux", "size": "m",
+                "ttl_seconds": 3600, "created_at": "2026-11-19T10:00:00Z", "driver": "ec2",
+                "expires_at": "2036-11-19T10:00:00Z",
+                "ssh": {"host_alias": ALPHA_ALIAS, "user": "ubuntu"}
+            }));
+        }
+        std::fs::create_dir_all(home.join(".agentspace")).unwrap();
+        std::fs::write(
+            home.join(".agentspace").join("hosts.json"),
+            r#"{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"alpha","stack":"agentspace-host-alpha","state":"ready"}]}"#,
+        )
+        .unwrap();
+    }
     std::fs::write(state.join("leases.json"), leases.to_string()).unwrap();
 
     let home_os = home.clone().into_os_string();
@@ -245,13 +286,13 @@ fn watch(world: &Rc<World>, extra: &[&str]) -> Ran {
 }
 
 fn started(pid: u32) -> String {
-    format!("started lease={LEASE} alias={ALIAS} pid={pid}")
+    format!("started lease={LEASE} alias={ALIAS} pid={pid} host=swimcoach")
 }
 fn kept(pid: u32) -> String {
-    format!("kept lease={LEASE} alias={ALIAS} pid={pid}")
+    format!("kept lease={LEASE} alias={ALIAS} pid={pid} host=swimcoach")
 }
 fn lost(pid: u32) -> String {
-    format!("lost lease={LEASE} alias={ALIAS} pid={pid}")
+    format!("lost lease={LEASE} alias={ALIAS} pid={pid} host=swimcoach")
 }
 
 #[test]
@@ -421,4 +462,36 @@ fn every_wait_is_at_least_the_interval_and_the_last_pass_is_not_waited_after() {
     *w.lifetimes.borrow_mut() = vec![None];
     let ran = watch(&w, &["-MaxPasses", "3", "-IntervalSeconds", "200"]);
     assert_eq!(ran.sleeps, vec![200, 200]);
+}
+
+/// One host's failures back off on that host alone (keeper.md, Fast failures and backoff; D50):
+/// alpha's backoff grows with alpha's count, carries `host=alpha`, and holds off only alpha's
+/// starts, while the box's holder is kept in a pass every interval.
+#[test]
+fn one_hosts_backoff_holds_off_only_that_host() {
+    let w = World::new();
+    w.alpha.set(true);
+    *w.lifetimes.borrow_mut() = vec![None];
+    let ran = watch(&w, &["-MaxPasses", "4"]);
+    assert_eq!(ran.code, 0);
+    let alpha_failed = format!(
+        "failed lease={ALPHA_LEASE} alias={ALPHA_ALIAS} pid=- host=alpha reason=The holder could not be started: It failed."
+    );
+    assert_eq!(
+        ran.lines,
+        vec![
+            started(101),
+            alpha_failed.clone(),
+            "backoff seconds=30 host=alpha".to_string(),
+            kept(101),
+            alpha_failed.clone(),
+            "backoff seconds=60 host=alpha".to_string(),
+            // alpha is in its backoff: its turn starts nothing and logs no line.
+            kept(101),
+            kept(101),
+            alpha_failed,
+        ]
+    );
+    // The box has no hold-off, so every wait is the interval.
+    assert_eq!(ran.sleeps, vec![30, 30, 30]);
 }

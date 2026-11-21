@@ -134,6 +134,11 @@ pub fn holder_for(pid: u32, id: &str) -> HolderRecord {
 }
 
 /// One log line as the keeper writes it, LF included.
+///
+/// A line that names a holder carries ` host=swimcoach` after `pid`, the box's project, and before
+/// `reason` (keeper.md, Log lines: A pass's line; E0.07-T03-S05): `started`, `kept`, `stopped`
+/// and `lost`, and a `failed` that names a lease, which is a start or a stop. Every other line of
+/// the box reads exactly as v0.06's: `idle`, `rotated`, `skipped`, and a `failed` with `lease=-`.
 pub fn line(
     time: &str,
     action: &str,
@@ -142,9 +147,18 @@ pub fn line(
     pid: &str,
     reason: Option<&str>,
 ) -> String {
+    let names_a_holder = matches!(action, "started" | "kept" | "stopped" | "lost")
+        || (action == "failed" && lease != "-");
+    let host = if names_a_holder {
+        " host=swimcoach"
+    } else {
+        ""
+    };
     match reason {
-        Some(r) => format!("{time} {action} lease={lease} alias={alias} pid={pid} reason={r}\n"),
-        None => format!("{time} {action} lease={lease} alias={alias} pid={pid}\n"),
+        Some(r) => {
+            format!("{time} {action} lease={lease} alias={alias} pid={pid}{host} reason={r}\n")
+        }
+        None => format!("{time} {action} lease={lease} alias={alias} pid={pid}{host}\n"),
     }
 }
 

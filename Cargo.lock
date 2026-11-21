@@ -98,6 +98,7 @@ dependencies = [
 name = "agentspace-keeper"
 version = "0.6.0"
 dependencies = [
+ "agentspace-hosts",
  "agentspace-keeper-api",
  "agentspace-keeper-files",
  "agentspace-keeper-win",
@@ -115,6 +116,7 @@ version = "0.6.0"
 name = "agentspace-keeper-files"
 version = "0.6.0"
 dependencies = [
+ "agentspace-hosts",
  "agentspace-keeper-api",
  "jsonschema",
  "serde",

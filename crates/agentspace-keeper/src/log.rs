@@ -1,6 +1,7 @@
 //! Log lines (docs/keeper.md, Log lines; docs/state.md, The keeper's logs).
 
 use agentspace_keeper_api::Clock;
+use agentspace_keeper_files::{holder_ssh_log_file, holder_ssh_log_rotated_file};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -8,9 +9,6 @@ use std::time::Duration;
 
 /// `<state folder>\board-holder.log`.
 pub(crate) const LOG: &str = "board-holder.log";
-/// `<state folder>\board-holder-ssh.log`, and the name it is rotated to.
-pub(crate) const SSH_LOG: &str = "board-holder-ssh.log";
-pub(crate) const SSH_LOG_ROTATED: &str = "board-holder-ssh.log.1";
 /// A holder's log larger than this is rotated (keeper.md, The holder's log).
 pub(crate) const ROTATE_ABOVE: u64 = 1_048_576;
 /// An open of the log that fails is tried up to 5 times, 50 ms apart.
@@ -54,7 +52,7 @@ pub(crate) fn reason_text(reason: &str) -> String {
 }
 
 /// One pass line: `<time> <action> lease=<lease> alias=<alias> pid=<pid>[ reason=<reason>]`,
-/// without its LF. An empty `lease`, `alias` or `pid` is written `-`.
+/// without its LF and without `host=`. An empty `lease`, `alias` or `pid` is written `-`.
 pub(crate) fn pass_line(
     time: &str,
     action: &str,
@@ -63,12 +61,32 @@ pub(crate) fn pass_line(
     pid: &str,
     reason: Option<&str>,
 ) -> String {
+    pass_line_host(time, action, lease, alias, pid, None, reason)
+}
+
+/// One pass line with its host: `<time> <action> lease=<lease> alias=<alias> pid=<pid>[
+/// host=<project>][ reason=<reason>]`, without its LF (keeper.md, A pass's line). `host=` comes
+/// after `pid` and before `reason`, so every field v0.06 wrote keeps its place; which lines carry
+/// it is the caller's.
+pub(crate) fn pass_line_host(
+    time: &str,
+    action: &str,
+    lease: &str,
+    alias: &str,
+    pid: &str,
+    host: Option<&str>,
+    reason: Option<&str>,
+) -> String {
     let mut line = format!(
         "{time} {action} lease={} alias={} pid={}",
         field(lease),
         field(alias),
         field(pid)
     );
+    if let Some(h) = host {
+        line.push_str(" host=");
+        line.push_str(&field(h));
+    }
     if let Some(r) = reason {
         line.push_str(" reason=");
         line.push_str(&reason_text(r));
@@ -131,13 +149,14 @@ fn open_append(path: &Path) -> io::Result<fs::File> {
     options.open(path)
 }
 
-/// Rotates `board-holder-ssh.log` when it is larger than 1 MiB: renames it to
-/// `board-holder-ssh.log.1`, replacing any older one. Says whether it was rotated. A failure to
-/// rotate is no rotation, and is not reported.
-pub(crate) fn rotate_ssh_log(state_dir: &Path) -> bool {
-    let from = state_dir.join(SSH_LOG);
+/// Rotates a host's holder log when it is larger than 1 MiB: renames `board-holder-ssh.log` (the
+/// box, `None`) or `board-holder-ssh.<project>.log` to the same name with `.1`, replacing any
+/// older one. Says whether it was rotated. A failure to rotate is no rotation, and is not
+/// reported (keeper.md, The holder's log).
+pub(crate) fn rotate_ssh_log(state_dir: &Path, project: Option<&str>) -> bool {
+    let from = state_dir.join(holder_ssh_log_file(project));
     let due = fs::metadata(&from).is_ok_and(|m| m.is_file() && m.len() > ROTATE_ABOVE);
-    due && fs::rename(&from, state_dir.join(SSH_LOG_ROTATED)).is_ok()
+    due && fs::rename(&from, state_dir.join(holder_ssh_log_rotated_file(project))).is_ok()
 }
 
 #[cfg(test)]
@@ -171,6 +190,18 @@ mod tests {
                 Some("locked")
             ),
             "2026-11-18T06:02:06Z skipped lease=- alias=- pid=- reason=locked"
+        );
+    }
+
+    #[test]
+    fn host_comes_after_pid_and_before_reason() {
+        assert_eq!(
+            pass_line_host("T", "kept", "l", "a", "7", Some("swimcoach"), None),
+            "T kept lease=l alias=a pid=7 host=swimcoach"
+        );
+        assert_eq!(
+            pass_line_host("T", "failed", "", "", "", Some("demo"), Some("x")),
+            "T failed lease=- alias=- pid=- host=demo reason=x"
         );
     }
 
