@@ -58,13 +58,36 @@ impl Driver for Ec2Driver {
     }
 }
 
+/// What [`place_pending`] did: how many leases it placed, and each it could not, with why
+/// (driver.md, place_pending: its result names each lease it could and could not place).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PendingPlaced {
+    /// How many `pending` leases it placed and wrote `ready`.
+    pub placed: usize,
+    /// Each lease it left `pending`, in the order it tried them.
+    pub failed: Vec<PendingFailure>,
+}
+
+/// One lease [`place_pending`] could not place. It stays `pending`, for the next run (D48).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingFailure {
+    /// The lease's normalized ID.
+    pub lease_id: String,
+    /// Why, in agentspace's own words, as a [`Failure`]'s message is: no path outside the home,
+    /// no backend name (D1), never a secret. The run writes it to its log.
+    pub message: String,
+}
+
 /// Places every `pending` lease of `project` that this driver placed, under the lease state lock,
-/// and writes each `ready` (driver.md, place_pending). Returns how many it placed. The
-/// provisioning run calls it as its last step (operator.md, provision).
+/// and writes each `ready` (driver.md, place_pending). The provisioning run calls it as its last
+/// step and logs each lease it could not place (operator.md, provision). `Err` is a failure of the
+/// whole call, such as a lease state file that cannot be read; one lease's failure is in
+/// [`PendingPlaced::failed`] and stops no other.
 ///
-/// A stub pinned by the architect, 2026-11-20, before v0.07-T03 (D55): it places nothing and
-/// fails until E0.07-T03-S01 builds it.
-pub fn place_pending(ctx: &Context, project: &str) -> Result<usize, Failure> {
+/// A stub pinned by the architect, 2026-11-20, before v0.07-T03 (D55), its result widened from a
+/// count on 2026-11-21 (#0150's and #0152's question 6): it places nothing and fails until
+/// E0.07-T03-S01 builds it.
+pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Failure> {
     let _ = (ctx, project);
     Err(Failure {
         message: "Placing the pending leases is not built yet.".to_string(),
