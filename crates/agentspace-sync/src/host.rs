@@ -71,9 +71,12 @@ pub(crate) fn prepare(
     let home = places.home();
     let key_path = host_key_path(home, project);
 
-    // Step 2: the key, made while `hosts.lock` is held, so that two commands never make two keys.
-    // The lock is never held across anything else.
-    {
+    // Step 2: the key. It is looked for without the lock, so that a command that writes no registry
+    // never waits on a provisioning run's `hosts.lock` (architect, 2026-11-21, for v0.07-T03, on
+    // #0152's review). Only when it is missing is `hosts.lock` taken, the key looked for again under
+    // it, and `ensure_operator_key` called while it is held, so that two commands never make two
+    // keys. The lock is never held across anything else.
+    if !key_path.is_file() {
         let _held = crate::registry::lock(home)?;
         ensure_operator_key(home, project).map_err(|e| {
             failure(format!(
@@ -134,9 +137,18 @@ fn write_alias(
 
     let ssh = ssh_dir(places, seams);
     let alias_path = ssh.join("agentspace.d").join(&alias);
-    // Architect's to confirm: an `Include` line that cannot be made is reported as a file that
-    // cannot be written, naming the config, since operator.md gives no message for it.
-    ensure_include(&ssh, unix_now()).map_err(|_| cannot_write(&ssh.join("config")))?;
+    // An `Include` line that cannot be made is a configuration a person has to fix when its kind is
+    // `Config`, and a file that cannot be written otherwise (operator.md, How the operator reaches
+    // a host, step 4; architect, 2026-11-21, for v0.07-T03, on #0152's review).
+    let config = ssh.join("config");
+    ensure_include(&ssh, unix_now()).map_err(|e| match e.kind {
+        AliasFailureKind::Config => failure(format!(
+            "agentspace: {} cannot take agentspace's Include line: {}.",
+            config.display(),
+            e.message
+        )),
+        _ => cannot_write(&config),
+    })?;
     write_host_alias(&ssh, project, &bytes).map_err(|e| match e.kind {
         AliasFailureKind::Foreign => failure(format!(
             "agentspace: {} is not agentspace's alias for '{project}'; it was left as it is.",
@@ -156,6 +168,7 @@ mod tests {
     use agentspace_box::SystemClock;
     use agentspace_ca::CaEnv;
     use agentspace_operator_api::{CallerLine, Mode, Say};
+    use std::time::{Duration, Instant};
 
     struct Quiet;
 
@@ -267,6 +280,116 @@ mod tests {
             )
         );
         assert!(!dir.path().join("ssh").join("agentspace.d").exists());
+    }
+
+    #[test]
+    fn an_include_line_below_a_host_block_fails_with_the_config_message_and_its_why() {
+        let dir = Scratch::new("host-include-config");
+        let Some(ctx) = lab(&dir) else { return };
+        let places = Places::new(&ctx);
+        let ssh = dir.path().join("ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        let config = ssh.join("config");
+        std::fs::write(
+            &config,
+            "Host other\n  User someone\nInclude agentspace.d/*\n",
+        )
+        .unwrap();
+        let failure =
+            with_seams(&dir, true, |seams| prepare(&ctx, &places, "demo", seams)).unwrap_err();
+        let prefix = format!(
+            "agentspace: {} cannot take agentspace's Include line: ",
+            config.display()
+        );
+        assert!(failure.message.starts_with(&prefix), "{}", failure.message);
+        assert!(failure.message.ends_with('.'));
+        assert!(
+            failure.message.len() > prefix.len() + 1,
+            "The reason MUST be there"
+        );
+        assert!(
+            !ssh.join("agentspace.d")
+                .join("agentspace-host.demo")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn an_include_line_that_cannot_be_written_for_io_fails_with_cannot_write_the_config() {
+        let dir = Scratch::new("host-include-io");
+        let Some(ctx) = lab(&dir) else { return };
+        let places = Places::new(&ctx);
+        let ssh = dir.path().join("ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        // A file where the aliases' folder belongs is an Io failure of agentspace-alias.
+        std::fs::write(ssh.join("agentspace.d"), "x").unwrap();
+        let failure =
+            with_seams(&dir, true, |seams| prepare(&ctx, &places, "demo", seams)).unwrap_err();
+        assert_eq!(
+            failure.message,
+            format!("agentspace: Cannot write {}.", ssh.join("config").display())
+        );
+    }
+
+    /// Holds `hosts.lock` for `hold`, in a thread that has taken it before this returns.
+    fn hold_lock(home: &std::path::Path, hold: Duration) -> std::thread::JoinHandle<()> {
+        let held = agentspace_hosts::lock(home).unwrap();
+        std::thread::spawn(move || {
+            std::thread::sleep(hold);
+            drop(held);
+        })
+    }
+
+    #[test]
+    fn a_key_that_exists_is_found_without_waiting_for_a_held_hosts_lock() {
+        let dir = Scratch::new("host-key-no-lock");
+        let Some(ctx) = lab(&dir) else { return };
+        let places = Places::new(&ctx);
+        with_seams(&dir, true, |seams| {
+            prepare(&ctx, &places, "demo", seams).unwrap()
+        });
+        let holder = hold_lock(places.home(), Duration::from_secs(8));
+        let start = Instant::now();
+        let result = with_seams(&dir, true, |seams| prepare(&ctx, &places, "demo", seams));
+        let took = start.elapsed();
+        holder.join().unwrap();
+        if let Err(failure) = &result {
+            panic!(
+                "{}",
+                failure
+                    .message
+                    .replace(&dir.path().display().to_string(), "<dir>")
+            );
+        }
+        assert!(
+            took < Duration::from_secs(6),
+            "A command whose key exists MUST NOT wait for hosts.lock"
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_missing_waits_for_the_hosts_lock_and_then_takes_it() {
+        let dir = Scratch::new("host-key-lock");
+        let Some(ctx) = lab(&dir) else { return };
+        let places = Places::new(&ctx);
+        let holder = hold_lock(places.home(), Duration::from_secs(2));
+        let start = Instant::now();
+        let result = with_seams(&dir, true, |seams| prepare(&ctx, &places, "demo", seams));
+        let took = start.elapsed();
+        holder.join().unwrap();
+        if let Err(failure) = &result {
+            panic!(
+                "{}",
+                failure
+                    .message
+                    .replace(&dir.path().display().to_string(), "<dir>")
+            );
+        }
+        assert!(
+            took >= Duration::from_millis(1500),
+            "A command with no key MUST wait for hosts.lock"
+        );
+        assert!(agentspace_hosts::host_key_path(places.home(), "demo").is_file());
     }
 
     #[test]

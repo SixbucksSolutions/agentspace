@@ -1287,6 +1287,12 @@ The steps:
      `agentspace: <path> is not agentspace's alias for '<project>'; it was left as it is.` So is
      anything there that is not a file, a link included, as for a lease's alias file.
    - **A file that cannot be written** fails with `agentspace: Cannot write <path>.`
+   - **An `Include` line that cannot be added** fails by the kind of the failure
+     (agentspace-alias's `AliasFailureKind`), with
+     `<config>` the ssh folder's `config` file's full path: a `Config` failure, a configuration a
+     person has to fix, with `agentspace: <config> cannot take agentspace's Include line: <why>.`,
+     `<why>` being agentspace-alias's reason, and an `Io` failure with
+     `agentspace: Cannot write <config>.` (architect, 2026-11-21, for v0.07-T03, on #0152's review).
 
 Each of these messages is confirmed by the architect, 2026-11-20, for v0.07-T01.
 
