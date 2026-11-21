@@ -26,10 +26,9 @@ fn could_not_reach(message: String) -> Failure {
 /// - a lock not taken within its 30 seconds: `agentspace: The host registry's lock <path> is held
 ///   by another program; try again.`;
 /// - a file that cannot be written: `agentspace: Cannot write <path>.`
-///
-/// // Architect's to confirm: a lock that cannot be opened for another reason, and a project list
-/// // error that reaches this function, are given `Cannot write <path>.` of the lock's or the file's
-/// // path, since operator.md gives no text for either.
+// Architect's to confirm: a lock that cannot be opened for another reason, and a project list
+// error that reaches this function, are given `Cannot write <path>.` of the lock's or the file's
+// path, since operator.md gives no text for either.
 pub(crate) fn registry_failure(home: &Path, error: HostsError) -> Failure {
     let registry = hosts_path(home);
     let lock = hosts_lock_path(home);
@@ -105,6 +104,9 @@ impl InstanceIdCache for HostCache {
     }
 
     fn read(&self) -> CacheRead {
+        // Architect's to confirm: a registry that cannot be read or is not valid reads as `Missing`
+        // here, so the caller's own read of the registry (`read_registry`) fails the command with
+        // the spec's message rather than this cache failing with its own.
         let id = agentspace_hosts::read(&self.home).ok().and_then(|hosts| {
             hosts
                 .hosts

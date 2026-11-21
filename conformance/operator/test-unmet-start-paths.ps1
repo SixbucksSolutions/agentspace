@@ -158,7 +158,8 @@ try {
   } elseif (-not $program) {
     Write-ConformanceResult -Name $seamName -Status FAIL -Reason 'Neither AGENTSPACE_OPERATOR_CMD nor its default names a program'
   } else {
-    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile '.agentspace\instance-id.json')), ('{"version":0,"instance_id":"' + $id + '"}'))
+    # The box's record in the host registry holds the instance ID (docs/state.md, hosts.json; D45).
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.UserProfile '.agentspace\hosts.json')), ('{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"' + $id + '"}]}'))
     $standinDir = Join-Path $h.Root 'standins'
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $standinDir) | Out-Null
     [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $standinDir 'aws-standin.ps1')), $awsStandInScript)

@@ -140,6 +140,8 @@ fn write_alias(ctx: &Context, access: &Access, project: &str) -> Result<(), Fail
     .map_err(|_| cannot_write(&alias_path))?;
 
     let config = access.ssh_dir.join("config");
+    // Architect's to confirm: an ssh config that cannot take the Include line fails with `<path>
+    // cannot take agentspace's Include line: <reason>.`, since operator.md gives no text for it.
     ensure_include(&access.ssh_dir, unix_now()).map_err(|f| match f.kind {
         AliasFailureKind::Config => could_not_reach(format!(
             "agentspace: {} cannot take agentspace's Include line: {}.",

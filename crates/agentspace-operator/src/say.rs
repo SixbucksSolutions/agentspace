@@ -110,6 +110,9 @@ impl Report for Printer {
         self.write_line(line);
     }
 
+    // Architect's to confirm: a host's failure under `-All` prints the same one line `Printer::failure`
+    // does, to the same writer and whatever `-Quiet` says, since operator.md's Messages gives it no
+    // text of its own.
     /// A host's failure under `-All`: the same line [`Printer::failure`] prints.
     fn failure(&self, failure: &Failure) {
         Printer::failure(self, failure);

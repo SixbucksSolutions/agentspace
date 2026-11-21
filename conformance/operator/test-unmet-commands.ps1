@@ -11,14 +11,14 @@
 # the stand-in `aws`, the file reports `FAIL ... seam not met` and checks nothing more. A rewrite MUST
 # pass every result line. The result lines still say FAIL: nothing turns a FAIL into a pass.
 #
-# What it does, when the seam is met: it writes into a throwaway home the instance-ID cache, a
+# What it does, when the seam is met: it writes into a throwaway home the host registry (hosts.json), a
 # stand-in `aws` that answers each call from files beside it and logs the call's arguments, and a
 # stand-in `ssh` that does the same. For each command it runs the cases below and checks the AWS CLI
 # calls in order with their arguments, the messages on stderr exactly, stdout, the exit code, and that
 # no other program was started.
 #
 #   down    The one call and its message; -Quiet; the answer that is not read; a missing, empty or
-#           unreadable cache; the failures of the AWS CLI (the sign-in message, the CLI's own text,
+#           hosts.json, one that is not valid or is a folder; the failures of the AWS CLI (the sign-in message, the CLI's own text,
 #           an empty error text); a stack with no InstanceId output.
 #   status  The five lines for each state and each Session Manager answer; the root volume found by
 #           its device name; -Quiet; every call's failure, answers that are not JSON, members that
@@ -45,6 +45,8 @@
 $ErrorActionPreference = 'Stop'
 $seamSec = 'operator.md#the-test-seam'
 $id = 'i-1234567890abcdef0'
+$otherId = 'i-fedcba9876543210f'
+$retiredId = 'i-abcdef1234567890a'
 $vol = 'vol-1234567890abcdef0'
 $otherVol = 'vol-fedcba9876543210f'
 $signIn = "agentspace: AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry."
@@ -156,7 +158,7 @@ try {
   } elseif (-not $program) {
     Write-ConformanceResult -Name $seamName -Status FAIL -Reason 'Neither AGENTSPACE_OPERATOR_CMD nor its default names a program'
   } else {
-    # ---- The throwaway home: the stand-ins and the instance-ID cache ----
+    # ---- The throwaway home: the stand-ins and the host registry ----
     $pwshPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     $aws = New-OperatorStandIn -ConformanceHome $h -Name 'aws' -Body @(
       ('"' + $pwshPath + '" -NoProfile -File "%~dp0aws-standin.ps1" %*'),
@@ -171,8 +173,12 @@ try {
     $env0 = @{ AGENTSPACE_AWS_CMD = $aws; AGENTSPACE_SSH_CMD = $ssh; AGENTSPACE_SCP_CMD = $trip['AGENTSPACE_SCP_CMD'] }
     $scpLog = Join-Path $standins 'scp-tripwire-calls.log'
     $ansDir = Join-Path $standins 'ans'
-    $cacheFile = Join-Path $h.UserProfile '.agentspace\instance-id.json'
-    $cacheJson = '{"version":0,"instance_id":"' + $id + '"}'
+    # The host registry (docs/state.md, The host registry; D45): hosts.json, whose box record holds the
+    # instance ID, replaces the retired instance-ID cache, instance-id.json, which no v0.07 program reads.
+    $hostsFile = Join-Path $h.UserProfile '.agentspace\hosts.json'
+    $hostsJson = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"' + $id + '"}]}' + "`n"
+    $retiredFile = Join-Path $h.UserProfile '.agentspace\instance-id.json'
+    $retiredJson = '{"version":0,"instance_id":"' + $retiredId + '"}'
 
     # ---- Helpers ----
     function Reset-Case {
@@ -184,9 +190,12 @@ try {
         if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $p) -Recurse -Force }
         New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $p) | Out-Null
       }
-      # The cache of every case is the made-up one, unless the case replaces it.
-      if (Test-Path -LiteralPath $cacheFile) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Recurse -Force }
-      [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $cacheFile), $cacheJson)
+      # The registry of every case holds the box's record with the made-up instance ID, unless the case
+      # replaces it; the retired cache is absent unless the case writes it.
+      foreach ($f in $hostsFile, $retiredFile) {
+        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $f) -Recurse -Force }
+      }
+      [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $hostsFile), $hostsJson)
     }
     # Sets the answer of one call, or of the ssh ($Key 'ssh'): standard output, standard error, exit code.
     function Set-Answer([string]$Key, [string]$Out = $null, [string]$Err = $null, $Code = $null) {
@@ -356,70 +365,169 @@ try {
         Set-Answer 'ec2-stop-instances' -Err $otherAwsText -Code 254
       }
 
-      # ---- The instance-ID cache, as down reads it (Laptop files) ----
+      # ---- The host registry's record of the box, as down reads and writes its instance ID ----
+      # Cases written from operator.md, "The host registry, as the operator uses it", "Laptop files" and
+      # state.md, "The host registry" and "The instance ID" (D45): a missing hosts.json reads as the box's
+      # record alone and the first change writes it; a file that is not valid fails the command and is
+      # never repaired; a record's instance ID is cached from its stack's InstanceId output.
+      $hr = 'operator.md#the-host-registry-as-the-operator-uses-it'
+      $st = 'state.md#the-host-registry'
       $ls = 'operator.md#laptop-files'
       $stackCalls = @($cStack, $cStop)
-      $cacheCheck = {
-        param($r, $t)
-        if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) { return 'No instance-ID cache was written' }
-        try { $doc = [IO.File]::ReadAllText($cacheFile) | ConvertFrom-Json -ErrorAction Stop } catch { return 'The cache is not JSON' }
-        if ($doc.instance_id -cne $id) { return 'The cache does not hold the stack''s InstanceId output' }
+      $otherCreating = '{"project":"other","stack":"agentspace-host-other","state":"creating","last_attempt_at":"2026-01-01T00:00:00Z"}'
+      $otherReady = '{"project":"another","stack":"agentspace-host-another","state":"ready","instance_id":"' + $otherId + '"}'
+      # What a valid registry reads and a writer writes (state.md, Its bytes): the box's record first, each
+      # record's members in the table's order, compact, one LF at the end. -Records are other records, as text.
+      function Get-HostsBytes([string]$BoxId = $null, [string[]]$Records = @()) {
+        $box = '{"project":"swimcoach","stack":"agentbox","state":"ready"' + $(if ($BoxId) { ',"instance_id":"' + $BoxId + '"' } else { '' }) + '}'
+        [Text.Encoding]::UTF8.GetBytes('{"version":0,"hosts":[' + ((@($box) + $Records) -join ',') + ']}' + "`n")
       }
-      Test-Case "${ls}: with no instance-ID cache down reads the stack's InstanceId output first, writes the cache, then stops that instance" @('down') @{
-        Exit = 0; Stderr = "Stopping $id.`n"; Calls = $stackCalls; Check = $cacheCheck } -Setup {
+      # Two byte arrays are the same bytes, an empty one or $null included.
+      function Get-Base64($Bytes) { if ($null -eq $Bytes) { '' } else { [Convert]::ToBase64String([byte[]]$Bytes) } }
+      function Compare-Bytes($A, $B) { (Get-Base64 $A) -ceq (Get-Base64 $B) }
+      function Set-HostsFile($Bytes) {
+        if ($null -eq $Bytes) { $Bytes = [byte[]]@() }
+        [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $h -Path $hostsFile), [byte[]]$Bytes)
+      }
+      function Remove-HostsFile {
+        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $hostsFile) -Recurse -Force
+      }
+      # The file holds exactly the bytes in $Want, which $What describes.
+      $wantsBytes = {
+        param($Want, $What)
+        if (-not (Test-Path -LiteralPath $hostsFile -PathType Leaf)) { return 'No hosts.json was written' }
+        if (-not (Compare-Bytes ([IO.File]::ReadAllBytes($hostsFile)) $Want)) { return "hosts.json is not $What, as UTF-8 without a byte order mark, compact, with one LF at the end" }
+      }
+      $boxIdCheck = { param($r, $t) & $wantsBytes (Get-HostsBytes -BoxId $id) "the box's record holding the stack's InstanceId output and nothing else" }
+      $noHostsWritten = { param($r, $t) if (Test-Path -LiteralPath $hostsFile) { 'A hosts.json was written' } }
+
+      Test-Case "${hr}: with no hosts.json, down reads the box's record as the seed, reads the stack's InstanceId output, writes hosts.json holding the box's record with it, then stops that instance" @('down') @{
+        Exit = 0; Stderr = "Stopping $id.`n"; Calls = $stackCalls; Check = $boxIdCheck } -Setup {
         Set-Healthy
         Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc @('Other', 'InstanceId'))
-        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Force
+        Remove-HostsFile
       }
-      foreach ($bad in @(@{ N = 'empty'; T = '' }, @{ N = 'only whitespace'; T = "  `n" }, @{ N = 'not JSON'; T = 'not json {' }, @{ N = 'JSON that does not match its schema'; T = '{"version":0}' })) {
-        $badText = $bad.T
-        Test-Case "${ls}: a cache that is $($bad.N) is treated as missing, so down reads the stack and rewrites it" @('down') @{
-          Exit = 0; Stderr = "Stopping $id.`n"; Calls = $stackCalls; Check = $cacheCheck } -Setup {
-          Set-Healthy
-          Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc)
-          [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $cacheFile), $badText)
-        }
-      }
-      Test-Case "${ls}: a stack with no InstanceId output fails with Stack 'agentbox' has no InstanceId output. and writes no cache" @('down') @{
-        Exit = 1; Stderr = "agentspace: Stack 'agentbox' has no InstanceId output.`n"; Calls = @($cStack)
-        Check = { param($r, $t) if (Test-Path -LiteralPath $cacheFile) { 'A cache was written' } } } -Setup {
+      Test-Case "${st}: a missing hosts.json is never created by a read, so a command that fails before any change writes none (the stack has no InstanceId output)" @('down') @{
+        Exit = 1; Stderr = "agentspace: Stack 'agentbox' has no InstanceId output.`n"; Calls = @($cStack); Check = $noHostsWritten } -Setup {
         Set-Healthy
         Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc @('Other'))
-        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Force
+        Remove-HostsFile
       }
-      Test-Case "${ls}: an InstanceId output that is not an instance ID is the same failure, and no cache is written" @('down') @{
-        Exit = 1; Stderr = "agentspace: Stack 'agentbox' has no InstanceId output.`n"; Calls = @($cStack)
-        Check = { param($r, $t) if (Test-Path -LiteralPath $cacheFile) { 'A cache was written' } } } -Setup {
+      Test-Case "${hr}: the box's record without an instance ID has it read from the stack and written into that record, changing nothing else" @('down') @{
+        Exit = 0; Stderr = "Stopping $id.`n"; Calls = $stackCalls; Check = $boxIdCheck } -Setup {
+        Set-Healthy
+        Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc)
+        Set-HostsFile (Get-HostsBytes)
+      }
+      Test-Case "${hr}: the write of the box's instance ID leaves every other record's members and values as they were read, and the order of the records" @('down') @{
+        Exit = 0; Stderr = "Stopping $id.`n"; Calls = $stackCalls
+        Check = { param($r, $t) & $wantsBytes (Get-HostsBytes -BoxId $id -Records @($otherCreating, $otherReady)) "the box's record with its instance ID and both other records as they were" } } -Setup {
+        Set-Healthy
+        Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc)
+        Set-HostsFile (Get-HostsBytes -Records @($otherCreating, $otherReady))
+      }
+      Test-Case "${hr}: a record that holds its instance ID is read without a call to the stack, and without a write, and another host's ID is not the box's (no -Host acts on the box)" @('down') @{
+        Exit = 0; Stderr = "Stopping $id.`n"; Calls = @($cStop)
+        Check = { param($r, $t) & $wantsBytes (Get-HostsBytes -BoxId $id -Records @($otherReady)) 'the file as it was' } } -Setup {
+        Set-Healthy
+        Set-HostsFile (Get-HostsBytes -BoxId $id -Records @($otherReady))
+      }
+      Test-Case "${st}: a reader accepts a leading byte order mark and any amount of JSON whitespace (Its bytes)" @('down') @{
+        Exit = 0; Stderr = "Stopping $id.`n"; Calls = @($cStop) } -Setup {
+        Set-Healthy
+        $pretty = "`r`n  {`r`n    `"version`" : 0 ,`r`n    `"hosts`" : [ { `"project`" : `"swimcoach`" , `"stack`" : `"agentbox`" , `"state`" : `"ready`" , `"instance_id`" : `"$id`" } ]`r`n  }`r`n"
+        Set-HostsFile ([byte[]](@(0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes($pretty)))
+      }
+      Test-Case "${ls}: the retired instance-ID cache is not read, written or removed, and nothing migrates from it: with no hosts.json, down reads the stack" @('down') @{
+        Exit = 0; Stderr = "Stopping $id.`n"; Calls = $stackCalls
+        Check = {
+          param($r, $t)
+          & $boxIdCheck $r $t
+          if (-not (Test-Path -LiteralPath $retiredFile -PathType Leaf)) { 'The retired cache was removed' }
+          elseif (-not (Compare-Bytes ([IO.File]::ReadAllBytes($retiredFile)) ([Text.Encoding]::UTF8.GetBytes($retiredJson)))) { 'The retired cache was changed' }
+        } } -Setup {
+        Set-Healthy
+        Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc)
+        Remove-HostsFile
+        [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $retiredFile), $retiredJson)
+      }
+      Test-Case "${hr}: an InstanceId output that is not an instance ID fails with Stack 'agentbox' has no InstanceId output. and writes nothing" @('down') @{
+        Exit = 1; Stderr = "agentspace: Stack 'agentbox' has no InstanceId output.`n"; Calls = @($cStack); Check = $noHostsWritten } -Setup {
         Set-Healthy
         Set-Answer 'cloudformation-describe-stacks' -Out (New-StackDoc -Value 'not an instance')
-        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Force
+        Remove-HostsFile
       }
-      Test-Case "${ls}: a stack that does not exist fails with agentspace: and the CLI's error text, and nothing is stopped" @('down') @{
-        Exit = 1; Stderr = "agentspace: An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id agentbox does not exist`n"; Calls = @($cStack) } -Setup {
+      Test-Case "${hr}: a stack that does not exist fails with agentspace: and the CLI's error text, nothing is stopped and nothing is written" @('down') @{
+        Exit = 1; Stderr = "agentspace: An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id agentbox does not exist`n"; Calls = @($cStack); Check = $noHostsWritten } -Setup {
         Set-Healthy
         Set-Answer 'cloudformation-describe-stacks' -Err 'An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id agentbox does not exist' -Code 254
-        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Force
+        Remove-HostsFile
       }
-      Test-Case "${ls}: an answer of cloudformation describe-stacks that is not JSON fails with Unexpected answer from cloudformation describe-stacks: not JSON." @('down') @{
-        Exit = 1; Stderr = "agentspace: Unexpected answer from cloudformation describe-stacks: not JSON.`n"; Calls = @($cStack) } -Setup {
+      Test-Case "${hr}: an answer of cloudformation describe-stacks that is not JSON fails with Unexpected answer from cloudformation describe-stacks: not JSON., and nothing is written" @('down') @{
+        Exit = 1; Stderr = "agentspace: Unexpected answer from cloudformation describe-stacks: not JSON.`n"; Calls = @($cStack); Check = $noHostsWritten } -Setup {
         Set-Healthy
         Set-Answer 'cloudformation-describe-stacks' -Out 'not json'
-        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Force
+        Remove-HostsFile
       }
-      Test-Case "${ls}: a cache that cannot be opened (a folder at its path) fails with the cache's own message, exit 1, and no AWS call" @('down') @{
+
+      # ---- A hosts.json that is not valid fails the command and is never repaired (state.md, The host
+      # registry; operator.md, The host registry, as the operator uses it) ----
+      # The message names the file and one reason: agentspace: The host registry <path> cannot be read:
+      # <reason>. The path is the file's full path, as the home gave it to the program or in its long
+      # form (a short 8.3 folder name in %TEMP% is spelled out there). The reason is not fixed by the
+      # spec, so it is checked only for being there, on one line.
+      $registryFailureCheck = {
+        param($r, $t)
+        $m = [regex]::Match($r.Stderr, '^agentspace: The host registry (.+?) cannot be read: (.+)\.\n$')
+        if (-not $m.Success) { return 'Stderr is not agentspace: The host registry <path> cannot be read: <reason>.' }
+        $longForm = Assert-ConformancePath -ConformanceHome $h -Path $hostsFile
+        if ($m.Groups[1].Value -ine $hostsFile -and $m.Groups[1].Value -ine $longForm) { return 'The path in the message is not the registry''s full path' }
+        if ($m.Groups[2].Value.Trim() -eq '') { return 'The message gives no reason' }
+      }
+      $box = '{"project":"swimcoach","stack":"agentbox","state":"ready"}'
+      $notValid = @(
+        @{ N = 'empty'; T = '' }
+        @{ N = 'only whitespace'; T = "  `n" }
+        @{ N = 'not JSON'; T = 'not json {' }
+        @{ N = 'JSON that does not match its schema (no hosts)'; T = '{"version":0}' }
+        @{ N = 'of a version other than 0'; T = '{"version":1,"hosts":[' + $box + ']}' }
+        @{ N = 'holding no record whose stack is agentbox (rule 3)'; T = '{"version":0,"hosts":[]}' }
+        @{ N = 'holding two records whose stack is agentbox (rule 3)'; T = '{"version":0,"hosts":[' + $box + ',' + $box + ']}' }
+        @{ N = 'holding an agentbox record whose project is not swimcoach (rule 3)'; T = '{"version":0,"hosts":[{"project":"other","stack":"agentbox","state":"ready"}]}' }
+        @{ N = 'holding two records for one project (rule 1)'; T = '{"version":0,"hosts":[' + $box + ',' + $otherCreating + ',' + $otherCreating + ']}' }
+        @{ N = 'holding a record whose stack names another project than its own (rule 2)'; T = '{"version":0,"hosts":[' + $box + ',{"project":"other","stack":"agentspace-host-swimcoach","state":"creating"}]}' }
+        @{ N = 'holding a null instance_id, which is never accepted'; T = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":null}]}' }
+        @{ N = 'holding an instance_id that is not an instance ID'; T = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"not an instance"}]}' }
+        @{ N = 'holding a member the record does not have'; T = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","note":"x"}]}' }
+        @{ N = 'holding a record that names one member twice'; T = '{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","state":"ready"}]}' }
+        @{ N = 'holding a last_attempt_at that names no real instant'; T = '{"version":0,"hosts":[' + $box + ',{"project":"other","stack":"agentspace-host-other","state":"creating","last_attempt_at":"2026-02-30T00:00:00Z"}]}' }
+        @{ N = 'bytes that are not valid UTF-8'; B = [byte[]](0x7B, 0xFF, 0xFE, 0x7D) }
+      )
+      foreach ($bad in $notValid) {
+        $badBytes = if ($bad.ContainsKey('B')) { , $bad.B } else { , [Text.Encoding]::UTF8.GetBytes($bad.T) }
+        Test-Case "${hr}: a hosts.json that is $($bad.N) fails the command with the registry's message, exit 1, before any AWS call, and the file is left as it is" @('down') @{
+          Exit = 1; Calls = @()
+          Check = {
+            param($r, $t)
+            & $registryFailureCheck $r $t
+            if (-not (Test-Path -LiteralPath $hostsFile -PathType Leaf)) { 'The file was removed' }
+            elseif (-not (Compare-Bytes ([IO.File]::ReadAllBytes($hostsFile)) $badBytes)) { 'The file was repaired or changed' }
+            if (@(Get-ChildItem -LiteralPath (Split-Path -Parent $hostsFile) -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'hosts.json.*' }).Count -gt 0) { 'A temporary file was left beside it' }
+          } } -Setup {
+          Set-Healthy
+          Set-HostsFile $badBytes
+        }
+      }
+      Test-Case "${st}: something at hosts.json that is not a file (a folder) is a file that is not valid, not a missing one: the same failure, exit 1, no AWS call, and nothing written" @('down') @{
         Exit = 1; Calls = @()
         Check = {
           param($r, $t)
-          $m = [regex]::Match($r.Stderr, '^agentspace: Cannot read the instance-ID cache (.+); remove it and run the command again\.\n$')
-          if (-not $m.Success) { return 'Stderr is not agentspace: Cannot read the instance-ID cache <path>; remove it and run the command again.' }
-          # The path as the home gave it to the program, and the same path in long form (a short 8.3 folder
-          # name in %TEMP% is spelled out there), are both the cache's full path.
-          $longForm = Assert-ConformancePath -ConformanceHome $h -Path $cacheFile
-          if ($m.Groups[1].Value -ine $cacheFile -and $m.Groups[1].Value -ine $longForm) { return 'The path in the message is not the cache''s full path' }
+          & $registryFailureCheck $r $t
+          if (-not (Test-Path -LiteralPath $hostsFile -PathType Container)) { 'The folder at the registry''s path was removed or replaced' }
         } } -Setup {
         Set-Healthy
-        Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) -Force
-        New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $cacheFile) | Out-Null
+        Remove-HostsFile
+        New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $hostsFile) | Out-Null
       }
 
       # ============================ status ============================

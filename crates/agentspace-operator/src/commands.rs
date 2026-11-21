@@ -300,6 +300,8 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
             if failure.message == SIGN_IN_MESSAGE {
                 return Err(failure);
             }
+            // Architect's to confirm: a failed host's own message is printed as its failure line,
+            // whatever `-Quiet` says, before the final `<n> of <m> hosts failed.` line.
             parts.report.failure(&failure);
             failed += 1;
         }
@@ -315,6 +317,8 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
 
 /// The deadline message's `ssh agentspace` is the box's alias; for another host it is the host's
 /// (operator.md, Starting the box and waiting for it, step 3).
+// Architect's to confirm: the deadline text is rewritten for a host by replacing its `ssh agentspace
+// journalctl` with the host's alias, since operator.md gives no separate text for a host.
 fn for_host(mut failure: Failure, host: &HostRef) -> Failure {
     if !host.is_box {
         failure.message = failure.message.replace(
