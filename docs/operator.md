@@ -2069,11 +2069,12 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
   v0.07-T01; [state.md, The provisioning run's log](state.md#the-provisioning-runs-log)). No other
   program writes to the log. That output also passes through to the run's stdout and stderr, and
   its progress messages go to its stderr, as for any command: a run by hand writes them where the
-  person's shell sends them. **A run the driver starts detached has no standard handles**: its
-  stdin, stdout and stderr are null ([driver.md, Starting a provisioning
-  run](driver.md#starting-a-provisioning-run); P14, architect, 2026-11-20, for v0.07-T01), so its
-  log is the only record of it. **A run MUST work whatever its streams are, null included**, and
-  nothing it writes to its stdout or stderr can fail it.
+  person's shell sends them. **A run the driver starts detached has none of the CLI's standard
+  handles**: its stdin, stdout and stderr are its hidden console's, which nothing reads or writes
+  ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run); P14, architect,
+  2026-11-20, for v0.07-T01, corrected for v0.07-T02), so its log is the only record of it. **A run
+  MUST work whatever its streams are, null or a hidden console included, MUST NOT read its stdin**,
+  and nothing it writes to its stdout or stderr can fail it.
 
 **Stdout:** the output its steps pass through. **Stderr:** the messages above and those of its
 steps. **Its log:** its own lines and its steps' output, as above. **Exit codes:** 0 when the host

@@ -956,13 +956,18 @@ or result file and no handshake: `provision.lock`, which the run holds for its l
 of life. What the start MUST achieve, from outside:
 - **The run is outside the Job Object of the CLI and of every process above it**, as keeper.md's
   item 1 says of a holder.
-- **It has no window, starts in a new process group, and its working folder is the home folder**,
-  as the CLI has it, so that it never holds a worktree or a checkout open.
-- **The driver gives the run no standard handles: its standard input, standard output and
-  standard error are null**, and so never the CLI's ([The boundary](#the-boundary); pin P14.2,
-  architect, 2026-11-20, for v0.07-T01). A process created through `Win32_Process.Create` cannot
-  be handed a file handle, so the driver MUST NOT open the host's `provision.log`, and passes no
-  handle to the run.
+- **It starts in a new process group, with a hidden console window, and its working folder is the
+  home folder**, as the CLI has it, so that it never holds a worktree or a checkout open. The
+  console is hidden, never absent, because the console programs the run starts (the AWS CLI, ssh)
+  would otherwise each open a console window of their own; a new process group keeps a Ctrl+C
+  in the CLI's console from reaching it (architect, 2026-11-20, for v0.07-T02, correcting "no
+  window" after #0147's review observed it).
+- **The driver gives the run none of the CLI's standard handles**, and so never the CLI's streams
+  ([The boundary](#the-boundary); pin P14.2, architect, 2026-11-20, for v0.07-T01). The run's
+  standard input, standard output and standard error are its hidden console's, and the run MUST
+  NOT read its standard input, since nothing will ever write to it. A process created through
+  `Win32_Process.Create` cannot be handed a file handle, so the driver MUST NOT open the host's
+  `provision.log`, and passes no handle to the run.
 - **The run opens `provision.log` for append itself, as its first step, and writes every line of
   its log there** ([state.md, A host's folder](state.md#a-hosts-folder); pins P4 and P14.2,
   architect, 2026-11-20, for v0.07-T01). A run that cannot open its log exits 1 and writes nothing

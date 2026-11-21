@@ -1712,8 +1712,10 @@ before the start (below).
   line, which names the ProxyCommand program found beside the run's own executable
   ([The alias file](#the-alias-file)). Pending leases recorded under another `AGENTSPACE_STATE_DIR` wait for a
   `create` or `get` from there to start the next run.
-- **The starting program gives the run no stdout and no stderr**: both are null
-  (architect, 2026-11-20, for v0.07-T01), since a process created through WMI's
+- **The starting program gives the run none of its own standard handles**: the run's stdout and
+  stderr are its hidden console's, which nothing reads (architect, 2026-11-20, for v0.07-T01;
+  corrected for v0.07-T02, [driver.md, Starting a provisioning
+  run](driver.md#starting-a-provisioning-run)), since a process created through WMI's
   `Win32_Process.Create` cannot be handed a file handle. **The run writes its own log**, opening
   the host's [`provision.log`](#the-provisioning-runs-log) for append as its first step, and the
   output of the programs it starts is written through it into that log.
