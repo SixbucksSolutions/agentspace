@@ -36,5 +36,5 @@ pub use paths::{
     host_stamp_path, hosts_dir, hosts_lock_path, hosts_path, known_hosts_path, projects_path,
 };
 pub use projects::{Project, Projects, is_listed, read_projects};
-pub use registry::{HostsLock, lock, read, write};
+pub use registry::{HostsLock, lock, read, try_lock, write};
 pub use runlock::{RunLock, run_is_running, try_run_lock};

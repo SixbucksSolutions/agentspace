@@ -77,7 +77,7 @@ pub enum Failure {
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Failure::FolderIsAFile => f.write_str("a file is where agentspace's folder belongs"),
+            Failure::FolderIsAFile => f.write_str("a file is where a folder belongs"),
             Failure::CannotMakeFolder => f.write_str("the folder could not be made"),
             Failure::NotAFile => {
                 f.write_str("something that is not a file is where the file belongs")
@@ -136,3 +136,21 @@ impl fmt::Display for HostsError {
 }
 
 impl std::error::Error for HostsError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_where_a_folder_belongs_names_no_one_folder() {
+        // The failure covers `.agentspace`, `hosts`, a host's folder and the home folder.
+        assert_eq!(
+            Failure::FolderIsAFile.to_string(),
+            "a file is where a folder belongs"
+        );
+        assert_eq!(
+            HostsError::CannotLockRun(Failure::FolderIsAFile).to_string(),
+            "The provisioning run's lock could not be taken: a file is where a folder belongs."
+        );
+    }
+}

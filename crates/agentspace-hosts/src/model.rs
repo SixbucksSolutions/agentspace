@@ -421,33 +421,82 @@ mod tests {
         assert!(host_for(&hosts, "no-record").is_none());
     }
 
+    // Every sample of schemas/state/samples is embedded at compile time, so the test binary runs
+    // on a machine that has no repository (a cross-built one under another system). The lists are
+    // explicit, and `the_embedded_samples_cover_every_hosts_state_file` fails when a new file is
+    // not in them.
+    macro_rules! sample {
+        ($name:literal) => {
+            (
+                $name,
+                include_str!(concat!("../../../schemas/state/samples/", $name)),
+            )
+        };
+    }
+
+    const VALID_SAMPLES: [(&str, &str); 3] = [
+        sample!("hosts.state.creating-and-failed.json"),
+        sample!("hosts.state.full.json"),
+        sample!("hosts.state.seed.json"),
+    ];
+
+    const INVALID_SAMPLES: [(&str, &str); 12] = [
+        sample!("invalid/hosts.state.bad-instance-id.json"),
+        sample!("invalid/hosts.state.bare-array.json"),
+        sample!("invalid/hosts.state.extra-member.json"),
+        sample!("invalid/hosts.state.extra-top-level-member.json"),
+        sample!("invalid/hosts.state.missing-stack.json"),
+        sample!("invalid/hosts.state.missing-state.json"),
+        sample!("invalid/hosts.state.null-instance-id.json"),
+        sample!("invalid/hosts.state.stack-of-other-name.json"),
+        sample!("invalid/hosts.state.time-with-offset.json"),
+        sample!("invalid/hosts.state.unknown-state.json"),
+        sample!("invalid/hosts.state.uppercase-project.json"),
+        sample!("invalid/hosts.state.wrong-version.json"),
+    ];
+
     /// The schemas' own samples (schemas/state/samples) read as the crate reads them: every valid
     /// one parses and serializes back to a document that parses to the same records, and every
     /// invalid one is refused.
     #[test]
     fn the_schemas_samples_are_read_as_the_schemas_say() {
+        for (name, text) in VALID_SAMPLES {
+            let hosts = parse(text.as_bytes()).unwrap_or_else(|e| panic!("Sample {name}: {e:?}"));
+            assert_eq!(parse(&serialize(&hosts).unwrap()).unwrap(), hosts, "{name}");
+        }
+        for (name, text) in INVALID_SAMPLES {
+            assert!(parse(text.as_bytes()).is_err(), "Sample {name} was read");
+        }
+    }
+
+    /// The embedded list MUST name every `hosts.state.*` file in the samples folder, so a new
+    /// sample cannot be missed. It runs only where the folder is present: a test binary run on
+    /// another machine skips it, and the list above is still embedded.
+    #[test]
+    fn the_embedded_samples_cover_every_hosts_state_file() {
         let dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/state/samples");
-        let mut seen = 0;
-        for (sub, valid) in [("", true), ("invalid", false)] {
+        if !dir.is_dir() {
+            return;
+        }
+        let mut on_disk = Vec::new();
+        for (sub, prefix) in [("", ""), ("invalid", "invalid/")] {
             for entry in std::fs::read_dir(dir.join(sub)).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if !name.starts_with("hosts.state.") {
-                    continue;
+                let entry = entry.unwrap();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("hosts.state.") && entry.path().is_file() {
+                    on_disk.push(format!("{prefix}{name}"));
                 }
-                let bytes = std::fs::read(&path).unwrap();
-                match (valid, parse(&bytes)) {
-                    (true, Ok(hosts)) => {
-                        assert_eq!(parse(&serialize(&hosts).unwrap()).unwrap(), hosts, "{name}")
-                    }
-                    (false, Err(_)) => {}
-                    (valid, got) => panic!("Sample {name}: valid is {valid}, read as {got:?}"),
-                }
-                seen += 1;
             }
         }
-        assert!(seen >= 14, "Only {seen} samples were found");
+        on_disk.sort();
+        let mut embedded: Vec<String> = VALID_SAMPLES
+            .iter()
+            .chain(INVALID_SAMPLES.iter())
+            .map(|(name, _)| (*name).to_string())
+            .collect();
+        embedded.sort();
+        assert_eq!(on_disk, embedded);
     }
 
     #[test]

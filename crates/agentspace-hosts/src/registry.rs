@@ -12,16 +12,24 @@ use std::time::{Duration, Instant};
 
 use std::path::Path;
 
-/// How long a taker waits for the host registry lock (docs/state.md, The host registry lock).
+/// How long a taker waits for the host registry lock (docs/state.md, The host registry lock): 30
+/// seconds, and a taker MUST NOT wait longer.
 const LOCK_WAIT: Duration = Duration::from_secs(30);
 /// The gap between tries; a rewrite MAY pick its own.
 const RETRY_EVERY: Duration = Duration::from_millis(20);
 
 /// The host registry lock, held until this is dropped. The operating system lets the lock go when
 /// the handle closes, however the process ends, so a crashed command never leaves it held.
-#[derive(Debug)]
 pub struct HostsLock {
     _file: File,
+}
+
+/// Prints the type's name alone: the file's own `Debug` carries its full path, which MUST NOT reach
+/// a log or a failed assertion. The type has no `Display`.
+impl std::fmt::Debug for HostsLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HostsLock { .. }")
+    }
 }
 
 /// Takes the host registry lock: `<home>\.agentspace\hosts.lock`, with `.agentspace` made first
@@ -31,6 +39,21 @@ pub struct HostsLock {
 /// never reported as busy.
 pub fn lock(home: &Path) -> Result<HostsLock, HostsError> {
     lock_waiting(home, LOCK_WAIT)
+}
+
+/// Tries the host registry lock once, without waiting: `Some(lock)` when this call has it, and
+/// `None` when another process or handle holds it. It is what `get`'s `check_pending` uses, which
+/// starts nothing when the lock is held (docs/state.md, The host registry lock). Any other failure
+/// to open it, such as access denied or a folder at its path, is an error at once, as `lock` gives
+/// it, and is never reported as a held lock.
+///
+/// Added at review (architect, 2026-11-20, for v0.07-T02: accepted into the pin).
+pub fn try_lock(home: &Path) -> Result<Option<HostsLock>, HostsError> {
+    match lock_waiting(home, Duration::ZERO) {
+        Ok(held) => Ok(Some(held)),
+        Err(HostsError::Busy) => Ok(None),
+        Err(other) => Err(other),
+    }
 }
 
 fn lock_waiting(home: &Path, wait: Duration) -> Result<HostsLock, HostsError> {
@@ -113,6 +136,66 @@ mod tests {
 
     fn home() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn the_wait_ceiling_is_thirty_seconds_and_lock_uses_it() {
+        assert_eq!(LOCK_WAIT, Duration::from_secs(30));
+        // `lock` MUST wait through `LOCK_WAIT` and no other value: its source says so.
+        let source = include_str!("registry.rs");
+        let body = source
+            .split("pub fn lock(home: &Path)")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap();
+        let needle = format!("lock_waiting(home, {})", "LOCK_WAIT");
+        assert!(body.contains(&needle), "`lock` MUST wait through LOCK_WAIT");
+    }
+
+    #[test]
+    fn try_lock_gives_some_when_free_and_none_at_once_when_held() {
+        let t = home();
+        let first = try_lock(t.path()).unwrap();
+        assert!(first.is_some());
+        assert!(hosts_lock_path(t.path()).is_file());
+        // Held by this handle: another thread's try gives none, without waiting.
+        let path = t.path().to_path_buf();
+        let began = Instant::now();
+        let second = std::thread::spawn(move || try_lock(&path).map(|l| l.is_some()))
+            .join()
+            .unwrap();
+        assert_eq!(second, Ok(false));
+        assert!(began.elapsed() < Duration::from_millis(500));
+        drop(first);
+        assert!(try_lock(t.path()).unwrap().is_some());
+    }
+
+    #[test]
+    fn try_lock_with_a_folder_at_the_lock_is_an_error_not_none() {
+        let t = home();
+        fs::create_dir_all(hosts_lock_path(t.path())).unwrap();
+        assert_eq!(
+            try_lock(t.path()).map(|l| l.is_some()),
+            Err(HostsError::CannotLock(Failure::CannotOpenLock))
+        );
+        let t = home();
+        fs::write(agentspace_dir(t.path()), b"x").unwrap();
+        assert_eq!(
+            try_lock(t.path()).map(|l| l.is_some()),
+            Err(HostsError::CannotLock(Failure::FolderIsAFile))
+        );
+    }
+
+    #[test]
+    fn debug_prints_the_name_and_no_path() {
+        let t = home();
+        let held = lock(t.path()).unwrap();
+        let shown = format!("{held:?}");
+        assert!(!shown.contains(std::path::MAIN_SEPARATOR));
+        assert!(!shown.contains('/'));
+        let temp_name = t.path().file_name().unwrap().to_string_lossy().into_owned();
+        assert!(!shown.contains(&temp_name));
+        assert!(!shown.contains("hosts.lock"));
     }
 
     fn short() -> Duration {

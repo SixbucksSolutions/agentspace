@@ -329,10 +329,23 @@ fn a_program_the_holder_starts_does_not_keep_the_lock() {
     let mut other = Helper::start(t.path(), "other-project", 4000);
     assert_eq!(other.next_line(Duration::from_secs(30)), "held");
     drop(lock);
-    let started = std::time::Instant::now();
-    let again = try_run_lock(t.path(), PROJECT).unwrap();
+    // A bounded retry, not one try (architect, 2026-11-20, for v0.07-T02): on Linux, a fork made
+    // by a test running in parallel holds a duplicate of the lock's descriptor until that child's
+    // exec closes it, so one try right after the drop can find the lock held although nothing
+    // inherited it. The helper lives 4 seconds, so a handle it inherited is still held after the
+    // 2 seconds polled here, and real inheritance is still caught.
+    let again = {
+        let started = std::time::Instant::now();
+        loop {
+            match try_run_lock(t.path(), PROJECT).unwrap() {
+                Some(lock) => break Some(lock),
+                None if started.elapsed() >= Duration::from_secs(2) => break None,
+                None => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    };
     assert!(
-        again.is_some() && started.elapsed() < Duration::from_secs(2),
+        again.is_some(),
         "The lock stayed held by the program its holder started: its handle was inherited"
     );
     drop(again);

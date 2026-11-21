@@ -13,9 +13,16 @@ use std::path::Path;
 /// a second process's `try_run_lock` finds it held. The operating system lets it go however the
 /// process ends, so a killed run leaves the lock free. The handle is not inheritable, so no
 /// program the run starts holds it.
-#[derive(Debug)]
 pub struct RunLock {
     _file: File,
+}
+
+/// Prints the type's name alone: the file's own `Debug` carries its full path, which MUST NOT reach
+/// a log or a failed assertion. The type has no `Display`.
+impl std::fmt::Debug for RunLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RunLock { .. }")
+    }
 }
 
 /// Tries a host's run lock once, without waiting: `Some(lock)` when this call has it, held until
@@ -85,6 +92,18 @@ mod tests {
             "Never deleted"
         );
         drop(other);
+    }
+
+    #[test]
+    fn debug_prints_the_name_and_no_path() {
+        let t = tempfile::tempdir().unwrap();
+        let held = try_run_lock(t.path(), "agentspace").unwrap().unwrap();
+        let shown = format!("{held:?}");
+        assert!(!shown.contains(std::path::MAIN_SEPARATOR));
+        assert!(!shown.contains('/'));
+        let temp_name = t.path().file_name().unwrap().to_string_lossy().into_owned();
+        assert!(!shown.contains(&temp_name));
+        assert!(!shown.contains("provision.lock"));
     }
 
     #[test]
