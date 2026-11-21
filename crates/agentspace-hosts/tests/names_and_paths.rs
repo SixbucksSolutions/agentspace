@@ -24,6 +24,13 @@ fn a_hosts_stack_is_agentspace_host_and_its_project() {
 }
 
 #[test]
+fn the_boxs_project_gets_the_boxs_stack() {
+    // D55's table: the box's stack is agentbox (architect, 2026-11-20, for v0.07-T02).
+    assert_eq!(stack_name(BOX_PROJECT), BOX_STACK);
+    assert_eq!(stack_name("swimcoach"), "agentbox");
+}
+
+#[test]
 fn the_longest_stack_name_is_forty_eight_characters() {
     // 16 for the prefix and 32 for the project (state.md, The host registry).
     let project = "a".repeat(32);

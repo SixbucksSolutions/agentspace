@@ -93,14 +93,13 @@ pub enum Target<'a> {
     Host(&'a str),
 }
 
-/// The stack a writer gives the record it adds for `project`, `agentspace-host-<project>` (D44):
-/// the plain formula for every project, as `host_alias` is. The box's stack is `BOX_STACK`, which
-/// only the seed carries, and a caller that wants an existing host's stack reads its record's
-/// `stack` member.
-// Architect's to confirm: stack_name(BOX_PROJECT) is `agentspace-host-swimcoach`, not `agentbox`;
-// state.md says only the seed ever has the stack `agentbox`, and a record added for swimcoach would
-// be a second record of one project, so no writer asks.
+/// The stack of `project`'s host (D44, D55's table): `BOX_STACK`, `agentbox`, for the box's
+/// project, `swimcoach`, and `agentspace-host-<project>` for every other project (architect,
+/// 2026-11-20, for v0.07-T02), so no caller can get a wrong name for the box from it.
 pub fn stack_name(project: &str) -> String {
+    if project == BOX_PROJECT {
+        return BOX_STACK.to_string();
+    }
     format!("{STACK_PREFIX}{project}")
 }
 

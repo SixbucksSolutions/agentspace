@@ -3,7 +3,7 @@
 
 mod common;
 
-use agentspace_hosts::{Host, HostState, Hosts, lock, read, stack_name, write};
+use agentspace_hosts::{Host, HostState, Hosts, lock, read, write};
 use common::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -324,7 +324,7 @@ fn a_stack_named_for_another_project_is_refused() {
     let t = TempHome::new();
     write_new(&t, &seed()).unwrap();
     let mut r = record("agentspace", HostState::Ready);
-    r.stack = stack_name("swimcoach");
+    r.stack = "agentspace-host-swimcoach".to_string();
     assert_refused_write("stack of another project", &t, &with_box(vec![r]));
 }
 
