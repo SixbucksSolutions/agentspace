@@ -1,11 +1,12 @@
 #Requires -Version 7
-# A conformance check under D34: it drives the lease CLI only as a separate process, through what docs/lease-api.md, docs/driver.md and docs/state.md document, with a stand-in for the provisioning run (a program outside agentspace). See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # EXPECTED TO FAIL against the installed v0.06 programs, which have no project list, no host registry,
 # no `pending` and no provisioning run to start: a create answers `ready` there, and
 # AGENTSPACE_PROVISION_CMD is read by nothing. A v0.07 build MUST pass every result line
 # (docs/conformance.md, "The files that are expected to fail").
+#
+# A conformance check under D34: it drives the lease CLI only as a separate process, through what docs/lease-api.md, docs/driver.md and docs/state.md document, with a stand-in for the provisioning run (a program outside agentspace). See docs/conformance.md.
 #
 # Cases of E0.07-T04-S01 (card #0155), a create that answers `pending` and starts the provisioning run,
 # each named by its case in docs/driver.md, "Conformance cases for v0.07". The ones that need a held lock
@@ -256,14 +257,16 @@ Test-NoProgram -Case 'C31' -Label 'With AGENTSPACE_PROVISION_CMD naming no file 
 Test-NoProgram -Case 'C31' -Label 'With AGENTSPACE_PROVISION_CMD naming no file and no run due (last attempt 1 minute ago), the same create answers pending and leaves the registry as it was' -Seed $notDueRecord -Program 'missing' -Expect 'pending'
 
 # ---- C18 ------------------------------------------------------------------------------------------------
-# The program's quoting in the command line is illustrative (architect, 2026-11-21, driver.md "Starting a
-# provisioning run"): the detached start quotes an argument only when it is empty or holds a space, a tab or
-# a non-printable character. So the check accepts the program quoted or not, and requires the quotes only for
-# a path that holds a space, where the stand-in MUST still be started with exactly the three arguments.
+# The quoting in the command line is not the spec's (architect, 2026-11-21, driver.md "Starting a
+# provisioning run"): the two lines give the arguments, not the line's bytes. So the check MUST NOT assert on
+# any quote in the line. It asserts that the stand-in's parent is the system folder's cmd.exe run with /d /c,
+# that the program named after /c is the one AGENTSPACE_PROVISION_CMD names (quotes ignored), and, through
+# Get-PvStartedOnceProblems, that the stand-in received exactly the three arguments, also when its full path
+# holds a space.
 function Test-CmdStandIn {
   param([string]$Extension, [string]$FolderName = 'run')
   $sub = @{ Ext = $Extension; Folder = $FolderName }
-  $what = $(if ($FolderName.Contains(' ')) { "A .$Extension stand-in whose full path holds a space is started through the system folder's cmd.exe /d /c, with the program quoted, and receives provision -Host <project>" } else { "A .$Extension stand-in is started through the system folder's cmd.exe /d /c and receives provision -Host <project>" })
+  $what = $(if ($FolderName.Contains(' ')) { "A .$Extension stand-in whose full path holds a space is started through the system folder's cmd.exe /d /c and receives exactly provision, -Host and the project" } else { "A .$Extension stand-in is started through the system folder's cmd.exe /d /c and receives exactly provision, -Host and the project" })
   Use-PvLab -Name "$start C18: $what" -Body {
     param($lab)
     Set-PvProjects -Lab $lab -Names @('agentspace')
@@ -275,13 +278,14 @@ function Test-CmdStandIn {
     if ($calls.Count -ge 1) {
       $c = $calls[0]
       if ([string]$c['parent_name'] -cne 'cmd.exe') { $p.Add('The stand-in''s parent is not cmd.exe') }
-      $m = [regex]::Match([string]$c['parent_command_line'], '\A(?<cmd>.+?) /d /c (?<prog>"[^"]+"|\S+) provision -Host agentspace\z')
-      if (-not $m.Success) { $p.Add('The interpreter''s command line is not <system folder>\cmd.exe /d /c <program> provision -Host <project>') }
+      # Every double quote is dropped first: the quoting is the driver's own and is not asserted.
+      $line = ([string]$c['parent_command_line']).Replace('"', '')
+      $m = [regex]::Match($line, '\A(?<cmd>.+?) /d /c (?<prog>.+) provision -Host agentspace\z')
+      if (-not $m.Success) { $p.Add('The interpreter''s command line is not <system folder>\cmd.exe /d /c <program> provision -Host <project>, quotes aside') }
       else {
         $sys = $env:SystemRoot.TrimEnd('\', '/') + '\System32\cmd.exe'
-        if ((ConvertTo-PvFullPath $m.Groups['cmd'].Value.Trim('"')) -ine (ConvertTo-PvFullPath $sys)) { $p.Add('The interpreter is not the system folder''s cmd.exe') }
-        if ((ConvertTo-PvFullPath $m.Groups['prog'].Value.Trim('"')) -ine (ConvertTo-PvFullPath $standIn.Path)) { $p.Add('The program in the command line is not the one AGENTSPACE_PROVISION_CMD names') }
-        if ($standIn.Path.Contains(' ') -and -not ($m.Groups['prog'].Value.StartsWith('"') -and $m.Groups['prog'].Value.EndsWith('"'))) { $p.Add('The program''s path holds a space and is not in double quotes') }
+        if ((ConvertTo-PvFullPath $m.Groups['cmd'].Value) -ine (ConvertTo-PvFullPath $sys)) { $p.Add('The interpreter is not the system folder''s cmd.exe') }
+        if ((ConvertTo-PvFullPath $m.Groups['prog'].Value) -ine (ConvertTo-PvFullPath $standIn.Path)) { $p.Add('The program in the command line is not the one AGENTSPACE_PROVISION_CMD names') }
       }
     }
     return , $p

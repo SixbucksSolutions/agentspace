@@ -1,10 +1,11 @@
 #Requires -Version 7
-# A conformance check under D34: it drives the lease CLI only as a separate process, through what docs/lease-api.md, docs/driver.md and docs/state.md document, with a stand-in for the provisioning run (a program outside agentspace). See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # EXPECTED TO FAIL against the installed v0.06 programs, which read no host registry and take no hosts.lock:
 # every create answers `ready` at once there. A v0.07 build MUST pass every result line
 # (docs/conformance.md, "The files that are expected to fail").
+#
+# A conformance check under D34: it drives the lease CLI only as a separate process, through what docs/lease-api.md, docs/driver.md and docs/state.md document, with a stand-in for the provisioning run (a program outside agentspace). See docs/conformance.md.
 #
 # Case of E0.07-T04-S01 (card #0155) that needs the host registry's lock held, named by its case in
 # docs/driver.md, "Conformance cases for v0.07":

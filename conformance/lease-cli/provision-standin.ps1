@@ -309,8 +309,10 @@ function Get-PvNoStartProblems {
   return , $p
 }
 
-# The problems with a stand-in that MUST have been started exactly once, with exactly `provision -Host
-# <project>` as its argument line, and, after it, nothing else. The record is read with Get-PvCalls.
+# The problems with a stand-in that MUST have been started exactly once, and to have received exactly the
+# three arguments provision, -Host and the project, parsed as the program received them. A check MUST NOT
+# assert on the quoting of the line the driver wrote (docs/driver.md, "Starting a provisioning run": the
+# line gives the arguments, not their quoting). The record is read with Get-PvCalls.
 function Get-PvStartedOnceProblems {
   param([Parameter(Mandatory)]$StandIn, [Parameter(Mandatory)][string]$Project, [int]$StartWaitSeconds = 10)
   $p = [System.Collections.Generic.List[string]]::new()
@@ -321,7 +323,6 @@ function Get-PvStartedOnceProblems {
   Start-Sleep -Seconds 2
   $lines = @(Get-PvStartedLines $StandIn)
   if ($lines.Count -ne 1) { $p.Add("The stand-in was started $($lines.Count) times, not once") }
-  if ($lines.Count -ge 1 -and $lines[0] -cne "ARGS=provision -Host $Project") { $p.Add("The stand-in's raw argument line is not 'provision -Host <project>'") }
   if ($calls.Count -ge 1) {
     $argv = @($calls[0]['args'])
     if (($argv -join '|') -cne "provision|-Host|$Project") { $p.Add("The stand-in's arguments are not provision, -Host and the project: it got $($argv.Count) arguments") }

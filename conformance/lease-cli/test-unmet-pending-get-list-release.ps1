@@ -193,7 +193,9 @@ function New-PgStandIn {
   $dir = Join-Path $Lab.Root "standins\run$($script:PgStandInCount)"
   New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $Lab -Path $dir) | Out-Null
   $cmd = Join-Path $dir 'provision.cmd'
-  $text = "@echo off`r`n>>`"%~dp0record.txt`" echo %*`r`n>>`"%~dp0start-time.txt`" echo %DATE% %TIME%`r`nexit /b 0`r`n"
+  # One line for each start, with each of the first four arguments as the interpreter parsed it (%~1 to %~4,
+  # quotes removed), so that a check never depends on how the driver quoted the line it wrote.
+  $text = "@echo off`r`n>>`"%~dp0record.txt`" echo A1=[%~1] A2=[%~2] A3=[%~3] A4=[%~4]`r`n>>`"%~dp0start-time.txt`" echo %DATE% %TIME%`r`nexit /b 0`r`n"
   [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $Lab -Path $cmd), [Text.Encoding]::ASCII.GetBytes($text))
   [pscustomobject]@{ Cmd = $cmd; Record = (Join-Path $dir 'record.txt') }
 }
@@ -225,12 +227,19 @@ function Wait-PgNoStart {
   return , (Get-PgStarts $StandIn)
 }
 
-# The problems with a start count: exactly one, with the three arguments `provision -Host <project>`.
+# The problems with a start count: exactly one, with exactly three arguments, provision, -Host and the
+# project, as the stand-in parsed them. It MUST NOT assert on how the driver quoted the line it wrote
+# (docs/driver.md, "Starting a provisioning run": the line gives the arguments, not their quoting).
 function Get-PgOnceProblems {
   param($Starts, [string]$Project)
   $p = [System.Collections.Generic.List[string]]::new()
-  if ($Starts.Count -ne 1) { $p.Add("The stand-in was started $($Starts.Count) time(s), not once") }
-  elseif ($Starts[0].Trim() -cne "provision -Host $Project") { $p.Add('The stand-in''s arguments are not exactly provision -Host <project>') }
+  if ($Starts.Count -ne 1) { $p.Add("The stand-in was started $($Starts.Count) time(s), not once"); return , $p }
+  $m = [regex]::Match($Starts[0].Trim(), '\AA1=\[(.*)\] A2=\[(.*)\] A3=\[(.*)\] A4=\[(.*)\]\z')
+  if (-not $m.Success) { $p.Add('The stand-in''s record is not in the form the stand-in writes'); return , $p }
+  $got = @($m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value, $m.Groups[4].Value)
+  if ($got[0] -cne 'provision' -or $got[1] -cne '-Host' -or $got[2] -cne $Project -or $got[3] -ne '') {
+    $p.Add('The stand-in''s arguments are not exactly provision, -Host and the project')
+  }
   return , $p
 }
 
@@ -263,12 +272,15 @@ function Get-PgStoredProblems {
   return , $p
 }
 
-# True when the time is a real contract time within [Before, After], the clock of this process either side of a run.
+# True when the time is a real contract time within [Before - 1s, After + 1s], the clock of this process
+# either side of a run. The second of slack each way is because the spec does not fix whether "now" is
+# truncated or rounded to the second, and the check MUST NOT fail a program for either (as
+# Test-PvTimeBetween in provision-standin.ps1).
 function Test-PgWithin {
   param($Text, [DateTime]$Before, [DateTime]$After)
   if ($Text -isnot [string] -or $Text -cnotmatch '\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z') { return $false }
   try { $t = ConvertFrom-CcTime $Text } catch { return $false }
-  return ($t -ge $Before -and $t -le $After)
+  return ($t -ge $Before.AddSeconds(-1) -and $t -le $After.AddSeconds(1))
 }
 
 # The names of what a lease CLI left in the lease folder, and in the alias folder (nothing for a pending lease).
