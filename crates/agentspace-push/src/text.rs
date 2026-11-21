@@ -8,13 +8,6 @@ pub(crate) enum Order {
     Big,
 }
 
-/// The encoding a file's bytes were read in, for the XML declaration's check.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Encoding {
-    Utf8,
-    Utf16(Order),
-}
-
 /// Decodes UTF-16 in the given order. An odd byte count or an unpaired surrogate is refused.
 pub(crate) fn utf16(bytes: &[u8], order: Order) -> Option<String> {
     if !bytes.len().is_multiple_of(2) {
@@ -47,24 +40,13 @@ pub(crate) fn decode_marked(bytes: &[u8]) -> Option<String> {
     }
 }
 
-/// XML 1.0's detection (its Appendix F), for the encodings agentspace reads: a byte order mark,
-/// or, with none, the first characters `<?` in UTF-16 of either order; anything else is UTF-8.
-pub(crate) fn decode_xml(bytes: &[u8]) -> Option<(String, Encoding)> {
-    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        let text = std::str::from_utf8(rest).ok()?;
-        Some((text.to_owned(), Encoding::Utf8))
-    } else if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        Some((utf16(rest, Order::Little)?, Encoding::Utf16(Order::Little)))
-    } else if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        Some((utf16(rest, Order::Big)?, Encoding::Utf16(Order::Big)))
-    } else if bytes.starts_with(&[0x3C, 0x00, 0x3F, 0x00]) {
-        Some((utf16(bytes, Order::Little)?, Encoding::Utf16(Order::Little)))
-    } else if bytes.starts_with(&[0x00, 0x3C, 0x00, 0x3F]) {
-        Some((utf16(bytes, Order::Big)?, Encoding::Utf16(Order::Big)))
-    } else {
-        let text = std::str::from_utf8(bytes).ok()?;
-        Some((text.to_owned(), Encoding::Utf8))
-    }
+/// The credential's rule (localswim's `docs/windows-operations.md`, "The credential files"):
+/// UTF-8, after an optional UTF-8 byte order mark (`EF BB BF`), which is not part of the text. No
+/// other mark is stripped, so a UTF-16 file is refused, as invalid UTF-8 or as text that is not
+/// JSON.
+pub(crate) fn decode_utf8(bytes: &[u8]) -> Option<&str> {
+    let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    std::str::from_utf8(rest).ok()
 }
 
 #[cfg(test)]
@@ -95,22 +77,15 @@ mod tests {
     }
 
     #[test]
-    fn xml_without_a_mark_in_utf16_is_detected() {
-        let le: Vec<u8> = "<?xml?>"
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect();
-        let be: Vec<u8> = "<?xml?>"
-            .encode_utf16()
-            .flat_map(u16::to_be_bytes)
-            .collect();
+    fn utf8_with_or_without_its_mark() {
+        assert_eq!(decode_utf8(b"\xEF\xBB\xBF{}"), Some("{}"));
+        assert_eq!(decode_utf8(b"{}"), Some("{}"));
+        assert_eq!(decode_utf8(b"{\xFF}"), None);
+        assert_eq!(decode_utf8(b"\xFF\xFE{\0}\0"), None, "UTF-16LE");
         assert_eq!(
-            decode_xml(&le),
-            Some(("<?xml?>".to_owned(), Encoding::Utf16(Order::Little)))
-        );
-        assert_eq!(
-            decode_xml(&be),
-            Some(("<?xml?>".to_owned(), Encoding::Utf16(Order::Big)))
+            decode_utf8(b"\xEF\xBB\xBF\xEF\xBB\xBF{}"),
+            Some("\u{FEFF}{}"),
+            "One mark is stripped, not two"
         );
     }
 }

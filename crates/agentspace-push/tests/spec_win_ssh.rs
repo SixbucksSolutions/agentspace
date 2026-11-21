@@ -106,20 +106,18 @@ fn the_stdin_is_exactly_the_two_content_lines() {
 }
 
 #[test]
-fn the_stdin_carries_a_non_ascii_token_as_utf8() {
+fn the_stdin_carries_a_token_with_a_dash_and_an_underscore_unchanged() {
     let mut rig = Rig::new();
-    rig.token = format!(
-        "{}-t\u{f6}k\u{e9}n-\u{65e5}\u{672c}-\u{1f600}",
-        dummy_token()
-    );
+    rig.token = format!("{}-_", &dummy_token()[..41]);
+    assert_eq!(rig.token.len(), 43);
     rig.write_credential();
     let say = rig.up();
     assert_eq!(rig.calls(), 1);
     assert!(
         without_bom(&rig.stdin(1)) == rig.content().as_bytes(),
-        "The token did not reach the stdin as its UTF-8 bytes"
+        "The token did not reach the stdin as its ASCII bytes"
     );
-    assert_warnings(&say, &[], "A non-ASCII token");
+    assert_warnings(&say, &[], "A token with a dash and an underscore");
     assert!(
         rig.stamp_matches(DEFAULT_ZONE),
         "The stamp does not cover the content"
@@ -128,14 +126,22 @@ fn the_stdin_carries_a_non_ascii_token_as_utf8() {
 
 #[test]
 fn the_stdin_carries_the_url_unchanged() {
-    let mut rig = Rig::new();
-    rig.base = "http://127.0.0.1:18811/some/path?x=1&y=2#frag".to_string();
-    rig.write_receipt();
-    rig.up();
-    assert!(
-        without_bom(&rig.stdin(1)) == rig.content().as_bytes(),
-        "The URL did not reach the stdin unchanged"
-    );
+    // The base is exactly `http://127.0.0.1:PORT`, so the URL varies in its port alone.
+    for base in [
+        "http://127.0.0.1:1",
+        "http://127.0.0.1:8811",
+        "http://127.0.0.1:65535",
+    ] {
+        let mut rig = Rig::new();
+        rig.base = base.to_string();
+        rig.write_receipt();
+        rig.up();
+        assert_eq!(rig.calls(), 1, "A fitting base was refused");
+        assert!(
+            without_bom(&rig.stdin(1)) == rig.content().as_bytes(),
+            "The URL did not reach the stdin unchanged"
+        );
+    }
 }
 
 #[test]

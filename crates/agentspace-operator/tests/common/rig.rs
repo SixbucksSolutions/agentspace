@@ -109,10 +109,11 @@ fn protect(plain: &[u8]) -> Vec<u8> {
     }
 }
 
-/// A credential document as both PowerShell runtimes write it (operator.md, The Bot credential).
-fn clixml(password_hex: &str) -> String {
+/// A Bot credential file as localswim writes it (localswim's windows-operations.md, "The service
+/// receipt and credential files"; operator.md, The Bot credential).
+fn bot_json(token_dpapi_hex: &str) -> String {
     format!(
-        "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCredential</T><T>System.Object</T></TN><ToString>System.Management.Automation.PSCredential</ToString><Props><S N=\"UserName\">bot</S><SS N=\"Password\">{password_hex}</SS></Props></Obj></Objs>"
+        "{{\"format\":\"localswim-credential\",\"format_version\":1,\"role\":\"bot\",\"token_dpapi_hex\":\"{token_dpapi_hex}\"}}"
     )
 }
 
@@ -563,7 +564,7 @@ impl Rig {
         )
         .expect("the receipt");
         let hex = to_hex(&protect(&utf16le(&self.token)));
-        fs::write(self.credential_dir().join("bot.xml"), clixml(&hex)).expect("bot.xml");
+        fs::write(self.credential_dir().join("bot.json"), bot_json(&hex)).expect("bot.json");
         fs::write(self.ctl.join("secret.txt"), &self.token).expect("the secret's name");
     }
 

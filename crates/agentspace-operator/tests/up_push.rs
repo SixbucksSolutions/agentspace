@@ -180,7 +180,7 @@ fn a_push_is_due_when_the_stamp_is_missing_unreadable_or_different() {
         ("another instance", Some(
             format!(
                 "{{\"version\":0,\"stamp\":\"{}\"}}",
-                expected_stamp(OTHER_ID, ZONE, "LOCALSWIM_URL=x\nLOCALSWIM_TOKEN=y\n")
+                expected_stamp(OTHER_ID, ZONE, "LOCALSWIM_URL=x\nLOCALSWIM_TOKEN=yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n")
             )
             .into_bytes(),
         )),
@@ -212,7 +212,9 @@ fn a_push_is_due_when_the_stamp_is_missing_unreadable_or_different() {
 fn a_stamp_for_another_token_makes_a_push_due() {
     let rig = pushing_rig();
     box_confirms(&rig, Some(ZONE));
-    let old_content = format!("LOCALSWIM_URL={BASE}\nLOCALSWIM_TOKEN=an-older-dummy-token\n");
+    let old_content = format!(
+        "LOCALSWIM_URL={BASE}\nLOCALSWIM_TOKEN=an-older-dummy-token-AAAAAAAAAAAAAAAAAAAAAA\n"
+    );
     std::fs::create_dir_all(rig.state_dir()).unwrap();
     std::fs::write(
         rig.stamp_path(),
@@ -492,7 +494,7 @@ fn a_nested_up_does_not_push_and_does_not_read_the_receipt_for_a_message() {
 fn a_nested_up_is_not_told_of_a_bad_credential() {
     // The push never starts, so a credential that could not be read is not reported either.
     let rig = pushing_rig();
-    std::fs::write(rig.credential_dir().join("bot.xml"), "garbage").unwrap();
+    std::fs::write(rig.credential_dir().join("bot.json"), "garbage").unwrap();
     let out = rig.op(&["up"]).env("AGENTSPACE_NESTED", "1").run();
     assert_eq!(out.code, Some(0));
     assert_eq!(out.err(), format!("Ready: {ID}\n"));
@@ -572,26 +574,23 @@ fn a_receipt_or_credential_that_cannot_be_read_warns_and_sends_nothing() {
             }),
         ),
         (
-            "a missing bot.xml",
+            "a missing bot.json",
             Box::new(|r: &Rig| {
-                std::fs::remove_file(r.credential_dir().join("bot.xml")).unwrap();
+                std::fs::remove_file(r.credential_dir().join("bot.json")).unwrap();
             }),
         ),
         (
-            "a bot.xml that is not a credential",
+            "a bot.json that is not a credential",
             Box::new(|r: &Rig| {
-                std::fs::write(r.credential_dir().join("bot.xml"), "<Objs/>").unwrap();
+                std::fs::write(r.credential_dir().join("bot.json"), "{}").unwrap();
             }),
         ),
         (
-            "a bot.xml with a DOCTYPE",
+            "a bot.json with a member too many",
             Box::new(|r: &Rig| {
-                let text = std::fs::read_to_string(r.credential_dir().join("bot.xml")).unwrap();
-                std::fs::write(
-                    r.credential_dir().join("bot.xml"),
-                    format!("<!DOCTYPE x [<!ENTITY a \"b\">]>{text}"),
-                )
-                .unwrap();
+                let text = std::fs::read_to_string(r.credential_dir().join("bot.json")).unwrap();
+                let text = text.replacen('{', "{\"extra\":1,", 1);
+                std::fs::write(r.credential_dir().join("bot.json"), text).unwrap();
             }),
         ),
     ];
@@ -616,7 +615,7 @@ fn the_credential_is_read_even_when_the_stamp_says_nothing_is_due() {
     // The stamp covers the token, so a credential that cannot be read warns at every up.
     let rig = pushing_rig();
     rig.write_stamp_for(ZONE);
-    std::fs::write(rig.credential_dir().join("bot.xml"), "garbage").unwrap();
+    std::fs::write(rig.credential_dir().join("bot.json"), "garbage").unwrap();
     let out = rig.run(&["up"]);
     assert_eq!(out.code, Some(0));
     assert_eq!(
@@ -628,7 +627,7 @@ fn the_credential_is_read_even_when_the_stamp_says_nothing_is_due() {
 #[test]
 fn quiet_hides_the_could_not_read_warning() {
     let rig = pushing_rig();
-    std::fs::write(rig.credential_dir().join("bot.xml"), "garbage").unwrap();
+    std::fs::write(rig.credential_dir().join("bot.json"), "garbage").unwrap();
     let out = rig.run(&["up", "-Quiet"]);
     assert_eq!(out.code, Some(0));
     assert_eq!(out.err(), "");

@@ -19,18 +19,23 @@ fn content_is_exactly_two_lf_lines() {
 #[test]
 fn content_sends_the_url_with_nothing_added_or_removed() {
     assert_eq!(
-        content("http://localhost:9/", "t"),
-        b"LOCALSWIM_URL=http://localhost:9/\nLOCALSWIM_TOKEN=t\n"
+        content("http://localhost:9/", TOKEN_B),
+        format!("LOCALSWIM_URL=http://localhost:9/\nLOCALSWIM_TOKEN={TOKEN_B}\n").as_bytes()
     );
 }
 
 #[test]
-fn content_carries_the_token_as_utf8() {
-    let c = content(BASE, "t\u{e9}k\u{1F600}n");
-    assert_eq!(
-        c,
-        "LOCALSWIM_URL=http://127.0.0.1:8811\nLOCALSWIM_TOKEN=t\u{e9}k\u{1F600}n\n".as_bytes()
-    );
+fn content_carries_the_token_as_its_ascii_bytes_with_dash_and_underscore() {
+    // A token is 43 characters of base64url, so its UTF-8 bytes are its ASCII ones.
+    for token in [TOKEN, TOKEN_B] {
+        assert_eq!(token.len(), 43);
+        assert!(token.contains('-') || token.contains('_'));
+        let c = content(BASE, token);
+        assert_eq!(
+            c,
+            format!("LOCALSWIM_URL=http://127.0.0.1:8811\nLOCALSWIM_TOKEN={token}\n").as_bytes()
+        );
+    }
 }
 
 #[test]

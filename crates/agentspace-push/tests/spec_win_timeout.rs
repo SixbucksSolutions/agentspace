@@ -77,16 +77,16 @@ fn a_hung_ssh_is_stopped_at_20_seconds_with_its_whole_tree_and_only_that_tree() 
 
 #[test]
 fn an_ssh_that_never_reads_its_stdin_is_cut_off_by_the_same_limit() {
-    let mut rig = Rig::new();
-    // A URL far larger than a pipe's buffer, so that the write itself blocks.
-    rig.base = format!("http://127.0.0.1:18811/{}", "a".repeat(1_048_576));
-    rig.write_receipt();
+    // The base is exactly `http://127.0.0.1:PORT`, so the content is a few bytes and no longer
+    // fills a pipe's buffer. The stand-in's `noread` scenario neither reads its stdin nor exits,
+    // so the push's own 20-second limit is what ends it, whether the write completed or not.
+    let rig = Rig::new();
     rig.scenario("noread");
 
     let say = FakeSay::person();
     let took = rig.push(&say, DEFAULT_ALIAS, false);
 
-    assert_warnings(&say, &[TOOK_TOO_LONG], "A write that blocks");
+    assert_warnings(&say, &[TOOK_TOO_LONG], "An ssh that never reads its stdin");
     let secs = took.as_secs_f64();
     assert!(
         secs >= LIMIT_LOW,

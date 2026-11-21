@@ -99,7 +99,7 @@ fn assert_nothing_is_written_outside_the_home(what: &str, env: &Env, s: &Scenari
         planted.push((env.receipt_path(), b.clone()));
     }
     if let Slot::Bytes(b) = &s.credential {
-        planted.push((env.bot_xml(), b.clone()));
+        planted.push((env.bot_json(), b.clone()));
     }
     let mut found: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
     let mut stack = vec![env.tmp.path().to_path_buf()];
@@ -202,21 +202,19 @@ fn every_path(env: &Env) -> Vec<(String, Scenario)> {
             p.push(0);
             s.unprotect = UnprotectBehavior::Returns(p);
         });
-        add("password in an S element, as plain text", &|s| {
-            let text = clixml(
-                Some("1.1.0.1"),
-                &[PSCRED],
-                &format!("<S N=\"UserName\">bot</S><S N=\"Password\">{TOKEN}</S>"),
-            );
-            s.credential = Slot::Bytes(enc_utf8(&text));
+        add("token in the hex member, as plain text", &|s| {
+            s.credential = Slot::Bytes(enc_utf8(&credential_json(TOKEN)));
         });
-        add("credential with the token in an unrelated element", &|s| {
-            let text = clixml(
-                Some("1.1.0.1"),
-                &[PSCRED],
-                &format!("<S N=\"UserName\">{TOKEN}</S><SS N=\"Password\">zz{TOKEN}</SS>"),
-            );
-            s.credential = Slot::Bytes(enc_utf8(&text));
+        add("credential with the token in an unrelated member", &|s| {
+            let mut m = members(&format!("zz{TOKEN}"));
+            m.push((TOKEN.to_string(), js(TOKEN)));
+            m[2].1 = js(TOKEN);
+            s.credential = Slot::Bytes(enc_utf8(&object(&m)));
+        });
+        add("credential with the token as a duplicate member", &|s| {
+            let mut m = members(&hex_lower(&blob()));
+            m.push(("role".to_string(), js(TOKEN)));
+            s.credential = Slot::Bytes(enc_utf8(&object(&m)));
         });
         add("receipt that quotes the token", &|s| {
             s.receipt = Slot::Bytes(enc_utf8(&format!("{{\"base\":\"{TOKEN}\"")));
@@ -224,7 +222,7 @@ fn every_path(env: &Env) -> Vec<(String, Scenario)> {
         add("receipt that is garbage", &|s| {
             s.receipt = Slot::Bytes(b"garbage".to_vec())
         });
-        add("bot.xml missing", &|s| s.credential = Slot::Absent);
+        add("bot.json missing", &|s| s.credential = Slot::Absent);
         add("no receipt", &|s| s.receipt = Slot::Absent);
     }
     out
@@ -326,10 +324,22 @@ fn a_failure_never_quotes_the_error_that_caused_it() {
     assert!(!all.contains("QUOTE-ME-RECEIPT"), "{all}");
 
     let mut s = env.scenario();
-    s.credential = Slot::Bytes(enc_utf8("<Objs QUOTE-ME-CREDENTIAL"));
+    s.credential = Slot::Bytes(enc_utf8("{\"format\":\"QUOTE-ME-CREDENTIAL\""));
     let r = env.run(&s);
     let all = format!("{:?} {:?} {}", r.printed, r.events, r.debug);
     assert!(!all.contains("QUOTE-ME-CREDENTIAL"), "{all}");
+
+    // A well-formed credential with a wrong value is not quoted either.
+    let mut s = env.scenario();
+    s.credential = Slot::Bytes(enc_utf8(&object(&members_with(
+        &hex_lower(&blob()),
+        "role",
+        &js("QUOTE-ME-ROLE"),
+    ))));
+    let r = env.run(&s);
+    assert_eq!(r.printed, vec![W_COULD_NOT_READ.to_string()]);
+    let all = format!("{:?} {:?} {}", r.printed, r.events, r.debug);
+    assert!(!all.contains("QUOTE-ME-ROLE"), "{all}");
 }
 
 #[test]
@@ -339,7 +349,7 @@ fn a_warning_names_no_path_and_no_value_from_the_receipt() {
     s.credential = Slot::Absent;
     let r = env.run(&s);
     let all = format!("{:?}", r.events);
-    assert!(!all.contains("bot.xml") && !all.contains(&env.tmp.path().display().to_string()));
+    assert!(!all.contains("bot.json") && !all.contains(&env.tmp.path().display().to_string()));
     assert!(!all.contains(BASE));
 }
 

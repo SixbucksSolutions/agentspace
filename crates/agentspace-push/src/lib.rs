@@ -3,8 +3,8 @@
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
 //! The portable half (v0.06-T01) is everything about the push that is not a Windows call: when it
-//! runs and when it is due, what the laptop reads (the receipt, and the Bot credential down to its
-//! `SS` element's hex), the content and the stamp, the ssh's arguments and remote command, what
+//! runs and when it is due, what the laptop reads (the receipt, and the Bot credential, `bot.json`,
+//! down to its `token_dpapi_hex` member's bytes), the content and the stamp, the ssh's arguments and remote command, what
 //! the laptop checks in the box's answer, and every warning, through the pinned [`Say`]. What
 //! needs Windows, touches the disk or starts a program is behind three small traits: [`Files`],
 //! [`Unprotect`] and [`SshRun`].
@@ -357,14 +357,15 @@ pub fn receipt_path(ctx: &Context) -> Option<PathBuf> {
     Some(dir.join("localswim-v2").join("service.json"))
 }
 
-/// `bot.xml`'s path: `credential_directory`, then a separator unless it already ends in `\` or
-/// `/`, then `bot.xml`, taken literally.
+/// `bot.json`'s path: `credential_directory`, then a separator unless it already ends in `\` or
+/// `/`, then `bot.json`, taken literally (localswim's `docs/windows-operations.md`, "The credential
+/// files": the file names are fixed).
 pub fn credential_path(credential_directory: &str) -> PathBuf {
     let mut p = OsString::from(credential_directory);
     if !credential_directory.ends_with(['\\', '/']) {
         p.push(MAIN_SEPARATOR.to_string());
     }
-    p.push("bot.xml");
+    p.push("bot.json");
     PathBuf::from(p)
 }
 
