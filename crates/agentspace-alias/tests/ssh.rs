@@ -86,6 +86,8 @@ fn write_world(s: &Scratch, proxy: &str) -> World {
         user: "ubuntu",
         key_path: &key,
         cert_path: &cert,
+        host_key_alias: "agentspace",
+        known_hosts: None,
         proxy_command: proxy,
     })
     .unwrap();

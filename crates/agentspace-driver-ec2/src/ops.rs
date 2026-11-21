@@ -101,6 +101,8 @@ fn alias_bytes(
         user: USER,
         key_path: &key_path,
         cert_path: &cert_path,
+        host_key_alias: "agentspace",
+        known_hosts: None,
         proxy_command: &proxy,
     })
     .map_err(|e| alias_setup_failed(&e.0))

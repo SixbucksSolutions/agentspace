@@ -19,6 +19,7 @@
 #![deny(unsafe_code)]
 
 mod lease;
+mod operator;
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -33,6 +34,7 @@ pub use lease::{
     CaFailure, CredFailure, Issued, RenewGuard, ca_failure_message, check_ca, issue,
     remove_lease_folder, renew,
 };
+pub use operator::{ensure_operator_key, sign_operator_certificate};
 
 use ssh_key::certificate::{Builder, CertType};
 use ssh_key::rand_core::OsRng;
@@ -109,7 +111,7 @@ fn normalized(bytes: &[u8]) -> Option<String> {
 }
 
 /// Parses an OpenSSH private key, in whatever state of encryption, from bytes.
-fn parse_private(private: &[u8]) -> Result<PrivateKey, ssh_key::Error> {
+pub(crate) fn parse_private(private: &[u8]) -> Result<PrivateKey, ssh_key::Error> {
     match normalized(private) {
         Some(text) => PrivateKey::from_openssh(text.as_bytes()),
         None => Err(ssh_key::Error::FormatEncoding),
@@ -117,7 +119,7 @@ fn parse_private(private: &[u8]) -> Result<PrivateKey, ssh_key::Error> {
 }
 
 /// Whether a private key has a passphrase: its cipher or its KDF is not `none`.
-fn has_passphrase(key: &PrivateKey) -> bool {
+pub(crate) fn has_passphrase(key: &PrivateKey) -> bool {
     key.cipher() != Cipher::None || key.kdf().is_some() || key.is_encrypted()
 }
 
@@ -128,9 +130,18 @@ pub fn new_lease_key(id: &str) -> Result<LeaseKey, CredError> {
     if id.is_empty() || !is_one_line(id) {
         return Err(err("The lease's ID cannot be used as a key's comment."));
     }
+    new_key(&format!("agentspace lease {id}"))
+}
+
+/// Makes a new unencrypted ed25519 key pair with `comment`, which MUST hold no line break. A lease's
+/// key and the operator's key for a host are both made here, and so by the same code.
+pub(crate) fn new_key(comment: &str) -> Result<LeaseKey, CredError> {
+    if comment.is_empty() || !is_one_line(comment) {
+        return Err(err("The key's comment cannot be used."));
+    }
     let mut key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)
         .map_err(|_| err("A key could not be made."))?;
-    key.set_comment(format!("agentspace lease {id}"));
+    key.set_comment(comment);
     let private = key
         .to_openssh(LineEnding::LF)
         .map_err(|_| err("A key could not be written."))?;
@@ -170,8 +181,33 @@ pub fn sign_certificate(
     issue_unix: i64,
     ttl_seconds: u32,
 ) -> Result<String, CredError> {
+    sign_certificate_commented(
+        ca_private,
+        lease_public,
+        id,
+        user,
+        issue_unix,
+        ttl_seconds,
+        &format!("agentspace lease {id}"),
+    )
+}
+
+/// [`sign_certificate`] with the certificate's comment given: the operator's certificate for a host
+/// is signed here too, so by the same code, with the public key's comment.
+pub(crate) fn sign_certificate_commented(
+    ca_private: &[u8],
+    lease_public: &[u8],
+    id: &str,
+    user: &str,
+    issue_unix: i64,
+    ttl_seconds: u32,
+    comment: &str,
+) -> Result<String, CredError> {
     if id.is_empty() || !is_one_line(id) {
         return Err(err("The lease's ID cannot be used in a certificate."));
+    }
+    if comment.is_empty() || !is_one_line(comment) {
+        return Err(err("The certificate's comment cannot be used."));
     }
     if user.is_empty() || !is_one_line(user) {
         return Err(err("The user cannot be used in a certificate."));
@@ -216,9 +252,7 @@ pub fn sign_certificate(
         .extension("permit-port-forwarding", "")
         .map_err(build)?;
     builder.extension("permit-pty", "").map_err(build)?;
-    builder
-        .comment(format!("agentspace lease {id}"))
-        .map_err(build)?;
+    builder.comment(comment).map_err(build)?;
     let certificate = builder
         .sign(&ca)
         .map_err(|_| err("The certificate could not be signed."))?;

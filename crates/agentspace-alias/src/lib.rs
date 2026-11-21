@@ -15,8 +15,8 @@ mod disk;
 mod windows;
 
 pub use disk::{
-    AliasFailure, AliasFailureKind, check_alias_owner, ensure_include, find_proxy_program,
-    remove_alias, write_alias,
+    AliasFailure, AliasFailureKind, check_alias_owner, check_host_alias_owner, ensure_include,
+    find_proxy_program, remove_alias, remove_host_alias, write_alias, write_host_alias,
 };
 
 use std::fmt;
@@ -81,9 +81,14 @@ pub fn lease_file_text(home_full: &str, id: &str, file: &str) -> String {
     path_text(&joined)
 }
 
-/// The values of one alias file. `key_path` and `cert_path` are as `lease_file_text` gives them,
-/// already in the file's form. `proxy_command` is the raw command, which `alias_file_bytes`
-/// escapes.
+/// The values of one alias file. `key_path`, `cert_path` and `known_hosts` are as
+/// `lease_file_text` gives a path, already in the file's form. `proxy_command` is the raw command,
+/// which `alias_file_bytes` escapes.
+///
+/// A lease on the box passes `host_key_alias` as `agentspace` and `known_hosts` as `None`, and its
+/// bytes are v0.06's. A lease on another host passes `agentspace-host.<project>` and the path of
+/// agentspace's `known_hosts`, which adds the `UserKnownHostsFile` line (docs/state.md, "A lease
+/// alias for a host that is not the box").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasFile<'a> {
     pub id: &'a str,
@@ -92,6 +97,8 @@ pub struct AliasFile<'a> {
     pub user: &'a str,
     pub key_path: &'a str,
     pub cert_path: &'a str,
+    pub host_key_alias: &'a str,
+    pub known_hosts: Option<&'a str>,
     pub proxy_command: &'a str,
 }
 
@@ -115,13 +122,23 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
         || has_line_break(f.comment)
         || has_line_break(f.alias)
         || has_line_break(f.user)
+        || has_line_break(f.host_key_alias)
     {
         return Err(err("a value in the alias file holds a line break"));
+    }
+    if f.known_hosts.is_some_and(has_line_break) {
+        return Err(err("a path in the alias file holds a line break"));
     }
     if !is_valid_alias(f.alias) {
         return Err(err("the host alias is not a valid name"));
     }
     let proxy = f.proxy_command.replace('%', "%%");
+    // The `UserKnownHostsFile` line follows `HostKeyAlias` and is there only for another host's
+    // lease (state.md, "A lease alias for a host that is not the box").
+    let known_hosts = f
+        .known_hosts
+        .map(|path| format!("\x20 UserKnownHostsFile \"{path}\"\n"))
+        .unwrap_or_default();
     let text = format!(
         "# agentspace lease {id}; {comment}\n\
          Host {alias}\n\
@@ -129,7 +146,8 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
          \x20 IdentityFile \"{key}\"\n\
          \x20 CertificateFile \"{cert}\"\n\
          \x20 IdentitiesOnly yes\n\
-         \x20 HostKeyAlias agentspace\n\
+         \x20 HostKeyAlias {host_key_alias}\n\
+         {known_hosts}\
          \x20 StrictHostKeyChecking yes\n\
          \x20 ProxyCommand {proxy}\n\
          \x20 ServerAliveInterval 30\n\
@@ -142,6 +160,67 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
         user = f.user,
         key = f.key_path,
         cert = f.cert_path,
+        host_key_alias = f.host_key_alias,
+    );
+    Ok(text.into_bytes())
+}
+
+/// The name of a host's operator alias, `agentspace-host.<project>`, which is also the `Host` name,
+/// the `HostKeyAlias` and the file's name in `agentspace.d` (docs/state.md, "A host's operator
+/// alias"). The caller passes the project as the host registry gives it.
+pub fn host_alias_name(project: &str) -> String {
+    format!("agentspace-host.{project}")
+}
+
+/// The values of one host's operator alias. `key_path`, `cert_path` and `known_hosts` are in the
+/// file's form, as `lease_file_text` gives a path. `proxy_command` is the raw command, which
+/// `host_alias_file_bytes` escapes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAliasFile<'a> {
+    pub project: &'a str,
+    pub comment: &'a str,
+    pub key_path: &'a str,
+    pub cert_path: &'a str,
+    pub known_hosts: &'a str,
+    pub proxy_command: &'a str,
+}
+
+/// A host's operator alias's bytes, exactly as docs/state.md, "A host's operator alias": UTF-8 with
+/// no byte order mark, each line ending in one LF. A CR or LF in any value, or a project that does
+/// not make a valid alias, is refused and nothing is made.
+pub fn host_alias_file_bytes(f: &HostAliasFile) -> Result<Vec<u8>, AliasError> {
+    if has_line_break(f.key_path) || has_line_break(f.cert_path) || has_line_break(f.known_hosts) {
+        return Err(err("a path in the alias file holds a line break"));
+    }
+    if has_line_break(f.proxy_command) {
+        return Err(err("the ProxyCommand holds a line break"));
+    }
+    if has_line_break(f.project) || has_line_break(f.comment) {
+        return Err(err("a value in the alias file holds a line break"));
+    }
+    let host = host_alias_name(f.project);
+    if f.project.is_empty() || !is_valid_alias(&host) {
+        return Err(err("the host alias is not a valid name"));
+    }
+    let proxy = f.proxy_command.replace('%', "%%");
+    let text = format!(
+        "# agentspace host {project}; {comment}\n\
+         Host {host}\n\
+         \x20 User ubuntu\n\
+         \x20 IdentityFile \"{key}\"\n\
+         \x20 CertificateFile \"{cert}\"\n\
+         \x20 IdentitiesOnly yes\n\
+         \x20 HostKeyAlias {host}\n\
+         \x20 UserKnownHostsFile \"{known_hosts}\"\n\
+         \x20 StrictHostKeyChecking accept-new\n\
+         \x20 ProxyCommand {proxy}\n\
+         \x20 ServerAliveInterval 30\n\
+         \x20 ServerAliveCountMax 4\n",
+        project = f.project,
+        comment = f.comment,
+        key = f.key_path,
+        cert = f.cert_path,
+        known_hosts = f.known_hosts,
     );
     Ok(text.into_bytes())
 }
@@ -186,12 +265,24 @@ pub fn default_proxy_command(
 /// ID is the non-white-space run up to the last `;` in it, returned lowercased so it matches its
 /// lease (state.md, The alias file, the owner mark).
 pub fn owner_mark(bytes: &[u8]) -> Option<String> {
-    const PREFIX: &[u8] = b"# agentspace lease ";
+    mark_after(bytes, b"# agentspace lease ")
+}
+
+/// The normalized (lowercase) project of a host's operator alias's owner mark: its first line, up
+/// to the first LF, `# agentspace host <project>;`, read as [`owner_mark`] reads a lease's, except
+/// for the prefix. The two never match each other's files: `# agentspace host ` is not
+/// `# agentspace lease ` (state.md, "A host's operator alias").
+pub fn host_owner_mark(bytes: &[u8]) -> Option<String> {
+    mark_after(bytes, b"# agentspace host ")
+}
+
+/// The word after `prefix` on a file's first line, up to the last `;` in it, lowercased.
+fn mark_after(bytes: &[u8], prefix: &[u8]) -> Option<String> {
     let line = bytes.split(|&b| b == b'\n').next()?;
-    if line.len() < PREFIX.len() || !line[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+    if line.len() < prefix.len() || !line[..prefix.len()].eq_ignore_ascii_case(prefix) {
         return None;
     }
-    let rest = &line[PREFIX.len()..];
+    let rest = &line[prefix.len()..];
     let run_len = rest
         .iter()
         .position(|b| b.is_ascii_whitespace())
@@ -293,4 +384,114 @@ pub fn include_plan(config: &[u8]) -> IncludePlan {
     out.extend_from_slice(if has_crlf { b"\r\n" } else { b"\n" });
     out.extend_from_slice(body);
     IncludePlan::Insert(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lease<'a>(host_key_alias: &'a str, known_hosts: Option<&'a str>) -> AliasFile<'a> {
+        AliasFile {
+            id: "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90",
+            comment: "test",
+            alias: "agentspace-p-3f2a9c1e",
+            user: "ubuntu",
+            key_path: "C:/h/id",
+            cert_path: "C:/h/id-cert.pub",
+            host_key_alias,
+            known_hosts,
+            proxy_command: "\"C:\\a\\p.exe\" agentspace-p-3f2a9c1e",
+        }
+    }
+
+    fn host() -> HostAliasFile<'static> {
+        HostAliasFile {
+            project: "proj",
+            comment: "test",
+            key_path: "C:/h/id",
+            cert_path: "C:/h/id-cert.pub",
+            known_hosts: "C:/h/known_hosts",
+            proxy_command: "\"C:\\a\\p 100%.exe\" agentspace-host.proj",
+        }
+    }
+
+    #[test]
+    fn the_boxs_lease_alias_is_v006s_bytes_and_another_hosts_adds_one_line() {
+        let box_bytes = alias_file_bytes(&lease("agentspace", None)).unwrap();
+        let text = String::from_utf8(box_bytes).unwrap();
+        assert!(text.contains("\n  HostKeyAlias agentspace\n  StrictHostKeyChecking yes\n"));
+        assert!(!text.contains("UserKnownHostsFile"));
+        assert_eq!(text.lines().count(), 13);
+        let other =
+            alias_file_bytes(&lease("agentspace-host.proj", Some("C:/h/known_hosts"))).unwrap();
+        let other = String::from_utf8(other).unwrap();
+        assert!(other.contains(
+            "\n  HostKeyAlias agentspace-host.proj\n  UserKnownHostsFile \"C:/h/known_hosts\"\n  StrictHostKeyChecking yes\n"
+        ));
+        assert_eq!(other.lines().count(), 14);
+    }
+
+    #[test]
+    fn a_line_break_in_the_new_lease_values_is_refused() {
+        assert!(alias_file_bytes(&lease("a\nb", None)).is_err());
+        assert!(alias_file_bytes(&lease("a", Some("C:/h\r/k"))).is_err());
+    }
+
+    #[test]
+    fn a_host_alias_is_the_bytes_state_md_gives() {
+        let want = "# agentspace host proj; test\n\
+            Host agentspace-host.proj\n\
+            \x20 User ubuntu\n\
+            \x20 IdentityFile \"C:/h/id\"\n\
+            \x20 CertificateFile \"C:/h/id-cert.pub\"\n\
+            \x20 IdentitiesOnly yes\n\
+            \x20 HostKeyAlias agentspace-host.proj\n\
+            \x20 UserKnownHostsFile \"C:/h/known_hosts\"\n\
+            \x20 StrictHostKeyChecking accept-new\n\
+            \x20 ProxyCommand \"C:\\a\\p 100%%.exe\" agentspace-host.proj\n\
+            \x20 ServerAliveInterval 30\n\
+            \x20 ServerAliveCountMax 4\n";
+        assert_eq!(host_alias_file_bytes(&host()).unwrap(), want.as_bytes());
+    }
+
+    #[test]
+    fn a_host_alias_refuses_a_line_break_in_any_value_and_a_bad_project() {
+        for i in 0..6 {
+            let mut h = host();
+            let bad = "x\ny";
+            match i {
+                0 => h.project = bad,
+                1 => h.comment = bad,
+                2 => h.key_path = bad,
+                3 => h.cert_path = bad,
+                4 => h.known_hosts = "x\ry",
+                _ => h.proxy_command = bad,
+            }
+            assert!(host_alias_file_bytes(&h).is_err(), "{i}");
+        }
+        for project in ["", "a b", "a/b"] {
+            let mut h = host();
+            h.project = project;
+            assert!(host_alias_file_bytes(&h).is_err(), "{project:?}");
+        }
+    }
+
+    #[test]
+    fn the_two_owner_marks_never_match_each_other() {
+        let lease_bytes = alias_file_bytes(&lease("agentspace", None)).unwrap();
+        let host_bytes = host_alias_file_bytes(&host()).unwrap();
+        assert_eq!(
+            owner_mark(&lease_bytes).as_deref(),
+            Some("3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90")
+        );
+        assert_eq!(owner_mark(&host_bytes), None);
+        assert_eq!(host_owner_mark(&host_bytes).as_deref(), Some("proj"));
+        assert_eq!(host_owner_mark(&lease_bytes), None);
+        assert_eq!(
+            host_owner_mark(b"# AGENTSPACE HOST Proj; x\nHost y\n").as_deref(),
+            Some("proj")
+        );
+        assert_eq!(host_owner_mark(b"# agentspace host ;x\n"), None);
+        assert_eq!(host_owner_mark(b"# agentspace host proj x\n"), None);
+    }
 }

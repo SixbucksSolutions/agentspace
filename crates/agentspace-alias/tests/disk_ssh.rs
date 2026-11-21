@@ -160,3 +160,131 @@ fn openssh_reads_the_alias_through_the_cmd_form_too() {
     assert!(got[0].ends_with(&format!(" {ALIAS}")), "{}", got[0]);
     assert_eq!(values(&out, "user"), ["ubuntu"], "{out}");
 }
+
+/// The known_hosts file's text in an alias, written as the key's is: the home folder with every
+/// `\` as `/` and every `%` as `%%`.
+fn known_hosts_text(home: &Path) -> String {
+    format!(
+        "{}/.agentspace/known_hosts",
+        slashed(home).replace('%', "%%")
+    )
+}
+
+#[test]
+fn openssh_reads_another_hosts_lease_alias_with_its_host_key_and_known_hosts() {
+    let s = scratch("sshh1");
+    let home = s.0.join("home dir %7 x");
+    make_openssh_safe(&home);
+    let dir = home.join(".ssh");
+    let alias = "agentspace-examplehost-3f2a9c1e";
+    let home_s = home.display().to_string();
+    let key = lease_file_text(&home_s, ID, "id_ed25519");
+    let cert = lease_file_text(&home_s, ID, "id_ed25519-cert.pub");
+    let known = known_hosts_text(&home);
+    let proxy = "\"C:\\bin\\agentspace-ssh-proxy.exe\" agentspace-examplehost-3f2a9c1e";
+    let bytes = alias_file_bytes(&AliasFile {
+        id: ID,
+        comment: "Written by agentspace. Do not edit.",
+        alias,
+        user: "ubuntu",
+        key_path: &key,
+        cert_path: &cert,
+        host_key_alias: "agentspace-host.examplehost",
+        known_hosts: Some(&known),
+        proxy_command: proxy,
+    })
+    .unwrap();
+    ensure_include(&dir, NOW).unwrap();
+    write_alias(&dir, alias, ID, &bytes).unwrap();
+    let top = home.join("top-config");
+    fs::write(
+        &top,
+        format!("Include \"{}/*\"\n", slashed(&dir.join("agentspace.d"))),
+    )
+    .unwrap();
+    let out = ssh_g(&home, &top, alias);
+    assert_eq!(values(&out, "user"), ["ubuntu"], "{out}");
+    assert_eq!(
+        values(&out, "hostkeyalias"),
+        ["agentspace-host.examplehost"],
+        "{out}"
+    );
+    // ssh expands `%%` to `%` in this path, so what it prints is the real path of the file.
+    assert_eq!(
+        values(&out, "userknownhostsfile"),
+        [slashed(&home.join(".agentspace").join("known_hosts"))],
+        "{out}"
+    );
+    assert!(known.contains("%%7"));
+    // A lease alias never accepts a new key, and keeps the board's two forwards.
+    assert_eq!(values(&out, "stricthostkeychecking"), ["true"], "{out}");
+    assert_eq!(values(&out, "remoteforward").len(), 2, "{out}");
+    assert_eq!(values(&out, "identitiesonly"), ["yes"], "{out}");
+}
+
+#[test]
+fn openssh_reads_a_host_alias_that_accepts_a_new_key_and_forwards_nothing() {
+    let s = scratch("sshh2");
+    let home = s.0.join("home dir %7 x");
+    make_openssh_safe(&home);
+    let dir = home.join(".ssh");
+    let host_dir =
+        slashed(&home.join(".agentspace").join("hosts").join("examplehost")).replace('%', "%%");
+    let key = format!("{host_dir}/id_ed25519");
+    let cert = format!("{host_dir}/id_ed25519-cert.pub");
+    let known = known_hosts_text(&home);
+    let proxy = "\"C:\\bin\\agentspace-ssh-proxy.exe\" agentspace-host.examplehost";
+    let bytes = host_alias_file_bytes(&HostAliasFile {
+        project: "examplehost",
+        comment: "Written by agentspace. Do not edit.",
+        key_path: &key,
+        cert_path: &cert,
+        known_hosts: &known,
+        proxy_command: proxy,
+    })
+    .unwrap();
+    ensure_include(&dir, NOW).unwrap();
+    write_host_alias(&dir, "examplehost", &bytes).unwrap();
+    let top = home.join("top-config");
+    fs::write(
+        &top,
+        format!("Include \"{}/*\"\n", slashed(&dir.join("agentspace.d"))),
+    )
+    .unwrap();
+    let out = ssh_g(&home, &top, "agentspace-host.examplehost");
+    assert_eq!(values(&out, "user"), ["ubuntu"], "{out}");
+    assert_eq!(
+        values(&out, "identityfile"),
+        std::slice::from_ref(&key),
+        "{out}"
+    );
+    assert_eq!(
+        values(&out, "certificatefile"),
+        std::slice::from_ref(&cert),
+        "{out}"
+    );
+    assert_eq!(values(&out, "identitiesonly"), ["yes"], "{out}");
+    assert_eq!(
+        values(&out, "hostkeyalias"),
+        ["agentspace-host.examplehost"],
+        "{out}"
+    );
+    assert_eq!(
+        values(&out, "userknownhostsfile"),
+        [slashed(&home.join(".agentspace").join("known_hosts"))],
+        "{out}"
+    );
+    assert_eq!(
+        values(&out, "stricthostkeychecking"),
+        ["accept-new"],
+        "{out}"
+    );
+    assert_eq!(
+        values(&out, "proxycommand"),
+        [proxy.replace('%', "%%")],
+        "{out}"
+    );
+    assert_eq!(values(&out, "serveraliveinterval"), ["30"], "{out}");
+    assert_eq!(values(&out, "serveralivecountmax"), ["4"], "{out}");
+    assert!(values(&out, "remoteforward").is_empty(), "{out}");
+}
