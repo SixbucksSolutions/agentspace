@@ -172,6 +172,22 @@ function Get-PgSnapshot {
   }
 }
 
+# Names each of the three files that differs between two snapshots, and whether it was made or is
+# now absent, so that a failure says which file changed.
+function Get-PgSnapshotChange {
+  param([Parameter(Mandatory)]$Before, [Parameter(Mandatory)]$After)
+  $named = [ordered]@{ Hosts = 'hosts.json'; Projects = 'projects.json'; Leases = 'the lease state file' }
+  $changes = @(foreach ($k in $named.Keys) {
+    if ($After.$k -cne $Before.$k) {
+      if ($After.$k -ceq 'absent') { "$($named[$k]) is now absent" }
+      elseif ($Before.$k -ceq 'absent') { "$($named[$k]) was made" }
+      else { "$($named[$k]) changed" }
+    }
+  })
+  if ($changes.Count -gt 0) { return ($changes -join '; ') + '.' }
+  $null
+}
+
 function Get-PgHostsHash { param($Lab) Get-CcFileHash (Join-Path $Lab.UserProfile '.agentspace\hosts.json') }
 
 function Read-PgHosts {
@@ -413,8 +429,8 @@ try {
       if ($q.Count -gt 0) { return ($q -join '; ') + '.' }
       if ($g.Ms -ge 20000) { return "The get took $($g.Ms) ms, not under 20 seconds." }
       if ($starts.Count -ne 0) { return "The stand-in was started $($starts.Count) time(s)." }
-      $after = Get-PgSnapshot $lab
-      if ($after.Hosts -cne $snap.Hosts -or $after.Projects -cne $snap.Projects -or $after.Leases -cne $snap.Leases) { return 'hosts.json, projects.json or the lease state file changed.' }
+      $change = Get-PgSnapshotChange $snap (Get-PgSnapshot $lab)
+      if ($change) { return $change }
       $true
     }
   }
@@ -441,8 +457,8 @@ try {
     if (-not (Test-CcSuccess $l2.Run -Schema 'lease-list.output.schema.json')) { return "The filtered list gave $(Format-CcRun $l2.Run)" }
     if (@((ConvertFrom-CcJson $l1.Run.Stdout)['leases']).Count -ne 6) { return 'The list does not hold the six leases.' }
     if ($starts.Count -ne 0) { return "The stand-in was started $($starts.Count) time(s)." }
-    $after = Get-PgSnapshot $lab
-    if ($after.Hosts -cne $snap.Hosts -or $after.Projects -cne $snap.Projects -or $after.Leases -cne $snap.Leases) { return 'hosts.json, projects.json or the lease state file changed.' }
+    $change = Get-PgSnapshotChange $snap (Get-PgSnapshot $lab)
+    if ($change) { return $change }
     $true
   }
 
