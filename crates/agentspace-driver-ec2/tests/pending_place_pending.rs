@@ -365,7 +365,8 @@ fn a_default_transport_program_that_is_not_there_fails_the_lease() {
     let mut fx = Fx::with_ca_proxy(None);
     fx.state_elsewhere();
     fx.write_hosts(&[H::ready(PROJECT)]);
-    fx.write_leases(&[L::pending(A, PROJECT)]);
+    let lease = L::pending(A, PROJECT);
+    fx.write_leases(std::slice::from_ref(&lease));
     let before = fx.leases_bytes();
     assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(0, &[A]));
     assert_eq!(fx.leases_bytes(), before, "The lease stays pending");
@@ -378,7 +379,7 @@ fn a_default_transport_program_that_is_not_there_fails_the_lease() {
     fx.ctx.proxy_override = Some("my-transport --stdio".to_string());
     let t0 = now();
     assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
-    assert_placed(&fx, &L::pending(A, PROJECT), t0 - 1, now() + 1, true);
+    assert_placed(&fx, &lease, t0 - 1, now() + 1, true);
 }
 
 #[test]

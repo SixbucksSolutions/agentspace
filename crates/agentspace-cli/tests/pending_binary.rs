@@ -312,24 +312,21 @@ fn get_of_a_pending_lease_on_a_ready_host_starts_the_run_once_and_changes_no_lea
         started.is_folder("userprofile", &t.home),
         "USERPROFILE is the CLI's"
     );
-    assert_eq!(
-        started.get("state"),
-        "",
+    // A mismatch is reported by name, never by value: the run's environment is the logon one.
+    assert!(
+        started.get("state").is_empty(),
         "AGENTSPACE_STATE_DIR is absent: the CLI had none"
     );
-    assert_eq!(
-        started.get("ssh"),
-        "",
+    assert!(
+        started.get("ssh").is_empty(),
         "AGENTSPACE_SSH_DIR is absent: the CLI had none"
     );
-    assert_eq!(
-        started.get("proxy"),
-        "",
+    assert!(
+        started.get("proxy").is_empty(),
         "AGENTSPACE_PROXY_COMMAND is absent: the CLI had none"
     );
-    assert_eq!(
-        started.get("seam"),
-        "",
+    assert!(
+        started.get("seam").is_empty(),
         "A variable set only in the CLI's environment never reaches the run"
     );
     assert!(
@@ -400,7 +397,10 @@ fn the_run_gets_the_clis_folders_made_full_and_its_override_exactly() {
         started.is_folder("ssh", &t.home.join("ssh-rel")),
         "AGENTSPACE_SSH_DIR is made full against the CLI's working folder"
     );
-    assert_eq!(started.get("proxy"), "my-transport --stdio");
+    assert!(
+        started.get("proxy") == "my-transport --stdio",
+        "AGENTSPACE_PROXY_COMMAND is the CLI's, exactly"
+    );
 }
 
 #[test]

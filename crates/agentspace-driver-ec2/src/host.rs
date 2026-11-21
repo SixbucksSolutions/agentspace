@@ -382,10 +382,13 @@ fn run_environment(ctx: &Context, home: &Path) -> Vec<(&'static str, OsString)> 
 /// Step 5: makes the host's folder when it is missing, then starts the run detached, in the home
 /// folder, and waits for the start, never for the run, at most `bound`. A start that fails, or
 /// does not return within `bound`, changes nothing more and fails nothing.
+///
+/// The start MUST always be begun once step 4 has written `last_attempt_at`, or the record would
+/// say a run was started when none was, and none would start for 5 minutes (driver.md, a start
+/// counts as made because it was begun). So a `bound` already used up waits a floor of one second
+/// rather than skipping the start; check_pending's whole call still ends within its 20 seconds.
 fn start_run(ctx: &Context, project: &str, run: Run, detach: &SharedDetach, bound: Duration) {
-    if bound.is_zero() {
-        return;
-    }
+    let bound = bound.max(Duration::from_secs(1));
     let home = full(&ctx.home);
     // A failure to make the folder is a start that fails.
     if fs::create_dir_all(hosts::host_dir(&home, project)).is_err() {
@@ -900,6 +903,18 @@ mod tests {
         fs::write(hosts::host_dir(&home, "other"), b"x").unwrap();
         start_run(&f.ctx, "other", run, &detach, Duration::from_secs(5));
         assert!(f.starts().is_empty());
+    }
+
+    /// A bound already used up still begins the start, since step 4 has written
+    /// `last_attempt_at` and a record MUST NOT say a run was started when none was.
+    #[test]
+    fn a_bound_already_used_up_still_begins_the_start() {
+        let f = fx();
+        f.list("other");
+        let detach = f.detach.clone();
+        let run = operator_run(&f.ctx, "other").unwrap();
+        start_run(&f.ctx, "other", run, &detach, Duration::ZERO);
+        assert_eq!(f.starts().len(), 1);
     }
 
     #[test]
