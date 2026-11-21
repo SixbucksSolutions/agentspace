@@ -108,6 +108,8 @@ pub fn parse_credential_blob(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     // A repeated name, and a name that differs from another only in ASCII case, are refused.
     // With four members all among the four names, this also means each of the four is present.
+    // The count and the exact names above already refuse both; this loop is kept as a second
+    // guard, so that loosening either check alone never lets a duplicate through.
     for (i, (name, _)) in members.iter().enumerate() {
         if members[i + 1..]
             .iter()

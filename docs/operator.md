@@ -2734,7 +2734,8 @@ stamp covers the token and so cannot be computed without it:
 **Both files are localswim's, and agentspace never writes, moves or deletes them**
 ([docs/state.md](state.md#files-agentspace-reads-and-never-writes), which owns that rule).
 
-**Their formats are localswim's, and this page MUST NOT restate them.** localswim specifies both
+**Their formats are localswim's, and this page MUST NOT restate them, but as the checks the push
+makes in its own code, which follow.** localswim specifies both
 in its repository (`localswim/localswim`, the sibling checkout `C:\Projects\localswim`), as of
 commit `8d9d583` on its `main` (localswim PR #13, merged 2026-11-20):
 - **`docs/windows-operations.md`, section "The service receipt and credential files"**, with its
@@ -2778,6 +2779,10 @@ remembered from an earlier read can be stale.
   message**: localswim is not set up on this laptop ([Q19](#open-questions)). **Anything else that
   cannot be read as a file**, such as a folder at that path, a file the user may not read, or one
   another process holds without sharing read access, gives the "Could not read" warning below.
+- **The push MUST NOT retry a read that failed**, though localswim's "The receipt" says a reader
+  SHOULD retry a sharing violation after a short pause. This is agentspace's own rule: a push that
+  could not read writes no stamp, so the next command that pushes tries again, and a retry would
+  only lengthen the connection that is waiting on the push.
 - **Its encoding is chosen by a byte order mark:** the bytes `EF BB BF` mean UTF-8, `FF FE`
   UTF-16LE and `FE FF` UTF-16BE, and the mark is not part of the text. **A file with no mark is
   read as UTF-8.** Bytes that are not valid in the encoding are refused, rather than replaced, since
@@ -2866,9 +2871,8 @@ remembered from an earlier read can be stale.
      blob, below, is the real check.
 - **Those bytes are a DPAPI blob**, which localswim's section says is made in user scope with no
   optional entropy, and which begins `01 00 00 00` and then the DPAPI provider's GUID
-  `D0 8C 9D DF 01 15 D1 11 8C 7A 00 C0 4F C2 97 EB`. A reader MAY refuse a blob that does not begin
-  with them; the call below refuses one whose first four bytes differ, and does not check the
-  GUID. localswim's schema also pins the GUID and a flags field of 0 in its pattern, which the push
+  `D0 8C 9D DF 01 15 D1 11 8C 7A 00 C0 4F C2 97 EB`. The push does not check them; the call below
+  refuses a blob whose first four bytes differ, and does not check the GUID. localswim's schema also pins the GUID and a flags field of 0 in its pattern, which the push
   does not apply ([What the laptop reads](#what-the-laptop-reads)): a blob made with entropy fails
   the call below, and a blob the call decrypts is accepted whatever its flags. **The reader
   decrypts it with the Win32 call `CryptUnprotectData` (`crypt32.dll`)**, run in the operator's own
