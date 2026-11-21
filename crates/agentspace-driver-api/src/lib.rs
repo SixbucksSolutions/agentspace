@@ -43,6 +43,13 @@ pub struct Context {
     /// the CLI. `None` until E0.07-T03-S01 resolves it. Added by the architect, 2026-11-20, before
     /// v0.07-T03 (D55).
     pub operator_program: Option<PathBuf>,
+    /// `AGENTSPACE_STATE_DIR` made full when the CLI had it set and not empty, else `None`, so the
+    /// detached start passes it to the run if and only if the CLI had it (driver.md, The detached
+    /// start, C7). Added by the architect, 2026-11-21, during v0.07-T03 (#0150's question).
+    pub state_dir_env: Option<PathBuf>,
+    /// `AGENTSPACE_SSH_DIR` made full when the CLI had it set and not empty, else `None`, for the
+    /// same reason. Added by the architect, 2026-11-21, during v0.07-T03.
+    pub ssh_dir_env: Option<PathBuf>,
 }
 
 /// A request to place a lease (driver.md, Place a lease). Every value is already normalized and

@@ -305,6 +305,8 @@ mod tests {
             own_exe: root.join("bin").join("agentspace.exe"),
             state_dir: root.join("home").join(".agentspace"),
             operator_program: None,
+            state_dir_env: None,
+            ssh_dir_env: None,
         }
     }
 

@@ -345,8 +345,10 @@ pub fn context(
         system_root,
         own_exe: world.own_exe.to_path_buf(),
         state_dir,
-        // E0.07-T03-S01 resolves it from AGENTSPACE_PROVISION_CMD or the CLI's own folder.
+        // E0.07-T03-S01 resolves these three from the CLI's environment (driver.md, C7).
         operator_program: None,
+        state_dir_env: None,
+        ssh_dir_env: None,
     })
 }
 
