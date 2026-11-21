@@ -1,0 +1,30 @@
+[package]
+name = "agentspace-hosts"
+version = "0.7.0"
+edition.workspace = true
+description = "The host registry, the project list and a host's provisioning run lock (docs/state.md; D45, D54, D55)"
+publish = false
+
+[lib]
+name = "agentspace_hosts"
+path = "src/lib.rs"
+
+# Test-only. A program that tries a host's provisioning run lock and says whether it got it, so a
+# test can show the lock excludes a second process. It is never installed: xtask builds only the
+# binaries it names (crates/xtask). Tests reach it as env!("CARGO_BIN_EXE_hosts-run-lock-helper").
+[[bin]]
+name = "hosts-run-lock-helper"
+path = "src/bin/hosts-run-lock-helper.rs"
+test = false
+
+[dependencies]
+# write_atomically, the contract's times and the embedded schemas' validator.
+agentspace-state = { path = "../agentspace-state" }
+# The same pins agentspace-state uses. preserve_order keeps a document's members in the order they
+# were read; serde is only the Visitor and DeserializeSeed traits, for the repeated-member check.
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+serde = { version = "=1.0.229", default-features = false }
+
+[dev-dependencies]
+# Throwaway folders for the unit tests; the version agentspace-state's tests use.
+tempfile = { version = "=3.23.0", default-features = false }
