@@ -16,9 +16,9 @@ pub(crate) type HostKey = Option<String>;
 ///
 /// A registry that is not valid by state.md's rules is `the host registry is not valid`. One that
 /// cannot be opened or read (access denied, a folder at its path) MUST NOT be reported as not
-/// valid: it is `the host registry could not be read: Windows error <n>.`, the number alone, never
-/// the system's localized text (keeper.md, Hosts; architect, 2026-11-21, for v0.07-T03, on
-/// #0154's review).
+/// valid: it is `Windows error <n>.`, the number alone, never the system's localized text, so the
+/// line reads `Host registry could not be read: Windows error <n>.` (keeper.md, Hosts and Reasons;
+/// architect, 2026-11-21, for v0.07-T03, on #0154's review).
 pub(crate) fn read_registry(home: &Path) -> Result<Hosts, String> {
     agentspace_hosts::read(home).map_err(|e| match e {
         HostsError::NotValid(_) => "the host registry is not valid".to_string(),
@@ -35,7 +35,7 @@ fn unreadable_error(home: &Path) -> String {
         .err()
         .and_then(|e| e.raw_os_error())
         .unwrap_or(0);
-    format!("the host registry could not be read: Windows error {n}.")
+    format!("Windows error {n}.")
 }
 
 /// The box's project: the `project` of the registry's record whose stack is `agentbox`, which a
@@ -227,7 +227,7 @@ mod tests {
         std::fs::create_dir_all(home.path().join(".agentspace").join("hosts.json")).unwrap();
         assert_eq!(
             read_registry(home.path()),
-            Err("the host registry could not be read: Windows error 5.".to_string())
+            Err("Windows error 5.".to_string())
         );
     }
 

@@ -747,11 +747,7 @@ fn a_registry_that_cannot_be_read_fails_the_pass_and_leaves_every_holder_and_rec
         } else {
             // A folder cannot be opened: it is unreadable, never "not valid" (keeper.md, Hosts;
             // architect, 2026-11-21, for v0.07-T03).
-            assert!(
-                lines[0].ends_with("the host registry could not be read: Windows error 5."),
-                "{what}: {}",
-                lines[0]
-            );
+            assert_eq!(lines[0], format!("{prefix}Windows error 5."), "{what}");
         }
         assert_eq!(ran.stdout, format!("{}\n", lines[0]), "{what}");
         assert_eq!(ran.stderr, "", "{what}");
