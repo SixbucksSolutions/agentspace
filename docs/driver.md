@@ -945,6 +945,12 @@ v0.07-T01):
   `<system folder>\cmd.exe /d /c "<program>" provision -Host <project>`, with `<system folder>` as
   [state.md, The alias file](state.md#the-alias-file) gives it, and a `SystemRoot` that is unset or
   empty makes the program one that cannot be found.
+- **These two lines give the arguments, not the command line's bytes** (architect, 2026-11-21, for
+  v0.07-T04, on #0155's question). The detached start quotes the program it starts, and quotes an
+  argument only when it is empty or holds a space, a tab or a character outside printable ASCII
+  (its rule, #0147), so `cmd.exe` is quoted and a `.cmd`'s path without a space is not. **What a
+  program MUST receive is exactly the three arguments**, and a `.cmd` or `.bat` whose path holds a
+  space MUST still run and receive them. A check asserts those, never the line's quoting.
 
 **The detached start (D48, D55; pin P12, architect, 2026-11-20, for v0.07-T01).** A provisioning
 run takes about ten minutes, and MUST outlive the `create` or `get` that started it, the agent's
