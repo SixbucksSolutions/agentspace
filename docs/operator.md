@@ -1998,13 +1998,20 @@ order:
    **The default ProxyCommand line names the program found beside the run's own executable**,
    `agentspace-operator.exe`'s folder, as the lease CLI finds it
    ([How each program finds the others](#how-each-program-finds-the-others); P15, architect,
-   2026-11-20, for v0.07-T01): when it is not there, placement fails for that lease, which stays
-   `pending`, and the others are placed. `AGENTSPACE_PROXY_COMMAND`, when the run has it, replaces
-   the whole line. It logs `place done`. **A failure here leaves the host
-   `ready` and the leases `pending`**: it logs `place failed` with the reason, warns
+   2026-11-20, for v0.07-T01). When it is not there, each lease's placement fails and the lease
+   stays `pending`, so every lease of the run stays `pending`; the call itself succeeds, as for
+   any lease it leaves `pending`. **On a host that is not the box, the run fails before step 9**:
+   step 6's operator alias needs the same program (architect, 2026-11-21, for v0.07-T04).
+   `AGENTSPACE_PROXY_COMMAND`, when the run has it, replaces the whole line. It logs `place done`.
+   **A lease the call leaves `pending` while the call succeeds is logged and not warned**: one
+   `place failed lease=<id>` line each (below), and the run goes on (architect, 2026-11-21, for
+   v0.07-T04). **A failure of the call as a whole leaves the host `ready` and the leases
+   `pending`**: it logs `place failed` with the reason, warns
    `agentspace: The pending leases of '<project>' could not be placed: <reason>; the next run places
-   them.`, and the run goes on to step 10 and exits 0 (P3; the warning and the exit code are
-   confirmed by the architect, 2026-11-20, for v0.07-T01). The next run P2's rule allows places them.
+   them.`, where `<reason>` is the failure message without its `agentspace: ` prefix and its last
+   period (architect, 2026-11-21, for v0.07-T04), and the run goes on to step 10 and exits 0 (P3;
+   the warning and the exit code are confirmed by the architect, 2026-11-20, for v0.07-T01). The
+   next run P2's rule allows places them.
 10. **Prints where the sign-in procedure is** (D52), as the run's last line, **only for a host
     that was not `ready` when the run began, and never for the box**, since a host that was
     already `ready` has had its sign-ins (the condition is confirmed by the architect, 2026-11-20, for v0.07-T01):
