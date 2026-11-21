@@ -191,7 +191,9 @@ reads before it prints it").
    first shown to match a planted value: an instance ID, a run of 12 digits with UUIDs masked, the
    private network's addresses and host names, `vpc-`, `subnet-`, `vol-`, `sg-`, `arn:aws`, a token
    assignment, a key's text, a UUID, `$env:COMPUTERNAME` and `$env:USERNAME`. An example value from
-   AWS's documentation or an `EXAMPLE` key is not a hit.
+   AWS's documentation (`i-0123456789abcdef0` and its reverse), an `EXAMPLE` key, or a value of all
+   zeros (`i-00000000000000000`) is not a hit; the PR names each so the scan's hits read as expected
+   (v0.07-T02).
 7. **Check every commit's author and committer** carry `main`'s identity.
 8. **Merge exactly the reviewed commit, and only then the rest, in one command that stops at the
    first failure** (AGENTS.md, "Roles and pull requests"):
