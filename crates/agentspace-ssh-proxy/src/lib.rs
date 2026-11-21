@@ -38,7 +38,6 @@
 
 #![deny(unsafe_code)]
 
-mod cache;
 pub mod host;
 // The Windows calls, and the only module with `unsafe` (the Windows one, `win.rs`). On any other
 // system `other.rs` stands in, which is NOT THE CONTRACT'S: it exists so that the crate builds and
@@ -65,7 +64,6 @@ use agentspace_push::{Lookup, push_to_host_using};
 use agentspace_run::Runner;
 
 pub use agentspace_operator::COULD_NOT_REACH;
-pub use cache::{CACHE_FILE, FileCache};
 pub use host::{HOST_ALIAS_PREFIX, HostCache};
 
 /// The program's file name, which the second-argument refusal names (operator.md, The programs).
