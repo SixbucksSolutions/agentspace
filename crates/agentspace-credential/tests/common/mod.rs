@@ -42,6 +42,10 @@ impl Home {
     pub fn lease_dir(&self, id: &str) -> PathBuf {
         self.leases_dir().join(id)
     }
+    /// `%USERPROFILE%\.agentspace\hosts\<project>`: a host's folder (state.md, A host's folder).
+    pub fn host_dir(&self, project: &str) -> PathBuf {
+        self.home.join(".agentspace").join("hosts").join(project)
+    }
 }
 
 fn run_out(cmd: &mut Command) -> Output {
@@ -336,6 +340,43 @@ pub fn fingerprint(pubfile: &Path) -> String {
 pub fn cert_info(cert: &Path) -> CertInfo {
     let (ok, out, err) = ssh_keygen(&["-L", "-f", cert.to_str().unwrap()]);
     assert!(ok, "ssh-keygen -L failed: {err}");
+    parse_cert_listing(&out)
+}
+
+/// Runs `ssh-keygen` with every profile variable pointed into the throwaway home (#0137), through
+/// `Command::env`, never `set_var`. Stdin is closed, so a prompt fails rather than waits.
+pub fn ssh_keygen_in(h: &Home, args: &[&str]) -> (bool, String, String) {
+    let out = run_out(
+        Command::new("ssh-keygen")
+            .args(args)
+            .env("USERPROFILE", &h.home)
+            .env("HOME", &h.home)
+            .env("LOCALAPPDATA", h.home.join("AppData").join("Local"))
+            .env("APPDATA", h.home.join("AppData").join("Roaming"))
+            .env("TZ", "UTC"),
+    );
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Reads a certificate with `ssh-keygen -L`, run in the throwaway home, in UTC.
+pub fn cert_info_in(h: &Home, cert: &Path) -> CertInfo {
+    let (ok, out, err) = ssh_keygen_in(h, &["-L", "-f", cert.to_str().unwrap()]);
+    assert!(ok, "ssh-keygen -L failed: {err}");
+    parse_cert_listing(&out)
+}
+
+/// The fingerprint of a public key or certificate file, read with `ssh-keygen -l` in the home.
+pub fn fingerprint_in(h: &Home, file: &Path) -> String {
+    let (ok, out, err) = ssh_keygen_in(h, &["-l", "-f", file.to_str().unwrap()]);
+    assert!(ok, "ssh-keygen -l failed: {err}");
+    fp_of(&out)
+}
+
+fn parse_cert_listing(out: &str) -> CertInfo {
     let mut info = CertInfo {
         cert_type: String::new(),
         public_fp: String::new(),

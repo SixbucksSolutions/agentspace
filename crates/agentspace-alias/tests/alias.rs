@@ -13,6 +13,8 @@ fn sample<'a>(proxy: &'a str, key: &'a str, cert: &'a str) -> AliasFile<'a> {
         user: "ubuntu",
         key_path: key,
         cert_path: cert,
+        host_key_alias: "agentspace",
+        known_hosts: None,
         proxy_command: proxy,
     }
 }

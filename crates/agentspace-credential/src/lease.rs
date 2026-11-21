@@ -27,11 +27,11 @@ use crate::platform;
 use crate::{check_ca_keys, check_unencrypted, new_lease_key, sign_certificate};
 
 /// The private key's file name.
-const KEY_FILE: &str = "id_ed25519";
+pub(crate) const KEY_FILE: &str = "id_ed25519";
 /// The public key's file name.
-const PUB_FILE: &str = "id_ed25519.pub";
+pub(crate) const PUB_FILE: &str = "id_ed25519.pub";
 /// The certificate's file name, which ssh finds beside the key.
-const CERT_FILE: &str = "id_ed25519-cert.pub";
+pub(crate) const CERT_FILE: &str = "id_ed25519-cert.pub";
 
 /// Why a CA is not usable (state.md, "The CA", "Its checks").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub struct Issued {
     pub expires_at: i64,
 }
 
-fn fail(message: &str) -> CredFailure {
+pub(crate) fn fail(message: &str) -> CredFailure {
     CredFailure {
         message: message.to_string(),
         leftovers: Vec::new(),
@@ -80,11 +80,11 @@ pub fn ca_failure_message(f: CaFailure) -> &'static str {
     }
 }
 
-fn ca_failure(f: CaFailure) -> CredFailure {
+pub(crate) fn ca_failure(f: CaFailure) -> CredFailure {
     fail(ca_failure_message(f))
 }
 
-fn agentspace_dir(home: &Path) -> PathBuf {
+pub(crate) fn agentspace_dir(home: &Path) -> PathBuf {
     home.join(".agentspace")
 }
 
@@ -135,7 +135,7 @@ fn spot(path: &Path) -> Spot {
 
 /// All five of state.md's checks of the CA, in order, the first failure ending the check. On
 /// success it returns the CA's private key, as it was read for the check.
-fn load_ca(home: &Path) -> Result<Vec<u8>, CaFailure> {
+pub(crate) fn load_ca(home: &Path) -> Result<Vec<u8>, CaFailure> {
     let dir = agentspace_dir(home).join("ca");
     let private_path = dir.join("agentspace_ca");
     let public_path = dir.join("agentspace_ca.pub");
@@ -203,7 +203,7 @@ impl Made {
 }
 
 /// Removes a file, and says whether it is gone: a file that was never there is gone.
-fn file_gone(path: &Path) -> bool {
+pub(crate) fn file_gone(path: &Path) -> bool {
     match fs::remove_file(path) {
         Ok(()) => true,
         Err(e) => e.kind() == ErrorKind::NotFound,
@@ -241,7 +241,7 @@ fn write_new(made: &mut Made, name: &str, bytes: &[u8]) -> Result<(), ()> {
 }
 
 /// A line of a key file or a certificate file ends in one LF.
-fn with_line_ending(line: &str) -> Vec<u8> {
+pub(crate) fn with_line_ending(line: &str) -> Vec<u8> {
     let mut bytes = line.as_bytes().to_vec();
     bytes.push(b'\n');
     bytes
@@ -510,7 +510,7 @@ impl std::fmt::Debug for RenewGuard {
 }
 
 /// Thirty-two lowercase hex digits, new for each renewal.
-fn new_hex() -> String {
+pub(crate) fn new_hex() -> String {
     let mut bytes = [0u8; 16];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()

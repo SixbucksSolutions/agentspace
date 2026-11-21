@@ -6,7 +6,10 @@
 //! lease-api.md's message: no path, no user name, no other program's or library's error text.
 
 use crate::windows::{is_link_or_read_only, random_bytes, replace_keeping_rules};
-use crate::{IncludePlan, include_plan, is_valid_alias, owner_mark};
+use crate::{
+    IncludePlan, host_alias_name, host_owner_mark, include_plan, is_valid_alias, is_valid_project,
+    owner_mark,
+};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -54,6 +57,7 @@ fn io_fail(message: &str) -> AliasFailure {
 
 const FOREIGN_WHY: &str =
     "the host alias file belongs to another lease or to no lease, so a person has to move it";
+const HOST_FOREIGN_WHY: &str = "the operator's alias file for the host belongs to another host, to a lease or to no host, so a person has to move it";
 const INVALID_ALIAS_WHY: &str = "the host alias is not a valid name";
 
 /// The folder the `Include` line reads.
@@ -265,13 +269,19 @@ fn create_config(config: &Path) -> Result<(), AliasFailure> {
 /// What is at an alias file's place.
 enum Existing {
     Missing,
-    /// A file whose owner mark names this lease, with its bytes.
+    /// A file whose owner mark names the caller (a lease or a host), with its bytes.
     Mine(Vec<u8>),
-    /// Another lease's file, a file with no owner mark, or something that is not a file.
+    /// Another owner's file, a file with no owner mark, or something that is not a file.
     Foreign,
 }
 
-fn existing(path: &Path, id: &str, read_why: &str) -> Result<Existing, AliasFailure> {
+/// Reads what is at `path` without following a link: a file is `Mine` when `is_mine` says its
+/// owner mark names the caller, and anything else that is there is `Foreign`.
+fn existing(
+    path: &Path,
+    is_mine: &dyn Fn(&[u8]) -> bool,
+    read_why: &str,
+) -> Result<Existing, AliasFailure> {
     let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Existing::Missing),
@@ -281,9 +291,81 @@ fn existing(path: &Path, id: &str, read_why: &str) -> Result<Existing, AliasFail
         return Ok(Existing::Foreign);
     }
     let bytes = fs::read(path).map_err(|_| io_fail(read_why))?;
-    match owner_mark(&bytes) {
-        Some(mark) if mark == id.to_lowercase() => Ok(Existing::Mine(bytes)),
-        _ => Ok(Existing::Foreign),
+    if is_mine(&bytes) {
+        Ok(Existing::Mine(bytes))
+    } else {
+        Ok(Existing::Foreign)
+    }
+}
+
+/// Whether the owner mark of `bytes` names the lease `id`, compared without regard to ASCII case.
+fn names_lease(bytes: &[u8], id: &str) -> bool {
+    owner_mark(bytes).is_some_and(|mark| mark == id.to_lowercase())
+}
+
+/// Whether the owner mark of `bytes` names the host `project`, compared without regard to ASCII
+/// case.
+fn names_host(bytes: &[u8], project: &str) -> bool {
+    host_owner_mark(bytes).is_some_and(|mark| mark == project.to_lowercase())
+}
+
+/// The write both kinds of alias file share: `name` is the file's name in `agentspace.d` and the
+/// start of its temporary file's name, which is in `<ssh folder>`, never in `agentspace.d`.
+fn write_owned(
+    ssh_dir: &Path,
+    name: &str,
+    dest: &Path,
+    bytes: &[u8],
+    is_mine: &dyn Fn(&[u8]) -> bool,
+    foreign_why: &str,
+    write_why: &str,
+) -> Result<(), AliasFailure> {
+    check_folders(ssh_dir)?;
+    match existing(dest, is_mine, write_why)? {
+        Existing::Foreign => return Err(fail(AliasFailureKind::Foreign, foreign_why)),
+        Existing::Mine(old) if old == bytes => return Ok(()),
+        Existing::Mine(_) | Existing::Missing => {}
+    }
+    fs::create_dir_all(alias_dir(ssh_dir)).map_err(|_| io_fail(write_why))?;
+    let tmp = write_temp(ssh_dir, name, bytes).map_err(|_| io_fail(write_why))?;
+    if fs::rename(&tmp, dest).is_err() {
+        let _ = fs::remove_file(&tmp);
+        return Err(io_fail(write_why));
+    }
+    Ok(())
+}
+
+/// The owner check both kinds of alias file share: a missing file and one that names the caller
+/// give `Ok`, anything else [`AliasFailureKind::Foreign`].
+fn check_owned(
+    ssh_dir: &Path,
+    path: &Path,
+    is_mine: &dyn Fn(&[u8]) -> bool,
+    foreign_why: &str,
+) -> Result<(), AliasFailure> {
+    check_folders(ssh_dir)?;
+    match existing(path, is_mine, "the host alias file could not be read")? {
+        Existing::Foreign => Err(fail(AliasFailureKind::Foreign, foreign_why)),
+        Existing::Missing | Existing::Mine(_) => Ok(()),
+    }
+}
+
+/// The removal both kinds of alias file share, after the owner check.
+fn remove_owned(
+    ssh_dir: &Path,
+    path: &Path,
+    is_mine: &dyn Fn(&[u8]) -> bool,
+    foreign_why: &str,
+) -> Result<(), AliasFailure> {
+    check_folders(ssh_dir)?;
+    match existing(path, is_mine, "the host alias file could not be read")? {
+        Existing::Foreign => Err(fail(AliasFailureKind::Foreign, foreign_why)),
+        Existing::Missing => Ok(()),
+        Existing::Mine(_) => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(io_fail("the host alias file could not be deleted")),
+        },
     }
 }
 
@@ -292,30 +374,25 @@ fn existing(path: &Path, id: &str, read_why: &str) -> Result<Existing, AliasFail
 /// `agentspace.d` in one attempt.
 ///
 /// An existing file that names this lease and holds the same bytes is left alone, and one that
-/// names this lease and holds other bytes is replaced. Another lease's file, a file with no owner
-/// mark, and something that is not a file give [`AliasFailureKind::Foreign`] and change nothing.
-/// `id` is compared without regard to ASCII case.
+/// names this lease and holds other bytes is replaced. Another lease's file, a host's operator
+/// alias, a file with no owner mark, and something that is not a file give
+/// [`AliasFailureKind::Foreign`] and change nothing. `id` is compared without regard to ASCII case.
 pub fn write_alias(
     ssh_dir: &Path,
     alias: &str,
     id: &str,
     bytes: &[u8],
 ) -> Result<(), AliasFailure> {
-    const WHY: &str = "the host alias file could not be written";
     let dest = alias_path(ssh_dir, alias)?;
-    check_folders(ssh_dir)?;
-    match existing(&dest, id, WHY)? {
-        Existing::Foreign => return Err(fail(AliasFailureKind::Foreign, FOREIGN_WHY)),
-        Existing::Mine(old) if old == bytes => return Ok(()),
-        Existing::Mine(_) | Existing::Missing => {}
-    }
-    fs::create_dir_all(alias_dir(ssh_dir)).map_err(|_| io_fail(WHY))?;
-    let tmp = write_temp(ssh_dir, alias, bytes).map_err(|_| io_fail(WHY))?;
-    if fs::rename(&tmp, &dest).is_err() {
-        let _ = fs::remove_file(&tmp);
-        return Err(io_fail(WHY));
-    }
-    Ok(())
+    write_owned(
+        ssh_dir,
+        alias,
+        &dest,
+        bytes,
+        &|b| names_lease(b, id),
+        FOREIGN_WHY,
+        "the host alias file could not be written",
+    )
 }
 
 /// Checks the owner mark of the alias file a `release` is about to remove (docs/state.md,
@@ -324,11 +401,7 @@ pub fn write_alias(
 /// included, give [`AliasFailureKind::Foreign`].
 pub fn check_alias_owner(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFailure> {
     let path = alias_path(ssh_dir, alias)?;
-    check_folders(ssh_dir)?;
-    match existing(&path, id, "the host alias file could not be read")? {
-        Existing::Foreign => Err(fail(AliasFailureKind::Foreign, FOREIGN_WHY)),
-        Existing::Missing | Existing::Mine(_) => Ok(()),
-    }
+    check_owned(ssh_dir, &path, &|b| names_lease(b, id), FOREIGN_WHY)
 }
 
 /// Removes the lease's alias file. The owner mark is checked first, as [`check_alias_owner`] does,
@@ -336,16 +409,71 @@ pub fn check_alias_owner(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), Al
 /// [`AliasFailureKind::Io`].
 pub fn remove_alias(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFailure> {
     let path = alias_path(ssh_dir, alias)?;
-    check_folders(ssh_dir)?;
-    match existing(&path, id, "the host alias file could not be read")? {
-        Existing::Foreign => Err(fail(AliasFailureKind::Foreign, FOREIGN_WHY)),
-        Existing::Missing => Ok(()),
-        Existing::Mine(_) => match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(io_fail("the host alias file could not be deleted")),
-        },
+    remove_owned(ssh_dir, &path, &|b| names_lease(b, id), FOREIGN_WHY)
+}
+
+/// `<ssh folder>\agentspace.d\agentspace-host.<project>` and its name. A project that is not as the
+/// host registry names it (`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`) is refused, so that no path can
+/// leave the folder and no two projects share a file (Windows drops a trailing dot).
+fn host_alias_path(ssh_dir: &Path, project: &str) -> Result<(String, PathBuf), AliasFailure> {
+    let name = host_alias_name(project);
+    if !is_valid_project(project) || !is_valid_alias(&name) {
+        return Err(io_fail(INVALID_ALIAS_WHY));
     }
+    let path = alias_dir(ssh_dir).join(&name);
+    Ok((name, path))
+}
+
+/// Writes a host's operator alias, `<ssh folder>\agentspace.d\agentspace-host.<project>` (docs/
+/// state.md, "A host's operator alias"), through
+/// `<ssh folder>\agentspace-host.<project>.agentspace-tmp-<32 hex digits>`, which is moved into
+/// `agentspace.d` in one attempt.
+///
+/// An existing file that names this host and holds the same bytes is left alone, and one that names
+/// this host and holds other bytes is replaced. Another host's file, a lease's alias, a file with
+/// no owner mark, and something that is not a file, a symbolic link or another reparse point
+/// included, give [`AliasFailureKind::Foreign`] and change nothing. `project` is compared without
+/// regard to ASCII case.
+pub fn write_host_alias(ssh_dir: &Path, project: &str, bytes: &[u8]) -> Result<(), AliasFailure> {
+    let (name, dest) = host_alias_path(ssh_dir, project)?;
+    write_owned(
+        ssh_dir,
+        &name,
+        &dest,
+        bytes,
+        &|b| names_host(b, project),
+        HOST_FOREIGN_WHY,
+        "the operator's alias file for the host could not be written",
+    )
+}
+
+/// Checks the owner mark of a host's operator alias: a missing file and one that names this host
+/// give `Ok`. Another host's file, a lease's alias, a file with no owner mark, and something that
+/// is not a file give [`AliasFailureKind::Foreign`].
+pub fn check_host_alias_owner(ssh_dir: &Path, project: &str) -> Result<(), AliasFailure> {
+    let (_, path) = host_alias_path(ssh_dir, project)?;
+    check_owned(
+        ssh_dir,
+        &path,
+        &|b| names_host(b, project),
+        HOST_FOREIGN_WHY,
+    )
+}
+
+/// Removes a host's operator alias. The owner mark is checked first, as [`check_host_alias_owner`]
+/// does, and nothing is deleted when it fails. A missing file is `Ok`. A failure to delete is
+/// [`AliasFailureKind::Io`].
+///
+/// **No agentspace command calls this**: a host's operator alias is never removed by agentspace
+/// (docs/state.md, "A host's operator alias"). It exists for a person's tooling and for tests.
+pub fn remove_host_alias(ssh_dir: &Path, project: &str) -> Result<(), AliasFailure> {
+    let (_, path) = host_alias_path(ssh_dir, project)?;
+    remove_owned(
+        ssh_dir,
+        &path,
+        &|b| names_host(b, project),
+        HOST_FOREIGN_WHY,
+    )
 }
 
 /// The ProxyCommand program beside the running executable (docs/operator.md, "How each program
@@ -600,6 +728,28 @@ mod tests {
     }
 
     #[test]
+    fn a_host_project_the_registry_does_not_name_is_refused_and_nothing_is_written() {
+        let s = scratch();
+        for project in ["A", "a_b", "a.b", "..", "x.", "-a", "a-", "a\n", ""] {
+            let e = write_host_alias(&s.0, project, b"x").unwrap_err();
+            assert_eq!(e.kind, AliasFailureKind::Io, "{project:?}");
+            assert!(
+                check_host_alias_owner(&s.0, project).is_err(),
+                "{project:?}"
+            );
+            assert!(remove_host_alias(&s.0, project).is_err(), "{project:?}");
+        }
+        assert!(names(&s.0).is_empty());
+        // `x` and `x.` would be one file on Windows; only the first is a project.
+        write_host_alias(&s.0, "x", b"# agentspace host x; t\n").unwrap();
+        assert!(write_host_alias(&s.0, "x.", b"# agentspace host x.; t\n").is_err());
+        assert_eq!(
+            fs::read(s.0.join("agentspace.d").join("agentspace-host.x")).unwrap(),
+            b"# agentspace host x; t\n"
+        );
+    }
+
+    #[test]
     fn a_name_that_could_leave_the_folder_is_refused() {
         let s = scratch();
         for alias in ["..", ".", "a/b", "a\\b", "-x", ""] {
@@ -678,6 +828,8 @@ mod tests {
             user: "ubuntu",
             key_path: "C:/Users/x y/%%/id",
             cert_path: "C:/Users/x y/%%/id-cert.pub",
+            host_key_alias: "agentspace",
+            known_hosts: None,
             proxy_command: "\"C:\\a b\\p.exe\" agentspace-p-3f2a9c1e",
         })
         .unwrap();
@@ -743,6 +895,117 @@ mod tests {
         fs::create_dir(s.0.join("agentspace-ssh-proxy.exe")).unwrap();
         assert_eq!(find_proxy_program(&exe), None);
         assert_eq!(find_proxy_program(Path::new("")), None);
+    }
+
+    fn host_bytes(project: &str, extra: &str) -> Vec<u8> {
+        format!("# agentspace host {project}; test\nHost x\n{extra}").into_bytes()
+    }
+
+    #[test]
+    fn a_host_alias_is_written_replaced_checked_and_removed() {
+        let s = scratch();
+        let a = host_bytes("proj", "  User u\n");
+        let path = s.0.join("agentspace.d").join("agentspace-host.proj");
+        check_host_alias_owner(&s.0, "proj").unwrap();
+        remove_host_alias(&s.0, "proj").unwrap();
+        write_host_alias(&s.0, "proj", &a).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), a);
+        // The temporary file does not stay, in the ssh folder or in agentspace.d.
+        assert_eq!(names(&s.0), ["agentspace.d"]);
+        assert_eq!(names(&s.0.join("agentspace.d")), ["agentspace-host.proj"]);
+        // The same bytes write nothing, other bytes replace.
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_host_alias(&s.0, "proj", &a).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
+        let b = host_bytes("PROJ", "  User v\n");
+        write_host_alias(&s.0, "proj", &b).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b);
+        check_host_alias_owner(&s.0, "proj").unwrap();
+        remove_host_alias(&s.0, "proj").unwrap();
+        assert!(names(&s.0.join("agentspace.d")).is_empty());
+    }
+
+    #[test]
+    fn a_host_alias_refuses_what_is_not_its_own_and_leaves_it() {
+        let s = scratch();
+        let dir = s.0.join("agentspace.d");
+        fs::create_dir(&dir).unwrap();
+        let mine = host_bytes("proj", "");
+        let files: [(&str, Vec<u8>); 3] = [
+            ("agentspace-host.a", host_bytes("other", "")),
+            ("agentspace-host.b", file_bytes(ID, "")),
+            ("agentspace-host.c", b"Host c\n".to_vec()),
+        ];
+        for (name, bytes) in &files {
+            fs::write(dir.join(name), bytes).unwrap();
+        }
+        fs::create_dir(dir.join("agentspace-host.d")).unwrap();
+        for (project, expect_kept) in [("a", 0), ("b", 1), ("c", 2), ("d", 3)] {
+            let e = write_host_alias(&s.0, project, &mine).unwrap_err();
+            assert_eq!(e.kind, AliasFailureKind::Foreign, "{project}");
+            let e = check_host_alias_owner(&s.0, project).unwrap_err();
+            assert_eq!(e.kind, AliasFailureKind::Foreign, "{project}");
+            let e = remove_host_alias(&s.0, project).unwrap_err();
+            assert_eq!(e.kind, AliasFailureKind::Foreign, "{project}");
+            if let Some((name, bytes)) = files.get(expect_kept) {
+                assert_eq!(fs::read(dir.join(name)).unwrap(), *bytes, "{project}");
+            }
+        }
+        assert!(dir.join("agentspace-host.d").is_dir());
+        assert_eq!(names(&s.0), ["agentspace.d"]);
+    }
+
+    #[test]
+    fn the_two_owner_checks_never_cross() {
+        let s = scratch();
+        let lease = file_bytes(ID, "");
+        let host = host_bytes("proj", "");
+        let path = s.0.join("agentspace.d").join("agentspace-host.proj");
+        // An operator alias is no lease's: a lease's write, check and remove refuse it.
+        write_host_alias(&s.0, "proj", &host).unwrap();
+        let alias = "agentspace-host.proj";
+        assert_eq!(
+            write_alias(&s.0, alias, ID, &lease).unwrap_err().kind,
+            AliasFailureKind::Foreign
+        );
+        assert_eq!(
+            check_alias_owner(&s.0, alias, ID).unwrap_err().kind,
+            AliasFailureKind::Foreign
+        );
+        assert_eq!(
+            remove_alias(&s.0, alias, ID).unwrap_err().kind,
+            AliasFailureKind::Foreign
+        );
+        assert_eq!(fs::read(&path).unwrap(), host);
+        // A lease's alias is no host's: the host's write and remove refuse it.
+        fs::write(&path, &lease).unwrap();
+        assert_eq!(
+            write_host_alias(&s.0, "proj", &host).unwrap_err().kind,
+            AliasFailureKind::Foreign
+        );
+        assert_eq!(
+            remove_host_alias(&s.0, "proj").unwrap_err().kind,
+            AliasFailureKind::Foreign
+        );
+        assert_eq!(fs::read(&path).unwrap(), lease);
+    }
+
+    #[test]
+    fn a_host_alias_name_that_could_leave_the_folder_is_refused() {
+        let s = scratch();
+        for project in ["", "a/b", "a\\b", "a b", "a;b"] {
+            assert!(
+                write_host_alias(&s.0, project, b"x").is_err(),
+                "{project:?}"
+            );
+            assert!(remove_host_alias(&s.0, project).is_err(), "{project:?}");
+            assert!(
+                check_host_alias_owner(&s.0, project).is_err(),
+                "{project:?}"
+            );
+        }
+        assert!(names(&s.0).is_empty());
     }
 
     #[test]

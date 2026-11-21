@@ -172,6 +172,8 @@ pub fn alias_bytes(home: &Path, id: &str, alias: &str, proxy: &str) -> Vec<u8> {
         user: "ubuntu",
         key_path: &key,
         cert_path: &cert,
+        host_key_alias: "agentspace",
+        known_hosts: None,
         proxy_command: proxy,
     })
     .unwrap()
