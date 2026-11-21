@@ -19,6 +19,16 @@ fn main() {
     // rebuilds the crate.
     println!("cargo:rerun-if-changed={}", system.display());
     println!("cargo:rerun-if-changed=build.rs");
+    // The bootstrap is embedded by `include_bytes!` in embedded.rs, which Cargo tracks itself.
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest
+            .join("..")
+            .join("..")
+            .join("box")
+            .join("bootstrap.sh")
+            .display()
+    );
 
     let mut files = Vec::new();
     walk(&system, "", &mut files);

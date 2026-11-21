@@ -21,8 +21,17 @@ agentspace-push = { path = "../agentspace-push" }
 agentspace-run = { path = "../agentspace-run" }
 # write_atomically, for the instance-ID cache (state.md, Replacing a file).
 agentspace-state = { path = "../agentspace-state" }
-# Target, which names the host a command acts on (D49, D55).
+# Target, which names the host a command acts on (D49, D55); the host registry, the project list
+# and a host's provisioning run lock.
 agentspace-hosts = { path = "../agentspace-hosts" }
+# A host's operator alias, and the operator's key and certificate for it (operator.md, How the
+# operator reaches a host).
+agentspace-alias = { path = "../agentspace-alias" }
+agentspace-credential = { path = "../agentspace-credential" }
+# provision's step 9: the EC2 driver's place_pending and the Context it takes (operator.md,
+# provision; D48, D55).
+agentspace-driver-api = { path = "../agentspace-driver-api" }
+agentspace-driver-ec2 = { path = "../agentspace-driver-ec2" }
 # The versions already in Cargo.lock. serde: only DeserializeSeed and Visitor, for the
 # repeated-member check of the stack parameters file. jsonschema: the stack parameters schema,
 # carried inside the operator, with no remote reference fetched (D38).
@@ -37,5 +46,6 @@ agentspace-run = { path = "../agentspace-run" }
 tempfile = { version = "=3.23.0", default-features = false }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 sha2 = { version = "=0.10.9", default-features = false }
-# CryptProtectData, for the dummy Bot credential of the push test.
-windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+# CryptProtectData, for the dummy Bot credential of the push test; and SetFileTime, which gives a
+# throwaway operator folder its old creation time for the 24-hour sweep's test.
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }

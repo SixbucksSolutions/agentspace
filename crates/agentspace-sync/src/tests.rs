@@ -234,6 +234,8 @@ struct World {
     checkout: PathBuf,
     ca: Result<String, Failure>,
     pushed: RefCell<Vec<String>>,
+    /// Each push as `<alias> <project, or <box>>`.
+    pushes: RefCell<Vec<String>>,
     ca_checked: Cell<bool>,
 }
 
@@ -254,6 +256,7 @@ impl World {
             checkout,
             ca: Ok(FP.to_string()),
             pushed: RefCell::default(),
+            pushes: RefCell::default(),
             ca_checked: Cell::new(false),
         }
     }
@@ -293,13 +296,22 @@ impl World {
             self.ca.clone()
         };
         let find_go = || self.go.clone();
-        let push = |_: &Context, _: &dyn Say, id: &str| self.pushed.borrow_mut().push(id.into());
+        let push = |_: &Context, _: &dyn Say, id: &str, alias: &str, host: Option<&str>| {
+            self.pushed.borrow_mut().push(id.into());
+            self.pushes
+                .borrow_mut()
+                .push(format!("{alias} {}", host.unwrap_or("<box>")));
+        };
+        // The command's folder is left in place, so a test finds what the command sent.
         f(&Seams {
             clock: &FakeClock,
             ca_check: &ca_check,
             find_go: &find_go,
             localswim_checkout: self.checkout.clone(),
             push: &push,
+            folder: crate::folder::CommandFolder::new(),
+            ssh_dir: Some(self.home().join(".ssh")),
+            operator_dir: None,
         })
     }
 
@@ -311,18 +323,77 @@ impl World {
         self.run(|seams| deploy_using(&self.ctx, &CaEnv::default(), say, aws, remote, seams))
     }
 
-    fn operator(&self) -> PathBuf {
+    /// `%USERPROFILE%\.agentspace\operator`.
+    fn operator_root(&self) -> PathBuf {
         std::path::absolute(self.home())
             .unwrap()
             .join(".agentspace")
             .join("operator")
     }
 
+    /// The command's own folder under the operator's, `operator\<hex>\`: the one folder of a
+    /// 32-hex-digit name that a run left (the seams here never remove it).
+    fn operator(&self) -> PathBuf {
+        let root = self.operator_root();
+        let mut found: Vec<PathBuf> = std::fs::read_dir(&root)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| {
+                        crate::folder::is_command_folder_name(&e.file_name().to_string_lossy())
+                    })
+                    .map(|e| e.path())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(found.len() <= 1, "A command makes one folder");
+        found
+            .pop()
+            .unwrap_or_else(|| root.join("no-command-folder"))
+    }
+
+    /// `%USERPROFILE%\.agentspace\hosts.json`.
+    fn registry(&self) -> PathBuf {
+        std::path::absolute(self.home())
+            .unwrap()
+            .join(".agentspace")
+            .join("hosts.json")
+    }
+
+    /// The retired instance-ID cache's path. Only the v0.06 deploy tests below still name it, and
+    /// they are the deploy implementer's to move to the registry (`box_instance_id`,
+    /// `seed_registry`).
     fn cache(&self) -> PathBuf {
         std::path::absolute(self.home())
             .unwrap()
             .join(".agentspace")
             .join("instance-id.json")
+    }
+
+    /// The instance ID the box's record holds, or `None`.
+    fn box_instance_id(&self) -> Option<String> {
+        let home = std::path::absolute(self.home()).unwrap();
+        let hosts = agentspace_hosts::read(&home).unwrap();
+        hosts.hosts[0].instance_id.clone()
+    }
+
+    /// Writes the registry: the box's record, with `box_id` for its instance ID, and `others` after
+    /// it, as `(project, state, instance ID)`.
+    fn seed_registry(&self, box_id: Option<&str>, others: &[(&str, agentspace_hosts::HostState)]) {
+        let home = std::path::absolute(self.home()).unwrap();
+        let mut hosts = agentspace_hosts::Hosts::seed();
+        hosts.hosts[0].instance_id = box_id.map(str::to_string);
+        for (project, state) in others {
+            hosts.hosts.push(agentspace_hosts::Host {
+                project: project.to_string(),
+                stack: agentspace_hosts::stack_name(project),
+                state: *state,
+                instance_id: None,
+                last_attempt_at: None,
+            });
+        }
+        let held = agentspace_hosts::lock(&home).unwrap();
+        agentspace_hosts::write(&home, &hosts, &held).unwrap();
     }
 
     /// The nine calls of operator.md's table, as [`FakeRemote`] records them.
@@ -392,12 +463,12 @@ fn sync_makes_all_nine_calls_in_order_with_each_steps_message() {
             "ec2 describe-instances [json] --instance-ids | i-1234567890abcdef0",
         ]
     );
-    assert_eq!(
-        std::fs::read_to_string(w.cache()).unwrap(),
-        r#"{"version":0,"instance_id":"i-1234567890abcdef0"}"#
-    );
-    // The carried box\system, written out just before the copy.
+    // The ID read from the stack is written into the box's record, in a first change that writes
+    // `hosts.json`.
+    assert_eq!(w.box_instance_id().as_deref(), Some(ID));
+    // The carried box\system, written out just before the copy, in the command's own folder.
     assert!(w.operator().join("system").join("install.sh").is_file());
+    assert_eq!(*w.pushes.borrow(), vec!["agentspace <box>".to_string()]);
 }
 
 #[test]
@@ -510,7 +581,7 @@ fn a_failed_ca_check_touches_nothing() {
     assert!(aws.calls.borrow().is_empty());
     assert!(remote.lines().is_empty());
     assert!(say.lines().is_empty());
-    assert!(!w.cache().exists());
+    assert!(!w.registry().exists());
 }
 
 #[test]
@@ -546,16 +617,16 @@ fn a_failed_build_fails_before_its_copy() {
 #[test]
 fn an_operator_folder_that_cannot_be_written_fails_with_fa16_before_the_copy() {
     let w = World::new("sync-fa16");
-    let agentspace = w.operator().parent().unwrap().to_path_buf();
+    let agentspace = w.operator_root().parent().unwrap().to_path_buf();
     std::fs::create_dir_all(&agentspace).unwrap();
-    std::fs::write(w.operator(), "a file where the folder belongs").unwrap();
+    std::fs::write(w.operator_root(), "a file where the folder belongs").unwrap();
     let remote = FakeRemote::default();
     let failure = w
         .sync(&FakeSay::default(), &FakeAws::default(), &remote)
         .unwrap_err();
     assert_eq!(
         failure.message,
-        format!("agentspace: Cannot write {}.", w.operator().display())
+        format!("agentspace: Cannot write {}.", w.operator_root().display())
     );
     // Only the staging folder's removal ran; nothing read the folder.
     assert_eq!(remote.lines(), w.table()[..1].to_vec());
@@ -564,11 +635,7 @@ fn an_operator_folder_that_cannot_be_written_fails_with_fa16_before_the_copy() {
 #[test]
 fn deploy_passes_its_arguments_in_order_then_refreshes_the_cache_and_syncs() {
     let w = World::new("deploy").with_deploy_files();
-    std::fs::write(
-        w.cache(),
-        r#"{"version":0,"instance_id":"i-fedcba9876543210f"}"#,
-    )
-    .unwrap();
+    w.seed_registry(Some("i-fedcba9876543210f"), &[]);
     let (say, aws, remote) = (
         FakeSay::default(),
         FakeAws::default(),
@@ -595,10 +662,9 @@ fn deploy_passes_its_arguments_in_order_then_refreshes_the_cache_and_syncs() {
     assert!(calls[2].starts_with("ec2 describe-instances"));
     assert_eq!(calls.len(), 4);
     assert!(std::fs::read(&template).unwrap() == crate::embedded::TEMPLATE);
-    assert_eq!(
-        std::fs::read_to_string(w.cache()).unwrap(),
-        r#"{"version":0,"instance_id":"i-1234567890abcdef0"}"#
-    );
+    // The box's record holds the ID the stack gave, and the retired cache is never written.
+    assert_eq!(w.box_instance_id().as_deref(), Some(ID));
+    assert!(!w.cache().exists());
     let lines = say.lines();
     assert_eq!(
         lines[0],
@@ -626,11 +692,7 @@ fn deploys_aws_failures() {
     ];
     for (error, message) in cases {
         let w = World::new("deploy-aws").with_deploy_files();
-        std::fs::write(
-            w.cache(),
-            r#"{"version":0,"instance_id":"i-fedcba9876543210f"}"#,
-        )
-        .unwrap();
+        w.seed_registry(Some("i-fedcba9876543210f"), &[]);
         let aws = FakeAws::default();
         *aws.deploy.borrow_mut() = Err(error);
         let remote = FakeRemote::default();
@@ -639,19 +701,15 @@ fn deploys_aws_failures() {
         assert_eq!(aws.calls.borrow().len(), 1);
         assert!(remote.lines().is_empty());
         assert!(!w.ca_checked.get());
-        // A failed deploy leaves the cache alone.
-        assert!(w.cache().exists());
+        // A failed deploy leaves the record's instance ID alone.
+        assert_eq!(w.box_instance_id().as_deref(), Some("i-fedcba9876543210f"));
     }
 }
 
 #[test]
 fn a_stack_with_no_instance_id_output_leaves_no_cache() {
     let w = World::new("deploy-no-output").with_deploy_files();
-    std::fs::write(
-        w.cache(),
-        r#"{"version":0,"instance_id":"i-fedcba9876543210f"}"#,
-    )
-    .unwrap();
+    w.seed_registry(Some("i-fedcba9876543210f"), &[]);
     let aws = FakeAws::default();
     *aws.stack.borrow_mut() = json!({"Stacks": [{"Outputs": []}]});
     let failure = w
@@ -661,7 +719,8 @@ fn a_stack_with_no_instance_id_output_leaves_no_cache() {
         failure.message,
         "agentspace: Stack 'agentbox' has no InstanceId output."
     );
-    assert!(!w.cache().exists());
+    // The ID was removed before the read, and a failed read writes none.
+    assert_eq!(w.box_instance_id(), None);
 }
 
 #[test]
@@ -993,11 +1052,12 @@ fn no_test_calls_the_pinned_pair_but_the_rigs_guarded_two() {
     assert!(named[1].starts_with("src/tests.rs:"), "{named:?}");
 }
 
-/// The library reads no environment variable but `PATH`, once, to find `go` (operator.md,
+/// The library reads no environment variable but `PATH`, once, to find `go`, and
+/// `AGENTSPACE_SSH_DIR`, once, to find the ssh folder a host's operator alias goes in (operator.md,
 /// Environment variables); every other value comes from the `Context`. The scan is proven able to
-/// find a read by finding the one that exists.
+/// find a read by finding the ones that exist.
 #[test]
-fn the_library_reads_no_environment_variable_but_path() {
+fn the_library_reads_no_environment_variable_but_path_and_the_ssh_folder() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut reads = Vec::new();
     for entry in std::fs::read_dir(&src).unwrap() {
@@ -1010,11 +1070,599 @@ fn the_library_reads_no_environment_variable_but_path() {
         // A module's own tests come after the library's code.
         let library = text.split("#[cfg(test)]\nmod tests {").next().unwrap();
         for (n, line) in library.lines().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") {
+                continue;
+            }
             if line.contains("env::var") || line.contains("var_os(") {
                 reads.push(format!("{name}:{}: {}", n + 1, line.trim()));
             }
         }
     }
-    assert_eq!(reads.len(), 1, "{reads:?}");
-    assert!(reads[0].contains("var_os(\"PATH\")"), "{reads:?}");
+    reads.sort();
+    // The third is `provision`'s one look-up over the run's own environment, which the driver's
+    // context is built from (operator.md, provision).
+    assert_eq!(reads.len(), 3, "{reads:?}");
+    assert!(
+        reads
+            .iter()
+            .any(|r| r.contains("|name: &str| std::env::var_os(name)")),
+        "{reads:?}"
+    );
+    assert!(
+        reads.iter().any(|r| r.contains("var_os(\"PATH\")")),
+        "{reads:?}"
+    );
+    assert!(
+        reads
+            .iter()
+            .any(|r| r.contains("var_os(\"AGENTSPACE_SSH_DIR\")")),
+        "{reads:?}"
+    );
+}
+
+use agentspace_hosts::{HostState, Target};
+
+impl World {
+    fn sync_target(
+        &self,
+        target: Target<'_>,
+        say: &FakeSay,
+        aws: &FakeAws,
+        remote: &FakeRemote,
+    ) -> Result<(), Failure> {
+        self.run(|seams| {
+            crate::sync_target_using(
+                &self.ctx,
+                &CaEnv::default(),
+                target,
+                say,
+                aws,
+                remote,
+                seams,
+            )
+        })
+    }
+
+    fn sync_all(&self, say: &FakeSay, aws: &FakeAws, remote: &FakeRemote) -> Result<(), Failure> {
+        self.run(|seams| {
+            crate::sync_all_using(&self.ctx, &CaEnv::default(), say, aws, remote, seams)
+        })
+    }
+}
+
+#[test]
+fn a_project_with_no_record_fails_before_any_program_starts() {
+    let w = World::new("sync-no-host");
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    let failure = w
+        .sync_target(Target::Host("agentspace"), &say, &aws, &remote)
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        "agentspace: Project 'agentspace' has no host; provision -Host agentspace makes one."
+    );
+    assert!(!w.ca_checked.get());
+    assert!(aws.calls.borrow().is_empty() && remote.lines().is_empty());
+    assert!(say.lines().is_empty());
+}
+
+#[test]
+fn a_registry_that_is_not_valid_fails_sync_before_any_program_starts() {
+    let w = World::new("sync-bad-registry");
+    std::fs::create_dir_all(w.registry().parent().unwrap()).unwrap();
+    std::fs::write(w.registry(), "not json").unwrap();
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    let failure = w.sync(&say, &aws, &remote).unwrap_err();
+    assert!(
+        failure
+            .message
+            .starts_with("agentspace: The host registry "),
+        "{}",
+        failure.message
+    );
+    assert!(!w.ca_checked.get());
+    assert!(aws.calls.borrow().is_empty() && remote.lines().is_empty());
+}
+
+#[test]
+fn the_boxs_record_instance_id_is_used_and_the_box_is_reached_over_agentspace() {
+    let w = World::new("sync-box-record");
+    w.seed_registry(Some(ID), &[]);
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    // `-Host swimcoach` is the box in every respect.
+    w.sync_target(Target::Host("swimcoach"), &say, &aws, &remote)
+        .unwrap();
+    // The record held the ID, so the stack was never asked.
+    assert!(
+        aws.calls
+            .borrow()
+            .iter()
+            .all(|c| !c.starts_with("cloudformation"))
+    );
+    assert_eq!(*w.pushes.borrow(), vec!["agentspace <box>".to_string()]);
+    assert!(
+        remote
+            .lines()
+            .iter()
+            .all(|l| !l.contains("agentspace-host"))
+    );
+}
+
+#[test]
+fn sync_all_syncs_ready_hosts_and_skips_the_others_with_their_line() {
+    let w = World::new("sync-all-hosts");
+    w.seed_registry(None, &[("agentspace", HostState::Creating)]);
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    w.sync_all(&say, &aws, &remote).unwrap();
+    assert_eq!(
+        say.lines(),
+        vec![
+            READY,
+            COPY_SYSTEM,
+            COPY_CA,
+            BUILDING,
+            COPY_CLI,
+            "progress: Skipping: the host is creating; its next provisioning run syncs it.",
+        ]
+    );
+    assert_eq!(*w.pushes.borrow(), vec!["agentspace <box>".to_string()]);
+    // The skipped host's stack was never asked about.
+    assert!(
+        aws.calls
+            .borrow()
+            .iter()
+            .all(|c| !c.contains("agentspace-host-agentspace"))
+    );
+}
+
+#[test]
+fn sync_all_goes_on_past_a_failed_host_and_counts_the_failures() {
+    let w = World::new("sync-all-fail");
+    w.seed_registry(None, &[("agentspace", HostState::Failed)]);
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::failing(4, 1),
+    );
+    let failure = w.sync_all(&say, &aws, &remote).unwrap_err();
+    assert_eq!(failure.message, "agentspace: 1 of 2 hosts failed.");
+    assert!(w.pushed.borrow().is_empty());
+    assert_eq!(
+        say.lines().last().unwrap(),
+        "progress: Skipping: the host is failed; its next provisioning run syncs it."
+    );
+}
+
+#[test]
+fn the_sign_in_message_ends_sync_all_at_once() {
+    let w = World::new("sync-all-sign-in");
+    w.seed_registry(None, &[("agentspace", HostState::Ready)]);
+    let aws = FakeAws::default();
+    *aws.describe.borrow_mut() = Err(AwsError::SignIn);
+    let remote = FakeRemote::default();
+    let failure = w.sync_all(&FakeSay::default(), &aws, &remote).unwrap_err();
+    assert_eq!(failure.message, SIGN_IN_MESSAGE);
+    assert!(remote.lines().is_empty());
+}
+
+#[test]
+fn a_hosts_deadline_hint_names_its_own_alias_and_the_boxs_stays() {
+    let w = World::new("sync-hint");
+    let places = crate::files::Places::new(&w.ctx);
+    let hosts = agentspace_hosts::Hosts::seed();
+    let mut host = hosts.hosts[0].clone();
+    let message = "agentspace: i-1234567890abcdef0 was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch";
+    let failure = || Failure {
+        message: message.to_string(),
+        caller: CallerFailure::NotReady,
+    };
+    let plan = crate::syncing::Plan::for_record(&places, &host);
+    assert_eq!(plan.hint(failure()).message, message);
+    host.project = "demo".into();
+    host.stack = agentspace_hosts::stack_name("demo");
+    let plan = crate::syncing::Plan::for_record(&places, &host);
+    assert_eq!(plan.alias, "agentspace-host.demo");
+    assert_eq!(
+        plan.hint(failure()).message,
+        message.replace(
+            "ssh agentspace journalctl",
+            "ssh agentspace-host.demo journalctl"
+        )
+    );
+}
+
+#[test]
+fn the_commands_folder_is_removed_as_the_command_ends() {
+    let dir = Scratch::new("folder-removed");
+    let ctx = ctx_in(dir.path());
+    let places = crate::files::Places::new(&ctx);
+    let made = with_the_operators_seams(&dir, |seams| seams.folder.path(&places).unwrap()).0;
+    assert!(!made.exists());
+    assert!(places.operator.is_dir());
+}
+
+/// The deploy and provision implementer's tests: `deploy -Host`'s stack steps and the
+/// provisioning run's records and log, through the fakes above.
+mod host_deploy_and_provision {
+    use super::*;
+    use agentspace_hosts::HostState;
+
+    /// Answers `describe-stacks` from a queue, first to last, and every other call as [`FakeAws`]
+    /// does; records each call as one line.
+    struct ScriptedAws {
+        stacks: RefCell<Vec<Result<Value, AwsError>>>,
+        deploy: Result<Value, AwsError>,
+        inner: FakeAws,
+    }
+
+    impl ScriptedAws {
+        fn new(stacks: Vec<Result<Value, AwsError>>) -> ScriptedAws {
+            ScriptedAws {
+                stacks: RefCell::new(stacks),
+                deploy: Ok(Value::Null),
+                inner: FakeAws::default(),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.inner.calls.borrow().clone()
+        }
+    }
+
+    impl Aws for ScriptedAws {
+        fn call(&self, call: &Call) -> Result<Value, AwsError> {
+            let answer = self.inner.call(call);
+            match (call.service, call.operation) {
+                ("cloudformation", "describe-stacks") => {
+                    let mut stacks = self.stacks.borrow_mut();
+                    if stacks.is_empty() {
+                        answer
+                    } else {
+                        stacks.remove(0)
+                    }
+                }
+                ("cloudformation", "deploy") => self.deploy.clone(),
+                _ => answer,
+            }
+        }
+    }
+
+    const PROJECT: &str = "example";
+    const STACK: &str = "agentspace-host-example";
+
+    fn missing() -> Result<Value, AwsError> {
+        Err(AwsError::Failed(
+            "An error occurred (ValidationError): Stack with id x does not exist".into(),
+        ))
+    }
+
+    fn status(s: &str) -> Result<Value, AwsError> {
+        Ok(json!({"Stacks": [{"StackStatus": s}]}))
+    }
+
+    fn outputs() -> Result<Value, AwsError> {
+        Ok(json!({"Stacks": [{"Outputs": [{"OutputKey": "InstanceId", "OutputValue": ID}]}]}))
+    }
+
+    fn home(w: &World) -> PathBuf {
+        std::path::absolute(w.home()).unwrap()
+    }
+
+    fn with_ca(w: World) -> World {
+        let ca = w.home().join(".agentspace").join("ca");
+        std::fs::create_dir_all(&ca).unwrap();
+        std::fs::write(
+            ca.join("agentspace_ca.pub"),
+            "ssh-ed25519 AAAAcakey agentspace-ca NAME 2026-11-20\r\n",
+        )
+        .unwrap();
+        w
+    }
+
+    fn record(w: &World, project: &str) -> agentspace_hosts::Host {
+        let hosts = agentspace_hosts::read(&home(w)).unwrap();
+        agentspace_hosts::host_for(&hosts, project).unwrap().clone()
+    }
+
+    fn host_stack(
+        w: &World,
+        aws: &ScriptedAws,
+        instance_type: Option<&str>,
+    ) -> Result<String, Failure> {
+        w.run(|seams| {
+            crate::deploy::host_stack(
+                &w.ctx,
+                &CaEnv::default(),
+                PROJECT,
+                instance_type,
+                &FakeSay::default(),
+                aws,
+                seams,
+            )
+        })
+    }
+
+    #[test]
+    fn a_missing_stack_is_created_with_the_creation_parameters_alone() {
+        let w = with_ca(World::new("host-create").with_deploy_files());
+        // The box's file sizes the box alone: its InstanceType never reaches a new host.
+        std::fs::write(
+            w.home().join(".agentspace").join("stack-parameters.json"),
+            r#"{"version":0,"parameters":{"VpcId":"VPC_X","InstanceType":"m9g.4xlarge","SubnetId":"SUBNET_Y"}}"#,
+        )
+        .unwrap();
+        w.seed_registry(None, &[(PROJECT, HostState::Creating)]);
+        let aws = ScriptedAws::new(vec![missing(), outputs()]);
+        assert_eq!(host_stack(&w, &aws, None).unwrap(), ID);
+        let calls = aws.calls();
+        assert_eq!(
+            calls[0],
+            format!("cloudformation describe-stacks [json] --stack-name | {STACK}")
+        );
+        assert!(calls[1].starts_with(&format!(
+            "cloudformation deploy [pass] --stack-name | {STACK} | --template-file | "
+        )));
+        assert!(calls[1].ends_with(&format!(
+            "--capabilities | CAPABILITY_IAM | --no-fail-on-empty-changeset | --tags | \
+             project={STACK} | --parameter-overrides | SshPublicKey=ssh-ed25519 AAAAkey me@laptop | \
+             SubnetId=SUBNET_Y | VpcId=VPC_X | HostName={STACK} | CaPublicKey=ssh-ed25519 AAAAcakey"
+        )));
+        assert!(!calls[1].contains("InstanceType") && !calls[1].contains("NAME"));
+        assert_eq!(calls.len(), 3);
+        assert!(w.ca_checked.get());
+        let r = record(&w, PROJECT);
+        assert_eq!(r.instance_id.as_deref(), Some(ID));
+        assert_eq!(r.state, HostState::Creating, "deploy never sets a state");
+    }
+
+    #[test]
+    fn instance_type_comes_last_on_a_create_and_alone_on_an_update() {
+        let w = with_ca(World::new("host-sized").with_deploy_files());
+        w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+        let aws = ScriptedAws::new(vec![status("REVIEW_IN_PROGRESS"), outputs()]);
+        host_stack(&w, &aws, Some("m9g.2xlarge")).unwrap();
+        assert!(
+            aws.calls()[1]
+                .ends_with("CaPublicKey=ssh-ed25519 AAAAcakey | InstanceType=m9g.2xlarge")
+        );
+        let aws = ScriptedAws::new(vec![status("UPDATE_ROLLBACK_COMPLETE"), outputs()]);
+        host_stack(&w, &aws, Some("m9g.2xlarge")).unwrap();
+        assert!(aws.calls()[1].ends_with(&format!(
+            "--tags | project={STACK} | --parameter-overrides | InstanceType=m9g.2xlarge"
+        )));
+    }
+
+    #[test]
+    fn an_existing_stack_is_updated_with_no_parameter_and_reads_no_file() {
+        // No public key, no parameters file and no CA: an update reads none of them.
+        let w = World::new("host-update");
+        w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+        let aws = ScriptedAws::new(vec![status("CREATE_COMPLETE"), outputs()]);
+        host_stack(&w, &aws, None).unwrap();
+        assert!(aws.calls()[1].ends_with(&format!("--tags | project={STACK}")));
+        assert!(!w.ca_checked.get());
+        assert_eq!(record(&w, PROJECT).instance_id.as_deref(), Some(ID));
+    }
+
+    #[test]
+    fn a_new_stack_needs_subnet_and_vpc_before_any_change() {
+        let w = with_ca(World::new("host-no-subnet").with_deploy_files());
+        let params = w.home().join(".agentspace").join("stack-parameters.json");
+        std::fs::write(&params, r#"{"version":0,"parameters":{"VpcId":"VPC_X"}}"#).unwrap();
+        w.seed_registry(None, &[(PROJECT, HostState::Creating)]);
+        let aws = ScriptedAws::new(vec![missing()]);
+        assert_eq!(
+            host_stack(&w, &aws, None).unwrap_err().message,
+            format!(
+                "agentspace: {} MUST name SubnetId and VpcId for a new host's stack.",
+                std::path::absolute(&params).unwrap().display()
+            )
+        );
+        assert_eq!(aws.calls().len(), 1);
+    }
+
+    #[test]
+    fn a_status_no_update_starts_from_fails_before_any_change() {
+        let w = World::new("host-rollback");
+        w.seed_registry(None, &[(PROJECT, HostState::Creating)]);
+        let aws = ScriptedAws::new(vec![status("ROLLBACK_COMPLETE")]);
+        let m = host_stack(&w, &aws, None).unwrap_err().message;
+        assert!(m.starts_with(&format!("agentspace: Stack '{STACK}' is ROLLBACK_COMPLETE")));
+        assert_eq!(aws.calls().len(), 1);
+        let aws = ScriptedAws::new(vec![Ok(json!({"Stacks": [{}]}))]);
+        assert_eq!(
+            host_stack(&w, &aws, None).unwrap_err().message,
+            "agentspace: Unexpected answer from cloudformation describe-stacks: no Stacks[0].StackStatus."
+        );
+        let aws = ScriptedAws::new(vec![Err(AwsError::SignIn)]);
+        assert_eq!(
+            host_stack(&w, &aws, None).unwrap_err().message,
+            SIGN_IN_MESSAGE
+        );
+    }
+
+    #[test]
+    fn a_project_with_no_record_is_refused() {
+        let w = World::new("host-no-record");
+        let aws = ScriptedAws::new(vec![]);
+        assert_eq!(
+            host_stack(&w, &aws, None).unwrap_err().message,
+            "agentspace: Project 'example' has no host; provision -Host example makes one."
+        );
+        assert!(aws.calls().is_empty());
+    }
+
+    #[test]
+    fn instance_type_for_the_box_is_refused_before_anything_runs() {
+        let w = World::new("box-sized").with_deploy_files();
+        let aws = FakeAws::default();
+        let f = w
+            .run(|seams| {
+                crate::deploy_target_sized_using(
+                    &w.ctx,
+                    &CaEnv::default(),
+                    crate::Target::Host("swimcoach"),
+                    Some("m9g.2xlarge"),
+                    &FakeSay::default(),
+                    &aws,
+                    &FakeRemote::default(),
+                    seams,
+                )
+            })
+            .unwrap_err();
+        assert!(
+            f.message
+                .starts_with("agentspace: -InstanceType needs -Host <project>")
+        );
+        assert!(aws.calls.borrow().is_empty());
+    }
+
+    fn provision(w: &World, aws: &dyn Aws, say: &FakeSay) -> Result<(), Failure> {
+        w.run(|seams| {
+            crate::provision_using(
+                &w.ctx,
+                &CaEnv::default(),
+                PROJECT,
+                say,
+                aws,
+                &FakeRemote::default(),
+                seams,
+            )
+        })
+    }
+
+    fn log_lines(w: &World) -> Vec<String> {
+        let path = agentspace_hosts::host_log_path(&home(w), PROJECT);
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|l| l.split_once(' ').unwrap().1.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn an_unlisted_project_with_no_record_writes_nothing() {
+        let w = World::new("prov-unlisted");
+        let aws = ScriptedAws::new(vec![]);
+        let f = provision(&w, &aws, &FakeSay::default()).unwrap_err();
+        assert_eq!(
+            f.message,
+            format!(
+                "agentspace: Project 'example' has no host and is not in {}, so no host is made for it.",
+                agentspace_hosts::projects_path(&home(&w)).display()
+            )
+        );
+        assert!(!agentspace_hosts::hosts_dir(&home(&w)).exists());
+        assert!(!agentspace_hosts::hosts_path(&home(&w)).exists());
+        assert!(aws.calls().is_empty());
+    }
+
+    #[test]
+    fn a_failed_deploy_records_failed_for_a_listed_new_host() {
+        let w = World::new("prov-failed");
+        let agentspace = w.home().join(".agentspace");
+        std::fs::create_dir_all(&agentspace).unwrap();
+        std::fs::write(
+            agentspace.join("projects.json"),
+            r#"{"version":0,"projects":[{"name":"example","approved":"2026-11-20"}]}"#,
+        )
+        .unwrap();
+        let aws = ScriptedAws::new(vec![status("CREATE_IN_PROGRESS")]);
+        let say = FakeSay::default();
+        let f = provision(&w, &aws, &say).unwrap_err();
+        let want = format!(
+            "agentspace: Stack '{STACK}' is CREATE_IN_PROGRESS; try again once that operation has finished."
+        );
+        assert_eq!(f.message, want);
+        let r = record(&w, PROJECT);
+        assert_eq!(r.state, HostState::Failed);
+        assert_eq!(r.stack, STACK);
+        assert!(r.last_attempt_at.is_some());
+        assert_eq!(
+            log_lines(&w),
+            vec![
+                "run begun".to_string(),
+                format!(
+                    "deploy failed reason={}",
+                    want.strip_prefix("agentspace: ").unwrap()
+                ),
+            ]
+        );
+        assert_eq!(
+            say.lines(),
+            vec!["progress: Provisioning the host of 'example'...".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_failed_step_leaves_a_ready_host_ready_with_its_start_time() {
+        let w = World::new("prov-ready");
+        w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+        // A project list that is not valid is never read for a host with a record.
+        let agentspace = w.home().join(".agentspace");
+        std::fs::write(agentspace.join("projects.json"), "not json").unwrap();
+        let aws = ScriptedAws::new(vec![status("CREATE_COMPLETE"), outputs()]);
+        let mut describe = Err(AwsError::Failed("no such instance".into()));
+        std::mem::swap(&mut *aws.inner.describe.borrow_mut(), &mut describe);
+        let f = provision(&w, &aws, &FakeSay::default()).unwrap_err();
+        assert_eq!(f.message, "agentspace: no such instance");
+        let r = record(&w, PROJECT);
+        assert_eq!(r.state, HostState::Ready);
+        assert_eq!(r.instance_id.as_deref(), Some(ID));
+        assert!(r.last_attempt_at.is_some());
+        assert_eq!(
+            log_lines(&w),
+            vec![
+                "run begun".to_string(),
+                "deploy done".to_string(),
+                "start failed reason=no such instance".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_held_run_lock_fails_with_one_log_line_and_no_record() {
+        let w = World::new("prov-locked");
+        w.seed_registry(None, &[(PROJECT, HostState::Creating)]);
+        let before = std::fs::read(agentspace_hosts::hosts_path(&home(&w))).unwrap();
+        let held = agentspace_hosts::try_run_lock(&home(&w), PROJECT)
+            .unwrap()
+            .unwrap();
+        let aws = ScriptedAws::new(vec![]);
+        let f = provision(&w, &aws, &FakeSay::default()).unwrap_err();
+        drop(held);
+        assert_eq!(
+            f.message,
+            "agentspace: A provisioning run for 'example' is already running."
+        );
+        assert_eq!(
+            log_lines(&w),
+            vec![
+                "run failed reason=A provisioning run for 'example' is already running."
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            std::fs::read(agentspace_hosts::hosts_path(&home(&w))).unwrap(),
+            before
+        );
+        assert!(aws.calls().is_empty());
+    }
 }

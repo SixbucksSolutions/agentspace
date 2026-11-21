@@ -50,7 +50,11 @@ use agentspace_operator_api::{CallerLine, Context, Failure, Mode, Say};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
+pub mod certs;
 pub mod expect;
+pub mod hosts;
+pub mod provlog;
+pub mod times;
 
 pub const US: char = '\u{1f}';
 /// A made-up instance ID (it MUST NOT match the identifier scan).
@@ -247,6 +251,11 @@ pub struct Log {
     pub files: Vec<(String, u32, String, u64, u64)>,
     /// `(program, call number, arg, entries)`
     pub dirs: Vec<DirSnap>,
+    /// `(program, call number, path, content with line ends written \n and \r)`: a watched file
+    /// as it was when the program was called.
+    pub watches: Vec<(String, u32, String, String)>,
+    /// `(program, call number, path, held or free)`: a probed lock file as the program found it.
+    pub probes: Vec<(String, u32, String, String)>,
 }
 
 impl Log {
@@ -327,6 +336,15 @@ pub struct Rig {
     system_root: RefCell<Option<PathBuf>>,
     rules: RefCell<BTreeMap<String, Vec<String>>>,
     confirm: RefCell<Option<String>>,
+    /// Files whose content each stand-in records at each call (parent only).
+    watched: RefCell<Vec<PathBuf>>,
+    /// Lock files each stand-in tries to open at each call (parent only).
+    probed: RefCell<Vec<PathBuf>>,
+    /// Whether the ssh stand-in keeps each call's whole standard input (parent only).
+    capture_stdin: Cell<bool>,
+    /// The copy of the test binary the child runs from, beside which a file for the operator's
+    /// own folder can be put (parent only).
+    operator_exe: RefCell<Option<PathBuf>>,
     _tmp: Option<TempDir>,
 }
 
@@ -381,9 +399,14 @@ impl Rig {
             )
             .unwrap();
         }
+        // The box's record, with a made-up instance ID: from v0.07 the registry holds it, where
+        // the retired instance-ID cache did (operator.md, The test seam, step 2).
         rig.write_home(
-            ".agentspace/instance-id.json",
-            format!("{{\"version\":0,\"instance_id\":\"{ID}\"}}").as_bytes(),
+            ".agentspace/hosts.json",
+            format!(
+                "{{\"version\":0,\"hosts\":[{{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"instance_id\":\"{ID}\"}}]}}\n"
+            )
+            .as_bytes(),
         );
         rig
     }
@@ -402,6 +425,10 @@ impl Rig {
             system_root: RefCell::new(None),
             rules: RefCell::new(BTreeMap::new()),
             confirm: RefCell::new(None),
+            watched: RefCell::new(Vec::new()),
+            probed: RefCell::new(Vec::new()),
+            capture_stdin: Cell::new(false),
+            operator_exe: RefCell::new(None),
             _tmp: tmp,
         }
     }
@@ -591,6 +618,17 @@ impl Rig {
         for prog in ["aws", "ssh", "scp", "go"] {
             let dir = if prog == "go" { "gobin" } else { "bin" };
             let mut text = format!("log={}\n", self.log_path().display());
+            if prog != "go" {
+                for w in self.watched.borrow().iter() {
+                    text.push_str(&format!("watch={}\n", w.display()));
+                }
+                for p in self.probed.borrow().iter() {
+                    text.push_str(&format!("probe={}\n", p.display()));
+                }
+            }
+            if prog == "ssh" && self.capture_stdin.get() {
+                text.push_str(&format!("stdin_dir={}\n", self.stdin_dir().display()));
+            }
             if prog == "ssh" {
                 text.push_str(&format!(
                     "stdin={}\n",
@@ -634,7 +672,12 @@ impl Rig {
         // stand-in `go` is in another folder, and reaches `sync` only through its `go` finder.
         let path = self.empty_path_folder();
         let tmp = self.root.join("tmp");
-        let out = Command::new(std::env::current_exe().unwrap())
+        let exe = self
+            .operator_exe
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| std::env::current_exe().unwrap());
+        let out = Command::new(exe)
             .args([name.as_str(), "--exact", "--nocapture", "--test-threads=1"])
             .env_clear()
             .env("SystemRoot", &sysroot)
@@ -700,7 +743,7 @@ impl Rig {
     }
 
     /// The `go` the rig's finder gives `sync`: the rig's stand-in, or none.
-    fn found_go(&self) -> Option<PathBuf> {
+    pub fn found_go(&self) -> Option<PathBuf> {
         self.go.then(|| self.exe("go"))
     }
 
@@ -788,6 +831,18 @@ impl Rig {
                 "SAY" => log
                     .items
                     .push(Item::Say(f[1].to_string(), f[2].to_string())),
+                "WATCH" => log.watches.push((
+                    f[1].to_string(),
+                    f[2].parse().unwrap(),
+                    f[3].to_string(),
+                    f.get(4).copied().unwrap_or("").to_string(),
+                )),
+                "PROBE" => log.probes.push((
+                    f[1].to_string(),
+                    f[2].parse().unwrap(),
+                    f[3].to_string(),
+                    f[4].to_string(),
+                )),
                 "SNAPF" => log.files.push((
                     f[1].to_string(),
                     f[2].parse().unwrap(),
@@ -935,6 +990,50 @@ pub mod win {
     use windows_sys::Win32::Security::Cryptography::{
         CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
     };
+
+    /// Sets the creation time of an existing folder to `unix_secs`, for the 24-hour sweep's test
+    /// (operator.md, The operator's folder, one per command: the creation time is the measure).
+    pub fn set_dir_creation_time(path: &std::path::Path, unix_secs: i64) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, OPEN_EXISTING, SetFileTime,
+        };
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let ticks = ((unix_secs + 11_644_473_600) as u64) * 10_000_000;
+        let time = FILETIME {
+            dwLowDateTime: ticks as u32,
+            dwHighDateTime: (ticks >> 32) as u32,
+        };
+        // SAFETY: `wide` is a NUL-terminated path that outlives the call, `time` outlives the
+        // call, and the handle is closed before the function ends.
+        unsafe {
+            let handle = CreateFileW(
+                wide.as_ptr(),
+                FILE_WRITE_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                std::ptr::null_mut(),
+            );
+            assert!(
+                handle != INVALID_HANDLE_VALUE,
+                "A throwaway folder could not be opened to set its creation time"
+            );
+            let ok = SetFileTime(handle, &time, std::ptr::null(), std::ptr::null());
+            CloseHandle(handle);
+            assert!(
+                ok != 0,
+                "A throwaway folder's creation time could not be set"
+            );
+        }
+    }
 
     pub fn protect(plain: &[u8]) -> Vec<u8> {
         let input = CRYPT_INTEGER_BLOB {

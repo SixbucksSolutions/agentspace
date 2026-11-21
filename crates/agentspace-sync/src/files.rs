@@ -15,7 +15,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use agentspace_box::{CacheRead, InstanceIdCache};
 use agentspace_operator_api::{CallerFailure, Context, Failure};
 
 use crate::embedded::{BOX_SYSTEM, TEMPLATE};
@@ -48,16 +47,6 @@ impl Places {
         self.agentspace.join("stack-parameters.json")
     }
 
-    /// `%USERPROFILE%\.agentspace\instance-id.json`.
-    pub(crate) fn instance_id_cache(&self) -> PathBuf {
-        self.agentspace.join("instance-id.json")
-    }
-
-    /// `%USERPROFILE%\.agentspace\operator\localswim-linux-arm64`.
-    pub(crate) fn localswim_build(&self) -> PathBuf {
-        self.operator.join("localswim-linux-arm64")
-    }
-
     /// `%USERPROFILE%\.claude\CLAUDE.md`.
     pub(crate) fn claude_md(&self) -> PathBuf {
         self.home().join(".claude").join("CLAUDE.md")
@@ -68,7 +57,8 @@ impl Places {
         self.home().join(".ssh").join("id_ed25519.pub")
     }
 
-    fn home(&self) -> &Path {
+    /// `%USERPROFILE%`, made full.
+    pub(crate) fn home(&self) -> &Path {
         self.agentspace.parent().unwrap_or(&self.agentspace)
     }
 }
@@ -81,26 +71,25 @@ pub(crate) fn cannot_write(path: &Path) -> Failure {
     }
 }
 
-/// Makes sure the operator's folder exists (state.md: created by the first command that writes in
-/// it, with inherited access rules).
-pub(crate) fn make_operator_folder(places: &Places) -> Result<(), Failure> {
-    std::fs::create_dir_all(&places.operator).map_err(|_| cannot_write(&places.operator))
+/// The localswim CLI's build output in the command's folder (operator.md, The operator's folder,
+/// one per command): `<folder>\localswim-linux-arm64`.
+pub(crate) fn localswim_build(folder: &Path) -> PathBuf {
+    folder.join("localswim-linux-arm64")
 }
 
-/// Writes the carried template to `%USERPROFILE%\.agentspace\operator\agentspace.yaml`, replacing
-/// whatever was there, and returns its path.
-pub(crate) fn write_template(places: &Places) -> Result<PathBuf, Failure> {
-    make_operator_folder(places)?;
-    let path = places.operator.join("agentspace.yaml");
+/// Writes the carried template to `<folder>\agentspace.yaml`, the command's own folder
+/// ([`crate::folder::CommandFolder`]), replacing whatever was there, and returns its path.
+pub(crate) fn write_template(_places: &Places, folder: &Path) -> Result<PathBuf, Failure> {
+    let path = folder.join("agentspace.yaml");
     std::fs::write(&path, TEMPLATE).map_err(|_| cannot_write(&path))?;
     Ok(path)
 }
 
-/// Writes the carried `box\system` to `%USERPROFILE%\.agentspace\operator\system\`, after removing
-/// whatever that folder held, so it holds exactly the carried files. Returns the folder's path.
-pub(crate) fn write_system(places: &Places) -> Result<PathBuf, Failure> {
-    make_operator_folder(places)?;
-    let folder = places.operator.join("system");
+/// Writes the carried `box\system` to `<folder>\system\`, in the command's own folder, after
+/// removing whatever that held, so it holds exactly the carried files. Returns the system
+/// folder's path.
+pub(crate) fn write_system(_places: &Places, folder: &Path) -> Result<PathBuf, Failure> {
+    let folder = folder.join("system");
     remove_any(&folder).map_err(|_| cannot_write(&folder))?;
     std::fs::create_dir(&folder).map_err(|_| cannot_write(&folder))?;
     for (relative, bytes) in BOX_SYSTEM {
@@ -125,50 +114,6 @@ fn remove_any(path: &Path) -> io::Result<()> {
     }
 }
 
-/// The instance-ID cache, `%USERPROFILE%\.agentspace\instance-id.json` (state.md, Files in the
-/// checkout), read whole and replaced atomically through `agentspace-state`.
-pub(crate) struct FileCache {
-    path: PathBuf,
-}
-
-impl FileCache {
-    pub(crate) fn new(places: &Places) -> FileCache {
-        FileCache {
-            path: places.instance_id_cache(),
-        }
-    }
-
-    /// Deletes the cache (operator.md, deploy, step 5). A cache already missing is not an error.
-    /// One that cannot be deleted, like one that cannot be written, fails with `agentspace: Cannot
-    /// write <path>.`, `<path>` the cache's full path (operator.md, The test seam, "Not covered";
-    /// Laptop files, The instance-ID cache).
-    pub(crate) fn delete(&self) -> Result<(), Failure> {
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(cannot_write(&self.path)),
-        }
-    }
-}
-
-impl InstanceIdCache for FileCache {
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn read(&self) -> CacheRead {
-        CacheRead::from(std::fs::read(&self.path))
-    }
-
-    fn write(&self, bytes: &[u8]) -> Result<(), Failure> {
-        // A replace never creates a folder (state.md, Replacing a file), so the folder comes first.
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| cannot_write(&self.path))?;
-        }
-        agentspace_state::write_atomically(&self.path, bytes).map_err(|_| cannot_write(&self.path))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,10 +124,11 @@ mod tests {
         let dir = Scratch::new("files-system");
         let ctx = ctx_in(dir.path());
         let places = Places::new(&ctx);
-        let stale = places.operator.join("system").join("stale.txt");
+        let command = dir.path().join("command");
+        let stale = command.join("system").join("stale.txt");
         std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
         std::fs::write(&stale, "old").unwrap();
-        let folder = write_system(&places).unwrap();
+        let folder = write_system(&places, &command).unwrap();
         assert!(!stale.exists());
         let mut names: Vec<String> = std::fs::read_dir(&folder)
             .unwrap()
@@ -200,53 +146,39 @@ mod tests {
     fn a_system_folder_that_is_a_file_is_replaced() {
         let dir = Scratch::new("files-system-file");
         let places = Places::new(&ctx_in(dir.path()));
-        std::fs::create_dir_all(&places.operator).unwrap();
-        std::fs::write(places.operator.join("system"), "x").unwrap();
-        assert!(write_system(&places).unwrap().is_dir());
+        let command = dir.path().join("command");
+        std::fs::create_dir_all(&command).unwrap();
+        std::fs::write(command.join("system"), "x").unwrap();
+        assert!(write_system(&places, &command).unwrap().is_dir());
     }
 
     #[test]
-    fn an_operator_folder_that_cannot_be_made_fails_with_fa16() {
+    fn a_system_folder_that_cannot_be_made_fails_with_fa16() {
         let dir = Scratch::new("files-fa16");
         let places = Places::new(&ctx_in(dir.path()));
-        std::fs::create_dir_all(&places.agentspace).unwrap();
-        // A file where the operator's folder belongs.
-        std::fs::write(&places.operator, "x").unwrap();
-        let want = format!("agentspace: Cannot write {}.", places.operator.display());
-        assert_eq!(write_system(&places).unwrap_err().message, want);
-        assert_eq!(write_template(&places).unwrap_err().message, want);
+        // A file where the command's folder belongs.
+        let command = dir.path().join("command");
+        std::fs::write(&command, "x").unwrap();
+        let want = format!(
+            "agentspace: Cannot write {}.",
+            command.join("system").display()
+        );
+        assert_eq!(write_system(&places, &command).unwrap_err().message, want);
     }
 
     #[test]
     fn a_template_path_that_is_a_folder_fails_with_fa16() {
         let dir = Scratch::new("files-template");
         let places = Places::new(&ctx_in(dir.path()));
-        let path = places.operator.join("agentspace.yaml");
+        let command = dir.path().join("command");
+        let path = command.join("agentspace.yaml");
         std::fs::create_dir_all(&path).unwrap();
         assert_eq!(
-            write_template(&places).unwrap_err().message,
+            write_template(&places, &command).unwrap_err().message,
             format!("agentspace: Cannot write {}.", path.display())
         );
         std::fs::remove_dir(&path).unwrap();
-        let written = write_template(&places).unwrap();
+        let written = write_template(&places, &command).unwrap();
         assert!(std::fs::read(written).unwrap() == TEMPLATE);
-    }
-
-    #[test]
-    fn the_cache_is_written_with_its_folder_and_deleted() {
-        let dir = Scratch::new("files-cache");
-        let places = Places::new(&ctx_in(dir.path()));
-        let cache = FileCache::new(&places);
-        assert_eq!(cache.read(), CacheRead::Missing);
-        cache.delete().unwrap();
-        cache.write(b"{}").unwrap();
-        assert_eq!(cache.read(), CacheRead::Bytes(b"{}".to_vec()));
-        cache.delete().unwrap();
-        assert_eq!(cache.read(), CacheRead::Missing);
-        std::fs::create_dir(cache.path()).unwrap();
-        assert_eq!(cache.read(), CacheRead::Unopenable);
-        let want = format!("agentspace: Cannot write {}.", cache.path().display());
-        assert_eq!(cache.delete().unwrap_err().message, want);
-        assert_eq!(cache.write(b"{}").unwrap_err().message, want);
     }
 }
