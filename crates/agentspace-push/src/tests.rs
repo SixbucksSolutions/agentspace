@@ -5,11 +5,13 @@ use agentspace_operator_api::{CallerLine, Mode};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-const DUMMY_TOKEN: &str = "PLANTED-dummy-token-0123456789-not-real";
+const DUMMY_TOKEN: &str = "PLANTED-dummy_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1J";
+const OTHER_TOKEN: &str = "ANOTHER-dummy_Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj";
+// A token is 43 characters of base64url.
+const _: () = assert!(DUMMY_TOKEN.len() == 43 && OTHER_TOKEN.len() == 43);
 const URL: &str = "http://127.0.0.1:8811";
 const ID: &str = "i-0123456789abcdef0";
 const ZONE: &str = "America/New_York";
-const NS: &str = "http://schemas.microsoft.com/powershell/2004/04";
 
 /// A `Say` that records what a real one would print, rewriting warnings in caller mode as the pin
 /// says.
@@ -166,12 +168,22 @@ impl SshRun for FakeSsh {
     }
 }
 
-fn credential_xml(blob: &[u8]) -> Vec<u8> {
-    let hex: String = blob.iter().map(|b| format!("{b:02x}")).collect();
+fn hex_of(blob: &[u8]) -> String {
+    blob.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A good `bot.json` for `blob`: the four members of localswim's schema.
+fn credential_json(blob: &[u8]) -> Vec<u8> {
     format!(
-        r#"<Objs Version="1.1.0.1" xmlns="{NS}"><Obj RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCredential</T><T>System.Object</T></TN><ToString>System.Management.Automation.PSCredential</ToString><Props><S N="UserName">bot</S><SS N="Password">{hex}</SS></Props></Obj></Objs>"#
+        r#"{{"format":"localswim-credential","format_version":1,"role":"bot","token_dpapi_hex":"{}"}}"#,
+        hex_of(blob)
     )
     .into_bytes()
+}
+
+/// A `bot.json` of the member texts given, in order, each written as `"name":value`.
+fn credential_with(members: &[&str]) -> Vec<u8> {
+    format!("{{{}}}", members.join(",")).into_bytes()
 }
 
 fn blob_for(token: &str) -> Vec<u8> {
@@ -198,7 +210,7 @@ fn laptop(token: &str) -> Disk {
     );
     disk.files.borrow_mut().insert(
         credential_path("creds/"),
-        FileRead::Bytes(credential_xml(&blob_for(token))),
+        FileRead::Bytes(credential_json(&blob_for(token))),
     );
     disk
 }
@@ -306,7 +318,7 @@ fn a_changed_instance_zone_or_token_makes_it_due() {
         false,
     );
     assert_eq!(other_zone.outcome, Outcome::Pushed);
-    let disk2 = laptop("another-dummy");
+    let disk2 = laptop(OTHER_TOKEN);
     disk2.files.borrow_mut().insert(
         stamp_path(&ctx()),
         FileRead::Bytes(stamp_file_bytes(&expected_stamp(ZONE))),
@@ -527,22 +539,41 @@ fn each_read_failure_warns_could_not_read_and_sends_nothing() {
         ),
         (
             receipt.clone(),
-            FileRead::Bytes(br#"{"base":"http://x\ny","credential_directory":"creds/"}"#.to_vec()),
+            FileRead::Bytes(
+                br#"{"base":"http://127.0.0.1:8811\nx","credential_directory":"creds/"}"#.to_vec(),
+            ),
+        ),
+        (
+            receipt.clone(),
+            FileRead::Bytes(br#"{"base":"http://127.0.0.1:8811"}"#.to_vec()),
+        ),
+        (
+            receipt.clone(),
+            FileRead::Bytes(
+                br#"{"base":"http://127.0.0.1:8811/","credential_directory":"creds/"}"#.to_vec(),
+            ),
         ),
         (cred.clone(), FileRead::Missing),
         (cred.clone(), FileRead::Unreadable),
-        (cred.clone(), FileRead::Bytes(b"<Objs/>".to_vec())),
-        (cred.clone(), FileRead::Bytes(credential_xml(&[9, 9, 9, 9]))),
-        (cred.clone(), FileRead::Bytes(credential_xml(&blob_for("")))),
+        (cred.clone(), FileRead::Bytes(b"{}".to_vec())),
+        (cred.clone(), FileRead::Bytes(b"not json".to_vec())),
         (
             cred.clone(),
-            FileRead::Bytes(credential_xml(&blob_for("a\0b"))),
+            FileRead::Bytes(credential_json(&[9, 9, 9, 9])),
         ),
         (
             cred.clone(),
-            FileRead::Bytes(credential_xml(&blob_for("a\rb"))),
+            FileRead::Bytes(credential_json(&blob_for(""))),
         ),
-        (cred, FileRead::Bytes(credential_xml(&[1, 0, 0, 0, 0x61]))),
+        (
+            cred.clone(),
+            FileRead::Bytes(credential_json(&blob_for("a\0b"))),
+        ),
+        (
+            cred.clone(),
+            FileRead::Bytes(credential_json(&blob_for("a\rb"))),
+        ),
+        (cred, FileRead::Bytes(credential_json(&[1, 0, 0, 0, 0x61]))),
     ];
     for (path, read) in cases {
         for mode in [Mode::Person, Mode::Caller] {
@@ -688,10 +719,371 @@ fn credential_path_adds_a_separator_only_when_needed() {
     let sep = MAIN_SEPARATOR;
     assert_eq!(
         credential_path("a"),
-        PathBuf::from(format!("a{sep}bot.xml"))
+        PathBuf::from(format!("a{sep}bot.json"))
     );
-    assert_eq!(credential_path("a/"), PathBuf::from("a/bot.xml"));
-    assert_eq!(credential_path("a\\"), PathBuf::from("a\\bot.xml"));
+    assert_eq!(credential_path("a/"), PathBuf::from("a/bot.json"));
+    assert_eq!(credential_path("a\\"), PathBuf::from("a\\bot.json"));
+}
+
+// ---- The credential's own rules, at the pinned API -----------------------------------------------
+
+/// The document with `value` for the member `name` and every other member good.
+fn credential_member(name: &str, value: &str) -> Vec<u8> {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    let mut members = vec![
+        ("format", "\"localswim-credential\"".to_string()),
+        ("format_version", "1".to_string()),
+        ("role", "\"bot\"".to_string()),
+        ("token_dpapi_hex", format!("\"{hex}\"")),
+    ];
+    for m in &mut members {
+        if m.0 == name {
+            m.1 = value.to_string();
+        }
+    }
+    let texts: Vec<String> = members
+        .iter()
+        .map(|(n, v)| format!("\"{n}\":{v}"))
+        .collect();
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    credential_with(&refs)
+}
+
+#[test]
+fn a_good_bot_json_gives_its_blob_and_then_the_token() {
+    let bytes = credential_json(&blob_for(DUMMY_TOKEN));
+    assert_eq!(parse_credential_blob(&bytes), Some(blob_for(DUMMY_TOKEN)));
+    let token = read_token(&bytes, &FakeDpapi).expect("A token");
+    assert_eq!(token.0.as_str(), DUMMY_TOKEN);
+}
+
+#[test]
+fn a_utf8_mark_and_any_whitespace_are_accepted() {
+    let good = String::from_utf8(credential_json(&blob_for(DUMMY_TOKEN))).unwrap();
+    let indented = good
+        .replace("{\"", "{\r\n    \"")
+        .replace(",\"", ",\r\n    \"")
+        .replace("\":", "\":  ")
+        .replace('}', "\r\n}");
+    let mut marked = vec![0xEF, 0xBB, 0xBF];
+    marked.extend(good.as_bytes());
+    for bytes in [
+        marked,
+        indented.into_bytes(),
+        format!("\n {good}\r\n").into_bytes(),
+    ] {
+        assert_eq!(parse_credential_blob(&bytes), Some(blob_for(DUMMY_TOKEN)));
+    }
+}
+
+#[test]
+fn the_four_members_in_any_order_are_accepted() {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    let f = "\"format\":\"localswim-credential\"".to_string();
+    let v = "\"format_version\":1".to_string();
+    let r = "\"role\":\"bot\"".to_string();
+    let t = format!("\"token_dpapi_hex\":\"{hex}\"");
+    for order in [[&t, &r, &v, &f], [&r, &t, &f, &v], [&v, &f, &t, &r]] {
+        let refs: Vec<&str> = order.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            parse_credential_blob(&credential_with(&refs)),
+            Some(blob_for(DUMMY_TOKEN))
+        );
+    }
+}
+
+#[test]
+fn each_member_missing_is_refused() {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    let all = [
+        "\"format\":\"localswim-credential\"".to_string(),
+        "\"format_version\":1".to_string(),
+        "\"role\":\"bot\"".to_string(),
+        format!("\"token_dpapi_hex\":\"{hex}\""),
+    ];
+    for skip in 0..4 {
+        let kept: Vec<&str> = all
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != skip)
+            .map(|(_, s)| s.as_str())
+            .collect();
+        assert_eq!(
+            parse_credential_blob(&credential_with(&kept)),
+            None,
+            "{skip}"
+        );
+    }
+}
+
+#[test]
+fn an_extra_member_is_refused() {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    for extra in [
+        "\"extra\":1",
+        "\"extra\":null",
+        "\"\":\"\"",
+        "\"token\":\"x\"",
+    ] {
+        let members = [
+            "\"format\":\"localswim-credential\"".to_string(),
+            "\"format_version\":1".to_string(),
+            "\"role\":\"bot\"".to_string(),
+            format!("\"token_dpapi_hex\":\"{hex}\""),
+            extra.to_string(),
+        ];
+        let refs: Vec<&str> = members.iter().map(String::as_str).collect();
+        assert_eq!(
+            parse_credential_blob(&credential_with(&refs)),
+            None,
+            "{extra}"
+        );
+    }
+}
+
+#[test]
+fn a_member_name_in_another_ascii_case_is_refused_beside_the_real_one_and_in_its_place() {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    let base = [
+        ("format", "\"localswim-credential\"".to_string()),
+        ("format_version", "1".to_string()),
+        ("role", "\"bot\"".to_string()),
+        ("token_dpapi_hex", format!("\"{hex}\"")),
+    ];
+    for (i, (name, value)) in base.iter().enumerate() {
+        for variant in [
+            name.to_ascii_uppercase(),
+            format!("{}{}", name[..1].to_ascii_uppercase(), &name[1..]),
+        ] {
+            let mut beside: Vec<String> =
+                base.iter().map(|(n, v)| format!("\"{n}\":{v}")).collect();
+            beside.push(format!("\"{variant}\":{value}"));
+            let refs: Vec<&str> = beside.iter().map(String::as_str).collect();
+            assert_eq!(
+                parse_credential_blob(&credential_with(&refs)),
+                None,
+                "{variant} beside"
+            );
+
+            let mut in_place: Vec<String> =
+                base.iter().map(|(n, v)| format!("\"{n}\":{v}")).collect();
+            in_place[i] = format!("\"{variant}\":{value}");
+            let refs: Vec<&str> = in_place.iter().map(String::as_str).collect();
+            assert_eq!(
+                parse_credential_blob(&credential_with(&refs)),
+                None,
+                "{variant} in place"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_duplicate_member_is_refused_with_the_same_value_or_a_different_one_in_either_order() {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    let other_hex = hex_of(&[1, 0, 0, 0, 9, 9]);
+    let good = [
+        (
+            "format",
+            "\"localswim-credential\"".to_string(),
+            "\"x\"".to_string(),
+        ),
+        ("format_version", "1".to_string(), "2".to_string()),
+        ("role", "\"bot\"".to_string(), "\"human\"".to_string()),
+        (
+            "token_dpapi_hex",
+            format!("\"{hex}\""),
+            format!("\"{other_hex}\""),
+        ),
+    ];
+    for (i, (name, value, other)) in good.iter().enumerate() {
+        for (first, second) in [(value, value), (value, other), (other, value)] {
+            let mut texts = Vec::new();
+            for (j, (n, v, _)) in good.iter().enumerate() {
+                if i == j {
+                    texts.push(format!("\"{n}\":{first}"));
+                    texts.push(format!("\"{n}\":{second}"));
+                } else {
+                    texts.push(format!("\"{n}\":{v}"));
+                }
+            }
+            let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            assert_eq!(
+                parse_credential_blob(&credential_with(&refs)),
+                None,
+                "{name} {first} {second}"
+            );
+        }
+    }
+    // The same name written through an escape is the same name.
+    let escaped = format!(
+        r#"{{"format":"localswim-credential","format_version":1,"role":"human","token_dpapi_hex":"{hex}","role":"bot"}}"#
+    );
+    assert_eq!(parse_credential_blob(escaped.as_bytes()), None);
+}
+
+#[test]
+fn a_wrong_format_format_version_or_role_is_refused() {
+    for v in [
+        "\"Localswim-Credential\"",
+        "\"localswim-credential \"",
+        "\"\"",
+        "1",
+        "null",
+    ] {
+        assert_eq!(
+            parse_credential_blob(&credential_member("format", v)),
+            None,
+            "{v}"
+        );
+    }
+    for v in [
+        "1.0", "1.00", "1e0", "1E0", "2", "0", "-1", "\"1\"", "true", "null", "[1]",
+    ] {
+        assert_eq!(
+            parse_credential_blob(&credential_member("format_version", v)),
+            None,
+            "{v}"
+        );
+    }
+    for v in ["\"human\"", "\"Bot\"", "\"bot \"", "\"\"", "null", "1"] {
+        assert_eq!(
+            parse_credential_blob(&credential_member("role", v)),
+            None,
+            "{v}"
+        );
+    }
+}
+
+#[test]
+fn hex_that_is_not_hex_odd_or_empty_is_refused() {
+    let hex = hex_of(&blob_for(DUMMY_TOKEN));
+    for v in [
+        "\"\"".to_string(),
+        "\"a\"".to_string(),
+        format!("\"{hex}0\""),
+        format!("\" {hex}\""),
+        format!("\"{hex}\\n\""),
+        format!("\"0x{hex}\""),
+        format!("\"{}g{}\"", &hex[..10], &hex[12..]),
+        "\"zz\"".to_string(),
+        "12".to_string(),
+        "null".to_string(),
+        "[]".to_string(),
+    ] {
+        assert_eq!(
+            parse_credential_blob(&credential_member("token_dpapi_hex", &v)),
+            None,
+            "{v}"
+        );
+    }
+    // And a refusal is a refusal of the token as well.
+    assert!(read_token(&credential_member("token_dpapi_hex", "\"zz\""), &FakeDpapi).is_none());
+}
+
+fn token_of(token: &str) -> Option<Token> {
+    read_token(&credential_json(&blob_for(token)), &FakeDpapi)
+}
+
+#[test]
+fn a_token_must_be_exactly_43_characters_of_base64url() {
+    // Architect's ruling (2026-11-20, for v0.07-T02), after the plaintext's own checks.
+    for good in [
+        DUMMY_TOKEN,
+        OTHER_TOKEN,
+        "AZaz09-_AZaz09-_AZaz09-_AZaz09-_AZaz09-_AZa",
+    ] {
+        assert_eq!(good.len(), 43);
+        assert_eq!(token_of(good).expect("A token").0.as_str(), good);
+    }
+    let spliced =
+        |c: &str, at: usize| format!("{}{c}{}", &DUMMY_TOKEN[..at], &DUMMY_TOKEN[at + 1..]);
+    let bad = [
+        DUMMY_TOKEN[..42].to_string(),
+        format!("{DUMMY_TOKEN}x"),
+        DUMMY_TOKEN[..41].to_string(),
+        spliced("+", 20),
+        spliced("/", 20),
+        spliced("+", 0),
+        spliced("/", 42),
+        format!("{}=", &DUMMY_TOKEN[..42]),
+        format!("{DUMMY_TOKEN}="),
+        spliced(" ", 20),
+        spliced(".", 20),
+        spliced("\u{e9}", 20),
+        spliced("\u{4e2d}", 20),
+        spliced("\u{1F600}", 20),
+        "a".to_string(),
+        String::new(),
+    ];
+    for token in bad {
+        assert!(
+            token_of(&token).is_none(),
+            "{} characters",
+            token.chars().count()
+        );
+    }
+}
+
+#[test]
+fn hex_in_either_case_is_read_and_two_digits_are_enough() {
+    let bytes = |hex: &str| {
+        format!(
+            r#"{{"format":"localswim-credential","format_version":1,"role":"bot","token_dpapi_hex":"{hex}"}}"#
+        )
+        .into_bytes()
+    };
+    let upper = hex_of(&blob_for(DUMMY_TOKEN)).to_ascii_uppercase();
+    assert_eq!(
+        parse_credential_blob(&bytes(&upper)),
+        Some(blob_for(DUMMY_TOKEN))
+    );
+    assert_eq!(parse_credential_blob(&bytes("aB")), Some(vec![0xAB]));
+    assert_eq!(parse_credential_blob(&bytes("00")), Some(vec![0x00]));
+    assert_eq!(parse_credential_blob(&bytes("")), None);
+    assert_eq!(parse_credential_blob(&bytes("a")), None);
+    assert_eq!(parse_credential_blob(&bytes("abc")), None);
+    assert!(read_token(&bytes(&upper), &FakeDpapi).is_some());
+}
+
+#[test]
+fn a_file_that_is_not_one_json_object_in_utf8_is_refused() {
+    let good = String::from_utf8(credential_json(&blob_for(DUMMY_TOKEN))).unwrap();
+    let mut bad_utf8 = good.clone().into_bytes();
+    bad_utf8.extend([0xC3, 0x28]);
+    let mut utf16 = vec![0xFF, 0xFE];
+    utf16.extend(good.encode_utf16().flat_map(u16::to_le_bytes));
+    let mut two_marks = vec![0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF];
+    two_marks.extend(good.as_bytes());
+    let cases: Vec<Vec<u8>> = vec![
+        Vec::new(),
+        b"   ".to_vec(),
+        b"not json".to_vec(),
+        b"[]".to_vec(),
+        b"{}".to_vec(),
+        b"null".to_vec(),
+        b"\"text\"".to_vec(),
+        format!("[{good}]").into_bytes(),
+        format!("{good}{good}").into_bytes(),
+        format!("{good}\n{good}").into_bytes(),
+        format!("{good}x").into_bytes(),
+        format!("{good},").into_bytes(),
+        format!("{good}}}").into_bytes(),
+        format!("x{good}").into_bytes(),
+        good.as_bytes()[..good.len() - 1].to_vec(),
+        format!("{},}}", &good[..good.len() - 1]).into_bytes(),
+        bad_utf8,
+        utf16,
+        two_marks,
+        vec![0xEF, 0xBB, 0xBF],
+        (0..=255u8).collect(),
+        "[".repeat(50_000).into_bytes(),
+        "{\"a\":".repeat(50_000).into_bytes(),
+    ];
+    for (i, bytes) in cases.iter().enumerate() {
+        assert_eq!(parse_credential_blob(bytes), None, "case {i}");
+        assert!(read_token(bytes, &FakeDpapi).is_none(), "case {i}");
+    }
 }
 
 /// A throwaway folder under the temp folder, removed when dropped.
@@ -767,8 +1159,8 @@ fn a_whole_push_on_disk_with_std_files() {
     )
     .unwrap();
     std::fs::write(
-        creds.join("bot.xml"),
-        credential_xml(&blob_for(DUMMY_TOKEN)),
+        creds.join("bot.json"),
+        credential_json(&blob_for(DUMMY_TOKEN)),
     )
     .unwrap();
     let c = Context {

@@ -309,17 +309,24 @@ fn a_missing_receipt_is_silent_and_an_unreadable_credential_warns_and_starts_no_
     assert!(say.printed().is_empty());
 
     sb.write_localswim();
-    std::fs::write(sb.credential_dir().join("bot.xml"), "not a credential").unwrap();
+    std::fs::write(sb.credential_dir().join("bot.json"), "not a credential").unwrap();
     let (outcome, say) = push(&sb, Some(NEW_YORK), false);
     assert_eq!(outcome, Outcome::CouldNotRead);
     assert_eq!(say.printed(), [COULD_NOT_READ]);
     assert_eq!(sb.calls(), 0);
 
-    // A credential protected for no one who can read it here: a blob that does not decrypt.
-    let hex = impl_support::hex_lower(&[1, 0, 0, 0, 0xD0, 0x8C, 0x9D, 0xDF, 1, 2, 3]);
+    // A credential protected for no one who can read it here: a blob that does not decrypt, here
+    // localswim's example header followed by bytes of value zero.
+    let mut blob = vec![
+        1, 0, 0, 0, 0xD0, 0x8C, 0x9D, 0xDF, 0x01, 0x15, 0xD1, 0x11, 0x8C, 0x7A, 0x00, 0xC0, 0x4F,
+        0xC2, 0x97, 0xEB, 1, 0, 0, 0,
+    ];
+    blob.extend([0x11; 16]);
+    blob.extend([0x00; 20]);
+    let hex = impl_support::hex_lower(&blob);
     std::fs::write(
-        sb.credential_dir().join("bot.xml"),
-        impl_support::clixml(&hex),
+        sb.credential_dir().join("bot.json"),
+        impl_support::credential_json(&hex),
     )
     .unwrap();
     let (outcome, say) = push(&sb, Some(NEW_YORK), false);

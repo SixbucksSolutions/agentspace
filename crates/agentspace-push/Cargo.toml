@@ -18,7 +18,6 @@ agentspace-zone = { path = "../agentspace-zone" }
 # replace.
 agentspace-run = { path = "../agentspace-run" }
 agentspace-state = { path = "../agentspace-state" }
-roxmltree = { version = "=0.21.2", default-features = false }
 serde = { version = "=1.0.229", default-features = false, features = ["std"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 sha2 = { version = "=0.10.9", default-features = false }

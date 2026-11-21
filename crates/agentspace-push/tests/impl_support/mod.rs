@@ -31,8 +31,8 @@ use windows_sys::Win32::System::Threading::{
 pub const INSTANCE: &str = "i-0123456789abcdef0";
 pub const BASE: &str = "http://127.0.0.1:8811";
 /// A dummy token, not a real one.
-pub const TOKEN: &str = "dummy-token_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4";
-pub const CONTENT: &str = "LOCALSWIM_URL=http://127.0.0.1:8811\nLOCALSWIM_TOKEN=dummy-token_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4\n";
+pub const TOKEN: &str = "dummy-_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4";
+pub const CONTENT: &str = "LOCALSWIM_URL=http://127.0.0.1:8811\nLOCALSWIM_TOKEN=dummy-_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4\n";
 pub const ALIAS: &str = "agentspace";
 
 /// A person's `Say`: the lines that would reach stderr.
@@ -286,7 +286,7 @@ impl Sandbox {
         self.lad.join("localswim-v2").join("service.json")
     }
 
-    /// Writes a receipt, and a `bot.xml` that holds `TOKEN` protected for the current user, as
+    /// Writes a receipt, and a `bot.json` that holds `TOKEN` protected for the current user, as
     /// PowerShell 7 writes it (UTF-8, no mark).
     pub fn write_localswim(&self) {
         fs::create_dir_all(self.credential_dir()).expect("The credential folder");
@@ -300,7 +300,11 @@ impl Sandbox {
         )
         .expect("The receipt");
         let hex = hex_lower(&protect(&utf16le(TOKEN), None));
-        fs::write(self.credential_dir().join("bot.xml"), clixml(&hex)).expect("bot.xml");
+        fs::write(
+            self.credential_dir().join("bot.json"),
+            credential_json(&hex),
+        )
+        .expect("bot.json");
     }
 
     pub fn stamp_path(&self) -> PathBuf {
@@ -316,12 +320,12 @@ pub fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub fn clixml(hex: &str) -> String {
+/// A credential as localswim writes `bot.json` (windows-operations.md, "The credential files"):
+/// the four members, with `hex` as the protected token.
+pub fn credential_json(hex: &str) -> String {
     format!(
-        "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\">\
-         <Obj RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCredential</T>\
-         <T>System.Object</T></TN><ToString>System.Management.Automation.PSCredential</ToString>\
-         <Props><S N=\"UserName\">bot</S><SS N=\"Password\">{hex}</SS></Props></Obj></Objs>"
+        "{{\"format\":\"localswim-credential\",\"format_version\":1,\"role\":\"bot\",\
+         \"token_dpapi_hex\":\"{hex}\"}}"
     )
 }
 

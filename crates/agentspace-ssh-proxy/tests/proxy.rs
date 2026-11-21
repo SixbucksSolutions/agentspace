@@ -1853,7 +1853,7 @@ fn push_setup(sb: &Sandbox) {
         ),
     )
     .unwrap();
-    let token: Vec<u8> = "Dummy_proxy_test_token"
+    let token: Vec<u8> = "Dummy_proxy_test_token_0123456789abcdefABCD"
         .encode_utf16()
         .flat_map(u16::to_le_bytes)
         .collect();
@@ -1862,9 +1862,9 @@ fn push_setup(sb: &Sandbox) {
         .map(|b| format!("{b:02x}"))
         .collect();
     fs::write(
-        creds.join("bot.xml"),
+        creds.join("bot.json"),
         format!(
-            "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCredential</T><T>System.Object</T></TN><ToString>System.Management.Automation.PSCredential</ToString><Props><S N=\"UserName\">bot</S><SS N=\"Password\">{hex}</SS></Props></Obj></Objs>"
+            "{{\"format\":\"localswim-credential\",\"format_version\":1,\"role\":\"bot\",\"token_dpapi_hex\":\"{hex}\"}}"
         ),
     )
     .unwrap();

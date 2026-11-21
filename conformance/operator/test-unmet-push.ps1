@@ -50,7 +50,8 @@ $sec = 'operator.md#the-token-push'
 $seamSec = 'operator.md#the-test-seam'
 $alias = 'conformance-push-alias'
 $fakeId = 'i-' + ('0' * 17)
-$tokenValue = 'conformance-fake-token-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+# A made-up token in the form the push accepts: 43 base64url characters.
+$tokenValue = 'conformance-fake-token-' + [guid]::NewGuid().ToString('N').Substring(0, 20)
 $baseUrl = 'http://127.0.0.1:18811'
 $content = "LOCALSWIM_URL=$baseUrl`nLOCALSWIM_TOKEN=$tokenValue`n"
 
@@ -107,10 +108,13 @@ try {
     $credDir = Join-Path $lsDir 'cred'
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path $credDir) | Out-Null
     $receipt = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $lsDir 'service.json')
-    $botXml = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $credDir 'bot.xml')
+    $botJson = Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $credDir 'bot.json')
     [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $receipt), (ConvertTo-Json -Compress -InputObject @{ base = $baseUrl; credential_directory = $credDir }))
     $secure = ConvertTo-SecureString -String $tokenValue -AsPlainText -Force
-    [pscredential]::new('bot', $secure) | Export-Clixml -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botXml)
+    # localswim's bot.json: four members, the token's user-scope DPAPI blob as hex (no BOM).
+    $tokenHex = ConvertFrom-SecureString -SecureString $secure
+    $botJsonText = ConvertTo-Json -Compress -InputObject ([ordered]@{ format = 'localswim-credential'; format_version = 1; role = 'bot'; token_dpapi_hex = $tokenHex })
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $botJson), $botJsonText)
 
     # The stand-ins: a running instance launched long ago, so that `up` does not wait.
     $aws = New-OperatorStandIn -ConformanceHome $h -Name 'aws' -Body @(
@@ -329,9 +333,9 @@ try {
       Rename-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path "$receipt.away") -NewName 'service.json'
 
       # ---- 5. A credential that cannot be read ----
-      $botBackup = Join-Path $h.Root 'bot.xml.keep'
-      Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botXml) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $botBackup)
-      [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $botXml), 'not a credential')
+      $botBackup = Join-Path $h.Root 'bot.json.keep'
+      Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botJson) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $botBackup)
+      [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $h -Path $botJson), 'not a credential')
       $callsBefore = Get-StandInCallCount -Log $sshCalls
       $r = Invoke-Up $zoneB
       $p = Get-Problems $r
@@ -339,7 +343,7 @@ try {
       $warn = 'agentspace: Could not read the localswim Bot token; the board will not work on the box this session.'
       if (-not (@($r.Stderr -split "`r?`n") -ccontains $warn)) { $p.Add('Stderr lacks the fixed "Could not read the localswim Bot token" warning') }
       Write-Problems "${sec}: A credential that cannot be read warns with the fixed text, sends nothing, and still exits 0 (What the laptop reads)" $p
-      Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botBackup) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $botXml) -Force
+      Move-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $botBackup) -Destination (Assert-ConformancePath -ConformanceHome $h -Path $botJson) -Force
 
       # ---- 6. The box does not confirm ----
       Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $stamp) -Force -ErrorAction SilentlyContinue

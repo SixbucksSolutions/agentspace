@@ -230,7 +230,8 @@ pub const PLANTED_FD_STATE: [&str; 2] = [
 ];
 const GUID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
-/// A made-up token that no other text in a run holds.
+/// A made-up token that no other text in a run holds: 43 characters of base64url, the shape of
+/// localswim's tokens, and not a real one.
 pub fn dummy_token() -> String {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let t = std::time::SystemTime::now()
@@ -238,7 +239,7 @@ pub fn dummy_token() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!(
-        "Dummy_{:016x}{:08x}_{:08x}",
+        "Dummy_tkn_{:016x}{:08x}_{:08x}",
         t as u64,
         std::process::id(),
         n
@@ -473,7 +474,7 @@ impl Rig {
     }
 
     pub fn bot_path(&self) -> PathBuf {
-        self.credential_dir().join("bot.xml")
+        self.credential_dir().join("bot.json")
     }
 
     /// Writes the receipt, as localswim does, from `self.base`.
@@ -493,8 +494,8 @@ impl Rig {
         fs::write(self.receipt_path(), text).expect("the receipt");
     }
 
-    /// Writes `bot.xml` with `self.token`, protected for the current user, as PowerShell 7 writes it
-    /// (UTF-8, no mark).
+    /// Writes `bot.json` with `self.token`, protected for the current user, as PowerShell 7 writes
+    /// it (UTF-8, no mark).
     pub fn write_credential(&self) {
         self.write_credential_for(&self.token.clone());
     }
@@ -503,15 +504,15 @@ impl Rig {
         self.write_credential_plain(&utf16le(token));
     }
 
-    /// Writes `bot.xml` holding `plain` (the plaintext bytes) protected for the current user.
+    /// Writes `bot.json` holding `plain` (the plaintext bytes) protected for the current user.
     pub fn write_credential_plain(&self, plain: &[u8]) {
         let hex = to_hex(&protect(plain));
-        self.write_bot_bytes(clixml(&hex).as_bytes());
+        self.write_bot_bytes(credential_json(&hex).as_bytes());
     }
 
     pub fn write_bot_bytes(&self, bytes: &[u8]) {
         fs::create_dir_all(self.credential_dir()).expect("the credential folder");
-        fs::write(self.bot_path(), bytes).expect("bot.xml");
+        fs::write(self.bot_path(), bytes).expect("bot.json");
     }
 
     // ---- the push ----
@@ -731,14 +732,50 @@ pub fn expected_stamp(instance: &str, zone: &str, content: &str) -> String {
     to_hex(&h.finalize()).to_ascii_uppercase()
 }
 
-/// A credential document as both PowerShell runtimes write it (operator.md, The Bot credential).
-pub fn clixml(password_hex: &str) -> String {
+/// The four members of a credential, as `(name, the JSON text of the value)`, for `hex`.
+pub fn members(hex: &str) -> Vec<(String, String)> {
+    [
+        ("format", "\"localswim-credential\"".to_string()),
+        ("format_version", "1".to_string()),
+        ("role", "\"bot\"".to_string()),
+        ("token_dpapi_hex", format!("\"{hex}\"")),
+    ]
+    .into_iter()
+    .map(|(n, v)| (n.to_string(), v))
+    .collect()
+}
+
+/// An object written from `(name, the JSON text of the value)` pairs, in order, duplicates kept.
+pub fn object(members: &[(String, String)]) -> String {
+    let parts: Vec<String> = members
+        .iter()
+        .map(|(name, value)| format!("\"{name}\":{value}"))
+        .collect();
+    format!("{{{}}}", parts.join(","))
+}
+
+/// A credential document: the four members, compact, for `hex` (docs/operator.md, The Bot
+/// credential; localswim's windows-operations.md, "The credential files").
+pub fn credential_json(hex: &str) -> String {
+    object(&members(hex))
+}
+
+/// The same as PowerShell 7 writes it: two-space indentation and LF.
+pub fn ps7_json(hex: &str) -> String {
     format!(
-        "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCredential</T><T>System.Object</T></TN><ToString>System.Management.Automation.PSCredential</ToString><Props><S N=\"UserName\">bot</S><SS N=\"Password\">{password_hex}</SS></Props></Obj></Objs>"
+        "{{\n  \"format\": \"localswim-credential\",\n  \"format_version\": 1,\n  \"role\": \"bot\",\n  \"token_dpapi_hex\": \"{hex}\"\n}}"
     )
 }
 
-/// The same as Windows PowerShell 5.1 writes it: UTF-16LE with the mark `FF FE`.
+/// The same as Windows PowerShell 5.1 writes it: four-space indentation, two spaces after each
+/// colon, and CRLF. The file is still UTF-8 with no mark.
+pub fn ps51_json(hex: &str) -> String {
+    format!(
+        "{{\r\n    \"format\":  \"localswim-credential\",\r\n    \"format_version\":  1,\r\n    \"role\":  \"bot\",\r\n    \"token_dpapi_hex\":  \"{hex}\"\r\n}}"
+    )
+}
+
+/// A UTF-16LE file with the mark `FF FE`, which a `bot.json` is never.
 pub fn utf16le_with_mark(text: &str) -> Vec<u8> {
     let mut out = vec![0xFF, 0xFE];
     out.extend(utf16le(text));

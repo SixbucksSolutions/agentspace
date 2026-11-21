@@ -20,26 +20,26 @@ pub const INSTANCE: &str = "i-0123456789abcdef0";
 pub const OTHER_INSTANCE: &str = "i-0aaaaaaaaaaaaaaa1";
 pub const BASE: &str = "http://127.0.0.1:8811";
 /// The planted dummy token. It is not a real token.
-pub const TOKEN: &str = "dummy-token_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4";
-pub const TOKEN_B: &str = "dummy-token_B_Qq1Ww2Ee3Rr4Tt5Yy6Uu7Ii8Oo9Pp0Aa1Ss";
+pub const TOKEN: &str = "dummy-_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4";
+pub const TOKEN_B: &str = "dummyB_-Qq1Ww2Ee3Rr4Tt5Yy6Uu7Ii8Oo9Pp0Aa1Ss";
 pub const ZONE: &str = "America/Los_Angeles";
 pub const ALIAS: &str = "agentspace";
 
 /// The content for `BASE` and `TOKEN` (sha256sum of exactly these bytes, computed independently).
-pub const CONTENT: &str = "LOCALSWIM_URL=http://127.0.0.1:8811\nLOCALSWIM_TOKEN=dummy-token_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4\n";
+pub const CONTENT: &str = "LOCALSWIM_URL=http://127.0.0.1:8811\nLOCALSWIM_TOKEN=dummy-_Zk3Qp9xL2mVb7RtYw5NcHs8DfGa1JeUo0iX4\n";
 /// SHA-256 of `CONTENT`'s bytes, lowercase, as the box prints it.
-pub const HASH_LOWER: &str = "c9e30d93f1db27c3f685bd942f80d7842b4fcdf33b87d3f8ac2b98ad08342e40";
-pub const HASH_UPPER: &str = "C9E30D93F1DB27C3F685BD942F80D7842B4FCDF33B87D3F8AC2B98AD08342E40";
+pub const HASH_LOWER: &str = "b95583663ec5a991f4e37bd14f5eeee5a8d7bc3dcf19b90a3d9ad6c1431e38f4";
+pub const HASH_UPPER: &str = "B95583663EC5A991F4E37BD14F5EEEE5A8D7BC3DCF19B90A3D9AD6C1431E38F4";
 
 /// SHA-256 of `INSTANCE LF zone LF CONTENT`, uppercase hex (sha256sum, independently).
-pub const STAMP_LA: &str = "23AFC6EAFC08A901D51E2D50D29F2D46B926A4897C840B44F4B55C4643ED0948";
+pub const STAMP_LA: &str = "6D390CD3654375C445E95E9FF2ABB9E0AFCAC3A179E9C0EF43AFB4D8CAC0B4BC";
 pub const STAMP_EMPTY_ZONE: &str =
-    "4C43B21E2B704197FD74FA1A23468EC719459F1BC1FB1B80B6C375F2A599AE9A";
-pub const STAMP_KOLKATA: &str = "5FC0AF5361A1C5B363F86001DFEED1DE062D85DCC3AA026DD263414CE851FFD3";
-pub const STAMP_LONDON: &str = "62F4BE98456069635A0C4134CA2C940BA690584950657C428ACABFFC223AE0A5";
+    "DE018CA20BBE2C5A5398304311851AC866DC1E4F92A28B9A09E4A75E8E81D590";
+pub const STAMP_KOLKATA: &str = "D2B37FF89278D04D962F34667E06E0070F1DAF286F1E283BD638AD75E070E1AA";
+pub const STAMP_LONDON: &str = "737877538A4A7E4960AB84705B72FEF25D4C7EC774406A07A26D5FDF7271A5EF";
 /// The same as `STAMP_LA` for `OTHER_INSTANCE`.
 pub const STAMP_LA_OTHER_INSTANCE: &str =
-    "577BC0C4FBAD9B50E38954FE21A7E9E19657342F67259194888318AD4BE4EFDA";
+    "49F6B9EFA597C489A443EA57B665F0F02A22B8183D853417200326E093D9F02A";
 
 pub const SENDING: &str = "Sending the localswim Bot token to the instance...";
 pub const W_COULD_NOT_READ: &str = "agentspace: Could not read the localswim Bot token; the board will not work on the box this session.";
@@ -56,13 +56,31 @@ pub fn w_zone_not_taken(zone: &str) -> String {
     )
 }
 
-/// The DPAPI blob's fixed head: `01 00 00 00` and the provider's GUID, then some fake payload.
-pub fn blob() -> Vec<u8> {
-    let mut b = vec![
+/// The head of a DPAPI blob as localswim's schema pins it: version 1, the provider's GUID, the
+/// master key's version and GUID, and flags of 0 (user scope). Everything after it is a payload.
+pub fn dpapi_head() -> Vec<u8> {
+    let mut h = vec![
         0x01, 0x00, 0x00, 0x00, 0xD0, 0x8C, 0x9D, 0xDF, 0x01, 0x15, 0xD1, 0x11, 0x8C, 0x7A, 0x00,
-        0xC0, 0x4F, 0xC2, 0x97, 0xEB, 0x01, 0x00, 0x00, 0x00,
+        0xC0, 0x4F, 0xC2, 0x97, 0xEB, // The provider's GUID ends at byte 20.
+        0x01, 0x00, 0x00, 0x00, // The master key's version.
     ];
-    b.extend_from_slice(b"fake-payload-bytes");
+    h.extend([0x11; 16]); // The master key's GUID, made up.
+    h.extend([0x00; 4]); // The flags: user scope.
+    h
+}
+
+/// A fake blob: the head, then a payload whose first byte shows which nibble comes first in the
+/// hex. It is not a real blob, and the fake `Unprotect` ignores what it holds.
+pub fn blob() -> Vec<u8> {
+    let mut b = dpapi_head();
+    b.extend_from_slice(&[0x12, 0xAB, 0x3C, 0xD4, 0xEF, 0x05, 0x60]);
+    b
+}
+
+/// Localswim's example blob: the head, then bytes of value zero.
+pub fn example_blob() -> Vec<u8> {
+    let mut b = dpapi_head();
+    b.extend([0x00; 16]);
     b
 }
 
@@ -98,38 +116,69 @@ pub fn enc_utf16be_bom(s: &str) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The Bot credential's CLIXML.
+// The Bot credential's JSON (localswim's windows-operations.md, "The credential files").
 // ---------------------------------------------------------------------------------------------
 
-pub const PS_NS: &str = "http://schemas.microsoft.com/powershell/2004/04";
-pub const PSCRED: &str = "System.Management.Automation.PSCredential";
-
-/// The usual `Props` content for `hex` as the password.
-pub fn props(hex: &str) -> String {
-    format!("<S N=\"UserName\">bot</S><SS N=\"Password\">{hex}</SS>")
+/// A JSON string literal for `s`.
+pub fn js(s: &str) -> String {
+    serde_json::to_string(s).unwrap()
 }
 
-/// A CLIXML document in the default namespace. `version` is the `Version` attribute's value (or
-/// none), `types` the `T` children of `TN`, `props` the content of `Props`.
-pub fn clixml(version: Option<&str>, types: &[&str], props: &str) -> String {
-    let v = version
-        .map(|v| format!(" Version=\"{v}\""))
-        .unwrap_or_default();
-    let ts: String = types.iter().map(|t| format!("<T>{t}</T>")).collect();
-    format!(
-        "<Objs{v} xmlns=\"{PS_NS}\"><Obj RefId=\"0\"><TN RefId=\"0\">{ts}</TN>\
-         <ToString>{PSCRED}</ToString><Props>{props}</Props></Obj></Objs>"
-    )
+/// An object written from `(name, the JSON text of the value)` pairs, in order. It keeps a
+/// duplicate name and writes a name as given, which a JSON library's map would not.
+pub fn object<S: AsRef<str>>(members: &[(S, String)]) -> String {
+    let parts: Vec<String> = members
+        .iter()
+        .map(|(name, value)| format!("{}:{value}", js(name.as_ref())))
+        .collect();
+    format!("{{{}}}", parts.join(","))
 }
 
-/// The standard document for `hex`.
-pub fn clixml_ok(hex: &str) -> String {
-    clixml(Some("1.1.0.1"), &[PSCRED, "System.Object"], &props(hex))
+/// The four members of a good `bot.json`, in the order localswim writes them, for `hex`, as
+/// `(name, the JSON text of the value)`.
+pub fn members(hex: &str) -> Vec<(String, String)> {
+    [
+        ("format", js("localswim-credential")),
+        ("format_version", "1".to_string()),
+        ("role", js("bot")),
+        ("token_dpapi_hex", js(hex)),
+    ]
+    .into_iter()
+    .map(|(n, v)| (n.to_string(), v))
+    .collect()
 }
 
-/// The standard document for the standard blob, as UTF-8.
+/// `members(hex)` with the member `name` given the value text `value`.
+pub fn members_with(hex: &str, name: &str, value: &str) -> Vec<(String, String)> {
+    members(hex)
+        .into_iter()
+        .map(|(n, v)| {
+            if n == name {
+                (n, value.to_string())
+            } else {
+                (n, v)
+            }
+        })
+        .collect()
+}
+
+/// The JSON text of the good value of the member `name`.
+pub fn good_value(hex: &str, name: &str) -> String {
+    members(hex)
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .expect("a member of the credential")
+        .1
+}
+
+/// The good document for `hex`.
+pub fn credential_json(hex: &str) -> String {
+    object(&members(hex))
+}
+
+/// The standard document for the standard blob, as UTF-8 with no mark.
 pub fn good_credential() -> Vec<u8> {
-    enc_utf8(&clixml_ok(&hex_lower(&blob())))
+    enc_utf8(&credential_json(&hex_lower(&blob())))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -287,7 +336,8 @@ impl std::fmt::Debug for SshCall {
 //   pub fn push_with(ctx, say, instance_id: &str, alias: &str, forced: bool, &Seams) -> Outcome
 //     (`sync` is forced; the files are `StdFiles` over the throwaway folders `ctx` names)
 //   pub fn content(base: Option<&str>, token: &Token) -> Option<Content>
-//   pub fn read_token(bot_xml: &[u8], &dyn Unprotect) -> Option<Token>   // the only Token maker
+//   pub fn read_token(bot_json: &[u8], &dyn Unprotect) -> Option<Token>   // the only Token maker
+//   pub fn parse_credential_blob(bot_json: &[u8]) -> Option<Vec<u8>>   // bot.json's bytes to the blob
 //   pub fn stamp(instance_id: &str, zone: &str, content: &Content) -> String   // uppercase hex
 //   pub fn stamp_file_bytes(stamp: &str) -> Vec<u8>
 //   pub fn check_zone(zone: Option<&str>) -> String    // the guard: step 3's check, no renames
@@ -415,6 +465,11 @@ pub fn stamp(instance: &str, zone: &str, content: &[u8]) -> String {
     agentspace_push::stamp(instance, zone, &c)
 }
 
+/// `bot.json`'s bytes to the DPAPI blob, or `None` for a refusal.
+pub fn parse_blob(bot_json: &[u8]) -> Option<Vec<u8>> {
+    agentspace_push::parse_credential_blob(bot_json)
+}
+
 /// The bytes the stamp file holds for `stamp`.
 pub fn stamp_file_bytes(stamp: &str) -> Vec<u8> {
     agentspace_push::stamp_file_bytes(stamp)
@@ -479,6 +534,9 @@ pub struct Scenario {
     pub block_stamp_dir: bool,
     /// Leaves the throwaway home as the last run left it.
     pub keep_home: bool,
+    /// Other files in the credential folder, as `(file name, bytes)`: localswim's folder holds
+    /// `human.json` beside `bot.json`, and the push MUST ignore every file but `bot.json`.
+    pub other_files: Vec<(String, Vec<u8>)>,
     pub ssh: SshBehavior,
 }
 
@@ -511,8 +569,8 @@ impl Env {
             .join("credentials")
             .join("g1")
     }
-    pub fn bot_xml(&self) -> PathBuf {
-        self.cred_dir().join("bot.xml")
+    pub fn bot_json(&self) -> PathBuf {
+        self.cred_dir().join("bot.json")
     }
     pub fn stamp_dir(&self) -> PathBuf {
         self.home().join(".agentspace")
@@ -557,6 +615,7 @@ impl Env {
             proto_stamp: None,
             block_stamp_dir: false,
             keep_home: false,
+            other_files: Vec::new(),
             ssh: SshBehavior::Confirm,
         }
     }
@@ -582,7 +641,10 @@ impl Env {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&lad).unwrap();
         Self::put(&self.receipt_path(), &s.receipt);
-        Self::put(&self.bot_xml(), &s.credential);
+        Self::put(&self.bot_json(), &s.credential);
+        for (name, bytes) in &s.other_files {
+            Self::put(&self.cred_dir().join(name), &Slot::Bytes(bytes.clone()));
+        }
         if s.block_stamp_dir {
             std::fs::write(self.stamp_dir(), b"in the way").unwrap();
         } else {

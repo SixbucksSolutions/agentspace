@@ -60,7 +60,8 @@ pub const STAGING: &str = "/tmp/agentspace-system";
 pub const CLAUDE_MD: &str = "# Test instructions\nSecond line.\n";
 pub const KEY_LINE: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMP user@example";
-pub const TOKEN: &str = "dummy-token-0123456789-0123456789-0123456789";
+/// A made-up token in the form the push accepts: 43 base64url characters.
+pub const TOKEN: &str = "dummy-token-0123456789-0123456789-012345678";
 pub const BASE: &str = "http://127.0.0.1:18811";
 pub const ZONE: &str = "America/New_York";
 
@@ -549,10 +550,13 @@ impl Rig {
         }
         let blob = win::protect(&plain);
         let hex: String = blob.iter().map(|b| format!("{b:02x}")).collect();
-        let xml = format!(
-            "<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCredential</T><T>System.Object</T></TN><ToString>System.Management.Automation.PSCredential</ToString><Props><S N=\"UserName\">bot</S><SS N=\"Password\">{hex}</SS></Props></Obj></Objs>"
-        );
-        fs::write(cred_dir.join("bot.xml"), xml).unwrap();
+        let credential = serde_json::json!({
+            "format": "localswim-credential",
+            "format_version": 1,
+            "role": "bot",
+            "token_dpapi_hex": hex,
+        });
+        fs::write(cred_dir.join("bot.json"), credential.to_string()).unwrap();
     }
 
     pub fn ctx(&self) -> Context {

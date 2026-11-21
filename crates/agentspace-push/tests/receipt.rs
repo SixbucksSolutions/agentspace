@@ -208,11 +208,57 @@ fn receipt_base_is_sent_after_json_unescaping_and_otherwise_as_it_is() {
         enc_utf8(&env.receipt_text("\"\\u0068ttp://127.0.0.1:8811\"")),
         CONTENT.as_bytes(),
     );
-    accepted_with(
-        &env,
-        enc_utf8(&env.receipt_text("\"http://127.0.0.1:8811/\"")),
-        &content("http://127.0.0.1:8811/", TOKEN),
-    );
+}
+
+#[test]
+fn base_must_be_exactly_http_127_0_0_1_and_a_port() {
+    // Architect's ruling (2026-11-20, for v0.07-T02): `http://127.0.0.1:PORT`, PORT 1 to 65535 in
+    // decimal with no leading zero, and no trailing slash. Anything else is refused.
+    let env = Env::new();
+    for port in ["1", "80", "8811", "65535", "10000", "9"] {
+        let base = format!("http://127.0.0.1:{port}");
+        accepted_with(
+            &env,
+            enc_utf8(&env.receipt_text(&Env::json_str(&base))),
+            &content(&base, TOKEN),
+        );
+    }
+    for base in [
+        "http://127.0.0.1:8811/",
+        "http://127.0.0.1:8811/path",
+        "http://127.0.0.1:8811?x=1",
+        "http://127.0.0.1:8811#frag",
+        "http://127.0.0.1:8811 ",
+        " http://127.0.0.1:8811",
+        "https://127.0.0.1:8811",
+        "HTTP://127.0.0.1:8811",
+        "http://localhost:8811",
+        "http://127.0.0.2:8811",
+        "http://127.0.0.1.:8811",
+        "http://0.0.0.0:8811",
+        "http://[::1]:8811",
+        "http://user@127.0.0.1:8811",
+        "http://127.0.0.1",
+        "http://127.0.0.1:",
+        "http://127.0.0.1:0",
+        "http://127.0.0.1:00",
+        "http://127.0.0.1:08811",
+        "http://127.0.0.1:65536",
+        "http://127.0.0.1:99999",
+        "http://127.0.0.1:123456",
+        "http://127.0.0.1:-1",
+        "http://127.0.0.1:+80",
+        "http://127.0.0.1:80a",
+        "http://127.0.0.1:8811:8811",
+        "http://x",
+        "127.0.0.1:8811",
+        "//127.0.0.1:8811",
+    ] {
+        refused(
+            &env,
+            with_receipt(&env, enc_utf8(&env.receipt_text(&Env::json_str(base)))),
+        );
+    }
 }
 
 #[test]
@@ -275,7 +321,9 @@ fn a_member_given_twice_in_any_case_is_refused() {
     let cred = Env::json_str(&env.cred_dir_text());
     for text in [
         format!("{{\"base\":\"{BASE}\",\"base\":\"{BASE}\",\"credential_directory\":{cred}}}"),
-        format!("{{\"base\":\"{BASE}\",\"BASE\":\"http://x\",\"credential_directory\":{cred}}}"),
+        format!(
+            "{{\"base\":\"{BASE}\",\"BASE\":\"http://127.0.0.1:8812\",\"credential_directory\":{cred}}}"
+        ),
         format!(
             "{{\"base\":\"{BASE}\",\"credential_directory\":{cred},\"Credential_Directory\":{cred}}}"
         ),
