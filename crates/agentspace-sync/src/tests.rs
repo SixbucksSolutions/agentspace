@@ -990,6 +990,34 @@ fn no_test_calls_the_pinned_pair_but_the_rigs_guarded_two() {
         );
     }
 
+    // The entries pinned beside them in v0.07 use the same `go` finder and localswim folder, and
+    // the rig has no guarded entry for them: no test MAY call one. A test goes through its hidden
+    // `_using` twin. In the library's own files a bare name can be a module's helper, so a call
+    // there is one through `crate::`.
+    assert_eq!(
+        calls_of("crate::sink", "    crate::sink(a);\n    sink(b);\n"),
+        vec!["1: crate::sink(a);"]
+    );
+    for pinned in [
+        "bootstrap",
+        "provision",
+        "sync_all",
+        "deploy_with_instance_type",
+    ] {
+        for (path, text) in &files {
+            let file = name_of(path);
+            let calls = if file.starts_with("tests/") {
+                calls_of(pinned, text)
+            } else {
+                calls_of(&format!("crate::{pinned}"), text)
+            };
+            assert!(
+                calls.is_empty(),
+                "No test MAY call the pinned {pinned}, which finds the real go: {file}: {calls:?}"
+            );
+        }
+    }
+
     // Each guarded entry runs the guard first, and the guard holds the child to an empty PATH.
     let rig = &files
         .iter()
@@ -1634,6 +1662,30 @@ mod host_deploy_and_provision {
                 "deploy done".to_string(),
                 "start failed reason=no such instance".to_string(),
             ]
+        );
+    }
+
+    /// Step 5 on a host that is not the box: the start-and-wait's `journalctl` hint names the
+    /// host's own alias, never the box's (operator.md, From the command line). The fake AWS has no
+    /// SSM to wait on, so the deadline's words, as `agentspace-box` writes them, arrive here as the
+    /// step's failure text.
+    #[test]
+    fn a_hosts_failed_start_names_the_hosts_own_alias_in_its_hint() {
+        let w = World::new("prov-hint");
+        w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+        let aws = ScriptedAws::new(vec![status("CREATE_COMPLETE"), outputs()]);
+        let mut describe = Err(AwsError::Failed(format!(
+            "{ID} was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch"
+        )));
+        std::mem::swap(&mut *aws.inner.describe.borrow_mut(), &mut describe);
+        let f = provision(&w, &aws, &FakeSay::default()).unwrap_err();
+        let want = format!(
+            "{ID} was not ready within 15 minutes; check: ssh agentspace-host.example journalctl -u agentspace-patch"
+        );
+        assert_eq!(f.message, format!("agentspace: {want}"));
+        assert_eq!(
+            log_lines(&w).last().unwrap(),
+            &format!("start failed reason={want}")
         );
     }
 

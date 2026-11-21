@@ -69,13 +69,19 @@ impl Plan {
         if self.is_box {
             return failure;
         }
-        Failure {
-            message: failure.message.replace(
-                "ssh agentspace journalctl",
-                &format!("ssh {} journalctl", self.alias),
-            ),
-            ..failure
-        }
+        hint_for(&self.alias, failure)
+    }
+}
+
+/// A start-and-wait failure of a host that is not the box: its `journalctl` hint names `alias`, the
+/// host's own, where `agentspace-box` words it for the box (operator.md, From the command line).
+pub(crate) fn hint_for(alias: &str, failure: Failure) -> Failure {
+    Failure {
+        message: failure.message.replace(
+            "ssh agentspace journalctl",
+            &format!("ssh {alias} journalctl"),
+        ),
+        ..failure
     }
 }
 

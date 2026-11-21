@@ -125,14 +125,35 @@ fn open_log(path: &Path) -> Result<Log, Failure> {
     })
 }
 
-/// The system's error text, with no final period and no line break.
+/// The system's error text, with no final period and no line break. Rust's trailing
+/// ` (os error <n>)` MUST be dropped: a message carries the system's own words alone (operator.md,
+/// Exit codes).
 fn error_text(e: &dyn std::fmt::Display) -> String {
     let text = e.to_string();
     let text: String = text
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
-    text.trim().trim_end_matches('.').to_string()
+    without_os_error(text.trim())
+        .trim()
+        .trim_end_matches('.')
+        .to_string()
+}
+
+/// `text` without one trailing ` (os error <digits>)`, the suffix Rust's `io::Error` adds to an OS
+/// error's message. Anything else, a near miss included, is returned as it is.
+fn without_os_error(text: &str) -> &str {
+    const OPEN: &str = " (os error ";
+    if let Some(body) = text.strip_suffix(')')
+        && let Some(open) = body.rfind(OPEN)
+    {
+        let code = &body[open + OPEN.len()..];
+        let digits = code.strip_prefix('-').unwrap_or(code);
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            return &text[..open];
+        }
+    }
+    text
 }
 
 /// Step 2's lock, taken without waiting; a held lock and any other failure are each logged as
@@ -379,8 +400,16 @@ pub(crate) fn run(
     let instance_id = deployed.map_err(|f| fail("deploy", f))?;
     log.line("deploy", "done", None);
 
-    // Step 5: start and wait, with no push.
+    // Step 5: start and wait, with no push. A host's deadline hint names its own alias, never the
+    // box's (operator.md, From the command line, "What a command takes from its host").
     agentspace_box::start_and_wait_for(aws, say, seams.clock, &instance_id)
+        .map_err(|f| {
+            if is_box {
+                f
+            } else {
+                crate::syncing::hint_for(&agentspace_hosts::host_alias(project), f)
+            }
+        })
         .map_err(|f| fail("start", f))?;
     log.line("start", "done", None);
 
@@ -481,6 +510,19 @@ mod tests {
             shown(&path)
         )));
         assert!(message.ends_with('.') && !message.ends_with(".."));
+        // The system's own words alone: Rust's ` (os error <n>)` is dropped.
+        assert!(
+            !message.contains("os error"),
+            "The message MUST NOT carry Rust's os error suffix"
+        );
+        assert_eq!(
+            error_text(&"Access is denied. (os error 5)"),
+            "Access is denied"
+        );
+        assert_eq!(
+            error_text(&"A near miss (os error 12a)"),
+            "A near miss (os error 12a)"
+        );
     }
 
     #[test]
