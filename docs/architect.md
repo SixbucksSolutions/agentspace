@@ -177,6 +177,12 @@ reads before it prints it").
    the card claims a test fails without the change, show it fail: v0.06-T05-S02's conformance case
    was run against a build from before the fix and hung, then against the fix and passed. A run
    cut short by a timeout has not passed.
+   - **A docs-only pull request is not exempt: run `cargo test --workspace --locked` on its head
+     whenever a crate's tests read a doc it changes** (v0.07-T01). The operator crate's help tests
+     compare its help with operator.md's help blocks byte for byte. T01 changed those blocks for
+     commands T03 builds, its PRs were merged without the workspace tests, and `main` went red in
+     about a dozen help tests until #0151 (found by T02's dev lead). A spec that runs ahead of its
+     code SHOULD say which tests it breaks, and the story that builds the code fixes them.
 4. **Prove a harness before calling a defect.** In v0.05 a no-stdout run first "showed" exit 0,
    because the harness gave the child a hidden console; with no console the build was right.
 5. **After a rebase,** check the new head with `git range-diff` and a diff of the story's own files
