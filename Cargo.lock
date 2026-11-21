@@ -232,6 +232,7 @@ version = "0.6.0"
 dependencies = [
  "agentspace-box",
  "agentspace-ca",
+ "agentspace-hosts",
  "agentspace-operator-api",
  "agentspace-push",
  "agentspace-run",

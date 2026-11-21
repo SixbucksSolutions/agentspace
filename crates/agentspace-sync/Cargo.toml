@@ -21,6 +21,8 @@ agentspace-push = { path = "../agentspace-push" }
 agentspace-run = { path = "../agentspace-run" }
 # write_atomically, for the instance-ID cache (state.md, Replacing a file).
 agentspace-state = { path = "../agentspace-state" }
+# Target, which names the host a command acts on (D49, D55).
+agentspace-hosts = { path = "../agentspace-hosts" }
 # The versions already in Cargo.lock. serde: only DeserializeSeed and Visitor, for the
 # repeated-member check of the stack parameters file. jsonschema: the stack parameters schema,
 # carried inside the operator, with no remote reference fetched (D38).

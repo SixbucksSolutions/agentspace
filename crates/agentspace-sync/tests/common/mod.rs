@@ -37,6 +37,7 @@
 #![cfg(windows)]
 #![allow(dead_code)]
 
+use agentspace_sync::Target;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fs;
@@ -754,7 +755,7 @@ impl Rig {
         self.refuse_unless_no_go_can_be_found();
         let ctx = self.ctx();
         let run = agentspace_run::Runner::new(ctx.clone());
-        agentspace_sync::sync(&ctx, &ca_env(), say, &run, &run)
+        agentspace_sync::sync(&ctx, &ca_env(), Target::Box, say, &run, &run)
     }
 
     /// The pinned `deploy` itself, where no `go` can be found.
@@ -762,7 +763,7 @@ impl Rig {
         self.refuse_unless_no_go_can_be_found();
         let ctx = self.ctx();
         let run = agentspace_run::Runner::new(ctx.clone());
-        agentspace_sync::deploy(&ctx, &ca_env(), say, &run, &run)
+        agentspace_sync::deploy(&ctx, &ca_env(), Target::Box, say, &run, &run)
     }
 
     // ---- Reading what happened

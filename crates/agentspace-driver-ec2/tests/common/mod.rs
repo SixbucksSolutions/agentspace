@@ -186,6 +186,8 @@ impl Fx {
             proxy_override: None,
             own_exe,
             system_root: Some(system_root()),
+            state_dir: home.join(".agentspace"),
+            operator_program: None,
         };
         Fx {
             _tmp: tmp,

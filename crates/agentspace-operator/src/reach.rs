@@ -112,7 +112,7 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        agentspace_sync::sync(ctx, env, say, aws, remote)
+        agentspace_sync::sync(ctx, env, agentspace_sync::Target::Box, say, aws, remote)
     }
 
     fn deploy(
@@ -123,7 +123,7 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        agentspace_sync::deploy(ctx, env, say, aws, remote)
+        agentspace_sync::deploy(ctx, env, agentspace_sync::Target::Box, say, aws, remote)
     }
 }
 

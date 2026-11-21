@@ -925,7 +925,7 @@ fn no_test_calls_the_pinned_pair_but_the_rigs_guarded_two() {
         assert_eq!(file, "tests/common/mod.rs", "{call}");
         assert!(
             call.ends_with(&format!(
-                "agentspace_sync::{pinned}(&ctx, &ca_env(), say, &run, &run)"
+                "agentspace_sync::{pinned}(&ctx, &ca_env(), Target::Box, say, &run, &run)"
             )),
             "{call}"
         );

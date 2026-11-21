@@ -34,6 +34,15 @@ pub struct Context {
     /// The running program's own file, a full path, never its first argument (operator.md, How
     /// each program finds the others).
     pub own_exe: PathBuf,
+    /// The resolved state folder, made full (docs/state.md, The home folder): where
+    /// `place_pending` reads and writes the lease state file. Added by the architect, 2026-11-20,
+    /// before v0.07-T03 (D55, "Changed during T01").
+    pub state_dir: PathBuf,
+    /// The program a provisioning run starts (driver.md, The operator program): the full path of
+    /// `AGENTSPACE_PROVISION_CMD` when set and not empty, else `agentspace-operator.exe` beside
+    /// the CLI. `None` until E0.07-T03-S01 resolves it. Added by the architect, 2026-11-20, before
+    /// v0.07-T03 (D55).
+    pub operator_program: Option<PathBuf>,
 }
 
 /// A request to place a lease (driver.md, Place a lease). Every value is already normalized and
@@ -138,4 +147,14 @@ pub trait Driver {
     /// Deletes the alias file, then the lease folder. A missing one is not a failure. It MUST work
     /// for a lease just placed that has no record (driver.md, Ordering and concurrency).
     fn release(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure>;
+
+    /// Asked by `get` for a lease whose stored state is `pending` (driver.md, check_pending). It
+    /// MUST NOT write the lease state file or take its lock, MUST end within 20 seconds, and MAY
+    /// start work that outlives `get`. The CLI drops its failure. The default does nothing, for a
+    /// driver that never answers `pending`. Added by the architect, 2026-11-20, before v0.07-T03
+    /// (D55); E0.07-T03-S01 builds the EC2 driver's.
+    fn check_pending(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
+        let _ = (ctx, lease);
+        Ok(())
+    }
 }

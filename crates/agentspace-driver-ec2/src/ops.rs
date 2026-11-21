@@ -303,6 +303,8 @@ mod tests {
             proxy_override: over.map(str::to_string),
             system_root: None,
             own_exe: root.join("bin").join("agentspace.exe"),
+            state_dir: root.join("home").join(".agentspace"),
+            operator_program: None,
         }
     }
 

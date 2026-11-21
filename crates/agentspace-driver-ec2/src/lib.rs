@@ -57,3 +57,17 @@ impl Driver for Ec2Driver {
         ops::release(ctx, lease)
     }
 }
+
+/// Places every `pending` lease of `project` that this driver placed, under the lease state lock,
+/// and writes each `ready` (driver.md, place_pending). Returns how many it placed. The
+/// provisioning run calls it as its last step (operator.md, provision).
+///
+/// A stub pinned by the architect, 2026-11-20, before v0.07-T03 (D55): it places nothing and
+/// fails until E0.07-T03-S01 builds it.
+pub fn place_pending(ctx: &Context, project: &str) -> Result<usize, Failure> {
+    let _ = (ctx, project);
+    Err(Failure {
+        message: "Placing the pending leases is not built yet.".to_string(),
+        leftovers: Vec::new(),
+    })
+}

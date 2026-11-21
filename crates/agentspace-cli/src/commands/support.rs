@@ -335,12 +335,18 @@ pub fn context(
     // A `SystemRoot` that is not valid text is read as unset (lease-api.md, Messages, architect,
     // 2026-11-19).
     let system_root = text_var(world, "SystemRoot").and_then(Result::ok);
+    // Every command that asks for a context has already resolved the state folder to read the
+    // lease state file, so this adds no failure (architect, 2026-11-20, the pin before v0.07-T03).
+    let state_dir = state_dir(paths, sub)?.to_path_buf();
     Ok(Context {
         home,
         ssh_dir,
         proxy_override,
         system_root,
         own_exe: world.own_exe.to_path_buf(),
+        state_dir,
+        // E0.07-T03-S01 resolves it from AGENTSPACE_PROVISION_CMD or the CLI's own folder.
+        operator_program: None,
     })
 }
 

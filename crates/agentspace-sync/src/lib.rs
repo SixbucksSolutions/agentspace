@@ -5,8 +5,10 @@
 //! # Public API
 //!
 //! - [`sync`] and [`deploy`], the pinned entry points (D42; the `CaEnv` parameter was added to the
-//!   pin by the architect on 2026-11-19). Their signatures are the pin, and a change to them is
-//!   the architect's.
+//!   pin by the architect on 2026-11-19, and the [`Target`] parameter on 2026-11-20, before
+//!   v0.07-T03, D55), and [`bootstrap`] and [`provision`], stubs pinned the same day for
+//!   E0.07-T03-S03 to build. Their signatures are the pin, and a change to them is the
+//!   architect's.
 //! - `sync_using` and `deploy_using`, the same over `Seams`, and `Seams::real_except_go`, which
 //!   gives them the operator's own clock, CA check and push with a `go` finder and a localswim
 //!   folder of the test's: hidden from the docs, for tests alone, since `go`, the localswim
@@ -54,6 +56,9 @@ use agentspace_operator_api::{
 };
 
 use files::{FileCache, Places};
+
+/// The host a command acts on (D49, D55), re-exported so the operator names it through this crate.
+pub use agentspace_hosts::Target;
 
 /// The ssh host alias every connection of `sync` goes through (operator.md, The `agentspace` SSH
 /// entry).
@@ -116,26 +121,78 @@ impl Seams<'_> {
 /// `operator sync` (docs/operator.md, sync): checks the CA, starts the box and waits for it,
 /// installs `box\system` and the CA's public key, copies `CLAUDE.md`, builds and installs the
 /// localswim CLI when the laptop can, and pushes the token, forced.
+///
+/// `target` names the host (D49). The pin before v0.07-T03 (architect, 2026-11-20, D55) added it:
+/// [`Target::Box`] is today's behavior, and another host fails as not built yet until
+/// E0.07-T03-S03 builds it.
 pub fn sync(
     ctx: &Context,
     ca_env: &CaEnv,
+    target: Target<'_>,
     say: &dyn Say,
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    with_real_seams(|seams| sync_using(ctx, ca_env, say, aws, remote, seams))
+    match target {
+        Target::Box => with_real_seams(|seams| sync_using(ctx, ca_env, say, aws, remote, seams)),
+        Target::Host(_) => Err(not_built_yet("sync -Host")),
+    }
 }
 
 /// `operator deploy` (docs/operator.md, deploy): creates or updates the stack, refreshes the
 /// instance-ID cache, then runs `sync` with the same [`Say`], so `deploy -Quiet` quiets it too.
+///
+/// `target` as for [`sync`] (the pin before v0.07-T03, D55).
 pub fn deploy(
     ctx: &Context,
     ca_env: &CaEnv,
+    target: Target<'_>,
     say: &dyn Say,
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    with_real_seams(|seams| deploy_using(ctx, ca_env, say, aws, remote, seams))
+    match target {
+        Target::Box => with_real_seams(|seams| deploy_using(ctx, ca_env, say, aws, remote, seams)),
+        Target::Host(_) => Err(not_built_yet("deploy -Host")),
+    }
+}
+
+/// `operator bootstrap` (docs/operator.md, bootstrap): runs the embedded toolchain bootstrap on
+/// the target's host (D46). A stub pinned by the architect, 2026-11-20, before v0.07-T03 (D55),
+/// until E0.07-T03-S03 builds it.
+pub fn bootstrap(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    target: Target<'_>,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+) -> Result<(), Failure> {
+    let _ = (ctx, ca_env, target, say, aws, remote);
+    Err(not_built_yet("bootstrap"))
+}
+
+/// `operator provision -Host <project>` (docs/operator.md, provision): the provisioning run
+/// (D48). A stub pinned by the architect, 2026-11-20, before v0.07-T03 (D55), until
+/// E0.07-T03-S03 builds it.
+pub fn provision(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    project: &str,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+) -> Result<(), Failure> {
+    let _ = (ctx, ca_env, project, say, aws, remote);
+    Err(not_built_yet("provision"))
+}
+
+/// The failure of a command the pin names and T03 has not built yet.
+fn not_built_yet(command: &str) -> Failure {
+    Failure {
+        message: format!("agentspace: {command} is not built yet."),
+        caller: CallerFailure::Same,
+    }
 }
 
 /// A failure of one of `sync`'s or `deploy`'s own steps, with its exact message.
