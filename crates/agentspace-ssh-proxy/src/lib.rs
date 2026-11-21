@@ -177,13 +177,16 @@ fn report(say: &Printer, failure: &Failure) {
     }
 }
 
+/// The box's stack, until T03 picks the host's (operator.md, The stack).
+const BOX_STACK: &str = "agentbox";
+
 /// `up`'s steps in caller mode (operator.md, up; What a caller sees): the start-and-wait step, and
 /// the token push unless this is a nested `up`. Returns when the box is ready.
 fn up(ctx: &Context, say: &dyn Say, alias: &str, env: &Arc<Env>) -> Result<(), Failure> {
     let lookup_env = Arc::clone(env);
     let runner = Runner::with_lookup(ctx.clone(), move |name| lookup_env.get(name));
     let cache = FileCache::new(&ctx.home);
-    let id = start_and_wait(&runner, say, &SystemClock::new(), &cache)?;
+    let id = start_and_wait(&runner, say, &SystemClock::new(), &cache, BOX_STACK)?;
     if !ctx.nested {
         let lookup_env = Arc::clone(env);
         let lookup: Arc<Lookup> = Arc::new(move |name| lookup_env.get(name));

@@ -19,9 +19,9 @@
 //!
 //! The entry points:
 //! - [`start_and_wait`]: `up`'s steps 1 and 2. Reads the instance ID (from the cache, or rebuilt
-//!   from the stack), starts the box and waits for it, ending with `Ready: <id>`. Returns the ID.
+//!   from the host's `stack`, a parameter: `agentbox` for the box), starts the box and waits for it, ending with `Ready: <id>`. Returns the ID.
 //! - [`start_and_wait_for`]: the shared start-and-wait step alone, for an ID already read.
-//! - [`instance_id`]: the instance ID from the cache, or from the stack's output when the cache
+//! - [`instance_id`]: the instance ID from the cache, or from the given stack's output when the cache
 //!   counts as missing, handing the cache's new bytes to [`InstanceIdCache::write`].
 //!
 //! The cache's decisions, as pure functions:
@@ -30,8 +30,8 @@
 //!   `std::fs::read` result converts into a [`CacheRead`], not found counting as missing.
 //! - [`cache_bytes`]: the bytes a cache holding an ID is written as.
 //! - [`cache_unreadable`]: FA-16's failure for a cache that cannot be opened.
-//! - [`instance_id_from_stack`]: the stack's `InstanceId` output, through
-//!   `cloudformation describe-stacks`, or the "no InstanceId output" failure.
+//! - [`instance_id_from_stack`]: the given stack's `InstanceId` output, through
+//!   `cloudformation describe-stacks`, or the "no InstanceId output" failure naming that stack.
 //!
 //! The seams and helpers:
 //! - [`Clock`], with [`SystemClock`] the real one.
@@ -62,7 +62,8 @@ use agentspace_operator_api::{Aws, Failure, Say};
 use agentspace_operator_api::Mode;
 
 /// `up`'s steps 1 and 2 (operator.md, up): reads the instance ID from the cache, or from the
-/// stack's output when the cache counts as missing, writing the cache then; then starts the box
+/// output of `stack`, the host's stack (`agentbox` for the box), when the cache counts as missing,
+/// writing the cache then; then starts the box
 /// and waits for it, ending with `Ready: <id>` (the caller's `The host is ready.` in caller mode).
 ///
 /// Returns the instance ID once the box is ready. Every failure ends the step at once, with
@@ -72,8 +73,9 @@ pub fn start_and_wait(
     say: &dyn Say,
     clock: &dyn Clock,
     cache: &dyn InstanceIdCache,
+    stack: &str,
 ) -> Result<String, Failure> {
-    let id = instance_id(aws, cache)?;
+    let id = instance_id(aws, cache, stack)?;
     start_and_wait_for(aws, say, clock, &id)?;
     Ok(id)
 }
