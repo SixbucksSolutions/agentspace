@@ -74,7 +74,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | Leases | None ready; 25 released |
 | Terry's laptop | v0.07 installed in `%USERPROFILE%\.agentspace\bin` from T05's release build of `e0c4046` (two `.old-` files left for a later install to remove); the keeper runs it. `projects.json` lists `agentspace` (D54); `hosts.json` holds both hosts. No change to his ssh config, keeper task or `PATH` |
 | Swimcoach | No milestone; `scripts/milestones.json` is empty and the reporter is stopped. `v0.07` was stopped at 9:24pm |
-| Sessions | Every dev lead is archived but T06's, which the app kept because it was open on Terry's screen |
+| Sessions | Every dev lead is archived. T06's was refused twice while the app showed it, and archived on a retry once it no longer did |
 
 ### v0.07 by turn
 
@@ -188,7 +188,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | A review worktree under the scratchpad's long path fails on box/tests' fixtures ("Filename too long") | Put review worktrees under `.claude\worktrees\` |
 | A worktree folder stays held after `git worktree remove`, by the session that was in it | Remove the empty folder after that session is archived |
 | `archive_session` is refused once by a hook that relabels the call | Send it again with exactly the input the refusal quotes |
-| `archive_session` is refused while the app shows the session | Ask Terry to archive it from the sidebar |
+| `archive_session` is refused ("pinned or in use") while the app shows the session | Retry once Terry has moved off it, or ask him to archive it from the sidebar |
 | Bot's card moves: out of Backlog, and from Ready For Work straight to Ready For Review, answer HTTP 403. Routing around a 403 is refused by auto mode as undermining oversight | Ask Terry to move the card to In Progress; then the architect moves it on |
 | `agentspace-operator status` prints on stderr, not stdout | Capture `2>&1`, or read stderr |
 | A case-insensitive scan for a short name fragment matched the word "stdout" | Anchor names with `\b`, and look at every hit before believing it |
@@ -231,8 +231,6 @@ RFC 2119 keywords; the capitals are load-bearing.
 | #0027 from Git Bash: `deploy` and `sync` passed in T05; `grow`'s refusal case met #0164 instead | Terry, on #0027's card | #0159's record, step 6 |
 | #0064 (a release leaves a lease's connections up) and #0043 (the CloudWatch backstop) | v0.08 | roadmap.md |
 | #0109 and #0082, the sampler's silent death and missed work | Before v0.09's measurement | roadmap.md |
-| The T06 dev lead's session, not archived | Terry, from the sidebar | AGENTS.md, "Roles and pull requests" |
-
 ## The scope ahead: v0.08
 
 **v0.08 (#0048): host lifecycle and cost guard** (D25). A project's host runs only while the
