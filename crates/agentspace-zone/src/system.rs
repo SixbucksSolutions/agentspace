@@ -1,4 +1,5 @@
-//! The laptop's Windows zone ID, read from the system (operator.md, The time zone, step 1).
+//! The laptop's Windows zone ID, read from the system (operator.md, The time zone, step 1), and
+//! the laptop's offset from UTC at an instant, for the guard's stop time.
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. This is the only module of the crate that
 //! calls Windows, and so the only one with `unsafe`.
@@ -42,7 +43,9 @@ pub fn windows_zone_id() -> Option<String> {
 /// instant, or `None` when the system does not give one (and always on any other system).
 ///
 /// It is read afresh at each call and never remembered, so a laptop that travels gives the offset
-/// of the zone it is in. Added for `status -All`'s `Guard` line (operator.md, status; E0.08-T03-S02).
+/// of the zone it is in. Added for the guard's stop time, printed by `status -All`'s `Guard` line
+/// and the guard's progress lines (operator.md, status, and guard, step 6), through
+/// [`crate::local_clock_time`].
 #[cfg(windows)]
 pub fn local_utc_offset(unix: i64) -> Option<i32> {
     use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
@@ -76,7 +79,9 @@ pub fn local_utc_offset(unix: i64) -> Option<i32> {
         return None;
     }
     let local_ticks = (i64::from(local.dwHighDateTime) << 32) | i64::from(local.dwLowDateTime);
-    let seconds = (local_ticks - ticks as i64).div_euclid(TICKS_PER_SECOND);
+    let seconds = local_ticks
+        .checked_sub(ticks as i64)?
+        .div_euclid(TICKS_PER_SECOND);
     i32::try_from(seconds).ok()
 }
 

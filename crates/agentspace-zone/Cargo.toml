@@ -2,7 +2,7 @@
 name = "agentspace-zone"
 version = "0.6.0"
 edition.workspace = true
-description = "The laptop's time zone as an IANA name, and the zone check (docs/operator.md, The time zone; D42)"
+description = "The laptop's time zone as an IANA name, the zone check, and the laptop's clock time at an instant (docs/operator.md, The time zone, status and guard; D42)"
 publish = false
 
 [lib]
@@ -11,7 +11,8 @@ path = "src/lib.rs"
 
 [dependencies]
 
-# Only the Windows half uses it: reading the laptop's zone ID (src/system.rs), the one unsafe call.
+# Only the Windows half uses it: reading the laptop's zone ID and its offset at an instant
+# (src/system.rs), the crate's only unsafe calls.
 # The version the other crates already use.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Time"] }

@@ -2,8 +2,9 @@
 //!
 //! RFC 2119 keywords in this crate's comments, and the capitals are load-bearing.
 //!
-//! The one entry point is [`zone`]. It works out the zone the token push sends, in the order
-//! the spec gives:
+//! It has two entry points. [`local_clock_time`] gives the laptop's clock time at an instant,
+//! `<h:mm><am|pm>`, the one formatter of the guard's stop time (operator.md, status and guard).
+//! [`zone`] works out the zone the token push sends, in the order the spec gives:
 //!
 //! 1. The override (`AGENTSPACE_TIMEZONE`, passed in by the caller) replaces the laptop's zone
 //!    when it is set and not empty. Otherwise the laptop's Windows zone ID is converted with
@@ -13,9 +14,10 @@
 //!    is the empty zone, which this crate gives as `None`.
 //!
 //! The crate reads no environment variable and no file, writes to no stream, and never panics on
-//! bad input. Its one system read is the laptop's own Windows zone ID ([`windows_zone_id`], from
-//! the system's time zone setting), which [`laptop_zone`] makes only when no override is given;
-//! the override's value is the caller's to read from `AGENTSPACE_TIMEZONE`.
+//! bad input. Its two system reads are the laptop's own Windows zone ID ([`windows_zone_id`], from
+//! the system's time zone setting), which [`laptop_zone`] makes only when no override is given,
+//! and the system zone's offset at an instant ([`local_utc_offset`]); the override's value is the
+//! caller's to read from `AGENTSPACE_TIMEZONE`, and never changes the clock time.
 
 #![deny(unsafe_code)]
 
@@ -36,7 +38,7 @@ pub const LEGACY_NAMES: [(&str, &str); 7] = [
 // The file's header names the CLDR release it comes from; a test keeps the rows sorted.
 mod cldr_windows_zones;
 
-// The one place that calls Windows, to read the laptop's zone ID.
+// The one place that calls Windows, to read the laptop's zone ID and its offset at an instant.
 mod system;
 
 use cldr_windows_zones::WINDOWS_ZONES;
@@ -179,8 +181,14 @@ fn round_up_to_minute(unix: i64) -> i128 {
 /// is unchanged), and the offset is the system's at the rounded instant, then [`clock_time_at`]
 /// gives the text.
 pub fn local_clock_time(unix: i64) -> Option<String> {
+    clock_time_with(unix, local_utc_offset)
+}
+
+/// [`local_clock_time`] with the zone's offset given as a function of the instant, so a test can
+/// give a zone of its own: the offset MUST be read at the rounded instant.
+fn clock_time_with(unix: i64, offset_at: impl Fn(i64) -> Option<i32>) -> Option<String> {
     let rounded = i64::try_from(round_up_to_minute(unix)).ok()?;
-    let offset = local_utc_offset(rounded)?;
+    let offset = offset_at(rounded)?;
     Some(clock_time_at(rounded, offset))
 }
 
@@ -258,9 +266,52 @@ mod tests {
         assert_eq!(clock_time_at(1_793_512_800, EASTERN_STANDARD), "1:00am");
     }
 
+    /// US Eastern's 2026 rule: daylight time from 2026-03-08 07:00Z to 2026-11-01 06:00Z.
+    fn eastern_2026(unix: i64) -> Option<i32> {
+        if (1_772_953_200..1_793_512_800).contains(&unix) {
+            Some(EASTERN_DAYLIGHT)
+        } else {
+            Some(EASTERN_STANDARD)
+        }
+    }
+
+    #[test]
+    fn the_offset_is_read_at_the_rounded_instant_at_spring_forward() {
+        // 06:59:30Z is 1:59:30am EST, which rounds to 07:00Z, the change: 3:00am EDT. The
+        // unrounded instant's offset would give 2:00am, a time the clock never shows.
+        assert_eq!(
+            clock_time_with(1_772_953_170, eastern_2026).as_deref(),
+            Some("3:00am")
+        );
+    }
+
+    #[test]
+    fn the_offset_is_read_at_the_rounded_instant_at_fall_back() {
+        // 05:59:30Z is 1:59:30am EDT, which rounds to 06:00Z, the change: 1:00am EST. The
+        // unrounded instant's offset would give 2:00am.
+        assert_eq!(
+            clock_time_with(1_793_512_770, eastern_2026).as_deref(),
+            Some("1:00am")
+        );
+    }
+
+    #[test]
+    fn no_offset_gives_no_time() {
+        assert_eq!(clock_time_with(at(12, 0, 0), |_| None), None);
+    }
+
     #[test]
     fn clock_time_never_panics_on_an_extreme() {
-        for unix in [i64::MIN, i64::MIN + 1, -1, 0, i64::MAX - 1, i64::MAX] {
+        // 910_000_000_000 is in the year 30807, near the end of what Windows converts.
+        for unix in [
+            i64::MIN,
+            i64::MIN + 1,
+            -1,
+            0,
+            910_000_000_000,
+            i64::MAX - 1,
+            i64::MAX,
+        ] {
             for offset in [i32::MIN, -1, 0, 1, i32::MAX] {
                 let text = clock_time_at(unix, offset);
                 assert!(text.ends_with("am") || text.ends_with("pm"), "{text}");
