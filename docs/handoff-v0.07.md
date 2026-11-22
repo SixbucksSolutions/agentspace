@@ -2,18 +2,21 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Draft, the live record of v0.07 (#0047) until it closes.** Started at 4:22pm Pacific on
-> 2026-11-20, at v0.07-T01's close. Where this file and AGENTS.md, the board or decisions.md
-> disagree, they win. The procedure is [architect.md](architect.md); the design is D43 to D55 in
+> **Final.** v0.07 (#0047) closed at 9:24pm Pacific on 2026-11-21, when Terry approved the epic
+> into Completed. This is the architect's handoff after v0.07, for the architect who starts v0.08
+> (#0048). It was started at 4:22pm Pacific on 2026-11-20, at v0.07-T01's close, and refreshed at
+> each turn's close. Where this file and AGENTS.md, the board or decisions.md disagree, they win.
+> The procedure is [architect.md](architect.md); the design is D43 to D55 in
 > [decisions.md](decisions.md).
 
 ## Where things stand
 
-**As of 8:52pm Pacific, 2026-11-21.**
+**As of 9:24pm Pacific, 2026-11-21.**
 
 | What | State |
 |---|---|
-| v0.07 (#0047), a host per project | In Ready For Review, following its last story. All twenty-one stories are merged (D55; #0162 added to T02), and all six turns are closed. The release closes on Terry's word ([architect.md, Closing a release](architect.md#closing-a-release)) |
+| v0.07 (#0047), a host per project | Completed, every card approved by Terry. Twenty-one stories in six turns (D55; #0162 added to T02), PRs #90 to #110. Marked done in [roadmap.md](roadmap.md) |
+| v0.08 (#0048), host lifecycle and cost guard | Not laid out. It MUST NOT be broken into stories until Terry says so (AGENTS.md, "The board") |
 | The done-when | Met in T06 ([runs/e0.07-t06-s01.md](runs/e0.07-t06-s01.md)): Terry signed in Claude Code, Codex and gh on `agentspace-host-agentspace` by README's procedure and cloned the checkout; an agent in a desktop-app session on an agentspace lease created, moved and archived #0165 on the agentspace board at 8:34pm, through the host's `localswim`; the keeper held the board on both hosts, with a swimcoach lease on the box beside it |
 | The live checks | T05 ran D53's checks but the sign-ins on Terry's laptop and AWS ([runs/e0.07-t05-s01.md](runs/e0.07-t05-s01.md)): an agentspace lease went `pending` to `ready` on the new host `agentspace-host-agentspace`, its alias reached it, a swimcoach lease's alias matched v0.06's form and reached the box, the keeper held both hosts at once, and the `agentbox` change set was empty. Three findings: the install's keeper race (README fixed), #0163 and #0164 |
 | The conformance suite | Covers v0.07 from T04: the lease CLI's `pending` and `no_capacity` and its provisioning-run tripwire, the operator and ProxyCommand per host, the keeper per host (H1 to H18) and the state schemas' samples; 73 files and the deadline case pass against `main` 39363d2's build, 2,640 results ([runs/e0.07-t04-s04.md](runs/e0.07-t04-s04.md)) |
@@ -25,7 +28,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | The hosts | Both stopped, confirmed by the architect's `status -All` at 8:41pm: the box (`agentbox`), `m9g.xlarge`, 20 GiB; and `agentspace-host-agentspace`, `m9g.xlarge`, 8 GiB, its root filesystem 66% used at T05, its volume not changeable until about 12:05am on 2026-11-22 (#0164). The new host's first patch run ran at its boot in T06 (8:17pm). Each ran about 40 minutes in T05 and about 20 in T06 |
 | The new host's sign-ins | Claude Code, Codex and gh are signed in on `agentspace-host-agentspace`, and `~/agentspace` is cloned; rustc, cargo and codex are on an interactive shell's `PATH` only (#0166) |
 | Leases | None ready; 25 released |
-| Swimcoach | Milestone `v0.07` only; `v0.07-T01` stopped at 4:22pm, `v0.07-T02` at 7:04pm, `v0.07-T03` at 11:48am, `v0.07-T04` at 5:04pm, `v0.07-T05` at 6:21pm and `v0.07-T06` at 8:52pm on 2026-11-21 |
+| Swimcoach | No milestone; `scripts/milestones.json` is empty and the reporter is stopped. `v0.07-T01` stopped at 4:22pm on 2026-11-20, `v0.07-T02` at 7:04pm, then on 2026-11-21 `v0.07-T03` at 11:48am, `v0.07-T04` at 5:04pm, `v0.07-T05` at 6:21pm, `v0.07-T06` at 8:52pm and `v0.07` at 9:24pm |
 | Laptop files | T05 changed what its card names: the v0.07 install in `%USERPROFILE%\.agentspace\bin` (two `.old-` files left for a later install to remove), `projects.json` listing `agentspace`, `hosts.json` with both hosts, and the new host's operator alias and key. The keeper runs the v0.07 build. Nothing in Terry's ssh config, task or `PATH` changed. Disclosed slips, none written: in T04 a listing of `bin` and a copy of the installed operator; in T05 a listing of `hosts\agentspace` and the Windows user name in a dev lead's transcript |
 
 ### v0.07 by turn
@@ -92,7 +95,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| Closing v0.07: Terry approves the epic #0047 into Completed; then the release milestone goes, `swimcoach stop`, the roadmap's row, this handoff made final, and AGENTS.md's "Where it stands" | Terry, then the architect | [architect.md, Closing a release](architect.md#closing-a-release) |
+| v0.08 (#0048): laid out only on Terry's word. Its host lifecycle work is where #0163, #0164, #0166 and #0167 below SHOULD be weighed first, since each is about a host's start, size or tools | Terry's word, then the architect | [roadmap.md](roadmap.md), #0048 |
+| The T06 dev lead's session is not archived: the app kept it, pinned or open on Terry's screen | Terry, from the sidebar, or the architect once the app allows | AGENTS.md, "Roles and pull requests" |
 | #0166: rustc, cargo and codex are on an interactive shell's `PATH` only on a new host | A later release, carded in Backlog | #0166 |
 | #0167: a connection that starts a host prints "The host is ready." twice, and pushes though the stamp gives no start as a reason | A later release, carded in Backlog | #0167 |
 | #0137 and #0138, fixed and merged, now in Ready For Work by Terry's move; the board refuses Bot's move from there to Ready For Review | Terry moves each to In Progress (or past it); the architect moves it to Ready For Review | #0137, #0138 |

@@ -11,11 +11,10 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where it stands:** [docs/handoff-v0.06.md](docs/handoff-v0.06.md), the architect's handoff
-  after v0.06, for the architect who starts v0.07. It is final, and v0.06 is closed (2026-11-20).
-  An agent picking agentspace up SHOULD read it first, then
-  [docs/handoff-v0.07.md](docs/handoff-v0.07.md), the draft live record of v0.07, refreshed at
-  each turn's close.
+- **Where it stands:** [docs/handoff-v0.07.md](docs/handoff-v0.07.md), the architect's handoff
+  after v0.07, for the architect who starts v0.08 (#0048). It is final, and v0.07 is closed
+  (2026-11-21). An agent picking agentspace up SHOULD read it first. The v0.06 handoff,
+  [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stays for its pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with
   [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and [docs/handoff-mvp.md](docs/handoff-mvp.md),
