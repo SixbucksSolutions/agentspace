@@ -13,7 +13,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
 
 - **Where it stands:** [docs/handoff-v0.07.md](docs/handoff-v0.07.md), the architect's handoff
   after v0.07, for the architect who starts v0.08 (#0048). It is final, and v0.07 is closed
-  (2026-11-21). An agent picking agentspace up SHOULD read it first. The v0.06 handoff,
+  (2026-11-21). An agent picking agentspace up SHOULD read it first. v0.08's design calls are
+  settled as D56 to D62 in [docs/decisions.md](docs/decisions.md), with Q8 to Q10 open for Terry,
+  and v0.08 is not broken into stories until he says so. The v0.06 handoff,
   [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stays for its pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with

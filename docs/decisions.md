@@ -48,7 +48,7 @@ line's text after `Status:`, without its full stop.
 - [D8. The MVP control plane is a CLI on the laptop](#d8-the-mvp-control-plane-is-a-cli-on-the-laptop): MVP only; replaced by card #0011
 - [D9. Reachability belongs to the driver](#d9-reachability-belongs-to-the-driver): Decided
 - [D10. Releasing a lease does not revoke its certificate](#d10-releasing-a-lease-does-not-revoke-its-certificate): MVP only; replaced by card #0010
-- [D11. Today's idle stop stays](#d11-todays-idle-stop-stays): MVP only; replaced by v0.08 (#0048)
+- [D11. Today's idle stop stays](#d11-todays-idle-stop-stays): MVP only; replaced by v0.08 (#0048), as D56 and D57 design
 - [D12. Board access is unchanged](#d12-board-access-is-unchanged): MVP only; replaced by card #0008, and its hand-run holder by D30
 - [D13. arm64 is the default platform](#d13-arm64-is-the-default-platform): Decided
 - [D14. Roadmap horizons, epics before stories](#d14-roadmap-horizons-epics-before-stories): Decided; its horizons were replaced by D26, and its story names for releases by D29
@@ -93,6 +93,13 @@ line's text after `Status:`, without its full stop.
 - [D53. v0.07's done-when is shown by live checks, with Terry's yes for their instance hours](#d53-v007s-done-when-is-shown-by-live-checks-with-terrys-yes-for-their-instance-hours): Decided
 - [D54. A host is made only for a project Terry has named](#d54-a-host-is-made-only-for-a-project-terry-has-named): Decided
 - [D55. v0.07 is twenty stories in six turns: specs, foundations, programs, conformance, live](#d55-v007-is-twenty-stories-in-six-turns-specs-foundations-programs-conformance-live): Decided
+- [D56. A host runs only while its project holds a live lease; the laptop's guard stops it otherwise](#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise): Decided
+- [D57. A host bounds itself by its lease horizon while the laptop is away](#d57-a-host-bounds-itself-by-its-lease-horizon-while-the-laptop-is-away): Decided
+- [D58. The CloudWatch backstop stays, lengthened from 3 hours to 24](#d58-the-cloudwatch-backstop-stays-lengthened-from-3-hours-to-24): Decided
+- [D59. A release ends the lease's own connections on the laptop](#d59-a-release-ends-the-leases-own-connections-on-the-laptop): Decided
+- [D60. `status -All` is the one command that lists every host with its live leases](#d60-status--all-is-the-one-command-that-lists-every-host-with-its-live-leases): Decided
+- [D61. v0.08 carries #0163, #0164, #0166 and #0167](#d61-v008-carries-0163-0164-0166-and-0167): Decided
+- [D62. v0.08's done-when is shown by live checks on both hosts, with Terry's yes for their instance hours](#d62-v008s-done-when-is-shown-by-live-checks-on-both-hosts-with-terrys-yes-for-their-instance-hours): Decided
 
 ## The interface
 
@@ -1085,7 +1092,7 @@ responding`, never by a disconnect. A live session open at release keeps running
 
 ### D11. Today's idle stop stays
 
-**Status: MVP only; replaced by v0.08 (#0048).**
+**Status: MVP only; replaced by v0.08 (#0048), as D56 and D57 design.**
 
 **MVP only.** The box still powers off after 60 minutes with no SSH or Session Manager session and
 no CPU work. An agent holding a lease but doing nothing can still have the box stopped under it;
@@ -3181,6 +3188,220 @@ agentspace's own process for the work"):**
 - **T06 is a story of its own** because it waits on Terry's sign-ins, which pause its clock in
   Needs Terry, and T05's evidence MUST be merged before he is asked.
 
+## v0.08: host lifecycle and cost guard
+
+**D56 to D62 settle v0.08's (#0048) design calls before its stories are laid out**, as
+[handoff-v0.07.md](handoff-v0.07.md#the-scope-ahead-v008) asks. Each is the architect's,
+2026-11-21, unless it says otherwise. They bind the stories, which carry each one into the spec
+that owns the fact in the same pull request that builds it (D34). One number and two choices are
+Terry's, and are open as Q8 to Q10 until he makes them; each names the architect's
+recommendation, which the stories' specs MUST NOT treat as settled.
+
+**What none of them changes:** the lease contract (D1). Every output, schema and reason code of
+contract v0 stays as it is, and nothing in a lease says when or why its host stops.
+
+**Words used here:**
+- **A live lease** is one whose state, read as lease-api.md's States read it, is `pending`, or
+  `ready` with its `expires_at` after now. An `expired` lease is not live, though its record still
+  says `ready`.
+- **A host's last lease end** is the latest of its project's leases' ends: `released_at` for a
+  released lease, `expires_at` for one that expired. A host that never had a lease has none.
+- **A host's lease horizon** is the latest `expires_at` among its project's live ready leases, or
+  its last lease end when it has none.
+
+### D56. A host runs only while its project holds a live lease; the laptop's guard stops it otherwise
+
+**Decided, architect, 2026-11-21.** It replaces D11 on the laptop's side, and D51 once v0.08 is
+installed. Its grace is Q8's, Terry's.
+- **A live lease explains its host, whatever the host is doing.** A quiet lease, with no session
+  and no CPU work, keeps its host from the guard until the lease ends. A host whose project holds
+  no live lease is unexplained.
+- **A new operator command, `agentspace-operator guard`, stops every unexplained host.** In one
+  run it reads `hosts.json`, the lease state file read-only, and every host's EC2 state in one
+  `ec2 describe-instances` call. Each `running` host with no live lease is stopped, as
+  `down -Host` stops it, once the grace has passed since the later of its launch time and its last
+  lease end. Before then the run logs it as unexplained with the time it will stop.
+- **The guard MUST NOT stop a host while its provisioning run holds `provision.lock`** (D55's pin),
+  since a host being made has only `pending` leases, and its run starts and syncs it.
+- **The keeper starts the guard**, detached through `agentspace-detach` as the lease CLI starts a
+  provisioning run (D48), at its first pass and then at most once every 5 minutes, and never while
+  one runs (a `guard.lock` beside `hosts.json`, held for the run's life). **The keeper still never
+  talks to AWS or a host itself** (keeper.md, Where it runs): it starts a program, as it starts
+  holders. Its log line for the start is keeper.md's, written by the story that builds it.
+- **The guard logs to `%USERPROFILE%\.agentspace\guard.log`**: one line per host per run that
+  stops a host, finds one unexplained, or fails, and nothing for a host that is explained or
+  stopped. A run whose AWS call fails, an expired sign-in included, logs that and stops nothing.
+- **The stated time:** a host is `stopped` within the grace plus 10 minutes of its last live
+  lease's end, whether by release or by expiry: up to 5 minutes until the next guard run, and the
+  rest for the stop itself. The same bound holds for a host started with no lease at all,
+  counted from its launch.
+- **Nothing renews a lease on its own.** A lease ends at its `expires_at` unless its holder renews
+  it (D24), and its host is stopped a grace later. Sessions open past expiry stay open, since a
+  certificate is checked only at login, and end when the host stops. The architect's turns SHOULD
+  give a dev lead's lease a TTL that covers the turn, and renew it when a turn runs long.
+- **Work on a host by hand is done under a lease.** D52's sign-in procedure, a `sync`, `grow` or
+  `bootstrap` run by a person, and any direct session: each is stopped a grace after launch or
+  after the project's last lease end, unless a live lease explains the host. README's procedure
+  gains a first step, `agentspace lease create --project <project>`, and its release at the end.
+- **Every host is guarded, the box included**, unless Terry says otherwise in Q9.
+- **Hosts stay `ready` in `hosts.json` when stopped**: the registry records whether a host is made,
+  never whether it runs (D45). Start-on-connect is unchanged, so a stopped host's next lease starts
+  it with its first connection, as the box's leases do today.
+
+**Why the laptop and the keeper:**
+- **Only the laptop knows a lease ended.** Expiry is decided when a lease is read (lease-api.md,
+  States), and release writes only the laptop's state file. The keeper already reads that file
+  every 30 seconds and applies expiry by the pass's time (keeper.md, Which leases are ready).
+- **Starting the guard from the keeper adds nothing to Terry's laptop.** A scheduled task of its
+  own would be a second task to install, watch and reverse (D41); the keeper's task already runs at
+  every logon.
+- **Lease-based, not activity-based, is the release's point** (D25). D11 stopped a host under a
+  held lease that went quiet, and kept one up for any leftover session after release (#0064); the
+  guard does neither.
+- **One `describe-instances` call every 5 minutes** costs nothing measurable, and a host's stop
+  never waits on a person.
+
+### D57. A host bounds itself by its lease horizon while the laptop is away
+
+**Decided, architect, 2026-11-21.** It keeps D11's on-host idle stop and adds a lease-based bound
+under it.
+- **The on-host idle check keeps D11's rule unchanged**: power off after 60 minutes with no SSH or
+  Session Manager session, no patch run and no CPU work. Sixty minutes is Terry's number, with his
+  reason in README ("a lunch break shouldn't cost a reboot"), and a host left alone over lunch
+  with its lease live is explained.
+- **Each run of the guard sends every running host its lease horizon** when it differs from the
+  one last sent, with one `ssm send-command`, as `up`'s patch check sends one. The host keeps it in
+  `/run/agentspace/lease-horizon`, which a boot clears, so a host that has just started holds no
+  horizon until the next guard run.
+- **Once the horizon plus the grace (Q8) has passed, the idle check powers the host off at the
+  first check with no SSH or Session Manager session, whatever its CPU is doing.** A host with no
+  horizon file keeps D11's rule alone.
+- **So a host bounds its own cost with the laptop off or asleep**, which is when the guard cannot
+  run: an idle host stops after 60 minutes, as today, and a busy one no later than its horizon,
+  the grace, and one 5-minute check after its last session ends.
+
+**Why on the host, and why a horizon:**
+- **The keeper's holder is a session on every host with a live lease while the laptop is on**
+  (D50), so the laptop away is the case the guard cannot cover. With the laptop off, every
+  desktop-app connection is gone too (D8), and only work running on the host itself keeps it busy:
+  an agent run there in a terminal multiplexer, a sampler (D33), or a runaway process.
+- **CPU work still counts before the horizon**, because an agent working on the host on its own
+  with a live lease is the remote compute agentspace exists for. After the horizon no lease
+  explains the work.
+- **A horizon from a guard run, not from the push.** A renew changes no connection (D24), so a
+  horizon sent by the ProxyCommand's push would go stale at every renew and could stop a host
+  under a renewed lease. The guard sends it within 5 minutes of a renew while the laptop is on. A
+  renew made less than 5 minutes before the laptop goes away is the one gap, and it costs a host
+  stop, never a running cost.
+- **Not by instance tags read from the metadata service**, which would need a change to every
+  host's instance options for the same one value.
+
+### D58. The CloudWatch backstop stays, lengthened from 3 hours to 24
+
+**Decided, architect, 2026-11-21.** It closes #0043, which becomes OBE when it is built.
+- **Each host's alarm stops it after 24 hours averaging under 1% CPU**: `Period` 3600 and
+  `EvaluationPeriods` 24, the longest an alarm with a one-hour period can evaluate. The template's
+  alarm changes in place, so `agentbox`'s change set holds that one modification, read live before
+  the merge as D44's empty one was.
+- **Its job is a host whose on-host idle check has died**, idle, with the laptop away. Its cost
+  does not change: it is the alarm each host already has.
+
+**Why not the alternatives:**
+- **Three hours stops a host under a quiet held lease**, sessions included (#0043), and under v0.08
+  every live lease holds a session through the keeper's holder, so it would do so routinely.
+- **A heartbeat metric from the host**, alarmed when it stops, would catch a dead check sooner, but
+  needs `cloudwatch:PutMetricData` on every host's role, a custom metric per host, and an alarm
+  that treats missing data as breaching while a stopped host reports none. That is more design and
+  more cost than the case is worth.
+- **The case left uncovered is a host whose idle check has died while it is busy, with the laptop
+  away for longer than a day.** The guard reports and stops it when the laptop returns, if no live
+  lease explains it.
+
+### D59. A release ends the lease's own connections on the laptop
+
+**Decided, architect, 2026-11-21.** It meets #0064.
+- **`agentspace lease release` ends every ssh client on the laptop whose destination is the
+  lease's alias, with its ProxyCommand**, before it deletes the alias. The keeper's holder is left
+  to the keeper, which stops it at its next pass (keeper.md, Stopping a holder).
+- **The far end of each ended connection is dropped by the host's sshd within about 90 seconds**,
+  by the `ClientAlive` bound every host already has (`51-agentspace-logins.conf`), since the
+  Session Manager tunnel never passes a client's close on.
+- **The release's document is unchanged** (contract v0). How many connections it ended is logged
+  where lease-api.md says, written by the story that builds it.
+- **No call to a host is made.** A release stays laptop-local and works on a stopped host.
+
+**Why the laptop's end:**
+- **Every client is on the laptop today** (D8): the desktop app's connections and the holder.
+- **The host's end needs a connection to the host at every release**, which would make release slow,
+  and fail on a stopped host. The guard stops a host whatever sessions it holds (D56), so a
+  connection the release missed costs at most a grace of running time.
+
+### D60. `status -All` is the one command that lists every host with its live leases
+
+**Decided, architect, 2026-11-21.**
+- **`agentspace-operator status -All` gains, for each host**: its project, its registry state, its
+  EC2 state, its live leases' count, and for a running host that no live lease explains, the word
+  `unexplained` and the time the guard stops it. Its exact lines are operator.md's.
+- **It prints counts, never lease IDs**, so its output is safe to show in a live run's record
+  (AGENTS.md, "A live run on Terry's real setup MUST mask what it reads before it prints it").
+- **An unexplained host is reported** by the guard's log line, by `status -All`, and on any further
+  channel Terry chooses in Q10.
+
+### D61. v0.08 carries #0163, #0164, #0166 and #0167
+
+**Decided, architect, 2026-11-21.** v0.08 starts and stops hosts more than any release before it,
+and each of these is about a host's start, size or tools.
+- **#0163, a new host's first provisioning run failing at sync.** The outcome is required: a first
+  run succeeds without the 15-minute patch wait, and the host has had its patch run before its
+  first lease is placed. The architect's preferred mechanism is that the run starts this boot's
+  `agentspace-patch.service` itself once `sync` has installed it, and waits for its marker, a
+  patch reboot included. The spec turn rules on it after a probe on a host, since the unit is a
+  `oneshot` that MAY reboot (handoff-v0.07.md, Lessons: ask for a probe before ruling on how an
+  OS call behaves).
+- **#0164, `grow -GiB 0`.** `grow` refuses an `<n>` of 0 or less as a usage error, with exit 2 and
+  no AWS call. The AWS stand-in stops modelling EC2's refusal, and a conformance case counts no
+  `ec2 modify-volume` call.
+- **#0166, tools on an interactive shell's `PATH` only.** Every tool the `agent-linux` profile's
+  agents use (`rustc`, `cargo`, `codex`, `claude`, `gh`) MUST be found by a non-login,
+  non-interactive shell over ssh. The bootstrap links each into `/usr/local/bin`, through rustup's
+  proxies and fnm's default alias, so each follows its tool's updates. A live check on both hosts
+  runs `ssh <alias> 'command -v rustc cargo codex claude gh'`.
+- **#0167, "The host is ready." printed twice, and a push at every start.** The spec turn checks
+  operator.md's stamp rule against the build's push decision through the conformance seam, and
+  rules whether a start makes the push due or the build pushes when it is not. Then the nested
+  line is withheld from the outer connection's stderr.
+
+**Not carried:** #0137 and #0138 are fixed and merged, and wait only on Terry's card moves;
+#0109 and #0082 stay before v0.09's measurement.
+
+### D62. v0.08's done-when is shown by live checks on both hosts, with Terry's yes for their instance hours
+
+**Decided, architect, 2026-11-21** (D19, as D53 for v0.07).
+- **No stand-in can show a host stop, so the stories' done-whens name these live checks**, each on
+  the box and on agentspace's host unless it says one:
+  - **Release:** the project's last live lease released, the host `stopped` within D56's bound,
+    measured from `released_at`.
+  - **Expiry:** a lease with a short TTL left to expire, the same bound from its `expires_at`.
+  - **A quiet held lease:** a live lease with no session but the holder's and no CPU work keeps its
+    host past the grace.
+  - **Next lease:** a new lease's first connection starts the stopped host, and the time to a
+    prompt is recorded.
+  - **Unexplained:** a host started with `up -Host` and no lease is reported by `guard.log` and
+    `status -All`, and stopped within the bound (agentspace's host only).
+  - **The laptop away:** with the keeper stopped and a CPU-busy process left on the host, the host
+    powers itself off past its horizon plus the grace (D57; agentspace's host only).
+  - **A release ends its connections** (#0064): a desktop-app session left open on a lease, the
+    lease released, no ssh client of that alias left on the laptop, and no session of that lease
+    on the host 2 minutes later.
+  - **#0163, #0166:** a host's provisioning run's patch step on agentspace's host, with no
+    15-minute wait, and `command -v` finding every tool on both hosts.
+  - **The alarm:** `agentbox`'s change set holds only the alarm's modification.
+- **Terry's yes is asked once, before the first live check, for its instance hours**, and every
+  host is confirmed `stopped` at the close. The architect's estimate is about 6 instance hours at
+  `m9g.xlarge`, about $1.20, most of them graces waited out.
+- **conformance.md's coverage table is read for every "None" these change** (architect.md,
+  Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -3255,3 +3476,6 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 for the MVP (D18), then Rust (D28). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |
 | **Q6** | **Closed by D54 (Terry, 2026-11-20).** ~~May any project's first lease make a host, or only a project Terry has named?~~ Only a named one, listed in `projects.json`; another project's lease is `unsatisfiable` with `no_capacity`. | Closed, D54 |
 | **Q7** | **Closed (Terry, 2026-11-20).** ~~Does his standing order on the box's disk cover every host?~~ Yes, each host on its own: AGENTS.md, "Growing the box's disk", and D46. | Closed |
+| **Q8** | **Needs Terry, before v0.08's stories:** the grace D56 and D57 wait after a host's last live lease ends before stopping it. A longer one costs about $0.05 per stop for each 15 minutes at `m9g.xlarge`; a shorter one costs a restart, with its patch wait, when a lease follows soon after. The architect recommends 15 minutes, so a host stops within 25 minutes of its last lease's end. | Terry |
+| **Q9** | **Needs Terry, before v0.08's stories:** does the guard cover the box too (D56)? If he still opens sessions on the box through his own `agentspace` entry with no lease, the guard would stop it under them a grace after its last lease ends. The architect recommends guarding it, with direct work done under a lease. | Terry |
+| **Q10** | **Needs Terry, before v0.08's stories:** is an unexplained host reported only by `guard.log` and `status -All` (D60), or pushed to his phone too? The architect recommends the log and `status -All` alone, since the guard stops such a host on its own. | Terry |
