@@ -624,6 +624,35 @@ impl World {
             .collect()
     }
 
+    /// Every warning, in order: the guard's failure channel, which `-Quiet` never suppresses.
+    pub fn warnings(&self) -> Vec<String> {
+        self.events()
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Warning(text) => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A host's part that failed is said exactly once, through `Say::warning` and through no
+    /// other channel, as `agentspace: Host '<project>': <message>`.
+    pub fn expect_host_failure_warned(&self, project: &str, message: &str) {
+        let line = format!("agentspace: Host '{project}': {message}");
+        let warned = self.warnings().iter().filter(|w| **w == line).count();
+        assert_eq!(warned, 1, "The failure is warned once: {line}");
+        let elsewhere = self
+            .events()
+            .iter()
+            .filter(|e| match e {
+                Event::Warning(_) => false,
+                Event::Progress { person, .. } => person.contains(message),
+                Event::Detail(text) => text.contains(message),
+            })
+            .count();
+        assert_eq!(elsewhere, 0, "The failure is said through warning alone");
+    }
+
     /// Every text the run said, of any kind.
     pub fn said(&self) -> Vec<String> {
         self.events()

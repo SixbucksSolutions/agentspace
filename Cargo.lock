@@ -99,9 +99,9 @@ dependencies = [
  "agentspace-hosts",
  "agentspace-operator-api",
  "agentspace-state",
+ "agentspace-zone",
  "serde_json",
  "tempfile",
- "windows-sys",
 ]
 
 [[package]]

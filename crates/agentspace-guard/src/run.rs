@@ -10,11 +10,14 @@
 //!
 //! **Where each line goes.** A progress line, the three of step 6 and the closing line of step 8,
 //! goes through [`Say::progress`], which `-Quiet` suppresses. **A host's part that fails goes
-//! through [`Say::warning`] as `agentspace: Host '<project>': <message>`**, because a library
-//! prints only through [`Say`] and no other method of it prints a line a person reads. `-Quiet`
-//! MUST NOT withhold a failure (operator.md, guard, Its streams), so the [`Say`] the operator
-//! hands the guard MUST print `warning` whatever `-Quiet` says, and suppress `progress` alone.
+//! through [`Say::warning`] as `agentspace: Host '<project>': <message>`, and so does the dropped
+//! log line's `agentspace: Cannot write the guard's log <path>: <error>.`, said once at the first
+//! line dropped**: `warning` is the guard's failure channel, and nothing that is not a failure
+//! goes through it (architect, 2026-11-22, for v0.08-T03). `-Quiet` MUST NOT withhold a failure
+//! (operator.md, guard, Its streams), so the [`Say`] the operator hands the guard MUST print
+//! `warning` whatever `-Quiet` says, and suppress `progress` alone.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -68,85 +71,14 @@ fn leases_failure(path: &Path, why: &str) -> Failure {
     ))
 }
 
-/// The time of a stop as a progress line prints it, `<h:mm><am|pm>`: the laptop's local time, read
-/// from the system now, with seconds rounded up to the next whole minute (operator.md, guard,
-/// step 6).
-fn local_time(unix: i64) -> String {
-    let rounded = if unix.rem_euclid(60) == 0 {
-        unix
-    } else {
-        unix + (60 - unix.rem_euclid(60))
-    };
-    let (hour, minute) = local::hour_and_minute(rounded);
-    twelve_hour(hour, minute)
-}
-
-/// `h:mm` and `am` or `pm`: `12:34pm`, `5:19am`, `12:05am` after midnight.
-fn twelve_hour(hour: u32, minute: u32) -> String {
-    let h = match hour % 12 {
-        0 => 12,
-        h => h,
-    };
-    let suffix = if hour < 12 { "am" } else { "pm" };
-    format!("{h}:{minute:02}{suffix}")
-}
-
-/// The laptop's local time of an instant, which only Windows can give (the guard runs on the
-/// laptop): the system's zone of the moment, with the rule of that date applied. Anywhere else the
-/// zone is UTC.
-#[allow(unsafe_code)]
-mod local {
-    use agentspace_state::format_time;
-
-    /// The hour (0 to 23) and minute of `unix` in the zone the system is set to now.
-    pub(super) fn hour_and_minute(unix: i64) -> (u32, u32) {
-        let utc = format_time(unix);
-        let (hour, minute) = (field(&utc, 11), field(&utc, 14));
-        #[cfg(windows)]
-        if let Some(local) = to_local(&utc) {
-            return local;
-        }
-        (hour, minute)
-    }
-
-    /// The two digits of `text` at `at`, which `format_time`'s form guarantees.
-    fn field(text: &str, at: usize) -> u32 {
-        text.get(at..at + 2)
-            .and_then(|digits| digits.parse().ok())
-            .unwrap_or(0)
-    }
-
-    #[cfg(windows)]
-    fn to_local(utc: &str) -> Option<(u32, u32)> {
-        use windows_sys::Win32::Foundation::SYSTEMTIME;
-        use windows_sys::Win32::System::Time::SystemTimeToTzSpecificLocalTime;
-
-        let universal = SYSTEMTIME {
-            wYear: u16::try_from(field(utc, 0) * 100 + field(utc, 2)).ok()?,
-            wMonth: u16::try_from(field(utc, 5)).ok()?,
-            wDayOfWeek: 0,
-            wDay: u16::try_from(field(utc, 8)).ok()?,
-            wHour: u16::try_from(field(utc, 11)).ok()?,
-            wMinute: u16::try_from(field(utc, 14)).ok()?,
-            wSecond: u16::try_from(field(utc, 17)).ok()?,
-            wMilliseconds: 0,
-        };
-        let mut local = SYSTEMTIME {
-            wYear: 0,
-            wMonth: 0,
-            wDayOfWeek: 0,
-            wDay: 0,
-            wHour: 0,
-            wMinute: 0,
-            wSecond: 0,
-            wMilliseconds: 0,
-        };
-        // SAFETY: A null zone means the zone the system is set to now. `universal` and `local` are
-        // valid SYSTEMTIME values for the call to read and to fill.
-        let done =
-            unsafe { SystemTimeToTzSpecificLocalTime(std::ptr::null(), &universal, &mut local) };
-        (done != 0).then_some((u32::from(local.wHour), u32::from(local.wMinute)))
-    }
+/// The time of a stop as a progress line prints it, `<h:mm><am|pm>`: the laptop's local time,
+/// from [`agentspace_zone::local_clock_time`], the one formatter of the guard's stop time
+/// (operator.md, guard, step 6; architect, 2026-11-22, for v0.08-T03). When the system gives no
+/// offset for the instant (always off Windows), the time is printed in UTC, as
+/// [`agentspace_zone::clock_time_at`] with offset 0, so a line is never printed with no time.
+fn stop_time(unix: i64) -> String {
+    agentspace_zone::local_clock_time(unix)
+        .unwrap_or_else(|| agentspace_zone::clock_time_at(unix, 0))
 }
 
 /// The run's state: its streams, its log, and the hosts whose part failed.
@@ -155,30 +87,55 @@ struct Run<'a> {
     log: GuardLog,
     /// The registry's index of each host whose part failed, once each.
     failed: BTreeSet<usize>,
+    /// The dropped-log message has been said: it is said once, at the first line dropped.
+    drop_said: Cell<bool>,
 }
 
 impl Run<'_> {
-    /// A host's part fails (operator.md, guard, A host's part that fails): its message to stderr
-    /// as `agentspace: Host '<project>': <message>`, one `failed` line in the log, and the run goes
-    /// on. `message` has no `agentspace: ` prefix.
+    /// Says `agentspace: Cannot write the guard's log <path>: <error>.` through [`Say::warning`] at
+    /// the first line the log dropped, and never again (operator.md, guard, Its log; architect,
+    /// 2026-11-22, for v0.08-T03). Every write to the log MUST be followed by a call of this.
+    fn note_drop(&self) {
+        if self.drop_said.get() {
+            return;
+        }
+        if let Some(error) = self.log.dropped() {
+            self.drop_said.set(true);
+            self.say.warning(&format!(
+                "agentspace: Cannot write the guard's log {}: {error}.",
+                self.log.path().display()
+            ));
+        }
+    }
+
+    /// A line about one host in the log, `<time> host=<project> <text>`.
+    fn log_host(&self, project: &str, text: &str) {
+        self.log.host(project, text);
+        self.note_drop();
+    }
+
+    /// A host's part fails (operator.md, guard, A host's part that fails): its message through
+    /// [`Say::warning`] as `agentspace: Host '<project>': <message>`, one `failed` line in the log,
+    /// and the run goes on. `message` has no `agentspace: ` prefix.
     fn host_failed(&mut self, index: usize, project: &str, step: &str, message: &str) {
         let message = bare(message);
         self.say
             .warning(&format!("agentspace: Host '{project}': {message}"));
         self.log.host_failed(project, step, message);
+        self.note_drop();
         self.failed.insert(index);
     }
 
     /// A call met #0034's sign-in message: it is logged without a `host=` field, as the step of the
     /// call that met it, and ends the run.
     fn sign_in(&self, step: &str, failure: Failure) -> Failure {
-        self.log.run_failed(step, &failure.message);
-        failure
+        self.ends(step, failure)
     }
 
     /// A failure that ends the run: logged without a `host=` field, and returned.
     fn ends(&self, step: &str, failure: Failure) -> Failure {
         self.log.run_failed(step, &failure.message);
+        self.note_drop();
         failure
     }
 }
@@ -190,6 +147,7 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
         say,
         log: GuardLog::new(home),
         failed: BTreeSet::new(),
+        drop_said: Cell::new(false),
     };
 
     // Step 1: guard.lock, without waiting, held until this function returns.
@@ -338,7 +296,7 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
             } => {
                 running += 1;
                 unexplained += 1;
-                run.log.host(
+                run.log_host(
                     &project,
                     &format!(
                         "unexplained since={} stops={}",
@@ -349,7 +307,7 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
                 say.progress(
                     &format!(
                         "The host of '{project}' ({instance_id}) has no live lease; it stops at {}.",
-                        local_time(stop_at)
+                        stop_time(stop_at)
                     ),
                     None,
                 );
@@ -363,7 +321,7 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
             } => {
                 running += 1;
                 unexplained += 1;
-                run.log.host(
+                run.log_host(
                     &project,
                     &format!(
                         "unexplained since={} stops={} provisioning=running",
@@ -401,7 +359,7 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
                 match stop_host(aws, &instance_id) {
                     Ok(()) => {
                         stopped += 1;
-                        run.log.host(
+                        run.log_host(
                             &project,
                             &format!("stopped since={}", format_time(stop_at - GRACE_SECONDS)),
                         );
@@ -439,7 +397,8 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
         }
     }
 
-    // Step 8: the closing line. A line the log dropped is a run that has not succeeded (D36).
+    // Step 8: the closing line. A line the log dropped was said once, at the first drop, and the
+    // report carries it: the operator exits 1 on it (D36; architect, 2026-11-22, for v0.08-T03).
     say.progress(
         &format!(
             "Hosts: {}; running {running}, stopped {stopped}, unexplained {unexplained}.",
@@ -447,12 +406,6 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
         ),
         None,
     );
-    if let Some(error) = run.log.dropped() {
-        return Err(failure(format!(
-            "agentspace: Cannot write the guard's log {}: {error}.",
-            run.log.path().display()
-        )));
-    }
     Ok(Report {
         lock_held: false,
         hosts: hosts.hosts.len(),
@@ -460,22 +413,13 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
         stopped,
         unexplained,
         failed: run.failed.len(),
+        log_dropped: run.log.dropped().is_some(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_twelve_hour_clock_has_no_leading_zero_and_noon_and_midnight_are_twelve() {
-        assert_eq!(twelve_hour(0, 5), "12:05am");
-        assert_eq!(twelve_hour(5, 19), "5:19am");
-        assert_eq!(twelve_hour(11, 59), "11:59am");
-        assert_eq!(twelve_hour(12, 34), "12:34pm");
-        assert_eq!(twelve_hour(13, 0), "1:00pm");
-        assert_eq!(twelve_hour(23, 59), "11:59pm");
-    }
 
     #[test]
     fn the_sign_in_message_is_told_by_its_text_and_not_by_its_kind() {
@@ -493,28 +437,20 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_time_with_seconds_is_rounded_up_to_the_next_minute() {
-        // The zone is the system's, so the check is against the same conversion of the rounded
-        // minute: a time one second past a minute reads as the next minute.
+    fn the_stop_time_is_the_zone_crates_text_and_never_empty() {
+        // The one formatter is agentspace_zone's: the local time when the system gives one, else
+        // the same instant in UTC.
         let minute = 1_795_075_920;
-        assert_eq!(local_time(minute), local_time(minute));
-        assert_eq!(local_time(minute + 1), local_time(minute + 60));
-        assert_eq!(local_time(minute + 59), local_time(minute + 60));
-        assert_ne!(local_time(minute + 1), local_time(minute + 120));
-    }
-
-    #[test]
-    fn the_local_time_is_a_real_zone_offset_of_the_instant() {
-        // Every zone's offset is a multiple of 15 minutes, so the minute of the hour is the UTC
-        // minute's modulo 15, and the hour and minute are in range.
-        for unix in [1_795_075_920_i64, 1_795_075_920 + 7 * 60, 1_780_000_020] {
-            let (hour, minute) = local::hour_and_minute(unix);
-            assert!(hour < 24 && minute < 60);
-            assert_eq!(minute % 15, unix.rem_euclid(3600) as u32 / 60 % 15);
+        for unix in [minute, minute + 1, minute + 59, minute + 60, 1_780_000_020] {
+            let shown = stop_time(unix);
+            let expected = agentspace_zone::local_clock_time(unix)
+                .unwrap_or_else(|| agentspace_zone::clock_time_at(unix, 0));
+            assert_eq!(shown, expected);
+            assert!(shown.ends_with("am") || shown.ends_with("pm"), "{shown}");
+            assert!(shown.contains(':') && !shown.starts_with('0'), "{shown}");
         }
-        let shown = local_time(1_795_075_921);
-        assert!(shown.ends_with("am") || shown.ends_with("pm"), "{shown}");
-        assert!(shown.contains(':') && !shown.starts_with('0'), "{shown}");
+        // Seconds are rounded up to the next whole minute.
+        assert_eq!(stop_time(minute + 1), stop_time(minute + 60));
     }
 
     #[test]
@@ -750,7 +686,8 @@ mod flow_tests {
                 running: 1,
                 stopped: 1,
                 unexplained: 0,
-                failed: 0
+                failed: 0,
+                log_dropped: false
             }
         );
         assert_eq!(
@@ -1019,15 +956,17 @@ mod flow_tests {
     }
 
     #[test]
-    fn a_dropped_log_line_makes_the_run_fail_without_changing_what_it_did() {
+    fn a_dropped_log_line_is_said_once_as_a_warning_and_reported_without_changing_what_it_did() {
         let w = World::new();
         std::fs::create_dir_all(w.state_dir().join("guard.log")).unwrap();
         let (say, aws) = (FakeSay::default(), aws(running(NOW - 3600), ok));
-        let f = w.run(&say, &aws).unwrap_err();
-        assert!(
-            f.message
-                .starts_with("agentspace: Cannot write the guard's log ")
-        );
+        let report = w.run(&say, &aws).unwrap();
+        assert!(report.log_dropped);
+        assert_eq!(report.failed, 0, "A drop is not a host's failure");
+        let warnings = say.warnings.borrow();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("agentspace: Cannot write the guard's log "));
+        assert!(warnings[0].ends_with('.'));
         assert_eq!(operations(&aws).last().unwrap(), "ec2 stop-instances");
         assert!(
             say.progress

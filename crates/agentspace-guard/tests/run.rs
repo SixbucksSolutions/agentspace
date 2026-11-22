@@ -10,8 +10,9 @@
 //! home under `%TEMP%`. No test calls real AWS, and none sets a process variable.
 //!
 //! Where operator.md leaves a form open, a test holds what it requires and no more:
-//! - a host's part that fails is said through `Say` in any of its three channels, and a test finds
-//!   it by its text, since `Say` has no channel of its own for a failure;
+//! - a host's part that fails, and a dropped log line, are said through `Say::warning` and no other
+//!   channel (the guard's failure channel; architect, 2026-11-22, for v0.08-T03), and a progress
+//!   line goes through `Say::progress` alone;
 //! - the progress line of an unexplained host is matched up to its `<h:mm><am|pm>`, which is read
 //!   in the laptop's zone and so cannot be fixed by a test;
 //! - the horizon's command is the operator's own (D34), so a test holds the horizon's digits as one
@@ -321,7 +322,8 @@ fn the_horizon_sent_is_the_later_of_the_projects_horizon_and_the_launch_time() {
             running: 6,
             stopped: 0,
             unexplained: 3,
-            failed: 0
+            failed: 0,
+            log_dropped: false
         }
     );
     let expected = vec![
@@ -487,7 +489,8 @@ fn a_host_that_is_not_running_gets_nothing() {
             running: 0,
             stopped: 0,
             unexplained: 0,
-            failed: 0
+            failed: 0,
+            log_dropped: false
         }
     );
     assert!(w.stopped_ids().is_empty());
@@ -608,7 +611,8 @@ fn the_report_counts_the_hosts() {
             running: 3,
             stopped: 1,
             unexplained: 1,
-            failed: 0
+            failed: 0,
+            log_dropped: false
         }
     );
 }
@@ -631,7 +635,8 @@ fn an_explained_host_is_neither_logged_nor_stopped_nor_mentioned() {
             running: 1,
             stopped: 0,
             unexplained: 0,
-            failed: 0
+            failed: 0,
+            log_dropped: false
         }
     );
     assert_eq!(
@@ -657,7 +662,8 @@ fn no_id_found_means_no_describe() {
             running: 0,
             stopped: 0,
             unexplained: 0,
-            failed: 0
+            failed: 0,
+            log_dropped: false
         }
     );
     assert!(w.calls().is_empty());
@@ -1126,7 +1132,8 @@ fn a_host_whose_provisioning_run_holds_its_lock_is_left_and_sent_its_horizon() {
             running: 3,
             stopped: 0,
             unexplained: 2,
-            failed: 0
+            failed: 0,
+            log_dropped: false
         }
     );
     assert!(w.stopped_ids().is_empty());
@@ -1207,7 +1214,8 @@ fn a_provisioning_lock_that_cannot_be_tried_fails_the_hosts_part() {
             running: 3,
             stopped: 0,
             unexplained: 1,
-            failed: 1
+            failed: 1,
+            log_dropped: false
         }
     );
     assert!(w.stopped_ids().is_empty());
@@ -1247,7 +1255,8 @@ fn a_failed_stop_fails_the_hosts_part_and_the_run_goes_on() {
             running: 3,
             stopped: 1,
             unexplained: 0,
-            failed: 1
+            failed: 1,
+            log_dropped: false
         }
     );
     assert_eq!(w.stopped_ids(), vec![id(1), id(5)]);
@@ -1266,10 +1275,9 @@ fn a_failed_stop_fails_the_hosts_part_and_the_run_goes_on() {
             format!("host=zeta stopped since={}", today("19:00:00")),
         ]
     );
-    let said = format!("Host 'alpha': Could not stop {}: Not authorized", id(1));
-    assert!(
-        w.said().iter().any(|line| line.contains(&said)),
-        "The failure is said, as the host's part"
+    w.expect_host_failure_warned(
+        "alpha",
+        &format!("Could not stop {}: Not authorized", id(1)),
     );
 }
 
@@ -1290,7 +1298,8 @@ fn a_failed_send_fails_the_hosts_part_and_the_next_host_is_still_sent() {
             running: 3,
             stopped: 1,
             unexplained: 1,
-            failed: 1
+            failed: 1,
+            log_dropped: false
         }
     );
     assert_eq!(w.sent_ids(), vec![id(0), ZEROS.to_string()]);
@@ -1305,11 +1314,13 @@ fn a_failed_send_fails_the_hosts_part_and_the_next_host_is_still_sent() {
             ),
         ]
     );
-    let said = format!(
-        "Host 'swimcoach': Could not send the lease horizon to {}: Target is not connected",
-        id(0)
+    w.expect_host_failure_warned(
+        "swimcoach",
+        &format!(
+            "Could not send the lease horizon to {}: Target is not connected",
+            id(0)
+        ),
     );
-    assert!(w.said().iter().any(|line| line.contains(&said)));
 }
 
 /// Step 5: a host whose instance is not in the answer fails its part with `Instance <id> was not
@@ -1328,7 +1339,8 @@ fn a_host_whose_instance_is_not_in_the_answer_fails_its_part() {
             running: 3,
             stopped: 1,
             unexplained: 1,
-            failed: 1
+            failed: 1,
+            log_dropped: false
         }
     );
     assert_eq!(
@@ -1344,8 +1356,7 @@ fn a_host_whose_instance_is_not_in_the_answer_fails_its_part() {
     );
     assert_eq!(w.stopped_ids(), vec![id(1)]);
     assert_eq!(w.sent_ids(), vec![id(0), ZEROS.to_string()]);
-    let said = format!("Host 'delta': Instance {} was not found.", id(3));
-    assert!(w.said().iter().any(|line| line.contains(&said)));
+    w.expect_host_failure_warned("delta", &format!("Instance {} was not found.", id(3)));
 }
 
 /// Step 5: an answer with no instance at all, which is what EC2 gives a filter that matches
@@ -1416,6 +1427,8 @@ fn a_running_instance_with_no_usable_launch_time_fails_its_hosts_part() {
         );
         assert!(w.stopped_ids().is_empty(), "{name}");
         assert_eq!(w.sent_ids(), vec![ZEROS.to_string()], "{name}");
+        w.expect_host_failure_warned("swimcoach", reason);
+        w.expect_host_failure_warned("alpha", reason);
     }
 }
 
@@ -1440,7 +1453,8 @@ fn a_failed_stack_read_fails_that_hosts_part_and_the_run_goes_on() {
             running: 2,
             stopped: 1,
             unexplained: 0,
-            failed: 1
+            failed: 1,
+            log_dropped: false
         }
     );
     assert_eq!(
@@ -1463,6 +1477,7 @@ fn a_failed_stack_read_fails_that_hosts_part_and_the_run_goes_on() {
         )
     );
     assert_eq!(w.sent_ids(), vec![id(0)]);
+    w.expect_host_failure_warned("beta", "Stack with id agentspace-host-beta does not exist");
 }
 
 /// Step 4: a stack with no `InstanceId` output fails the host's part with `Stack '<stack>' has no
@@ -1646,31 +1661,101 @@ fn a_missing_registry_is_not_made() {
 }
 
 /// Its log: a line that cannot be written, here because the log's path is a folder, changes
-/// nothing the run decided or did: the stop and the sends are all made; the run does not succeed,
-/// whether by a failure or by a failed count, and the message `Cannot write the guard's log` is
-/// said once.
+/// nothing the run decided or did: the stop and the sends are all made, and the run goes to its end
+/// with `Ok`. The message `agentspace: Cannot write the guard's log <path>: <error>.` is said
+/// exactly once, through `Say::warning`, at the first line dropped (alpha's `stopped` line, before
+/// beta's progress line and long before the closing line), and the report says `log_dropped`
+/// without counting the drop as a host's failure.
 #[test]
-fn a_line_that_cannot_be_written_changes_nothing_the_run_does_but_fails_it() {
+fn a_line_that_cannot_be_written_is_warned_once_at_the_first_drop_and_reported() {
     let w = mixed("log-dropped");
     std::fs::create_dir_all(w.agentspace()).unwrap();
     std::fs::create_dir_all(w.guard_log()).unwrap();
-    let outcome = w.run(now());
+    let report = w.run_ok(now());
+    assert!(report.log_dropped, "The report says a line was dropped");
+    assert_eq!(report.failed, 0, "A drop is not a host's failure");
+    assert_eq!(
+        (
+            report.hosts,
+            report.running,
+            report.stopped,
+            report.unexplained
+        ),
+        (6, 3, 1, 1),
+        "A drop changes nothing the run decided"
+    );
     assert_eq!(w.stopped_ids(), vec![id(1)]);
     assert_eq!(w.sent_ids(), vec![id(0), ZEROS.to_string()]);
+
+    // Said once, as a warning, in the form the spec gives.
     let needle = "Cannot write the guard's log ";
-    let mut times = w.said().iter().filter(|l| l.contains(needle)).count();
-    match outcome {
-        Err(failure) => {
-            w.expect(
-                failure
-                    .message
-                    .starts_with(&format!("agentspace: {needle}")),
-                "The failure",
-                &failure.message,
-            );
-            times += 1;
-        }
-        Ok(report) => assert!(report.failed >= 1, "The run does not succeed"),
-    }
-    assert_eq!(times, 1, "Said once, at the first line dropped");
+    let events = w.events();
+    let drops: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| match e {
+            Event::Warning(text) | Event::Detail(text) => text.contains(needle),
+            Event::Progress { person, .. } => person.contains(needle),
+        })
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(drops.len(), 1, "Said exactly once");
+    let at = drops[0];
+    let Event::Warning(text) = &events[at] else {
+        panic!("The drop is said through warning, not another channel");
+    };
+    w.expect(
+        text.starts_with("agentspace: Cannot write the guard's log ")
+            && text.ends_with('.')
+            && text.contains(": ")
+            && !text.contains('\n'),
+        "The message's form",
+        text,
+    );
+    w.expect(
+        text.contains(&w.guard_log().display().to_string()),
+        "The message names the log's full path",
+        text,
+    );
+
+    // At the point of the first drop: before the progress line of the host after it, and so
+    // before the closing line; not at the end of the run.
+    let position = |is: &dyn Fn(&str) -> bool| {
+        events.iter().position(|e| match e {
+            Event::Progress { person, .. } => is(person),
+            _ => false,
+        })
+    };
+    let beta = position(&|l| l.starts_with("The host of 'beta'")).expect("beta's progress line");
+    let closing = position(&|l| l.starts_with("Hosts:")).expect("The closing line");
+    assert!(
+        at < beta,
+        "Said at the first drop, before the next host's line"
+    );
+    assert!(beta < closing);
+    assert_eq!(w.warnings().len(), 1, "Nothing else is warned");
+    assert_eq!(
+        w.progress().len(),
+        3,
+        "The progress lines are the run's own, and the drop is not one of them"
+    );
+}
+
+/// Its log: a drop after which the run ends by a failure of its own has been said once already,
+/// and the failure is the run's `Err`; the message is not said a second time.
+#[test]
+fn a_drop_before_a_failure_that_ends_the_run_is_said_once() {
+    let w = mixed("log-dropped-then-ends");
+    std::fs::create_dir_all(w.agentspace()).unwrap();
+    std::fs::create_dir_all(w.guard_log()).unwrap();
+    // A failed stack read for beta drops its `failed` line (the first drop); the sign-in message
+    // at alpha's stop then ends the run, and its own line is dropped too.
+    w.aws
+        .set_stack(&stack_of("beta"), Err(AwsError::Failed("Not found".into())));
+    w.aws.fail_stop(&id(1), AwsError::SignIn);
+    let failure = w.run_err(now());
+    assert_eq!(failure.message, SIGN_IN_MESSAGE);
+    let needle = "Cannot write the guard's log ";
+    let said = w.warnings().iter().filter(|l| l.contains(needle)).count();
+    assert_eq!(said, 1, "Said once, though two lines were dropped");
 }
