@@ -55,7 +55,7 @@ $sec = 'operator.md#provision'
 $hr = 'operator.md#the-host-registry-as-the-operator-uses-it'
 $stack = 'agentspace-host-agentspace'
 $alias = 'agentspace-host.agentspace'
-$signInLine = 'Sign in on this host once, by hand: run ''agentspace-operator status -Host agentspace'' first and again after an hour, then see "Signing in on a new host" in the agentspace README.'
+$signInLine = 'Sign in on this host once, by hand, under a lease: see "Signing in on a new host" in the agentspace README.'
 $boxRecordText = '{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"' + $script:HpBoxId + '"}'
 $startSteps = 'run begun,deploy done,start done,sync done,bootstrap done,record done,place done placed=0,run done'
 
