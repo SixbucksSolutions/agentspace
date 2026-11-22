@@ -8,10 +8,14 @@
 //! - [`terminate_tree`] stops the ssh and every process descended from it through the Windows
 //!   API, the ssh last, and no other process: it starts neither `taskkill` nor anything else
 //!   (operator.md, Programs it starts, the `icacls.exe`, `taskkill.exe` row).
+//! - [`StderrPipe`] is the ssh's stderr pipe as the caller-mode relay reads it: `PeekNamedPipe`
+//!   says how much it holds, so the relay never blocks on it (operator.md, What the laptop sends,
+//!   step 2).
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::os::windows::io::AsRawHandle;
-use std::process::Child;
+use std::process::{Child, ChildStderr};
 use std::ptr::{null, null_mut};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
@@ -23,6 +27,7 @@ use windows_sys::Win32::Security::Cryptography::{
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
+use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 use windows_sys::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
     TerminateProcess, WaitForSingleObject,
@@ -77,6 +82,34 @@ pub fn unprotect(blob: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     // `LocalFree`, and nothing refers to it any more.
     unsafe { LocalFree(output.pbData.cast()) };
     plain
+}
+
+/// The ssh's stderr pipe, for the caller-mode relay.
+pub struct StderrPipe(ChildStderr);
+
+/// The relay's reader of the ssh's stderr. Always `Some` here.
+pub fn stderr_pipe(pipe: ChildStderr) -> Option<StderrPipe> {
+    Some(StderrPipe(pipe))
+}
+
+impl crate::relay::Source for StderrPipe {
+    /// What `PeekNamedPipe` says the pipe holds. A pipe whose every writer has closed it and that
+    /// holds nothing makes the call fail (`ERROR_BROKEN_PIPE`), which is its end; any other failure
+    /// is taken as the end too.
+    fn available(&mut self) -> Option<usize> {
+        let handle = self.0.as_raw_handle() as HANDLE;
+        let mut total: u32 = 0;
+        // SAFETY: `handle` is the pipe's read end, which `self.0` keeps open. No buffer is passed,
+        // so nothing is copied; `total` is a local the call fills.
+        let ok =
+            unsafe { PeekNamedPipe(handle, null_mut(), 0, null_mut(), &mut total, null_mut()) };
+        (ok != 0).then_some(total as usize)
+    }
+
+    /// A read of no more than the pipe holds, which returns at once.
+    fn read(&mut self, buf: &mut [u8]) -> usize {
+        self.0.read(buf).unwrap_or(0)
+    }
 }
 
 /// Waits until the process has exited or `deadline` passes. `true` when it has exited.

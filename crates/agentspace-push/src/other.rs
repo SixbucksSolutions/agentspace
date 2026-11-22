@@ -4,9 +4,73 @@
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 
-use std::process::Child;
+use std::collections::VecDeque;
+use std::io::Read;
+use std::process::{Child, ChildStderr};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
+
+/// The ssh's stderr pipe, for the caller-mode relay: a thread of its own reads it, blocking, and
+/// hands each chunk over, so that the relay itself never blocks on it.
+pub struct StderrPipe {
+    chunks: mpsc::Receiver<Vec<u8>>,
+    held: VecDeque<u8>,
+    ended: bool,
+}
+
+/// The relay's reader of the ssh's stderr, or `None` when its thread cannot be started.
+pub fn stderr_pipe(mut pipe: ChildStderr) -> Option<StderrPipe> {
+    let (sent, chunks) = mpsc::channel();
+    std::thread::Builder::new()
+        .spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => {
+                        if sent.send(buf[..n].to_vec()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .ok()?;
+    Some(StderrPipe {
+        chunks,
+        held: VecDeque::new(),
+        ended: false,
+    })
+}
+
+impl crate::relay::Source for StderrPipe {
+    fn available(&mut self) -> Option<usize> {
+        loop {
+            match self.chunks.try_recv() {
+                Ok(chunk) => self.held.extend(chunk),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.ended = true;
+                    break;
+                }
+            }
+        }
+        if self.ended && self.held.is_empty() {
+            None
+        } else {
+            Some(self.held.len())
+        }
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> usize {
+        let n = buf.len().min(self.held.len());
+        for (slot, byte) in buf.iter_mut().zip(self.held.drain(..n)) {
+            *slot = byte;
+        }
+        n
+    }
+}
 
 /// There is no DPAPI here: every blob is refused.
 pub fn unprotect(_blob: &[u8]) -> Option<Zeroizing<Vec<u8>>> {

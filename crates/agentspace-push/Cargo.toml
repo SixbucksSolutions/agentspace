@@ -23,10 +23,11 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 sha2 = { version = "=0.10.9", default-features = false }
 zeroize = { version = "=1.8.2", default-features = false, features = ["alloc"] }
 
-# Only src/win.rs uses it, the one module that calls Windows: CryptUnprotectData, and the push's
-# ssh's wait and tree kill. The version the other crates already use.
+# Only src/win.rs uses it, the one module that calls Windows: CryptUnprotectData, the push's ssh's
+# wait and tree kill, and PeekNamedPipe for its stderr relay. The version the other crates already
+# use.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # Throwaway folders for the on-disk tests; the version agentspace-state already uses.
