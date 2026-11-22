@@ -56,11 +56,26 @@ fn hosts_reason(error: &HostsError) -> String {
             why.to_string()
         }
         HostsError::NotValid(why) => why.to_string(),
-        HostsError::CannotLockRun(why) | HostsError::CannotLockGuard(why) => why.to_string(),
+        HostsError::CannotLockRun(_) | HostsError::CannotLockGuard(_) => lock_error(error),
         HostsError::Busy => "the registry is in use by another command".to_string(),
         HostsError::BadProject => "a project is not in its normalized form".to_string(),
     };
     text.replace(['\r', '\n'], " ")
+}
+
+/// The `<error>` of `Cannot take <path>: <error>.` and `Cannot try <path>: <error>.`: the host
+/// registry library's own text for the error, its [`std::fmt::Display`], as provision's step 2
+/// prints it for its own lock (`error_text` in agentspace-sync's provision.rs), with each control
+/// character a space and the one final period dropped, since the sentence supplies it. The guard
+/// has no rendering of its own (operator.md, guard, steps 1 and 6; architect, 2026-11-22, for
+/// v0.08-T03).
+fn lock_error(error: &HostsError) -> String {
+    let text: String = error
+        .to_string()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    text.trim().trim_end_matches('.').to_string()
 }
 
 /// The lease state file's failure and its `<reason>` (operator.md, guard, step 3).
@@ -71,14 +86,13 @@ fn leases_failure(path: &Path, why: &str) -> Failure {
     ))
 }
 
-/// The time of a stop as a progress line prints it, `<h:mm><am|pm>`: the laptop's local time,
-/// from [`agentspace_zone::local_clock_time`], the one formatter of the guard's stop time
-/// (operator.md, guard, step 6; architect, 2026-11-22, for v0.08-T03). When the system gives no
-/// offset for the instant (always off Windows), the time is printed in UTC, as
-/// [`agentspace_zone::clock_time_at`] with offset 0, so a line is never printed with no time.
+/// The time of a stop as a progress line prints it: `<h:mm><am|pm>` in the laptop's local time, or
+/// `<h:mm><am|pm> UTC` when the system gives no local time for the instant (always off Windows),
+/// from [`agentspace_zone::local_clock_time_or_utc`], the one formatter and the one fallback
+/// (operator.md, guard, step 6; architect, 2026-11-22, for v0.08-T03). The guard keeps no
+/// fallback of its own.
 fn stop_time(unix: i64) -> String {
-    agentspace_zone::local_clock_time(unix)
-        .unwrap_or_else(|| agentspace_zone::clock_time_at(unix, 0))
+    agentspace_zone::local_clock_time_or_utc(unix)
 }
 
 /// The run's state: its streams, its log, and the hosts whose part failed.
@@ -160,13 +174,10 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
             });
         }
         Err(e) => {
-            let why = match &e {
-                HostsError::CannotLockGuard(why) => why.to_string(),
-                other => hosts_reason(other),
-            };
             let f = failure(format!(
-                "agentspace: Cannot take {}: {why}.",
-                guard_lock_path(home).display()
+                "agentspace: Cannot take {}: {}.",
+                guard_lock_path(home).display(),
+                lock_error(&e)
             ));
             return Err(run.ends("lock", f));
         }
@@ -249,7 +260,7 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
         Ok(true) => ProvisionLock::Held,
         Err(e) => ProvisionLock::NotTried {
             path: host_run_lock_path(home, project).display().to_string(),
-            error: hosts_reason(&e),
+            error: lock_error(&e),
         },
     };
     let actions = decide(&to_decide, &leases, &described, &provision_held, now);
@@ -438,14 +449,21 @@ mod tests {
     #[test]
     fn the_stop_time_is_the_zone_crates_text_and_never_empty() {
         // The one formatter is agentspace_zone's: the local time when the system gives one, else
-        // the same instant in UTC.
+        // the same instant in UTC with " UTC" after it, never a bare UTC time.
         let minute = 1_795_075_920;
         for unix in [minute, minute + 1, minute + 59, minute + 60, 1_780_000_020] {
             let shown = stop_time(unix);
-            let expected = agentspace_zone::local_clock_time(unix)
-                .unwrap_or_else(|| agentspace_zone::clock_time_at(unix, 0));
-            assert_eq!(shown, expected);
-            assert!(shown.ends_with("am") || shown.ends_with("pm"), "{shown}");
+            assert_eq!(shown, agentspace_zone::local_clock_time_or_utc(unix));
+            let local = agentspace_zone::local_clock_time(unix);
+            match local {
+                Some(local) => assert_eq!(shown, local),
+                None => assert_eq!(
+                    shown,
+                    format!("{} UTC", agentspace_zone::clock_time_at(unix, 0))
+                ),
+            }
+            let bare = shown.strip_suffix(" UTC").unwrap_or(&shown);
+            assert!(bare.ends_with("am") || bare.ends_with("pm"), "{shown}");
             assert!(shown.contains(':') && !shown.starts_with('0'), "{shown}");
         }
         // Seconds are rounded up to the next whole minute.
@@ -464,6 +482,38 @@ mod tests {
     #[test]
     fn a_reason_for_the_hosts_file_holds_no_line_break() {
         assert!(!hosts_reason(&HostsError::Busy).contains('\n'));
+    }
+
+    /// The guard's `<error>` is the host registry library's own `Display`, the text provision's
+    /// step 2 prints for its own lock (its `error_text` of a `HostsError` is this `Display` with
+    /// control characters flattened and the final period dropped), and not the `Failure`'s
+    /// alone: the same text for the same error, with no second rendering.
+    #[test]
+    fn a_lock_error_is_the_hosts_librarys_display_without_its_final_period() {
+        use agentspace_hosts::Failure;
+        for (error, expected) in [
+            (
+                HostsError::CannotLockGuard(Failure::CannotOpenLock),
+                "The guard's lock could not be taken: the lock file could not be opened",
+            ),
+            (
+                HostsError::CannotLockGuard(Failure::FolderIsAFile),
+                "The guard's lock could not be taken: a file is where a folder belongs",
+            ),
+            (
+                HostsError::CannotLockRun(Failure::CannotOpenLock),
+                "The provisioning run's lock could not be taken: the lock file could not be opened",
+            ),
+            (
+                HostsError::CannotLockRun(Failure::FolderIsAFile),
+                "The provisioning run's lock could not be taken: a file is where a folder belongs",
+            ),
+        ] {
+            assert_eq!(lock_error(&error), expected);
+            assert_eq!(format!("{}.", lock_error(&error)), error.to_string());
+            // The reason the run gives for a host-registry file's error is the same text.
+            assert_eq!(hosts_reason(&error), expected);
+        }
     }
 }
 

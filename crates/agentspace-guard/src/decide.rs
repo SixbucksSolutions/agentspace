@@ -28,7 +28,7 @@ pub enum ProvisionLock {
     /// A provisioning run holds it.
     Held,
     /// It could not be tried for any other reason. `path` is the lock's full path and `error` the
-    /// system's own error text, for `Cannot try <path>: <error>.`
+    /// host registry library's text for the error, for `Cannot try <path>: <error>.`
     NotTried { path: String, error: String },
 }
 

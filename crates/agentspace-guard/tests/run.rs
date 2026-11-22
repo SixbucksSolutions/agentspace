@@ -968,17 +968,22 @@ fn the_guard_lock_is_held_at_every_call_and_the_provisioning_lock_is_not() {
 
 /// Step 1: a lock that cannot be taken for another reason than being held, a folder at its path,
 /// fails the run with `agentspace: Cannot take <path>: <error>.`, logs it with `step=lock` and no
-/// `host=` field, reads nothing and calls nothing.
+/// `host=` field, reads nothing and calls nothing. `<error>` is the host registry library's own
+/// text for the error, as provision's step 2 prints it for its own lock (architect, 2026-11-22,
+/// for v0.08-T03): the library's sentence for a guard lock that could not be taken, with its final
+/// period left to the message's own.
 #[test]
 fn a_guard_lock_that_cannot_be_taken_fails_the_run() {
     let w = mixed("lock-folder");
     std::fs::create_dir_all(w.guard_lock()).unwrap();
     let failure = w.run_err(now());
-    let prefix = format!("agentspace: Cannot take {}: ", w.guard_lock().display());
-    w.expect(
-        failure.message.starts_with(&prefix) && failure.message.ends_with('.'),
-        "The failure's message",
+    w.expect_eq(
         &failure.message,
+        &format!(
+            "agentspace: Cannot take {}: The guard's lock could not be taken: the lock file could not be opened.",
+            w.guard_lock().display()
+        ),
+        "The failure's message",
     );
     let rests = w.rests();
     assert_eq!(rests.len(), 1);
@@ -1222,14 +1227,13 @@ fn a_provisioning_lock_that_cannot_be_tried_fails_the_hosts_part() {
     assert_eq!(w.sent_ids(), vec![id(0), id(1), ZEROS.to_string()]);
     let rests = w.rests();
     assert_eq!(rests.len(), 2);
-    let prefix = format!(
-        "host=alpha failed step=lock reason=Cannot try {}: ",
-        w.provision_lock("alpha").display()
-    );
-    w.expect(
-        rests[0].starts_with(&prefix) && rests[0].ends_with('.'),
-        "The log's line",
+    w.expect_eq(
         &rests[0],
+        &format!(
+            "host=alpha failed step=lock reason=Cannot try {}: The provisioning run's lock could not be taken: the lock file could not be opened.",
+            w.provision_lock("alpha").display()
+        ),
+        "The log's line",
     );
     assert_eq!(rests[1], beta_unexplained());
 }

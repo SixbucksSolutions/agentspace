@@ -3,8 +3,8 @@
 //! RFC 2119 keywords in this crate's comments, and the capitals are load-bearing.
 //!
 //! It has two entry points. [`local_clock_time`] gives the laptop's clock time at an instant,
-//! `<h:mm><am|pm>`, the one formatter of the guard's stop time (operator.md, status and guard).
-//! [`zone`] works out the zone the token push sends, in the order the spec gives:
+//! `<h:mm><am|pm>`, the one formatter of the guard's stop time (operator.md, status and guard),
+//! and [`local_clock_time_or_utc`] gives it with the one fallback, ` UTC`. [`zone`] works out the zone the token push sends, in the order the spec gives:
 //!
 //! 1. The override (`AGENTSPACE_TIMEZONE`, passed in by the caller) replaces the laptop's zone
 //!    when it is set and not empty. Otherwise the laptop's Windows zone ID is converted with
@@ -192,6 +192,25 @@ fn clock_time_with(unix: i64, offset_at: impl Fn(i64) -> Option<i32>) -> Option<
     Some(clock_time_at(rounded, offset))
 }
 
+/// The time of day the laptop's clock shows at the instant `unix`, `<h:mm><am|pm>`, as
+/// [`local_clock_time`], or, when the system gives no local time for that instant, the same
+/// instant in UTC with ` UTC` after it, `<h:mm><am|pm> UTC`, so it is never read as the laptop's
+/// own time and a caller never has no text to print.
+///
+/// This is the one fallback, for the guard's progress lines and `status -All`'s `Guard` line
+/// (operator.md, guard and status; architect, 2026-11-22). A caller MUST NOT keep a fallback of its
+/// own. The instant is rounded up to the next whole minute in either case, as
+/// [`local_clock_time`] rounds it.
+pub fn local_clock_time_or_utc(unix: i64) -> String {
+    clock_time_or_utc_with(unix, local_utc_offset)
+}
+
+/// [`local_clock_time_or_utc`] with the zone's offset given as a function of the instant, so a
+/// test can give a zone of its own, or none.
+fn clock_time_or_utc_with(unix: i64, offset_at: impl Fn(i64) -> Option<i32>) -> String {
+    clock_time_with(unix, offset_at).unwrap_or_else(|| format!("{} UTC", clock_time_at(unix, 0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,6 +317,55 @@ mod tests {
     #[test]
     fn no_offset_gives_no_time() {
         assert_eq!(clock_time_with(at(12, 0, 0), |_| None), None);
+    }
+
+    #[test]
+    fn no_offset_gives_the_utc_time_with_a_utc_suffix() {
+        // 12:04:01 rounds up to 12:05pm.
+        assert_eq!(
+            clock_time_or_utc_with(at(12, 4, 1), |_| None),
+            "12:05pm UTC"
+        );
+        assert_eq!(clock_time_or_utc_with(at(0, 5, 0), |_| None), "12:05am UTC");
+        assert_eq!(
+            clock_time_or_utc_with(at(23, 59, 30), |_| None),
+            "12:00am UTC"
+        );
+    }
+
+    #[test]
+    fn an_offset_gives_the_local_time_with_no_suffix() {
+        assert_eq!(
+            clock_time_or_utc_with(at(12, 4, 1), |_| Some(-8 * 3_600)),
+            "4:05am"
+        );
+        assert_eq!(clock_time_or_utc_with(at(0, 5, 0), |_| Some(0)), "12:05am");
+    }
+
+    #[test]
+    fn the_utc_fallback_never_panics_on_an_extreme() {
+        for unix in [i64::MIN, -1, 0, i64::MAX - 1, i64::MAX] {
+            let text = clock_time_or_utc_with(unix, |_| None);
+            assert!(
+                text.ends_with("am UTC") || text.ends_with("pm UTC"),
+                "{text}"
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_system_form_is_utc_off_windows() {
+        assert_eq!(local_clock_time_or_utc(at(12, 4, 1)), "12:05pm UTC");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_system_form_is_the_local_time_when_the_system_gives_one() {
+        let unix = at(12, 4, 1);
+        let expected =
+            local_clock_time(unix).unwrap_or_else(|| format!("{} UTC", clock_time_at(unix, 0)));
+        assert_eq!(local_clock_time_or_utc(unix), expected);
     }
 
     #[test]
