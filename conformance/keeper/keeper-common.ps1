@@ -198,6 +198,7 @@ function Set-CaseEnvironment($ChildEnvironment) {
 function Restore-CaseEnvironment {
   foreach ($name in @($script:savedEnvironment.Keys)) { Set-ProcessVariable $name $script:savedEnvironment[$name] }
   $script:savedEnvironment.Clear()
+  Write-KeeperTripwireTotals
 }
 
 # The tripwires of v0.08 (E0.08-T03-S03; conformance.md, "The harness"; keeper.md, "Conformance cases for
@@ -210,10 +211,28 @@ function Restore-CaseEnvironment {
 # character cannot change what it does. A keeper starts a .cmd through cmd.exe, as keeper.md gives.
 $script:tripwireNames = [ordered]@{ guard = 'AGENTSPACE_GUARD_CMD'; aws = 'AGENTSPACE_AWS_CMD'; ssh = 'AGENTSPACE_SSH_CMD'; scp = 'AGENTSPACE_SCP_CMD' }
 $script:tripwireDir = $null
+$script:tripwireTotals = [ordered]@{ guard = 0; aws = 0; ssh = 0; scp = 0 }
+
+# Adds the current case's tripwire starts to the run's totals, once, before its home is replaced or
+# removed.
+function Add-KeeperTripwireTotals {
+  if ($null -eq $script:tripwireDir) { return }
+  foreach ($name in @($script:tripwireTotals.Keys)) { $script:tripwireTotals[$name] += Get-KeeperTripwireStarts $name }
+  $script:tripwireDir = $null
+}
+
+# Prints the run's tripwire starts, one line, so a run against a build shows that the keeper started
+# its guard and that nothing reached aws, ssh or scp. It prints counts only, never a path.
+function Write-KeeperTripwireTotals {
+  Add-KeeperTripwireTotals
+  $t = $script:tripwireTotals
+  "Tripwire starts in this run: guard $($t.guard), aws $($t.aws), ssh $($t.ssh), scp $($t.scp)."
+}
 
 # Writes the four tripwires into the home's tripwire folder, each write checked at the call, and returns
 # the variables that name them.
 function New-KeeperTripwires($CaseHome) {
+  Add-KeeperTripwireTotals
   $dir = Join-Path $CaseHome.UserProfile 'tripwire'
   New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $runHome -Path $dir) | Out-Null
   $script:tripwireDir = $dir

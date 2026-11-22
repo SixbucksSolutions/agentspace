@@ -40,8 +40,10 @@ const GUARD_ARGUMENT: &str = "guard";
 pub const START_BOUND: Duration = Duration::from_secs(10);
 
 /// The seams of the guard's environment that the keeper passes or removes by name, beside any
-/// other `AGENTSPACE_*_CMD` its own environment holds (keeper.md, The guard's environment). Each is
-/// one the specs name.
+/// other `AGENTSPACE_*_CMD` its own environment holds (keeper.md, The guard's environment). They
+/// are exactly the `AGENTSPACE_*_CMD` names the specs give, since the keeper cannot list the logon
+/// environment's own (architect, 2026-11-22, for v0.08-T03; keeper.md at 8325a55); a test reads
+/// docs/ and holds the two equal.
 const KNOWN_SEAMS: [&str; 9] = [
     "AGENTSPACE_AWS_CMD",
     "AGENTSPACE_SSH_CMD",
@@ -489,6 +491,37 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    /// The names the keeper removes by name are exactly the `AGENTSPACE_*_CMD` names the specs
+    /// give (keeper.md, The guard's environment, at 8325a55): a spec that names a new seam fails
+    /// this until the keeper knows it too.
+    #[test]
+    fn the_known_seams_are_every_agentspace_cmd_name_the_specs_give() {
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+        let mut named = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&docs).expect("The docs folder can be read") {
+            let path = entry.expect("A docs entry can be read").path();
+            if path.extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("A spec can be read");
+            for (at, _) in text.match_indices("AGENTSPACE_") {
+                let word: String = text[at..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || *c == '_')
+                    .collect();
+                let middle = word
+                    .strip_prefix("AGENTSPACE_")
+                    .and_then(|w| w.strip_suffix("_CMD"));
+                if middle.is_some_and(|m| !m.is_empty() && !m.starts_with('_')) {
+                    named.insert(word);
+                }
+            }
+        }
+        let known: std::collections::BTreeSet<String> =
+            KNOWN_SEAMS.iter().map(|n| n.to_string()).collect();
+        assert_eq!(known, named);
+    }
 
     fn tempdir() -> tempfile::TempDir {
         tempfile::Builder::new()
