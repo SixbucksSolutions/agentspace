@@ -46,7 +46,10 @@ pub(crate) fn registry_failure(home: &Path, error: HostsError) -> Failure {
             lock.display()
         ),
         HostsError::CannotLock(_) => format!("agentspace: Cannot write {}.", lock.display()),
-        HostsError::Unwritable(_) | HostsError::BadProject | HostsError::CannotLockRun(_) => {
+        HostsError::Unwritable(_)
+        | HostsError::BadProject
+        | HostsError::CannotLockRun(_)
+        | HostsError::CannotLockGuard(_) => {
             format!("agentspace: Cannot write {}.", registry.display())
         }
     })

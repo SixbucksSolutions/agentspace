@@ -1,8 +1,10 @@
 //! agentspace-state (docs/decisions.md, D38).
 //!
 //! The lease state file: its model, schema checks and bytes, and its place on the disk: the
-//! folders (docs/state.md, The home folder), the lease state lock and the atomic replace. RFC 2119
-//! keywords in this crate's comments, and the capitals are load-bearing.
+//! folders (docs/state.md, The home folder), the lease state lock and the atomic replace; and live
+//! leases, a project's last lease end and its horizon (docs/state.md, Live leases and the lease
+//! horizon; D56, D63). RFC 2119 keywords in this crate's comments, and the capitals are
+//! load-bearing.
 //!
 //! A library crate: it never writes to stdout or stderr. The Windows half is behind `cfg(windows)`;
 //! on any other system the same interface builds with std's nearest equivalents, which are not the
@@ -11,6 +13,7 @@
 #![deny(unsafe_code)]
 
 mod atomic;
+mod live;
 mod paths;
 mod schemas;
 mod store;
@@ -23,6 +26,7 @@ use std::collections::HashSet;
 use std::fmt;
 
 pub use atomic::write_atomically;
+pub use live::{is_live, last_lease_end, lease_end, lease_horizon, live_count};
 pub use paths::{Paths, resolve_paths};
 pub use store::{LockGuard, StoreError, lock, read, write};
 pub use time::{format_time, now, parse_time};

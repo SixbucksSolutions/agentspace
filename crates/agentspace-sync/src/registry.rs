@@ -43,7 +43,7 @@ fn reason(error: &HostsError) -> String {
         HostsError::NotValid(why) => why.to_string(),
         HostsError::Busy => "the registry is in use by another command".to_string(),
         HostsError::BadProject => "a project is not in its normalized form".to_string(),
-        HostsError::CannotLockRun(why) => why.to_string(),
+        HostsError::CannotLockRun(why) | HostsError::CannotLockGuard(why) => why.to_string(),
     }
 }
 

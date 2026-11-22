@@ -83,6 +83,7 @@ pub fn registry_why(e: HostsError) -> &'static str {
         HostsError::Unwritable(_) => "agentspace's host records could not be written",
         HostsError::BadProject => "the project's name is not in its normalized form",
         HostsError::CannotLockRun(_) => "the provisioning run's lock could not be checked",
+        HostsError::CannotLockGuard(_) => "the guard's lock could not be checked",
     }
 }
 

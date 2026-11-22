@@ -111,6 +111,10 @@ pub enum HostsError {
     /// A host's run lock could not be taken for a reason other than another process holding it. It
     /// is not a free lock: the caller starts or runs nothing (docs/state.md).
     CannotLockRun(Failure),
+    /// The guard's lock could not be taken, or tried, for a reason other than another process
+    /// holding it. It is not a free lock: the caller runs nothing (docs/state.md, The guard's
+    /// lock).
+    CannotLockGuard(Failure),
 }
 
 impl fmt::Display for HostsError {
@@ -130,6 +134,9 @@ impl fmt::Display for HostsError {
             }
             HostsError::CannotLockRun(why) => {
                 write!(f, "The provisioning run's lock could not be taken: {why}.")
+            }
+            HostsError::CannotLockGuard(why) => {
+                write!(f, "The guard's lock could not be taken: {why}.")
             }
         }
     }
@@ -151,6 +158,10 @@ mod tests {
         assert_eq!(
             HostsError::CannotLockRun(Failure::FolderIsAFile).to_string(),
             "The provisioning run's lock could not be taken: a file is where a folder belongs."
+        );
+        assert_eq!(
+            HostsError::CannotLockGuard(Failure::CannotOpenLock).to_string(),
+            "The guard's lock could not be taken: the lock file could not be opened."
         );
     }
 }
