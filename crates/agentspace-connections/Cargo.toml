@@ -1,0 +1,24 @@
+[package]
+name = "agentspace-connections"
+version = "0.8.0"
+edition.workspace = true
+description = "Ends a lease alias's ssh clients on the laptop, each with its tree (docs/driver.md, Ending a lease's connections; D59, D63)"
+publish = false
+
+[lib]
+name = "agentspace_connections"
+path = "src/lib.rs"
+
+# TEST-ONLY. A stand-in for ssh.exe and agentspace-ssh-proxy.exe that the tests copy under those
+# names into a throwaway folder and start with ssh-like arguments. It MUST NOT be installed or
+# shipped.
+[[bin]]
+name = "agentspace-connections-stub"
+path = "tests/support/stub.rs"
+test = false
+
+# The Windows half: the process list, each process's user, image, command line and parent, and
+# terminating a tree. The one module that calls it is src/windows.rs. The version is the one
+# already in Cargo.lock.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Wdk_System_Threading", "Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Kernel", "Win32_System_Threading"] }

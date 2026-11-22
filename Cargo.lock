@@ -46,6 +46,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-connections"
+version = "0.8.0"
+dependencies = [
+ "windows-sys",
+]
+
+[[package]]
 name = "agentspace-credential"
 version = "0.5.0"
 dependencies = [
