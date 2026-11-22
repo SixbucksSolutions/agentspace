@@ -1363,7 +1363,10 @@ the architect's, 2026-11-21, for v0.08-T01, pin P18):
 - **`guard started pid=<pid>`** is written once the detached start has returned, with the process
   ID it returned, in decimal: the operator's, or for a `.cmd` or `.bat` program, the `cmd.exe`
   that runs it. It says that a guard process was created, not that the guard ran to the end or
-  stopped anything; what the guard did is in `guard.log`.
+  stopped anything; what the guard did is in `guard.log`. **A start that returned no process ID
+  writes `pid=-`**, which only a keeper built for another platform or a check's stand-in for the
+  detached start can give: on Windows the start always returns the ID WMI's
+  `Win32_Process.Create` gives (architect, 2026-11-22, for v0.08-T03, on #0179).
 - **The `failed` line** has the grammar and the reason rules of a keeper's `failed` line, with `-`
   in every field ([A keeper's own lines](#a-keepers-own-lines)). A check tells it from the keeper's
   other `failed` lines by its reason's start, `The guard could not be started:`.
