@@ -3193,9 +3193,10 @@ agentspace's own process for the work"):**
 **D56 to D62 settle v0.08's (#0048) design calls before its stories are laid out**, as
 [handoff-v0.07.md](handoff-v0.07.md#the-scope-ahead-v008) asks. Each is the architect's,
 2026-11-21, unless it says otherwise. They bind the stories, which carry each one into the spec
-that owns the fact in the same pull request that builds it (D34). One number and two choices are
-Terry's, and are open as Q8 to Q10 until he makes them; each names the architect's
-recommendation, which the stories' specs MUST NOT treat as settled.
+that owns the fact in the same pull request that builds it (D34). One number and two choices were
+Terry's, Q8 to Q10, and he made them the same day, taking the architect's recommendations: a
+15-minute grace, the box guarded like every host, and unexplained hosts reported by the log and
+`status -All` alone. He also said yes to D62's instance hours ahead of the live turn.
 
 **What none of them changes:** the lease contract (D1). Every output, schema and reason code of
 contract v0 stays as it is, and nothing in a lease says when or why its host stops.
@@ -3212,7 +3213,8 @@ contract v0 stays as it is, and nothing in a lease says when or why its host sto
 ### D56. A host runs only while its project holds a live lease; the laptop's guard stops it otherwise
 
 **Decided, architect, 2026-11-21.** It replaces D11 on the laptop's side, and D51 once v0.08 is
-installed. Its grace is Q8's, Terry's.
+installed. **The grace is 15 minutes** (Terry, 2026-11-21, closing Q8), so a host is stopped
+within 25 minutes of its last live lease's end.
 - **A live lease explains its host, whatever the host is doing.** A quiet lease, with no session
   and no CPU work, keeps its host from the guard until the lease ends. A host whose project holds
   no live lease is unexplained.
@@ -3243,7 +3245,8 @@ installed. Its grace is Q8's, Terry's.
   `bootstrap` run by a person, and any direct session: each is stopped a grace after launch or
   after the project's last lease end, unless a live lease explains the host. README's procedure
   gains a first step, `agentspace lease create --project <project>`, and its release at the end.
-- **Every host is guarded, the box included**, unless Terry says otherwise in Q9.
+- **Every host is guarded, the box included** (Terry, 2026-11-21, closing Q9). Direct work on the
+  box through his own `agentspace` entry is done under a swimcoach lease, as on any host.
 - **Hosts stay `ready` in `hosts.json` when stopped**: the registry records whether a host is made,
   never whether it runs (D45). Start-on-connect is unchanged, so a stopped host's next lease starts
   it with its first connection, as the box's leases do today.
@@ -3273,7 +3276,7 @@ under it.
   one last sent, with one `ssm send-command`, as `up`'s patch check sends one. The host keeps it in
   `/run/agentspace/lease-horizon`, which a boot clears, so a host that has just started holds no
   horizon until the next guard run.
-- **Once the horizon plus the grace (Q8) has passed, the idle check powers the host off at the
+- **Once the horizon plus the grace (D56's 15 minutes) has passed, the idle check powers the host off at the
   first check with no SSH or Session Manager session, whatever its CPU is doing.** A host with no
   horizon file keeps D11's rule alone.
 - **So a host bounds its own cost with the laptop off or asleep**, which is when the guard cannot
@@ -3344,8 +3347,9 @@ under it.
   `unexplained` and the time the guard stops it. Its exact lines are operator.md's.
 - **It prints counts, never lease IDs**, so its output is safe to show in a live run's record
   (AGENTS.md, "A live run on Terry's real setup MUST mask what it reads before it prints it").
-- **An unexplained host is reported** by the guard's log line, by `status -All`, and on any further
-  channel Terry chooses in Q10.
+- **An unexplained host is reported by the guard's log line and by `status -All`, and nowhere
+  else** (Terry, 2026-11-21, closing Q10): the guard stops it on its own, so nothing needs his
+  phone.
 
 ### D61. v0.08 carries #0163, #0164, #0166 and #0167
 
@@ -3396,9 +3400,9 @@ and each of these is about a host's start, size or tools.
   - **#0163, #0166:** a host's provisioning run's patch step on agentspace's host, with no
     15-minute wait, and `command -v` finding every tool on both hosts.
   - **The alarm:** `agentbox`'s change set holds only the alarm's modification.
-- **Terry's yes is asked once, before the first live check, for its instance hours**, and every
-  host is confirmed `stopped` at the close. The architect's estimate is about 6 instance hours at
-  `m9g.xlarge`, about $1.20, most of them graces waited out.
+- **Terry said yes on 2026-11-21, ahead of the live turn, to up to 6 instance hours** at
+  `m9g.xlarge`, about $1.20, most of them graces waited out. A live turn that would pass 6 MUST
+  ask him again before it does. Every host is confirmed `stopped` at the close.
 - **conformance.md's coverage table is read for every "None" these change** (architect.md,
   Breaking an epic into stories, step 5), and each gets a case or one of these checks.
 
@@ -3476,6 +3480,6 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q5** | ~~Is the lease CLI PowerShell or Go?~~ PowerShell 7 for the MVP (D18), then Rust (D28). ~~Its default and maximum TTL?~~ 8 hours by default, 24 hours at most, 1 minute at least (D24). | #0001 |
 | **Q6** | **Closed by D54 (Terry, 2026-11-20).** ~~May any project's first lease make a host, or only a project Terry has named?~~ Only a named one, listed in `projects.json`; another project's lease is `unsatisfiable` with `no_capacity`. | Closed, D54 |
 | **Q7** | **Closed (Terry, 2026-11-20).** ~~Does his standing order on the box's disk cover every host?~~ Yes, each host on its own: AGENTS.md, "Growing the box's disk", and D46. | Closed |
-| **Q8** | **Needs Terry, before v0.08's stories:** the grace D56 and D57 wait after a host's last live lease ends before stopping it. A longer one costs about $0.05 per stop for each 15 minutes at `m9g.xlarge`; a shorter one costs a restart, with its patch wait, when a lease follows soon after. The architect recommends 15 minutes, so a host stops within 25 minutes of its last lease's end. | Terry |
-| **Q9** | **Needs Terry, before v0.08's stories:** does the guard cover the box too (D56)? If he still opens sessions on the box through his own `agentspace` entry with no lease, the guard would stop it under them a grace after its last lease ends. The architect recommends guarding it, with direct work done under a lease. | Terry |
-| **Q10** | **Needs Terry, before v0.08's stories:** is an unexplained host reported only by `guard.log` and `status -All` (D60), or pushed to his phone too? The architect recommends the log and `status -All` alone, since the guard stops such a host on its own. | Terry |
+| **Q8** | **Closed by D56 (Terry, 2026-11-21).** ~~How long is the grace after a host's last live lease ends before it is stopped?~~ 15 minutes, so a host stops within 25 minutes of its last lease's end. | Closed, D56 |
+| **Q9** | **Closed by D56 (Terry, 2026-11-21).** ~~Does the guard cover the box too?~~ Yes; direct work on it is done under a lease. | Closed, D56 |
+| **Q10** | **Closed by D60 (Terry, 2026-11-21).** ~~Is an unexplained host pushed to his phone too?~~ No: `guard.log` and `status -All` alone. | Closed, D60 |
