@@ -3366,6 +3366,11 @@ under it.
   with the rest, rather than left to the keeper. A release then needs nothing from the keeper's
   files, and the keeper treats the holder as one its look finds gone, with its release grace
   (keeper.md, Release grace), which is what its own stop at the next pass would have cost.
+- **Changed for v0.08-T01 (architect, 2026-11-21, on the dev lead's pin P23.3): a release walks
+  twice**, once before it deletes the alias and once after, and counts both in its one line. A
+  client that reconnects by itself, as the desktop app's does, can come back through the alias in
+  the seconds the first walk takes, while the alias and its credential still exist; the second
+  walk ends it, and once the alias is gone no client can connect through it again.
 
 **Why the laptop's end:**
 - **Every client is on the laptop today** (D8): the desktop app's connections and the holder.
