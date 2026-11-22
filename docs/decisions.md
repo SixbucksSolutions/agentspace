@@ -3331,6 +3331,11 @@ under it.
   `EvaluationPeriods` 24, the longest an alarm with a one-hour period can evaluate. The template's
   alarm changes in place, so `agentbox`'s change set holds that one modification, read live before
   the merge as D44's empty one was.
+- **Changed for v0.08-T01 (architect, 2026-11-21, on #0171's review): 24 hours is a choice, not
+  AWS's limit.** The clause above is wrong: an alarm whose period is an hour or more MAY evaluate up
+  to 7 days (`Period` times `EvaluationPeriods` at most 604,800 seconds); the one-day limit holds
+  only for periods under an hour. A day is kept because it outlasts any quiet stretch a held lease
+  is expected to have, while bounding a host whose idle check has died to about $5 of running time.
 - **Its job is a host whose on-host idle check has died**, idle, with the laptop away. Its cost
   does not change: it is the alarm each host already has.
 
