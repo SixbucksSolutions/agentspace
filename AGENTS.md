@@ -86,6 +86,10 @@ pushing to `main`, rebasing, force pushing and deleting branches need no permiss
   request per story** to `main`, from a branch named for the story (`mvp/e2.06`, or `v0.02/e0.02-t03-s01` in a release, D29). A dev lead MUST
   NOT merge its own pull request.
 - **Subagents** MUST NOT move cards or open pull requests.
+- **The architect MUST be the only agent that moves a card** (Terry, 2026-11-22: "architect MUST
+  be the agent to move all cards"). Dev leads and subagents MUST NOT move any card, to any lane.
+  A dev lead that needs a card moved, to Needs Terry above all, asks the architect, which moves it.
+  Only Terry moves a card to Completed, and moves a card the board refuses Bot (out of Backlog).
 
 The git authority above belongs to the architect. A dev lead pushes only its own branch.
 
@@ -138,8 +142,8 @@ its subagents.
 - **The architect asks Terry only for what only he can do:** a check outside the Claude app, a
   click in its UI, or a call that would commit agentspace to something costly to reverse (D19).
   It relays his answer back.
-- **A card waiting on Terry still goes to Needs Terry**, so it reaches his phone, but the request
-  itself comes to him from the architect.
+- **A card waiting on Terry still goes to Needs Terry**, so it reaches his phone, moved there by the
+  architect, and the request itself comes to him from the architect.
 - **When the AWS sign-in has expired, the request MUST name `aws login --remote`, and say to paste
   the link it prints into a fresh Incognito window**, with every other Incognito window closed
   first (Terry, 2026-11-19: "We've had this fail before"). Plain `aws login` opens the default
@@ -327,7 +331,8 @@ Docs cite its cards as `#0001`.
   to in progress when the turn starts"): the architect moves them all as it starts the turn's dev
   lead, in the same step as the turn's milestone, so the milestone's clock runs from the turn's
   start. v0.08-T02's four stayed in Ready For Work until 7:19am, about 35 minutes into the turn,
-  when Terry noticed. Each stays there while its PR is open. The architect moves it to Ready For Review
+  when Terry noticed. Each stays there while its PR is open, and every move is the architect's
+  (Roles and pull requests, above). The architect moves it to Ready For Review
   when it merges the PR. So everything in Ready For Review is merged and safe for Terry to
   approve. Terry, the same day: "rfr means architect claims fully good and in main. I delegate
   to you so I review once we're in main." Moving a card there is the architect's claim, and

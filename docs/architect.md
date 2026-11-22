@@ -115,8 +115,9 @@ first.**
    brief MUST name its cards and branches, its watcher reader (`agentspace-vX.YY-tnn`), the
    rulings already made for it, and these rules: read AGENTS.md first; enter a story's worktree
    itself before launching its subagents; subagents finish in one run; one PR per story, never
-   merged by itself, and no push after its head is sent; cards stay In Progress while a PR is
-   open; questions go to the architect, never to Terry; times and SHAs come only from a command's
+   merged by itself, and no push after its head is sent; it moves no card, and asks the architect
+   for any move, Needs Terry included (AGENTS.md, "Roles and pull requests"); questions go to the
+   architect, never to Terry; times and SHAs come only from a command's
    output; the identifier scan before every push; `C:\Projects\localswim\localswim.exe` by full
    path; a status line at least every 10 minutes.
 8. **Start the watchdog**: `scripts\watchdog.ps1 -Lead <name> -Reset`, then
