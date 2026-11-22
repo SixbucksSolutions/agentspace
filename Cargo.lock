@@ -95,7 +95,13 @@ dependencies = [
 name = "agentspace-guard"
 version = "0.8.0"
 dependencies = [
+ "agentspace-box",
+ "agentspace-hosts",
  "agentspace-operator-api",
+ "agentspace-state",
+ "agentspace-zone",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

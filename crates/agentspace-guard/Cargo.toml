@@ -14,3 +14,14 @@ path = "src/lib.rs"
 # agentspace-box among them). E0.08-T03-S02 (#0178) calls it from the operator.
 [dependencies]
 agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-box = { path = "../agentspace-box" }
+agentspace-state = { path = "../agentspace-state" }
+agentspace-hosts = { path = "../agentspace-hosts" }
+# The one formatter of the guard's stop time (`local_clock_time`, `clock_time_at`).
+agentspace-zone = { path = "../agentspace-zone" }
+
+[dev-dependencies]
+# Throwaway folders for the log's tests; the version agentspace-hosts's tests use.
+tempfile = { version = "=3.23.0", default-features = false }
+# The scripted AWS answers of src/run.rs's tests; the version agentspace-box uses.
+serde_json = { version = "=1.0.154" }
