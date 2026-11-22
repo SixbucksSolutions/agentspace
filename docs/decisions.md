@@ -3429,7 +3429,11 @@ and each of these is about a host's start, size or tools.
   wait ends at `patched`, or at once when `agentspace-patch.service` has failed, with a warning
   that points at the host's journal, and sync goes on. Before v0.08 no sync depended on patching,
   and a broken package mirror MUST NOT block every sync. The install starts a failed run again at
-  each sync, so each sync is its retry.
+  each sync, so each sync is its retry. **The same holds for a connection** (pin P24.2): `up`
+  treats a failed run as it treats an unknown answer and does not wait, so a lease's connection in
+  a host's first 20 minutes after a failed run gets through at once, where v0.07 made it wait 15
+  minutes and then fail. The host runs unpatched until a later run succeeds, as any host whose
+  patch run fails does.
 - **#0166's PATH is set by `box/system`'s install, not by links from the bootstrap:** the install
   writes the `PATH` of `/etc/environment`, which every ssh session reads through PAM, with
   `~/.cargo/bin`, `~/.local/bin` and fnm's default alias folder after the system's own folders.
