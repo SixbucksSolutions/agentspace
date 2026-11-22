@@ -3,12 +3,25 @@
 RFC 2119 keywords; the capitals are load-bearing.
 
 **The reference for the operator: the laptop-side commands that manage agentspace's hosts
-(`deploy`, `up`, `sync`, `bootstrap`, `provision`, `ca`, `down`, `status`, `grow`), the SSH
-ProxyCommand, and the localswim token push.** It is written so that the operator can be rebuilt
+(`deploy`, `up`, `sync`, `bootstrap`, `provision`, `ca`, `down`, `status`, `grow`, `guard`), the
+SSH ProxyCommand, and the localswim token push.** It is written so that the operator can be rebuilt
 without reading any of its code (D20, D34). It names every command, parameter, message, stream and
 exit code, which host each command and each connection reaches, the protocol of the token push,
 a host as the laptop sees it, and the AWS calls each command makes. The reasoning behind each rule
 is in [decisions.md](decisions.md), cited as `D<n>`.
+
+**From v0.08 a host runs only while its project holds a live lease** (D56 to D58): the guard,
+`agentspace-operator guard`, which the keeper starts every 5 minutes, stops every host that no live
+lease explains ([guard](#guard)); each host bounds itself by the lease horizon the guard sends it
+while the laptop is away ([The idle check and the lease
+horizon](#the-idle-check-and-the-lease-horizon)); and each host's alarm is the 24-hour backstop
+([The stack](#the-stack)). **A rule cited "architect, 2026-11-21, for v0.08-T01" is one of the
+dev lead's pins for v0.08's specs, P1 to P26, as the architect ruled it; one cited "architect,
+2026-11-21, for v0.08-T01, S01 batch" is a choice this page's writers made that the architect
+confirmed as written, or as P21 changed it for `sync`'s patch wait (P22)**. A fact marked
+"architect's to confirm" would be a choice this page's writers made that no decision or pin
+settles, binding as written until the architect rules on it; **none is left**, since the
+architect ruled the last of them as P24, P25 and P27.
 
 **What it does not own:**
 - **The lease CLI** (`agentspace lease ...`) is [lease-api.md](lease-api.md)'s. It reaches one
@@ -66,7 +79,7 @@ that a lease's client sees, so D1 binds it, and everything it runs
   [which checks show it](#which-checks-show-it)
 - [Commands](#commands): [the top level](#the-top-level), [`deploy`](#deploy), [`up`](#up),
   [`sync`](#sync), [`bootstrap`](#bootstrap), [`provision`](#provision), [`ca`](#ca),
-  [`down`](#down), [`status`](#status), [`grow`](#grow)
+  [`down`](#down), [`status`](#status), [`grow`](#grow), [`guard`](#guard)
 - [Starting the box and waiting for it](#starting-the-box-and-waiting-for-it)
 - [The ProxyCommand](#the-proxycommand)
 - [The token push](#the-token-push)
@@ -124,8 +137,8 @@ prototype's entry point is `powershell -NoProfile -File <checkout>\scripts\agent
 which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 
 - **`<command>` is the first positional argument** and MUST be one of `deploy`, `up`, `sync`,
-  `bootstrap`, `provision`, `ca`, `down`, `status` and `grow`, whole: it is matched without regard
-  to case, and never as an abbreviation (`st` is unknown).
+  `bootstrap`, `provision`, `ca`, `down`, `status`, `grow` and `guard`, whole: it is matched
+  without regard to case, and never as an abbreviation (`st` is unknown).
 - **Parameter names are matched without regard to case**, and a value follows its name as the next
   argument (`-GiB 4`). **The argument after `-GiB`, `-Alias`, `-Host` or `-InstanceType` is its
   value, whatever it looks like**, so `-Alias -Fx` gives `-Alias` the value `-Fx`, and `-GiB -1`
@@ -137,8 +150,12 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 - **`-GiB`'s value MUST be a decimal integer:** an optional `+` or `-`, then one or more ASCII
   digits, from -2147483648 to 2147483647. Anything else is a usage error. The rewrite MAY accept
   other forms the prototype's shell converts (`0x10` as 16, `1e1` as 10, `2.5` as 2, an empty value
-  as 0), and a caller MUST NOT depend on them. Its range is not checked further
-  ([grow](#grow); [Q22](#open-questions)).
+  as 0), and a caller MUST NOT depend on them. **For `grow`, the value MUST also be 1 or more**
+  (D61, #0164): `grow` given a `-GiB` of 0 or less, `-1` and every other negative included, is a
+  usage error, found by [`grow`'s check](#command-line) below, after the host checks, and no AWS
+  call is made (D61 as corrected; P7, architect, 2026-11-21, for v0.08-T01). **Every other command
+  checks the form alone** and ignores the value, so `status -GiB 0` is not an error
+  (architect, 2026-11-21, for v0.08-T01, S01 batch) ([grow](#grow); [Q22](#open-questions), closed).
 - **`-Host`'s value MUST be a project name in the form the lease CLI accepts**
   ([lease-api.md, Project](lease-api.md#project)): 1 to 32 letters, digits and `-`, starting and
   ending with a letter or digit, in any case, with surrounding whitespace. It is normalized as the
@@ -176,27 +193,31 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 
   | Problem | Message |
   |---|---|
-  | No command | `agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.` |
-  | An unknown command `<arg>` | `agentspace: Unknown command '<arg>'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.` |
+  | No command | `agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.` |
+  | An unknown command `<arg>` | `agentspace: Unknown command '<arg>'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.` |
   | A second positional argument `<arg>` | `agentspace: Unexpected argument '<arg>'.` |
   | An unknown parameter `<arg>` (an argument that starts with `-` and is not a parameter's value) | `agentspace: Unknown parameter '<arg>'.` |
   | A parameter given twice, `-Quiet` and `-All` included | `agentspace: <name> is given more than once.` |
   | `-GiB`, `-Alias`, `-Host` or `-InstanceType` as the last argument, with no value | `agentspace: <name> needs a value.` |
   | A `-GiB` value that is not a decimal integer in range | `agentspace: -GiB MUST be a whole number, not '<arg>'.` |
+  | `grow` given a `-GiB` value of 0 or less, by `grow`'s check below | `agentspace: -GiB MUST be 1 or more for grow, not '<arg>'.` |
   | A `-Host` value that is not a project name in the form above | `agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '<arg>'.` |
   | An `-InstanceType` value that is not of the form above | `agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '<arg>'.` |
 
   `<name>` is the parameter as this page spells it (`-GiB`, `-Alias`, `-Host`, `-InstanceType`,
   `-All`, `-Quiet`), whatever case was given. **The two command-list messages, the `-Host` message
-  and the `-InstanceType` message are confirmed by the architect, 2026-11-20, for v0.07-T01**. `<arg>` is the
-  argument as given, with each control character in it written as `?`, so that the message stays
-  one line.
+  and the `-InstanceType` message are confirmed by the architect, 2026-11-20, for v0.07-T01**; the
+  command-list messages' `guard`, added for v0.08, and the `-GiB` message for `grow`, which keeps
+  its "MUST", are confirmed by the architect, 2026-11-21, for v0.08-T01, S01 batch. `<arg>` is the argument as given, with each control character in it
+  written as `?`, so that the message stays one line: so `grow -GiB -0` reports `'-0'` and
+  `grow -GiB +0` reports `'+0'`.
 - **The checks run in this order, and the first failure ends the command:** help; then the
   arguments read from left to right, the first usage error found among them reported (a missing
   command is found only once the whole line is read); then the two `-Alias` checks below, in their
-  order; then the six host checks below, in their order. So `status -GiB abc -Alias bad!` reports
-  the `-GiB` message, `status -Host bad! -GiB abc` reports the `-Host` message, and
-  `ca -Alias x -Host y` reports `agentspace: -Alias applies to up alone.` **At each argument a
+  order; then the six host checks below, in their order; then `grow`'s `-GiB` check below. So
+  `status -GiB abc -Alias bad!` reports the `-GiB` message, `status -Host bad! -GiB abc` reports
+  the `-Host` message, `ca -Alias x -Host y` reports `agentspace: -Alias applies to up alone.`, and
+  `grow -All -GiB 0` reports `agentspace: -All applies to status, down and sync alone.` **At each argument a
   repeated name is found before a missing value** (architect, 2026-11-19, for E0.06-T01-S01, as
   keeper.md's check 1 reads its own), so `status -GiB 1 -GiB` reports `agentspace: -GiB is given
   more than once.`
@@ -220,9 +241,9 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
 
 | Parameter | Type | Default | Applies to | Notes |
 |---|---|---|---|---|
-| `-GiB <n>` | Integer | `2` | `grow` | The GiB to add to the root volume. Every command checks its form ([Command line](#command-line)), so `status -GiB abc` is a usage error; every command but `grow` then ignores its value. No range is checked; AWS refuses a size that is not larger ([grow](#grow)). |
+| `-GiB <n>` | Integer | `2` | `grow` | The GiB to add to the root volume, 1 or more (D61). Every command checks its form ([Command line](#command-line)), so `status -GiB abc` is a usage error; `grow` then refuses a value of 0 or less before any AWS call, and every other command, `guard` included, ignores the value ([grow](#grow)). |
 | `-Alias <alias>` | SSH host alias | The host's own alias: `agentspace` for the box, `agentspace-host.<project>` for another host | `up` | The SSH host alias the token push connects with (D9, card #0057). Any other command given `-Alias` fails. Without `-Host` the default is `agentspace`, as before v0.07. |
-| `-Host <project>` | Project name | None: the box | `deploy`, `up`, `sync`, `bootstrap`, `provision` (which requires it), `down`, `status`, `grow` | The project whose host the command acts on (D49, D55). `-Host swimcoach` names the box, and is the same as no `-Host` (P1, architect, 2026-11-20, for v0.07-T01). `ca` given `-Host` fails. [Which host a command acts on](#which-host-a-command-acts-on). |
+| `-Host <project>` | Project name | None: the box | `deploy`, `up`, `sync`, `bootstrap`, `provision` (which requires it), `down`, `status`, `grow` | The project whose host the command acts on (D49, D55). `-Host swimcoach` names the box, and is the same as no `-Host` (P1, architect, 2026-11-20, for v0.07-T01). `ca` and `guard` given `-Host` fail. [Which host a command acts on](#which-host-a-command-acts-on). |
 | `-InstanceType <type>` | EC2 instance type | None: the stack's previous value | `deploy`, with `-Host` naming a host that is not the box | The instance type the host's stack is deployed with (P13, architect, 2026-11-20, for v0.07-T01). **It is the one way a host that is not the box changes size** (D39, D51, D55); the box is sized through `stack-parameters.json`, as before ([deploy](#deploy), step 2). Any other command given `-InstanceType` fails, and so does `deploy` without `-Host` or with `-Host swimcoach`. |
 | `-All` | Switch | Off | `status`, `down`, `sync` | Every host in the host registry, one at a time ([Every host at once](#every-host-at-once--all)). Any other command given `-All` fails, and so does `-All` with `-Host`. |
 | `-Quiet` | Switch | Off | Every command | Suppresses every message that is not a failure and not `status`'s report, warnings included ([Messages](#messages)). |
@@ -240,7 +261,10 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
    started before this check, not even an AWS call.
 
 **The host checks run next, in this order** (D49, D55; each message is confirmed by the architect, 2026-11-20, for v0.07-T01):
-1. **`-Host` given with `ca`** fails with `agentspace: -Host does not apply to ca.`
+1. **`-Host` given with `ca` or `guard`** fails with `agentspace: -Host does not apply to <command>.`,
+   `<command>` being `ca` or `guard` as this page spells it, so `ca`'s message is unchanged byte for
+   byte (the `guard` form is the architect's, 2026-11-21, for v0.08-T01, S01 batch). `guard -Host x -All` therefore reports the
+   `-Host` message, check 1 coming before check 3.
 2. **`-All` given with any command but `status`, `down` and `sync`** fails with
    `agentspace: -All applies to status, down and sync alone.`
 3. **`-Host` and `-All` together** fail with `agentspace: -Host and -All cannot be given together.`
@@ -254,6 +278,16 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
    with `<project>` written as those nine characters (P13, architect, 2026-11-20, for v0.07-T01:
    `-InstanceType` is allowed only with `-Host`; that `-Host swimcoach` counts as no `-Host` here,
    and the message, are confirmed by the architect, 2026-11-20, for v0.07-T01).
+
+**Then `grow`'s `-GiB` check** (D61, #0164): **`grow` given a `-GiB` whose value is 0 or less**
+fails with `agentspace: -GiB MUST be 1 or more for grow, not '<arg>'.`, a usage error, exit 1, as
+every operator usage error is (D61 as corrected; P7, architect, 2026-11-21, for v0.08-T01). The
+default, 2, passes. It is checked after the host checks and before the home and the system folder,
+as every usage error is, so it needs neither, and before the host registry is read, so
+`grow -Host nobody -GiB 0` reports it rather than the project's missing host (architect,
+2026-11-21, for v0.08-T01, S01 batch). **It starts no program and makes no AWS call**: no `ec2 describe-instances`, no
+`ec2 describe-volumes`, no `ec2 modify-volume`, and for `-Host` no key, certificate or alias is
+written. No other command checks the value.
 
 Nothing is started before these checks either, and none reads a file.
 
@@ -296,10 +330,12 @@ prototype does for every usage error, the `-Alias` refusals included ([Q1](#open
 closed).
 
 **A failure MUST end the command at once**, with nothing after it run, and MUST print one message
-that starts `agentspace: `. **The one exception is `-All`** ([Every host at
-once](#every-host-at-once--all)): a failure on one host ends that host's part, and the command goes
-on to the next host and exits 1 at its end, unless the failure is #0034's sign-in message, which
-ends it at once (architect, 2026-11-20, for v0.07-T01). **A failure MUST NOT print a runtime's error record,
+that starts `agentspace: `. **The two exceptions are `-All` and `guard`** ([Every host at
+once](#every-host-at-once--all); [guard](#guard)): a failure on one host ends that host's part, and
+the command goes on to the next host and exits 1 at its end, unless the failure is #0034's sign-in
+message, which ends it at once (architect, 2026-11-20, for v0.07-T01; for `guard`, architect,
+2026-11-21, for v0.08-T01, S01 batch). `grow`'s refusal of a `-GiB` of 0 or less is a usage error like any other, exit 1 (P7,
+architect, 2026-11-21, for v0.08-T01). **A failure MUST NOT print a runtime's error record,
 stack or exception text in place of that message.** Where a message carries the system's error
 text, it is the system's own words alone: a runtime's addition, such as Rust's trailing
 ` (os error <n>)`, is dropped (architect, 2026-11-19, for E0.06-T03-S01). The prototype does in
@@ -312,12 +348,14 @@ some cases
   line feed. A message starts with a capital, or with `agentspace: `, or with a path or an
   identifier.
 - **A failure starts `agentspace: `**, followed by the text this page gives.
-- **A warning starts `agentspace: ` too**, and does not change the exit code. Only the token push
-  and `provision`'s last step, which places the project's pending leases, warn
-  ([provision](#provision)).
+- **A warning starts `agentspace: ` too**, and does not change the exit code. Only the token push,
+  `provision`'s last step, which places the project's pending leases ([provision](#provision)),
+  and `sync`'s patch wait, for a patch run that failed ([The patch wait](#the-patch-wait); P21),
+  warn.
 - **A progress message has no prefix.**
 - **`-Quiet` suppresses progress messages and warnings.** Failures, `status`'s report and the
-  `Host` line that `-All` prints before each host always print. Output passed through from other
+  `Host` line that `-All` prints before each host always print. `guard`'s progress lines are
+  suppressed, and its log is not ([guard](#guard)). Output passed through from other
   programs is not affected by `-Quiet`. **Nor is the detail `AGENTSPACE_DIAGNOSTIC` asks for**
   (architect, 2026-11-19, for E0.06-T01-S01): it prints only in caller mode, which has no
   `-Quiet`, and a caller who sets the variable asked for it.
@@ -355,6 +393,7 @@ some cases
 | `go` | On `PATH` | `sync`, to build the localswim CLI |
 | The operator, `agentspace-operator.exe` | In the ProxyCommand's own folder ([How each program finds the others](#how-each-program-finds-the-others)); a ProxyCommand that runs `up` in its own process starts none. The prototype's ProxyCommand runs `powershell.exe` (Windows PowerShell 5.1), found on `PATH`, with its `agentspace.ps1` | The ProxyCommand, to run `up` |
 | The operator, `agentspace-operator.exe`, as a provisioning run | In the lease CLI's own folder, or the program `AGENTSPACE_PROVISION_CMD` names ([How each program finds the others](#how-each-program-finds-the-others)), by the EC2 driver, which starts `provision -Host <project>` detached ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run); D48, D55) | The driver; the operator itself starts no run of `provision` |
+| The operator, `agentspace-operator.exe`, as a guard run | In the keeper's own folder, or the program `AGENTSPACE_GUARD_CMD` names, started by the keeper as `guard`, detached ([keeper.md, Starting the guard](keeper.md#starting-the-guard); D56, D63) | The keeper; the operator itself starts no guard |
 
 **How the paths are written (A-24):** a path that starts `%SystemRoot%` MUST be built from the value
 of `SystemRoot` as the operator finds it, never from the fixed text `C:\Windows`, which is that
@@ -447,8 +486,8 @@ operation is `wait`**, and `instance-stopped` is the first of its own arguments,
 | `OneDrive`, `OneDriveConsumer`, `OneDriveCommercial` | Read by `ca` | Folders the CA MUST NOT be inside (D17). |
 | `USERNAME`, `COMPUTERNAME` | Read by `ca` and `sync` | The user named in the CA's messages, and the computer named in a new CA's key comment (docs/state.md). |
 | `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`, `AGENTSPACE_TIMEZONE` | Read, each time the operator needs what it names | Name the programs the operator starts in place of the AWS CLI, `ssh` and `scp`, and the zone the token push sends in place of the laptop's. For tests only ([The test seam](#the-test-seam)). |
-| `AGENTSPACE_DIAGNOSTIC` | Read by the ProxyCommand | When it is set to a non-empty value, the ProxyCommand MAY print backend detail to stderr that it otherwise withholds ([What a caller sees](#what-a-caller-sees-d1-card-0087)). |
-| `AGENTSPACE_STATE_DIR` | Read by the ProxyCommand and `provision` | Moves the state folder, where the lease state file is, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). The ProxyCommand reads the lease state file from there to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)), and `provision` places the project's pending leases there ([provision](#provision), step 9). It moves nothing else the operator reads: the host registry, the project list and each host's folder stay under `%USERPROFILE%\.agentspace`, as state.md says. |
+| `AGENTSPACE_DIAGNOSTIC` | Read by the ProxyCommand | When it is set to a non-empty value, the ProxyCommand MAY print backend detail to stderr that it otherwise withholds ([What a caller sees](#what-a-caller-sees-d1-card-0087)), and its token push drops nothing of its ssh's stderr, `The host is ready.` included ([What the laptop sends](#what-the-laptop-sends), step 2; #0167, P14, architect, 2026-11-21, for v0.08-T01). |
+| `AGENTSPACE_STATE_DIR` | Read by the ProxyCommand, `provision`, `status -All` and `guard` | Moves the state folder, where the lease state file is, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). The ProxyCommand reads the lease state file from there to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)), `provision` places the project's pending leases there ([provision](#provision), step 9), `status -All` counts each host's live leases from it ([status](#status)), and `guard` reads it to decide which hosts a live lease explains ([guard](#guard)). It moves nothing else the operator reads: the host registry, the project list, each host's folder, `guard.log` and `guard.lock` stay under `%USERPROFILE%\.agentspace`, as state.md says. |
 | `AGENTSPACE_SSH_DIR` | Read by `provision`, and by every command that writes a host's operator alias | Moves the ssh folder, where a placed lease's alias file and the `Include` line are written, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). `provision`'s step 9 uses it as `create` does. The operator's own alias for a host is written in the ssh folder it names too ([How the operator reaches a host](#how-the-operator-reaches-a-host)). |
 | `AGENTSPACE_PROXY_COMMAND` | Read by `provision` | The lease CLI's ProxyCommand override ([lease-api.md, Environment](lease-api.md#environment)): `provision`'s step 9 writes it into each placed lease's alias file as `create` would. |
 | `PATH` | Read; the ProxyCommand prepends two folders | Finding `go`, the AWS CLI's fallback, and the Session Manager plugin. |
@@ -474,9 +513,18 @@ removed** (P15, architect, 2026-11-20, for v0.07-T01), so a run never takes a fo
 ProxyCommand line that the command which started it did not use.
 
 So **the test seam's variables (`AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`,
-`AGENTSPACE_TIMEZONE`) never reach a detached run**, nor does `AGENTSPACE_DIAGNOSTIC`, and a check
-reaches a run only by running `provision` itself ([The test seam](#the-test-seam), step 8).
-`AGENTSPACE_NESTED` is unset in a detached run, so its `sync` step pushes as every `sync` does.
+`AGENTSPACE_TIMEZONE`) never reach a detached provisioning run**, nor does `AGENTSPACE_DIAGNOSTIC`,
+and a check reaches a run only by running `provision` itself ([The test seam](#the-test-seam),
+step 8). `AGENTSPACE_NESTED` is unset in a detached run, so its `sync` step pushes as every `sync`
+does.
+
+**A guard the keeper starts is the one detached run that carries seam variables** (P4, architect,
+2026-11-21, for v0.08-T01): it gets the environment a provisioning run gets, built from the user's
+logon environment as `agentspace-detach` builds it, and with it every `AGENTSPACE_*_CMD` variable
+the keeper itself was given, so a check's throwaway home and stand-ins reach it. `AGENTSPACE_TIMEZONE`
+and `AGENTSPACE_DIAGNOSTIC` do not reach it. The list is
+[keeper.md, The guard's environment](keeper.md#the-guards-environment)'s; what the guard reads of
+it is [guard](#guard)'s.
 **`provision` builds the EC2 driver's `Context` for its step 9 from these variables as the lease
 CLI builds its own**: the state folder, the ssh folder and the ProxyCommand line, from
 `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` when set, and from
@@ -584,6 +632,12 @@ by a real box.
    start the installed operator against the real AWS. **A stand-in named by
    `AGENTSPACE_PROVISION_CMD` never calls `place_pending`** (P15, architect, 2026-11-20, for
    v0.07-T01), so such a check's leases stay `pending`.
+9. **It reaches the guard by running `guard` itself**, with the seam set and the case's lease state
+   file in the throwaway home's state folder ([guard](#guard), its seams). **A check of the keeper
+   MUST set `AGENTSPACE_GUARD_CMD` to a stand-in** ([keeper.md, Starting the
+   guard](keeper.md#starting-the-guard)), or the keeper would start the operator beside it against
+   whatever the seam variables it was given name. Neither has a clock seam, so a case sets its
+   lease and launch times relative to the real clock.
 
 **Not covered:** `go`, `ssh-keygen`, `icacls` and `taskkill` have no variable
 ([Q30](#open-questions)).
@@ -614,19 +668,21 @@ history;** where the rewrite keeps each is
 | File (as today's prototype has it) | Read by | Written by | What it is |
 |---|---|---|---|
 | `<checkout>\.instance-id`, then `%USERPROFILE%\.agentspace\instance-id.json` (D21, D40), until v0.07 | Nothing, from v0.07 | Nothing, from v0.07 | The instance-ID cache, retired by D45: the host registry's records hold each host's instance ID. No v0.07 program reads, writes or removes the file, and nothing migrates from it; a person MAY delete it |
-| `%USERPROFILE%\.agentspace\hosts.json`, and its lock `hosts.lock` beside it | Every command but `ca`; the ProxyCommand | `deploy`, `provision`; any command that finds a record's instance ID missing, and the ProxyCommand's `up`, which writes that member alone (P13, architect, 2026-11-20, for v0.07-T01); the EC2 driver ([driver.md](driver.md)) | The host registry: one record per host, with its project, stack, state, instance ID and last attempt (D45; [state.md, The host registry](state.md#the-host-registry); [below](#the-host-registry-as-the-operator-uses-it)) |
+| `%USERPROFILE%\.agentspace\hosts.json`, and its lock `hosts.lock` beside it | Every command but `ca`, `guard` without its lock; the ProxyCommand | `deploy`, `provision`; any command that finds a record's instance ID missing, and the ProxyCommand's `up`, which writes that member alone (P13, architect, 2026-11-20, for v0.07-T01); the EC2 driver ([driver.md](driver.md)) | The host registry: one record per host, with its project, stack, state, instance ID and last attempt (D45; [state.md, The host registry](state.md#the-host-registry); [below](#the-host-registry-as-the-operator-uses-it)) |
 | `%USERPROFILE%\.agentspace\projects.json` | `provision` (and the EC2 driver) | Never: a person, or the architect with Terry's yes (D54) | The project list: the projects that MAY have a host made ([state.md, The project list](state.md#the-project-list)) |
 | `%USERPROFILE%\.agentspace\localswim-pushed.sha256` today; `localswim-pushed.json` beside it as D40 requires | `up` | `up`, `sync` | The box's push stamp ([The stamp](#the-stamp)); unchanged by v0.07 (D55, "The box's own files") |
 | `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json` | `up` | `up`, `sync` | Another host's push stamp (D50; [state.md, A host's folder](state.md#a-hosts-folder)) |
 | `%USERPROFILE%\.agentspace\hosts\<project>\id_ed25519`, its `.pub`, and `id_ed25519-cert.pub` | The ssh client, through the host's operator alias | Every command given `-Host`, or `-All`, for a host that is not the box ([How the operator reaches a host](#how-the-operator-reaches-a-host)) | The operator's own key for that host, and its one-hour certificate (D47; [state.md, A host's folder](state.md#a-hosts-folder)). Whether the key's folder holds the public half as `id_ed25519.pub` is state.md's |
-| `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, `provision.lock` | People and checks; `provision`, and the driver, which tries the lock | `provision` alone, which opens the log itself and writes every line of it, its own lines alone (architect, 2026-11-21, for v0.07-T03); the driver makes the host's folder before a start, and never opens the log (P14, architect, 2026-11-20, for v0.07-T01) | The provisioning run's log and its lock, held for the run's life ([provision](#provision); [state.md, A host's folder](state.md#a-hosts-folder)) |
+| `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, `provision.lock` | People and checks; `provision`; the driver and `guard`, which try the lock, `guard` without creating it or its folder | `provision` alone, which opens the log itself and writes every line of it, its own lines alone (architect, 2026-11-21, for v0.07-T03); the driver makes the host's folder before a start, and never opens the log (P14, architect, 2026-11-20, for v0.07-T01) | The provisioning run's log and its lock, held for the run's life ([provision](#provision); [state.md, A host's folder](state.md#a-hosts-folder)) |
+| `%USERPROFILE%\.agentspace\guard.log` | People | `guard` alone, a line at a time; created at its first line | The guard's log: one line per host per stop, unexplained host or failure, and one per failure of the run itself ([guard](#guard); [state.md, The guard's log](state.md#the-guards-log)) |
+| `%USERPROFILE%\.agentspace\guard.lock` | The keeper, which tries it before it starts a guard (P3, architect, 2026-11-21, for v0.08-T01) | `guard`, which holds it for its run's life; created if missing, never deleted | The guard's lock ([guard](#guard); [state.md, The guard's lock](state.md#the-guards-lock)) |
 | `<ssh folder>\agentspace.d\agentspace-host.<project>` | The ssh client | Every command given `-Host`, or `-All`, for a host that is not the box | The host's operator alias ([state.md, A host's operator alias](state.md#a-hosts-operator-alias)) |
 | `%USERPROFILE%\.agentspace\known_hosts` | The ssh client, through a host alias of a host that is not the box | The ssh client alone, never the operator (D47) | The host keys of every host but the box, each under `agentspace-host.<project>` ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)) |
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca` | `ca`, `sync`; for a host that is not the box, `deploy` and every command that signs the operator's certificate | `ca`, once | The CA's private key (D17), one for every host (D50) |
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` | `ca`, `sync`; `deploy`, when it creates a host's stack | `ca`, once | The CA's public key, which `sync` sends to every host, and `deploy -Host` passes as `CaPublicKey` to the stack it creates for a host that is not the box |
 | `%USERPROFILE%\.ssh\id_ed25519.pub` | `deploy` | Never | The user's own public key, passed as `SshPublicKey` to the box's stack at every deploy and to a new host's stack when it is created ([deploy](#deploy), step 1) |
 | `%USERPROFILE%\.ssh\config` | The ssh client, for the `agentspace` entry and lease aliases | Never, but for agentspace's `Include` line, which every command that writes a host's operator alias, and `provision`'s `place_pending`, add when it is missing, as `create` does ([state.md, The `Include` line](state.md#the-include-line)) | [The `agentspace` SSH entry](#the-agentspace-ssh-entry) |
-| `<state folder>\leases.json`, and its lock `leases.lock` beside it | The ProxyCommand, without the lock, to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)); `provision`'s `place_pending`, under the lock | `provision`'s `place_pending`, which writes a placed lease's record `ready`, one lease per hold of the lock ([provision](#provision), step 9) | The lease state file ([state.md, The lease state file](state.md#the-lease-state-file)), which the lease CLI owns |
+| `<state folder>\leases.json`, and its lock `leases.lock` beside it | The ProxyCommand, without the lock, to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)); `status -All` and `guard`, without the lock, for each project's live leases ([status](#status); [guard](#guard)); `provision`'s `place_pending`, under the lock | `provision`'s `place_pending`, which writes a placed lease's record `ready`, one lease per hold of the lock ([provision](#provision), step 9) | The lease state file ([state.md, The lease state file](state.md#the-lease-state-file)), which the lease CLI owns |
 | `%USERPROFILE%\.agentspace\leases\<id>\` and the key and certificate in it | The ssh client, through a lease alias | `provision`'s `place_pending`, for each lease it places, after removing a killed placement's leftovers | A placed lease's folder ([state.md, The lease folder](state.md#the-lease-folder)) |
 | `<ssh folder>\agentspace.d\<alias>`, a lease's alias file | The ssh client | `provision`'s `place_pending`, for each lease it places; never the operator's own commands | A placed lease's alias ([state.md, The alias file](state.md#the-alias-file); [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)) |
 | `%USERPROFILE%\.claude\CLAUDE.md` | `sync` | Never | The user's global instructions for Claude Code, copied to each host |
@@ -711,7 +767,12 @@ nested `up` acts on the same host ([From the ProxyCommand](#from-the-proxycomman
 waits. **It runs inside a ProxyCommand, so it prints the
 caller's lines, not a person's** ([What a caller sees](#what-a-caller-sees-d1-card-0087)): its last
 is `The host is ready.`, never `Ready: <id>`. So a `sync` prints one `The host is ready.` line per
-ssh or scp it starts, to stderr, and each one costs a Session Manager session.
+ssh or scp it starts, to stderr, and each one costs a Session Manager session. **The token push of
+a ProxyCommand connection is the exception** (#0167): its ssh's stderr reaches the connection
+through a filter that drops its nested ProxyCommand's `The host is ready.`, so a connection prints
+that line once, its own, whether or not it pushes, unless `AGENTSPACE_DIAGNOSTIC` is set
+([What the laptop sends](#what-the-laptop-sends), step 2; P14, architect, 2026-11-21, for
+v0.08-T01).
 
 - **Every ssh and scp the operator starts MUST pass `-o ClearAllForwardings=yes`**, so it never
   takes the board's forwarded ports from a person's interactive session (D12). Those ports are the
@@ -735,7 +796,7 @@ settles [Q10](#open-questions) here, and keeper.md's [Q3, Q8 and Q10](keeper.md#
 |---|---|---|---|---|
 | `agentspace.exe` | The lease CLI, run as `agentspace` | [lease-api.md](lease-api.md) | Console program | `AGENTSPACE_CMD` |
 | `agentspace` | The lease CLI's wrapper for Git Bash and other POSIX shells: it runs `agentspace.exe` from its own folder with its arguments unchanged and MSYS path conversion off, as [lease-api.md, The program](lease-api.md#the-program) allows | lease-api.md | POSIX `sh` script, no extension, with LF line ends and `#!/bin/sh` as its first line, which is what makes Git Bash run a file with no extension | None |
-| `agentspace-operator.exe` | The operator: `deploy`, `up`, `sync`, `bootstrap`, `provision`, `ca`, `down`, `status` and `grow` | [Command line](#command-line) | Console program | `AGENTSPACE_OPERATOR_CMD` |
+| `agentspace-operator.exe` | The operator: `deploy`, `up`, `sync`, `bootstrap`, `provision`, `ca`, `down`, `status`, `grow` and `guard` | [Command line](#command-line) | Console program | `AGENTSPACE_OPERATOR_CMD` |
 | `agentspace-ssh-proxy.exe` | The ProxyCommand | [The ProxyCommand](#the-proxycommand) | Console program | `AGENTSPACE_SSH_PROXY_CMD` |
 | `agentspace-keeper.exe` | The keeper | [keeper.md, Command line](keeper.md#command-line) | Console program | `AGENTSPACE_KEEPER_CMD` |
 | `agentspace-keeper-task.exe` | The keeper task's launcher, which the logon task runs | [keeper.md, The task's launcher](keeper.md#the-tasks-launcher) | Windows program, with no console | None |
@@ -827,7 +888,9 @@ settles [Q10](#open-questions) here, and keeper.md's [Q3, Q8 and Q10](keeper.md#
 **Every program finds another agentspace program in the folder its own executable runs from, by
 the file name in [the table](#the-programs), and never through `PATH`, the working folder, an
 environment variable or a checkout.** This is D8's rule for the ProxyCommand, applied to every
-program (D37). **The one exception is the program the EC2 driver starts for a provisioning run**
+program (D37). **The exceptions are the program the EC2 driver starts for a provisioning run, and the program the
+keeper starts for a guard run, which `AGENTSPACE_GUARD_CMD` names when it is set** (D63;
+[keeper.md, Starting the guard](keeper.md#starting-the-guard)). For the first
 (P12, architect, 2026-11-20, for v0.07-T01; D55): when `AGENTSPACE_PROVISION_CMD` is set and not
 empty, the lease CLI starts the program it names in place of `agentspace-operator.exe` beside it, a
 relative value made full against the lease CLI's working folder before the detached start. It is
@@ -844,6 +907,7 @@ like `AGENTSPACE_PROXY_COMMAND`, and not a conformance naming variable, so
 | `agentspace-operator.exe`, in `provision`'s `place_pending` | `agentspace-ssh-proxy.exe`; when that file is not there, `agentspace-ssh-proxy.cmd`, exactly as `agentspace.exe` finds it, beside the running program's own executable | The default ProxyCommand line of each lease alias `place_pending` writes ([provision](#provision), step 9; P15, architect, 2026-11-20, for v0.07-T01; [state.md, The alias file](state.md#the-alias-file), D8). **When neither is there, placement fails for that lease, which stays `pending`.** `AGENTSPACE_PROXY_COMMAND`, when the run has it, replaces the whole line, and nothing is looked for |
 | `agentspace-ssh-proxy.exe` | `agentspace-operator.exe`, when it runs `up` as a separate program. It MAY instead run `up` in its own process, with the same result | [The ProxyCommand](#the-proxycommand), step 3 |
 | `agentspace-keeper.exe` | Its own file, when the holder's launcher is the keeper's own program again | [keeper.md, Starting a holder](keeper.md#starting-a-holder) |
+| `agentspace-keeper.exe` | `agentspace-operator.exe`, or the program `AGENTSPACE_GUARD_CMD` names, the keeper's own variable (D63) | Starting a guard run, `guard`, detached ([keeper.md, Starting the guard](keeper.md#starting-the-guard)) |
 | `agentspace-keeper-task.exe` | `agentspace-keeper.exe` | Running the keeper ([keeper.md](keeper.md#the-tasks-launcher)) |
 | `agentspace-keeper-install.exe` | `agentspace-keeper.exe` and `agentspace-keeper-task.exe` | Checking both exist, and naming the launcher in the task by full path ([keeper.md](keeper.md#the-installer)) |
 
@@ -1104,6 +1168,9 @@ on it for v0.07's specs.
   creates the stack of a host that has a record and no stack yet (D49), and never a record.
 - **The registry is looked up once per command**, as it starts; `-All` reads every record then
   ([Every host at once](#every-host-at-once--all)).
+- **`guard` acts on every record in the registry, every run, and takes no `-Host` or `-All`**
+  (D63; [guard](#guard)). It prints no `Host` line, and a project with no record is never named to
+  it.
 
 **What a command takes from its host:**
 
@@ -1248,7 +1315,7 @@ It does these, in this order, once per command:
 - **For `sync -All`, for each host that is not the box and that it syncs, as its part with
   `-Host`** ([Every host at once](#every-host-at-once--all); architect, 2026-11-20, for v0.07-T01), since it
   connects to each. **`status -All` and `down -All` MUST NOT sign, and MUST NOT write any alias**:
-  they name no host, and the cost guard's stop and its check (D51) MUST NOT fail on the CA's
+  they name no host, and the stop and the check of a turn's close (D51) MUST NOT fail on the CA's
   trouble.
 
 The steps:
@@ -1327,9 +1394,14 @@ Each of these messages is confirmed by the architect, 2026-11-20, for v0.07-T01.
 - **A person's own `ssh agentspace-host.<project>`**, as D52's sign-ins use it, works for the hour
   after any command that signed. **So a person runs `agentspace-operator status -Host <project>`
   before signing in over `ssh agentspace-host.<project>`, and again after an hour** (P13,
-  architect, 2026-11-20, for v0.07-T01). `status` never starts a host and changes nothing on it,
-  and its report shows whether the host is running. The sign-in procedure (D52) and the line
-  `provision` ends with ([provision](#provision), step 10) say the same.
+  architect, 2026-11-20, for v0.07-T01), **under a live lease of the project, created before
+  either** (D56): without one, the guard stops the host mid sign-in ([Work on a host by
+  hand](#what-the-guard-can-race)). `status` never starts a host and changes nothing on it, and its
+  report shows whether the host is running. The sign-in procedure (D52), [README, Signing in on a
+  new host](../README.md#signing-in-on-a-new-host), and the line `provision` ends with
+  ([provision](#provision), step 10), `Sign in on this host once, by hand, under a lease: see
+  "Signing in on a new host" in the agentspace README.`, say the same (P20, architect, 2026-11-21,
+  for v0.08-T01).
 - **The operator's key is a private key**: it MUST NOT be printed, logged or put in any message, and
   no program gets more of it than its path.
 
@@ -1347,6 +1419,14 @@ D51, D55). Except where D49, D50 and D55 say it, everything in this section is c
   streams and exit rules as the command run with `-Host <project>`, but that **`status -All` and
   `down -All` MUST NOT sign a certificate or write an alias for any host**, where `status -Host` and
   `down -Host` do ([How the operator reaches a host](#how-the-operator-reaches-a-host)).
+- **`status -All` also reads the lease state file, once, before its first host's part**, and adds
+  two lines to each host's report: its count of live leases, and for a running host that no live
+  lease explains, the time the guard stops it ([status](#status); D60). **When that file is
+  missing, cannot be read or is not valid, every host's report goes without the two lines, and the
+  command says why once after the last host's part**: a missing file is not "no leases"
+  (architect, 2026-11-21, for v0.08-T01, pin P18). **The lease state file never changes the exit
+  code**: it is what the host lines alone make it (architect, 2026-11-21, for v0.08-T01, pin P25).
+  `down -All` and `sync -All` never read the lease state file.
 - **A host's instance ID is its record's**, or, for a `ready` record without one, read from its
   stack as every command reads it. **A `creating` or `failed` record without one is skipped:**
   `status` prints `Instance  none recorded` after its `Host` line, and `down` prints the progress
@@ -1356,8 +1436,11 @@ D51, D55). Except where D49, D50 and D55 say it, everything in this section is c
   or `failed` host's next run syncs it ([provision](#provision)). **A replaced CA does not reach a
   host that is not the box this way**: [ca](#ca) says why, and how a person recovers each such
   host.
-- **`sync -All` starts every `ready` host that is stopped, as `sync` does, and stops none.** A
-  turn's close that synced every host stops them afterwards with `down -All` (D51).
+- **`sync -All` starts every `ready` host that is stopped, as `sync` does, and stops none.** From
+  v0.08 a host it started and no live lease explains is stopped by the guard ([guard](#guard)), so
+  a turn's close leaves its hosts to the guard. Until v0.08 is installed (#0186), a turn's close
+  that synced every host stops them afterwards with `down -All` (D51), as the README's [A host's
+  life](../README.md#a-hosts-life) says.
 - **`sync -All` writes `system\` and builds the localswim CLI once**, in its one folder ([The
   operator's folder, one per command](#the-operators-folder-one-per-command)), in the part of the
   first host it syncs, and every later host's part copies the same files. Step 7's skip or build
@@ -1424,6 +1507,61 @@ instance or a real Session Manager session; and `go` and `ssh-keygen` have no se
 | The laptop's AWS sign-in needing no new permission (D44) | Live check, E0.07-T05-S01, by its run with today's sign-in |
 | Every command with `-Host` started from Git Bash (#0027) | Live check, E0.07-T05-S01 (D55 carries #0027 there) |
 
+**Every behavior v0.08 adds to this page, or changes on it, is shown by a conformance case against
+stand-ins in E0.08-T04-S01 (the keeper's start of the guard in E0.08-T04-S03), by a test of a crate
+or of `box/tests`, or by a live check of D62's in E0.08-T05-S01, E0.08-T06-S01 (the box) or
+E0.08-T06-S02 (agentspace's host)** (D62, D63). No stand-in can show a host stop, a real Run
+Command or a real session, and the suite has no fake clock, so the grace's timing is a live check.
+**Where a stand-in cannot show a behavior, such as a time format at a chosen hour or a shell
+command's answer under a stand-in `systemctl`, a crate's test or the builder's own test of the
+text is accepted in place of a case**, and the row names it.
+A case that runs the operator against stand-ins seeds the lease state file in its throwaway home's
+state folder, with times set relative to the real clock, and never reads Terry's real files.
+
+| Behavior | Shown by |
+|---|---|
+| The command line: `guard` accepted, with `-Quiet` alone; `guard -Host` refused by check 1 with its message, `ca`'s unchanged byte for byte; `guard -All`, `-Alias` and `-InstanceType` refused with their messages; `guard -GiB 5` checked for form and ignored; the two command-list messages naming `guard`; the top level's, `guard`'s, `status`'s, `grow`'s and `sync`'s help byte for byte (`conformance/operator/test-unmet-usage-help.ps1`'s copies updated) | Conformance case, E0.08-T04-S01 |
+| `grow -GiB 0`, `-0`, `+0`, `-1` and `-2147483648`: exactly the refusal message on stderr, nothing on stdout, exit 1, no AWS call at all (no `ec2 modify-volume` counted), no ssh, nothing written in the home; with `-Host agentspace`, no key, certificate or alias written either. **`conformance/operator/test-unmet-commands.ps1`'s `-GiB 0` case, which the AWS stand-in's model of EC2's refusal served, and its `-GiB -1` case, which asks EC2 for the size less 1, are replaced by these** (D61; P7, architect, 2026-11-21, for v0.08-T01; #0182) | Conformance case, E0.08-T04-S01 |
+| `grow -GiB 1` asking EC2 for the size plus 1; the refusal's place in the order (`grow -Alias x -GiB 0`, `grow -All -GiB 0`, `grow -InstanceType m9g.xlarge -GiB 0` each giving its own message, `grow -Host nobody -GiB 0` and `grow -GiB 0` with `USERPROFILE` unset giving the refusal, `grow -GiB 0 -h` grow's help); `status -GiB 0`, `down -GiB -5` and `sync -GiB 0` not refused | Conformance case, E0.08-T04-S01 |
+| `status -All`'s `Leases` line for every host: `pending` and unexpired `ready` leases counted; an expired `ready`, a `released` and an `unsatisfiable` lease not counted; another project's leases not counted, the project compared exactly; the box counting swimcoach's; a `creating` host with no instance ID showing its count after `Instance  none recorded` | Conformance case, E0.08-T04-S01 |
+| `status -All`'s `Guard` line, its padding and its time in the laptop's zone, read by the case from the same system: from the launch time, from a released lease's `released_at` and from an expired lease's `expires_at`, each when it is the later; an `unsatisfiable` lease adding no end; a past-due host showing the report's minute (the case accepts that minute or the next); no `Guard` line for a host a live lease explains, for a `stopped`, `stopping` or `pending` host, or for `Instance  none recorded` | Conformance case, E0.08-T04-S01, with launch and lease times relative to the run's time so the stop time falls inside the grace |
+| `status -All` over a missing lease state file, one that is not valid, one holding two records with one `id`, a folder at its path, and one that cannot be opened: each with every host's five lines and no `Leases` or `Guard` line, the lease state file's message once, on the stream the host lines go to, after the last host and before any closing count (`the file does not exist` for the missing one, architect, 2026-11-21, for v0.08-T01, pin P24), the exit code the one the host lines alone give, 0 when every host's part passed and 1 when one failed, and the same AWS calls (P18, architect, 2026-11-21, for v0.08-T01; architect, 2026-11-21, for v0.08-T01, pin P25); `AGENTSPACE_STATE_DIR` moving it; a running unexplained host with no `LaunchTime` failing its part alone; the same AWS calls as before v0.08; the file's bytes unchanged; a run finishing while the case holds the lease state lock; the lines, the lease state file's message among them, printed whatever `-Quiet` says; #0034's message ending it with the lease state file's line unprinted | Conformance case, E0.08-T04-S01 |
+| `status` and `status -Host` printing the five lines alone, with a lease state file that is not valid in the home; `conformance/operator/test-unmet-host-commands-all.ps1`'s `status -All` reports gaining the two lines | Conformance case, E0.08-T04-S01 |
+| `provision`'s step 10 line, `Sign in on this host once, by hand, under a lease: see "Signing in on a new host" in the agentspace README.`, byte for byte, as the run's last line for a host that was not `ready`, and never for the box or a `ready` host (P20, architect, 2026-11-21, for v0.08-T01) | Crate test of `agentspace-sync`, E0.08-T03-S05 (#0181), which builds the line and changes the crate's tests that assert v0.07's; conformance case, E0.08-T04-S01 (#0182), which changes `conformance/operator/test-unmet-host-provision.ps1`'s expected line |
+| The 12-hour form at every hour: `12:05am` after midnight, `11:59am`, `12:00pm`, `1:07pm`, the minute rounded up, and a date on each side of a daylight saving change | Crate test, E0.08-T03-S02, over the formatting function with fixed times and zones, since a case cannot choose the hour of its run |
+| `guard.lock` held by the case: exit 0, nothing on stdout or stderr, no line in `guard.log`, no call the stand-in records; `guard.lock` that cannot be taken (a folder at its path): exit 1, its message, its `failed step=lock` line, no AWS call | Conformance case, E0.08-T04-S01 |
+| The host registry missing (the box alone) or not valid (`failed step=hosts`); `AGENTSPACE_STATE_DIR` moving the lease state file and not `hosts.json`, `guard.lock` or `guard.log` | Conformance case, E0.08-T04-S01 |
+| The lease state file missing, not valid, and holding two records with one `id`, each with a running host the leases would leave unexplained and past its stop time: the lease state file's message on stderr (`the file does not exist` for the missing one), exactly one `failed step=leases` line in `guard.log` with no `host=` field, no AWS call the stand-in records (so no `ec2 stop-instances` and no `ssm send-command`), and exit 1 (D36; P18, architect, 2026-11-21, for v0.08-T01) | Conformance case, E0.08-T04-S01 |
+| A `ready` record with no instance ID read from its stack, `hosts.json`'s bytes unchanged after the run; a `creating` or `failed` record with none skipped with no call; a stack read that fails giving that host's `failed step=instance` line while the others are guarded | Conformance case, E0.08-T04-S01 |
+| One `ec2 describe-instances` per run, its filter naming every ID in the registry's order; none when no host has an ID; its failure, and an answer that is not JSON, giving `failed step=describe`, no stop, no send, exit 1; a host missing from the answer giving its `failed step=instance` line while the others are guarded; a running host with no `LaunchTime`, explained by a live lease or not, giving its `failed step=instance` line at its place in the registry's order, no stop and no send | Conformance case, E0.08-T04-S01 |
+| The decision, against seeded leases and launch times: a `ready` lease explains its host (no line, no stop); so does a `pending` one; a released lease's end, an expired lease's `expires_at` and a lease released after it expired (its `expires_at`) as the last lease end (P11); an `unsatisfiable` lease ignored; a project with no lease counted from `LaunchTime`; the later of `LaunchTime` and the last lease end as `since=`; before the stop time an `unexplained ... stops=` line and no stop; at or after it one `ec2 stop-instances` and a `stopped since=` line; a host not `running` getting no line, no stop and no send; the box decided like any host | Conformance case, E0.08-T04-S01 |
+| A due host whose `provision.lock` the case holds: not stopped, its `unexplained ... provisioning=running` line, its horizon still sent; a missing `hosts\<project>\` folder or lock file read as free, and not created; a folder at the lock's path giving `failed step=lock` and no stop | Conformance case, E0.08-T04-S01 |
+| The horizon: one `ssm send-command` per running host the run did not stop, every run, with the comment `agentspace guard: lease horizon`, the document `AWS-RunShellScript`, and the expected Unix seconds as one word of the command: the latest live `expires_at`; the run's time for a project whose only live leases are `pending` (P10); else the last lease end; else `LaunchTime`; never earlier than `LaunchTime` (P12); no comma, bracket or equals sign in the command; no `ssm get-command-invocation`; a send that fails giving `failed step=horizon` and exit 1, and the next run sending again; a sent horizon logging nothing | Conformance case, E0.08-T04-S01 |
+| A stop that fails: `failed step=stop`, the run going on, the host sent its horizon, exit 1, and `agentspace: <n> of <m> hosts failed.` last; #0034's sign-in text from the stand-in at each call in turn (stack read, `describe-instances`, a stop, a send): its message, one `failed step=<step>` line with no `host=`, no later call, exit 1, a stop already requested left standing | Conformance case, E0.08-T04-S01 |
+| `guard.log`'s bytes: UTF-8 without a byte order mark, LF endings, each line's exact form and field order, `host=` on host lines alone, `<time>`, `since=` and `stops=` in UTC whole seconds, `reason=` last with control characters as `?`; nothing for an explained host or a sent horizon; `guard.log` that cannot be written (a folder at its path): the run's stops and sends made as without it, the "Cannot write the guard's log" message once, exit 1 | Conformance case, E0.08-T04-S01 |
+| `guard`'s stdout always empty; its progress lines and closing line on stderr without `-Quiet`, `<h:mm><am\|pm>` in the laptop's zone; none of them with `-Quiet`, the failures and the count line still printed, the log the same either way | Conformance case, E0.08-T04-S01 |
+| What the guard never does: no ssh or scp started (a stand-in `ssh` set and never called), no `operator\` folder, no key, certificate or alias written with no CA in the throwaway home, no `hosts.lock` or `leases.lock` created, `leases.json` unchanged | Conformance case, E0.08-T04-S01 |
+| The keeper starting `guard` at its first pass and at most once every 300 seconds, never while `guard.lock` is held, with the environment P4 gives, `AGENTSPACE_GUARD_CMD` naming the program | Conformance case of the keeper, E0.08-T04-S03, with a stand-in guard program that records the names of the variables it got and the values of the named ones alone (AGENTS.md) ([keeper.md, Starting the guard](keeper.md#starting-the-guard)) |
+| `sync`'s patch wait in its place: after row 4 and before row 5, its calls in order (`ssm describe-instance-information`, then `ssm send-command` with the comment `agentspace sync: patch check`, then `ssm get-command-invocation`), with no `ec2 describe-instances` of its own, and no wait when row 4 fails; its messages, `Checking that <id> has finished this boot's patch run...` and `Patched: <id>`; `pending` then `patched` printing the patching message once | Conformance case, E0.08-T04-S01, through the stand-in `aws`, `ssh` and `scp`, ordered by their logs' times |
+| `patched` after a reboot: the wait through it (`Online`, `pending`, not `Online`, a failed `ssm send-command`, `Online`, `pending`, `patched`), each phase message printed again when it changes, `Patched: <id>` once, rows 5 to 9 run and exit 0; only `patched` and `failed` ending it (`unknown`, an empty answer, an unexpected answer, an invocation ended in `Failed`, its output `failed` included, and 20 polls without an end each keeping it waiting); a host launched more than 20 minutes ago still asked; #0034's sign-in failure at `ssm send-command` failing `sync` at once and ending `sync -All`; a failed `ssm describe-instance-information` failing `sync`; `-Quiet` and `sync -All` | Conformance case, E0.08-T04-S01, with a stand-in `aws` whose answers change from call to call |
+| A `failed` answer (P21): after `pending`, and as the first answer, the wait ending at that answer with no further `ssm` call, the warning `agentspace: The patch run on <id> failed; sync goes on without it. Check: ssh agentspace journalctl -u agentspace-patch` exactly, once, on stderr, with the host's alias for a host that is not the box; no `Patched` line; rows 5 to 9 run; `sync` exiting 0 when nothing else failed, and 1 when a later row fails, with that row's message last; the warning withheld by `-Quiet`, the exit code the same; `sync -All` not counting the host as failed; `provision`'s step 6 logging `sync done; the patch run failed, see the host's journal` exactly, the host recorded `ready`, and the run exiting 0; `up` on a host launched less than 20 minutes ago ending its wait at `failed` with `Ready: <id>` and no other message | Conformance case, E0.08-T04-S01, with a stand-in `aws` whose answers change from call to call |
+| The patch check's command answering `failed` for a unit in systemd's `failed` state without a start job queued, `pending` for one with a start job queued, `pending` for an enabled unit otherwise, and `unknown` for one not enabled | A test of the command's text by its builder, E0.08-T03-S05 (#0181), run under bash with a stand-in `systemctl` first on `PATH` |
+| A `failed` unit with a start job queued answering `pending` on a real host (architect, 2026-11-21, for v0.08-T01, pin P24): `systemctl kill agentspace-patch.service` while its run is under way on agentspace's host, `failed` answered by the patch check, then `sync`, its install starting the run again, and its patch wait not ending on the stale failure | Live check, E0.08-T05-S01, on agentspace's host |
+| A run that never finishes: `pending` answered until the wait's 30-minute deadline, then its exact message, with the host's alias for a host that is not the box, exit 1, and no row 5; `provision`'s and `deploy`'s step 6 making the wait's calls, and a provisioning run whose wait runs out logging `sync failed reason=<id> did not finish its patch run within 30 minutes; ...` | Conformance case, E0.08-T04-S01, the deadline run only when asked for, as `test-unmet-start-paths.ps1`'s `deadline` is: it waits the real 30 minutes (about 32), since no seam shortens it |
+| #0163: the install starting `agentspace-patch.service` with no marker, `Patch run: started for this boot, as /run/agentspace/patched is missing`, and `sync` waiting for it and going on with no 15-minute wait; `provision -Host agentspace`'s patch step the same; a `sync` while the run is under way issuing the same `systemctl start --no-block`, printing `Patch run: already running this boot; not started again`, and the start merging into the run's job, no second run in the unit's journal | Live check, E0.08-T05-S01, on agentspace's host with this boot's `/run/agentspace/patched` removed by hand first (D61's change); no new host is made in v0.08 |
+| The install starting nothing when the marker exists, with `Patch run: finished this boot; not started again`; a patch reboot during the wait, if the run asks for one, which T05 cannot force (its record says whether it did) | Live check, E0.08-T05-S01, by `sync` on both hosts |
+| #0166: `/etc/environment`'s `PATH` lines as [What sync installs](#what-sync-installs) gives them, its other lines kept, the `Installed:` line's `(added)` then `(already there)` at a second `sync`, and `ssh <alias> 'command -v rustc cargo codex claude gh'` finding all five | Live check, E0.08-T05-S01, on both hosts after their `sync` (D62); the edit's edges by S05's own test of `install.sh`, where it has one |
+| The idle check with no usable horizon (missing, empty, a folder, non-digits, a CR, 16 digits): D11's rule alone, CPU work keeping the host up; past `<h>` plus 60 times `<g>` with no session, no patch run and CPU busy, the exact `Past lease horizon <h:mm><am\|pm> plus <g> min with no session; powering off` line and one `systemctl poweroff`; one second before it, D11's rule; a session past the horizon keeping the host up with its `Active:` line; a patch run past the horizon, with no session and CPU busy, holding the host up with `Active: Patching` (P9); `HORIZON_GRACE_MINUTES` read from the settings file, 15 when it is not set, and an invalid one warned and replaced by 15; `date` unable to format giving `@<h>`; D11's lines and limits unchanged | `box/tests` case, E0.08-T01-S05's test of the idle check, with the three seams and stand-ins on `PATH`; run against T03's build by E0.08-T04 |
+| The check on a host with no seam set: the laptop away, a CPU-busy process left on agentspace's host, the keeper stopped, and the host powering itself off past its horizon plus the grace, its journal holding the line | Live check, E0.08-T05-S01 (D62, "The laptop away") |
+| `/run/agentspace/lease-horizon` on a real host after a guard run: one line of digits and an LF, root-owned, 0644; the command's comment in Session Manager's history; the real AWS CLI accepting the filter form of `ec2 describe-instances` and the command's `--parameters` | Live check, E0.08-T05-S01, read over ssh on agentspace's host |
+| The alarm: `Period` 3600, `EvaluationPeriods` 24 and the description; `agentbox`'s change set holding only the alarm's modification | The template's story, E0.08-T01-S04, read live before its merge; deployed, and the alarm read back, by E0.08-T05-S01 (D62, "The alarm") |
+| The laptop's AWS sign-in needing no new permission for the guard | Live check, E0.08-T05-S01, by its run with today's sign-in |
+| #0167: no push at a start with a current stamp, through `up` and through the ProxyCommand; one `The host is ready.` from a ProxyCommand connection whose push is due; two with `AGENTSPACE_DIAGNOSTIC` set; a push that fails still showing its ssh's error lines; a person's `up` whose push is due still printing the nested line | Conformance case, E0.08-T04-S01 (P14, architect, 2026-11-21, for v0.08-T01), with a stand-in `ssh` that runs the ProxyCommand program nested before it answers as the host; the push's stderr choice by unit tests of `agentspace-push` and `agentspace-ssh-proxy`, E0.08-T02-S04 (#0176) |
+| A host `stopped` within D56's bound after its project's last live lease is released, measured from `released_at`; the same after a lease with a short TTL expires, measured from its `expires_at`; a quiet held lease, with no session but the holder's and no CPU work, keeping its host past the grace; a new lease's first connection starting the stopped host, the time to a prompt recorded (D62); `status -All`'s `Leases    <n> live` matching the leases held before and after each | Live check, E0.08-T06-S01 (the box) and E0.08-T06-S02 (agentspace's host) |
+| A host started with `up -Host agentspace` and no lease: reported by `guard.log`'s `unexplained` line and by `status -All`'s `Guard` line at the same time, then `stopped` within the bound | Live check, E0.08-T06-S02 (agentspace's host only; D62, "Unexplained"); instance and volume IDs masked in the record |
+| A send to a host whose Session Manager agent is not yet online failing, and the next run's send reaching it | Live check, E0.08-T05-S01 or E0.08-T06, by `guard.log` over a host's start; not required by D62, recorded where it is seen |
+| The real AWS CLI's text for an expired sign-in caught by the sign-in test | Not shown: [Q26](#open-questions) stays open |
+
 ## Commands
 
 ### The top level
@@ -1433,7 +1571,7 @@ operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-Instan
 operator -h | --help
 ```
 
-**Help** (architect, 2026-11-20, for v0.07-T01, as every help text v0.07 changes or adds is):
+**Help** (architect, 2026-11-21, for v0.08-T01, as every help text v0.08 changes or adds is; v0.07's were for v0.07-T01):
 
 ```
 Usage: agentspace-operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]
@@ -1454,10 +1592,12 @@ Commands:
   down       Stop a host
   status     Show a host's state, type, disk and Session Manager reachability
   grow       Grow a host's disk by -GiB (default 2), and its filesystem with it
+  guard      Stop every running host no live lease explains, after a
+             15-minute grace, and send each running host its lease horizon
 
 Parameters:
   -Host <project>  The project whose host to act on (default: the box);
-                   provision needs it, and ca takes none
+                   provision needs it, and ca and guard take none
   -All             For status, down and sync: every host, one at a time
   -GiB <n>         For grow: the GiB to add (default 2)
   -Alias <alias>   For up: the SSH host alias the token push uses
@@ -1686,7 +1826,11 @@ the host it found ([From the ProxyCommand](#from-the-proxycommand)).
 ssh, which carries its nested ProxyCommand's lines, `The host is ready.` among them
 ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)). Run by the ProxyCommand,
 `up` prints the caller's lines in place of a person's
-([What a caller sees](#what-a-caller-sees-d1-card-0087)). **Exit codes:** 0 once the box is ready,
+([What a caller sees](#what-a-caller-sees-d1-card-0087)), and **passes its push's ssh's stderr on
+with every line that is exactly `The host is ready.` dropped, unless `AGENTSPACE_DIAGNOSTIC` is
+set** ([What the laptop sends](#what-the-laptop-sends), step 2; #0167, P14, architect, 2026-11-21,
+for v0.08-T01). **A start does not make the push due by itself** ([The stamp](#the-stamp)).
+**Exit codes:** 0 once the box is ready,
 whatever the push did ([What the laptop checks](#what-the-laptop-checks)); 1 on any failure before
 that.
 
@@ -1753,6 +1897,12 @@ old CA until a person recovers it, as [ca](#ca) says (D17, D50).
    install succeeds**, with its output passed through. A non-zero exit fails with `agentspace:
    Install on the instance failed.`, and leaves the staging folder on the box, which the next
    `sync`'s step 3 removes. What the install does is in [What sync installs](#what-sync-installs).
+   **Then, before step 6, it waits until the host's patch run has finished this boot**, as
+   [The patch wait](#the-patch-wait) below says (D61's change, #0163), and fails at that wait's
+   deadline. So step 6 and every step after it, each ssh and scp with its nested ProxyCommand,
+   finds the host patched. **A patch run that has failed ends the wait at once with a warning,
+   and `sync` goes on with its exit status unchanged** (P21, architect, 2026-11-21, for
+   v0.08-T01).
 6. **If `%USERPROFILE%\.claude\CLAUDE.md` exists**, prints `Copying ~/.claude/CLAUDE.md to the
    instance...`, makes sure the login user's `~/.claude` exists on the box, and copies the file to
    `~/.claude/CLAUDE.md` there, replacing the box's copy. **The folder step's exit code is not
@@ -1783,11 +1933,12 @@ old CA until a person recovers it, as [ca](#ca) says (D17, D50).
 8. **Pushes the token over the host's alias, forced**: the stamp is not compared, so the push always
    runs, and on success writes the host's own stamp ([The token push](#the-token-push); D50).
 
-**Stdout:** the install's `Installed:` lines, and whatever else the remote steps print on their
-stdout. **Stderr:** the messages above; `go build`'s output; the remote steps' stderr, the
-install's `install.sh:` lines among them; one `The host is ready.` per ssh or scp, from its nested
-ProxyCommand; and the push's. **Exit codes:** 0 and 1, whatever the push did
-([What the laptop checks](#what-the-laptop-checks)).
+**Stdout:** the install's `Installed:` lines and its `Patch run:` line, and whatever else the
+remote steps print on their stdout. **Stderr:** the messages above; the patch wait's messages and
+its warning for a failed patch run ([The patch wait](#the-patch-wait)); `go build`'s output; the remote steps' stderr, the install's
+`install.sh:` lines among them; one `The host is ready.` per ssh or scp, from its nested
+ProxyCommand; and the push's, its nested ProxyCommand's `The host is ready.` included. **Exit
+codes:** 0 and 1, whatever the push did ([What the laptop checks](#what-the-laptop-checks)).
 
 **Its ssh and scp calls, in order** (B-23, A-30). Each is one process, started as
 [Programs it starts](#programs-it-starts) says (or through [the test seam](#the-test-seam)), with
@@ -1815,28 +1966,143 @@ today's box. In the rewrite, rows 2 and 7 name the command's own folder in place
 - **`<remote command>` is one argument, the last**, quoted as [What the laptop
   sends](#what-the-laptop-sends) says for Windows. Its text is the operator's own, and this page
   gives only what it MUST do (D34). Every path in this table on the box's side is today's box's.
-- **Each of steps 1 to 8 but 5 is checked by its process's exit code**, as steps 3 to 7 above
-  say; step 5's failure is reported by step 6's copy, as step 6 above says, and step 9 is
+- **Each of rows 1 to 8 but 5 is checked by its process's exit code**, as steps 3 to 7 above
+  say; row 5's failure is reported by row 6's copy, as step 6 above says, and row 9 is
   checked as [What the laptop checks](#what-the-laptop-checks) says, never failing `sync`. An ssh that fails to connect exits
-  255, which fails its step the same way.
-- **So a `sync` starts at least five processes** (1, 2, 3, 4 and 9) and at most nine, and makes as
-  many Session Manager sessions.
+  255, which fails its row the same way.
+- **So a `sync` starts at least five ssh and scp processes** (1, 2, 3, 4 and 9) and at most nine,
+  and makes as many Session Manager sessions.
+- **The patch wait runs between rows 4 and 5, and only when row 4 exited 0.** It starts no ssh or
+  scp and opens no Session Manager session: its calls are the AWS CLI's, through Run Command
+  ([The patch wait](#the-patch-wait); [Calls by command](#calls-by-command)).
 
 **After the localswim service on the laptop is updated, `sync` MUST be run again for every host**
 (`sync -All`), so that each host's localswim CLI is built from the same source as the service it
 talks to. **After the CA is replaced, `sync` MUST be run for the box, and every other host MUST be
 recovered by hand**, as [ca](#ca)'s replacement steps say (D17, D50).
 
-**Help:**
+#### The patch wait
+
+**`sync` waits, right after its install (row 4), until the host's patch check answers `patched`,
+before row 5, and stops waiting at once with a warning when it answers `failed`** (D61's change,
+#0163; P21). The install starts this boot's patch run when the host has not finished one ([What
+sync installs](#what-sync-installs)), so a new host's first `sync` patches it, and every nested
+connection after row 4 finds it patched, or finds its patch run failed and reported. **It is the
+same question `up` asks, through Session Manager's Run Command and never over SSH** ([What up waits
+for](#what-up-waits-for)), so it goes on through a patch run's reboot, which ends every SSH
+connection but not the wait. `provision` gets it through its step 6, which is `sync`, and `deploy`
+through its step 6, which is `sync` too. `bootstrap` has none. With `-All`, each host waits in its
+own part. Its place under `sync` and its comment are confirmed (architect, 2026-11-21, for
+v0.08-T01, S01 batch); its messages and the outcomes that end it are confirmed as P21 changed them
+(P21 and the S01 batch, architect, 2026-11-21, for v0.08-T01); its bound is the architect's (P13,
+below).
+
+**What it MUST do, in order:**
+1. **Prints `Checking that <id> has finished this boot's patch run...`**
+2. **Checks, at once and then every 5 seconds, for at most 30 minutes from the start of the wait**
+   (P13, architect, 2026-11-21, for v0.08-T01):
+   - **Is Session Manager's agent `Online`?** If not, the message is `Waiting for Session
+     Manager...`.
+   - **If it is, asks the host whether its patch run has finished**: the question and its four
+     answers are [What up waits for](#what-up-waits-for)'s, sent with the comment
+     `agentspace sync: patch check`, so Run Command's history tells `sync`'s questions from `up`'s,
+     and its invocation polled as `up`'s is, once a second, at most 20 times.
+   - **`patched` ends the wait, and a `failed` unit ends it at once with a warning** (P21 and the
+     S01 batch, architect, 2026-11-21, for v0.08-T01). `patched` goes on to step 3. `failed` goes
+     on to step 4, at its first answer, without another check. Every other outcome is a check that
+     was not ready and gives the message `Patching Ubuntu (dist-upgrade, reboot if the kernel
+     changed)...`: `pending`, `unknown`, an empty or unexpected answer, an invocation that ended in
+     a status other than `Success`, and 20 polls without an end. **So the wait has none of the four
+     exceptions of [Starting the box](#starting-the-box-and-waiting-for-it)'s rule**: it asks a
+     host whatever its launch time, and counts neither `unknown`, nor a failed check, nor `failed`
+     as finished. A `failed` answer ends it, and is never read as `patched`. So a host that
+     `sync` has finished with has had this boot's patch run, finished or failed and reported.
+   - **A `ssm send-command` that fails** is a check that was not ready, with the message `Waiting
+     for Session Manager...`, since a host rebooting for its patch run refuses commands while
+     Session Manager can still read it `Online`. **The one exception is #0034's sign-in failure**,
+     which fails `sync` at once with #0034's message ([AWS failures](#aws-failures)), and ends
+     `-All` too ([Exit codes](#exit-codes)).
+   - **A failed `ssm describe-instance-information` fails `sync`**, under
+     [AWS failures](#aws-failures), as it fails `up`.
+   - **A message is printed only when it differs from the last one this wait printed**, so a wait
+     through a reboot prints `Waiting for Session Manager...` again after `Patching Ubuntu
+     (dist-upgrade, reboot if the kernel changed)...`.
+   - **At the deadline** it fails with `agentspace: <id> did not finish its patch run within 30
+     minutes; check: ssh agentspace journalctl -u agentspace-patch`, whose command is today's box's.
+     For a host that is not the box, `agentspace` in it is the host's alias,
+     `agentspace-host.<project>`. Rows 5 to 9 are not run, and the staging folder, which row 4
+     removed, stays removed. **That is the outcome of a run that never finishes**, and it is a
+     failure, as before P21: a `failed` answer never reaches it.
+3. **On `patched`, prints `Patched: <id>`**, and goes on to `sync`'s step 6.
+4. **On `failed`, prints one warning and goes on to `sync`'s step 6** (P21 and the S01 batch, architect,
+   2026-11-21, for v0.08-T01):
+
+   ```
+   agentspace: The patch run on <id> failed; sync goes on without it. Check: ssh agentspace journalctl -u agentspace-patch
+   ```
+
+   As in the deadline's message, the command is today's box's, and for a host that is not the box
+   `agentspace` in it is the host's alias, `agentspace-host.<project>`. **It prints no `Patched`
+   line, and `sync`'s exit status is unchanged**: rows 5 to 9 run as after `patched`, and `sync`
+   exits 0 when nothing else failed. It is a warning under [Messages](#messages), so `-Quiet`
+   suppresses it. With `-All` the host's part is not a failed one, and is not counted in the
+   closing count.
+
+**The wait's timing is [Calls by command](#calls-by-command)'s for `up`'s wait**: the 5 seconds
+are a pause after each check, the deadline is tested after each check that was not ready, and the
+last pause is cut short to end on it.
+
+**Why 30 minutes** (P13, architect, 2026-11-21, for v0.08-T01): the patch unit's own limit is 20
+minutes (`TimeoutStartSec=20min`), and a run that asks for a reboot is followed, after the reboot,
+by the next boot's run of the same unit, which writes the marker. `up`'s 15 minutes is shorter than
+the unit's limit, so a slow first run would fail a `sync` that a later check would have passed. A
+run that reaches the unit's limit is killed and leaves the unit `failed`, which ends the wait at
+once (step 4), so the 30 minutes bound only a run that never finishes: a host that does not come
+back from its patch reboot, a Session Manager agent that never comes online, or a run that reboots
+twice.
+
+**When the patch run fails** (P21, architect, 2026-11-21, for v0.08-T01), the wait ends at the
+first `failed` answer, with step 4's warning, and `sync` goes on to row 5. **The wait MUST NOT go on
+to its deadline against a unit that has already failed, and a patch run's failure MUST NOT fail
+`sync`**: a patch run fails when apt does, a broken or unreachable apt mirror among the causes, and
+a broken apt mirror MUST NOT block every `sync`, and through it every provisioning run and every
+`deploy`. **The failed run gets a retry**: the install starts this boot's patch run again at every
+`sync` while the marker is missing, a failed run's case included ([What sync
+installs](#what-sync-installs)), so the next `sync` runs it again, as does the host's next boot.
+**#0163's outcome still holds**: a host has had its patch run, finished or failed and reported,
+before its first lease is placed. In a provisioning run, step 6 is `sync` exiting 0, so the run
+logs `sync done; the patch run failed, see the host's journal` and goes on ([provision](#provision),
+step 6); the warning goes to the run's stderr, which for a detached run goes nowhere, and the
+failure's own record is the host's journal.
+
+**When the 30 minutes run out**, `sync` fails at that row with the deadline's own message, and
+nothing after row 4 runs. **In a provisioning run that is step 6's failure**: the run logs
+`sync failed reason=<id> did not finish its patch run within 30 minutes; check: ...`, records
+`failed` for a host that was never `ready`, and leaves a `ready` host `ready` (D48;
+[provision](#provision)), with the project's leases `pending`. **D48's retry covers it**: a later
+`create` or `get` for the project starts another run, at most once every 5 minutes, which finds
+the host patched. **A patch run that reboots twice can outlast 30 minutes, and that path is the
+designed answer, not a defect** (P13).
+
+**Its messages are a person's**: `sync` never runs in caller mode
+([What a caller sees](#what-a-caller-sees-d1-card-0087)). `-Quiet` suppresses steps 1 and 3, the
+phase messages and step 4's warning; the deadline's failure always prints ([Messages](#messages)).
+
+**What it costs a host already patched this boot**, the box on most days: one
+`ssm describe-instance-information`, one `ssm send-command` and its polls, about 2 to 3 seconds,
+and the two lines of steps 1 and 3.
+
+**Help** (architect, 2026-11-21, for v0.08-T01):
 
 ```
 Usage: agentspace-operator sync [-Host <project> | -All] [-Quiet]
 
-Checks the agentspace SSH CA, then installs box/system and the CA's public key
-on a host, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
-CLI from C:\Projects\localswim, and sends the localswim Bot token and the
-laptop's time zone. Starts the host first if it is stopped. Without -Host it
-acts on the box; -All syncs every ready host, one at a time.
+Checks the agentspace SSH CA, then installs box/system and the CA's public
+key on a host, waits until the host has finished this boot's patch run,
+copies ~/.claude/CLAUDE.md there, builds and installs the localswim CLI from
+C:\Projects\localswim, and sends the localswim Bot token and the laptop's
+time zone. Starts the host first if it is stopped. Without -Host it acts on
+the box; -All syncs every ready host, one at a time.
 
 Fails before touching a host if the CA is missing, half-made, mismatched or
 readable by anyone else.
@@ -1979,7 +2245,13 @@ order:
    nothing. Its step 5 writes the instance ID into the record.
 5. **Starts the host and waits for it** ([Starting the box](#starting-the-box-and-waiting-for-it)),
    as `up` does, with no push.
-6. **Runs `sync`**: every step of [sync](#sync), with `-Host <project>`, its forced push included.
+6. **Runs `sync`**: every step of [sync](#sync), with `-Host <project>`, its patch wait and its
+   forced push included. So a new host's first run has its patch run before its first lease is
+   placed, with no 15-minute wait of `up`'s (D61's change, #0163); a wait that runs out fails the
+   step as [The patch wait](#the-patch-wait) says. **A wait that ended on `failed` is recorded in
+   the step's line**, `sync done; the patch run failed, see the host's journal` in place of
+   `sync done` (architect, 2026-11-21, for v0.08-T01, pin P27), since a detached run's
+   warning reaches no one ([Its log](#provision), below).
 7. **Runs `bootstrap`**: every step of [bootstrap](#bootstrap), with `-Host <project>`.
 8. **Records the host `ready`, under `hosts.lock` alone**: `instance_id` the ID step 4 read,
    `last_attempt_at` left as step 3 wrote it, and `state` `ready` for a host that was not `ready`;
@@ -2016,11 +2288,13 @@ order:
 10. **Prints where the sign-in procedure is** (D52), as the run's last line, **only for a host
     that was not `ready` when the run began, and never for the box**, since a host that was
     already `ready` has had its sign-ins (the condition is confirmed by the architect, 2026-11-20, for v0.07-T01):
-    `Sign in on this host once, by hand: run 'agentspace-operator status -Host <project>' first and again after an hour, then see "Signing in on a new host" in the agentspace README.`
-    The `status` run signs the one-hour certificate that `ssh agentspace-host.<project>` signs in
-    with ([How the operator reaches a host](#how-the-operator-reaches-a-host); P13, architect,
-    2026-11-20, for v0.07-T01). The procedure is written in the README by the story that makes the
-    first new host (D52); the heading named here, and the line's wording, are confirmed by the architect, 2026-11-20, for v0.07-T01, and that story uses them. It logs `run done`, releases `provision.lock`, and exits 0.
+    `Sign in on this host once, by hand, under a lease: see "Signing in on a new host" in the agentspace README.`
+    **The line is exactly that, byte for byte** (architect, 2026-11-21, for v0.08-T01, pin P20). It
+    replaces v0.07's line, which sent a person to `agentspace-operator status -Host <project>`
+    first for a one-hour certificate: from v0.08 a host runs only while its project holds a live
+    lease (D56), so the sign-ins are made under a lease, as the README's procedure says. The procedure is written in the README (D52); the heading named here is
+    confirmed by the architect, 2026-11-20, for v0.07-T01. E0.08-T03-S05 (#0181) builds the new
+    line in `agentspace-sync`. It logs `run done`, releases `provision.lock`, and exits 0.
 
 **A host is `ready` for leases before the sign-ins** (D52): `ready` means a connection is expected
 to succeed (lease-api.md, States), not that an agent can work there yet.
@@ -2074,7 +2348,9 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
 - **`<outcome>`** is `begun` (for `run` alone), `done` or `failed`. A run's lines are `run begun`,
   then `done` or `failed` for each step it reached, in order, then `run done` when it succeeded.
   A run whose step 2 found the lock held, or could not take it, writes one line, `run failed`,
-  with no `run begun` before it.
+  with no `run begun` before it. **The one line with more after `done`** is step 6's when its
+  patch wait ended on `failed`: `<time> sync done; the patch run failed, see the host's journal`,
+  exactly, with no other field (architect, 2026-11-21, for v0.08-T01, pin P27).
 - **`reason`** is written for `failed` alone, is the last field and runs to the end of the line: the
   failure message without its `agentspace: ` prefix, with each control character in it written as
   `?`. It MUST NOT hold the token or any text of the Bot credential ([Secrecy](#secrecy)), which no
@@ -2303,14 +2579,17 @@ operator down [-Host <project> | -All] [-Quiet]
 accepted. Without `-Host` its host is the box. It does not wait for the stop, and it asks whatever
 state the instance is in; stopping a stopped instance succeeds. Open sessions on the host end with
 it. **`down -All` does this for every host** whose record holds an instance ID, or is `ready`
-([Every host at once](#every-host-at-once--all)), and is one of the cost guard's two tools until
-v0.08 (D49, D51): a turn's close stops every host it used with `down -Host` or `down -All`, and
-confirms with `status -All` that each is `stopped`. **`down -Host` for a host that is not the box
+([Every host at once](#every-host-at-once--all)). Until v0.08 is installed (#0186), it is one of
+the two tools of a turn's close (D49, D51): a turn's close stops every host it used with
+`down -Host` or `down -All`, and confirms with `status -All` that each is `stopped`. **From v0.08
+the guard stops every host that no
+live lease explains, on its own** ([guard](#guard); D56), and `down` stays a person's way to stop a
+host at once, whatever its leases. **`down -Host` for a host that is not the box
 then writes its alias and signs a fresh one-hour certificate for it** (P13 and P15, architect,
 2026-11-20, for v0.07-T01), after the stop is requested, as [How the operator reaches a
 host](#how-the-operator-reaches-a-host) says; a failure there fails `down`, and the stop already
-requested stands. **`down -All` MUST NOT sign or write an alias for any host**, so the cost guard
-never fails on the CA ([Every host at once](#every-host-at-once--all)).
+requested stands. **`down -All` MUST NOT sign or write an alias for any host**, so a turn's close
+(D51) never fails on the CA ([Every host at once](#every-host-at-once--all)).
 
 **Stdout:** nothing. **Stderr:** that line, and with `-All` each host's `Host` line. **Exit
 codes:** 0 and 1.
@@ -2361,46 +2640,161 @@ E0.06-T04-S02): a failed call prints its failure line alone, never a partial rep
 not the box, writes its alias and signs a fresh one-hour certificate for it (P13 and P15,
 architect, 2026-11-20, for v0.07-T01; [How the operator reaches a
 host](#how-the-operator-reaches-a-host)). **So `status -Host <project>` is what a person runs
-before signing in over `ssh agentspace-host.<project>`, and again after an hour.** A failure of
-that signing fails `status` after its report. **`status -All` reports every host in the host
-registry** (D49), each as `-Host` would, after the `Host` line that `-All` prints before each host
+before signing in over `ssh agentspace-host.<project>`, and again after an hour, under a live
+lease of the project that they created first** (D56), as [README, Signing in on a new
+host](../README.md#signing-in-on-a-new-host) gives the steps: `status` neither needs nor makes a
+lease, and without one the guard stops the host mid sign-in ([Work on a host by
+hand](#what-the-guard-can-race)). A failure of that signing fails `status` after its report.
+
+**`status` and `status -Host` print the five lines alone, and MUST NOT read the lease state file**
+(architect, 2026-11-21, for v0.08-T01, S01 batch: D60 gives the lease lines to `-All`, and without `-All` the report stays
+exactly as before v0.07, as [From the command line](#from-the-command-line) promises for every
+command line without `-Host`).
+
+#### status -All
+
+**`status -All` reports every host in the host registry** (D49, D60), each as `-Host` would, after
+the `Host` line that `-All` prints before each host
 ([Every host at once](#every-host-at-once--all)), **but MUST NOT sign or write an alias for any
-host**, so D51's check never fails on the CA. A host whose record is
-`creating` or `failed` and holds no instance ID gets one line, `Instance  none recorded`, after its
-`Host` line, and no AWS call. So, for the box and one other host (architect, 2026-11-20, for v0.07-T01):
+host**, so its check never fails on the CA. A host whose record is `creating` or `failed` and
+holds no instance ID gets one line, `Instance  none recorded`, after its `Host` line, and no AWS
+call.
+
+**After each host's report, `status -All` prints its leases, and for a running host that no live
+lease explains, the guard's stop** (D60, D63), in this order, after the host's existing lines and
+before the next host's `Host` line:
+
+```
+Leases    <n> live
+Guard     unexplained; stops at <h:mm><am|pm>
+```
+
+Each label is padded with spaces to 10 characters, as the other lines' are: `Leases` and four
+spaces, `Guard` and five. So, for the box under a live lease, agentspace's host running with none,
+and a host still being made under a pending lease (architect, 2026-11-20, for v0.07-T01, for the
+lines before v0.08's):
 
 ```
 Host      swimcoach (agentbox), ready
 Instance  <id>
-State     <state>
+State     running
 Type      <type>
 Disk      <size> GiB gp3 (<vol>)
-SSM       <ssm>
+SSM       online
+Leases    1 live
 Host      agentspace (agentspace-host-agentspace), ready
 Instance  <id>
-State     <state>
+State     running
 Type      <type>
 Disk      <size> GiB gp3 (<vol>)
-SSM       <ssm>
+SSM       online
+Leases    0 live
+Guard     unexplained; stops at <h:mm><am|pm>
+Host      example (agentspace-host-example), creating
+Instance  none recorded
+Leases    1 live
 ```
 
-Each host's five lines print only once that host's calls have succeeded; a host whose call failed
-prints its failure line after its `Host` line, and the report goes on with the next host. **D51's
-check reads it:** a turn's close is done when every host it used shows `State     stopped`.
+- **The lease state file is read once, before the first host's part**, from
+  `<state folder>\leases.json` ([state.md, The lease state file](state.md#the-lease-state-file);
+  `AGENTSPACE_STATE_DIR` moves it, [Environment variables](#environment-variables)), **without
+  taking the lease state lock, as the keeper and the ProxyCommand read it, and is never written.**
+  One time, the report's time, is taken as it is read, and every host's count and stop time use it
+  (architect, 2026-11-21, for v0.08-T01, S01 batch).
+- **A project's leases, a live lease and the project's last lease end are
+  [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)'s**
+  (D63; P1, P10 and P11, architect, 2026-11-21, for v0.08-T01), applied at the report's time. A
+  host's project is its record's `project`, so the box's leases are swimcoach's.
+- **`Leases    <n> live`** prints for every host whose part did not fail, when the lease state file
+  was read (below): after its five lines, or after `Instance  none recorded` (architect,
+  2026-11-21, for v0.08-T01, S01 batch). `<n>` is the count of the project's live
+  leases, in decimal with no leading zero, `0` included. **It is a count, never a lease's ID, alias
+  or any other of its members** (D60), so the report is safe to show in a live run's record once
+  its instance and volume IDs are masked ([Messages](#messages)).
+- **`Guard     unexplained; stops at <h:mm><am|pm>`** prints after the `Leases` line when, and only
+  when, the host is running and `<n>` is `0`. **A host is running when its `State.Name`, in the
+  `ec2 describe-instances` answer its report read, is `running`**, the state the guard stops
+  ([guard](#guard)); a `pending`, `stopping`, `stopped` or other state gets no `Guard` line, nor
+  does a host with `Instance  none recorded` (architect, 2026-11-21, for v0.08-T01, S01 batch). The words `unexplained` and
+  `stops at` are D60's and the guard's ([guard](#guard)).
+- **The stop time is the guard's own** (D56): the later of the instance's `LaunchTime`, from the
+  same `ec2 describe-instances` answer, and the project's last lease end, plus the grace, 15
+  minutes. A project with no last lease end takes the launch time alone. **What prints is the later
+  of that time and the report's time** (architect, 2026-11-21, for v0.08-T01, S01 batch), since the guard stops a host whose
+  time has passed at its next run, and a time already past, perhaps by days with the laptop asleep,
+  would read as a time still to come. So the printed time is never more than the grace after the
+  report's time, and needs no date.
+- **`<h:mm><am|pm>` is that time in the laptop's local time, read from the system when the line is
+  printed**, never assumed or stored: the zone Windows is set to at that moment, with that date's
+  daylight saving rule applied (AGENTS.md, Writing). `<h>` is the hour on a 12-hour clock, `1` to
+  `12` with no leading zero, `12` for the hours after midnight and after noon; `<mm>` is the
+  minute, two digits; then `am` for a time before noon and `pm` from noon on, lowercase, with no
+  space before it. So `12:34pm`, `5:19am`. **A time with seconds is rounded up to the next whole
+  minute** (architect, 2026-11-21, for v0.08-T01, S01 batch), so the line never names a minute before the guard can stop
+  the host. **`AGENTSPACE_TIMEZONE` does not change it**: that variable is the token push's alone
+  ([The test seam](#the-test-seam); architect, 2026-11-21, for v0.08-T01, S01 batch). The guard's own progress lines use the
+  same form ([guard](#guard)).
+- **A held `provision.lock` is not shown.** The guard MUST NOT stop a host while its provisioning
+  run holds that lock ([guard](#guard)), and `status -All` MUST NOT try or take it, since a try
+  could make a run that starts at that moment fail. A host being made under a lease has a `pending`
+  lease, which is live, so it gets no `Guard` line; one being made with no lease, by a person's
+  `provision`, can show a stop time that its run's lock postpones (architect, 2026-11-21, for v0.08-T01, S01 batch).
+- **`LaunchTime` is read only for a host that gets a `Guard` line.** For such a host, a missing
+  `LaunchTime`, or one not of its form ([Calls by command](#calls-by-command)), fails that host's
+  part before its five lines, with
+  `agentspace: Unexpected answer from ec2 describe-instances: no Reservations[0].Instances[0].LaunchTime.`,
+  and the report goes on with the next host, as for any failed host (architect, 2026-11-21, for v0.08-T01, S01 batch). Any
+  other host never reads it, and is not failed by it.
+- **`status -All` makes no AWS call that it did not make before v0.08**: the launch time comes
+  from the `ec2 describe-instances` answer each host's report already reads.
 
-**Help:**
+**When the lease state file is missing, cannot be read, or is not valid** by state.md's checks (no
+file at its path, something at its path that is not a file, a file that cannot be opened, its
+bytes, its JSON, its schema, two records with one `id`, or a time that names no real instant),
+**`status -All` still reports every host, without the `Leases` and `Guard` lines, and says why
+once** (architect, 2026-11-21, for v0.08-T01, pin P18). **A missing lease state file is not "no
+leases" here either**, as it is not for the guard ([guard](#guard), step 3): `status -All` MUST
+NOT print `Leases    0 live` or a `Guard` line for a file it did not read. After the last host's
+part, and before the closing count when a host failed, it prints, once,
+`agentspace: The lease state file <path> cannot be read: <reason>.`, where `<path>` is the file's
+full path and `<reason>` is one sentence fragment naming the first problem found, or the system's
+own error text, with no line break, in the form of the host registry's message
+([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)), and
+`the file does not exist` for a missing file, as the guard's (architect, 2026-11-21, for
+v0.08-T01, pin P24). **That line is part of `status`'s report**: it prints on stderr, where the
+host lines go, and `-Quiet` does not withhold it (architect, 2026-11-21, for v0.08-T01, pin
+P27). **The lease state file never changes the exit code** (architect, 2026-11-21, for
+v0.08-T01, pin P25): a missing, unreadable or invalid file only leaves out the `Leases` and
+`Guard` lines and adds that one line, and `status -All` exits 0 or 1 as the host lines alone make
+it, by [Every host at once](#every-host-at-once--all)'s rule. The hosts' states it reports are
+complete and true, so exit 0 is no false success (D36). That line is not a host's failure, and is
+not counted in `agentspace: <n> of <m> hosts failed.` **It never prints a count it could not read,
+and never guesses one**, and it still shows each host's `State`, which is what a turn's close
+reads. #0034's sign-in message still ends the command at once, and this line is not printed after
+it. The message's words are the guard's for the same file ([guard](#guard); architect,
+2026-11-21, for v0.08-T01, S01 batch).
+
+Each host's five lines print only once that host's calls have succeeded; a host whose call failed
+prints its failure line after its `Host` line, and no `Leases` or `Guard` line, and the report goes
+on with the next host. **D51's check reads it:** until v0.08 is installed (#0186), a turn's close
+is done when every host it used shows `State     stopped`; from then on the guard stops them
+([guard](#guard)).
+
+**Help** (architect, 2026-11-21, for v0.08-T01):
 
 ```
 Usage: agentspace-operator status [-Host <project> | -All] [-Quiet]
 
 Shows a host's instance ID, state, type, root disk size and volume, and
 whether Session Manager can reach it; with -All, each host's, after a line
-naming it. Never starts a host. Prints to stderr. Without -Host it shows the
-box.
+naming it, then its count of live leases and, for a running host that no
+live lease explains, the time the guard will stop it. Never starts a host.
+Prints to stderr. Without -Host it shows the box.
 
 With -Host, for a host that is not the box, it then signs a fresh one-hour
 certificate, so 'ssh agentspace-host.<project>' signs in for the next hour:
-run it before you sign in there, and again after an hour.
+run it before you sign in there, and again after an hour. Sign in under a
+live lease of the project, created first, or the guard stops the host.
 
 Exit codes: 0 success, 1 failure.
 ```
@@ -2421,11 +2815,18 @@ volume's change in step 2 stands. **When the host is not running, `grow -Host` s
 alias and signs a fresh certificate**, after step 2, since every command given `-Host` does (P13
 and P15, architect, 2026-11-20, for v0.07-T01).
 
+**`<n>` MUST be 1 or more** (D61, #0164). `grow` given a `-GiB` of 0 or less, `-1` included, fails
+before any of the steps below, with `agentspace: -GiB MUST be 1 or more for grow, not '<arg>'.`, a
+usage error with exit 1, as every operator usage error is (D61 as corrected; P7, architect,
+2026-11-21, for v0.08-T01), found by [`grow`'s check](#command-line) after the host checks. **It
+makes no AWS call, starts no program and writes nothing**, the host's key, certificate and alias
+included. A value that is not a decimal integer in range is the `-GiB` form's usage error, as for
+every command ([Command line](#command-line)).
+
 1. **Reads the root volume's size**, and prints `Growing <vol> from <size> to <new> GiB (EBS allows
    one change per volume every 6 hours)...`, where `<new>` is `<size>` plus `<n>`.
 2. **Asks EC2 to change the volume to `<new>` GiB.** A refusal fails with the AWS CLI's error
-   ([AWS failures](#aws-failures)), which is what happens for a second change within 6 hours, or
-   for an `<n>` of 0 or less.
+   ([AWS failures](#aws-failures)), which is what happens for a second change within 6 hours.
 3. **When the instance is running**, as step 1 read it, prints `Growing the filesystem online...`,
    waits 10 seconds, and starts one ssh (B-23, A-30):
 
@@ -2462,17 +2863,394 @@ and P15, architect, 2026-11-20, for v0.07-T01).
 ProxyCommand's lines, `The host is ready.` among them
 ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)). **Exit codes:** 0 and 1.
 
-**Help:**
+**Help** (architect, 2026-11-21, for v0.08-T01):
 
 ```
 Usage: agentspace-operator grow [-Host <project>] [-GiB <n>] [-Quiet]
 
-Grows a host's root volume by -GiB (default 2) and, if the host is running,
-its filesystem online; a stopped host grows its filesystem at next boot.
-EBS volumes never shrink, and allow one change every 6 hours. Without -Host
-it grows the box's.
+Grows a host's root volume by -GiB, a whole number of 1 or more (default 2),
+and, if the host is running, its filesystem online; a stopped host grows its
+filesystem at next boot. EBS volumes never shrink, and allow one change
+every 6 hours. Without -Host it grows the box's.
 
 Exit codes: 0 success, 1 failure.
+```
+
+### guard
+
+```
+operator guard [-Quiet]
+```
+
+**Stops every running host that no live lease explains, once the grace has passed, and sends every
+running host its lease horizon** (D56, D57, D63). **The grace is 15 minutes, a constant and not a
+parameter** (D56, D63). The words *a project's leases*, *live lease*, *a project's last lease end*
+and *a project's horizon* are
+[state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)'s (P1,
+P10 and P11, architect, 2026-11-21, for v0.08-T01), and this section uses them as that section
+defines them, at the run's time. **The keeper starts the guard**, detached, at its first pass and
+then at most once every 300 seconds, as `agentspace-operator guard` with no other argument
+([keeper.md, Starting the guard](keeper.md#starting-the-guard); D56, D63); **a person MAY run it
+too**, and a run by hand is logged and decided the same way.
+
+**It acts on every host in the host registry, every run, and takes no `-Host` or `-All`** (D63). It
+is not `-All`: it prints no `Host` line, and it decides every host from one read of the files and
+one `ec2 describe-instances` call, rather than running a command once per host. **The box is
+guarded like any host** (D56; Terry, 2026-11-21, closing Q9).
+
+**What it MUST NOT do:**
+- **Write the host registry or the lease state file, or take `hosts.lock` or the lease state
+  lock** (D56). It reads both files without their locks, as the keeper and the ProxyCommand do,
+  and so never waits on the driver, a provisioning run or a lease command, and never makes them
+  wait. **A missing instance ID it reads from the host's stack is not written back**
+  (architect, 2026-11-21, for v0.08-T01, S01 batch). **A host it stops stays `ready` in the registry** (D45, D56).
+- **Sign a certificate, make a key or write an alias for any host**, as `down -All` signs none
+  ([Every host at once](#every-host-at-once--all)), so the guard never fails on the CA's trouble.
+- **Start an ssh or an scp, or make a folder under `operator\`.** Every program it starts is the
+  AWS CLI.
+- **Read its stdin, or depend on its streams.** A guard the keeper starts has a hidden console's
+  streams, which nothing reads, as a detached provisioning run does
+  ([provision](#provision), its log); its log is the only record of it. Nothing it writes to its
+  stdout or stderr can fail it.
+- **Stop a host whose provisioning run holds its `provision.lock`** (D56). Step 6 leaves such a
+  host, logs it `unexplained` with `provisioning=running`, and sends it its horizon.
+- **Stop a host whose `provision.lock` it could not try** for any reason but its being held, such
+  as access denied or a folder at the lock's path: that is not a free lock (P3's rule for the
+  keeper, applied here; architect, 2026-11-21, for v0.08-T01, S01 batch). Step 6 fails the host's
+  part, and sends it its horizon.
+
+**What it MUST do, in order**, after the command line's checks and the home and system folder
+checks ([Command line](#command-line)):
+
+1. **Takes `guard.lock`, without waiting** (P3, architect, 2026-11-21, for v0.08-T01). The lock is
+   `%USERPROFILE%\.agentspace\guard.lock`, beside `hosts.json`; `AGENTSPACE_STATE_DIR` does not
+   move it. It is held as `provision.lock` is held: open for reading and writing with no sharing,
+   created if it is missing, with `%USERPROFILE%\.agentspace` made first if that is missing, never
+   deleted, empty, its handle not inheritable, and held until the run exits. Its rules are
+   [state.md, The guard's lock](state.md#the-guards-lock)'s.
+   - **A lock another program holds ends the run at once with exit 0**, before anything else:
+     nothing is read, no AWS call is made, nothing is logged (D63, P3) and nothing is printed
+     (architect, 2026-11-21, for v0.08-T01, S01 batch). The guard that holds it does this run's work.
+   - **A lock that cannot be taken for any other reason**, a folder at its path or access denied
+     among them, fails the run: it prints `agentspace: Cannot take <path>: <error>.`, logs it
+     ([Its log](#its-log)), reads nothing, makes no AWS call and exits 1. `<path>` is the lock's
+     full path and `<error>` the system's own error text, the form of [provision](#provision)'s
+     step 2 (architect, 2026-11-21, for v0.08-T01, S01 batch).
+2. **Reads the host registry**, `%USERPROFILE%\.agentspace\hosts.json`, whole, without its lock
+   ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)). A
+   missing file is the box's record alone. **A file that cannot be read or is not valid fails the
+   run** with that section's message, `agentspace: The host registry <path> cannot be read:
+   <reason>.`, logged, and the run stops nothing, sends nothing and exits 1.
+3. **Reads the lease state file**, `<state folder>\leases.json`, whole, without its lock
+   ([state.md, The lease state file](state.md#the-lease-state-file)), from the state folder
+   `AGENTSPACE_STATE_DIR` names, else `%USERPROFILE%\.agentspace`
+   ([Environment variables](#environment-variables)). **A file that is missing, cannot be read or
+   is not valid, by state.md's checks, two records with one `id` among them, fails the run** with
+   `agentspace: The lease state file <path> cannot be read: <reason>.`: the run MUST stop nothing
+   and MUST send no horizon; it makes no AWS call, logs one `failed step=leases` line with no
+   `host=` field ([Its log](#its-log)), and exits 1
+   (D36; architect, 2026-11-21, for v0.08-T01, pin P18). **A missing lease state file is not "no
+   leases" for the guard**, though the lease CLI reads it so: a laptop that lost or corrupted
+   `leases.json` MUST NOT cost a working agent its host, and a run that cannot see the leases MUST
+   NOT treat a host as unexplained. `<path>` is the file's full path. `<reason>` is as for the host
+   registry's message: one sentence fragment naming the first problem found, or the system's own
+   error text, with no line break (architect, 2026-11-21, for v0.08-T01, S01 batch); for a
+   missing file it is `the file does not exist` (architect, 2026-11-21, for v0.08-T01, pin P24).
+   - **Then it reads the run's time, once**, the UTC clock to the whole second, and uses it as the
+     reading's time for every lease of the run (P1) and for every comparison with the grace
+     (architect, 2026-11-21, for v0.08-T01, S01 batch). Each log line carries the time it is written, as `provision.log`'s
+     do.
+4. **Finds each host's instance ID**, in the registry's order:
+   - **A record that holds one:** that ID.
+   - **A `ready` record that holds none:** the ID read from its stack's `InstanceId` output, as the
+     ProxyCommand reads it (`cloudformation describe-stacks --stack-name <stack>`,
+     [Calls by command](#calls-by-command)), with that call's failure messages
+     ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)).
+     **It is not written into the record** (architect, 2026-11-21, for v0.08-T01, S01 batch). A failure fails that host's
+     part ([A host's part that fails](#a-hosts-part-that-fails)), and the run goes on to the next
+     host, but for #0034's sign-in message, which ends the run.
+   - **A `creating` or `failed` record that holds none is skipped**, with no call and no line, as
+     `-All` skips one ([Every host at once](#every-host-at-once--all)): no instance of it is known
+     (architect, 2026-11-21, for v0.08-T01, S01 batch).
+5. **Asks EC2 for every host's instance in one call**, `ec2 describe-instances` with a filter
+   naming every ID step 4 found, in the registry's order ([Calls by command](#calls-by-command)).
+   It is not made when step 4 found no ID. **A failure of the call, #0034's sign-in message
+   included, fails the run** (D56; P8, architect, 2026-11-21, for v0.08-T01): logged, and the run
+   stops nothing, sends nothing and exits 1. An answer that is not JSON fails it the same way, with
+   `agentspace: Unexpected answer from ec2 describe-instances: not JSON.`
+   - **The call names the IDs in a filter, never in `--instance-ids`** (architect, 2026-11-21, for v0.08-T01, S01 batch),
+     because EC2 refuses the whole of an `--instance-ids` call that names one instance it does not
+     know. With the filter, an unknown instance is only missing from the answer, and every other
+     host is still guarded.
+   - **Each host's instance is the element of the answer's `Reservations[].Instances[]`** whose
+     `InstanceId` equals its ID ([Calls by command](#calls-by-command), what is read). **A host
+     whose instance is not in the answer fails its part** with `Instance <id> was not found.`
+     (architect, 2026-11-21, for v0.08-T01, S01 batch). An element with no string `InstanceId` is ignored.
+6. **Decides each host, in the registry's order**, by its instance's `State.Name`:
+   - **Anything but `running`** (`pending`, `stopping`, `stopped`, `shutting-down`,
+     `terminated`): nothing. No line, no stop and no horizon (architect, 2026-11-21, for v0.08-T01, S01 batch). A `pending`
+     host is decided at the next run that finds it `running`.
+   - **`running`, with its instance's `LaunchTime` missing, or not of its form:** the host's part
+     fails with
+     `Unexpected answer from ec2 describe-instances: no Reservations[].Instances[].LaunchTime.`
+     ([Calls by command](#calls-by-command)), logged with `step=instance`, and the host is neither
+     decided, stopped nor sent a horizon. **Every running host needs its `LaunchTime`, explained or
+     not**, since step 7 sends the later of the project's horizon and the host's `LaunchTime` (P12,
+     architect, 2026-11-21, for v0.08-T01), and an unexplained host's since needs it too.
+   - **`running`, and the project holds a live lease: explained.** Nothing is logged, and the host
+     is not stopped, whatever it is doing (D56). A `pending` lease is live, so a host being made,
+     or waiting on a placement, is explained.
+   - **`running`, and the project holds no live lease: unexplained.** Its *since* is the later of
+     its instance's `LaunchTime` and the project's last lease end, or `LaunchTime` alone when the
+     project has no last lease end (D56). Its *stop time* is its since plus 15 minutes.
+     - **Before the stop time**, the run's time earlier than it: it logs the host `unexplained`
+       with the stop time, prints `The host of '<project>' (<id>) has no live lease; it stops at
+       <h:mm><am|pm>.`, and does not stop it (D56).
+     - **At or after the stop time: the host is due.** The guard tries the host's provisioning
+       lock, `%USERPROFILE%\.agentspace\hosts\<project>\provision.lock`, as the driver tries it
+       ([state.md, The provisioning run's lock](state.md#the-provisioning-runs-lock)): one try
+       with no sharing, released at once if it got it. **It never creates the host's folder or the
+       lock file to try it: a missing folder or file is a lock nobody holds** (architect,
+       2026-11-21, for v0.08-T01, S01 batch).
+       - **Held: the host is left** (D56). The guard logs it `unexplained` with the stop time and
+         `provisioning=running`, prints `The host of '<project>' (<id>) has no live lease, but a
+         provisioning run is working on it; it is not stopped.`, and does not stop it.
+       - **Not tried**, for any reason but its being held, such as access denied or a folder at its
+         path: not a free lock ([What it MUST NOT do](#guard), above). The host fails its part with
+         `Cannot try <path>: <error>.`, and is not stopped.
+       - **Free: the host is stopped**, as `down -Host` stops it but with no certificate or alias
+         (D56, D63): one `ec2 stop-instances` for its instance, which asks EC2 to stop it and does
+         not wait. Once the request is accepted, it logs the host `stopped`, and prints
+         `Stopping the host of '<project>' (<id>): no live lease explains it.` A stop that fails
+         fails the host's part with `Could not stop <id>: <error>`, where `<error>` is the AWS
+         CLI's error text as [AWS failures](#aws-failures) gives it; #0034's sign-in message ends
+         the run instead.
+   - `<h:mm><am|pm>` is the stop time in the laptop's zone when it is printed, in the form of
+     `status -All`'s `Guard` line ([status](#status)), seconds rounded up to the next whole minute.
+     The log's times are UTC ([Its log](#its-log)).
+7. **Sends every running host its horizon** (D57, as D63 changed it), in the registry's order: each
+   host step 6 read as `running`, but a host the run stopped and a host whose `LaunchTime` failed
+   its part. **Every run sends it to every such host, whether or not it changed**, so no file on
+   the laptop remembers what was sent, and a host that rebooted gets it back within 5 minutes.
+   - **What is sent is the later of the project's horizon and the host's `LaunchTime`** (P12,
+     architect, 2026-11-21, for v0.08-T01; D57 as changed). The project's horizon is
+     [state.md](state.md#live-leases-and-the-lease-horizon)'s, at the run's time, with the host's
+     `LaunchTime` from step 5 as the launch time it takes. So a host started with no live lease is
+     never sent a last lease end from before its launch, and its own bound and the guard's agree:
+     for an unexplained host, the horizon sent plus the grace is the guard's stop time. A host left
+     in step 6 because its provisioning run holds the lock is sent its horizon too.
+   - **It is sent with one `ssm send-command` per host**, the document `AWS-RunShellScript`, which
+     runs as root, and the comment `agentspace guard: lease horizon` (D63), as `up`'s patch check
+     is sent ([What up waits for](#what-up-waits-for)). **The remote command MUST**, as root and
+     never prompting:
+     1. Make `/run/agentspace` if it is missing, owned by root, mode 0755.
+     2. Write the horizon as Unix seconds, a decimal integer with no sign and no leading zero, then
+        one line feed and nothing else, to a temporary file in `/run/agentspace`, owned by root,
+        mode 0644.
+     3. Rename it over `/run/agentspace/lease-horizon`, so a reader finds the old file or the new
+        one whole, never a part (D63).
+     4. Exit 0 only when all three succeeded.
+
+     **The command sent MUST hold the horizon's decimal digits as one word of its own**, so a check
+     can find the value in it (architect, 2026-11-21, for v0.08-T01, S01 batch), and **MUST hold no comma, bracket or equals
+     sign**, which the AWS CLI's shorthand syntax for `--parameters` would split on, or MUST be
+     passed in a form that is not split, as the patch check's. Its text is the operator's own
+     (D34). On today's box `/run` is cleared at every boot, so a host that has just started holds
+     no horizon until the next run (D57), and its idle check keeps D11's rule alone until then
+     ([The idle check and the lease horizon](#the-idle-check-and-the-lease-horizon)).
+   - **The send is the call alone:** it succeeds when `ssm send-command` exits 0, and the guard
+     never polls the command's invocation (architect, 2026-11-21, for v0.08-T01, S01 batch). Whether the host ran it is
+     shown by the next run's send, 5 minutes later, and by the host's own file. **A send that fails
+     fails the host's part** with `Could not send the lease horizon to <id>: <error>`, `<error>`
+     as for a stop, and is tried again at the next run (D57's change). A host whose Session Manager
+     agent is not online yet, such as one started within the last minute, fails this way, and the
+     next run sends it.
+   - **A horizon sent is not logged** (D63), and prints nothing.
+8. **Ends.** Unless `-Quiet` is given, it prints one closing line,
+   `Hosts: <m>; running <r>, stopped <s>, unexplained <u>.`, where `<m>` is the registry's records,
+   `<r>` the hosts step 6 read as `running`, `<s>` the hosts this run stopped, and `<u>` the hosts
+   it logged `unexplained` (architect, 2026-11-21, for v0.08-T01, S01 batch). **When any host's part failed**, it then
+   prints `agentspace: <n> of <m> hosts failed.`, `-All`'s line, where `<n>` is the number of hosts
+   whose part failed, and exits 1. Otherwise it exits 0. It releases `guard.lock` as it exits.
+
+#### A host's part that fails
+
+**A host's part that fails** prints its message to stderr as `agentspace: Host '<project>':
+<message>`, where `<message>` is the failure's text as the steps above give it, logs one `failed`
+line for the host ([Its log](#its-log)), and the run goes on to the next host and to step 7
+(architect, 2026-11-21, for v0.08-T01, S01 batch). It stops nothing more for that host this run, and sends it no horizon,
+but in step 6's two cases that say otherwise: a provisioning lock not tried, and a stop that
+failed, after which the host is still running and is sent its horizon. **#0034's sign-in message
+is the exception, as for `-All`**: whichever call meets it, the run prints it, logs it, makes no
+further call, and exits 1. A stop already requested stands, and a horizon already sent stays on its
+host.
+
+#### What the guard can race
+
+**Which state folder it reads.** **The guard sees the leases of one state folder**: the one
+`AGENTSPACE_STATE_DIR` names in its own environment, else `%USERPROFILE%\.agentspace`. A lease
+recorded under another state folder explains no host, so a person who keeps real leases under
+another state folder MUST NOT expect them to keep a host from the guard. The keeper passes the
+guard its own state folder (P4, architect, 2026-11-21, for v0.08-T01), so the guard and the
+keeper's holders read the same leases.
+
+**A lease made during a run** (architect, 2026-11-21, for v0.08-T01, S01 batch): a lease created, or a released host's next
+lease's first connection, between the guard's read of the lease state file and its stop of that
+project's host, is not seen by that run. The host is stopped, and the lease's next connection
+starts it again (D56: start-on-connect is unchanged), as for any stopped host.
+
+**A provision started by hand while the guard stops its host is safe** (architect, 2026-11-21, for
+v0.08-T01, ruled with P10 and P11). A run that takes `provision.lock` after the guard's try finds
+the host `stopping` or `stopped` at its step 5, and its start-and-wait step waits for a `stopping`
+host to stop and then starts it ([Starting the box and waiting for
+it](#starting-the-box-and-waiting-for-it), step 1; [provision](#provision), step 5); every later
+step reaches the started host. A run already past its step 5 holds the lock, so the guard leaves
+its host (step 6).
+
+**The guard's own try of `provision.lock`** (step 6) holds the lock for a moment. A provisioning
+run that starts in that moment finds it held, logs
+`run failed reason=A provisioning run for '<project>' is already running.` and exits 1
+([provision](#provision), step 2), and the guard, which found the lock free, stops the host. The
+project's next `lease create` or `lease get` starts another run (D48), whose start-and-wait step
+starts the host again ([provision](#provision), step 5).
+
+**Work on a host by hand MUST be done under a live lease of its project** (D56): a person's
+`up -Host`, `sync`, `bootstrap`, `grow` or `deploy`, and any direct ssh, the sign-in of [README,
+Signing in on a new host](../README.md#signing-in-on-a-new-host) included. With no live lease, the
+guard stops that host a grace after the later of its launch and its project's last lease end,
+whatever is running there. **Only `provision`'s lock holds the guard off** (step 6), and no other
+command holds it. **So a person's `sync` MUST be run under a lease**, since its patch wait can run
+for up to 30 minutes ([The patch wait](#the-patch-wait)), past that stop: a host stopped
+mid-wait leaves the wait waiting for Session Manager until its deadline, and `sync` fails.
+
+#### Its log
+
+**`%USERPROFILE%\.agentspace\guard.log`** (D56, D63; P2, architect, 2026-11-21, for v0.08-T01).
+`AGENTSPACE_STATE_DIR` does not move it. **One line per host per event**: a host the run stopped,
+a host it found unexplained, a host whose part failed, a failed horizon send among them; and one
+line, with no `host=` field, for a failure of the run itself. **Nothing for a host that is
+explained, a host that is not `running`, or a horizon sent** (D56, D63). The file's bytes, share
+mode and access rules are [state.md, The guard's log](state.md#the-guards-log)'s: UTF-8 without a
+byte order mark, each line ending in one LF, opened for append sharing read, write and delete,
+created at its first line, and never rotated or removed by agentspace (P2).
+- **Each line is written by opening the file for append, writing the whole line and closing it**,
+  and lands whole at the end of the file even when two processes write at once, as
+  [keeper.md, Log lines](keeper.md#log-lines) requires of the keeper's. An open or write that fails
+  is tried up to 5 times, 50 ms apart, and a line that still cannot be written is dropped
+  (architect, 2026-11-21, for v0.08-T01, S01 batch). **A dropped line changes nothing the run decided or did, and the run
+  then exits 1**, printing `agentspace: Cannot write the guard's log <path>: <error>.` once, at the
+  first line it drops: a run that cannot report what it found has not succeeded (D36).
+- **The lines are exactly these** (P2's form; their text is the architect's, 2026-11-21, for
+  v0.08-T01, S01 batch):
+
+  ```
+  <time> host=<project> stopped since=<since>
+  <time> host=<project> unexplained since=<since> stops=<stop>
+  <time> host=<project> unexplained since=<since> stops=<stop> provisioning=running
+  <time> host=<project> failed step=<step> reason=<reason>
+  <time> failed step=<step> reason=<reason>
+  ```
+
+  - **`<time>`** is the time the line is written, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`, truncated to
+    the whole second (P2). **`<since>`** and **`<stop>`** are the host's since and stop time
+    (step 6), in the same form. A `LaunchTime` with fractions of a second is truncated to the whole
+    second before it is compared or written.
+  - **`host=<project>`** is the record's `project`, the box's `swimcoach`, and comes right after
+    `<time>` (P2). A line not about one host carries none (P2).
+  - **`<step>`** on a host's line is one of `instance` (step 4's stack read, or step 5's answer
+    for that host: not found, or a member missing, a running instance's `LaunchTime` among
+    them), `lock` (the provisioning lock not tried),
+    `stop` and `horizon`. On the run's line it is one of `lock` (`guard.lock` not taken), `hosts`,
+    `leases`, `describe`, and, for #0034's sign-in message, the step of the call that met it:
+    `instance`, `describe`, `stop` or `horizon`.
+  - **`reason`** is the last field and runs to the end of the line: the failure's message without
+    its `agentspace: ` prefix, and without the `Host '<project>': ` that stderr puts before a
+    host's, with each control character in it written as `?`, as `provision.log`'s reason is
+    ([provision](#provision), its log). It MUST NOT hold the token or any text of the Bot
+    credential, which no failure message holds ([Secrecy](#secrecy)).
+  - **A run's lines come in the order of its steps**: a host's `instance` failure in step 4, then
+    each host's step 6 line in the registry's order, then each `horizon` failure in step 7's.
+    **Step 5's failures for one host**, an instance not in the answer, are written at that host's
+    place in step 6's order, as is a member missing from its instance.
+- **What a line says about a host is the same decision `status -All` reports** (D60): a host
+  logged `unexplained` with `stops=<stop>` is one `status -All` would show as
+  `Guard     unexplained; stops at <h:mm><am|pm>` at the same time, with `<stop>` in the laptop's
+  zone.
+
+#### Its streams, exit codes and help
+
+**`-Quiet`** (architect, 2026-11-21, for v0.08-T01, S01 batch) suppresses the guard's progress lines: the three of step 6
+and the closing line of step 8. As for every command ([Messages](#messages)), its failures always
+print, and so does `-All`'s count line. **The log is the same with `-Quiet` or without it**, and so
+is everything the run decides and does. The keeper starts the guard without `-Quiet` (D63); its
+streams reach nobody.
+
+**An expired AWS sign-in** (#0034): whichever call meets it, step 4's, step 5's, a stop or a send,
+the run prints `agentspace: AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry.`,
+logs `<time> failed step=<step> reason=AWS sign-in has expired. Run 'aws login --remote' and open its link in a fresh Incognito window, then retry.`
+with no `host=` field, makes no further call, and exits 1 (D56: "logs that and stops nothing"; P8,
+architect, 2026-11-21, for v0.08-T01). Met at step 4 or 5, which is where an expired sign-in is met
+in practice, it stops nothing and sends nothing. Met later, a stop already requested stands. The
+keeper starts the next guard 5 minutes later, which meets it again until a person signs in, so the
+log gains one such line per run while the sign-in has expired, and nothing reaches Terry's phone
+(D60; architect, 2026-11-21, for v0.08-T01, S01 batch).
+
+**Stdout:** nothing, ever. **Stderr:** the progress lines above, unless `-Quiet`; every failure's
+message; and nothing of the AWS CLI's but its error text inside a failure's message. No program's
+output is passed through: the guard reads every answer it gets. **Exit codes** (D36; P8,
+architect, 2026-11-21, for v0.08-T01, for a failed AWS call; P18, architect, 2026-11-21, for
+v0.08-T01, for the lease state file; the rest architect, 2026-11-21, for v0.08-T01, S01 batch):
+
+| Exit | When |
+|---|---|
+| 0 | **The run did all it decided to do:** every due host whose lock was free was asked to stop, every running host was sent its horizon, every line was logged, and nothing failed. A run that finds every host explained, or no host running, exits 0. **So does a run that finds `guard.lock` held** (D63, P3), which reads, decides and logs nothing because the guard holding the lock does this run's work. A run that finds no lease state file never exits 0 (P18). |
+| 1 | **Anything failed:** a usage error; `guard.lock` not taken for a reason other than its being held; the host registry not read; the lease state file missing, not read or not valid, a duplicate `id` included (P18), with nothing stopped and no horizon sent; the `describe-instances` call; any host's part (its instance ID, its instance, its provisioning lock, its stop or its horizon's send); a log line dropped; #0034's sign-in message. A host's part that failed never turns another host's stop back, and a run that exits 1 has still done every stop and every send it could. |
+
+**Its environment** (P4, architect, 2026-11-21, for v0.08-T01). The guard reads, of the variables
+[Environment variables](#environment-variables) lists:
+- **`USERPROFILE` and `SystemRoot`**, checked as every command checks them: the home holds
+  `hosts.json`, `guard.lock`, `guard.log` and each host's `provision.lock`.
+- **`AGENTSPACE_STATE_DIR`**, for the lease state file alone, as the ProxyCommand reads it.
+- **`AGENTSPACE_AWS_CMD`**, the test seam's AWS CLI ([The test seam](#the-test-seam)), and
+  **`PATH`**, for the AWS CLI's fallback.
+- **`*_POSIX_FD_STATE`** is removed, and **`AGENTSPACE_NESTED`** set, for the AWS CLI it starts, as
+  for every program the operator starts.
+
+**It reads no other.** `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD` and `AGENTSPACE_TIMEZONE` name
+programs and a zone it never uses; `AGENTSPACE_SSH_DIR`, `AGENTSPACE_PROXY_COMMAND` and
+`AGENTSPACE_DIAGNOSTIC` change nothing it does. **Its progress lines' `<h:mm><am|pm>` uses the
+laptop's zone as the system gives it**, never `AGENTSPACE_TIMEZONE`, which is the push's alone
+(architect, 2026-11-21, for v0.08-T01, S01 batch). **A guard the keeper starts gets the environment the lease CLI gives a
+provisioning run, with every `AGENTSPACE_*_CMD` the keeper itself was given** (P4;
+[keeper.md, The guard's environment](keeper.md#the-guards-environment)), so a conformance home
+reaches it, and a keeper started with `AGENTSPACE_AWS_CMD` set starts guards against that
+stand-in ([Environment variables](#environment-variables)).
+
+**Its seams for conformance** (D34): the throwaway home of [The test seam](#the-test-seam), with
+`hosts.json` written by the case; the lease state file written into the case's state folder, with
+times set relative to the real clock, since the guard has no clock seam (architect, 2026-11-21, for v0.08-T01, S01 batch);
+`guard.lock` and each `provision.lock` held by the case where it needs them held; and a stand-in
+AWS CLI through `AGENTSPACE_AWS_CMD`, which answers `cloudformation describe-stacks`,
+`ec2 describe-instances` with each instance's `InstanceId`, `State.Name` and `LaunchTime`,
+`ec2 stop-instances` and `ssm send-command`, records each call's arguments, and exits non-zero, or
+prints #0034's sign-in text, where a case needs a failure.
+
+**Help** (architect, 2026-11-21, for v0.08-T01):
+
+```
+Usage: agentspace-operator guard [-Quiet]
+
+Stops every running host that no live lease explains, once 15 minutes have
+passed since the later of its start and its project's last lease end, and
+sends every running host its lease horizon, the end of its project's leases.
+Leaves a host whose provisioning run is working on it. Acts on every host in
+~/.agentspace/hosts.json, and takes no -Host or -All. Logs each stop, each
+unexplained host and each failure to ~/.agentspace/guard.log.
+
+The keeper runs it every 5 minutes; you can also run it yourself. A guard
+that finds another one running exits at once.
+
+Exit codes: 0 success, or another guard is running; 1 failure.
 ```
 
 ## Starting the box and waiting for it
@@ -2509,9 +3287,10 @@ while a host is made, and the provisioning run does the waiting (D48).
    - **Is Session Manager's agent `Online`?** If not, the message is `Waiting for Session
      Manager...`.
    - **If it is, asks the box whether its patch run has finished**
-     ([What up waits for](#what-up-waits-for)). An answer other than `pending` ends the wait. A
-     `pending` answer gives the message `Patching Ubuntu (dist-upgrade, reboot if the kernel
-     changed)...`, which is today's box's wording.
+     ([What up waits for](#what-up-waits-for)). An answer other than `pending` ends the wait,
+     `failed` included, with no message of its own ([What up waits for](#what-up-waits-for) says
+     why). A `pending` answer gives the message `Patching Ubuntu (dist-upgrade, reboot if the
+     kernel changed)...`, which is today's box's wording.
    - **A message is printed only when it differs from the last one printed**, so a long wait shows
      each phase once.
    - **At the deadline** it fails with `agentspace: <id> was not ready within 15 minutes; check:
@@ -2525,10 +3304,14 @@ while a host is made, and the provisioning run does the waiting (D48).
 
 **`up` MUST NOT print `Ready` before the box's patch run has finished**, because the box MUST be
 fully patched at every start before it is used ([What up waits for](#what-up-waits-for)), within
-three exceptions: a box running for 20 minutes is not asked, an answer of `unknown` counts as
-finished, and so does an empty or unexpected answer from a failed check
-([What up waits for](#what-up-waits-for); [Q6](#open-questions)). This is the one statement of
-them.
+four exceptions: a box running for 20 minutes is not asked, an answer of `unknown` counts as
+finished, so does an empty or unexpected answer from a failed check
+([What up waits for](#what-up-waits-for); [Q6](#open-questions)), and so does `failed`, a patch
+run that ended this boot without the marker (P21; architect, 2026-11-21, for v0.08-T01, pin
+P24). This is the one
+statement of them. **`sync`'s patch wait has none of them** ([The patch wait](#the-patch-wait)), so a host that
+`sync` has finished with has had this boot's patch run, finished or failed and reported, whatever
+its launch time (D61's change, #0163).
 
 ## The ProxyCommand
 
@@ -2660,7 +3443,8 @@ the same exit codes and the same rules, with every message replaced as the two t
   `up` a person does, which prints a person's lines, `Ready: <id>` included, nested or not.
 
 **The caller's progress lines**, each printed to stderr at most once per run of the ProxyCommand,
-in this order, and only when the person's line it replaces would have printed:
+in this order, and only when the person's line it replaces would have printed; the push's ssh's
+stderr, the row after the push's `Sending` line, is passed on line by line as its row says:
 
 | A person's `up` prints | The ProxyCommand prints instead |
 |---|---|
@@ -2668,6 +3452,7 @@ in this order, and only when the person's line it replaces would have printed:
 | `Waiting for Session Manager...` or `Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...`, at the first of them | `Waiting for the host to be ready...` |
 | `Ready: <id>` | `The host is ready.` |
 | The push's `Sending the localswim Bot token to the instance...` | Nothing |
+| The push's ssh's stderr: its nested ProxyCommand's lines, `The host is ready.` among them, and ssh's own messages | Every line as it arrives, but a line that is exactly `The host is ready.`, which is dropped; with `AGENTSPACE_DIAGNOSTIC` set, every line ([What the laptop sends](#what-the-laptop-sends), step 2; #0167, P14, architect, 2026-11-21, for v0.08-T01) |
 | A push warning ([What the laptop checks](#what-the-laptop-checks), [What the laptop reads](#what-the-laptop-reads)) | The same warning, with `the instance` written `the host` and `The instance` written `The host`. A warning names no backend otherwise |
 
 **The caller's failure messages.** Each is one line on stderr, the last the ProxyCommand prints
@@ -2697,8 +3482,10 @@ ProxyCommand then exits with the tunnel's code. A tunnel that cannot be started 
   Session Manager's plugin or of a runtime's error record.
 - **On success the ProxyCommand MUST NOT print backend text.** It prints the caller's progress
   lines above, the push's warnings in their caller form, and nothing else but what
-  `AGENTSPACE_DIAGNOSTIC` allows, below. It prints nothing to
-  stdout but the tunnel ([above](#the-proxycommand)).
+  `AGENTSPACE_DIAGNOSTIC` allows, below, **with one exception: the push's ssh's stderr lines other
+  than `The host is ready.` pass to its stderr**, such as ssh's own `Warning: Permanently added
+  ...` line, as [What the laptop sends](#what-the-laptop-sends) says (P14, architect, 2026-11-21,
+  for v0.08-T01). It prints nothing to stdout but the tunnel ([above](#the-proxycommand)).
 - **On failure the ProxyCommand MUST print agentspace's own message and no backend text:** the
   caller's failure messages above, each one line that starts `agentspace: `
   ([Exit codes](#exit-codes)), and exits as [above](#the-proxycommand). **The one exception is
@@ -3058,6 +3845,17 @@ built its input differently never matches, so the first connection after such a 
   warns "Could not send" and pushes nothing when the stamp file is empty or unreadable
   ([Requirements the prototype does not meet
   yet](#requirements-the-prototype-does-not-meet-yet)).
+- **A start of the host MUST NOT make the push due by itself** (#0167; P14, architect, 2026-11-21,
+  for v0.08-T01). The stamp covers the instance ID, the zone and the content, and a stop and a
+  start change none of them: the host's record keeps its instance ID, and the credential file and
+  the system zone are on the host's disk ([What the box does](#what-the-box-does)). So a
+  connection that starts a stopped host pushes only when the stamp says so, as every other
+  connection does, and the build's decision is this rule unchanged. **The first connection after
+  localswim's cold start finds the push due whatever the host's state**, because the token is new,
+  and that connection is often the one that starts a host. That is the reading, an inference made
+  without reading any real stamp, of the pushes seen at host starts in v0.07-T06: localswim's
+  service came back at 8:15pm (Pacific) on 2026-11-21, and the two connections that pushed were the
+  first to each host after it ([the run record](runs/e0.07-t06-s01.md)).
 - **When the push is not due, nothing is sent, and nothing is printed** but a warning from
   [What the laptop reads](#what-the-laptop-reads).
 - **The stamp is written only after the box confirms the token and, when a zone was sent, the
@@ -3105,10 +3903,34 @@ When the push is due, the laptop:
      quotes and the operator's stand-ins never turn on delayed expansion. The patch question
      ([What up waits for](#what-up-waits-for)) is under the same rule, as well as that section's
      own.
-   - The ssh gets a pipe for its stdin and one for its stdout; its stderr is the operator's
-     stderr, so it carries its nested ProxyCommand's lines, `The host is ready.` among them
-     ([What a caller sees](#what-a-caller-sees-d1-card-0087)). Its environment is
-     the operator's, as [Environment variables](#environment-variables) sets it.
+   - **The ssh gets a pipe for its stdin and one for its stdout. Its stderr depends on what runs
+     the push** (#0167; P14, architect, 2026-11-21, for v0.08-T01; built by E0.08-T02-S04, #0176):
+     - **In a person's `up`, `up -Host` and `sync`, it is the operator's stderr**, inherited, so it
+       carries its nested ProxyCommand's lines, `The host is ready.` among them
+       ([Every ssh runs the ProxyCommand](#every-ssh-runs-the-proxycommand)).
+     - **In the ProxyCommand's caller mode, it is a pipe, and each line read from it is written to
+       the ProxyCommand's stderr as it arrives, except a line that is exactly
+       `The host is ready.`, which is dropped.** The line is compared without its line ending, an
+       LF or a CR LF, and passed on with the line ending it came with (architect, 2026-11-21, for v0.08-T01, S01 batch). A last
+       line with no line ending is passed on as it is, with none added, and every byte passes
+       unchanged, whatever its encoding: the lines are compared as bytes and never decoded. So
+       a connection prints `The host is ready.` once, its own, whether or not it pushes, and a push
+       that fails still shows its ssh's error lines. **With `AGENTSPACE_DIAGNOSTIC` set, nothing is
+       dropped.** Not the null device, which would swallow a failed push's ssh errors.
+     - **The pipe is read while the push runs, and no longer**: once the ssh has exited and its
+       stdout has ended, or been given up on after its 10 seconds (step 5), what the pipe already
+       holds is read and passed on first, by the rules above, without waiting for more, and only
+       what arrives after that is dropped; once the tree is stopped at the 20-second limit
+       (step 4), the push stops reading it at once, and a line still unread then is dropped
+       (architect, 2026-11-21, for v0.08-T01, S01 batch). So the pipe never lengthens a push, a
+       failed push's last error lines are not lost to a race with its exit, and a full pipe never
+       stops the ssh.
+     - **The choice MUST NOT change anything else in the push**: its 20-second limit, its
+       10-second wait for stdout, the stop of the ssh's tree, and every warning are as this section
+       says.
+
+     Its environment is the operator's, as [Environment variables](#environment-variables) sets
+     it.
    - An ssh that cannot be started at all warns as [any other failure](#what-the-laptop-checks)
      does.
 3. **Starts a 20-second clock as the ssh starts, writes the content to the ssh's stdin, and closes
@@ -3291,6 +4113,47 @@ set a keyword that another drop-in already sets.
 - **Installs the box's files** (the table below), reloads systemd, enables and starts the idle
   timer, and enables the patch service. It prints `Installed: idle check (timer <active state>),
   patch at boot (<enabled state>)`.
+- **Puts the login user's tool folders on every session's `PATH`** (D61's change, #0166; P5,
+  architect, 2026-11-21, for v0.08-T01), in `/etc/environment`, which PAM reads at the start of
+  every ssh session, a non-login, non-interactive one included, and reads without expanding
+  variables, so every folder is written out. The three folders, in this order, are
+  `/home/ubuntu/.cargo/bin` (rustup's proxies, for `rustc` and `cargo`), `/home/ubuntu/.local/bin`
+  (`claude`) and `/home/ubuntu/.local/share/fnm/aliases/default/bin` (fnm's default alias, for
+  `codex` and Node's other global tools); `gh` is in `/usr/bin`. Nothing is linked, so each follows
+  its tool's updates, and a tool installed later by the sign-ins (D52) is found without another
+  `sync`.
+  - **Every `PATH` line keeps its value, and each of the three folders absent from it is appended,
+    in that order.** A `PATH` line is one that starts `PATH=` after any leading whitespace and an
+    optional `export ` (as `pam_env` allows); its `export `, its quotes around the value and a CR ending are kept as they were.
+    The value is what comes before the line's first `#` and the blanks ahead of it, as `pam_env`
+    reads it, and the folders are appended to that value, inside its quotes; the blanks and the
+    comment after it are kept after it. Every other line is left as it was, byte for byte and in
+    its order. **A `PATH` line whose value is neither plain (no quote character in it) nor quoted
+    whole (one matching pair of single or double quotes around it, and no other quote character)**
+    fails the install before `/etc/environment` is written, leaving the file as it was and
+    running none of the steps after this one, with
+    `install.sh: line <n> of /etc/environment sets PATH to a value that is neither plain nor quoted whole; the file is left as it was, so fix that line by hand and run agentspace-operator sync again`
+    on stderr and exit 1, `<n>` the line's number from 1. **Only a file with no `PATH` line gets
+    one**, added at its end, after a line feed when the file's last line had none, with Ubuntu's
+    default folders and then the three:
+
+    ```
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/ubuntu/.cargo/bin:/home/ubuntu/.local/bin:/home/ubuntu/.local/share/fnm/aliases/default/bin"
+    ```
+
+    A missing file is created holding that line alone. Rewriting from Ubuntu's default would drop
+    a folder someone added by hand, so it is never done (P5).
+  - **The file is replaced by a rename**, root-owned, mode 0644, so a reader never sees half of
+    it, and **a file the install would not change is not touched**: a second run finds nothing to
+    add. Then it reads the file back and checks, as the sshd settings are checked below, that it
+    has at least one `PATH` line, that every `PATH` line holds every folder in the value `pam_env`
+    reads, and that none is neither plain nor quoted whole, and exits 1 if not with
+    `install.sh: /etc/environment has no PATH line holding /home/ubuntu/.cargo/bin /home/ubuntu/.local/bin /home/ubuntu/.local/share/fnm/aliases/default/bin after the install wrote it`
+    on stderr.
+  - **It takes effect for sessions that start after it**: a session already open keeps the `PATH`
+    it started with.
+  - It prints `Installed: /etc/environment's PATH holds the ubuntu user's tool folders (added)`,
+    or `(already there)` in place of `(added)` when it changed nothing.
 - **Installs the CA's public key and both sshd drop-ins as one transaction.** It saves what was
   there, installs the three files, and runs sshd's config test. If the test fails, it puts back
   every file it changed, does not reload sshd, prints `install.sh: sshd -t rejected the new SSH
@@ -3311,27 +4174,54 @@ set a keyword that another drop-in already sets.
   Installed: a session whose client has gone is dropped about 90 seconds after it goes quiet (probe every 15 seconds, 5 unanswered)
   ```
 
-**The `Installed:` lines go to the box's stdout, and so to `sync`'s stdout; the `install.sh:`
-lines go to stderr.** Exit 0 means everything above took effect, and `sync` fails on any other
-exit.
+- **Last, starts this boot's patch run when it has not finished** (D61's change, #0163), after
+  every other change and check has succeeded, so an install that exits 1 starts no patch run, and
+  the patch run's upgrades and any reboot never overlap the SSH steps above. It prints one line:
+  - **`/run/agentspace/patched` exists:** it starts nothing, and prints
+    `Patch run: finished this boot; not started again`.
+  - **Otherwise** it starts `agentspace-patch.service` with `systemctl start --no-block`, which
+    queues the start and returns at once, so the install never waits on the patch run and a patch
+    reboot never cuts it short. It prints
+    `Patch run: already running this boot; not started again` when the unit was already
+    activating as the install found it, since that start merges into the run under way and no
+    second run begins, and otherwise
+    `Patch run: started for this boot, as /run/agentspace/patched is missing`. A run that ended
+    this boot without the marker, a failed one, is started again.
+  - **A start that systemd refuses** exits 1 with
+    `install.sh: systemd refused to start agentspace-patch.service; this boot's patch run has not started`
+    on stderr.
+
+  `sync` then waits for the marker ([The patch wait](#the-patch-wait)). **The install issues the
+  same `systemctl start --no-block` whatever state it found the unit in, an `activating` one
+  included**, and only its line differs: it reads the unit's state with `systemctl is-active`
+  before the start, and relies on systemd to merge a start on an activating unit into the job
+  under way. That merge is not probed on a host here; E0.08-T05-S01's live check is the probe
+  (D61's change).
+
+**The `Installed:` lines and the `Patch run:` line go to the box's stdout, and so to `sync`'s
+stdout; the `install.sh:` lines go to stderr.** Exit 0 means everything above took effect, the
+patch run's start queued when it was due, and `sync` fails on any other exit. The install's lines
+are as E0.08-T01-S05 builds `box/system/install.sh`.
 
 ### The box's files
 
 | Path on today's box | Put there by | What it is for |
 |---|---|---|
-| `/usr/local/sbin/agentspace-patch`, `/etc/systemd/system/agentspace-patch.service` (enabled) | `sync` | Patches the box at every boot, and leaves the marker `up` waits for |
-| `/run/agentspace/patched` | The patch run | Exists once this boot's patch run has finished. Removed as each run starts, and gone at every boot |
+| `/usr/local/sbin/agentspace-patch`, `/etc/systemd/system/agentspace-patch.service` (enabled) | `sync` | Patches the box at every boot, within the unit's own 20-minute limit (`TimeoutStartSec=20min`), and leaves the marker `up` and `sync` wait for. `sync`'s install also starts it when this boot has no marker (#0163) |
+| `/run/agentspace/patched` | The patch run | Exists once this boot's patch run has finished. Removed as each run starts, and gone at every boot. `up` waits for it, and `sync` waits for it after its install |
 | `/run/agentspace/last-active`, `/run/agentspace/busy` | The idle check | When the box was last active, and the CPU counter at the last check; gone at every boot, so each boot starts a fresh idle window |
+| `/run/agentspace/lease-horizon` | The guard, through Run Command ([guard](#guard)) | The host's lease horizon: one line, the horizon as Unix seconds and an LF, root-owned, mode 0644 (D63). Read by the idle check alone ([The idle check and the lease horizon](#the-idle-check-and-the-lease-horizon)); gone at every boot, so a host just started has none until the next guard run (D57) |
 | `/var/lib/agentspace/last-patch-reboot` | The patch run | Keeps the patch run from rebooting more than once per 15 minutes |
 | `/usr/local/bin/agentspace-tools` | `sync` | Moves the login user's toolchain forward; the patch run starts it |
-| `/usr/local/sbin/agentspace-idle-check`, `/etc/systemd/system/agentspace-idle.service`, `agentspace-idle.timer` (enabled, started) | `sync` | Powers the box off when idle (D11) |
-| `/etc/agentspace/idle.conf` | `sync` | The idle limits: 60 minutes, and 6 CPU-seconds per 5-minute check |
+| `/usr/local/sbin/agentspace-idle-check`, `/etc/systemd/system/agentspace-idle.service`, `agentspace-idle.timer` (enabled, started) | `sync` | Powers the box off when idle (D11), or once its lease horizon and the grace have passed with no session and no patch run (D57) ([The idle check and the lease horizon](#the-idle-check-and-the-lease-horizon)) |
+| `/etc/agentspace/idle.conf` | `sync` | The idle limits: 60 minutes, and 6 CPU-seconds per 5-minute check; and the horizon's grace, `HORIZON_GRACE_MINUTES=15` (D56, D63) |
 | `/usr/local/bin/localswim` | `sync` | The wrapper agents run as `localswim`; it reads the credential file |
 | `/usr/local/lib/localswim/localswim` | `sync`, built on the laptop | The real localswim CLI |
 | `/usr/local/bin/agentspace-sample`, `/usr/local/bin/agentspace-footprint` | `sync` | Measure a turn (D33) |
 | `/etc/ssh/agentspace_ca.pub` | `sync` | The CA sshd trusts for user certificates |
 | `/etc/ssh/sshd_config.d/50-agentspace-ca.conf` | `sync` | Trusts the CA, and closes root login (D7) |
 | `/etc/ssh/sshd_config.d/51-agentspace-logins.conf` | `sync` | Exempts 127.0.0.1 from login penalties, a 30-second login grace time, and a dead client dropped after about 90 seconds (D7, D12) |
+| `/etc/environment`, its `PATH` lines | `sync` | Puts the login user's tool folders on every ssh session's `PATH` (#0166); the file's other lines are left as they are ([What sync installs](#what-sync-installs)) |
 | `~/.config/localswim/bot.env` (login user's, mode 0600, folder 0700 when created) | The token push | The board's URL and Bot token, for the wrapper |
 | `~/.claude/CLAUDE.md` (login user's) | `sync` | A copy of the laptop's; MUST NOT be edited on the box |
 | The system time zone | The token push | The laptop's zone (D32) |
@@ -3383,36 +4273,176 @@ SSH is what it is getting ready:
 - **The question** is sent with the comment `agentspace up: patch check`. The box MUST answer
   with exactly one word on stdout:
   - **`patched`** when this boot's patch run has finished.
+  - **`failed`** when this boot's last patch run ended without finishing (P21), and no run is
+    under way and no start job queued (architect, 2026-11-21, for v0.08-T01, pin P24).
   - **`pending`** when a patch run is due or under way this boot.
   - **`unknown`** when no patch run is set up, such as before the first `sync`.
 
   On today's box the marker of a finished run is `/run/agentspace/patched`, the patch run is the
   unit `agentspace-patch.service`, enabled when set up, and the question is sent as the document
-  `AWS-RunShellScript`, which runs as root. The command answers `patched` when the marker
-  exists; otherwise `pending` when the unit is enabled, and `unknown` when it is not. The command
-  sent MUST hold no comma, bracket or equals sign, which the AWS CLI's shorthand syntax for
-  `--parameters` would split on, or MUST be passed in a form that is not split.
+  `AWS-RunShellScript`, which runs as root. **The command answers `patched` when the marker
+  exists; otherwise `failed` when the unit is in systemd's `failed` state (its `ActiveState` is
+  `failed`, which `systemctl is-failed agentspace-patch.service` tests) without a start job
+  queued; otherwise `pending` when the unit is enabled, and `unknown` when it is not.** One remote
+  command reads the marker, the unit's state, whether a start job is queued and whether the unit
+  is enabled, in that order, and prints the one word. The unit is `failed` when its script exited
+  non-zero, an `apt-get` that failed among the causes, or when systemd killed it at its 20-minute
+  limit (`TimeoutStartSec=20min`). **A run that asks for a reboot runs `systemctl reboot`, which
+  queues the reboot and returns at once, and then exits 0**, so the unit is normally not `failed`
+  across a patch reboot. **If the shutdown stops the unit before that `exit 0`**, the unit can end
+  `failed`, since systemd counts no signal as a clean end of a `oneshot` unit, and a check that
+  runs in the moments before the host goes down then answers `failed`. That state does not outlive
+  the boot: every boot starts with the unit in no failed state, and a later boot's check reads the
+  marker that boot's run writes. **A `failed` unit with a start job queued answers `pending`**, so
+  a check that runs between the install's `systemctl start --no-block` and the run's start, while
+  the unit still shows the earlier run's failure, never reads that failure as this run's
+  (architect, 2026-11-21, for v0.08-T01, pin P24).
+  The command sent MUST hold no comma, bracket or equals sign, which the AWS CLI's shorthand syntax
+  for `--parameters` would split on, or MUST be passed in a form that is not split.
 - **How the answer is read.** `up` polls the command's invocation once a second, for up to 20
   seconds. While its status is `Pending`, `InProgress` or `Delayed`, or the invocation cannot be
   read yet, it polls again. Any other status ends the poll, and the answer is the invocation's
   stdout, trimmed. **20 polls without an end count as `pending`.**
 - **What counts as ready:** every answer but `pending`
   ([Starting the box](#starting-the-box-and-waiting-for-it) lists what that lets through).
+  **`up` reads `failed` as ready, as it reads `unknown`: its wait ends, it prints `Ready: <id>`, and
+  it adds no message of its own** (P21; architect, 2026-11-21, for v0.08-T01, pin P24). Before
+  v0.08 a failed run
+  answered `pending`, and `up` waited out its 15 minutes and failed. **The reason is `sync`'s
+  nested connections**: once `sync`'s patch wait goes on past a failed run, as P21 requires, each
+  of rows 5 to 9 runs a nested ProxyCommand whose `up` asks the same question of a host launched
+  less than 20 minutes ago, a new host in its provisioning run among them. Waiting there would fail
+  `sync` on the patch run's failure after all, which P21 forbids. `up` starts no patch run, so a
+  wait against a failed unit could only run out; the next `sync` starts the run again.
+  **`sync`'s patch wait reads `failed` its own way**: it ends the wait with a warning, and is never
+  read as `patched` ([The patch wait](#the-patch-wait)).
 - **What the box does at boot, as far as `up` can see:** the patch unit runs once, after the
   network is up, with a 20-minute limit. It removes the marker, upgrades every package
   (`dist-upgrade`, phased updates included) and snaps, reboots at most once per 15 minutes if a
   package asks for it, moves the toolchain forward, and then writes the marker. A failed run
-  writes no marker, so `up` waits until its 15-minute deadline. The unit's own limit, 20 minutes,
-  is longer than `up`'s wait, so a slow run that is still working also ends in `up`'s failure.
+  writes no marker and leaves the unit `failed`, which ends `up`'s wait, as above. The unit's own
+  limit, 20 minutes, is longer than `up`'s wait, so a slow run that is still working ends in `up`'s
+  failure at its 15-minute deadline.
+  **A run that reboots writes no marker before the reboot**; the next boot's run of the unit
+  writes it.
+- **`sync`'s install also starts the unit, when this boot has no marker** (D61's change, #0163;
+  [What sync installs](#what-sync-installs)). That is how a host's first boot, in which the unit
+  was installed too late to run, gets its patch run, and how a run that failed this boot is run
+  again. `sync` then asks the same question until it is answered `patched`, or `failed`, which
+  ends its wait with a warning ([The patch wait](#the-patch-wait); P21).
 
 ### Idle stop, as the laptop sees it
 
-**The box powers itself off after 60 minutes with no SSH session, no Session Manager session, no
-patch run and less than 6 CPU-seconds of work per 5-minute check (D11).** The instance's shutdown
-behavior is stop, so the next connection starts it again. The stack's alarm stops it too after 3
-hours averaging under 1% CPU, whatever sessions are open ([The stack](#the-stack)). **Both apply to
-every host** (D51): `sync` installs the idle check on each, and each host's stack carries its own
-alarm (D44).
+**From v0.08 a host is stopped three ways, and the first is the laptop's** (D56, D57, D58). The
+instance's shutdown behavior is stop, so in each case the next connection starts it again. **All
+three apply to every host, the box included** (D56; Terry, 2026-11-21, closing Q9): `sync` installs
+the idle check on each, the guard reads every host in `hosts.json`, and each host's stack carries
+its own alarm (D44).
+
+- **The guard stops a host its project's live leases do not explain**, a grace (15 minutes) after
+  the later of its launch time and its project's last lease end ([guard](#guard); D56). It runs on
+  the laptop, started by the keeper, so it needs the laptop on.
+- **The host's own idle check powers it off** after 60 minutes with no SSH session, no Session
+  Manager session, no patch run and less than 6 CPU-seconds of work per 5-minute check (D11), or,
+  once its lease horizon and the grace have passed, at the first check with no SSH or Session
+  Manager session and no patch run, whatever its CPU is doing (D57; P9, architect, 2026-11-21, for
+  v0.08-T01; [The idle check and the lease horizon](#the-idle-check-and-the-lease-horizon)). That
+  is what bounds a host's cost while the laptop is off or asleep.
+- **The stack's alarm stops it after 24 hours averaging under 1% CPU**, whatever sessions are open
+  ([The stack](#the-stack); D58). It is the backstop for a host whose idle check has died, idle,
+  with the laptop away.
+
+### The idle check and the lease horizon
+
+**The idle check is `/usr/local/sbin/agentspace-idle-check`, run as root by
+`agentspace-idle.service`, which `agentspace-idle.timer` starts 5 minutes after boot and then 5
+minutes after each run started** (`OnBootSec=5min`, `OnUnitActiveSec=5min`), each start within
+`AccuracySec=30s` of its time, so the 5 minutes between checks are approximate. Each run decides once, prints one line to its journal, and either does
+nothing more or powers the host off with `systemctl poweroff`. **D11's rule is unchanged** (D57);
+**the lease horizon adds one rule ahead of its CPU test.** What this section gives is the check as
+E0.08-T01-S05 builds `box/system/agentspace-idle-check`; a detail that no decision or pin fixes was
+confirmed as written by the architect, 2026-11-21, for v0.08-T01, S01 batch, and is cited so.
+
+**The horizon file is `/run/agentspace/lease-horizon`** (D63). The guard writes it to every running
+host at every run, with one `ssm send-command` whose comment is `agentspace guard: lease horizon`
+([guard](#guard)), and the host keeps what the last send wrote. **It holds one line: the horizon,
+as a decimal count of Unix seconds, and one LF**, root-owned, mode 0644. The horizon is what the
+guard sends: the later of the project's horizon and the host's launch time ([guard](#guard), step
+7; [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)).
+`/run` is cleared at every boot, so a host just started has no horizon until the next guard run.
+
+**A horizon the check can use is the file's first line, when it is 1 to 15 decimal digits and
+nothing else** (as built). **Anything else counts as no horizon file, and is ignored without a
+word**: a missing file, one it cannot read, a folder at the path, an empty first line, a sign, a
+space, a CR, or 16 digits or more. Lines after the first are not read.
+
+**The settings are read from `/etc/agentspace/idle.conf`**, as shell assignments, when it is
+readable. Each has a default in the check itself, used when the file is missing or does not set it
+(architect, 2026-11-21, for v0.08-T01, S01 batch):
+
+| Setting | In `idle.conf` | Default in the check | Means |
+|---|---|---|---|
+| `IDLE_MINUTES` | `60` | `60` | Minutes with no session, no patch run and no CPU work before D11's power-off |
+| `BUSY_CPU_SECONDS` | `6` | `6` | CPU-seconds of work since the last check that count as activity |
+| `HORIZON_GRACE_MINUTES` | `15` | `15` | Minutes past the horizon before the horizon's power-off; D56's grace, a constant that `sync` installs, never a parameter of any command (D63) |
+
+**A `HORIZON_GRACE_MINUTES` that is not 1 to 6 decimal digits** is replaced by 15, and the check
+prints `Invalid HORIZON_GRACE_MINUTES in <conf>; using 15` to stderr, where `<conf>` is the
+settings file's path. It is read, and the line printed, only when there is a horizon the check can
+use and no session or patch run holds the host (as built).
+
+**Each run, in this order** (as built; the order is the architect's, 2026-11-21, for v0.08-T01,
+S01 batch):
+1. **Measures the CPU work since the last check**, from the busy fields of `/proc/stat`'s `cpu`
+   line (user, nice, system, irq, softirq and steal), and records the counter for the next run, as
+   before.
+2. **Looks for a session**: an SSH session open (an established TCP connection on port 22), or a
+   Session Manager session open (a running `ssm-session-worker`). **With none, looks for a patch
+   run under way** (`systemctl is-active --quiet agentspace-patch.service`, the test D11's rule
+   uses).
+3. **The horizon rule** (D57): with no session and no patch run, when there is a horizon the check
+   can use and the time now, in Unix seconds, is at or after `<h>` plus 60 times `<g>`, where `<h>` is the
+   horizon and `<g>` the grace (at or after is the architect's, 2026-11-21, for v0.08-T01, S01
+   batch), it prints
+
+   ```
+   Past lease horizon <h:mm><am|pm> plus <g> min with no session; powering off
+   ```
+
+   and powers the host off (P6, architect, 2026-11-21, for v0.08-T01). `<h:mm><am|pm>` is the
+   horizon in the host's own zone, as `date -d @<h> +%-I:%M%P` gives it (D32: the host's zone is
+   the laptop's), and `@<h>`, the horizon's seconds, when `date` cannot format it. **Its CPU does
+   not stop it** (D57). **A session or a patch run holds it off** (P9, architect, 2026-11-21, for
+   v0.08-T01): a power-off in the middle of an upgrade can leave dpkg half configured, and the
+   patch unit's own 20-minute limit (`TimeoutStartSec=20min`) bounds the hold.
+4. **D11's rule, unchanged**, for every other case: a session, a patch run under way, or at least
+   `BUSY_CPU_SECONDS` of CPU work since the last check, in that order, is activity: it records the
+   time as the host's last activity and prints `Active: SSH session open`,
+   `Active: Session Manager session open`, `Active: Patching` or
+   `Active: CPU work: <n> s since last check`. Otherwise, at `IDLE_MINUTES` or more since the last
+   activity, it prints `Idle for <n> min (limit <limit>); powering off` and powers the host off;
+   below that, `Idle for <n> min of <limit> (CPU <n> s since last check)`. The last activity starts
+   as the first run's time each boot, since `/run` is cleared.
+
+**So a host left with work running on it, with the laptop away, stops no later than its horizon,
+the grace and one 5-minute check after its last session and patch run end** (D57); an idle one
+stops after 60 minutes, as before. **The check writes nothing to the horizon file**, and changes
+nothing on the host but its own two state files, `last-active` and `busy`, and the power-off.
+
+**Its seams, for `box/tests` alone** (D63). Three environment variables replace three paths, so a
+test can run the check on any machine against files of its own:
+
+| Variable | Replaces | Default |
+|---|---|---|
+| `AGENTSPACE_IDLE_STATE` | The state folder, which holds `last-active`, `busy` and `lease-horizon` | `/run/agentspace` |
+| `AGENTSPACE_IDLE_CONF` | The settings file | `/etc/agentspace/idle.conf` |
+| `AGENTSPACE_PROC_STAT` | The CPU counters' file | `/proc/stat` |
+
+- **No unit, script or file that `sync` installs sets any of them**, and a host MUST run the check
+  with all three unset. Unset or empty, each is its default (architect, 2026-11-21, for v0.08-T01, S01 batch).
+- **The programs the check starts, `ss`, `pgrep`, `systemctl`, `getconf` and `date` among them, are
+  found on `PATH`**, so a test puts stand-ins first on it, `systemctl poweroff` among them; no seam
+  variable names them (architect, 2026-11-21, for v0.08-T01, S01 batch).
 
 ## The AWS side
 
@@ -3462,8 +4492,17 @@ one (P13, architect, 2026-11-20, for v0.07-T01; [deploy](#deploy), step 4).
   `unzip`, adds `SshPublicKey` to the login user's authorized keys, and, when `CaPublicKey` is
   not empty, installs it with its sshd drop-in. Nothing in it runs again after the first boot.
 - **A CloudWatch alarm**, `<HostName>-idle-backstop` (`agentbox-idle-backstop` for the box), on the
-  instance's average `CPUUtilization`: under 1% for 36 periods of 5 minutes (3 hours), with missing
-  data counted as not breaching, and the action of stopping the instance.
+  instance's average `CPUUtilization`: under 1% for 24 periods of one hour (24 hours), `Period`
+  3600 and `EvaluationPeriods` 24, with missing data counted as not breaching, and the action of
+  stopping the instance (D58, D63). Its description is
+  `Stops ${HostName} after 24 hours averaging under 1% CPU.`, with the stack's `HostName` in place
+  of `${HostName}`. **It is the backstop for a host whose idle check has died, idle, with the
+  laptop away** ([Idle stop, as the laptop sees it](#idle-stop-as-the-laptop-sees-it)). Until
+  v0.08 it was 36 periods of 5 minutes (3 hours), which stopped a host under a quiet held lease
+  (#0043, OBE once v0.08 is live). **The change is in place**: each stack's next update modifies
+  the alarm and nothing else, so `agentbox`'s change set holds that one modification, read live
+  before the template's merge (D58), and a host's stack takes it at its next `deploy -Host` or
+  `provision`, its parameters kept.
 
 **Tags:** the stack is deployed with the tag `project=<stack>`: `project=agentbox` for the box, as
 before, and `project=agentspace-host-<project>` for another host (architect, 2026-11-20, for v0.07-T01: D44 names
@@ -3481,7 +4520,9 @@ invocation, start a session). The operator reads no credentials itself: every ca
 the AWS CLI is signed in with. Today that is an administrator signed in with `aws login`, which
 gives short-lived credentials, whose expiry is #0034's case ([AWS failures](#aws-failures)).
 **A host adds no new permission** (D44): every call a host needs is one the box's commands already
-make, against its own stack and instance, and this list gains no service.
+make, against its own stack and instance, and this list gains no service. **Nor does the guard**:
+it describes and stops instances and sends a Session Manager command, each of which `status`,
+`down` and `up` already do ([guard](#guard)).
 
 ### Calls by command
 
@@ -3491,7 +4532,8 @@ the rest are checked by their exit code alone. **Every call is per host:** `<sta
 command's host's stack (`agentbox` for the box) and `<id>` the instance ID in that host's record
 ([Which host a command acts on](#which-host-a-command-acts-on)). A command without `-Host` makes
 exactly the calls it made before v0.07, `<stack>` being `agentbox`, but for the folder `deploy`'s
-template is written in.
+template is written in, and for what v0.08 adds: `sync`'s patch wait, and `grow`'s refusal of a
+`-GiB` of 0 or less before any call.
 
 | Command | AWS CLI calls, in order |
 |---|---|
@@ -3499,21 +4541,26 @@ template is written in.
 | `deploy`, the box | `cloudformation deploy --stack-name <stack> --template-file %USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --tags project=<stack> --parameter-overrides SshPublicKey=<key> <each Name=value line>` (output passed through); then `cloudformation describe-stacks --stack-name <stack>` (JSON); then `sync`'s. As before v0.07, but for the template's folder ([The operator's folder, one per command](#the-operators-folder-one-per-command)) |
 | `deploy -Host`, a host that is not the box | `cloudformation describe-stacks --stack-name <stack>` (JSON), the existence check ([deploy](#deploy)), and nothing more when its `StackStatus` fails it; then `cloudformation deploy` with the same arguments as the box's up to `--tags project=<stack>`, and then: creating the stack, `--parameter-overrides SshPublicKey=<key> SubnetId=<subnet> VpcId=<vpc> HostName=<stack> CaPublicKey=<CA key>`, with `InstanceType=<type>` last when `-InstanceType` is given, each `Name=value` one argument, `CaPublicKey=<CA key>` included though the key holds a space; updating it, no `--parameter-overrides` at all, or `--parameter-overrides InstanceType=<type>` when `-InstanceType` is given (output passed through); then `cloudformation describe-stacks --stack-name <stack>` (JSON); then `sync`'s. The order of the overrides is confirmed by the architect, 2026-11-20, for v0.07-T01 |
 | `bootstrap` | The start and wait's below, then nothing more from AWS: the bootstrap goes over SSH, whose nested `up` makes its own calls and a tunnel |
-| `provision` | `deploy -Host`'s, or the box's `deploy`'s for `-Host swimcoach`, without its `sync` and never with `-InstanceType`; then the start and wait's; then `sync`'s and `bootstrap`'s. Its first and last steps, the registry and `place_pending`, make none (D48) |
+| `provision` | `deploy -Host`'s, or the box's `deploy`'s for `-Host swimcoach`, without its `sync` and never with `-InstanceType`; then the start and wait's; then `sync`'s, its patch wait included, and `bootstrap`'s. Its first and last steps, the registry and `place_pending`, make none (D48) |
 | `up`, `sync`: [start and wait](#starting-the-box-and-waiting-for-it) | `ec2 describe-instances --instance-ids <id>` (JSON); if stopped, `ec2 start-instances --instance-ids <id>` (JSON); if stopping, `ec2 wait instance-stopped --instance-ids <id>`, then `ec2 start-instances`; `ec2 describe-instances` again, for the launch time, only if it was `running` (FB-09); while waiting, every 5 seconds, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON), and once that is `Online`, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace up: patch check" --parameters commands=<question>` (JSON) and up to 20 of `ssm get-command-invocation --command-id <command id> --instance-id <id>` (JSON) |
-| `sync` | The above, then nothing more from AWS: the rest goes over SSH, and each ssh or scp makes its own nested `up`'s calls and a tunnel |
+| `sync` | The above; then, after its install, [the patch wait](#the-patch-wait)'s: every 5 seconds `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON), and while that is `Online`, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace sync: patch check" --parameters commands=<question>` (JSON) and up to 20 of `ssm get-command-invocation --command-id <command id> --instance-id <id>` (JSON), until the answer is `patched`, or `failed`, after which no other check is made (P21). No `ec2 describe-instances` of its own: the wait never reads the launch time. The rest goes over SSH, and each ssh or scp makes its own nested `up`'s calls and a tunnel |
 | `down` | `ec2 stop-instances --instance-ids <id>` (JSON) |
 | `status` | `ec2 describe-instances --instance-ids <id>` (JSON); `ec2 describe-volumes --volume-ids <vol>` (JSON); if running, `ssm describe-instance-information --filters Key=InstanceIds,Values=<id>` (JSON) |
-| `status -All`, `down -All`, `sync -All` | The single command's calls for each host in turn, in the registry's order, none for a host it skips ([Every host at once](#every-host-at-once--all)). One call never names two instances |
-| `grow` | `ec2 describe-instances --instance-ids <id>` (JSON); `ec2 describe-volumes --volume-ids <vol>` (JSON); `ec2 modify-volume --volume-id <vol> --size <new>` (JSON) |
+| `status -All`, `down -All`, `sync -All` | The single command's calls for each host in turn, in the registry's order, none for a host it skips ([Every host at once](#every-host-at-once--all)). One call never names two instances. `status -All` makes no other call: a host's launch time is read from the `ec2 describe-instances` answer its report already reads ([status](#status)). Its calls are the same when the lease state file is missing, cannot be read or is not valid (P18, architect, 2026-11-21, for v0.08-T01) |
+| `grow` | `ec2 describe-instances --instance-ids <id>` (JSON); `ec2 describe-volumes --volume-ids <vol>` (JSON); `ec2 modify-volume --volume-id <vol> --size <new>` (JSON). None when `-GiB` is 0 or less, which is refused first ([grow](#grow)) |
+| `guard` | For each `ready` record with no instance ID, in the registry's order, `cloudformation describe-stacks --stack-name <stack>` (JSON); then, when any host has an instance ID, one `ec2 describe-instances --filters Name=instance-id,Values=<id>,<id>,...` (JSON), the IDs in the registry's order joined by commas, `Name=instance-id,Values=...` one argument (architect, 2026-11-21, for v0.08-T01, S01 batch); then, for each due host whose provisioning lock is free, in the registry's order, `ec2 stop-instances --instance-ids <id>` (JSON); then, for each running host the run did not stop, in the registry's order, `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment "agentspace guard: lease horizon" --parameters commands=<command>` (JSON). No `ssm get-command-invocation`. One call never stops or sends to two instances ([guard](#guard)). **No call at all** when `guard.lock` is held or cannot be taken, when the host registry cannot be read or is not valid, or when the lease state file is missing, cannot be read or is not valid (steps 1 to 3; P18, architect, 2026-11-21, for v0.08-T01) |
 | `ca` | None |
 | The ProxyCommand | `up`'s, then `ssm start-session --target <id> --document-name AWS-StartSSHSession --parameters portNumber=22`, the tunnel |
 
 **Which failures are tolerated:** a failed `ssm get-command-invocation` is polled again, since the
 invocation is often not readable for a moment after `send-command`; `ec2 wait instance-stopped`'s
 exit code is not checked, since the start request after it is the check
-([Starting the box](#starting-the-box-and-waiting-for-it)). Every other failed call fails the
-command, under [AWS failures](#aws-failures).
+([Starting the box](#starting-the-box-and-waiting-for-it)); in `sync`'s patch wait alone, a failed
+`ssm send-command` is a check that was not ready, unless it is #0034's sign-in failure
+([The patch wait](#the-patch-wait)); and `guard`'s failed `cloudformation describe-stacks`,
+`ec2 stop-instances` or `ssm send-command` fails that host's part, and the run goes on to the next
+host and exits 1 at its end, unless it is #0034's sign-in failure, which ends it at once
+([guard](#guard)). Every other failed call fails the command, under [AWS failures](#aws-failures).
 
 **What is read from each answer** (B-32). Members are named by their path in the JSON the AWS CLI
 prints; `[0]` is the first element of an array. Every other member is ignored, and the answers of
@@ -3524,7 +4571,9 @@ code.
 |---|---|---|
 | `cloudformation describe-stacks` | `Stacks[0].Outputs`: the element whose `OutputKey` is `InstanceId`, its `OutputValue` | The host's record's instance ID. No such element is the "no `InstanceId` output" failure ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)) |
 | `cloudformation describe-stacks`, as `deploy -Host`'s existence check | `Stacks[0].StackStatus` alone | Whether `deploy` creates the stack, updates it or fails ([deploy](#deploy); P17, architect, 2026-11-20, for v0.07-T01). A missing or non-string `StackStatus` fails with `agentspace: Unexpected answer from cloudformation describe-stacks: no Stacks[0].StackStatus.` |
-| `ec2 describe-instances` | `Reservations[0].Instances[0]`: `State.Name`, `LaunchTime` (ISO 8601, compared in UTC), `InstanceType`, `RootDeviceName`, and in `BlockDeviceMappings` the element whose `DeviceName` equals `RootDeviceName`, its `Ebs.VolumeId` | The state, the 20-minute rule, `status`'s type, and the root volume's ID |
+| `ec2 describe-instances` | `Reservations[0].Instances[0]`: `State.Name`, `LaunchTime` (ISO 8601, compared in UTC), `InstanceType`, `RootDeviceName`, and in `BlockDeviceMappings` the element whose `DeviceName` equals `RootDeviceName`, its `Ebs.VolumeId` | The state, the 20-minute rule, `status`'s type, the root volume's ID, and `status -All`'s stop time |
+| `ec2 describe-instances`, as `guard`'s | Every element of `Reservations[].Instances[]`: `InstanceId`; and for the element whose `InstanceId` is a host's ID, `State.Name`, and for every `running` one, explained or not, `LaunchTime` (ISO 8601, compared in UTC) | Which hosts run, each running host's horizon sent (P12), and an unexplained host's since and stop time ([guard](#guard)) |
+| `ssm send-command`, as `guard`'s | Nothing: its exit code alone | Whether the horizon was sent |
 | `ec2 describe-volumes` | `Volumes[0].Size` (GiB) | `status`'s size, and `grow`'s `<size>` |
 | `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
 | `ssm send-command` | `Command.CommandId` | The poll |
@@ -3541,12 +4590,17 @@ missing or of another form:
 | Reader | Members it reads |
 |---|---|
 | The start-and-wait step (`up`, `sync`, `bootstrap`, `provision`, the ProxyCommand's `up`) | `State.Name` in its first call; `LaunchTime` in its second, which runs only for a `running` box (FB-09) |
-| `status` | `State.Name`, `InstanceType`, `RootDeviceName`, and the root volume's `Ebs.VolumeId` |
+| `status` | `State.Name`, `InstanceType`, `RootDeviceName`, and the root volume's `Ebs.VolumeId`; and with `-All`, `LaunchTime`, only for a running host whose project holds no live lease, and never when the lease state file is missing, cannot be read or is not valid ([status](#status); P18) |
 | `grow` | `State.Name`, `RootDeviceName`, and the root volume's `Ebs.VolumeId` |
+| `guard` | `InstanceId` of every element; `State.Name`; `LaunchTime` for every `running` instance, explained or not, and for no other |
 
 A member a command reads that is missing, or not of the form above, fails the command with
 `agentspace: Unexpected answer from ec2 describe-instances: no <member>.`, where `<member>` is its
-path as this table writes it, such as `Reservations[0].Instances[0].LaunchTime`. When no element
+path as this table writes it, such as `Reservations[0].Instances[0].LaunchTime`. **For `guard`, and
+for `status -All`, it fails that host's part alone, never the run**: `guard`'s message is
+`Unexpected answer from ec2 describe-instances: no Reservations[].Instances[].<member>.`,
+logged with `step=instance` ([guard](#guard), step 6); a running host's missing `LaunchTime` fails
+it whether or not a live lease explains the host. When no element
 of `BlockDeviceMappings` has the `RootDeviceName`, or it has no `Ebs.VolumeId`, `<member>` is
 `Reservations[0].Instances[0].BlockDeviceMappings[].Ebs.VolumeId` (architect, 2026-11-19, for
 E0.06-T03-S01).
@@ -3564,7 +4618,13 @@ for E0.06-T01-S03):
   less than 20 minutes ago, so the box is waited for.
 - **The waits' timing:** the 5 seconds are a pause after each check; the 15-minute deadline is
   tested after each check that was not ready, and the last pause is cut short to end on it; the
-  invocation is polled at once and then each second, at most 20 times.
+  invocation is polled at once and then each second, at most 20 times. `sync`'s patch wait keeps
+  the same timing with its 30-minute deadline ([The patch wait](#the-patch-wait)).
+- **`sync`'s patch wait reads the same members as `up`'s wait**, and an invocation that has ended
+  with no `StandardOutputContent` is the empty answer, which in this wait alone is not ready
+  ([The patch wait](#the-patch-wait)). The answer `failed` is the trimmed `StandardOutputContent`
+  of an invocation that ended in `Success`, as `patched` is; in an invocation that ended in any
+  other status it is a check that was not ready.
 
 ## Requirements the prototype does not meet yet
 
@@ -3627,7 +4687,7 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q3** | **Later, not blocking:** **What exit code does the prototype's `deploy` give when its `sync` step fails?** It runs `sync` as a nested script in the same process. Two readings disagree: that the nested script's `exit 1` ends only the nested script, so `deploy` ends normally and a `-File` run exits 0; or that it ends the whole process with 1. | [deploy](#deploy) requires exit 1 either way, so only what the prototype does is open. Later: a run on the laptop |
 | **Q4** | **Closed by D36 (architect, 2026-11-18): `deploy -Quiet` quiets its `sync` step** ([deploy](#deploy), step 6), as the `-Quiet` row of [Command line](#command-line) says of every command. The prototype runs `sync` without `-Quiet`, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. | Closed, D36 |
 | **Q5** | **Later, not blocking:** **Does #0034's mechanism also hit `ssm get-command-invocation` and `ec2 wait`?** The poll discards the CLI's stderr while every error is terminating; under Windows PowerShell 5.1 a stderr line from it (such as an invocation not yet registered) may throw and fail `up` with a raw error instead of polling again. | The behavior to build is stated: a failed poll is polled again, and the wait's exit code is not checked ([Calls by command](#calls-by-command)), so only what the prototype does is open. Later: a run on the laptop |
-| **Q6** | **Later, not blocking:** **Is an empty or unexpected answer to the patch check meant to count as ready?** The prototype ends the wait on anything but `pending`, so a check that fails lets `up` print `Ready` before the patch run has finished, against the rule of [Starting the box](#starting-the-box-and-waiting-for-it). | That section states the behavior to build, today's, and names this as one of its three exceptions, so a stricter wait would be a later change. Later: the architect |
+| **Q6** | **Later, not blocking:** **Is an empty or unexpected answer to the patch check meant to count as ready?** The prototype ends the wait on anything but `pending`, so a check that fails lets `up` print `Ready` before the patch run has finished, against the rule of [Starting the box](#starting-the-box-and-waiting-for-it). | That section states the behavior to build, today's, and names this as one of its exceptions, so a stricter wait would be a later change. Later: the architect |
 | **Q7** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace` ([Laptop files](#laptop-files)); the prototype keeps it in the checkout, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. The localswim CLI's build output (`.build\`) is not state, and MAY stay in the checkout. D45 (v0.07) retired the cache: each host's instance ID is now a member of its record in `%USERPROFILE%\.agentspace\hosts.json`. | Closed |
 | **Q8** | **Closed by [docs/state.md](state.md#files-agentspace-reads-and-never-writes) (E0.04-T02-S01).** state.md lists the files the operator reads and agentspace never writes (localswim's receipt and `bot.json`, the user's `id_ed25519.pub`, `CLAUDE.md`, `~/.ssh/config`'s `agentspace` entry), and `infra\local.parameters` in [Files in the checkout](state.md#files-in-the-checkout); it owns none of their formats. | Closed |
 | **Q9** | **Closed, both halves, by E0.07-T02-S05 (#0162; the architect's rulings for v0.07-T02, 2026-11-20).** ~~What characters can a localswim Bot token contain, and what characters can a localswim URL contain, and what form MUST it have?~~ The box's wrapper reads the credential file as shell assignments, so a space, quote or `$` in either value would break or change it ([The box's files](#the-boxs-files)). **The token:** the push refuses a token that is not exactly 43 characters of `A-Z`, `a-z`, `0-9`, `-` and `_`, as localswim's `docs/windows-operations.md`, "The credential files", makes every token ([The Bot credential](#the-bot-credential)). **The URL:** the push refuses a receipt whose `base` is not exactly `http://127.0.0.1:PORT`, with `PORT` a decimal port from 1 to 65535, no leading zero and no trailing slash, the form localswim's "The receipt" pins, checked in the push's own code ([The receipt](#the-receipt)). So no value the push sends holds a character the wrapper's shell reading would change. | Closed, both halves: E0.07-T02-S05 |
@@ -3643,7 +4703,7 @@ Several need a run on the laptop, which no writer of this page could make (D34).
 | **Q19** | **Later, not blocking:** **Is a silent skip right when localswim's receipt is missing?** Every other reason the push does not happen warns; this one prints nothing, so a laptop without localswim never learns why the board does not work on the box. | [What the laptop reads](#what-the-laptop-reads) states the behavior to build, the skip, and a warning would be an addition. Later: the architect |
 | **Q20** | **Later, not blocking:** **SHOULD concurrent pushes be serialized?** Two `up`s at once both push and both write the stamp, with no lock. | Both pushes write the same token, so nothing breaks, and each costs only a login ([When it runs](#when-it-runs)). From v0.07 each host has its own stamp (D50), so pushes to two hosts never share one. Later: the architect |
 | **Q21** | **Later, not blocking:** **SHOULD `-Quiet` stop suppressing the push's warnings?** It suppresses them in the prototype, so a quiet `sync` hides a token that did not land. | The rule stands for contract v0: `-Quiet` suppresses them ([Messages](#messages); [What the laptop checks](#what-the-laptop-checks)), as the prototype does, and a drop-in builds that. The ProxyCommand never passes `-Quiet`, so a connection always shows them. Only whether a later contract changes the rule is open. Later: the architect |
-| **Q22** | **Later, not blocking:** **SHOULD `-GiB` be checked before AWS is asked?** The prototype passes any integer through, and AWS refuses 0 and below. | [Command line](#command-line) checks its form only, and AWS refuses a size that is not larger before anything changes, which fails `grow` with its error ([grow](#grow)). Later: the architect |
+| **Q22** | **Closed by D61 (#0164, architect, 2026-11-21; exit 1 by P7, architect, 2026-11-21, for v0.08-T01).** ~~SHOULD `-GiB` be checked before AWS is asked?~~ Yes, for `grow`: a `-GiB` of 0 or less is a usage error, exit 1, found after the host checks, and no AWS call is made ([grow](#grow)). Every other command still checks the form alone. | Closed, D61 |
 | **Q23** | **Closed by D36 (architect, 2026-11-18): `grow` fails, exit 1, when the online filesystem step fails** ([grow](#grow), step 3), with a message saying that the volume's change stands and the filesystem grows at next boot. The prototype exits 0, which [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists. | Closed, D36 |
 | **Q24** | **Later, not blocking:** **What exactly does the prototype print when the stack has no `InstanceId` output?** It writes an empty cache, and this page requires otherwise ([Laptop files](#laptop-files)). | The behavior to build is stated there, so only the prototype's text is open. Later: a run on the laptop |
 | **Q25** | **Closed by D36 (architect, 2026-11-18): a failed removal of the box's staging folder fails `sync` before the copy** ([sync](#sync), step 3). Read from the code: the prototype does not check the removal, and a partly removed folder takes the copy one level down, so the install runs whatever install script the removal left, and `sync` can succeed having installed the previous `box/system`. [Requirements the prototype does not meet yet](#requirements-the-prototype-does-not-meet-yet) lists it. | Closed, D36 |
