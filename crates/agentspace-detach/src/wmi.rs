@@ -393,8 +393,9 @@ fn send(request: &Request) -> Result<(u32, Option<u32>), String> {
     let code = value
         .code()
         .ok_or_else(|| "Win32_Process.Create gave no return code.".to_string())?;
-    // The process ID is read only from a call that created the process, and a failure to read it
-    // is no failure of the call: the process exists all the same.
+    // The process ID is read whatever the return value is, and it is used only when the return
+    // value is 0, the call that created the process. A failure to read it is no failure of the
+    // call: the process exists all the same.
     let mut id = Variant(VARIANT::default());
     // SAFETY: a valid output instance and a VARIANT of ours, cleared on drop.
     let read = unsafe { output.Get(w!("ProcessId"), 0, &mut id.0, None, None) };

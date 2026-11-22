@@ -130,8 +130,9 @@ fn the_first_iteration_starts_the_guard_before_the_first_pass() {
 
 /// `guard started pid=<pid>` names the process the detached start returned, in decimal digits
 /// (keeper.md, The keeper's lines for it). The process is a `.cmd` stand-in, so it is the command
-/// interpreter that runs it: the test checks that the process of that ID runs the stand-in, and
-/// ends it.
+/// interpreter that runs it: the test opens a handle on that ID, checks that the process runs the
+/// stand-in, lets it end (`staying.end()`), and ends it through the handle if it still runs. It
+/// never reaches a process by an ID alone.
 #[test]
 fn the_started_line_names_the_process_by_its_decimal_pid() {
     let b = Bin::new();
@@ -142,8 +143,8 @@ fn the_started_line_names_the_process_by_its_decimal_pid() {
     let (_, pid) = parse_guard_started(&guard_lines(&r.stdout)[0]);
     let process = StandInProcess::new(pid, STANDIN);
     staying.end();
-    process.end();
-    assert!(!process_exists(pid), "The test could not end the stand-in");
+    assert!(process.end(), "The test could not end the stand-in");
+    assert!(process.has_ended(), "The stand-in is gone");
 }
 
 // ---- G2, G3: the spacing ----

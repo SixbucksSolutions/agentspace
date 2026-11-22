@@ -124,6 +124,8 @@ pub struct World {
     born_counter: Cell<u32>,
     /// A message the next read of the UTC clock panics with, once.
     utc_panic: RefCell<Option<String>>,
+    /// A message the next read of the monotonic clock panics with, once.
+    mono_panic: RefCell<Option<String>>,
 }
 
 struct Guard {
@@ -202,6 +204,7 @@ impl World {
             self_check: RefCell::new(Ok(())),
             born_counter: Cell::new(0),
             utc_panic: RefCell::new(None),
+            mono_panic: RefCell::new(None),
         });
         w.set_leases(vec![ready(common::ID_A, FAR)]);
         w
@@ -308,6 +311,11 @@ impl World {
     /// Makes the next read of the UTC clock panic with `message`, once.
     pub fn panic_on_next_utc_read(&self, message: &str) {
         *self.utc_panic.borrow_mut() = Some(message.to_string());
+    }
+
+    /// Makes the next read of the monotonic clock panic with `message`, once.
+    pub fn panic_on_next_monotonic_read(&self, message: &str) {
+        *self.mono_panic.borrow_mut() = Some(message.to_string());
     }
 
     // -----------------------------------------------------------------------------------------
@@ -661,6 +669,10 @@ impl Clock for Clk {
         self.0.ms.get()
     }
     fn monotonic(&self) -> Duration {
+        let panic_with = self.0.mono_panic.borrow_mut().take();
+        if let Some(message) = panic_with {
+            panic!("{message}");
+        }
         self.0.mono.get()
     }
     fn sleep(&self, d: Duration) {

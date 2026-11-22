@@ -748,6 +748,44 @@ fn a_panic_in_the_start_is_a_failed_attempt_and_the_loop_goes_on() {
     assert_eq!(w.guard.starts().len(), 1, "An attempt, not retried");
 }
 
+/// A clock that cannot be read just before a pass is an error that escaped the start: it is logged
+/// as the start's, and it counts as an attempt that moves the guard's last start, so the next is
+/// not due at the next pass but `-GuardIntervalSeconds` after the one that was due (keeper.md,
+/// What a failed start changes). The start that fell due at 60 fails on the clock, and the pass at
+/// 90 starts nothing.
+#[test]
+fn a_clock_that_panics_before_a_pass_counts_as_an_attempt_that_delays_the_next() {
+    let w = World::new();
+    no_leases(&w);
+    // The second wait of 30 seconds ends at 60, and the next read of the clock is the one just
+    // before the pass.
+    w.on("sleep:30", 2, |w| {
+        w.panic_on_next_monotonic_read("The fake monotonic clock broke.")
+    });
+    let ran = w.run_guard(&["-GuardIntervalSeconds", "60", "-MaxPasses", "4"]);
+    assert_eq!(ran.exit, 0);
+    assert_shape(
+        &w,
+        &ran,
+        vec![
+            g(0),
+            idle(0),
+            idle(30),
+            gf(
+                60,
+                "The start stopped on an error: The fake monotonic clock broke.",
+            ),
+            idle(60),
+            idle(90),
+        ],
+    );
+    assert_eq!(
+        w.guard.starts().len(),
+        1,
+        "The failed attempt started nothing"
+    );
+}
+
 /// The same for the try of the lock.
 #[test]
 fn a_panic_in_the_lock_try_is_a_failed_attempt_and_the_loop_goes_on() {

@@ -164,7 +164,7 @@ pub fn tripwire_hit(home: &Path) -> bool {
 }
 
 /// One run of the stand-in guard, as it recorded itself.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GuardRun {
     lines: Vec<String>,
 }
@@ -406,39 +406,59 @@ pub fn process_command_line(pid: u32) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Whether the process `pid` exists.
-pub fn process_exists(pid: u32) -> bool {
-    let out = Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")),
-        Err(_) => false,
+/// The few calls of Windows the handle below needs. The library is `kernel32`, which every Rust
+/// program on Windows already links.
+mod win {
+    use std::ffi::c_void;
+
+    pub const PROCESS_TERMINATE: u32 = 0x0001;
+    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    pub const SYNCHRONIZE: u32 = 0x0010_0000;
+    pub const WAIT_OBJECT_0: u32 = 0;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        pub fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
+        pub fn TerminateProcess(handle: *mut c_void, code: u32) -> i32;
+        pub fn CloseHandle(handle: *mut c_void) -> i32;
     }
 }
 
-/// Ends a process and its tree. A test calls it only for a stand-in guard it made, checked by its
-/// command line (`StandInProcess`).
-fn end_tree(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-/// A stand-in guard process that a keeper started and a test has to end. It is checked to be the
-/// stand-in (its command line names `needle`) when it is made, and ended when it is dropped, a
-/// failed test included.
+/// A stand-in guard process that a keeper started and a test has to end, owned through a handle
+/// the test opened on its process ID **before** it checked that the process is the stand-in. An
+/// open handle pins the ID, so the process the check saw is the process the test ends, and an ID
+/// that is free and reused later is never reached: nothing here runs `taskkill` or any other call
+/// by ID. The process is ended only through the handle, and only once the check passed. Dropping
+/// it ends the process if it still runs (a failed test included), and closes the handle.
 pub struct StandInProcess {
     pub pid: u32,
+    handle: *mut std::ffi::c_void,
+    /// Whether the command line of the process matched the stand-in's.
+    confirmed: bool,
 }
 
 impl StandInProcess {
     pub fn new(pid: u32, needle: &str) -> StandInProcess {
+        // SAFETY: A plain call; a null handle is its failure.
+        let handle = unsafe {
+            win::OpenProcess(
+                win::PROCESS_QUERY_LIMITED_INFORMATION | win::SYNCHRONIZE | win::PROCESS_TERMINATE,
+                0,
+                pid,
+            )
+        };
+        assert!(
+            !handle.is_null(),
+            "No process {pid} can be opened, and the guard started line named it"
+        );
+        // From here the handle is owned, so a failed check below closes it by `drop` and ends
+        // nothing: `confirmed` is false until the command line has matched.
+        let mut process = StandInProcess {
+            pid,
+            handle,
+            confirmed: false,
+        };
         let line = process_command_line(pid).unwrap_or_else(|| {
             panic!("No process {pid} runs, and the guard started line named it")
         });
@@ -447,21 +467,41 @@ impl StandInProcess {
                 .contains(&needle.to_ascii_lowercase()),
             "The process the guard started line names is not the stand-in guard"
         );
-        StandInProcess { pid }
+        process.confirmed = true;
+        process
     }
 
-    /// Ends the process and waits, up to 10 seconds, for it to be gone.
-    pub fn end(&self) {
-        end_tree(self.pid);
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while process_exists(self.pid) && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(100));
+    /// Whether the process has ended, by its handle.
+    pub fn has_ended(&self) -> bool {
+        // SAFETY: The handle is open, with the right to wait.
+        unsafe { win::WaitForSingleObject(self.handle, 0) == win::WAIT_OBJECT_0 }
+    }
+
+    /// Ends the process through its handle if it still runs, and waits, up to 10 seconds, for it to
+    /// be gone. It reports whether it is.
+    pub fn end(&self) -> bool {
+        if self.confirmed && !self.has_ended() {
+            // SAFETY: The handle is open, with the right to end the process it names.
+            unsafe {
+                win::TerminateProcess(self.handle, 1);
+            }
         }
+        // SAFETY: The handle is open, with the right to wait.
+        unsafe { win::WaitForSingleObject(self.handle, 10_000) == win::WAIT_OBJECT_0 }
     }
 }
 
 impl Drop for StandInProcess {
     fn drop(&mut self) {
-        end_tree(self.pid);
+        if self.confirmed && !self.has_ended() {
+            // SAFETY: The handle is open, with the right to end the process it names.
+            unsafe {
+                win::TerminateProcess(self.handle, 1);
+            }
+        }
+        // SAFETY: The handle is this value's own and is closed once.
+        unsafe {
+            win::CloseHandle(self.handle);
+        }
     }
 }

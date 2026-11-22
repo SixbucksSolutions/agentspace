@@ -534,7 +534,9 @@ fn guard_before_pass(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, sta
         Ok(t) if t >= due_at => guard_attempt(keeping, deps, stdout, state, t),
         Ok(_) => {}
         // A clock that cannot be read is an error that escaped the start: logged as the start's,
-        // and it counts as an attempt (keeper.md, The keeper's wait).
+        // and it counts as an attempt (keeper.md, The keeper's wait). With no reading to mark its
+        // end, the time it was due stands in for it, so the next one is due `-GuardIntervalSeconds`
+        // after that and a counted attempt always moves `guard_last`.
         Err(message) => {
             log_failed(
                 deps,
@@ -542,7 +544,7 @@ fn guard_before_pass(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, sta
                 stdout,
                 &guard::failed_reason(&guard::escaped(&message)),
             );
-            state.guard_last = Some(state.guard_last.unwrap_or_default());
+            state.guard_last = Some(due_at);
         }
     }
 }

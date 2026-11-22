@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// One start, as the keeper asked for it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GuardStartSeen {
     pub program: PathBuf,
     pub args: Vec<String>,

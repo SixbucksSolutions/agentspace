@@ -782,10 +782,11 @@ mod windows {
         );
     }
 
-    /// A process this test started, owned through a handle it opened by the ID `start_pid` gave:
-    /// the one process the test ever ends. Ended and waited for when dropped, so a test that fails
-    /// first leaves nothing running. It is never reached by name or by an ID the test did not get
-    /// from its own start.
+    /// A handle the test opened on the process whose ID `start_pid` gave. The handle pins that ID
+    /// while it is open, so the process it names cannot be replaced by another one. Dropping it
+    /// only closes it and ends nothing: the test ends the process by `end`, and only after it has
+    /// checked the image name. The process the test started also ends itself (a short delay in its
+    /// start), so a test that fails first leaves nothing running.
     struct Started(HANDLE);
 
     impl Started {
@@ -827,7 +828,8 @@ mod windows {
             unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
         }
 
-        /// Ends the process through the handle, and waits up to 20 seconds for it to be gone.
+        /// Ends the process the handle names, and waits up to 20 seconds for it to be gone. The test
+        /// calls it only after `image_name` matched the helper's.
         fn end(&self) -> bool {
             // SAFETY: The handle is open, with the right to end the process it names.
             unsafe {
@@ -839,7 +841,6 @@ mod windows {
 
     impl Drop for Started {
         fn drop(&mut self) {
-            self.end();
             // SAFETY: The handle is this value's own and is closed once.
             unsafe {
                 CloseHandle(self.0);
@@ -848,9 +849,10 @@ mod windows {
     }
 
     /// The process ID `start_pid` answers is the created process's (architect, 2026-11-22, for
-    /// v0.08-T03). The helper's `write` sleeps 2 minutes, so it is alive when it is opened by the
-    /// ID; the test checks the image name, ends that one process through its handle, and
-    /// confirms it is gone, by the handle's wait and by the ID no longer opening.
+    /// v0.08-T03). The helper's `write` sleeps 5 seconds and then ends, so it is alive when it is
+    /// opened by the ID, and it ends on its own if the test fails first. The test opens the ID,
+    /// checks the image name, and only then ends that one process through the handle it opened;
+    /// the handle's wait shows it is gone, and the ID is not opened again afterwards.
     #[test]
     fn start_pid_gives_the_id_of_the_process_it_created() {
         let scratch = Scratch::new("pid");
@@ -858,7 +860,7 @@ mod windows {
         let file = out.to_string_lossy().to_string();
         let answer = WmiDetach.start_pid(
             &helper(),
-            &["write", &file, "AGENTSPACE_DETACH_SPEC_PID", "120000"],
+            &["write", &file, "AGENTSPACE_DETACH_SPEC_PID", "5000"],
             scratch.path(),
             &[],
         );
@@ -866,7 +868,8 @@ mod windows {
             .expect("The start is accepted.")
             .expect("WmiDetach gives the process ID.");
         assert_ne!(pid, 0, "The process ID is a real one.");
-        // The ID names a process the test can open, and it is the helper's.
+        // The ID names a process the test can open, and it is the helper's. A handle that names
+        // another process is only closed by its drop, and nothing is ended.
         let process = Started::open(pid).expect("The process with that ID can be opened.");
         assert_eq!(
             process.image_name(),
@@ -882,11 +885,6 @@ mod windows {
         );
         assert!(process.end(), "The test ended the process it started.");
         assert!(process.has_ended(), "The process is gone.");
-        drop(process);
-        assert!(
-            Started::open(pid).is_none_or(|again| again.has_ended()),
-            "No process holds that ID any more."
-        );
     }
 
     /// `start_pid` refuses what `start` refuses, before any call into Windows.
