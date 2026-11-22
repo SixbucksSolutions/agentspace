@@ -8,8 +8,10 @@
 use std::path::Path;
 
 pub mod decide;
+mod log;
+mod run;
 
-use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Say};
+use agentspace_operator_api::{Aws, Context, Failure, Say};
 
 /// The grace, a constant and not a parameter (D56, D63): 15 minutes, in seconds.
 pub const GRACE_SECONDS: i64 = 15 * 60;
@@ -71,9 +73,5 @@ pub struct Report {
 ///   a failed `ec2 describe-instances`, and #0034's sign-in message from any call. The run has
 ///   logged it; the operator prints the failure and exits 1.
 pub fn run(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Report, Failure> {
-    let _ = (input, say, aws);
-    Err(Failure {
-        message: "agentspace: guard is not built yet.".to_string(),
-        caller: CallerFailure::Same,
-    })
+    run::execute(input, say, aws)
 }

@@ -96,8 +96,12 @@ name = "agentspace-guard"
 version = "0.8.0"
 dependencies = [
  "agentspace-box",
+ "agentspace-hosts",
  "agentspace-operator-api",
  "agentspace-state",
+ "serde_json",
+ "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

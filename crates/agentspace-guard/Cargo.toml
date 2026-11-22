@@ -16,3 +16,15 @@ path = "src/lib.rs"
 agentspace-operator-api = { path = "../agentspace-operator-api" }
 agentspace-box = { path = "../agentspace-box" }
 agentspace-state = { path = "../agentspace-state" }
+agentspace-hosts = { path = "../agentspace-hosts" }
+
+# Only the Windows half uses it: the laptop's local time of a stop (src/run.rs, mod local), the one
+# unsafe call. The version the workspace's other crates already use.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_Time"] }
+
+[dev-dependencies]
+# Throwaway folders for the log's tests; the version agentspace-hosts's tests use.
+tempfile = { version = "=3.23.0", default-features = false }
+# The scripted AWS answers of src/run.rs's tests; the version agentspace-box uses.
+serde_json = { version = "=1.0.154" }
