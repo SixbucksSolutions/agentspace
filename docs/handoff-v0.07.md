@@ -84,6 +84,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 |---|---|---|
 | v0.07-T05 (#0159), the first new host, live; then T06 (#0160), an agent on it | Terry's word, then the architect | D55 |
 | #0137, met by #0147 and #0149, still in Backlog | Terry moves it out; the architect moves it to Ready For Review | #0137 |
+| #0138, fixed by #0157 (47d5578), still in Backlog | Terry moves it out; the architect moves it to Ready For Review | #0138 |
 | Before T05: Terry's yes for the instance hours (D53) | Terry, asked by the architect | D53 |
 | C13's variant "hosts.json valid but no box record" failed once in a full run ("changed"), then 265 runs passed; its failure now names the file | Whoever sees it fail again | #0155's PR, #107 |
 | The localswim checkout's path is fixed at `C:\Projects\localswim`; a seam for it would let sync's build cases run elsewhere | A later card, if wanted | operator.md, sync step 7 |
