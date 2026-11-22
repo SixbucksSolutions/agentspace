@@ -1328,7 +1328,12 @@ guard's environment is the user's logon environment, with these set exactly as t
   ([operator.md, The test seam](operator.md#the-test-seam)), and `AGENTSPACE_GUARD_CMD` itself.
 - **A value of any of those that the logon environment holds and the keeper does not have set and
   not empty is removed**, so the guard never takes a folder, a ProxyCommand line or a stand-in that
-  the keeper which started it did not use, as a provisioning run never does.
+  the keeper which started it did not use, as a provisioning run never does. **The keeper removes
+  the names it knows**: `USERPROFILE`'s companions above, and every `AGENTSPACE_*_CMD` the specs
+  name, `AGENTSPACE_GUARD_CMD` among them, since it cannot list the logon environment's own
+  variables. A logon environment that sets another `AGENTSPACE_..._CMD` passes it to the guard
+  (architect, 2026-11-22, for v0.08-T03; removal by pattern would need a change to the detached
+  start).
 - **No other variable of the keeper's reaches the guard.** `AGENTSPACE_TIMEZONE` and
   `AGENTSPACE_DIAGNOSTIC` are among those that do not (pin P4; architect, 2026-11-21, for
   v0.08-T01: the guard writes UTC times and prints no backend detail,
@@ -1965,7 +1970,9 @@ it:**
   `another keeper is running` and `failed` lines concern no host and never carry it.
 - **`pid=<pid>`** is, on an `another keeper is running` line, the running keeper's PID as its lock
   file gives it, or `-` ([Locks](#locks)); on a `guard started` line, the process ID the detached
-  start returned, in decimal, and never `-`.
+  start returned, in decimal, or `-` only for a start that returned none, which only a keeper
+  built for another platform or a check's stand-in can give ([The keeper's lines for
+  it](#the-keepers-lines-for-it); architect, 2026-11-22, for v0.08-T03).
 - **A keeper's `failed` line** has the pass line's grammar and reason rules, with `-` in every
   field.
 
