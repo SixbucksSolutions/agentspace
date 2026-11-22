@@ -468,6 +468,69 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
    Every CPU and memory figure is given as peak, p95 and p50. The tools processes and the most
    sessions at once are given as peak only.
 
+### Signing in on a new host
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+**A host the operator made for a project is `ready` for leases before any tool on it is signed in**
+(D52; `ready` means a connection is expected to succeed, not that an agent can work there yet). This
+procedure is done by hand, once per new host, by Terry, on his laptop. Card #0009 automates it
+after 1.0. The operator's provisioning run ends by printing where it is:
+`Sign in on this host once, by hand: run 'agentspace-operator status -Host <project>' first and
+again after an hour, then see "Signing in on a new host" in the agentspace README.` Only a run
+started by hand shows that line: a run a lease starts is detached, its output goes to a hidden
+console that nothing reads, and its log is its only record
+([operator.md, provision](docs/operator.md#provision)).
+
+1. **Start once the host is `ready`**: its log,
+   `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, ends `run done`, and step 2's
+   `status -Host <project>` shows the host `ready`. Only a project listed in
+   `%USERPROFILE%\.agentspace\projects.json` gets a host (D54), and adding one takes Terry's yes.
+   A lease for the project answers `pending` until its host is ready.
+   - **Until card #0163 is fixed, a new host's first provisioning run fails at `sync`**: sync's
+     connections after its install wait out `up`'s 15-minute deadline until the host's launch is
+     20 minutes old, and the log ends `sync failed`. The lease stays `pending`. In E0.07-T05-S01
+     (2026-11-21) the first run failed about 34 minutes after it began
+     ([docs/runs/e0.07-t05-s01.md](docs/runs/e0.07-t05-s01.md), finding 2). Only a `lease create`
+     or `lease get` for the project starts the next run, at most one every 5 minutes from the last
+     run's start (D48), so whoever waits on the lease SHOULD run
+     `agentspace lease get <lease id>` once the log ends `sync failed`. That run made the host
+     `ready` in about 2 minutes.
+2. **Sign the operator's one-hour certificate:**
+
+   ```bat
+   %USERPROFILE%\.agentspace\bin\agentspace-operator.exe status -Host <project>
+   ```
+
+   The full path is used until the install folder is on `PATH`
+   ([The lease CLI](#the-lease-cli)). The certificate lasts an hour, so the same command MUST be
+   run again after an hour, before any new `ssh` to the host
+   ([operator.md, How the operator reaches a host](docs/operator.md#how-the-operator-reaches-a-host)).
+3. **Connect, with Codex's port forwarded:**
+
+   ```bat
+   ssh -L 1455:localhost:1455 agentspace-host.<project>
+   ```
+
+   The alias `agentspace-host.<project>` is written by the provisioning run, and written again by
+   any operator command given `-Host <project>`, step 2's `status` included, whenever its bytes
+   differ ([operator.md, How the operator reaches a host](docs/operator.md#how-the-operator-reaches-a-host)).
+4. **Sign in to each tool at the host's prompt, as [Signing the tools in](#signing-the-tools-in)
+   gives them:** Claude Code
+   (`claude`, then its URL-and-code option), Codex (`codex login`, its URL opened in the laptop
+   browser) and gh (`gh auth login`, HTTPS and the web browser).
+5. **Clone the project's checkout after gh's sign-in**, never before it, since a private
+   repository needs gh's credential (D52):
+
+   ```sh
+   gh repo clone <owner>/<repo> ~/<project>
+   ```
+
+6. **The host's laptop files are agentspace's and MUST NOT be edited by hand:** the operator's alias
+   `agentspace-host.<project>` and its key. A new host adds nothing to Terry's `~/.ssh/config` but
+   agentspace's `Include` line, when it is missing, and never writes his `known_hosts` (D47);
+   agentspace's host keys are in `%USERPROFILE%\.agentspace\known_hosts`, written only by ssh.
+
 ### The localswim board on the box
 
 Terry's localswim board (`127.0.0.1:8811`) and the localpost queue behind its watcher
@@ -581,8 +644,13 @@ program makes it: a person, or an agent at the person's request, does.
    ([operator.md, The install folder](docs/operator.md#the-install-folder)). An install SHOULD NOT
    replace `agentspace-keeper.exe` while a keeper runs, and SHOULD stop the keeper first
    ([docs/keeper.md, Stopping and starting the keeper](docs/keeper.md#stopping-and-starting-the-keeper)).
-   An install whose copy fails part way SHOULD be run again before any program in the folder is
-   used.
+   **After the copy, the person MUST stop, by its checked PID, any keeper the task's repeating
+   trigger started during the install, and then start the task.** A running keeper whose start
+   time is before the copy's end is the old build (found in E0.07-T05-S01, 2026-11-21: the
+   trigger started the old keeper 2 seconds before the copy ended, finding 1 of
+   [docs/runs/e0.07-t05-s01.md](docs/runs/e0.07-t05-s01.md)). Disabling the task first stays the
+   alternative, and on Terry's laptop it MUST have his yes (D41). An install whose copy fails part
+   way SHOULD be run again before any program in the folder is used.
 4. **Add the folder to the user's `PATH`, which MUST be done only with Terry's yes**, so that
    `agentspace` and `agentspace-operator` run by name.
 
