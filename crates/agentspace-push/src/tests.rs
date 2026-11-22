@@ -367,6 +367,71 @@ fn every_stored_stamp_that_cannot_be_read_makes_it_due() {
     );
 }
 
+/// The push's decision is the stamp's rule exactly (operator.md, The stamp): due when forced, with
+/// no stamp, or with one that is empty, unreadable, unparseable, fails its schema or differs from
+/// the one computed; otherwise not. It takes nothing else: no input says whether the host was
+/// started.
+#[test]
+fn the_decision_is_the_stamps_rule_and_nothing_else() {
+    let path = stamp_path(&ctx());
+    let computed = expected_stamp(ZONE);
+    let good = stamp_file_bytes(&computed);
+    let schema_failing = String::from_utf8(good.clone())
+        .unwrap()
+        .replace("\"version\":0", "\"version\":1")
+        .into_bytes();
+    let cases = [
+        (None, true),
+        (Some(FileRead::Missing), true),
+        (Some(FileRead::Unreadable), true),
+        (Some(FileRead::Bytes(Vec::new())), true),
+        (Some(FileRead::Bytes(b"{".to_vec())), true),
+        (Some(FileRead::Bytes(schema_failing)), true),
+        (
+            Some(FileRead::Bytes(stamp_file_bytes(&expected_stamp("UTC")))),
+            true,
+        ),
+        (Some(FileRead::Bytes(good)), false),
+    ];
+    for (stored, due) in cases {
+        let disk = Disk::default();
+        if let Some(stored) = stored.clone() {
+            disk.files.borrow_mut().insert(path.clone(), stored);
+        }
+        assert_eq!(is_due(&disk, &path, &computed, false), due, "{stored:?}");
+        assert!(is_due(&disk, &path, &computed, true), "forced, {stored:?}");
+    }
+}
+
+/// A start of the host MUST NOT make the push due by itself (#0167; P14). A stop and a start keep
+/// the instance ID, the zone, the URL and the token, so the connection that starts the host finds
+/// the stamp the last push wrote, and pushes nothing.
+#[test]
+fn a_start_of_the_host_does_not_make_the_push_due() {
+    let disk = laptop(DUMMY_TOKEN);
+    // The connection before the host was stopped pushed.
+    assert_eq!(
+        run(&disk, Mode::Caller, Reply::Honest).outcome,
+        Outcome::Pushed
+    );
+    // The connection that starts it again, through the ProxyCommand: the same ID, unforced.
+    let r = run(&disk, Mode::Caller, Reply::Honest);
+    assert_eq!(r.outcome, Outcome::NotDue);
+    assert!(r.ssh.is_empty(), "A start made the push due");
+    assert!(r.said.is_empty());
+    assert!(r.writes.is_empty());
+    // After localswim's cold start the token is new, and the push is due whatever the host did.
+    let cold = laptop(OTHER_TOKEN);
+    cold.files.borrow_mut().insert(
+        stamp_path(&ctx()),
+        FileRead::Bytes(stamp_file_bytes(&expected_stamp(ZONE))),
+    );
+    assert_eq!(
+        run(&cold, Mode::Caller, Reply::Honest).outcome,
+        Outcome::Pushed
+    );
+}
+
 #[test]
 fn forced_pushes_whatever_the_stamp_and_nesting_say() {
     let disk = laptop(DUMMY_TOKEN);

@@ -23,7 +23,11 @@
 //!    registry or its stack, the start-and-wait step of `agentspace-box`, and, unless
 //!    `AGENTSPACE_NESTED` was set as the program started, the token push of `agentspace-push` over
 //!    the alias, with that host's push stamp (D50). Anything they write to standard output goes to
-//!    standard error.
+//!    standard error. The push decides by its stamp alone, so a start of the host makes it due no
+//!    more than any other connection does (#0167). Its ssh's stderr is relayed to the
+//!    ProxyCommand's standard error line by line, with its nested ProxyCommand's
+//!    `The host is ready.` dropped unless `AGENTSPACE_DIAGNOSTIC` is set ([`push_stderr`];
+//!    operator.md, What the laptop sends, step 2).
 //! 4. A failure of step 3 is exit 1, and no tunnel.
 //! 5. Reads that host's instance ID from its record again. A registry or a record that cannot be
 //!    read here is not a failure when step 3 has the ID: the connection uses the one it read
@@ -54,13 +58,13 @@ pub mod tunnel;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use agentspace_box::{SystemClock, start_and_wait};
 use agentspace_hosts::{Host, host_for, is_box};
 use agentspace_operator::{DEFAULT_ALIAS, Parsed, Printer, context_from, diagnostic_from, parse};
 use agentspace_operator_api::{CallerFailure, Context, Failure, Mode, Say};
-use agentspace_push::{Lookup, push_to_host_using};
+use agentspace_push::{Lookup, SshStderr, StderrSink, push_to_host_using};
 use agentspace_run::Runner;
 
 pub use agentspace_operator::COULD_NOT_REACH;
@@ -174,6 +178,36 @@ pub fn check_alias(alias: &str) -> Result<(), Failure> {
     }
 }
 
+/// The ProxyCommand's standard error, shared by its printer and its token push's relay, so that
+/// each write reaches it whole and the two keep their order.
+#[derive(Clone)]
+struct SharedStderr(Arc<Mutex<Box<dyn Write + Send>>>);
+
+impl Write for SharedStderr {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut out = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        out.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).flush()
+    }
+}
+
+/// Where the caller-mode token push sends its ssh's stderr (operator.md, What the laptop sends,
+/// step 2; #0167): a pipe whose lines reach `stderr` as they arrive, the nested ProxyCommand's
+/// `The host is ready.` dropped, and nothing dropped when `diagnostic`, `AGENTSPACE_DIAGNOSTIC`
+/// as the program started, is set. Never the operator's inherited stderr, and never the null
+/// device. A person's `up`, `up -Host` and `sync` do not come here: they keep the default,
+/// [`SshStderr::Inherit`].
+pub fn push_stderr(stderr: StderrSink, diagnostic: bool) -> SshStderr {
+    SshStderr::Relay {
+        sink: stderr,
+        diagnostic,
+    }
+}
+
 /// Prints a failure as a caller sees it: the caller's line, then, only under
 /// `AGENTSPACE_DIAGNOSTIC`, the person's message after it.
 fn report(say: &Printer, failure: &Failure) {
@@ -187,12 +221,16 @@ fn report(say: &Printer, failure: &Failure) {
 /// step, which reads the instance ID from the host's record or its stack, and the token push with
 /// the host's own stamp unless this is a nested `up`. Returns the instance ID once the host is
 /// ready.
+///
+/// The push is unforced whether or not the host was started: its stamp alone decides whether it
+/// is due (operator.md, The stamp; #0167). Its ssh's stderr goes to `push_stderr`.
 fn up(
     ctx: &Context,
     say: &dyn Say,
     alias: &str,
     host: &Host,
     env: &Arc<Env>,
+    push_stderr: &SshStderr,
 ) -> Result<String, Failure> {
     let lookup_env = Arc::clone(env);
     let runner = Runner::with_lookup(ctx.clone(), move |name| lookup_env.get(name));
@@ -205,13 +243,21 @@ fn up(
         let push_host = (!is_box(host)).then_some(host.project.as_str());
         // The push never fails a command; a panic in it is the "Could not send" warning, which
         // `push_to_host_using` says itself.
-        let _ = push_to_host_using(ctx, say, &id, alias, false, push_host, lookup, &|ssh| ssh);
+        let _ = push_to_host_using(ctx, say, &id, alias, false, push_host, lookup, &|ssh| {
+            ssh.with_stderr(push_stderr.clone())
+        });
     }
     Ok(id)
 }
 
 /// Steps 1 to 6. `Ok` is the exit code, which is the tunnel's.
-fn proxy(args: &[OsString], mut env: Env, say: &Printer, diagnostic: bool) -> Result<i32, Failure> {
+fn proxy(
+    args: &[OsString],
+    mut env: Env,
+    say: &Printer,
+    diagnostic: bool,
+    push_stderr: &SshStderr,
+) -> Result<i32, Failure> {
     // Step 1.
     if args.len() > 1 {
         return Err(Failure {
@@ -246,6 +292,7 @@ fn proxy(args: &[OsString], mut env: Env, say: &Printer, diagnostic: bool) -> Re
         alias.as_deref().unwrap_or(DEFAULT_ALIAS),
         &found,
         &env,
+        push_stderr,
     )?;
     // Step 5: the record's own ID, which the tunnel MUST target. Architect's to confirm: when the
     // registry or the record cannot give one here, such as after a write of `up`'s that failed
@@ -281,8 +328,16 @@ fn proxy(args: &[OsString], mut env: Env, say: &Printer, diagnostic: bool) -> Re
 /// not call this in its own process.
 pub fn run(args: &[OsString], env: Env, stderr: Box<dyn Write + Send>) -> i32 {
     let diagnostic = diagnostic_from(&|name| env.get(name));
-    let say = Printer::new(Mode::Caller, false, diagnostic, stderr);
-    match proxy(args, env, &say, diagnostic) {
+    // The printer and the token push's relayed ssh stderr write to the same stream.
+    let stderr = Arc::new(Mutex::new(stderr));
+    let say = Printer::new(
+        Mode::Caller,
+        false,
+        diagnostic,
+        Box::new(SharedStderr(Arc::clone(&stderr))),
+    );
+    let relay = push_stderr(stderr, diagnostic);
+    match proxy(args, env, &say, diagnostic, &relay) {
         Ok(code) => code,
         Err(failure) => {
             report(&say, &failure);
@@ -388,6 +443,32 @@ mod tests {
                 r"C:\Program Files\Amazon\SessionManagerPlugin\bin;C:\Program Files\Amazon\AWSCLIV2;"
             )
         );
+    }
+
+    #[test]
+    fn the_push_relays_its_ssh_stderr_and_drops_nothing_only_under_diagnostic() {
+        let cap = Capture::default();
+        for diagnostic in [false, true] {
+            let sink: StderrSink = Arc::new(Mutex::new(cap.clone()));
+            let choice = push_stderr(sink, diagnostic);
+            assert!(
+                matches!(choice, SshStderr::Relay { diagnostic: d, .. } if d == diagnostic),
+                "{choice:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_printer_and_the_relay_share_one_stream() {
+        let cap = Capture::default();
+        let shared: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(cap.clone())));
+        let mut printer_side = SharedStderr(Arc::clone(&shared));
+        printer_side.write_all(b"one\n").unwrap();
+        let sink: StderrSink = shared;
+        sink.lock().unwrap().write_all(b"two\r\n").unwrap();
+        printer_side.write_all(b"three\n").unwrap();
+        printer_side.flush().unwrap();
+        assert_eq!(cap.text(), "one\ntwo\r\nthree\n");
     }
 
     #[test]

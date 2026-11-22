@@ -26,6 +26,10 @@
 //! - [`Seams`], holding the three traits and the zone: [`Files`] (with [`FileRead`], and
 //!   [`StdFiles`], a portable `Files` that T02 MAY use or replace), [`Unprotect`] and [`SshRun`]
 //!   (with [`SshResult`]).
+//! - The push's ssh's stderr (v0.08, #0167): [`SshStderr`], which a caller gives
+//!   [`SystemSsh::with_stderr`] through its `configure`, inherited by default and relayed in the
+//!   ProxyCommand's caller mode; [`StderrFilter`], the relay's line rule, which drops
+//!   [`HOST_READY_LINE`]; and [`StderrSink`], where the relayed lines go.
 //! - [`Token`] and [`Content`], the two types that hold the token; each redacts it in `Debug` and
 //!   zeroes it when dropped.
 //! - The steps, for a caller that needs one alone: [`receipt_path`], [`parse_receipt`] and
@@ -65,6 +69,7 @@ mod platform;
 #[path = "other.rs"]
 mod platform;
 mod receipt;
+mod relay;
 mod stamp;
 mod system;
 mod text;
@@ -74,6 +79,7 @@ pub use agentspace_operator_api::{Context, Say};
 pub use boxside::{alias_is_valid, remote_command, ssh_args};
 pub use credential::{parse_credential_blob, read_token};
 pub use receipt::{Receipt, parse_receipt};
+pub use relay::{HOST_READY_LINE, SshStderr, StderrFilter, StderrSink};
 pub use stamp::{content, parse_stamp_file, stamp, stamp_file_bytes};
 pub use system::{
     DpapiUnprotect, Lookup, SSH_LIMIT, STDOUT_WAIT, SystemFiles, SystemSsh, push, push_to_host,
@@ -298,7 +304,8 @@ impl fmt::Debug for SshResult {
 /// implements.
 pub trait SshRun {
     /// Starts ssh with `args`, exactly these and in this order, under the 20-second limit: a pipe
-    /// for its stdin and one for its stdout, and its stderr the operator's. Writes `stdin` to it
+    /// for its stdin and one for its stdout, and its stderr the operator's, or in the
+    /// ProxyCommand's caller mode the relay its caller chose ([`SshStderr`]). Writes `stdin` to it
     /// and closes it, inside the limit. `stdin` is the content, which holds the token: it MUST go
     /// nowhere else.
     fn run(&self, args: &[&str], stdin: &[u8]) -> SshResult;
