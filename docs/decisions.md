@@ -3212,6 +3212,13 @@ contract v0 stays as it is, and nothing in a lease says when or why its host sto
   released lease, `expires_at` for one that expired. A host that never had a lease has none.
 - **A host's lease horizon** is the latest `expires_at` among its project's live ready leases, or
   its last lease end when it has none.
+- **Changed for v0.08-T01 (architect, 2026-11-21, on the dev lead's pins P10 and P11; state.md,
+  "Live leases and the lease horizon", owns the exact rule):** a released lease's end is the
+  earlier of its `released_at` and its `expires_at`, so a lease released after it expired ended at
+  its expiry; a released lease that was never ready ends at its `released_at`. A project whose only
+  live leases are `pending` has the reading's time as its horizon, so a host waiting on a
+  placement is not powered off by its own check while the laptop's guard runs, and stops a grace
+  after the last guard run when the laptop goes away.
 
 ### D56. A host runs only while its project holds a live lease; the laptop's guard stops it otherwise
 
