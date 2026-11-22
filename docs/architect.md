@@ -108,7 +108,9 @@ first.**
 5. **If the turn changes Terry's laptop** (his ssh config, his task, his `PATH`): ask him once,
    before the dev lead starts, naming each change with its reversal (D41). Record his yes on the
    card, and give it to the dev lead in its brief.
-6. **Add the turn's milestone**, commit and push.
+6. **Add the turn's milestone**, commit and push, and **move every story of the turn to In
+   Progress** (AGENTS.md, "The board"; Terry, 2026-11-22). The milestone's clock runs only while
+   its cards are In Progress, so a turn whose cards still sit in Ready For Work is not counted.
 7. **Start the dev lead** with `start_session`: Opus/high, fresh context, `use_worktree: false`. Its
    brief MUST name its cards and branches, its watcher reader (`agentspace-vX.YY-tnn`), the
    rulings already made for it, and these rules: read AGENTS.md first; enter a story's worktree
