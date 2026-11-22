@@ -2938,9 +2938,10 @@ checks ([Command line](#command-line)):
    - **A lock that cannot be taken for any other reason**, a folder at its path or access denied
      among them, fails the run: it prints `agentspace: Cannot take <path>: <error>.`, logs it
      ([Its log](#its-log)), reads nothing, makes no AWS call and exits 1. `<path>` is the lock's
-     full path and `<error>` the reason the host registry's library gives for that lock, the same
-     text [provision](#provision)'s step 2 prints for its own lock, a sentence fragment naming the
-     problem, such as `the lock file could not be opened` (architect, 2026-11-21, for v0.08-T01,
+     full path and `<error>` the host registry library's whole text for that lock's error, with
+     control characters made spaces and its last period dropped, as [provision](#provision)'s step
+     2 prints its own lock's, such as
+     `The guard's lock could not be taken: the lock file could not be opened` (architect, 2026-11-21, for v0.08-T01,
      S01 batch; its `<error>` corrected by the architect, 2026-11-22, for v0.08-T03: neither lock's
      error carries the system's own text).
 2. **Reads the host registry**, `%USERPROFILE%\.agentspace\hosts.json`, whole, without its lock
