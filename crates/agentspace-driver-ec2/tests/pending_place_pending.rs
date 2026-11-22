@@ -7,16 +7,20 @@
 //! state lock for each, and never writes the host registry or starts anything.
 #![cfg(windows)]
 
+#[path = "common/clients.rs"]
+mod clients;
 mod common;
 #[path = "common/pending.rs"]
 mod pending;
 
 use agentspace_driver_api::{Driver, Failure, LeaseRef};
 use agentspace_driver_ec2::{PendingPlaced, place_pending};
+use clients::{Lab, random_uuid_v4};
 use common::*;
 use pending::*;
 use serde_json::{Value, json};
 use std::fs;
+use std::os::windows::fs::OpenOptionsExt;
 use std::time::{Duration, Instant};
 
 const PROJECT: &str = "agentspace";
@@ -426,6 +430,85 @@ fn a_killed_placements_leftovers_are_removed_first_and_the_lease_is_placed() {
     }
 }
 
+// ---- Steps 4 and 7 are not a release: they end nothing and log nothing -----------------------------------------
+
+/// What a killed placement leaves for the lease `id`: a stale key in its folder, and an alias file
+/// that carries its owner mark.
+fn plant_leftovers(fx: &Fx, id: &str) {
+    fs::create_dir_all(fx.lease_dir(id)).unwrap();
+    fs::write(fx.lease_dir(id).join("id_ed25519"), b"stale key").unwrap();
+    fs::create_dir_all(fx.alias_dir()).unwrap();
+    fs::write(
+        fx.alias_file_of(PROJECT, id),
+        format!("# agentspace lease {id}; stale\nHost whatever\n").as_bytes(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn removing_a_killed_placements_leftovers_ends_nothing_and_logs_nothing() {
+    // Step 4 (driver.md, "For which leases"): the removal is not a release. A stand-in client of the
+    // lease's alias, which no real lease that is `pending` can have, stays running, and the state
+    // folder has no `release.log`. The lease ID is drawn at random for this run.
+    let fx = world();
+    let id = random_uuid_v4();
+    let l = L::pending(&id, PROJECT);
+    fx.write_leases(std::slice::from_ref(&l));
+    plant_leftovers(&fx, &id);
+    let mut lab = Lab::new();
+    let client = lab.start("ssh.exe", &[&alias_for(PROJECT, &id)]);
+
+    let t0 = now();
+    assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
+    assert_placed(&fx, &l, t0, now(), true);
+    assert_ne!(
+        fs::read(fx.lease_dir(&id).join("id_ed25519")).unwrap(),
+        b"stale key",
+        "The leftovers were removed and a new key made"
+    );
+    assert!(lab.alive(client), "A removal of leftovers ended a client");
+    assert!(
+        !fx.ctx.state_dir.join("release.log").exists(),
+        "A removal of leftovers logged a release"
+    );
+}
+
+#[test]
+fn removing_the_files_of_a_lease_that_could_not_be_written_ends_nothing_and_logs_nothing() {
+    // Step 7: the `ready` record cannot be written, because the lease state file is held open
+    // without sharing a delete, so that its replacement fails after the contract's 5 seconds. The
+    // lease stays `pending` and its files go as release removes them, ending nothing and logging
+    // nothing. The lease ID is drawn at random for this run.
+    let fx = world();
+    let id = random_uuid_v4();
+    let l = L::pending(&id, PROJECT);
+    fx.write_leases(std::slice::from_ref(&l));
+    plant_leftovers(&fx, &id);
+    let mut lab = Lab::new();
+    let client = lab.start("ssh.exe", &[&alias_for(PROJECT, &id)]);
+    let before = fx.leases_bytes();
+    // FILE_SHARE_READ | FILE_SHARE_WRITE, and no FILE_SHARE_DELETE.
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2)
+        .open(fx.ctx.state_dir.join("leases.json"))
+        .expect("The test can hold the lease state file");
+
+    let got = outcome(&fx, place_pending(&fx.ctx, PROJECT));
+    drop(held);
+    assert_eq!(got, was(0, &[id.as_str()]), "The write failed");
+    assert_eq!(fx.leases_bytes(), before, "The lease stays pending");
+    assert!(
+        !fx.has_files_of(PROJECT, &id),
+        "Its files were removed, the folder included"
+    );
+    assert!(lab.alive(client), "The removal ended a client");
+    assert!(
+        !fx.ctx.state_dir.join("release.log").exists(),
+        "The removal logged a release"
+    );
+}
+
 // ---- Locks -----------------------------------------------------------------------------------------------------------
 
 #[test]
@@ -489,7 +572,7 @@ fn a_placed_lease_is_renewed_and_released_like_any_ready_lease() {
     fx.write_leases(std::slice::from_ref(&l));
     assert_eq!(outcome(&fx, place_pending(&fx.ctx, PROJECT)), was(1, &[]));
     let first = expires_of(&fx.lease_value(A));
-    let d = agentspace_driver_ec2::Ec2Driver::new();
+    let d = fx.driver();
     let lease = LeaseRef {
         id: A,
         project: PROJECT,
@@ -562,7 +645,7 @@ fn releasing_a_pending_lease_after_a_killed_placement_leaves_nothing() {
         );
         fx.write_leases(&[L::pending(A, project)]);
         let hosts_before = fx.hosts_bytes();
-        let d = agentspace_driver_ec2::Ec2Driver::new();
+        let d = fx.driver();
         let lease = LeaseRef { id: A, project };
         d.check_release(&fx.ctx, &lease).expect("Checked");
         d.release(&fx.ctx, &lease).expect("A release works");
@@ -592,7 +675,7 @@ fn releasing_a_pending_lease_after_a_killed_placement_leaves_nothing() {
 #[test]
 fn releasing_a_pending_lease_that_has_no_files_succeeds_and_makes_none() {
     let fx = Fx::with_ca();
-    let d = agentspace_driver_ec2::Ec2Driver::new();
+    let d = fx.driver();
     let lease = LeaseRef {
         id: A,
         project: PROJECT,
@@ -608,7 +691,7 @@ fn releasing_a_pending_lease_never_removes_a_foreign_alias_file() {
     let foreign = plant_foreign_alias(&fx, PROJECT, A);
     fs::create_dir_all(fx.lease_dir(A)).unwrap();
     fs::write(fx.lease_dir(A).join("id_ed25519"), b"a key").unwrap();
-    let d = agentspace_driver_ec2::Ec2Driver::new();
+    let d = fx.driver();
     let lease = LeaseRef {
         id: A,
         project: PROJECT,

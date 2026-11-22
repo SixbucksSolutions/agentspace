@@ -17,13 +17,6 @@ name = "agentspace-driver-ec2-stub"
 path = "tests/support/stub.rs"
 test = false
 
-[features]
-# TEST-ONLY. Makes the release's pause between its two walks reachable from the integration tests
-# (driver.md, "How it is checked"). No product build turns it on: the crate's own tests turn it on
-# through the dev-dependency on itself below, and the same pause exists under `cfg(test)` for the
-# crate's unit tests.
-test-pause = []
-
 [dependencies]
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-credential = { path = "../agentspace-credential" }
@@ -38,9 +31,6 @@ agentspace-connections = { path = "../agentspace-connections" }
 agentspace-state = { path = "../agentspace-state" }
 
 [dev-dependencies]
-# The crate itself with `test-pause` on, for the integration tests that start a client between the
-# release's two walks.
-agentspace-driver-ec2 = { path = ".", features = ["test-pause"] }
 # For the integration tests: throwaway folders, at the version agentspace-credential and
 # agentspace-state already use.
 tempfile = { version = "=3.23.0", default-features = false }

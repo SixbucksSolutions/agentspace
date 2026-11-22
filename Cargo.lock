@@ -85,7 +85,6 @@ dependencies = [
  "agentspace-credential",
  "agentspace-detach",
  "agentspace-driver-api",
- "agentspace-driver-ec2",
  "agentspace-hosts",
  "agentspace-operator-api",
  "agentspace-state",

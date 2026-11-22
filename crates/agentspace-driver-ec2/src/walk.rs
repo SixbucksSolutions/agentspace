@@ -4,17 +4,20 @@
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
-//! - **A walk MUST be one call of `agentspace_connections::end_alias_clients`**, and the line's
-//!   text MUST come from `agentspace_connections::line::release_text`, never re-derived here.
+//! - **A walk MUST be one call of `agentspace_connections::end_alias_clients`**, or of
+//!   `end_alias_clients_under` for a scoped walker, and the line's text MUST come from
+//!   `agentspace_connections::line::release_text`, never re-derived here.
 //! - **A walk MUST NOT fail the release**: its result is only counted, by `release_text`.
 //! - **A log that cannot be opened or written MUST NOT fail the release**, and nothing is written
 //!   to standard output or standard error.
 //! - **There is no pause between the walks here.** The test-only one is `ops::release_pausing`,
-//!   which exists only under `cfg(test)` or the `test-pause` feature.
+//!   which exists only under `cfg(test)`.
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Arc;
 
 use agentspace_connections::{Result as WalkResult, end_alias_clients, end_alias_clients_under};
 use agentspace_state::{format_time, now};
@@ -28,16 +31,35 @@ use agentspace_state::{format_time, now};
 #[derive(Clone, Default)]
 pub(crate) struct Walker {
     under: Option<PathBuf>,
+    /// TEST-ONLY, under `cfg(test)`: called at the start of each walk, so that a test sees what
+    /// the release had done by then without relying on timing.
+    #[cfg(test)]
+    observer: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Walker {
     /// A walker that ends only the clients whose executable is inside `dir`.
     pub(crate) fn under(dir: PathBuf) -> Walker {
-        Walker { under: Some(dir) }
+        Walker {
+            under: Some(dir),
+            #[cfg(test)]
+            observer: None,
+        }
+    }
+
+    /// TEST-ONLY. The same walker, calling `observer` at the start of each walk.
+    #[cfg(test)]
+    pub(crate) fn observed_by(mut self, observer: impl Fn() + Send + Sync + 'static) -> Walker {
+        self.observer = Some(Arc::new(observer));
+        self
     }
 
     /// One walk: one call of the connections crate.
     pub(crate) fn end(&self, alias: &str) -> WalkResult<usize> {
+        #[cfg(test)]
+        if let Some(observer) = &self.observer {
+            observer();
+        }
         match &self.under {
             Some(dir) => end_alias_clients_under(alias, dir),
             None => end_alias_clients(alias),

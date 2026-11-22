@@ -17,9 +17,7 @@
 //!
 //! **What these tests assume of the crate, beyond its public API:** a `[[bin]]` named
 //! `agentspace-driver-ec2-stub` in `Cargo.toml`, with `test = false` and its source at
-//! `tests/support/stub.rs`, and `Ec2Driver::release_pausing(ctx, lease, &mut dyn FnMut())`, the
-//! release with a test-only pause between the first walk and the alias file's deletion, which is
-//! there when the crate's `test-pause` feature is on (the integration tests turn it on).
+//! `tests/support/stub.rs`.
 #![cfg(windows)]
 
 #[path = "common/clients.rs"]
@@ -33,7 +31,7 @@ use agentspace_driver_ec2::Ec2Driver;
 use clients::*;
 use common::*;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// A lease for these tests: a throwaway home, a lease ID drawn at random, and the aliases.
 struct Rel {
@@ -112,14 +110,6 @@ impl Rel {
             .with_walk_under(&lab.dir)
             .release(&self.fx.ctx, &self.lease())
     }
-    /// The same, with `pause` called once between the first walk and the alias file's deletion.
-    /// `dir` is the lab's folder, which the closure needs the lab itself for.
-    fn release_paused(&self, dir: &Path, pause: &mut dyn FnMut()) -> Result<(), Failure> {
-        Ec2Driver::new()
-            .with_walk_under(dir)
-            .release_pausing(&self.fx.ctx, &self.lease(), pause)
-    }
-
     /// The log's lines, each of which MUST be one whole line of the form
     /// `<UTC time> lease=<id> <text>` with a time in `[since, until]` (to the second).
     /// Returns each line's text.
@@ -401,6 +391,9 @@ fn the_check_step_ends_nothing_and_logs_nothing() {
 }
 
 // ---- The order: the first walk, the alias's deletion, the second walk ----
+// The second walk itself, which only a pause between the walks can separate from the first, is
+// proved by the crate's own tests under `cfg(test)`, in src/release_tests.rs (driver.md, "How it is
+// checked").
 
 #[test]
 fn the_clients_are_ended_before_the_alias_file_is_deleted() {
@@ -424,126 +417,6 @@ fn the_clients_are_ended_before_the_alias_file_is_deleted() {
     );
     assert!(!rel.alias_file().exists());
     assert!(!rel.lease_dir().exists());
-}
-
-#[test]
-fn the_second_walk_ends_a_client_started_after_the_first_and_both_are_counted() {
-    let rel = Rel::ready(600);
-    let mut lab = Lab::new();
-    let dir = lab.dir.clone();
-    let log = lab.dir.join("later.log");
-    let first = lab.start("ssh.exe", &[&rel.alias]);
-    let other = lab.start("ssh.exe", &[&rel.other]);
-
-    let mut at_pause = Vec::new();
-    let mut later = None;
-    let since = unix_now();
-    let result = {
-        let mut pause = || {
-            // The first walk has ended its client, and the alias file is still there.
-            at_pause.push((lab.alive(first), rel.alias_file().is_file()));
-            // A client that comes back through the alias in the gap, and watches the alias file.
-            later = Some(lab.start_with(
-                "ssh.exe",
-                &[&rel.alias],
-                Opts {
-                    watch: Some((rel.alias_file(), log.clone())),
-                    ..Opts::default()
-                },
-            ));
-        };
-        rel.release_paused(&dir, &mut pause)
-    };
-    let until = unix_now();
-    result.expect("The release succeeds");
-
-    assert_eq!(
-        at_pause,
-        vec![(false, true)],
-        "The pause is called once, after the first walk ended its client and with the alias file there"
-    );
-    let later = later.expect("The pause was called");
-    assert!(!lab.alive(later), "The second walk did not end the client");
-    assert_eq!(lab.exit_code(later), Some(1));
-    assert!(lab.alive(other), "A client of another alias was ended");
-    assert_eq!(
-        lines_of(&log),
-        vec!["exists".to_string(), "missing".to_string()],
-        "The alias file MUST be deleted after the first walk and before the second"
-    );
-    assert!(!rel.alias_file().exists());
-    assert!(!rel.lease_dir().exists());
-    assert_eq!(
-        rel.one_text(since, until),
-        release_text(&ok(1), &ok(1)),
-        "One line counts both walks"
-    );
-}
-
-#[test]
-fn a_refused_release_never_calls_the_pause_and_ends_nothing() {
-    let rel = Rel::ready(600);
-    fs::write(
-        rel.alias_file(),
-        format!("# agentspace lease {OTHER_ID}; written by agentspace\nHost x\n"),
-    )
-    .unwrap();
-    let mut lab = Lab::new();
-    let dir = lab.dir.clone();
-    let client = lab.start("ssh.exe", &[&rel.alias]);
-    let mut calls = 0;
-    let result = rel.release_paused(&dir, &mut || calls += 1);
-    assert!(result.is_err());
-    assert_eq!(calls, 0, "No walk was made, so there was no gap");
-    assert!(lab.alive(client));
-    assert!(!rel.log_path().exists());
-}
-
-#[test]
-fn a_failed_alias_deletion_still_has_its_second_walk_and_its_line() {
-    // The alias file's folder is outside the home, and a deny rule put on it in the pause makes the
-    // deletion fail. A client that starts in the pause is ended by the second walk all the same.
-    let rel = Rel::ready_in(Fx::with_ca_ssh_elsewhere(), 600);
-    let mut lab = Lab::new();
-    let dir = lab.dir.clone();
-    let first = lab.start("ssh.exe", &[&rel.alias]);
-
-    let mut deny = None;
-    let mut later = None;
-    let since = unix_now();
-    let result = {
-        let mut pause = || {
-            later = Some(lab.start("ssh.exe", &[&rel.alias]));
-            deny = Some(Deny::new(&rel.fx.alias_dir(), "(OI)(CI)(DE,DC)"));
-        };
-        rel.release_paused(&dir, &mut pause)
-    };
-    let until = unix_now();
-    let f = result.expect_err("A deletion that fails fails the release");
-    rel.fx.assert_failure_plain(&f);
-    assert!(!f.leftovers.is_empty());
-
-    let later = later.expect("The pause was called");
-    assert!(!lab.alive(first));
-    assert!(
-        !lab.alive(later),
-        "The second walk runs when the deletion failed"
-    );
-    assert_eq!(rel.one_text(since, until), release_text(&ok(1), &ok(1)));
-    assert!(rel.alias_file().is_file());
-    assert!(rel.lease_dir().join("id_ed25519").is_file());
-
-    // A retried release ends any client that appeared since, and finishes.
-    deny.take().expect("The deny was made").lift();
-    let again = lab.start("ssh.exe", &[&rel.alias]);
-    rel.release(&lab).expect("The retried release succeeds");
-    assert!(!lab.alive(again));
-    assert!(!rel.alias_file().exists());
-    assert!(!rel.lease_dir().exists());
-    assert_eq!(
-        rel.log_texts(since, unix_now()),
-        vec![release_text(&ok(1), &ok(1)), release_text(&ok(1), &ok(0))]
-    );
 }
 
 #[test]

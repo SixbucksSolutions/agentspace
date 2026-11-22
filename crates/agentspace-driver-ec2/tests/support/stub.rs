@@ -24,7 +24,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio, exit};
-use std::thread::{sleep, yield_now};
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 const LIFETIME: Duration = Duration::from_secs(120);
@@ -90,7 +90,7 @@ fn main() {
                     exit(6);
                 }
             }
-            yield_now();
+            sleep(Duration::from_millis(5));
         }
         return;
     }

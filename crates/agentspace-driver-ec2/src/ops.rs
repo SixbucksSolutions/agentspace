@@ -378,11 +378,11 @@ pub fn release(ctx: &Context, lease: &LeaseRef, walk: &Walker) -> Result<(), Fai
     after_first_walk(ctx, lease, walk, held)
 }
 
-/// TEST-ONLY, and only under `cfg(test)` or the `test-pause` feature, which no product build
-/// enables. The same release, with `pause` called once between the first walk and the alias file's
+/// TEST-ONLY, and only under `cfg(test)`: no build of this crate that ships has it. The same
+/// release, with `pause` called once between the first walk and the alias file's
 /// deletion, so that a test can start a client in that gap and show that the second walk ends it
 /// (docs/driver.md, "How it is checked"). A release whose owner mark is refused never calls it.
-#[cfg(any(test, feature = "test-pause"))]
+#[cfg(test)]
 pub fn release_pausing(
     ctx: &Context,
     lease: &LeaseRef,

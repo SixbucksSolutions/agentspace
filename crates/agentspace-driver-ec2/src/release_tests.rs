@@ -20,9 +20,12 @@ use std::fs;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agentspace_alias::alias_name;
+#[cfg(windows)]
+use agentspace_connections::line::release_text;
 use agentspace_driver_api::{Context, LeaseRef};
 
 use crate::ops::{release, release_pausing, remove_files};
@@ -187,7 +190,7 @@ impl World {
         self.log()
             .lines()
             .map(|line| {
-                let at = line.find(&prefix).expect("a line names the lease");
+                let at = line.find(&prefix).expect("A line names the lease");
                 line[at + prefix.len()..].to_string()
             })
             .collect()
@@ -229,7 +232,7 @@ fn lines_have_the_form(world: &World) {
         // `YYYY-MM-DDTHH:MM:SSZ lease=<id> <text>`.
         assert!(
             b.len() > 21 + 6 + 36 + 2,
-            "a line has a time, a lease and a text"
+            "A line has a time, a lease and a text"
         );
         assert!(b[4] == b'-' && b[7] == b'-' && b[10] == b'T' && b[13] == b':' && b[16] == b':');
         assert_eq!(b[19], b'Z');
@@ -280,8 +283,11 @@ fn a_refused_alias_ends_nothing_logs_nothing_and_deletes_nothing() {
     let mut paused = 0;
     let mut client = w.start_client(&w.alias);
     assert!(release_pausing(&w.ctx, &w.lease(), &w.walker(), &mut || paused += 1).is_err());
-    assert!(!client.ended_within(Duration::from_millis(500)), "no walk");
-    assert_eq!(paused, 0, "no walk, so no pause");
+    assert!(
+        !client.ended_within(Duration::from_millis(500)),
+        "No walk was made"
+    );
+    assert_eq!(paused, 0, "No walk was made, so there was no pause");
     assert!(!w.log_path().exists());
     assert!(w.alias_path().exists());
     assert!(w.folder().join("id_ed25519").exists());
@@ -323,20 +329,61 @@ fn the_first_walk_ends_a_client_and_the_line_counts_it() {
 fn the_second_walk_ends_a_client_that_came_back_while_the_first_ran() {
     let w = World::new();
     w.place_files();
+    let mut first = w.start_client(&w.alias);
+    let mut other = w.start_client(&alias_name("swim", &random_uuid()));
     // In the pause, between the first walk and the alias file's deletion, a client starts, as the
     // desktop app's would by itself. The first walk is over, so only the second can end it.
+    let mut at_pause = Vec::new();
     let mut started: Vec<Stand> = Vec::new();
     release_pausing(&w.ctx, &w.lease(), &w.walker(), &mut || {
+        at_pause.push((
+            first.ended_within(Duration::from_secs(5)),
+            w.alias_path().exists(),
+        ));
         started.push(w.start_client(&w.alias));
     })
     .unwrap();
+    assert_eq!(
+        at_pause,
+        vec![(true, true)],
+        "The first walk ended its client before the pause, which was called once"
+    );
     assert_eq!(started.len(), 1);
     assert!(
         started[0].ended_within(Duration::from_secs(5)),
-        "the second walk ended it"
+        "The second walk ended it"
     );
-    // The first walk found none, the second ended one.
-    assert_eq!(w.texts(), vec!["Ended 1 of the lease's connections."]);
+    // Another lease's alias is left running.
+    assert!(!other.ended_within(Duration::from_millis(500)));
+    // One line counts both walks.
+    assert_eq!(w.texts(), vec![release_text(&Ok(1), &Ok(1))]);
+    assert_eq!(w.texts(), vec!["Ended 2 of the lease's connections."]);
+}
+
+#[test]
+fn the_alias_file_is_deleted_after_the_first_walk_and_before_the_second() {
+    // Seen from the walks themselves, with no timing assumed: what exists when each walk starts.
+    let w = World::new();
+    w.place_files();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (alias, folder, log) = (w.alias_path(), w.folder(), w.log_path());
+    let walker = w.walker().observed_by({
+        let seen = Arc::clone(&seen);
+        move || {
+            seen.lock()
+                .unwrap()
+                .push((alias.exists(), folder.exists(), log.exists()));
+        }
+    });
+    release(&w.ctx, &w.lease(), &walker).unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        // The first walk finds the alias file; the second runs after its deletion; the folder
+        // stays until both walks and the log's line are done.
+        vec![(true, true, false), (false, true, false)]
+    );
+    assert!(!w.folder().exists());
+    assert_eq!(w.texts().len(), 1);
 }
 
 #[test]
@@ -357,7 +404,7 @@ fn a_missing_state_folder_does_not_fail_the_release() {
     w.ctx.state_dir = w.ctx.state_dir.join("never-made");
     release(&w.ctx, &w.lease(), &w.walker()).unwrap();
     assert!(!w.folder().exists());
-    assert!(!w.ctx.state_dir.exists(), "the log makes no folder");
+    assert!(!w.ctx.state_dir.exists(), "The log makes no folder");
 }
 
 /// Holds a file open for read, sharing read only, so that it cannot be deleted while held.
@@ -392,6 +439,42 @@ fn an_alias_that_cannot_be_deleted_still_has_its_second_walk_and_its_line_and_ke
 
 #[cfg(windows)]
 #[test]
+fn a_failed_alias_deletion_still_has_its_second_walk_that_ends_a_client_from_the_pause() {
+    let w = World::new();
+    w.place_files();
+    let mut holder = None;
+    let mut started: Vec<Stand> = Vec::new();
+    // In the pause a client starts and the alias file is held open, so that its deletion fails.
+    let f = release_pausing(&w.ctx, &w.lease(), &w.walker(), &mut || {
+        started.push(w.start_client(&w.alias));
+        holder = Some(hold_open(&w.alias_path()));
+    })
+    .unwrap_err();
+    assert!(f.message.contains("could not be deleted"));
+    assert_eq!(started.len(), 1);
+    assert!(
+        started[0].ended_within(Duration::from_secs(5)),
+        "The second walk runs when the deletion failed"
+    );
+    assert_eq!(w.texts(), vec!["Ended 1 of the lease's connections."]);
+    assert!(w.alias_path().exists());
+    assert!(w.folder().join("id_ed25519").exists());
+    // A retried release finishes, and logs a line of its own.
+    drop(holder);
+    release(&w.ctx, &w.lease(), &w.walker()).unwrap();
+    assert!(!w.alias_path().exists());
+    assert!(!w.folder().exists());
+    assert_eq!(
+        w.texts(),
+        vec![
+            "Ended 1 of the lease's connections.".to_string(),
+            "Ended 0 of the lease's connections.".to_string()
+        ]
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn the_line_is_written_before_the_folder_is_deleted() {
     let w = World::new();
     w.place_files();
@@ -399,7 +482,7 @@ fn the_line_is_written_before_the_folder_is_deleted() {
     let holder = hold_open(&w.folder().join("id_ed25519"));
     let f = release(&w.ctx, &w.lease(), &w.walker()).unwrap_err();
     assert!(f.message.contains("could not be deleted"));
-    assert!(!w.alias_path().exists(), "the alias went first");
+    assert!(!w.alias_path().exists(), "The alias went first");
     assert_eq!(w.texts(), vec!["Ended 0 of the lease's connections."]);
     drop(holder);
     release(&w.ctx, &w.lease(), &w.walker()).unwrap();
@@ -415,6 +498,9 @@ fn removing_the_files_walks_for_no_client_and_logs_nothing() {
     remove_files(&w.ctx, &w.lease()).unwrap();
     assert!(!w.alias_path().exists());
     assert!(!w.folder().exists());
-    assert!(!client.ended_within(Duration::from_millis(500)), "no walk");
+    assert!(
+        !client.ended_within(Duration::from_millis(500)),
+        "No walk was made"
+    );
     assert!(!w.log_path().exists());
 }

@@ -83,29 +83,12 @@ impl Ec2Driver {
     /// `agentspace_connections::end_alias_clients_under`: a process is a client only when its
     /// executable is inside `dir`, besides every rule of driver.md's section. A test that releases
     /// a lease MUST use it, over a throwaway folder and with a lease ID drawn at random for the run
-    /// (driver.md, "How it is checked"). The product never calls it. The pause between the two
-    /// walks that the crate's own unit tests use exists only under `cfg(test)`, and is not
-    /// reachable through it.
+    /// (driver.md, "How it is checked"). The product never calls it.
     #[doc(hidden)]
     #[must_use]
     pub fn with_walk_under(mut self, dir: impl Into<std::path::PathBuf>) -> Ec2Driver {
         self.walk = Walker::under(dir.into());
         self
-    }
-
-    /// TEST-ONLY, and present only when the `test-pause` feature is on (see
-    /// [`release_pausing_between_walks`]). This driver's release, walks scoped by
-    /// [`Ec2Driver::with_walk_under`] when it was made with it, with `pause` called once between
-    /// the first walk and the alias file's deletion.
-    #[cfg(feature = "test-pause")]
-    #[doc(hidden)]
-    pub fn release_pausing(
-        &self,
-        ctx: &Context,
-        lease: &LeaseRef,
-        pause: &mut dyn FnMut(),
-    ) -> Result<(), Failure> {
-        ops::release_pausing(ctx, lease, &self.walk, pause)
     }
 }
 
@@ -177,21 +160,4 @@ pub struct PendingFailure {
 /// it removed. It starts nothing.
 pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Failure> {
     pending::place_pending(ctx, project)
-}
-
-/// TEST-ONLY, and present only when the `test-pause` feature is on, which no product build turns
-/// on (the crate's own tests turn it on through a dev-dependency on itself). The EC2 driver's
-/// release, with `pause` called once between the first walk and the alias file's deletion, so that
-/// a test starts a client in that gap and shows that the second walk ends it (driver.md, "How it
-/// is checked"). The release walks the laptop's whole process list as the product's does, so a
-/// test that calls it MUST use a lease ID drawn at random for the run. A release whose owner mark
-/// is refused never calls `pause`.
-#[cfg(feature = "test-pause")]
-#[doc(hidden)]
-pub fn release_pausing_between_walks(
-    ctx: &Context,
-    lease: &LeaseRef,
-    pause: &mut dyn FnMut(),
-) -> Result<(), Failure> {
-    ops::release_pausing(ctx, lease, &Walker::default(), pause)
 }
