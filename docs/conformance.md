@@ -551,6 +551,15 @@ reach no provisioning run**: the bullets below give the rules.
     first `create`, and before any file map it compares.** A check whose `get` would start a run
     for a seeded project (a `pending` lease of a project with a `ready` host, D48) MUST name a
     stand-in, or clear the registry first with `Clear-ConformanceHosts`.
+  - **From v0.08, every check that runs a keeper MUST set `AGENTSPACE_GUARD_CMD` to a stand-in in
+    its home, and SHOULD set `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD` to
+    tripwires as well** (architect, 2026-11-21, on v0.08-T01's pin P15; D56, D63). A keeper built
+    by E0.08-T03-S03 starts a guard at its first watching pass, and with the variable unset that
+    guard is the build's own `agentspace-operator.exe`. A throwaway home with no `hosts.json` still
+    names the box, and the home's lease file has no live lease, so a guard that reached a real AWS
+    CLI could stop Terry's real box. The keeper's crate tests MUST do the same before the start is
+    built. This binds `conformance/keeper/`, the architect's runs of it, and any dev lead's run of
+    `test-keeper.ps1` against a build.
   - **Every other `AGENTSPACE_*` variable the caller holds is removed**, so that a shell's own
     settings never reach the program.
   - **`PSModulePath` is removed.** A PowerShell 7 session's value carries PowerShell 7's own module

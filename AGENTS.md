@@ -239,6 +239,12 @@ its throwaway home with `Copy-Item`; only the program file was read, nothing was
 copy went with the home. Such a case SKIPs against the installed programs, as
 `test-unmet-host-alias-no-proxy-program.ps1`'s do.
 
+**Every check that runs a keeper MUST name a stand-in guard, `AGENTSPACE_GUARD_CMD`** (found by
+v0.08-T01's keeper drafter, 2026-11-21, before any such keeper was built). From E0.08-T03-S03 a
+watching keeper starts a guard, which can stop hosts; unset, the guard is the build's real
+operator, and a throwaway home's empty lease file makes every host look unexplained. conformance.md,
+The harness, gives the rule in full.
+
 **A test MUST NOT print, log or format the values of an environment it captured** (found in
 v0.06-T01, 2026-11-19). E0.06-T01-S04's harness recorded the whole environment a fake ssh saw and
 derived `Debug` on it, so one failing assertion printed every variable into a subagent's tool
