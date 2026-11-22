@@ -18,7 +18,7 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   (Q8 to Q10, closed 2026-11-21). On his word the same night, D63 laid v0.08 out as twenty-one
   stories in six turns, #0168 to #0188, under epic #0048. Its live record is
   [docs/handoff-v0.08.md](docs/handoff-v0.08.md), refreshed at each turn's close; T01 closed at
-  1:47am on 2026-11-22. The v0.06 handoff,
+  1:47am and T02 at 8:26am on 2026-11-22. The v0.06 handoff,
   [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stays for its pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with

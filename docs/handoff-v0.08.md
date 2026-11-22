@@ -21,26 +21,27 @@ through a mask. Then:
 
 ## Where things stand
 
-**As of 1:47am Pacific, 2026-11-22.**
+**As of 8:26am Pacific, 2026-11-22, at T02's close.**
 
 | What | State |
 |---|---|
 | v0.08 (#0048), host lifecycle and cost guard | In Progress. Laid out by D63 as twenty-one stories, #0168 to #0188, in six turns, on Terry's word the night of 2026-11-21 |
 | T01, the specs, the template and the host's files | Closed at 1:47am: #111 to #115 merged, #0168 to #0172 in Ready For Review |
-| T02, the foundations | Next. Its gate is met. Its dev lead starts on Terry's word |
-| `main`'s tests | 25 failures in 22 distinct help tests, on purpose: T01's specs changed help text ahead of its code. 18 are the operator's, which #0178 (T03-S02) fixes; 4 are the lease CLI's (7 failures, some in two targets), which #0180 (T03-S04) fixes. Every other test passes, 3,873 in the architect's run on the four specs merged |
+| T02, the foundations | Closed at 8:26am: #116 to #119 merged, #0173 to #0176 in Ready For Review |
+| T03, the programs | Next. Its gate is met. Its dev lead starts on Terry's word, and the architect commits the `agentspace-guard` stub first (D63) |
+| `main`'s tests | 25 failures in 22 distinct help tests, on purpose: T01's specs changed help text ahead of its code. 18 are the operator's, which #0178 (T03-S02) fixes; 4 are the lease CLI's (7 failures, some in two targets), which #0180 (T03-S04) fixes. Every other test passes: 4,293 in the architect's run at T02's close. A timing test that fails once under a parallel build is #0189's, and is rerun alone before it is a finding |
 | A build of `main` | MUST NOT be installed or used against a real host until #0181 (T03-S05) merges: #113's `install.sh` starts a patch run with nothing yet waiting for it, which on a fresh host can race the bootstrap's apt (#113's PR body) |
-| The hosts | Both stopped; T01 started no instance. The instance hours Terry approved for T05 and T06 (6, D62) are untouched |
+| The hosts | Both stopped; T01 and T02 started no instance. The instance hours Terry approved for T05 and T06 (6, D62) are untouched |
 | Terry's laptop | v0.07 installed, unchanged. `cfn-lint` 1.61.0 added as a uv tool, on Terry's word ("we can install new dependencies if needed", 2026-11-21) |
-| Swimcoach | `v0.08` reported; `v0.08-T01` stopped at 1:47am |
-| Sessions | T01's dev lead archived; no other session of the architect's is open |
+| Swimcoach | `v0.08` reported; `v0.08-T01` stopped at 1:47am and `v0.08-T02` at 8:26am |
+| Sessions | T01's dev lead archived; T02's archived at its close |
 
 ### v0.08 by turn
 
 | Turn | Stories | Closed | PRs | What it left |
 |---|---|---|---|---|
 | T01 | #0168 to #0172 | 1:47am, 2026-11-22 | #111 to #115 | operator.md's guard, `status -All`'s leases, `grow`'s refusal, sync's patch wait and the host's files; keeper.md's start of the guard; state.md's live leases, horizon, `guard.log`, `guard.lock` and `release.log`; driver.md's two-walk release; the alarm at 24 hours; README's "A host's life"; `box/system`'s idle check, install and test |
-| T02 | #0173 to #0176 | | | |
+| T02 | #0173 to #0176 | 8:26am, 2026-11-22 | #116 to #119 | `agentspace-state`'s `is_live`, `lease_end`, `live_count`, `last_lease_end` and `lease_horizon`; `agentspace-hosts`' guard lock; the new `agentspace-connections` (the two-walk end of an alias's clients and `release.log`'s text); `agentspace-box`'s `describe_hosts`, `stop_host` and `send_horizon`; the push's one-line stderr filter (#0167) |
 | T03 | #0177 to #0181 | | | |
 | T04 | #0182 to #0185 | | | |
 | T05 | #0186 | | | |
@@ -54,6 +55,8 @@ through a mask. Then:
 | Yes for up to 6 instance hours for T05 and T06 | 2026-11-21 | D62 |
 | As many subagents per story as can be used effectively | 2026-11-21 | D31, D63; architect.md, "Breaking an epic into stories", step 4 |
 | New dependencies MAY be installed when needed; the dev lead names each to the architect first | 2026-11-21 | This file |
+| Every story of a turn goes to In Progress when the turn starts, moved by the architect | 2026-11-22 | AGENTS.md, "The board"; architect.md, "Running a turn", step 6 |
+| The architect MUST be the only agent that moves a card | 2026-11-22 | AGENTS.md, "Roles and pull requests" |
 
 ## Rulings made during v0.08
 
@@ -75,6 +78,11 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | `/etc/environment`'s PATH keeps its value and appends the tool folders (P5); the horizon line is in Terry's time form (P6) | T01 | `box/system/install.sh`, `box/system/agentspace-idle-check` |
 | The alarm's 24 hours is a choice, not AWS's limit | T01 | D58's change |
 | Provisioning's sign-in line sends a person to take a lease first | T01 | operator.md, provision step 10; README |
+| Only a spared client's tree is spared; a client whose tree holds the release's process is spared; an ancestor ID no process holds ends the walk up (#0174 Q1, Q2) | T02 | driver.md, "Which processes are the alias's clients" (3bebf43) |
+| The guard's stop is `agentspace-box`'s own function; `down` keeps its call | T02 | #0175's card |
+| An ec2 answer with no `Reservations` fails the whole describe; the guard detects #0034's sign-in failure by its message, never by `CallerFailure::Same` | T02 | #0177's card |
+| A new variant that breaks another crate's exhaustive match MAY get one arm there, named in the PR for that crate's T03 owner | T02 | #117's PR body |
+| `agentspace-connections`' test seam only narrows the match, and a test shows a matching client outside its folder left alone | T02 | `crates/agentspace-connections` |
 
 ## Lessons from v0.08
 
@@ -86,4 +94,7 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | The dev lead launched a fix writer from the wrong worktree; it worked on a copy and wrote nothing there | Check the current worktree before every launch | This file |
 | A keeper's check would have started the build's real operator as a guard, able to stop a real host, caught by the keeper drafter before any code | Name a stand-in for every program a component under test can start | conformance.md, The harness |
 | Two of the architect's decisions carried wrong facts (D58's AWS limit, D61's exit code), both caught in T01's reviews | Read the source before stating an outside system's limit or a spec's convention in a decision | This file |
+| In T02, #0176's reviewer searched the cargo registry's `windows-sys` folder with `Select-String`, and its output printed the profile path, so the Windows user name, into that subagent's transcript. Nothing reached a file, the repository, a card or a PR; the same kind as v0.07-T05's unmasked error | A search under `%USERPROFILE%` prints its matches' text only, never their paths, or runs through the mask; every later turn's brief names this slip with v0.07's four | AGENTS.md, "A live run on Terry's real setup MUST mask what it reads before it prints it"; each dev lead's brief |
+| T02's four stories sat in Ready For Work for its first 35 minutes, so its milestone's clock did not run, until Terry noticed | The architect moves every story of a turn to In Progress as it starts the turn, and moves every card itself | AGENTS.md, "The board" and "Roles and pull requests"; architect.md, step 6 |
+| Four workspace runs at once on the laptop made three timing tests fail once each, each clean alone | Merge a turn's reviewed PRs locally and run the workspace once, not one run per PR beside the dev lead's | #0189; this file |
 | Two specs that link each other could not each merge after the other | Check every anchor on a local merge of all of them, then merge in an order that ends with none broken | This file; the architect's anchor check |
