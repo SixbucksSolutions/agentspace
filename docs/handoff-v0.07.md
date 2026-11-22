@@ -9,11 +9,12 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 ## Where things stand
 
-**As of 6:21pm Pacific, 2026-11-21.**
+**As of 8:52pm Pacific, 2026-11-21.**
 
 | What | State |
 |---|---|
-| v0.07 (#0047), a host per project | In Progress. Twenty-one stories in six turns (D55; #0162 added to T02); T01 to T05 closed, T06 (#0160) waits on Terry's word |
+| v0.07 (#0047), a host per project | In Ready For Review, following its last story. All twenty-one stories are merged (D55; #0162 added to T02), and all six turns are closed. The release closes on Terry's word ([architect.md, Closing a release](architect.md#closing-a-release)) |
+| The done-when | Met in T06 ([runs/e0.07-t06-s01.md](runs/e0.07-t06-s01.md)): Terry signed in Claude Code, Codex and gh on `agentspace-host-agentspace` by README's procedure and cloned the checkout; an agent in a desktop-app session on an agentspace lease created, moved and archived #0165 on the agentspace board at 8:34pm, through the host's `localswim`; the keeper held the board on both hosts, with a swimcoach lease on the box beside it |
 | The live checks | T05 ran D53's checks but the sign-ins on Terry's laptop and AWS ([runs/e0.07-t05-s01.md](runs/e0.07-t05-s01.md)): an agentspace lease went `pending` to `ready` on the new host `agentspace-host-agentspace`, its alias reached it, a swimcoach lease's alias matched v0.06's form and reached the box, the keeper held both hosts at once, and the `agentbox` change set was empty. Three findings: the install's keeper race (README fixed), #0163 and #0164 |
 | The conformance suite | Covers v0.07 from T04: the lease CLI's `pending` and `no_capacity` and its provisioning-run tripwire, the operator and ProxyCommand per host, the keeper per host (H1 to H18) and the state schemas' samples; 73 files and the deadline case pass against `main` 39363d2's build, 2,640 results ([runs/e0.07-t04-s04.md](runs/e0.07-t04-s04.md)) |
 | The specs | state.md, operator.md, driver.md, lease-api.md and keeper.md carry v0.07's design, from T01; every link between them resolves on `main` (1,954) |
@@ -21,9 +22,10 @@ RFC 2119 keywords; the capitals are load-bearing.
 | The foundation crates | `agentspace-hosts` and `agentspace-detach` are new; `agentspace-alias`, `-credential`, `-box`, `-push` and `-launch` serve hosts; the token push reads localswim's `bot.json` (#0162), from T02 |
 | The programs | The driver and lease CLI answer `pending` and `no_capacity` and start a detached provisioning run; the operator has `-Host`, `-All`, `bootstrap` and `provision`; deploy, sync, bootstrap and provision work per host; the ProxyCommand finds each lease's host; the keeper holds one holder per host, from T03 |
 | `main`'s tests | Fully green since #104 (16705f4): 3,887 passed, 0 failed, 58 ignored helpers, on the architect's run, and again in T04's run at 39363d2 (T04 added no crate test) |
-| The hosts | Both stopped, confirmed by the architect's `status -All` at 6:08pm: the box (`agentbox`), `m9g.xlarge`, 20 GiB; and `agentspace-host-agentspace`, `m9g.xlarge`, 8 GiB, its root filesystem 66% used, its volume not changeable until about 12:05am on 2026-11-22 (#0164). **The new host has never run its patch unit** (#0163): its first patch run comes at its next boot, T06's first start. Each ran about 40 minutes in T05 |
-| Leases | None ready; 23 released |
-| Swimcoach | Milestone `v0.07` only; `v0.07-T01` stopped at 4:22pm, `v0.07-T02` at 7:04pm, `v0.07-T03` at 11:48am, `v0.07-T04` at 5:04pm and `v0.07-T05` at 6:21pm on 2026-11-21 |
+| The hosts | Both stopped, confirmed by the architect's `status -All` at 8:41pm: the box (`agentbox`), `m9g.xlarge`, 20 GiB; and `agentspace-host-agentspace`, `m9g.xlarge`, 8 GiB, its root filesystem 66% used at T05, its volume not changeable until about 12:05am on 2026-11-22 (#0164). The new host's first patch run ran at its boot in T06 (8:17pm). Each ran about 40 minutes in T05 and about 20 in T06 |
+| The new host's sign-ins | Claude Code, Codex and gh are signed in on `agentspace-host-agentspace`, and `~/agentspace` is cloned; rustc, cargo and codex are on an interactive shell's `PATH` only (#0166) |
+| Leases | None ready; 25 released |
+| Swimcoach | Milestone `v0.07` only; `v0.07-T01` stopped at 4:22pm, `v0.07-T02` at 7:04pm, `v0.07-T03` at 11:48am, `v0.07-T04` at 5:04pm, `v0.07-T05` at 6:21pm and `v0.07-T06` at 8:52pm on 2026-11-21 |
 | Laptop files | T05 changed what its card names: the v0.07 install in `%USERPROFILE%\.agentspace\bin` (two `.old-` files left for a later install to remove), `projects.json` listing `agentspace`, `hosts.json` with both hosts, and the new host's operator alias and key. The keeper runs the v0.07 build. Nothing in Terry's ssh config, task or `PATH` changed. Disclosed slips, none written: in T04 a listing of `bin` and a copy of the installed operator; in T05 a listing of `hosts\agentspace` and the Windows user name in a dev lead's transcript |
 
 ### v0.07 by turn
@@ -35,6 +37,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | T03, the programs | 11:48am, 2026-11-21 | #100 to #104 | The programs above; the architect's pins 7df955a, ce0967f and e502782; operator.md and state.md corrected six times from the stories' findings |
 | T04, conformance | 5:04pm, 2026-11-21 | #105 to #108 | The cases above, each PR run by the architect on Windows against its own build and shown failing against the installed v0.06; the whole-suite record; no build defect found. operator.md and keeper.md corrected five times from the stories' questions |
 | T05, the first new host, live | 6:21pm, 2026-11-21 | #109 | The install, `projects.json`, the new host, README's "Signing in on a new host" and its install step's keeper race; #0027's `deploy` and `sync` from Git Bash; defects #0163 and #0164 |
+| T06, the done-when | 8:52pm, 2026-11-21; the dev lead's session not yet archived (the app kept it, open on Terry's screen) | #110 | Terry's sign-ins and the checkout on the new host, the agent's card #0165, the keeper's lines for both hosts, and cards #0166 and #0167 from its observations. The Claude app's restart at about 8:12pm stopped every background task and the localswim service; Terry restarted the service |
 
 ## Rulings made during v0.07
 
@@ -89,11 +92,12 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| v0.07-T06 (#0160): Terry's sign-ins on agentspace's host, and an agent working an agentspace card there | Terry's word, then the architect; the yes for instance hours (D53) was T05's, asked again for T06 | D55 |
-| Before T06: rustc and cargo are not on a non-login ssh shell's `PATH` on the new host; check what the agent's shell gets | The architect, in T06's sweep | #0159's record, the diagnosis read |
+| Closing v0.07: Terry approves the epic #0047 into Completed; then the release milestone goes, `swimcoach stop`, the roadmap's row, this handoff made final, and AGENTS.md's "Where it stands" | Terry, then the architect | [architect.md, Closing a release](architect.md#closing-a-release) |
+| #0166: rustc, cargo and codex are on an interactive shell's `PATH` only on a new host | A later release, carded in Backlog | #0166 |
+| #0167: a connection that starts a host prints "The host is ready." twice, and pushes though the stamp gives no start as a reason | A later release, carded in Backlog | #0167 |
 | #0137 and #0138, fixed and merged, now in Ready For Work by Terry's move; the board refuses Bot's move from there to Ready For Review | Terry moves each to In Progress (or past it); the architect moves it to Ready For Review | #0137, #0138 |
 | #0163: a new host's first provisioning run fails at sync, and the host is used before its first patch run | A later release, carded in Backlog | #0163 |
 | #0164: `grow -GiB 0` is not refused | A later release, carded in Backlog | #0164 |
 | C13's variant "hosts.json valid but no box record" failed once in a full run ("changed"), then 265 runs passed; its failure now names the file | Whoever sees it fail again | #0155's PR, #107 |
 | The localswim checkout's path is fixed at `C:\Projects\localswim`; a seam for it would let sync's build cases run elsewhere | A later card, if wanted | operator.md, sync step 7 |
-| #0027 from Git Bash | E0.07-T05-S01 | #0159 |
+| #0027 from Git Bash: `deploy` and `sync` passed in T05; `grow`'s refusal case met #0164 instead | Terry, on #0027's card | #0159's record, step 6 |
