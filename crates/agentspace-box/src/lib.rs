@@ -33,6 +33,14 @@
 //! - [`instance_id_from_stack`]: the given stack's `InstanceId` output, through
 //!   `cloudformation describe-stacks`, or the "no InstanceId output" failure naming that stack.
 //!
+//! The guard's calls (operator.md, guard):
+//! - [`describe_hosts`]: one `ec2 describe-instances` with a filter naming every host's instance
+//!   ID, read into a [`Described`] per ID, in the order given: [`DescribedState::Unknown`],
+//!   `Running` with its launch time, `Other`, or `Unexpected` for a member missing.
+//! - [`stop_host`]: one `ec2 stop-instances`, asking EC2 to stop the instance and not waiting.
+//! - [`send_horizon`]: one `ssm send-command`, with the comment [`HORIZON_COMMENT`], that writes
+//!   the lease horizon to `/run/agentspace/lease-horizon` on the host.
+//!
 //! The seams and helpers:
 //! - [`Clock`], with [`SystemClock`] the real one.
 //! - [`InstanceIdCache`] and [`CacheRead`]: the cache file, as the program reads and writes it.
@@ -45,6 +53,7 @@ mod answer;
 mod cache;
 mod clock;
 mod failure;
+mod guard;
 mod launch_time;
 mod wait;
 
@@ -54,6 +63,9 @@ pub use cache::{
 };
 pub use clock::{Clock, SystemClock};
 pub use failure::failure_line;
+pub use guard::{
+    Described, DescribedState, HORIZON_COMMENT, describe_hosts, send_horizon, stop_host,
+};
 pub use wait::{PATCH_COMMENT, PATCH_QUESTION, start_and_wait_for};
 
 use agentspace_operator_api::{Aws, Failure, Say};
