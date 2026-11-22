@@ -37,7 +37,9 @@ pub const HOST_NOT_FOR_GUARD: &str = "agentspace: -Host does not apply to guard.
 /// What `agentspace-guard`'s run returns until E0.08-T03-S01 (#0177) builds it: the architect's
 /// stub (`crates/agentspace-guard/src/lib.rs`). **The merge of #0177 MUST change this constant
 /// and [`assert_reaches_guard`]**, which stand for "a command line that passes every check reaches
-/// the guard's run".
+/// the guard's run". **This constant is the one place in the operator's tests that pins the stub's
+/// text** (`guard_command_line.rs` and `assert_reaches_command` reach it through
+/// [`assert_reaches_guard`]); `guard_dispatch.rs` drives a stand-in run and never the stub.
 pub const GUARD_NOT_BUILT: &str = "agentspace: guard is not built yet.";
 pub const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alone.";
 pub const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";

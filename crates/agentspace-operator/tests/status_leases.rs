@@ -4,9 +4,9 @@
 //! against the rig's stand-ins, with a lease state file written into the throwaway home and its
 //! times set relative to the real clock, since the program has no clock seam.
 //!
-//! The `Guard` line's time is in the laptop's zone, read when it is printed. A case reads the same
-//! zone from the system the program reads it from (the offset of `TimeZoneInfo.Local` at the
-//! printed instant, asked of Windows PowerShell), and never assumes one.
+//! The `Guard` line's time is in the laptop's zone, read when it is printed. A case makes the
+//! expected text with `agentspace_zone::local_clock_time` for the instant it expects, and never
+//! assumes a zone.
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 #![cfg(windows)]
@@ -17,40 +17,19 @@ mod rig;
 use std::fs;
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use rig::*;
 
 // ---------------------------------------------------------------------------------------------
-// The laptop's zone, read from the same system, and the 12-hour form
+// The laptop's zone, read by the one formatter, and the 12-hour form
 // ---------------------------------------------------------------------------------------------
 
-/// The laptop's offset from UTC at the instant `unix`, in seconds east, as the system gives it.
-fn local_offset(unix: i64) -> i64 {
-    let root = std::env::var_os("SystemRoot").expect("SystemRoot is set");
-    let powershell = PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let script = format!(
-        "[int][TimeZoneInfo]::Local.GetUtcOffset([DateTimeOffset]::FromUnixTimeSeconds({unix})).TotalSeconds"
-    );
-    let out = Command::new(powershell)
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .stdin(Stdio::null())
-        .output()
-        .expect("Windows PowerShell starts, to read the laptop's zone");
-    assert!(out.status.success(), "reading the laptop's zone failed");
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .expect("an offset in seconds")
-}
-
-/// `<h:mm><am|pm>` for the whole-minute instant `unix`, in the laptop's zone.
+/// `<h:mm><am|pm>` for the instant `unix`, in the laptop's zone, made by
+/// `agentspace_zone::local_clock_time`, the one formatter of the guard's stop time (D63). The
+/// 12-hour form, the rounding and the daylight saving rule are tested in `agentspace-zone`; a case
+/// here shows that the line is made from the right instant.
 fn clock_text(unix: i64) -> String {
-    let local = (unix + local_offset(unix)).rem_euclid(86_400);
-    let (hour, minute) = (local / 3600, local % 3600 / 60);
-    let hour12 = if hour % 12 == 0 { 12 } else { hour % 12 };
-    let half = if hour < 12 { "am" } else { "pm" };
-    format!("{hour12}:{minute:02}{half}")
+    agentspace_zone::local_clock_time(unix).expect("the system gives the laptop's zone")
 }
 
 /// The next whole minute at or after `unix`: a time with seconds rounds up.

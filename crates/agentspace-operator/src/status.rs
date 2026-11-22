@@ -113,20 +113,20 @@ impl LeaseView {
     /// host with none live, `Guard     unexplained; stops at <h:mm><am|pm>`.
     ///
     /// `launch_time` is the instance's `LaunchTime` in Unix seconds, which a running host with no
-    /// live lease needs and no other host is given. `offset` gives the laptop's offset from UTC,
-    /// in seconds east, at an instant.
+    /// live lease needs and no other host is given. `clock_time` gives the text of the stop time,
+    /// which is `agentspace_zone`'s alone (D63): this module never converts a time.
     pub(crate) fn lines(
         &self,
         project: &str,
         state: &str,
         launch_time: Option<i64>,
-        offset: &dyn Fn(i64) -> i32,
+        clock_time: &dyn Fn(i64) -> String,
     ) -> Vec<String> {
         let mut lines = vec![self.leases_line(project)];
         if self.needs_launch_time(project, state)
             && let Some(launch) = launch_time
         {
-            lines.push(guard_line(self.stop_time(project, launch), offset));
+            lines.push(guard_line(&clock_time(self.stop_time(project, launch))));
         }
         lines
     }
@@ -150,31 +150,10 @@ impl LeaseView {
     }
 }
 
-/// `Guard     unexplained; stops at <h:mm><am|pm>`, the label padded to 10 characters.
-fn guard_line(shown: i64, offset: &dyn Fn(i64) -> i32) -> String {
-    format!(
-        "Guard     unexplained; stops at {}",
-        clock_text(shown, offset(shown))
-    )
-}
-
-/// `<h:mm><am|pm>` for the instant `unix`, in the zone whose offset from UTC at that instant is
-/// `offset_seconds`: the hour on a 12-hour clock, `1` to `12` with no leading zero, `12` for the
-/// hours after midnight and after noon; the minute as two digits; then `am` before noon and `pm`
-/// from noon, lowercase, no space. **A time with seconds is rounded up to the next whole minute**,
-/// so the text never names a minute before the guard can stop the host (operator.md, status -All).
-pub(crate) fn clock_text(unix: i64, offset_seconds: i32) -> String {
-    let local = unix.saturating_add(i64::from(offset_seconds));
-    // Whole minutes since the local epoch, rounded up, then the minute of the local day.
-    let minutes = (local.saturating_add(59)).div_euclid(60);
-    let minute_of_day = minutes.rem_euclid(24 * 60);
-    let (hour, minute) = (minute_of_day / 60, minute_of_day % 60);
-    let twelve = match hour % 12 {
-        0 => 12,
-        h => h,
-    };
-    let suffix = if hour < 12 { "am" } else { "pm" };
-    format!("{twelve}:{minute:02}{suffix}")
+/// `Guard     unexplained; stops at <h:mm><am|pm>`, the label padded to 10 characters, over the
+/// stop time's text, which `agentspace_zone::local_clock_time` makes (rounding included).
+fn guard_line(stop_text: &str) -> String {
+    format!("Guard     unexplained; stops at {stop_text}")
 }
 
 /// An instance's `LaunchTime` as Unix seconds, in UTC, a fraction of a second truncated, or `None`
@@ -238,6 +217,7 @@ pub(crate) fn parse_launch_time(text: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use agentspace_state::format_time;
+    use agentspace_zone::clock_time_at;
 
     use super::*;
 
@@ -266,68 +246,10 @@ mod tests {
         }
     }
 
-    /// Pacific standard time, in seconds east of UTC.
-    fn pacific(_: i64) -> i32 {
-        -8 * 3600
-    }
-
-    // ---- the 12-hour form (operator.md, coverage table: crate test, E0.08-T03-S02) ----
-
-    #[test]
-    fn the_twelve_hour_form_at_every_hour() {
-        let cases = [
-            ("2026-11-22T00:05:00Z", "12:05am"),
-            ("2026-11-22T01:00:00Z", "1:00am"),
-            ("2026-11-22T05:19:00Z", "5:19am"),
-            ("2026-11-22T11:59:00Z", "11:59am"),
-            ("2026-11-22T12:00:00Z", "12:00pm"),
-            ("2026-11-22T12:34:00Z", "12:34pm"),
-            ("2026-11-22T13:07:00Z", "1:07pm"),
-            ("2026-11-22T23:59:00Z", "11:59pm"),
-        ];
-        for (utc, expected) in cases {
-            assert_eq!(clock_text(at(utc), 0), expected, "{utc}");
-        }
-    }
-
-    #[test]
-    fn seconds_round_up_to_the_next_whole_minute() {
-        let cases = [
-            ("2026-11-22T12:34:00Z", "12:34pm"),
-            ("2026-11-22T12:34:01Z", "12:35pm"),
-            ("2026-11-22T12:34:59Z", "12:35pm"),
-            ("2026-11-22T11:59:30Z", "12:00pm"),
-            ("2026-11-22T23:59:01Z", "12:00am"),
-            ("2026-11-22T00:00:01Z", "12:01am"),
-        ];
-        for (utc, expected) in cases {
-            assert_eq!(clock_text(at(utc), 0), expected, "{utc}");
-        }
-    }
-
-    #[test]
-    fn the_offset_moves_the_time_and_may_change_the_date() {
-        assert_eq!(clock_text(at("2026-11-22T20:34:00Z"), -8 * 3600), "12:34pm");
-        assert_eq!(clock_text(at("2026-11-22T05:30:00Z"), -8 * 3600), "9:30pm");
-        assert_eq!(
-            clock_text(at("2026-11-22T23:30:00Z"), 5 * 3600 + 1800),
-            "5:00am"
-        );
-        assert_eq!(clock_text(at("2026-11-22T13:19:00Z"), -8 * 3600), "5:19am");
-    }
-
-    #[test]
-    fn a_date_on_each_side_of_a_daylight_saving_change() {
-        // The United States' change of 2026-03-08: 2:00am Pacific standard time is 3:00am daylight.
-        let before = at("2026-03-08T09:59:00Z");
-        let after = at("2026-03-08T10:01:00Z");
-        assert_eq!(clock_text(before, -8 * 3600), "1:59am");
-        assert_eq!(clock_text(after, -7 * 3600), "3:01am");
-        // And its change of 2026-11-01: 2:00am daylight time is 1:00am standard.
-        let before = at("2026-11-01T08:59:00Z");
-        let after = at("2026-11-01T09:01:00Z");
-        assert_eq!(clock_text(before, -7 * 3600), "1:59am");
-        assert_eq!(clock_text(after, -8 * 3600), "1:01am");
+    /// The stop time's text in Pacific standard time, which the seam gives in a test. The 12-hour
+    /// form, the rounding and the zone's rules are `agentspace_zone`'s, tested there.
+    fn pacific(unix: i64) -> String {
+        clock_time_at(unix, -8 * 3600)
     }
 
     // ---- the Leases line ----
@@ -490,20 +412,26 @@ mod tests {
     }
 
     #[test]
-    fn the_offset_is_the_one_at_the_printed_instant() {
-        // A zone whose offset changes between the report and the stop time: the stop time uses
-        // the offset at the stop time.
-        let view = LeaseView::new(Vec::new(), at("2026-03-08T09:50:00Z"));
-        let zone = |unix: i64| {
-            if unix < at("2026-03-08T10:00:00Z") {
-                -8 * 3600
-            } else {
-                -7 * 3600
-            }
+    fn the_text_is_asked_for_the_stop_time_and_for_no_other_instant() {
+        // The text is made from the stop time itself, the later of the stop time and the report's
+        // time, so the one formatter rounds it and applies the zone's rule at that instant.
+        let view = LeaseView::new(Vec::new(), NOW);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let ask = |unix: i64| {
+            asked.borrow_mut().push(unix);
+            "text".to_string()
         };
-        // Launched at the report's time, it stops at 10:05:00Z, which is 3:05am daylight time.
-        let lines = view.lines("p", "running", Some(at("2026-03-08T09:50:00Z")), &zone);
-        assert_eq!(lines[1], "Guard     unexplained; stops at 3:05am");
+        let lines = view.lines("p", "running", Some(NOW - 300), &ask);
+        assert_eq!(lines[1], "Guard     unexplained; stops at text");
+        assert_eq!(asked.into_inner(), vec![NOW - 300 + GRACE_SECONDS]);
+        // No `Guard` line, so no text is asked for.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let ask = |unix: i64| {
+            asked.borrow_mut().push(unix);
+            String::new()
+        };
+        view.lines("p", "stopped", None, &ask);
+        assert!(asked.into_inner().is_empty());
     }
 
     #[test]

@@ -4,12 +4,15 @@
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
 //! The operator resolves, once, what the run reads beside the context: the state folder and the
-//! run's time, the UTC clock to the whole second. It calls the run with the pinned [`Say`], which
-//! is `-Quiet`'s own (a quiet [`Say`] suppresses the closing `Hosts:` line the run prints through
-//! it), and the pinned [`Aws`]. It prints nothing but the count line of a run in which hosts'
-//! parts failed, and exits by the report: 0 when no part failed, a lock another program holds
-//! included, and 1 otherwise. A failure that ends the run is printed by the caller of
-//! [`guard`], as every command's failure is.
+//! run's time, the UTC clock to the whole second. It calls the run with a [`Say`] built here
+//! ([`GuardSay`]): its `progress` is `-Quiet`'s own (a quiet [`Say`] suppresses the closing
+//! `Hosts:` line the run prints through it), and its `warning` is **the guard's failure channel**,
+//! which prints whatever `-Quiet` says, since every failure always prints (operator.md, guard,
+//! Its streams, exit codes and help; architect, 2026-11-22, for v0.08-T03). The run gets the
+//! pinned [`Aws`] too. The operator prints nothing but the count line of a run in which hosts'
+//! parts failed, and exits by the report: 0 when no part failed and no log line was dropped, a
+//! lock another program holds included, and 1 otherwise. A failure that ends the run is printed
+//! by the caller of [`guard`], as every command's failure is.
 //!
 //! **The seam:** [`Reach::guard`](crate::Reach::guard) is the run, and its default is [`agentspace_guard::run`]; a test's
 //! [`Reach`](crate::Reach) overrides it with a stand-in and drives [`dispatch`](crate::dispatch) with a
@@ -21,12 +24,55 @@ use std::time::UNIX_EPOCH;
 
 use agentspace_box::Clock;
 use agentspace_guard::{Input, Report};
-use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Say};
+use agentspace_operator_api::{Aws, CallerFailure, CallerLine, Context, Failure, Mode, Say};
 
-use crate::Parts;
+use crate::{Parts, Report as Printed};
 
 /// A guard run: [`agentspace_guard::run`]'s signature, which a test's stand-in has too.
 pub type GuardRun<'a> = dyn Fn(&Input, &dyn Say, &dyn Aws) -> Result<Report, Failure> + 'a;
+
+/// The [`Say`] the guard's run is given. `progress` goes to the command's own [`Say`], so `-Quiet`
+/// suppresses it. `warning`, which the run uses for a host's failure and for a dropped log line,
+/// goes to the command's [`Printed`] channel, which `-Quiet` never suppresses (operator.md, guard,
+/// Its streams, exit codes and help). The command's own [`Say`] is not changed, nor is
+/// `agentspace-operator-api`'s.
+pub struct GuardSay<'a> {
+    say: &'a dyn Say,
+    report: &'a dyn Printed,
+}
+
+impl<'a> GuardSay<'a> {
+    /// The guard's [`Say`] over a command's `say` and its report channel.
+    pub fn new(say: &'a dyn Say, report: &'a dyn Printed) -> GuardSay<'a> {
+        GuardSay { say, report }
+    }
+}
+
+impl Say for GuardSay<'_> {
+    fn mode(&self) -> Mode {
+        self.say.mode()
+    }
+    fn progress(&self, person: &str, caller: Option<CallerLine>) {
+        self.say.progress(person, caller);
+    }
+    fn warning(&self, person: &str) {
+        self.report.report(person);
+    }
+    fn detail(&self, text: &str) {
+        self.say.detail(text);
+    }
+}
+
+/// The failure that exits 1 and prints nothing: [`Printer::failure`](crate::Printer::failure)
+/// prints no line for an empty message. A run in which a log line was dropped and no host failed
+/// has already said why through `warning`, so nothing more is printed (operator.md, guard, Its
+/// log).
+fn silent_failure() -> Failure {
+    Failure {
+        message: String::new(),
+        caller: CallerFailure::Same,
+    }
+}
 
 /// The UTC clock's reading, in Unix seconds, to the whole second (operator.md, guard, step 3). A
 /// clock set before 1970 reads 0.
@@ -39,10 +85,13 @@ pub fn utc_seconds(clock: &dyn Clock) -> i64 {
 
 /// `guard`, over `run`: one run at `now`, then the operator's closing (operator.md, guard, step 8).
 ///
-/// - `Ok(report)` with no failed host, `guard.lock` held by another program included: `Ok(())`,
-///   and nothing more is printed.
-/// - `Ok(report)` with failed hosts: fails with `agentspace: <n> of <m> hosts failed.`, `-All`'s
-///   line, `<m>` being the registry's records, which the caller prints and exits 1 for.
+/// - `Ok(report)` with no failed host and no dropped log line, `guard.lock` held by another program
+///   included: `Ok(())`, and nothing more is printed.
+/// - `Ok(report)` with failed hosts, whether or not a log line was dropped: fails with
+///   `agentspace: <n> of <m> hosts failed.`, `-All`'s line, `<m>` being the registry's records,
+///   which the caller prints once and exits 1 for.
+/// - `Ok(report)` with a dropped log line and no failed host: fails with a failure that prints
+///   nothing, since the run said why through `warning`, and the caller exits 1 for it.
 /// - `Err(failure)`: that failure, unchanged.
 pub fn guard_with(
     run: &GuardRun<'_>,
@@ -70,21 +119,26 @@ pub fn guard_with(
             caller: CallerFailure::Same,
         });
     }
+    if report.log_dropped {
+        return Err(silent_failure());
+    }
     Ok(())
 }
 
-/// `guard` as the dispatch runs it: [`guard_with`] over [`Reach::guard`](crate::Reach::guard) (the real run unless a
-/// stand-in overrides it), the state folder [`Reach::lease_state_dir`](crate::Reach::lease_state_dir) gives, and the clock's
-/// reading read once.
+/// `guard` as the dispatch runs it: [`guard_with`] over [`Reach::guard`](crate::Reach::guard) (the
+/// real run unless a stand-in overrides it), the state folder
+/// [`Reach::lease_state_dir`](crate::Reach::lease_state_dir) gives, the clock's reading read once,
+/// and the [`GuardSay`] over the command's `say` and report channel.
 pub fn guard(parts: &Parts) -> Result<(), Failure> {
     let state_dir = parts.reach.lease_state_dir(parts.ctx);
     let now = utc_seconds(parts.clock);
+    let say = GuardSay::new(parts.say, parts.report);
     guard_with(
         &|input, say, aws| parts.reach.guard(input, say, aws),
         parts.ctx,
         &state_dir,
         now,
-        parts.say,
+        &say,
         parts.aws,
     )
 }
@@ -185,6 +239,69 @@ mod tests {
         let failure = guard_with(&failed, &context, Path::new("s"), 0, &Mute, &NoAws).unwrap_err();
         assert_eq!(failure.message, "agentspace: 1 of 4 hosts failed.");
         assert_eq!(failure.caller, CallerFailure::Same);
+    }
+
+    #[test]
+    fn a_dropped_log_line_is_exit_1_with_the_count_line_only_when_hosts_failed() {
+        let context = ctx();
+        let run = |report: Report| move |_: &Input, _: &dyn Say, _: &dyn Aws| Ok(report.clone());
+        let go =
+            |report: Report| guard_with(&run(report), &context, Path::new("s"), 0, &Mute, &NoAws);
+        // Neither: exit 0. The lock held, with nothing else: exit 0.
+        assert_eq!(go(Report::default()), Ok(()));
+        let held = Report {
+            lock_held: true,
+            ..Report::default()
+        };
+        assert_eq!(go(held), Ok(()));
+        // Failed only: the count line, once.
+        let failed = Report {
+            hosts: 5,
+            failed: 2,
+            ..Report::default()
+        };
+        assert_eq!(
+            go(failed).unwrap_err().message,
+            "agentspace: 2 of 5 hosts failed."
+        );
+        // A dropped line only: exit 1, and no line of the operator's own.
+        let dropped = Report {
+            hosts: 5,
+            log_dropped: true,
+            ..Report::default()
+        };
+        let failure = go(dropped).unwrap_err();
+        assert_eq!(failure.message, "", "Nothing more is printed");
+        assert_eq!(failure.caller, CallerFailure::Same);
+        // Both: the count line, once, and exit 1.
+        let both = Report {
+            hosts: 5,
+            failed: 1,
+            log_dropped: true,
+            ..Report::default()
+        };
+        let failure = go(both).unwrap_err();
+        assert_eq!(failure.message, "agentspace: 1 of 5 hosts failed.");
+    }
+
+    #[test]
+    fn the_runs_warning_prints_whatever_quiet_says_and_its_progress_does_not() {
+        use crate::testing::FakeSay;
+        for quiet in [true, false] {
+            let fake = FakeSay::new(quiet);
+            let say = GuardSay::new(&fake, &fake);
+            say.progress("Hosts: 1; running 0, stopped 0, unexplained 0.", None);
+            say.warning("agentspace: Host 'p': it failed.");
+            let expected: &[&str] = if quiet {
+                &["agentspace: Host 'p': it failed."]
+            } else {
+                &[
+                    "Hosts: 1; running 0, stopped 0, unexplained 0.",
+                    "agentspace: Host 'p': it failed.",
+                ]
+            };
+            assert_eq!(fake.lines(), expected, "quiet {quiet}");
+        }
     }
 
     #[test]

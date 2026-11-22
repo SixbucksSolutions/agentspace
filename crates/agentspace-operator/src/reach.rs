@@ -118,12 +118,6 @@ impl Reach for SystemReach {
             .unwrap_or_else(|| ctx.home.join(".agentspace"))
     }
 
-    fn utc_offset(&self, unix: i64) -> i32 {
-        // The system's zone at that instant. `AGENTSPACE_TIMEZONE` is the token push's alone. A
-        // system that gives none is read as UTC.
-        agentspace_zone::local_utc_offset(unix).unwrap_or(0)
-    }
-
     fn push(
         &self,
         ctx: &Context,

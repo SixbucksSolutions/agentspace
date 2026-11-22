@@ -59,7 +59,7 @@ pub use agentspace_sync::Target;
 pub use cache::HostCache;
 pub use cli::{Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, Parsed, Request, help, parse};
 pub use commands::{HostRef, Parts, Reach, Report, dispatch, down, grow, status, up};
-pub use guard::{GuardRun, guard, guard_with, utc_seconds};
+pub use guard::{GuardRun, GuardSay, guard, guard_with, utc_seconds};
 pub use reach::{Env, SystemReach};
 pub use say::{COULD_NOT_REACH, NOT_AVAILABLE, NOT_READY, Printer, caller_warning};
 

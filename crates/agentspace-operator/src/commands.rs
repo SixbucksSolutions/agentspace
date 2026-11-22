@@ -112,13 +112,16 @@ pub trait Reach {
     fn lease_state_dir(&self, ctx: &Context) -> PathBuf {
         ctx.home.join(".agentspace")
     }
-    /// The laptop's offset from UTC at the instant `unix`, in seconds east of UTC, in the zone the
-    /// system is set to when the line is printed, with that instant's daylight saving rule applied;
-    /// `AGENTSPACE_TIMEZONE` does not change it (operator.md, status -All). The default is UTC,
-    /// for a stand-in that has no zone to give.
-    fn utc_offset(&self, unix: i64) -> i32 {
-        let _ = unix;
-        0
+    /// The text `status -All`'s `Guard` line gives the stop time at the instant `unix`:
+    /// `<h:mm><am|pm>`, rounded up to the next whole minute, in the zone the system is set to when
+    /// the line is printed, with that instant's daylight saving rule applied; `AGENTSPACE_TIMEZONE`
+    /// does not change it (operator.md, status -All). The default is
+    /// [`agentspace_zone::local_clock_time`], the one formatter of the guard's stop time (D63),
+    /// and UTC for a system that gives no offset. The operator never converts a time itself, so a
+    /// test that needs a fixed zone overrides this with a stand-in that yields the text.
+    fn clock_time(&self, unix: i64) -> String {
+        agentspace_zone::local_clock_time(unix)
+            .unwrap_or_else(|| agentspace_zone::clock_time_at(unix, 0))
     }
     /// `guard`'s run (operator.md, guard; D56, D63), which the dispatch calls with the state
     /// folder [`Reach::lease_state_dir`] gives and the clock's reading to the whole second. The
@@ -660,7 +663,7 @@ fn report_status(parts: &Parts, host: &HostRef, leases: Option<&LeaseView>) -> R
     }
     if let Some(view) = leases {
         for line in view.lines(&host.project, &instance.state, launch_time, &|unix| {
-            parts.reach.utc_offset(unix)
+            parts.reach.clock_time(unix)
         }) {
             parts.report.report(&line);
         }

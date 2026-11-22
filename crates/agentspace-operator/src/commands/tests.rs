@@ -1301,21 +1301,22 @@ fn sync_all_is_dispatched_before_the_operator_reads_the_registry() {
 
 // ---- status -All's lease lines, in process, in a zone the test chooses ----
 //
-// `Reach::utc_offset` is the seam for the laptop's zone (operator.md, status -All: the time is in
+// `Reach::clock_time` is the seam for the stop time's text (operator.md, status -All: the time is in
 // the laptop's local time, read from the system when the line is printed). A test's `Reach` gives
-// any offset it likes, so the cases below fix the zone, and read the real clock only for the
-// times they set relative to it. The cases that read the real system's zone are in
+// the text in any zone it likes, made by `agentspace_zone::clock_time_at` (the one formatter, which
+// rounds up to the next whole minute), so the cases below fix the zone, and read the real clock
+// only for the times they set relative to it. The cases that read the real system's zone are in
 // `tests/status_leases.rs`.
 
-/// A [`Reach`] that is a [`FakeReach`], but for the offset the laptop's zone gives.
+/// A [`Reach`] that is a [`FakeReach`], but for the stop time's text in the zone it is given.
 struct Zoned {
     inner: FakeReach,
     offset: fn(i64) -> i32,
 }
 
 impl Reach for Zoned {
-    fn utc_offset(&self, unix: i64) -> i32 {
-        (self.offset)(unix)
+    fn clock_time(&self, unix: i64) -> String {
+        agentspace_zone::clock_time_at(unix, (self.offset)(unix))
     }
     fn push(&self, ctx: &Context, say: &dyn Say, id: &str, alias: &str, host: Option<&str>) {
         self.inner.push(ctx, say, id, alias, host);
@@ -1430,17 +1431,6 @@ fn civil_time(unix: i64, zulu: bool) -> String {
         rest % 3600 / 60,
         rest % 60,
         if zulu { "Z" } else { "+00:00" }
-    )
-}
-
-/// `h:mm` and `am` or `pm` for the whole-minute instant `unix`, in a zone `offset` seconds east.
-fn clock_in(unix: i64, offset: i32) -> String {
-    let local = (unix + i64::from(offset)).rem_euclid(86_400);
-    let (hour, minute) = (local / 3600, local % 3600 / 60);
-    let hour12 = if hour % 12 == 0 { 12 } else { hour % 12 };
-    format!(
-        "{hour12}:{minute:02}{}",
-        if hour < 12 { "am" } else { "pm" }
     )
 }
 
@@ -1590,7 +1580,7 @@ fn status_all_prints_the_leases_line_for_every_host_and_the_guard_line_for_a_run
     );
     rig.run_in(&all_request(Command::Status), &zoned(minus_five_hours))
         .unwrap();
-    let stop = clock_in(ceil_minute(now - 300 + 900), -5 * 3600);
+    let stop = agentspace_zone::clock_time_at(now - 300 + 900, -5 * 3600);
     let lines = rig.say.lines();
     let at = |prefix: &str| lines.iter().position(|l| l.starts_with(prefix)).unwrap();
     let (box_at, host_at, making_at) = (
@@ -1626,7 +1616,7 @@ fn the_guard_line_is_in_the_zone_the_system_gives_by_whatever_offset() {
                 "Leases    0 live".to_string(),
                 format!(
                     "Guard     unexplained; stops at {}",
-                    clock_in(ceil_minute(now - 300 + 900), seconds)
+                    agentspace_zone::clock_time_at(now - 300 + 900, seconds)
                 ),
             ],
             "offset {seconds}"
@@ -1643,7 +1633,7 @@ fn the_since_is_the_later_of_the_launch_time_and_the_last_lease_end() {
             "Leases    0 live".to_string(),
             format!(
                 "Guard     unexplained; stops at {}",
-                clock_in(ceil_minute(since + 900), 0)
+                agentspace_zone::clock_time_at(since + 900, 0)
             ),
         ]
     };
@@ -1745,7 +1735,7 @@ fn seconds_round_up_to_the_next_whole_minute() {
             lines[2],
             format!(
                 "Guard     unexplained; stops at {}",
-                clock_in(ceil_minute(launch + 900), 0)
+                agentspace_zone::clock_time_at(launch + 900, 0)
             ),
             "launch {} seconds after a minute",
             launch - aligned
@@ -1764,7 +1754,7 @@ fn a_stop_time_that_has_passed_shows_the_reports_minute_or_the_next() {
         while minute <= ceil_minute(after) {
             candidates.push(format!(
                 "Guard     unexplained; stops at {}",
-                clock_in(minute, 0)
+                agentspace_zone::clock_time_at(minute, 0)
             ));
             minute += 60;
         }

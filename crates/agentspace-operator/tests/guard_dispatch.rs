@@ -84,6 +84,9 @@ struct Standin {
     real: SystemReach,
     seen: RefCell<Vec<Seen>>,
     outcome: Result<GuardReport, Failure>,
+    /// What the run says through `warning`, in order, before it answers: a host's failure, a
+    /// dropped log line.
+    warnings: Vec<String>,
 }
 
 impl Standin {
@@ -110,6 +113,7 @@ impl Standin {
             real: SystemReach::new(agentspace_operator::Env::snapshot(&lookup)),
             seen: RefCell::default(),
             outcome,
+            warnings: Vec::new(),
         }
     }
 }
@@ -125,6 +129,10 @@ impl Reach for Standin {
             state_dir: input.state_dir.to_path_buf(),
             now: input.now,
         });
+        // A host's failure and a dropped log line come through `warning`, before the closing line.
+        for warning in &self.warnings {
+            say.warning(warning);
+        }
         // The closing line of step 8, which `-Quiet` suppresses. A run that finds `guard.lock` held
         // prints nothing at all (step 1).
         if !matches!(&self.outcome, Ok(report) if report.lock_held) {
@@ -239,6 +247,19 @@ fn go(
     seconds: u64,
     fraction_ms: u64,
 ) -> Done {
+    go_saying(home, args, env, outcome, &[], seconds, fraction_ms)
+}
+
+/// [`go`], with a run that says `warnings` through the `Say` it is given before it answers.
+fn go_saying(
+    home: &Home,
+    args: &[&str],
+    env: &[(&str, &Path)],
+    outcome: Result<GuardReport, Failure>,
+    warnings: &[&str],
+    seconds: u64,
+    fraction_ms: u64,
+) -> Done {
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let Parsed::Run(request) = parse(&args) else {
         panic!("the line is a run");
@@ -250,7 +271,8 @@ fn go(
         false,
         Box::new(capture.clone()),
     );
-    let reach = Standin::new(&home.profile(), env, outcome);
+    let mut reach = Standin::new(&home.profile(), env, outcome);
+    reach.warnings = warnings.iter().map(|w| w.to_string()).collect();
     let ctx = home.ctx();
     let clock = Fixed(UNIX_EPOCH + Duration::new(seconds, (fraction_ms * 1_000_000) as u32));
     let ca_env = CaEnv::default();
@@ -568,4 +590,142 @@ fn each_dispatch_is_one_run() {
     let home = Home::new();
     let done = go(&home, &["guard", "-GiB", "0"], &[], clean(), 5, 0);
     assert_eq!(done.seen.len(), 1, "one run per dispatch, -GiB ignored");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The guard's failure channel: `warning` prints whatever -Quiet says (architect, 2026-11-22)
+// ---------------------------------------------------------------------------------------------
+
+const HOST_FAILED: &str =
+    "agentspace: Host 'example': Could not stop i-0123456789abcdef0: it was refused.";
+const LOG_FAILED: &str =
+    "agentspace: Cannot write the guard's log C:\\somewhere\\guard.log: access denied.";
+const CLOSING: &str = "Hosts: 0; running 0, stopped 0, unexplained 0.";
+
+#[test]
+fn a_failure_the_run_says_through_warning_prints_under_quiet_and_its_progress_does_not() {
+    let home = Home::new();
+    let report = GuardReport {
+        hosts: 2,
+        running: 1,
+        failed: 1,
+        ..GuardReport::default()
+    };
+    let done = go_saying(
+        &home,
+        &["guard", "-Quiet"],
+        &[],
+        Ok(report.clone()),
+        &[HOST_FAILED],
+        5,
+        0,
+    );
+    assert!(done.result.is_err());
+    assert_eq!(
+        done.printed,
+        format!("{HOST_FAILED}\nagentspace: 1 of 2 hosts failed.\n"),
+        "-Quiet: the failure line and the count line print, the closing line does not"
+    );
+    let done = go_saying(&home, &["guard"], &[], Ok(report), &[HOST_FAILED], 5, 0);
+    assert_eq!(
+        done.printed,
+        format!("{HOST_FAILED}\n{CLOSING}\nagentspace: 1 of 2 hosts failed.\n"),
+        "Without -Quiet: the failure line, the closing line, the count line"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// `log_dropped` (architect, 2026-11-22, for v0.08-T03): exit 1, and the count line only when
+// hosts failed
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_dropped_log_line_with_no_failed_host_exits_1_and_prints_nothing_more() {
+    let home = Home::new();
+    let report = GuardReport {
+        hosts: 2,
+        running: 1,
+        log_dropped: true,
+        ..GuardReport::default()
+    };
+    let done = go_saying(
+        &home,
+        &["guard"],
+        &[],
+        Ok(report.clone()),
+        &[LOG_FAILED],
+        5,
+        0,
+    );
+    assert!(done.result.is_err(), "Exit 1");
+    assert_eq!(
+        done.printed,
+        format!("{LOG_FAILED}\n{CLOSING}\n"),
+        "What the run said through warning and progress, and no count line of the operator's own"
+    );
+    let done = go_saying(
+        &home,
+        &["guard", "-Quiet"],
+        &[],
+        Ok(report),
+        &[LOG_FAILED],
+        5,
+        0,
+    );
+    assert!(done.result.is_err(), "Exit 1 under -Quiet too");
+    assert_eq!(done.printed, format!("{LOG_FAILED}\n"));
+}
+
+#[test]
+fn failed_hosts_and_a_dropped_log_line_print_the_count_line_once_and_exit_1() {
+    let home = Home::new();
+    let report = GuardReport {
+        hosts: 3,
+        running: 2,
+        failed: 2,
+        log_dropped: true,
+        ..GuardReport::default()
+    };
+    let done = go_saying(
+        &home,
+        &["guard", "-Quiet"],
+        &[],
+        Ok(report),
+        &[LOG_FAILED],
+        5,
+        0,
+    );
+    let failure = done.result.expect_err("Exit 1");
+    assert_eq!(failure.message, "agentspace: 2 of 3 hosts failed.");
+    assert_eq!(
+        done.printed,
+        format!("{LOG_FAILED}\nagentspace: 2 of 3 hosts failed.\n"),
+        "The count line once"
+    );
+}
+
+#[test]
+fn only_a_failed_host_a_dropped_line_or_a_failure_is_exit_1() {
+    let home = Home::new();
+    // Neither: exit 0. The lock held: exit 0.
+    assert_eq!(go(&home, &["guard"], &[], clean(), 5, 0).result, Ok(()));
+    let held = GuardReport {
+        lock_held: true,
+        ..GuardReport::default()
+    };
+    assert_eq!(go(&home, &["guard"], &[], Ok(held), 5, 0).result, Ok(()));
+    // Each of the others: exit 1.
+    let failed = GuardReport {
+        hosts: 1,
+        failed: 1,
+        ..GuardReport::default()
+    };
+    let dropped = GuardReport {
+        hosts: 1,
+        log_dropped: true,
+        ..GuardReport::default()
+    };
+    for report in [failed, dropped] {
+        assert!(go(&home, &["guard"], &[], Ok(report), 5, 0).result.is_err());
+    }
 }
