@@ -14,3 +14,5 @@ path = "src/lib.rs"
 # agentspace-box among them). E0.08-T03-S02 (#0178) calls it from the operator.
 [dependencies]
 agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-box = { path = "../agentspace-box" }
+agentspace-state = { path = "../agentspace-state" }

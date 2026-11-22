@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+pub mod decide;
+
 use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Say};
 
 /// The grace, a constant and not a parameter (D56, D63): 15 minutes, in seconds.

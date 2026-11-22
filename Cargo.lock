@@ -95,7 +95,9 @@ dependencies = [
 name = "agentspace-guard"
 version = "0.8.0"
 dependencies = [
+ "agentspace-box",
  "agentspace-operator-api",
+ "agentspace-state",
 ]
 
 [[package]]
