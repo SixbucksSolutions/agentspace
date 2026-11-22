@@ -2,8 +2,9 @@
 //!
 //! RFC 2119 keywords in this crate's comments, and the capitals are load-bearing.
 //!
-//! The one entry point is [`zone`]. It works out the zone the token push sends, in the order
-//! the spec gives:
+//! It has two entry points. [`local_clock_time`] gives the laptop's clock time at an instant,
+//! `<h:mm><am|pm>`, the one formatter of the guard's stop time (operator.md, status and guard).
+//! [`zone`] works out the zone the token push sends, in the order the spec gives:
 //!
 //! 1. The override (`AGENTSPACE_TIMEZONE`, passed in by the caller) replaces the laptop's zone
 //!    when it is set and not empty. Otherwise the laptop's Windows zone ID is converted with
@@ -13,9 +14,10 @@
 //!    is the empty zone, which this crate gives as `None`.
 //!
 //! The crate reads no environment variable and no file, writes to no stream, and never panics on
-//! bad input. Its one system read is the laptop's own Windows zone ID ([`windows_zone_id`], from
-//! the system's time zone setting), which [`laptop_zone`] makes only when no override is given;
-//! the override's value is the caller's to read from `AGENTSPACE_TIMEZONE`.
+//! bad input. Its two system reads are the laptop's own Windows zone ID ([`windows_zone_id`], from
+//! the system's time zone setting), which [`laptop_zone`] makes only when no override is given,
+//! and the system zone's offset at an instant ([`local_utc_offset`]); the override's value is the
+//! caller's to read from `AGENTSPACE_TIMEZONE`, and never changes the clock time.
 
 #![deny(unsafe_code)]
 
@@ -36,7 +38,7 @@ pub const LEGACY_NAMES: [(&str, &str); 7] = [
 // The file's header names the CLDR release it comes from; a test keeps the rows sorted.
 mod cldr_windows_zones;
 
-// The one place that calls Windows, to read the laptop's zone ID.
+// The one place that calls Windows, to read the laptop's zone ID and its offset at an instant.
 mod system;
 
 use cldr_windows_zones::WINDOWS_ZONES;
@@ -117,7 +119,7 @@ pub fn zone(windows_id: Option<&str>, override_value: Option<&str>) -> Option<St
     check_zone(map_legacy(converted)).map(str::to_owned)
 }
 
-pub use system::windows_zone_id;
+pub use system::{local_utc_offset, windows_zone_id};
 
 /// The zone the token push sends for this laptop: [`zone`], with the laptop's Windows zone ID read
 /// from the system ([`windows_zone_id`]) only when it is needed.
@@ -133,9 +135,230 @@ pub fn laptop_zone(override_value: Option<&str>) -> Option<String> {
     }
 }
 
+/// A time of day for a person, `<h:mm><am|pm>`, from a Unix time and the zone's offset at that
+/// time, with no system read, so it gives the same text on every system (operator.md, status,
+/// the `Guard` line; guard, step 6).
+///
+/// - `unix` is the instant, in Unix seconds. **A time with seconds is rounded up to the next whole
+///   minute**, and an instant already on a whole minute is unchanged.
+/// - `offset_seconds` is the zone's offset from UTC, in seconds east of UTC, **at the rounded
+///   instant**. The caller MUST give the offset of that instant and not of `unix`, since a
+///   daylight saving change can fall between the two ([`local_clock_time`] does).
+/// - The hour is on a 12-hour clock, `1` to `12` with no leading zero, `12` for the hours after
+///   midnight and after noon. The minute is two digits. Then `am` before noon and `pm` from noon
+///   on, lowercase, with no space before it: `12:05am`, `11:59am`, `12:00pm`, `1:07pm`.
+///
+/// It never panics: every `i64` and every offset gives a time, worked out without overflow.
+pub fn clock_time_at(unix: i64, offset_seconds: i32) -> String {
+    let rounded = round_up_to_minute(unix) + i128::from(offset_seconds);
+    let second_of_day = rounded.rem_euclid(86_400);
+    let hour = second_of_day / 3_600;
+    let minute = second_of_day % 3_600 / 60;
+    let clock_hour = match hour % 12 {
+        0 => 12,
+        other => other,
+    };
+    let suffix = if hour < 12 { "am" } else { "pm" };
+    format!("{clock_hour}:{minute:02}{suffix}")
+}
+
+/// The next whole minute at or after `unix`, in Unix seconds, wide enough never to overflow.
+fn round_up_to_minute(unix: i64) -> i128 {
+    (i128::from(unix) + 59).div_euclid(60) * 60
+}
+
+/// The time of day the laptop's clock shows at the instant `unix`, `<h:mm><am|pm>`, in the zone
+/// Windows is set to when this is called, with the daylight saving rule of that instant, or
+/// `None` when the system gives no offset for it (always `None` off Windows, and for an instant
+/// the system cannot convert).
+///
+/// This is the one formatter of the guard's stop time, so `status -All`'s `Guard` line and the
+/// guard's own progress lines print the same text for the same instant (operator.md, status and
+/// guard; architect, 2026-11-22). The zone is read afresh at each call and never remembered, and
+/// `AGENTSPACE_TIMEZONE` does not change it: that variable is the token push's alone.
+///
+/// The instant is rounded up to the next whole minute first (an instant already on a whole minute
+/// is unchanged), and the offset is the system's at the rounded instant, then [`clock_time_at`]
+/// gives the text.
+pub fn local_clock_time(unix: i64) -> Option<String> {
+    clock_time_with(unix, local_utc_offset)
+}
+
+/// [`local_clock_time`] with the zone's offset given as a function of the instant, so a test can
+/// give a zone of its own: the offset MUST be read at the rounded instant.
+fn clock_time_with(unix: i64, offset_at: impl Fn(i64) -> Option<i32>) -> Option<String> {
+    let rounded = i64::try_from(round_up_to_minute(unix)).ok()?;
+    let offset = offset_at(rounded)?;
+    Some(clock_time_at(rounded, offset))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Midnight, 2026-11-22, UTC, the base of the clock tests below.
+    const DAY: i64 = 1_795_305_600;
+    const EASTERN_STANDARD: i32 = -5 * 3600;
+    const EASTERN_DAYLIGHT: i32 = -4 * 3600;
+
+    fn at(hour: i64, minute: i64, second: i64) -> i64 {
+        DAY + hour * 3600 + minute * 60 + second
+    }
+
+    #[test]
+    fn clock_time_after_midnight_is_twelve_am() {
+        assert_eq!(clock_time_at(at(0, 5, 0), 0), "12:05am");
+        assert_eq!(clock_time_at(at(0, 0, 0), 0), "12:00am");
+    }
+
+    #[test]
+    fn clock_time_before_noon_is_am() {
+        assert_eq!(clock_time_at(at(11, 59, 0), 0), "11:59am");
+        assert_eq!(clock_time_at(at(5, 19, 0), 0), "5:19am");
+    }
+
+    #[test]
+    fn clock_time_from_noon_is_twelve_pm() {
+        assert_eq!(clock_time_at(at(12, 0, 0), 0), "12:00pm");
+        assert_eq!(clock_time_at(at(12, 34, 0), 0), "12:34pm");
+    }
+
+    #[test]
+    fn clock_time_in_the_afternoon_is_pm_with_no_leading_zero() {
+        assert_eq!(clock_time_at(at(13, 7, 0), 0), "1:07pm");
+        assert_eq!(clock_time_at(at(23, 59, 0), 0), "11:59pm");
+    }
+
+    #[test]
+    fn clock_time_rounds_seconds_up_to_the_next_minute() {
+        assert_eq!(clock_time_at(at(12, 4, 1), 0), "12:05pm");
+        assert_eq!(clock_time_at(at(12, 4, 59), 0), "12:05pm");
+        assert_eq!(clock_time_at(at(12, 4, 0), 0), "12:04pm");
+    }
+
+    #[test]
+    fn clock_time_rounds_across_midnight_and_noon() {
+        assert_eq!(clock_time_at(at(23, 59, 30), 0), "12:00am");
+        assert_eq!(clock_time_at(at(11, 59, 1), 0), "12:00pm");
+    }
+
+    #[test]
+    fn clock_time_applies_a_positive_and_a_negative_offset() {
+        // 12:05 UTC is 5:35pm in India (+5:30) and 7:05am at US Eastern standard time.
+        assert_eq!(clock_time_at(at(12, 5, 0), 5 * 3600 + 1800), "5:35pm");
+        assert_eq!(clock_time_at(at(12, 5, 0), EASTERN_STANDARD), "7:05am");
+        // The offset carries the time across a day boundary either way.
+        assert_eq!(clock_time_at(at(23, 30, 0), 3600), "12:30am");
+        assert_eq!(clock_time_at(at(0, 30, 0), -3600), "11:30pm");
+    }
+
+    /// 2026-03-08: US Eastern clocks go from 2:00am EST to 3:00am EDT, at 07:00 UTC.
+    #[test]
+    fn clock_time_either_side_of_spring_forward() {
+        assert_eq!(clock_time_at(1_772_953_140, EASTERN_STANDARD), "1:59am");
+        assert_eq!(clock_time_at(1_772_953_200, EASTERN_DAYLIGHT), "3:00am");
+    }
+
+    /// 2026-11-01: US Eastern clocks go from 2:00am EDT back to 1:00am EST, at 06:00 UTC.
+    #[test]
+    fn clock_time_either_side_of_fall_back() {
+        assert_eq!(clock_time_at(1_793_512_740, EASTERN_DAYLIGHT), "1:59am");
+        assert_eq!(clock_time_at(1_793_512_800, EASTERN_STANDARD), "1:00am");
+    }
+
+    /// US Eastern's 2026 rule: daylight time from 2026-03-08 07:00Z to 2026-11-01 06:00Z.
+    fn eastern_2026(unix: i64) -> Option<i32> {
+        if (1_772_953_200..1_793_512_800).contains(&unix) {
+            Some(EASTERN_DAYLIGHT)
+        } else {
+            Some(EASTERN_STANDARD)
+        }
+    }
+
+    #[test]
+    fn the_offset_is_read_at_the_rounded_instant_at_spring_forward() {
+        // 06:59:30Z is 1:59:30am EST, which rounds to 07:00Z, the change: 3:00am EDT. The
+        // unrounded instant's offset would give 2:00am, a time the clock never shows.
+        assert_eq!(
+            clock_time_with(1_772_953_170, eastern_2026).as_deref(),
+            Some("3:00am")
+        );
+    }
+
+    #[test]
+    fn the_offset_is_read_at_the_rounded_instant_at_fall_back() {
+        // 05:59:30Z is 1:59:30am EDT, which rounds to 06:00Z, the change: 1:00am EST. The
+        // unrounded instant's offset would give 2:00am.
+        assert_eq!(
+            clock_time_with(1_793_512_770, eastern_2026).as_deref(),
+            Some("1:00am")
+        );
+    }
+
+    #[test]
+    fn no_offset_gives_no_time() {
+        assert_eq!(clock_time_with(at(12, 0, 0), |_| None), None);
+    }
+
+    #[test]
+    fn clock_time_never_panics_on_an_extreme() {
+        // 910_000_000_000 is in the year 30807, near the end of what Windows converts.
+        for unix in [
+            i64::MIN,
+            i64::MIN + 1,
+            -1,
+            0,
+            910_000_000_000,
+            i64::MAX - 1,
+            i64::MAX,
+        ] {
+            for offset in [i32::MIN, -1, 0, 1, i32::MAX] {
+                let text = clock_time_at(unix, offset);
+                assert!(text.ends_with("am") || text.ends_with("pm"), "{text}");
+            }
+            // Whether or not the system converts it, it is an answer and not a panic.
+            let _ = local_clock_time(unix);
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn local_clock_time_is_none_off_windows() {
+        assert_eq!(local_clock_time(at(12, 0, 0)), None);
+    }
+
+    /// The system's clock time is the pure formatter given the system's offset at the rounded
+    /// instant, on each side of both daylight saving changes and at a rounding boundary.
+    #[cfg(windows)]
+    #[test]
+    fn local_clock_time_agrees_with_clock_time_at_and_the_system_offset() {
+        for unix in [
+            1_772_953_140,
+            1_772_953_200,
+            1_793_512_740,
+            1_793_512_800,
+            at(12, 4, 0),
+            at(12, 4, 1),
+            at(23, 59, 30),
+        ] {
+            let rounded = unix + (60 - unix.rem_euclid(60)) % 60;
+            let offset = local_utc_offset(rounded).expect("the system gives an offset");
+            let text = local_clock_time(unix).expect("the system gives a time");
+            assert_eq!(text, clock_time_at(unix, offset), "{unix}");
+            assert_eq!(text, clock_time_at(rounded, offset), "{unix}");
+        }
+    }
+
+    /// The system's offset for an instant is a whole number of minutes within the real range
+    /// of offsets, and the same instant gives the same offset twice.
+    #[cfg(windows)]
+    #[test]
+    fn local_utc_offset_is_a_plausible_whole_minute_offset() {
+        let offset = local_utc_offset(1_795_340_700).expect("the system gives an offset");
+        assert!((-12 * 3600..=14 * 3600).contains(&offset), "{offset}");
+        assert_eq!(offset % 60, 0);
+        assert_eq!(local_utc_offset(1_795_340_700), Some(offset));
+    }
 
     #[test]
     fn table_is_sorted_and_unique() {

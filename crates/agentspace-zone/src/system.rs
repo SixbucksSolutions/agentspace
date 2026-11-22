@@ -1,4 +1,5 @@
-//! The laptop's Windows zone ID, read from the system (operator.md, The time zone, step 1).
+//! The laptop's Windows zone ID, read from the system (operator.md, The time zone, step 1), and
+//! the laptop's offset from UTC at an instant, for the guard's stop time.
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. This is the only module of the crate that
 //! calls Windows, and so the only one with `unsafe`.
@@ -34,5 +35,58 @@ pub fn windows_zone_id() -> Option<String> {
 /// Not Windows: there is no zone ID to read.
 #[cfg(not(windows))]
 pub fn windows_zone_id() -> Option<String> {
+    None
+}
+
+/// The laptop's offset from UTC at the instant `unix` (Unix seconds), in seconds east of UTC, in
+/// the zone Windows is set to at this moment with the daylight saving rule that applies to that
+/// instant, or `None` when the system does not give one (and always on any other system).
+///
+/// It is read afresh at each call and never remembered, so a laptop that travels gives the offset
+/// of the zone it is in. Added for the guard's stop time, printed by `status -All`'s `Guard` line
+/// and the guard's progress lines (operator.md, status, and guard, step 6), through
+/// [`crate::local_clock_time`].
+#[cfg(windows)]
+pub fn local_utc_offset(unix: i64) -> Option<i32> {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{
+        FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
+    };
+    // Seconds from 1601-01-01, the FILETIME epoch, to 1970-01-01.
+    const EPOCH_GAP: i64 = 11_644_473_600;
+    const TICKS_PER_SECOND: i64 = 10_000_000;
+    let ticks = unix.checked_add(EPOCH_GAP)?.checked_mul(TICKS_PER_SECOND)?;
+    if ticks < 0 {
+        return None;
+    }
+    let ticks = ticks as u64;
+    let universal = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let mut universal_time = SYSTEMTIME::default();
+    let mut local_time = SYSTEMTIME::default();
+    let mut local = FILETIME::default();
+    // SAFETY: every pointer is to a valid value of the call's type that lives through the call; the
+    // null zone means the zone the system is set to.
+    let ok = unsafe {
+        FileTimeToSystemTime(&universal, &mut universal_time) != 0
+            && SystemTimeToTzSpecificLocalTime(std::ptr::null(), &universal_time, &mut local_time)
+                != 0
+            && SystemTimeToFileTime(&local_time, &mut local) != 0
+    };
+    if !ok {
+        return None;
+    }
+    let local_ticks = (i64::from(local.dwHighDateTime) << 32) | i64::from(local.dwLowDateTime);
+    let seconds = local_ticks
+        .checked_sub(ticks as i64)?
+        .div_euclid(TICKS_PER_SECOND);
+    i32::try_from(seconds).ok()
+}
+
+/// Not Windows: there is no zone to read.
+#[cfg(not(windows))]
+pub fn local_utc_offset(_unix: i64) -> Option<i32> {
     None
 }
