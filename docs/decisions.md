@@ -100,6 +100,7 @@ line's text after `Status:`, without its full stop.
 - [D60. `status -All` is the one command that lists every host with its live leases](#d60-status--all-is-the-one-command-that-lists-every-host-with-its-live-leases): Decided
 - [D61. v0.08 carries #0163, #0164, #0166 and #0167](#d61-v008-carries-0163-0164-0166-and-0167): Decided
 - [D62. v0.08's done-when is shown by live checks on both hosts, with Terry's yes for their instance hours](#d62-v008s-done-when-is-shown-by-live-checks-on-both-hosts-with-terrys-yes-for-their-instance-hours): Decided
+- [D63. v0.08 is twenty-one stories in six turns: specs, foundations, programs, conformance, live](#d63-v008-is-twenty-one-stories-in-six-turns-specs-foundations-programs-conformance-live): Decided
 
 ## The interface
 
@@ -2121,6 +2122,8 @@ the blast radius stands.
   concurrent agents cost a host, and D27 sizes hosts from it.
 - **Parallelism that costs more than it saves is not planned.** A docs edit is folded into an
   implementer's tasking rather than given a subagent of its own.
+- **Extended, Terry, 2026-11-21 (D63):** each story uses as many subagents as can be used
+  effectively, with section drafters and one integrator where several hands write one file.
 
 **v0.02's plans** (#0056 to #0060) peak at 3, 2, 3, 2 and 2 subagents. With two stories per turn,
 T1 and T2 peak at 6 and 5 subagents at once, plus the dev lead.
@@ -3282,6 +3285,11 @@ under it.
 - **So a host bounds its own cost with the laptop off or asleep**, which is when the guard cannot
   run: an idle host stops after 60 minutes, as today, and a busy one no later than its horizon,
   the grace, and one 5-minute check after its last session ends.
+- **Changed when v0.08 was laid out (architect, 2026-11-21, D63):** the guard sends the horizon to
+  every running host at every run, not only when it changed, so no file on the laptop has to
+  remember what was sent, and a host that rebooted gets it back within 5 minutes. A host whose
+  project has never had a lease is sent its launch time. A send that fails is logged and tried
+  again at the next run.
 
 **Why on the host, and why a horizon:**
 - **The keeper's holder is a session on every host with a live lease while the laptop is on**
@@ -3332,6 +3340,10 @@ under it.
 - **The release's document is unchanged** (contract v0). How many connections it ended is logged
   where lease-api.md says, written by the story that builds it.
 - **No call to a host is made.** A release stays laptop-local and works on a stopped host.
+- **Changed when v0.08 was laid out (architect, 2026-11-21, D63):** the keeper's holder is ended
+  with the rest, rather than left to the keeper. A release then needs nothing from the keeper's
+  files, and the keeper treats the holder as one its look finds gone, with its release grace
+  (keeper.md, Release grace), which is what its own stop at the next pass would have cost.
 
 **Why the laptop's end:**
 - **Every client is on the laptop today** (D8): the desktop app's connections and the holder.
@@ -3375,6 +3387,20 @@ and each of these is about a host's start, size or tools.
   rules whether a start makes the push due or the build pushes when it is not. Then the nested
   line is withheld from the outer connection's stderr.
 
+**Changed when v0.08 was laid out (architect, 2026-11-21, D63):**
+- **#0163's mechanism is pinned, and its probe is T05's live check.** `box/system/install.sh`,
+  when it finds no `/run/agentspace/patched`, starts `agentspace-patch.service` with `--no-block`
+  as well as enabling it; `sync`, right after its install row, waits for the patch check to answer
+  `patched` before its next row, through Session Manager as `up`'s wait does, which outlasts a
+  patch reboot. Every nested connection after that row finds the host patched. T05 shows it on a
+  host with this boot's marker removed by hand, since both hosts already exist and no new host is
+  made in v0.08.
+- **#0166's PATH is set by `box/system`'s install, not by links from the bootstrap:** the install
+  writes the `PATH` of `/etc/environment`, which every ssh session reads through PAM, with
+  `~/.cargo/bin`, `~/.local/bin` and fnm's default alias folder after the system's own folders.
+  Links made by the bootstrap would dangle for tools installed later by D52's sign-ins, and the
+  install runs at every `sync`, so the box gets it too.
+
 **Not carried:** #0137 and #0138 are fixed and merged, and wait only on Terry's card moves;
 #0109 and #0082 stay before v0.09's measurement.
 
@@ -3405,6 +3431,71 @@ and each of these is about a host's start, size or tools.
   ask him again before it does. Every host is confirmed `stopped` at the close.
 - **conformance.md's coverage table is read for every "None" these change** (architect.md,
   Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+
+### D63. v0.08 is twenty-one stories in six turns: specs, foundations, programs, conformance, live
+
+**Decided, architect, 2026-11-21, when Terry had v0.08 (#0048) broken into stories:** "break out
+v0.08 stories and create a staffing plan that uses as many subagents per story as can be used
+effectively". It lays v0.08 out as D55 laid out v0.07, on the designs of D56 to D62, and the
+stories' cards carry the detail.
+
+**Terry's staffing order, the same day, extends D31:** each story uses as many subagents as can be
+used effectively. Where one file has to be written by several hands, drafters each write their own
+sections into draft files they own, under the worktree's `target\drafts\`, and one integrator owns
+the file. Disjoint ownership (D31) still holds, and parallelism that costs more than it saves is
+still not planned.
+
+**The pinned names.** Every story uses these, and the specs written in T01 own their exact forms
+(operator.md for command lines, the guard and the host's files; keeper.md for the keeper; state.md
+for laptop files; driver.md and lease-api.md for release):
+
+| Name | Pinned as |
+|---|---|
+| The grace | 15 minutes, a constant, not a parameter (D56); on a host, `HORIZON_GRACE_MINUTES=15` in `/etc/agentspace/idle.conf` |
+| The guard | `agentspace-operator guard [-Quiet]`, with no `-Host` or `-All`: every host in `hosts.json`, every run. Its logic is the new crate `agentspace-guard`; the operator crate dispatches to it |
+| The guard's files | `%USERPROFILE%\.agentspace\guard.log`, one line per host per event (stopped, unexplained, or failed, a failed horizon send included; a horizon sent is not logged), each with its time and `host=<project>`; `guard.lock` beside `hosts.json`, held for the run's life. A run that finds it held exits 0 at once and logs nothing |
+| Live lease, last lease end, horizon | Functions of `agentspace-state` over the lease state file's records, one home for both the guard and `status -All`, by the words D56 to D57 define. Their signatures are pinned on E0.08-T02-S01's card |
+| The keeper's start of the guard | At its first pass, then at most once every 300 seconds, through `agentspace-detach`, never while `guard.lock` is held. The program is `AGENTSPACE_GUARD_CMD` when set, else the install folder's `agentspace-operator.exe`, with the argument `guard` |
+| The horizon on a host | `/run/agentspace/lease-horizon`, one line holding the horizon as Unix seconds and a line feed, root-owned, mode 0644, written by one `ssm send-command` per running host per guard run, with the comment `agentspace guard: lease horizon` |
+| The idle check's seams | `AGENTSPACE_IDLE_STATE` (default `/run/agentspace`), `AGENTSPACE_IDLE_CONF` (default `/etc/agentspace/idle.conf`) and `AGENTSPACE_PROC_STAT` (default `/proc/stat`), for `box/tests` alone |
+| `status -All`'s new lines | `Leases    <n> live` for every host, and `Guard     unexplained; stops at <h:mm><am\|pm>` for a running host no live lease explains, in the laptop's zone, both after the host's existing lines |
+| Release's connections | The new crate `agentspace-connections`: `end_alias_clients(alias) -> Result<usize>` ends every `ssh.exe` on the laptop whose destination argument is the alias and every `agentspace-ssh-proxy.exe` whose argument is, each with its tree, and returns how many it ended. The EC2 driver's release calls it before it deletes the alias |
+| The alarm | `Period` 3600, `EvaluationPeriods` 24, description `Stops ${HostName} after 24 hours averaging under 1% CPU.` (D58) |
+| #0163 and #0166 | As D61's change above |
+| Branches | `v0.08/e0.08-tnn-smm` (D29) |
+
+**The turns.** Stories in a turn run in parallel, each in its own worktree; a turn starts when every
+pull request of the turn before is merged (D16). T01 to T04 run on the laptop and start no
+instance; T05 and T06 start both hosts. The peak is the turn's subagents at once, its dev lead
+not counted.
+
+| Turn | Stories | What | Peak |
+|---|---|---|---|
+| T01 | S01 to S05 | **The specs, the template and the host's files.** operator.md; keeper.md and state.md; driver.md and lease-api.md; the template's alarm with its change sets read live, and README; `box/system`'s idle check, `idle.conf` and install, with a test of the idle check | 16 |
+| T02 | S01 to S04 | **The foundations, as libraries.** `agentspace-state` and `agentspace-hosts`; `agentspace-connections` (new); `agentspace-box`'s calls for the guard; `agentspace-push` and `agentspace-ssh-proxy` for #0167 | 10 |
+| T03 | S01 to S05 | **The programs.** `agentspace-guard` (new); the operator's `guard`, `status -All` and `grow`; the keeper's start of the guard; the EC2 driver's release; `sync`'s patch wait | 13 |
+| T04 | S01 to S04 | **Conformance.** The operator's cases; the lease CLI's; the keeper's; the whole suite, the crates and the idle check's test against T03's build, with conformance.md | 10 |
+| T05 | S01 | **The install and the host-side live checks:** the alarm deployed, `sync` on both hosts, #0163, #0166, and the laptop away | 3 |
+| T06 | S01, S02 | **The lifecycle, live, one story per host:** release, expiry, a quiet held lease, the next lease; on agentspace's host also an unexplained host and #0064 with Terry's desktop-app session | 4 |
+
+**Pins as code, committed by the architect before T03**, as D55's were: the crate
+`agentspace-guard`, with its public types and a `run` that returns `not built yet`, pinned on
+E0.08-T03-S01's card, so the operator story can call it while it is built.
+
+**Carried in, with `references`:** #0163, #0164, #0166 and #0167 (D61); #0064 (D59); #0043 (D58),
+OBE once T06 is merged.
+
+**Why this shape:**
+- **The same order as v0.07's, for the same reasons** (D55): specs before code, libraries before
+  programs, the whole suite before any instance starts.
+- **`box/system` and the template are built in T01**, as v0.07's template and bootstrap were: they
+  are shell and CloudFormation, specified by D57, D58 and D61's pins, and the operator embeds
+  `box/system`, so T03's builds carry them.
+- **The live checks are two turns, not one.** T05's laptop-away check stops the keeper, which
+  would stop the guard for any check running beside it, so it runs before T06's checks, whose
+  two stories run at once on different hosts.
+- **Instance hours:** about 1.75 in T05 and 3.75 in T06, about 5.5 of the 6 Terry approved (D62).
+  A turn that would pass the 6 asks him first.
 
 ## Keys
 

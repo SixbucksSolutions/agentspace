@@ -71,7 +71,9 @@ first.**
    subagent with `Model/effort`, tasking, owned files and start); and its branch
    `vX.YY/ex.yy-tnn-smm`. Mix models to the work: Sonnet for inventories, tests and most
    implementing and running, Opus for writing that decides behavior, for finding a cause, and for
-   every review.
+   every review. **Use as many subagents per story as can be used effectively** (Terry,
+   2026-11-21, D63): where several hands write one file, drafters write their sections into draft
+   files they own under the worktree's `target\drafts\`, and one integrator owns the file.
 5. **A done-when that a stand-in cannot show names its live check** (v0.06-T05). Read
    [conformance.md](conformance.md)'s coverage table: every behavior it marks "None" that the
    release changes MUST be either given a conformance case or named as a live check on a story.
