@@ -12,11 +12,8 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use agentspace_guard::GRACE_SECONDS;
 use agentspace_state::{Record, StoreError, last_lease_end, live_count, parse_time, read};
-
-/// The guard's grace, 15 minutes in seconds, a constant and not a parameter (D56, D63). It is
-/// `agentspace_guard::GRACE_SECONDS`' value, which this crate does not depend on for it.
-pub(crate) const GRACE_SECONDS: i64 = 15 * 60;
 
 /// The lease state file's name in the state folder (docs/state.md, The lease state file).
 const LEASES_FILE: &str = "leases.json";

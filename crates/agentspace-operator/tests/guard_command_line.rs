@@ -1,9 +1,8 @@
 //! `guard`'s command line: what it accepts, every usage error operator.md gives for it, its help
 //! and its place in the top level's (docs/operator.md: Command line, Usage errors, Help, the host
-//! checks, guard). A command line that passes every check reaches the guard's run, which is the
-//! architect's stub until E0.08-T03-S01 (#0177) builds it: `reaches_the_guard` below says so for
-//! each accepted line, and is the one assertion that #0177's merge changes (`GUARD_NOT_BUILT` in
-//! `common/cli.rs`).
+//! checks, guard). A command line that passes every check reaches the guard's real run, which in an
+//! empty throwaway home stops at its step 3, the missing lease state file: `reaches_the_guard`
+//! below says so for each accepted line, through `assert_reaches_guard` in `common/cli.rs`.
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 
@@ -14,7 +13,7 @@ use cli::*;
 
 /// An accepted command line gets past every usage check and reaches the guard's run, which makes no
 /// AWS call and starts no program: the harness's seam variables name nothing, so a call or a
-/// program would give another message, and nothing is written in the home.
+/// program would give another message. It leaves the lock and the log in the home, and no more.
 fn reaches_the_guard(line: &str) {
     assert_reaches_guard(&words(line));
 }

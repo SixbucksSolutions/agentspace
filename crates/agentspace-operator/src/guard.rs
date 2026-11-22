@@ -12,7 +12,9 @@
 //! pinned [`Aws`] too. The operator prints nothing but the count line of a run in which hosts'
 //! parts failed, and exits by the report: 0 when no part failed and no log line was dropped, a
 //! lock another program holds included, and 1 otherwise. A failure that ends the run is printed
-//! by the caller of [`guard`], as every command's failure is.
+//! by the caller of [`guard`], as every command's failure is. A run that exits 1 with nothing more
+//! to print, a log line dropped and no host failed, is [`Outcome::FailedAfterSaying`], never a
+//! [`Failure`] with an empty message.
 //!
 //! **The seam:** [`Reach::guard`](crate::Reach::guard) is the run, and its default is [`agentspace_guard::run`]; a test's
 //! [`Reach`](crate::Reach) overrides it with a stand-in and drives [`dispatch`](crate::dispatch) with a
@@ -20,13 +22,12 @@
 //! has no [`Reach`](crate::Reach).
 
 use std::path::Path;
-use std::time::UNIX_EPOCH;
 
-use agentspace_box::Clock;
 use agentspace_guard::{Input, Report};
 use agentspace_operator_api::{Aws, CallerFailure, CallerLine, Context, Failure, Mode, Say};
 
-use crate::{Parts, Report as Printed};
+use crate::status::unix_seconds;
+use crate::{Outcome, Parts, Report as Printed};
 
 /// A guard run: [`agentspace_guard::run`]'s signature, which a test's stand-in has too.
 pub type GuardRun<'a> = dyn Fn(&Input, &dyn Say, &dyn Aws) -> Result<Report, Failure> + 'a;
@@ -63,35 +64,15 @@ impl Say for GuardSay<'_> {
     }
 }
 
-/// The failure that exits 1 and prints nothing: [`Printer::failure`](crate::Printer::failure)
-/// prints no line for an empty message. A run in which a log line was dropped and no host failed
-/// has already said why through `warning`, so nothing more is printed (operator.md, guard, Its
-/// log).
-fn silent_failure() -> Failure {
-    Failure {
-        message: String::new(),
-        caller: CallerFailure::Same,
-    }
-}
-
-/// The UTC clock's reading, in Unix seconds, to the whole second (operator.md, guard, step 3). A
-/// clock set before 1970 reads 0.
-pub fn utc_seconds(clock: &dyn Clock) -> i64 {
-    clock
-        .utc_now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-}
-
 /// `guard`, over `run`: one run at `now`, then the operator's closing (operator.md, guard, step 8).
 ///
 /// - `Ok(report)` with no failed host and no dropped log line, `guard.lock` held by another program
-///   included: `Ok(())`, and nothing more is printed.
+///   included: `Ok(Outcome::Done)`, and nothing more is printed.
 /// - `Ok(report)` with failed hosts, whether or not a log line was dropped: fails with
 ///   `agentspace: <n> of <m> hosts failed.`, `-All`'s line, `<m>` being the registry's records,
 ///   which the caller prints once and exits 1 for.
-/// - `Ok(report)` with a dropped log line and no failed host: fails with a failure that prints
-///   nothing, since the run said why through `warning`, and the caller exits 1 for it.
+/// - `Ok(report)` with a dropped log line and no failed host: `Ok(Outcome::FailedAfterSaying)`,
+///   since the run said why through `warning`: the caller prints nothing more and exits 1.
 /// - `Err(failure)`: that failure, unchanged.
 pub fn guard_with(
     run: &GuardRun<'_>,
@@ -100,7 +81,7 @@ pub fn guard_with(
     now: i64,
     say: &dyn Say,
     aws: &dyn Aws,
-) -> Result<(), Failure> {
+) -> Result<Outcome, Failure> {
     let report = run(
         &Input {
             ctx,
@@ -120,18 +101,18 @@ pub fn guard_with(
         });
     }
     if report.log_dropped {
-        return Err(silent_failure());
+        return Ok(Outcome::FailedAfterSaying);
     }
-    Ok(())
+    Ok(Outcome::Done)
 }
 
 /// `guard` as the dispatch runs it: [`guard_with`] over [`Reach::guard`](crate::Reach::guard) (the
 /// real run unless a stand-in overrides it), the state folder
 /// [`Reach::lease_state_dir`](crate::Reach::lease_state_dir) gives, the clock's reading read once,
 /// and the [`GuardSay`] over the command's `say` and report channel.
-pub fn guard(parts: &Parts) -> Result<(), Failure> {
+pub fn guard(parts: &Parts) -> Result<Outcome, Failure> {
     let state_dir = parts.reach.lease_state_dir(parts.ctx);
-    let now = utc_seconds(parts.clock);
+    let now = unix_seconds(parts.clock.utc_now());
     let say = GuardSay::new(parts.say, parts.report);
     guard_with(
         &|input, say, aws| parts.reach.guard(input, say, aws),
@@ -204,7 +185,7 @@ mod tests {
             &Mute,
             &NoAws,
         );
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(Outcome::Done));
         assert_eq!(
             seen.into_inner(),
             Some((
@@ -226,7 +207,7 @@ mod tests {
         };
         assert_eq!(
             guard_with(&held, &context, Path::new("s"), 0, &Mute, &NoAws),
-            Ok(())
+            Ok(Outcome::Done)
         );
         let failed = |_: &Input, _: &dyn Say, _: &dyn Aws| {
             Ok(Report {
@@ -248,12 +229,12 @@ mod tests {
         let go =
             |report: Report| guard_with(&run(report), &context, Path::new("s"), 0, &Mute, &NoAws);
         // Neither: exit 0. The lock held, with nothing else: exit 0.
-        assert_eq!(go(Report::default()), Ok(()));
+        assert_eq!(go(Report::default()), Ok(Outcome::Done));
         let held = Report {
             lock_held: true,
             ..Report::default()
         };
-        assert_eq!(go(held), Ok(()));
+        assert_eq!(go(held), Ok(Outcome::Done));
         // Failed only: the count line, once.
         let failed = Report {
             hosts: 5,
@@ -264,15 +245,16 @@ mod tests {
             go(failed).unwrap_err().message,
             "agentspace: 2 of 5 hosts failed."
         );
-        // A dropped line only: exit 1, and no line of the operator's own.
+        // A dropped line only: exit 1 with no line of the operator's own, so an outcome and not a
+        // failure.
         let dropped = Report {
             hosts: 5,
             log_dropped: true,
             ..Report::default()
         };
-        let failure = go(dropped).unwrap_err();
-        assert_eq!(failure.message, "", "Nothing more is printed");
-        assert_eq!(failure.caller, CallerFailure::Same);
+        let outcome = go(dropped).expect("Not a failure: there is nothing to print");
+        assert_eq!(outcome, Outcome::FailedAfterSaying);
+        assert_eq!(outcome.exit_code(), 1);
         // Both: the count line, once, and exit 1.
         let both = Report {
             hosts: 5,
@@ -322,17 +304,8 @@ mod tests {
     }
 
     #[test]
-    fn the_time_is_the_clock_to_the_whole_second() {
-        struct Fixed;
-        impl Clock for Fixed {
-            fn now(&self) -> std::time::Duration {
-                std::time::Duration::ZERO
-            }
-            fn utc_now(&self) -> std::time::SystemTime {
-                UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 999_000_000)
-            }
-            fn sleep(&self, _: std::time::Duration) {}
-        }
-        assert_eq!(utc_seconds(&Fixed), 1_700_000_000);
+    fn the_outcomes_exit_codes_are_0_and_1() {
+        assert_eq!(Outcome::Done.exit_code(), 0);
+        assert_eq!(Outcome::FailedAfterSaying.exit_code(), 1);
     }
 }

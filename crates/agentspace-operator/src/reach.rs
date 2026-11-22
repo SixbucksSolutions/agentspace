@@ -15,7 +15,9 @@ use crate::Reach;
 use crate::access::Access;
 
 /// Every variable the program reads, by name. The context's, `ca`'s, the seam's four, `PATH`
-/// (the AWS CLI's fallback), and `AGENTSPACE_DIAGNOSTIC`.
+/// (the AWS CLI's fallback), `AGENTSPACE_DIAGNOSTIC`, `AGENTSPACE_SSH_DIR` (the ssh folder, where
+/// a host's operator alias and a placed lease's alias file are written) and `AGENTSPACE_STATE_DIR` (the lease state
+/// file's folder, which `status -All` and `guard` read).
 const VARIABLES: [&str; 16] = [
     "USERPROFILE",
     "LOCALAPPDATA",

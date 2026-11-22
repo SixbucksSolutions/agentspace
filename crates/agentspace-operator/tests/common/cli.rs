@@ -34,13 +34,6 @@ pub const HOST_NOT_FOR_CA: &str = "agentspace: -Host does not apply to ca.";
 /// Check 1 for `guard`: `ca`'s message with the command's name changed (architect, 2026-11-21,
 /// for v0.08-T01, S01 batch).
 pub const HOST_NOT_FOR_GUARD: &str = "agentspace: -Host does not apply to guard.";
-/// What `agentspace-guard`'s run returns until E0.08-T03-S01 (#0177) builds it: the architect's
-/// stub (`crates/agentspace-guard/src/lib.rs`). **The merge of #0177 MUST change this constant
-/// and [`assert_reaches_guard`]**, which stand for "a command line that passes every check reaches
-/// the guard's run". **This constant is the one place in the operator's tests that pins the stub's
-/// text** (`guard_command_line.rs` and `assert_reaches_command` reach it through
-/// [`assert_reaches_guard`]); `guard_dispatch.rs` drives a stand-in run and never the stub.
-pub const GUARD_NOT_BUILT: &str = "agentspace: guard is not built yet.";
 pub const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alone.";
 pub const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
 pub const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
@@ -148,7 +141,8 @@ impl Home {
     }
 
     /// The command, ready to run: environment pointed into the home, the three seam variables
-    /// naming nothing, and the rest of the operator's variables removed.
+    /// naming nothing, and the rest of the operator's variables removed, `AGENTSPACE_STATE_DIR`,
+    /// `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` among them.
     pub fn command<S: AsRef<OsStr>>(&self, args: &[S]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_agentspace-operator"));
         c.args(args)
@@ -166,6 +160,13 @@ impl Home {
             .env_remove("AGENTSPACE_NESTED")
             .env_remove("AGENTSPACE_DIAGNOSTIC")
             .env_remove("AGENTSPACE_TIMEZONE")
+            // Every other seam a run reads: the real guard reads the state folder, and MUST NOT
+            // read the test runner's own.
+            .env_remove("AGENTSPACE_STATE_DIR")
+            .env_remove("AGENTSPACE_SSH_DIR")
+            .env_remove("AGENTSPACE_PROXY_COMMAND")
+            .env_remove("AGENTSPACE_GUARD_CMD")
+            .env_remove("AGENTSPACE_OPERATOR_CMD")
             .env_remove("RUST_BACKTRACE")
             .current_dir(self.dir.path())
             .stdin(Stdio::null());
@@ -338,13 +339,87 @@ pub fn assert_reaches_sync_crate<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], 
     assert_failure_run(&format!("{args:?}"), &r, &expected);
 }
 
-/// `guard` reaches its run, which is the architect's stub until #0177 builds it ([`GUARD_NOT_BUILT`]):
-/// exit 1, the stub's one line on stderr, nothing on stdout, and nothing written in the home. The
-/// stub is no seam variable's business, so the harness's seam variables name nothing and no AWS
-/// call is made.
+/// `guard` reaches its real run, and in the harness's empty throwaway home the run ends at its step
+/// 3 (docs/operator.md, guard):
+/// - **Step 1** takes `%USERPROFILE%\.agentspace\guard.lock`, making the folder first. Nothing
+///   holds it, so the run goes on.
+/// - **Step 2** finds no `hosts.json`, which is the box's record alone, and goes on.
+/// - **Step 3** finds no `leases.json` in the state folder (`AGENTSPACE_STATE_DIR` is removed by
+///   [`Home::command`], so it is `%USERPROFILE%\.agentspace`). **A missing lease state file fails
+///   the run** (P18): it prints `agentspace: The lease state file <path> cannot be read: the file
+///   does not exist.`, makes no AWS call, logs one `failed step=leases` line with no `host=`
+///   field, and exits 1. The seam variables name nothing, so a call would have given the seam's
+///   own message instead, and no ssh or scp is started.
+///
+/// So the run gives exit 1, that one line on stderr, nothing on stdout, and leaves exactly two
+/// files in the home, both in `profile\.agentspace`: `guard.lock`, empty, and `guard.log`, one line.
 pub fn assert_reaches_guard<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S]) {
-    let r = run(args);
-    assert_failure_run(&format!("{args:?}"), &r, GUARD_NOT_BUILT);
+    let home = Home::new();
+    let r = home.run(args);
+    let shown = format!("{args:?}");
+    let state = home.path().join("profile").join(".agentspace");
+    let message = format!(
+        "agentspace: The lease state file {} cannot be read: the file does not exist.",
+        state.join("leases.json").display()
+    );
+    assert_eq!(
+        r.code,
+        Some(1),
+        "{shown}: exit code; stderr was {:?}",
+        r.err()
+    );
+    assert_eq!(r.out(), "", "{shown}: stdout MUST be empty on a failure");
+    assert_eq!(r.err(), format!("{message}\n"), "{shown}: stderr");
+    // The run writes only into the throwaway profile's `.agentspace` folder.
+    assert_eq!(
+        r.leftovers,
+        ["profile/..."],
+        "{shown}: wrote beyond the profile folder"
+    );
+    let mut names: Vec<String> = std::fs::read_dir(&state)
+        .expect("the guard made its state folder")
+        .map(|e| {
+            e.expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["guard.lock", "guard.log"],
+        "{shown}: exactly the lock and the log are left"
+    );
+    assert_eq!(
+        std::fs::read(state.join("guard.lock")).expect("the lock file"),
+        Vec::<u8>::new(),
+        "{shown}: the lock is empty"
+    );
+    let log = std::fs::read_to_string(state.join("guard.log")).expect("the log");
+    let line = log
+        .strip_suffix('\n')
+        .unwrap_or_else(|| panic!("{shown}: the log's line ends in a line feed: {log:?}"));
+    assert!(!line.contains('\n'), "{shown}: one log line: {log:?}");
+    // `<time>` is `YYYY-MM-DDTHH:MM:SSZ`, 20 characters, then a space.
+    let (time, rest) = line.split_at(20.min(line.len()));
+    assert!(
+        time.len() == 20
+            && time.bytes().enumerate().all(|(i, b)| match i {
+                4 | 7 => b == b'-',
+                10 => b == b'T',
+                13 | 16 => b == b':',
+                19 => b == b'Z',
+                _ => b.is_ascii_digit(),
+            }),
+        "{shown}: the log's time is UTC to the whole second: {time:?}"
+    );
+    let reason = message.strip_prefix("agentspace: ").expect("the prefix");
+    assert_eq!(
+        rest,
+        format!(" failed step=leases reason={reason}"),
+        "{shown}: the log's one line, with no host= field"
+    );
 }
 
 /// A command line given as a string of words, and the failure it MUST give.

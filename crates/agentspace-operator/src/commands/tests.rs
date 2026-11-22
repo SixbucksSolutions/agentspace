@@ -125,7 +125,7 @@ impl Rig {
     }
 
     fn run(&self, request: &Request) -> Result<(), Failure> {
-        dispatch(
+        done(dispatch(
             request,
             &Parts {
                 ctx: &self.ctx,
@@ -137,8 +137,14 @@ impl Rig {
                 clock: &self.clock,
                 reach: &self.reach,
             },
-        )
+        ))
     }
+}
+
+/// A command that is not `guard` ends in `Done` or a failure; `guard`'s outcomes are tested in
+/// guard.rs and tests/guard_dispatch.rs.
+fn done(result: Result<Outcome, Failure>) -> Result<(), Failure> {
+    result.map(|outcome| assert_eq!(outcome, Outcome::Done))
 }
 
 fn request(command: Command) -> Request {
@@ -1494,7 +1500,7 @@ fn write_leases(home: &TempHome, records: Vec<Value>) {
 impl Rig {
     /// `run`, with the `Reach` (and so the zone) a test chooses.
     fn run_in(&self, request: &Request, reach: &dyn Reach) -> Result<(), Failure> {
-        dispatch(
+        done(dispatch(
             request,
             &Parts {
                 ctx: &self.ctx,
@@ -1506,7 +1512,7 @@ impl Rig {
                 clock: &self.clock,
                 reach,
             },
-        )
+        ))
     }
 }
 

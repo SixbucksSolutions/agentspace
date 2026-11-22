@@ -1,15 +1,12 @@
 //! `guard`'s dispatch, in process, over the seam the operator gives a test: `Reach::guard` is the
-//! guard's run (the real one is `agentspace-guard`'s, the architect's stub until E0.08-T03-S01,
-//! #0177, builds it), and `Reach::lease_state_dir` is the state folder it reads (docs/operator.md:
-//! guard, its steps 3 and 8, Its environment, Its streams, exit codes and help; Environment
-//! variables). The program's exit codes follow `Ok` and `Err` as for every command (`run`: `Ok` is
-//! 0, and a failure is printed and is 1), so what is shown here is what the dispatch returns and
-//! prints.
+//! guard's run (the real one is `agentspace-guard`'s), and `Reach::lease_state_dir` is the state
+//! folder it reads (docs/operator.md: guard, its steps 3 and 8, Its environment, Its streams,
+//! exit codes and help; Environment variables). The program's exit code is the dispatch's
+//! `Outcome::exit_code` for an `Ok`, and 1 for an `Err`, which `run` prints, so what is shown here
+//! is what the dispatch returns and prints, and the exit code `run` maps it to.
 //!
-//! **This file assumes the seam named above** (`Reach::guard`, `Reach::lease_state_dir`,
-//! `agentspace_guard::{Input, Report}`), which E0.08-T03-S02's implementers were building while it
-//! was written. Nothing here reads or writes the process's environment: every variable is a value
-//! in a lookup, and every path is in a throwaway folder.
+//! Nothing here reads or writes the process's environment: every variable is a value in a lookup,
+//! and every path is in a throwaway folder.
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 
@@ -22,8 +19,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agentspace_guard::{Input, Report as GuardReport};
 use agentspace_operator::{
-    Aws, CaEnv, CallerFailure, Clock, Context, Failure, Mode, Parsed, Parts, Printer, Reach,
-    Remote, Say, SystemReach, Target, dispatch, parse,
+    Aws, CaEnv, CallerFailure, Clock, Context, Failure, Mode, Outcome, Parsed, Parts, Printer,
+    Reach, Remote, Say, SystemReach, Target, dispatch, parse,
 };
 use agentspace_operator_api::{AwsError, Call};
 use common::Capture;
@@ -231,9 +228,20 @@ impl Home {
 
 /// What one dispatch of `guard` did.
 struct Done {
-    result: Result<(), Failure>,
+    result: Result<Outcome, Failure>,
     seen: Vec<Seen>,
     printed: String,
+}
+
+impl Done {
+    /// The program's exit code for this dispatch, as `run` maps it: an outcome's own, and 1 for a
+    /// failure, which `go` has already printed.
+    fn exit_code(&self) -> i32 {
+        match &self.result {
+            Ok(outcome) => outcome.exit_code(),
+            Err(_) => 1,
+        }
+    }
 }
 
 /// Dispatches the command line `args` (which must parse to a run) with the stand-in guard run,
@@ -323,7 +331,7 @@ fn the_run_gets_the_home_the_state_folder_and_the_clocks_time_to_the_whole_secon
         1_700_000_000,
         999,
     );
-    assert_eq!(done.result, Ok(()));
+    assert_eq!(done.result, Ok(Outcome::Done));
     assert_eq!(
         done.seen,
         [Seen {
@@ -421,7 +429,7 @@ fn the_state_folder_never_moves_the_homes_own_files() {
 fn a_run_that_failed_no_host_is_success_and_prints_nothing_more() {
     let home = Home::new();
     let done = go(&home, &["guard"], &[], clean(), 5, 0);
-    assert_eq!(done.result, Ok(()), "exit 0");
+    assert_eq!(done.result, Ok(Outcome::Done), "exit 0");
     assert_eq!(
         done.printed, "Hosts: 0; running 0, stopped 0, unexplained 0.\n",
         "only what the run printed through the Say it was given"
@@ -435,7 +443,7 @@ fn a_run_that_failed_no_host_is_success_and_prints_nothing_more() {
         ..GuardReport::default()
     };
     let done = go(&home, &["guard"], &[], Ok(report), 5, 0);
-    assert_eq!(done.result, Ok(()));
+    assert_eq!(done.result, Ok(Outcome::Done));
 }
 
 #[test]
@@ -450,7 +458,7 @@ fn a_run_that_found_guard_lock_held_is_success_and_prints_nothing() {
             ..GuardReport::default()
         };
         let done = go(&home, args, &[], Ok(held), 5, 0);
-        assert_eq!(done.result, Ok(()), "{args:?}: exit 0");
+        assert_eq!(done.result, Ok(Outcome::Done), "{args:?}: exit 0");
         assert_eq!(done.printed, "", "{args:?}: nothing printed");
         assert_eq!(done.seen.len(), 1, "{args:?}: the run was reached");
     }
@@ -539,7 +547,7 @@ fn a_failure_that_ends_the_run_is_printed_unchanged() {
 fn quiet_is_the_runs_own_say_so_its_progress_lines_are_suppressed() {
     let home = Home::new();
     let done = go(&home, &["guard", "-Quiet"], &[], clean(), 5, 0);
-    assert_eq!(done.result, Ok(()));
+    assert_eq!(done.result, Ok(Outcome::Done));
     assert_eq!(done.printed, "", "-Quiet suppresses the progress lines");
     let done = go(&home, &["-Quiet", "guard"], &[], clean(), 5, 0);
     assert_eq!(done.printed, "");
@@ -559,7 +567,7 @@ fn guard_is_not_all_it_prints_no_host_line_and_reads_no_registry_of_its_own() {
     std::fs::create_dir_all(&state).unwrap();
     std::fs::write(state.join("hosts.json"), b"not json").unwrap();
     let done = go(&home, &["guard"], &[], clean(), 5, 0);
-    assert_eq!(done.result, Ok(()));
+    assert_eq!(done.result, Ok(Outcome::Done));
     assert_eq!(done.seen.len(), 1, "the run was reached");
     assert!(!done.printed.contains("Host      "), "{:?}", done.printed);
     // And the dispatch wrote nothing in the home: no `guard.lock`, no `guard.log`.
@@ -657,7 +665,12 @@ fn a_dropped_log_line_with_no_failed_host_exits_1_and_prints_nothing_more() {
         5,
         0,
     );
-    assert!(done.result.is_err(), "Exit 1");
+    assert_eq!(
+        done.result,
+        Ok(Outcome::FailedAfterSaying),
+        "A log line dropped, no host failed"
+    );
+    assert_eq!(done.exit_code(), 1, "Exit 1");
     assert_eq!(
         done.printed,
         format!("{LOG_FAILED}\n{CLOSING}\n"),
@@ -672,7 +685,8 @@ fn a_dropped_log_line_with_no_failed_host_exits_1_and_prints_nothing_more() {
         5,
         0,
     );
-    assert!(done.result.is_err(), "Exit 1 under -Quiet too");
+    assert_eq!(done.result, Ok(Outcome::FailedAfterSaying));
+    assert_eq!(done.exit_code(), 1, "Exit 1 under -Quiet too");
     assert_eq!(done.printed, format!("{LOG_FAILED}\n"));
 }
 
@@ -695,7 +709,8 @@ fn failed_hosts_and_a_dropped_log_line_print_the_count_line_once_and_exit_1() {
         5,
         0,
     );
-    let failure = done.result.expect_err("Exit 1");
+    assert_eq!(done.exit_code(), 1, "Exit 1");
+    let failure = done.result.expect_err("The count line is a failure");
     assert_eq!(failure.message, "agentspace: 2 of 3 hosts failed.");
     assert_eq!(
         done.printed,
@@ -708,12 +723,16 @@ fn failed_hosts_and_a_dropped_log_line_print_the_count_line_once_and_exit_1() {
 fn only_a_failed_host_a_dropped_line_or_a_failure_is_exit_1() {
     let home = Home::new();
     // Neither: exit 0. The lock held: exit 0.
-    assert_eq!(go(&home, &["guard"], &[], clean(), 5, 0).result, Ok(()));
+    let neither = go(&home, &["guard"], &[], clean(), 5, 0);
+    assert_eq!(neither.result, Ok(Outcome::Done));
+    assert_eq!(neither.exit_code(), 0);
     let held = GuardReport {
         lock_held: true,
         ..GuardReport::default()
     };
-    assert_eq!(go(&home, &["guard"], &[], Ok(held), 5, 0).result, Ok(()));
+    let held = go(&home, &["guard"], &[], Ok(held), 5, 0);
+    assert_eq!(held.result, Ok(Outcome::Done));
+    assert_eq!(held.exit_code(), 0);
     // Each of the others: exit 1.
     let failed = GuardReport {
         hosts: 1,
@@ -726,6 +745,15 @@ fn only_a_failed_host_a_dropped_line_or_a_failure_is_exit_1() {
         ..GuardReport::default()
     };
     for report in [failed, dropped] {
-        assert!(go(&home, &["guard"], &[], Ok(report), 5, 0).result.is_err());
+        let done = go(&home, &["guard"], &[], Ok(report), 5, 0);
+        assert_eq!(done.exit_code(), 1);
     }
+    let failure = Failure {
+        message: "agentspace: A failure that ended the run.".to_string(),
+        caller: CallerFailure::Same,
+    };
+    assert_eq!(
+        go(&home, &["guard"], &[], Err(failure), 5, 0).exit_code(),
+        1
+    );
 }

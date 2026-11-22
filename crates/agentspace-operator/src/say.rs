@@ -91,13 +91,14 @@ impl Printer {
 
     /// Prints a failure's one line, whatever `-Quiet` says. In caller mode it prints the caller's
     /// line in place of the person's, as operator.md's table gives it. The caller adds detail with
-    /// [`Say::detail`] after it. **A failure whose message is empty prints no line**, and still
-    /// fails the command: it is how `guard` exits 1 for a dropped log line, which its run has
-    /// already said through `warning` (operator.md, guard, Its log).
+    /// [`Say::detail`] after it. **It prints every failure it is given, so a failure's message is
+    /// never empty**: a command that exits 1 with nothing more to say does it through its
+    /// [`Outcome`](crate::Outcome), never through an empty message.
     pub fn failure(&self, failure: &Failure) {
-        if failure.message.is_empty() {
-            return;
-        }
+        debug_assert!(
+            !failure.message.is_empty(),
+            "A failure always has a message to print"
+        );
         match (self.mode, failure.caller) {
             (Mode::Person, _) | (Mode::Caller, CallerFailure::Same) => {
                 self.write_line(&failure.message)
@@ -246,16 +247,15 @@ mod tests {
         assert_eq!(cap.text(), "agentspace: Down.\n");
     }
 
+    #[cfg(debug_assertions)]
     #[test]
-    fn a_failure_with_an_empty_message_prints_no_line() {
-        for mode in [Mode::Person, Mode::Caller] {
-            let (say, cap) = printer(mode, false, false);
-            say.failure(&Failure {
-                message: String::new(),
-                caller: CallerFailure::Same,
-            });
-            assert_eq!(cap.text(), "", "{mode:?}");
-        }
+    #[should_panic(expected = "A failure always has a message to print")]
+    fn a_failure_with_an_empty_message_is_a_bug_and_never_a_silent_exit() {
+        let (say, _) = printer(Mode::Person, false, false);
+        say.failure(&Failure {
+            message: String::new(),
+            caller: CallerFailure::Same,
+        });
     }
 
     #[test]

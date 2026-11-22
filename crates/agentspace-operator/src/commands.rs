@@ -116,12 +116,13 @@ pub trait Reach {
     /// `<h:mm><am|pm>`, rounded up to the next whole minute, in the zone the system is set to when
     /// the line is printed, with that instant's daylight saving rule applied; `AGENTSPACE_TIMEZONE`
     /// does not change it (operator.md, status -All). The default is
-    /// [`agentspace_zone::local_clock_time`], the one formatter of the guard's stop time (D63),
-    /// and UTC for a system that gives no offset. The operator never converts a time itself, so a
-    /// test that needs a fixed zone overrides this with a stand-in that yields the text.
+    /// [`agentspace_zone::local_clock_time_or_utc`], the one formatter of the guard's stop time
+    /// (D63) with the one fallback: for a system that gives no offset for the instant it is
+    /// `<h:mm><am|pm> UTC`, so it is never read as the laptop's own time. The operator never
+    /// converts a time itself and keeps no fallback of its own, so a test that needs a fixed zone
+    /// overrides this with a stand-in that yields the text.
     fn clock_time(&self, unix: i64) -> String {
-        agentspace_zone::local_clock_time(unix)
-            .unwrap_or_else(|| agentspace_zone::clock_time_at(unix, 0))
+        agentspace_zone::local_clock_time_or_utc(unix)
     }
     /// `guard`'s run (operator.md, guard; D56, D63), which the dispatch calls with the state
     /// folder [`Reach::lease_state_dir`] gives and the clock's reading to the whole second. The
@@ -214,17 +215,50 @@ fn resolve(hosts: &Hosts, project: Option<&str>) -> Result<HostRef, Failure> {
         })
 }
 
+/// How a command that did not fail with a message ended: the program's exit code, 0 or 1, is
+/// [`Outcome::exit_code`]. A failure with a message is the `Err` of [`dispatch`], which the caller
+/// prints and exits 1 for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// The command succeeded: exit 0.
+    Done,
+    /// The command failed and has already said why, through its own lines, so nothing more is
+    /// printed: exit 1. `guard` ends so when a log line was dropped and no host failed (operator.md,
+    /// guard, Its log).
+    FailedAfterSaying,
+}
+
+impl Outcome {
+    /// The program's exit code: 0 for [`Outcome::Done`], 1 for [`Outcome::FailedAfterSaying`].
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Outcome::Done => 0,
+            Outcome::FailedAfterSaying => 1,
+        }
+    }
+}
+
 /// Runs a parsed command.
+///
+/// `guard` is its own: it acts on every host in one run, reads the registry itself, and may end in
+/// [`Outcome::FailedAfterSaying`] (operator.md, guard). Every other command ends in
+/// [`Outcome::Done`] or a [`Failure`].
+pub fn dispatch(request: &Request, parts: &Parts) -> Result<Outcome, Failure> {
+    if request.command == Command::Guard {
+        return crate::guard::guard(parts);
+    }
+    dispatch_command(request, parts).map(|()| Outcome::Done)
+}
+
+/// Runs a parsed command that is not `guard`.
 ///
 /// `ca`, `provision` and `sync -All` read no record here: `ca` takes no host, `provision` finds its
 /// own (operator.md, provision, step 1), and `sync -All` reads the registry itself. Every other
 /// command finds its host's record, or every record for `-All`, before it starts any program or
 /// makes any AWS call.
-pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
+fn dispatch_command(request: &Request, parts: &Parts) -> Result<(), Failure> {
     match request.command {
         Command::Ca => return parts.reach.ca(parts.ctx, parts.ca_env, parts.say),
-        // `guard` acts on every host in one run, and reads the registry itself (operator.md, guard).
-        Command::Guard => return crate::guard::guard(parts),
         Command::Provision => {
             return parts.reach.provision(
                 parts.ctx,
