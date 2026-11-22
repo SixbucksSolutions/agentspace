@@ -220,7 +220,7 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    `%USERPROFILE%\.agentspace\bin\agentspace.exe`. The default ProxyCommand names the install's
    `agentspace-ssh-proxy.exe`, so no checkout needs to exist ([Install it](#install-it)). The JSON
    gives the lease's `id`, its `expires_at` (8 hours from now unless `--ttl` says otherwise) and
-   `ssh.host_alias`, such as `agentspace-swimcoach-a62cb513`.
+   `ssh.host_alias`, such as `agentspace-swimcoach-3a9c5e21`.
 2. **Put the project's repo on the box.** Nothing clones it for you. The repo MUST be in the
    folder the agents will open, for example `ssh <alias> "git clone <url> ~/swimcoach"`. Every
    lease is `ubuntu` in the MVP
