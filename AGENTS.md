@@ -111,6 +111,11 @@ its subagents.
   dev lead was in E3.02's worktree, and E1.05's, resumed in its own worktree before the dev lead
   moved to E1.04's, both had their edits refused).
   - **For follow-up work, a dev lead SHOULD launch a fresh subagent rather than resume one.**
+  - **A message sent to a running subagent can turn it into a resumed one** (v0.08-T01,
+    2026-11-21): if it finishes before it reads the message, the harness resumes it with the
+    message, and it then follows the dev lead's current worktree. A dev lead SHOULD NOT message a
+    running subagent; it puts the whole tasking into the launch, and any later change into a fresh
+    subagent, so it never has to wait in a worktree.
   - **A dev lead that does resume one MUST stay in that story's worktree until it finishes.**
 - **Any wake of a subagent follows the dev lead's current worktree, not only a `SendMessage`
   resume** (found in v0.02-T1, 2026-11-17). 0.02.T1.1's implementer ended its run waiting on its
