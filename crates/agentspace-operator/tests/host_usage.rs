@@ -261,14 +261,15 @@ fn usage_errors_found_while_reading_come_before_every_host_check() {
 }
 
 #[test]
-fn the_command_list_in_the_missing_and_unknown_command_messages_names_all_nine() {
+fn the_command_list_in_the_missing_and_unknown_command_messages_names_all_ten() {
+    // v0.08 adds `guard` (operator.md, Usage errors; guard_command_line.rs has the same two).
     assert_failure::<&str>(
         &[],
-        "agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.",
+        "agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.",
     );
     assert_failure(
         &["bogus"],
-        "agentspace: Unknown command 'bogus'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.",
+        "agentspace: Unknown command 'bogus'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.",
     );
 }
 
@@ -284,7 +285,15 @@ fn check_1_host_given_with_ca() {
 
 #[test]
 fn check_2_all_given_with_a_command_that_does_not_take_it() {
-    for command in ["deploy", "up", "bootstrap", "provision", "ca", "grow"] {
+    for command in [
+        "deploy",
+        "up",
+        "bootstrap",
+        "provision",
+        "ca",
+        "grow",
+        "guard",
+    ] {
         assert_line_fails(&format!("{command} -All"), ALL_APPLIES);
         assert_line_fails(&format!("-all {command}"), ALL_APPLIES);
     }

@@ -13,10 +13,10 @@ use std::sync::OnceLock;
 
 /// The text every unknown-command and no-command message ends with.
 pub const COMMANDS_SENTENCE: &str =
-    "The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.";
+    "The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.";
 pub const ALIAS_APPLIES: &str = "agentspace: -Alias applies to up alone.";
 pub const ALIAS_INVALID: &str = "agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'.";
-pub const COMMANDS: [&str; 9] = [
+pub const COMMANDS: [&str; 10] = [
     "deploy",
     "up",
     "sync",
@@ -26,10 +26,19 @@ pub const COMMANDS: [&str; 9] = [
     "down",
     "status",
     "grow",
+    "guard",
 ];
 
 /// The host checks' messages (docs/operator.md, Command line, "The host checks run next").
 pub const HOST_NOT_FOR_CA: &str = "agentspace: -Host does not apply to ca.";
+/// Check 1 for `guard`: `ca`'s message with the command's name changed (architect, 2026-11-21,
+/// for v0.08-T01, S01 batch).
+pub const HOST_NOT_FOR_GUARD: &str = "agentspace: -Host does not apply to guard.";
+/// What `agentspace-guard`'s run returns until E0.08-T03-S01 (#0177) builds it: the architect's
+/// stub (`crates/agentspace-guard/src/lib.rs`). **The merge of #0177 MUST change this constant
+/// and [`assert_reaches_guard`]**, which stand for "a command line that passes every check reaches
+/// the guard's run".
+pub const GUARD_NOT_BUILT: &str = "agentspace: guard is not built yet.";
 pub const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alone.";
 pub const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
 pub const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
@@ -66,6 +75,10 @@ pub fn needs_value(name: &str) -> String {
 }
 pub fn not_a_number(arg: &str) -> String {
     format!("agentspace: -GiB MUST be a whole number, not '{arg}'.")
+}
+/// `grow`'s refusal of a `-GiB` of 0 or less (operator.md, Command line, Usage errors).
+pub fn gib_not_positive(arg: &str) -> String {
+    format!("agentspace: -GiB MUST be 1 or more for grow, not '{arg}'.")
 }
 pub fn not_a_project(arg: &str) -> String {
     format!(
@@ -243,6 +256,10 @@ pub fn assert_reaches_command<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], com
         assert_reaches_sync_crate(args, command);
         return;
     }
+    if command == "guard" {
+        assert_reaches_guard(args);
+        return;
+    }
     let home = Home::new();
     let r = home.run(args);
     let expected = match command {
@@ -317,6 +334,15 @@ pub fn assert_reaches_sync_crate<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S], 
         other => panic!("{other} is not one of agentspace-sync's commands"),
     };
     assert_failure_run(&format!("{args:?}"), &r, &expected);
+}
+
+/// `guard` reaches its run, which is the architect's stub until #0177 builds it ([`GUARD_NOT_BUILT`]):
+/// exit 1, the stub's one line on stderr, nothing on stdout, and nothing written in the home. The
+/// stub is no seam variable's business, so the harness's seam variables name nothing and no AWS
+/// call is made.
+pub fn assert_reaches_guard<S: AsRef<OsStr> + std::fmt::Debug>(args: &[S]) {
+    let r = run(args);
+    assert_failure_run(&format!("{args:?}"), &r, GUARD_NOT_BUILT);
 }
 
 /// A command line given as a string of words, and the failure it MUST give.

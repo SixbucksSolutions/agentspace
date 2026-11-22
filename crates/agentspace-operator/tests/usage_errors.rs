@@ -68,6 +68,11 @@ fn commands_are_whole_never_abbreviations() {
         "prov",
         "provisio",
         "provisions",
+        "g",
+        "gua",
+        "guar",
+        "guards",
+        "guard1",
     ] {
         assert_failure(&[abbreviation], &unknown_command(abbreviation));
     }
@@ -149,22 +154,30 @@ fn a_bad_gib_value_names_the_value_as_given() {
 
 #[test]
 fn gib_takes_a_decimal_integer_in_the_32_bit_range() {
+    // For `grow` the value MUST also be 1 or more (D61, #0164), so only the positive forms reach
+    // it; the others are `grow`'s own refusal, in `gib_s_range_is_checked_for_grow_alone`.
     for good in [
-        "0",
         "1",
         "2",
         "10",
-        "-1",
         "+5",
-        "-0",
-        "+0",
         "007",
         "2147483647",
-        "-2147483648",
         "+2147483647",
         "0000000000000000000000000001",
     ] {
         reaches_the_stub(&format!("grow -GiB {good}"), "grow");
+    }
+    // Every other command checks the form alone, so each of the forms below reaches it.
+    for good in [
+        "0",
+        "-1",
+        "-0",
+        "+0",
+        "-2147483648",
+        "0000000000000000000000000000",
+    ] {
+        reaches_the_stub(&format!("status -GiB {good}"), "status");
     }
 }
 
@@ -179,18 +192,25 @@ fn every_command_checks_gib_s_form() {
 }
 
 #[test]
-fn gib_s_range_is_not_checked_further() {
-    // 0 and below reach AWS, which refuses them (grow, step 2); the operator MUST NOT.
-    reaches_the_stub("grow -GiB 0", "grow");
-    reaches_the_stub("grow -GiB -2147483648", "grow");
-    reaches_the_stub("status -GiB -100", "status");
+fn gib_s_range_is_checked_for_grow_alone() {
+    // D61, #0164: `grow` refuses a value of 0 or less as a usage error, before any AWS call; every
+    // other command ignores the value (operator.md, Command line: `status -GiB 0` is not an error).
+    for refused in ["0", "-0", "+0", "-1", "-2147483648", "000", "-007", "-100"] {
+        assert_failure(&["grow", "-GiB", refused], &gib_not_positive(refused));
+    }
+    for command in ["status", "down", "sync", "up", "ca", "guard"] {
+        reaches_the_stub(&format!("{command} -GiB 0"), command);
+        reaches_the_stub(&format!("{command} -GiB -100"), command);
+    }
+    reaches_the_stub("down -GiB -5", "down");
 }
 
 // ---- A value is taken whatever it looks like ----
 
 #[test]
 fn the_argument_after_gib_is_its_value_whatever_it_looks_like() {
-    reaches_the_stub("grow -GiB -1", "grow");
+    // `-1` is the value, a number, so it is `grow`'s refusal and no unknown parameter.
+    assert_failure(&["grow", "-GiB", "-1"], &gib_not_positive("-1"));
     reaches_the_stub("grow -gib +1", "grow");
     // A parameter's name, a command, a flag: each is the value, and so a bad number.
     assert_line_fails("grow -GiB -Quiet", &not_a_number("-Quiet"));

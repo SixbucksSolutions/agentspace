@@ -7,7 +7,7 @@
 //! - [`parse`] reads a command line into [`Parsed`]: help ([`HelpLevel`]), a [`Request`] to run,
 //!   or the whole `agentspace: ` line of a usage error or an `-Alias` refusal.
 //! - [`help`] gives the help text of a [`HelpLevel`], byte for byte as operator.md gives it.
-//! - [`Command`] names the nine commands; [`Command::name`] is operator.md's spelling.
+//! - [`Command`] names the ten commands; [`Command::name`] is operator.md's spelling.
 //! - [`Printer`] implements the pinned [`Say`] for a person's command and for caller mode, to any
 //!   writer, and prints a [`Failure`] with [`Printer::failure`].
 //! - [`context_from`] builds the pinned [`Context`] from an injectable variable lookup, or fails
@@ -37,9 +37,11 @@ mod access;
 mod cache;
 mod cli;
 mod commands;
+mod guard;
 mod help_text;
 mod reach;
 mod say;
+mod status;
 #[cfg(test)]
 mod testing;
 
@@ -57,6 +59,7 @@ pub use agentspace_sync::Target;
 pub use cache::HostCache;
 pub use cli::{Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, Parsed, Request, help, parse};
 pub use commands::{HostRef, Parts, Reach, Report, dispatch, down, grow, status, up};
+pub use guard::{GuardRun, guard, guard_with, utc_seconds};
 pub use reach::{Env, SystemReach};
 pub use say::{COULD_NOT_REACH, NOT_AVAILABLE, NOT_READY, Printer, caller_warning};
 

@@ -16,7 +16,7 @@ use crate::access::Access;
 
 /// Every variable the program reads, by name. The context's, `ca`'s, the seam's four, `PATH`
 /// (the AWS CLI's fallback), and `AGENTSPACE_DIAGNOSTIC`.
-const VARIABLES: [&str; 15] = [
+const VARIABLES: [&str; 16] = [
     "USERPROFILE",
     "LOCALAPPDATA",
     "SystemRoot",
@@ -32,6 +32,7 @@ const VARIABLES: [&str; 15] = [
     "AGENTSPACE_SCP_CMD",
     "AGENTSPACE_TIMEZONE",
     "AGENTSPACE_SSH_DIR",
+    "AGENTSPACE_STATE_DIR",
 ];
 
 /// The program's environment as it started: the variables it reads, copied once from a lookup
@@ -84,6 +85,9 @@ impl Env {
 pub struct SystemReach {
     env: Env,
     access: Access,
+    /// The state folder: `AGENTSPACE_STATE_DIR` made full against the working folder when it is set
+    /// and not empty, else `<home>\.agentspace`.
+    state_dir: Option<std::path::PathBuf>,
 }
 
 impl SystemReach {
@@ -92,19 +96,34 @@ impl SystemReach {
     /// started.
     pub fn new(env: Env) -> Self {
         let cwd = std::env::current_dir().unwrap_or_default();
-        let ssh_dir = agentspace_state::resolve_paths(&env.lookup(), &cwd)
-            .ok()
-            .and_then(|paths| paths.ssh_dir)
+        let paths = agentspace_state::resolve_paths(&env.lookup(), &cwd).ok();
+        let ssh_dir = paths
+            .as_ref()
+            .and_then(|paths| paths.ssh_dir.clone())
             .unwrap_or_default();
+        let state_dir = paths.and_then(|paths| paths.state_dir);
         let own_exe = std::env::current_exe().ok();
         SystemReach {
             env,
             access: Access { ssh_dir, own_exe },
+            state_dir,
         }
     }
 }
 
 impl Reach for SystemReach {
+    fn lease_state_dir(&self, ctx: &Context) -> std::path::PathBuf {
+        self.state_dir
+            .clone()
+            .unwrap_or_else(|| ctx.home.join(".agentspace"))
+    }
+
+    fn utc_offset(&self, unix: i64) -> i32 {
+        // The system's zone at that instant. `AGENTSPACE_TIMEZONE` is the token push's alone. A
+        // system that gives none is read as UTC.
+        agentspace_zone::local_utc_offset(unix).unwrap_or(0)
+    }
+
     fn push(
         &self,
         ctx: &Context,

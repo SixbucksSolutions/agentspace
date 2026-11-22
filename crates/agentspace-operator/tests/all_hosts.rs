@@ -31,6 +31,17 @@ fn status_lines(id: &str) -> String {
     )
 }
 
+/// What `status -All` says, once, after its last host, when the rig holds no lease state file
+/// (operator.md, status -All: a missing file is not "no leases", so no host gets a `Leases` or
+/// `Guard` line). It is part of the report, and never changes the exit code. The cases that read
+/// the file are in `status_leases.rs`.
+fn no_leases_file(rig: &Rig) -> String {
+    format!(
+        "agentspace: The lease state file {} cannot be read: the file does not exist.\n",
+        rig.state_dir().join("leases.json").display()
+    )
+}
+
 const BOX_LINE: &str = "Host      swimcoach (agentbox), ready\n";
 const ALPHA_LINE: &str = "Host      alpha (agentspace-host-alpha), creating\n";
 const AGENTSPACE_LINE: &str = "Host      agentspace (agentspace-host-agentspace), ready\n";
@@ -47,10 +58,11 @@ fn status_all_reports_every_host_in_the_registrys_order_after_its_host_line() {
     assert_eq!(
         out.err(),
         format!(
-            "{BOX_LINE}{}{ALPHA_LINE}Instance  none recorded\n{AGENTSPACE_LINE}{}{ZETA_LINE}{}",
+            "{BOX_LINE}{}{ALPHA_LINE}Instance  none recorded\n{AGENTSPACE_LINE}{}{ZETA_LINE}{}{}",
             status_lines(ID),
             status_lines(OTHER_ID),
-            status_lines(THIRD_ID)
+            status_lines(THIRD_ID),
+            no_leases_file(&rig)
         )
     );
     // Nine calls, three per host that has an instance, in the registry's order, and none for
@@ -90,12 +102,17 @@ fn status_all_reports_every_host_in_the_registrys_order_after_its_host_line() {
 
 #[test]
 fn the_host_line_and_every_report_line_print_whatever_quiet_says() {
+    // One rig for both runs: the report ends with the lease state file's path, which is the rig's.
     let rig = four_hosts();
     let loud = rig.run(&["status", "-All"]);
-    let rig = four_hosts();
     let quiet = rig.run(&["status", "-All", "-Quiet"]);
     assert_eq!(quiet.code, Some(0));
     assert_eq!(quiet.err(), loud.err());
+    assert!(
+        quiet.err().ends_with(&no_leases_file(&rig)),
+        "{:?}",
+        quiet.err()
+    );
 }
 
 #[test]
@@ -115,7 +132,10 @@ fn status_all_over_a_missing_registry_is_the_box_alone() {
     let rig = Rig::standard();
     let out = rig.run(&["status", "-All"]);
     assert_eq!(out.code, Some(0), "{:?}", out.err());
-    assert_eq!(out.err(), format!("{BOX_LINE}{}", status_lines(ID)));
+    assert_eq!(
+        out.err(),
+        format!("{BOX_LINE}{}{}", status_lines(ID), no_leases_file(&rig))
+    );
     assert_eq!(
         rig.keys()[0],
         "cloudformation-describe-stacks",
@@ -138,9 +158,10 @@ fn a_ready_record_without_an_instance_id_is_read_from_its_stack_and_a_creating_o
     assert_eq!(
         out.err(),
         format!(
-            "{BOX_LINE}{}Host      beta (agentspace-host-beta), ready\n{}{ALPHA_LINE}Instance  none recorded\n{ZETA_LINE}Instance  none recorded\n",
+            "{BOX_LINE}{}Host      beta (agentspace-host-beta), ready\n{}{ALPHA_LINE}Instance  none recorded\n{ZETA_LINE}Instance  none recorded\n{}",
             status_lines(ID),
-            status_lines(ID)
+            status_lines(ID),
+            no_leases_file(&rig)
         )
     );
     let stacks = rig.calls_of("cloudformation-describe-stacks");
@@ -184,12 +205,13 @@ fn a_failure_on_one_host_ends_that_hosts_part_and_the_command_goes_on() {
     assert_eq!(
         out.err(),
         format!(
-            "{BOX_LINE}{}{AGENTSPACE_LINE}agentspace: An error occurred (InvalidInstanceID.NotFound): no such instance\n{ZETA_LINE}{}agentspace: 1 of 3 hosts failed.\n",
+            "{BOX_LINE}{}{AGENTSPACE_LINE}agentspace: An error occurred (InvalidInstanceID.NotFound): no such instance\n{ZETA_LINE}{}{}agentspace: 1 of 3 hosts failed.\n",
             status_lines(ID),
-            status_lines(THIRD_ID)
+            status_lines(THIRD_ID),
+            no_leases_file(&rig)
         ),
         "the failed host prints its failure line after its Host line, with no partial report, \
-         and the report goes on"
+         and the report goes on; the lease state file's line comes before the closing count"
     );
     assert_eq!(out.code, Some(1));
 }

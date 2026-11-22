@@ -119,7 +119,7 @@ fn a_running_box_gets_its_volume_changed_and_then_one_ssh_after_10_seconds() {
 }
 
 #[test]
-fn gib_sets_the_growth_and_no_range_is_checked_before_aws() {
+fn gib_sets_the_growth() {
     let rig = cached_rig();
     rig.ok("ec2-describe-volumes", "{\"Volumes\":[{\"Size\":20}]}");
     let out = rig.run(&["grow", "-GiB", "5"]);
@@ -141,38 +141,40 @@ fn gib_sets_the_growth_and_no_range_is_checked_before_aws() {
 }
 
 #[test]
-fn a_value_that_aws_will_refuse_is_still_passed_to_aws() {
-    // Q22: -GiB's range is not checked; AWS refuses a size that is not larger.
-    for (gib, new) in [("0", 8), ("-3", 5)] {
+fn a_gib_of_one_asks_aws_for_the_size_plus_one() {
+    // D61, #0164: -GiB 1 is the smallest value `grow` accepts (grow_refusal.rs has the refusals).
+    let rig = cached_rig();
+    rig.instance("stopped");
+    let out = rig.run(&["grow", "-GiB", "1"]);
+    assert_eq!(out.code, Some(0), "{:?}", out.err());
+    assert_eq!(out.err_lines(), [growing(8, 9), NEXT_BOOT.to_string()]);
+    assert_eq!(
+        rig.calls_of("ec2-modify-volume")[0].args,
+        aws_args("ec2", "modify-volume", &["--volume-id", VOL, "--size", "9"])
+    );
+}
+
+#[test]
+fn a_size_that_aws_refuses_for_another_reason_fails_with_the_clis_text() {
+    // A positive -GiB is passed to AWS, which may still refuse the change (the 6-hour rule, a
+    // volume that is not modifiable); that refusal is the CLI's text, as step 2 says.
+    for gib in ["1", "5"] {
         let rig = cached_rig();
         rig.fail(
             "ec2-modify-volume",
-            "An error occurred (InvalidParameterValue): New size cannot be smaller than existing size\n",
+            "An error occurred (InvalidParameterValue): not modifiable now\n",
             254,
         );
         let out = rig.run(&["grow", "-GiB", gib]);
         assert_fails_with(
             &out,
-            "agentspace: An error occurred (InvalidParameterValue): New size cannot be smaller than existing size",
+            "agentspace: An error occurred (InvalidParameterValue): not modifiable now",
             gib,
         );
-        assert_eq!(
-            rig.calls_of("ec2-modify-volume")[0].args,
-            aws_args(
-                "ec2",
-                "modify-volume",
-                &["--volume-id", VOL, "--size", &new.to_string()]
-            ),
-            "-GiB {gib}"
-        );
+        assert_eq!(rig.calls_of("ec2-modify-volume").len(), 1, "-GiB {gib}");
         assert!(
             rig.calls_of("ssh").is_empty(),
             "-GiB {gib}: no ssh after a refusal"
-        );
-        assert_eq!(
-            out.err_lines().first(),
-            Some(&growing(8, new)),
-            "-GiB {gib}"
         );
     }
 }

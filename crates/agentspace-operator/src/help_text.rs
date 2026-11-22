@@ -23,10 +23,12 @@ Commands:
   down       Stop a host
   status     Show a host's state, type, disk and Session Manager reachability
   grow       Grow a host's disk by -GiB (default 2), and its filesystem with it
+  guard      Stop every running host no live lease explains, after a
+             15-minute grace, and send each running host its lease horizon
 
 Parameters:
   -Host <project>  The project whose host to act on (default: the box);
-                   provision needs it, and ca takes none
+                   provision needs it, and ca and guard take none
   -All             For status, down and sync: every host, one at a time
   -GiB <n>         For grow: the GiB to add (default 2)
   -Alias <alias>   For up: the SSH host alias the token push uses
@@ -88,11 +90,12 @@ Exit codes: 0 the host is ready, 1 failure.
 
 pub(crate) const SYNC: &str = r##"Usage: agentspace-operator sync [-Host <project> | -All] [-Quiet]
 
-Checks the agentspace SSH CA, then installs box/system and the CA's public key
-on a host, copies ~/.claude/CLAUDE.md there, builds and installs the localswim
-CLI from C:\Projects\localswim, and sends the localswim Bot token and the
-laptop's time zone. Starts the host first if it is stopped. Without -Host it
-acts on the box; -All syncs every ready host, one at a time.
+Checks the agentspace SSH CA, then installs box/system and the CA's public
+key on a host, waits until the host has finished this boot's patch run,
+copies ~/.claude/CLAUDE.md there, builds and installs the localswim CLI from
+C:\Projects\localswim, and sends the localswim Bot token and the laptop's
+time zone. Starts the host first if it is stopped. Without -Host it acts on
+the box; -All syncs every ready host, one at a time.
 
 Fails before touching a host if the CA is missing, half-made, mismatched or
 readable by anyone else.
@@ -150,22 +153,39 @@ pub(crate) const STATUS: &str = r##"Usage: agentspace-operator status [-Host <pr
 
 Shows a host's instance ID, state, type, root disk size and volume, and
 whether Session Manager can reach it; with -All, each host's, after a line
-naming it. Never starts a host. Prints to stderr. Without -Host it shows the
-box.
+naming it, then its count of live leases and, for a running host that no
+live lease explains, the time the guard will stop it. Never starts a host.
+Prints to stderr. Without -Host it shows the box.
 
 With -Host, for a host that is not the box, it then signs a fresh one-hour
 certificate, so 'ssh agentspace-host.<project>' signs in for the next hour:
-run it before you sign in there, and again after an hour.
+run it before you sign in there, and again after an hour. Sign in under a
+live lease of the project, created first, or the guard stops the host.
 
 Exit codes: 0 success, 1 failure.
 "##;
 
 pub(crate) const GROW: &str = r##"Usage: agentspace-operator grow [-Host <project>] [-GiB <n>] [-Quiet]
 
-Grows a host's root volume by -GiB (default 2) and, if the host is running,
-its filesystem online; a stopped host grows its filesystem at next boot.
-EBS volumes never shrink, and allow one change every 6 hours. Without -Host
-it grows the box's.
+Grows a host's root volume by -GiB, a whole number of 1 or more (default 2),
+and, if the host is running, its filesystem online; a stopped host grows its
+filesystem at next boot. EBS volumes never shrink, and allow one change
+every 6 hours. Without -Host it grows the box's.
 
 Exit codes: 0 success, 1 failure.
+"##;
+
+pub(crate) const GUARD: &str = r##"Usage: agentspace-operator guard [-Quiet]
+
+Stops every running host that no live lease explains, once 15 minutes have
+passed since the later of its start and its project's last lease end, and
+sends every running host its lease horizon, the end of its project's leases.
+Leaves a host whose provisioning run is working on it. Acts on every host in
+~/.agentspace/hosts.json, and takes no -Host or -All. Logs each stop, each
+unexplained host and each failure to ~/.agentspace/guard.log.
+
+The keeper runs it every 5 minutes; you can also run it yourself. A guard
+that finds another one running exits at once.
+
+Exit codes: 0 success, or another guard is running; 1 failure.
 "##;

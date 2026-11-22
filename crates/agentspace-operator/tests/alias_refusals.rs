@@ -20,6 +20,7 @@ fn alias_is_refused_with_any_command_but_up() {
         "down",
         "status",
         "grow",
+        "guard",
     ] {
         assert_failure(&[command, "-Alias", "devbox"], ALIAS_APPLIES);
         // Whatever the value is, the first check runs first.
