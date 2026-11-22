@@ -1,29 +1,74 @@
 #!/bin/bash
 # Powers the box off after IDLE_MINUTES with no SSH or Session Manager session
-# and no CPU work. The instance's shutdown behavior is "stop".
+# and no CPU work. The instance's shutdown behavior is "stop" (D11).
+#
+# It also powers the box off once the lease horizon plus HORIZON_GRACE_MINUTES
+# has passed, at the first check with no SSH or Session Manager session and no
+# patch run, whatever the CPU is doing (D57; a patch run holds it off as a
+# session does: architect, 2026-11-21, for v0.08-T01). The horizon is in
+# <state>/lease-horizon, which the guard writes; a box without a valid one
+# keeps D11's rule alone.
+#
+# AGENTSPACE_IDLE_STATE, AGENTSPACE_IDLE_CONF and AGENTSPACE_PROC_STAT are for
+# box/tests alone (D63); unset, they name the box's own files.
 set -euo pipefail
 IDLE_MINUTES=60
 BUSY_CPU_SECONDS=6
-[ -r /etc/agentspace/idle.conf ] && . /etc/agentspace/idle.conf
-state=/run/agentspace
+HORIZON_GRACE_MINUTES=15
+conf=${AGENTSPACE_IDLE_CONF:-/etc/agentspace/idle.conf}
+state=${AGENTSPACE_IDLE_STATE:-/run/agentspace}
+proc_stat=${AGENTSPACE_PROC_STAT:-/proc/stat}
+# shellcheck source=/dev/null
+[ -r "$conf" ] && . "$conf"
 mkdir -p "$state"
 now=$(date +%s)
 # /run is cleared at boot, so every boot starts a fresh idle window.
 [ -f "$state/last-active" ] || echo "$now" > "$state/last-active"
 
 # Busy CPU ticks across the whole box (user+nice+system+irq+softirq+steal).
-busy=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9}' /proc/stat)
+busy=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9}' "$proc_stat")
 prev=$(cat "$state/busy" 2>/dev/null || echo "$busy")
 echo "$busy" > "$state/busy"
 cpu_s=$(( (busy - prev) / $(getconf CLK_TCK) ))
 
-reason=""
+# A session is an SSH or Session Manager session. Only a session or a patch run
+# holds the box past its horizon (architect, 2026-11-21, for v0.08-T01).
+session=""
 if [ "$(ss -Htn state established '( sport = :22 )' | wc -l)" -gt 0 ]; then
-  reason="SSH session open"
+  session="SSH session open"
 elif pgrep -f ssm-session-worker >/dev/null; then
-  reason="Session Manager session open"
-elif systemctl is-active --quiet agentspace-patch.service; then
-  reason="Patching"
+  session="Session Manager session open"
+fi
+patch=""
+if [ -z "$session" ] && systemctl is-active --quiet agentspace-patch.service; then
+  patch="Patching"
+fi
+
+# The horizon: one line of Unix seconds. Missing, unreadable, empty or not a
+# non-negative integer (1 to 15 digits), it is ignored without a word.
+if [ -z "$session" ] && [ -z "$patch" ]; then
+  horizon=$(head -n 1 "$state/lease-horizon" 2>/dev/null || true)
+  if [[ "$horizon" =~ ^[0-9]{1,15}$ ]]; then
+    grace=$HORIZON_GRACE_MINUTES
+    if ! [[ "$grace" =~ ^[0-9]{1,6}$ ]]; then
+      echo "Invalid HORIZON_GRACE_MINUTES in $conf; using 15" >&2
+      grace=15
+    fi
+    grace=$((10#$grace))
+    if [ "$now" -ge $(( 10#$horizon + grace * 60 )) ]; then
+      h_time=$(date -d "@$((10#$horizon))" +%-I:%M%P) || h_time="@$horizon"
+      echo "Past lease horizon $h_time plus $grace min with no session; powering off"
+      systemctl poweroff
+      exit 0
+    fi
+  fi
+fi
+
+reason="$session"
+if [ -n "$reason" ]; then
+  :
+elif [ -n "$patch" ]; then
+  reason="$patch"
 elif [ "$cpu_s" -ge "$BUSY_CPU_SECONDS" ]; then
   reason="CPU work: $cpu_s s since last check"
 fi
