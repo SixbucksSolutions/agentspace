@@ -187,16 +187,15 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
 
     // Step 3: the lease state file, without its lock. A missing file is not "no leases".
     let leases_path = input.state_dir.join("leases.json");
+    // `agentspace_state::read` reads a missing file as no leases, so its absence is checked first:
+    // agentspace never deletes the file, so one found here is still there for the read.
+    if matches!(std::fs::metadata(&leases_path), Err(ref e) if e.kind() == std::io::ErrorKind::NotFound)
+    {
+        let f = leases_failure(&leases_path, "the file does not exist");
+        return Err(run.ends("leases", f));
+    }
     let leases = match agentspace_state::read(input.state_dir) {
-        Ok(file) => {
-            if file.leases.is_empty()
-                && matches!(std::fs::metadata(&leases_path), Err(ref e) if e.kind() == std::io::ErrorKind::NotFound)
-            {
-                let f = leases_failure(&leases_path, "the file does not exist");
-                return Err(run.ends("leases", f));
-            }
-            file.leases
-        }
+        Ok(file) => file.leases,
         Err(e) => {
             let why = match &e {
                 StoreError::Unreadable(why)
@@ -634,10 +633,7 @@ mod flow_tests {
         std::fs::write(w.state_dir().join("hosts.json"), "not json").unwrap();
         let (say, aws) = (FakeSay::default(), aws(running(NOW), ok));
         let f = w.run(&say, &aws).unwrap_err();
-        assert!(
-            f.message.starts_with("agentspace: The host registry "),
-            "{f:?}"
-        );
+        assert!(f.message.starts_with("agentspace: The host registry "));
         assert!(f.message.contains(" cannot be read: "));
         assert!(aws.calls.borrow().is_empty());
         let log = w.log();
@@ -659,11 +655,10 @@ mod flow_tests {
             let f = w.run(&say, &aws).unwrap_err();
             assert!(
                 f.message.starts_with("agentspace: The lease state file ")
-                    && f.message.contains(" cannot be read: "),
-                "{f:?}"
+                    && f.message.contains(" cannot be read: ")
             );
             if content.is_none() {
-                assert!(f.message.ends_with(": the file does not exist."), "{f:?}");
+                assert!(f.message.ends_with(": the file does not exist."));
             }
             assert!(aws.calls.borrow().is_empty(), "No call, so no stop");
             let log = w.log();

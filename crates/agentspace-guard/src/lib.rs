@@ -2,8 +2,8 @@
 //!
 //! **The architect's stub, pinned before v0.08-T03 (D63).** Its public API is fixed:
 //! E0.08-T03-S01 (#0177) builds the run behind it without changing a signature, and
-//! E0.08-T03-S02 (#0178) calls it from the operator's `guard` command. Until #0177 merges, [`run`]
-//! returns the failure `agentspace: guard is not built yet.`
+//! E0.08-T03-S02 (#0178) calls it from the operator's `guard` command. The run is in `run.rs`, each
+//! host's decision in [`decide`], and `guard.log` in `log.rs`.
 
 use std::path::Path;
 
