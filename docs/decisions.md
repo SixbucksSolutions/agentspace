@@ -3290,6 +3290,10 @@ under it.
   remember what was sent, and a host that rebooted gets it back within 5 minutes. A host whose
   project has never had a lease is sent its launch time. A send that fails is logged and tried
   again at the next run.
+- **Changed for v0.08-T01 (architect, 2026-11-21, on the dev lead's pin P9): a running patch run
+  holds off the horizon power-off, as a session does**, and as it holds off D11's rule. A power-off
+  in the middle of an upgrade can leave dpkg half configured, and the patch unit is bounded by its
+  own 20-minute limit (`TimeoutStartSec`), so the bound moves by at most that.
 
 **Why on the host, and why a horizon:**
 - **The keeper's holder is a session on every host with a live lease while the laptop is on**
