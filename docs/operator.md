@@ -2734,6 +2734,10 @@ Leases    1 live
   the host. **`AGENTSPACE_TIMEZONE` does not change it**: that variable is the token push's alone
   ([The test seam](#the-test-seam); architect, 2026-11-21, for v0.08-T01, S01 batch). The guard's own progress lines use the
   same form ([guard](#guard)).
+- **When the system gives no local time for that instant**, the time is printed in UTC with ` UTC`
+  after it, as `<h:mm><am|pm> UTC`, so it is never read as the laptop's own (architect,
+  2026-11-22, for v0.08-T03, on #0177). The guard's lines and `status -All`'s `Guard` line do the
+  same, through one formatter.
 - **A held `provision.lock` is not shown.** The guard MUST NOT stop a host while its provisioning
   run holds that lock ([guard](#guard)), and `status -All` MUST NOT try or take it, since a try
   could make a run that starts at that moment fail. A host being made under a lease has a `pending`
@@ -2934,8 +2938,11 @@ checks ([Command line](#command-line)):
    - **A lock that cannot be taken for any other reason**, a folder at its path or access denied
      among them, fails the run: it prints `agentspace: Cannot take <path>: <error>.`, logs it
      ([Its log](#its-log)), reads nothing, makes no AWS call and exits 1. `<path>` is the lock's
-     full path and `<error>` the system's own error text, the form of [provision](#provision)'s
-     step 2 (architect, 2026-11-21, for v0.08-T01, S01 batch).
+     full path and `<error>` the reason the host registry's library gives for that lock, the same
+     text [provision](#provision)'s step 2 prints for its own lock, a sentence fragment naming the
+     problem, such as `the lock file could not be opened` (architect, 2026-11-21, for v0.08-T01,
+     S01 batch; its `<error>` corrected by the architect, 2026-11-22, for v0.08-T03: neither lock's
+     error carries the system's own text).
 2. **Reads the host registry**, `%USERPROFILE%\.agentspace\hosts.json`, whole, without its lock
    ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)). A
    missing file is the box's record alone. **A file that cannot be read or is not valid fails the
@@ -3017,7 +3024,8 @@ checks ([Command line](#command-line)):
          provisioning run is working on it; it is not stopped.`, and does not stop it.
        - **Not tried**, for any reason but its being held, such as access denied or a folder at its
          path: not a free lock ([What it MUST NOT do](#guard), above). The host fails its part with
-         `Cannot try <path>: <error>.`, and is not stopped.
+         `Cannot try <path>: <error>.`, and is not stopped. `<error>` is as for `guard.lock`'s
+         message in step 1.
        - **Free: the host is stopped**, as `down -Host` stops it but with no certificate or alias
          (D56, D63): one `ec2 stop-instances` for its instance, which asks EC2 to stop it and does
          not wait. Once the request is accepted, it logs the host `stopped`, and prints
