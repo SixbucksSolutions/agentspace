@@ -3420,6 +3420,11 @@ and each of these is about a host's start, size or tools.
   patch reboot. Every nested connection after that row finds the host patched. T05 shows it on a
   host with this boot's marker removed by hand, since both hosts already exist and no new host is
   made in v0.08.
+- **A failed patch run never fails a sync** (architect, 2026-11-21, for v0.08-T01, pin P21). The
+  wait ends at `patched`, or at once when `agentspace-patch.service` has failed, with a warning
+  that points at the host's journal, and sync goes on. Before v0.08 no sync depended on patching,
+  and a broken package mirror MUST NOT block every sync. The install starts a failed run again at
+  each sync, so each sync is its retry.
 - **#0166's PATH is set by `box/system`'s install, not by links from the bootstrap:** the install
   writes the `PATH` of `/etc/environment`, which every ssh session reads through PAM, with
   `~/.cargo/bin`, `~/.local/bin` and fnm's default alias folder after the system's own folders.
