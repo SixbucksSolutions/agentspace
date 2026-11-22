@@ -149,20 +149,21 @@ Resources:
               ssh_authorized_keys:
                 - ${SshPublicKey}
 
-  # Backstop for a dead on-box idle check: stop after 3 hours averaging under 1% CPU.
+  # Backstop for a host whose on-box idle check has died: stop after 24 hours averaging under 1% CPU
+  # (D58). Three hours stopped hosts under quiet held leases (#0043).
   # A stopped instance reports no data, which counts as not breaching.
   IdleAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "${HostName}-idle-backstop"
-      AlarmDescription: !Sub "Stops ${HostName} after 3 hours averaging under 1% CPU."
+      AlarmDescription: !Sub "Stops ${HostName} after 24 hours averaging under 1% CPU."
       Namespace: AWS/EC2
       MetricName: CPUUtilization
       Dimensions:
         - { Name: InstanceId, Value: !Ref Instance }
       Statistic: Average
-      Period: 300
-      EvaluationPeriods: 36
+      Period: 3600
+      EvaluationPeriods: 24
       Threshold: 1
       ComparisonOperator: LessThanThreshold
       TreatMissingData: notBreaching

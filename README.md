@@ -1,8 +1,9 @@
 # agentspace
 
 A Graviton EC2 instance in us-west-2 for running coding agents off the laptop. It is stopped
-most of the time: connecting starts it, and it stops itself when nobody is using it. Lead agents
-are told to "run this in agentspace".
+most of the time: connecting starts it, and it stops itself when nobody is using it. Once v0.08
+is installed, it is also stopped once its project holds no live lease
+([A host's life](#a-hosts-life)). Lead agents are told to "run this in agentspace".
 
 **How it was built, what Terry set up, and how agents on it reach the laptop's localswim board:
 [docs/how-it-was-built.md](docs/how-it-was-built.md).**
@@ -19,11 +20,12 @@ installed programs ([Build](#build), [Install it](#install-it)).
 | Piece | What |
 |---|---|
 | Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; `m9g.xlarge` (4 vCPUs, 16 GiB) by default, sized for each use with a vCPU per agent ([D39](docs/decisions.md#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent)) |
-| Disk | 8 GiB gp3, encrypted; grown on demand, never shrunk |
+| Disk | gp3, encrypted, per host: the box's is 20 GiB and a new host starts at 8 GiB; each is grown on demand under the disk order ([AGENTS.md](AGENTS.md#growing-the-boxs-disk)), never shrunk |
 | Access | Session Manager only: no inbound ports, no key pair, no Elastic IP |
 | Patching | Every boot: `apt-get dist-upgrade` (phased updates included) and `snap refresh`, then one reboot if the kernel or another package needs it; then the newest Node LTS, Codex and uv |
-| Idle stop | On-box timer: powers off after 60 minutes with no session and no CPU work (Terry: a lunch break shouldn't cost a reboot) |
-| Backstop | CloudWatch alarm: stops it after 3 hours averaging under 1% CPU |
+| Lease guard | Once v0.08 is installed: on the laptop, `agentspace-operator guard`, started by the keeper every 5 minutes, stops a host within 25 minutes of its project's last live lease's end ([D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise); [A host's life](#a-hosts-life)) |
+| Idle stop | On-host timer: powers off after 60 minutes with no session, no patch run and no CPU work (Terry: a lunch break shouldn't cost a reboot); and, once v0.08 is installed, once the host's lease horizon plus the 15-minute grace has passed, at the first check with no session and no patch run, whatever its CPU is doing ([D57](docs/decisions.md#d57-a-host-bounds-itself-by-its-lease-horizon-while-the-laptop-is-away)) |
+| Backstop | CloudWatch alarm: stops it after 24 hours averaging under 1% CPU once v0.08 is installed, 3 hours until then ([D58](docs/decisions.md#d58-the-cloudwatch-backstop-stays-lengthened-from-3-hours-to-24)) |
 | Defined in | [`infra/agentspace.yaml`](infra/agentspace.yaml), deployed as the CloudFormation stack `agentbox` |
 
 **The AWS side keeps the project's first name, agentbox:** the stack, its resource names and its
@@ -41,6 +43,11 @@ the instance if it is stopped, waits until its boot-time patch run has finished,
 through Session Manager. The first connection after a stop takes under a minute, longer when a
 new kernel means a reboot. VS Code Remote-SSH and the Claude desktop app's SSH connections can use
 the same host name.
+
+**Once v0.08 is installed, the box is guarded like every host** (D56; Terry, 2026-11-21): a
+connection through this entry holds no lease, so work done through it is done under a live
+swimcoach lease ([A host's life](#a-hosts-life)), or the guard stops the box within 25 minutes of
+the later of its launch and its project's last lease end, sessions and all.
 
 The whole entry, since it lives outside this repo:
 
@@ -66,6 +73,7 @@ A person builds and installs them as [Build](#build) and [Install it](#install-i
 
 ```bat
 agentspace-operator status
+agentspace-operator status -All
 agentspace-operator down
 agentspace-operator grow -GiB 2
 agentspace-operator sync
@@ -103,6 +111,10 @@ then each runs by its full path, `%USERPROFILE%\.agentspace\bin\agentspace-opera
   It also copies the laptop's `~/.claude/CLAUDE.md` (Terry's global instructions for Claude
   Code) there, builds and installs the localswim CLI, and sends the current localswim Bot token
   with the laptop's time zone.
+- **`status -All`** lists every host, each with its live leases' count, and, for a running host
+  no live lease explains, the time the guard stops it ([A host's life](#a-hosts-life)).
+- **`guard`** is started by the keeper every 5 minutes once v0.08 is installed, and stops every
+  host that no live lease explains ([A host's life](#a-hosts-life)).
 - **`deploy`** updates the CloudFormation stack and then runs `sync`. The account-specific
   parameters (`VpcId`, `SubnetId`) come from `%USERPROFILE%\.agentspace\stack-parameters.json`,
   JSON that a person writes and that is not committed (D40);
@@ -121,7 +133,9 @@ then each runs by its full path, `%USERPROFILE%\.agentspace\bin\agentspace-opera
   `ubuntu`, the lease ID as key ID and a validity of exactly the TTL, and writes the lease's host
   alias, `agentspace-<project>-<first 8 hex of the lease ID>`, as a file in `~/.ssh/agentspace.d`
   (see "Lease host aliases" below). `renew` signs a new certificate for the existing key, and
-  `release` deletes the alias file and the lease's folder and leaves `~/.ssh/config` alone. The
+  `release` ends the lease's ssh clients on the laptop
+  ([D59](docs/decisions.md#d59-a-release-ends-the-leases-own-connections-on-the-laptop)), deletes
+  the alias file and the lease's folder, and leaves `~/.ssh/config` alone. The
   rules are [docs/lease-api.md](docs/lease-api.md)'s and [docs/state.md](docs/state.md)'s, and the
   checks are the conformance suite ([docs/conformance.md](docs/conformance.md)). **The prototype's
   scripts for these, `scripts\lease-credential.ps1` and `scripts\lease-alias.ps1`, were removed by
@@ -268,6 +282,9 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
      starts one at once.
    - **No error ends the keeper.** It logs the error and carries on at its next interval, so only
      bad arguments or a killed process can stop it.
+   - **Once v0.08 is installed, the keeper also starts the guard**
+     ([A host's life](#a-hosts-life)); a stopped keeper stops it too, and each host then bounds
+     itself by its horizon.
    - **A crashed keeper is started again within about a minute** by the task's second trigger,
      which repeats every minute, indefinitely, from registration (E0.02-T04-S02, D30). With
      `MultipleInstances IgnoreNew`, a firing while the keeper runs is ignored. The task's
@@ -302,12 +319,17 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    ```
 
    It deletes the alias file and the lease's key folder and leaves the `Include` line. It does
-   not end open sessions or revoke the certificate
-   ([D10](docs/decisions.md#d10-releasing-a-lease-does-not-revoke-its-certificate)), so the holder
-   and any session SHOULD be closed first. **Archiving a desktop-app session does not close its
-   SSH connections** (E0.02-T03-S01): they stay up, and count as activity on the box, until the
-   app closes them. The desktop app's SSH environment SHOULD then be removed, since its alias no
-   longer exists. The project's checkout stays on the box.
+   not revoke the certificate
+   ([D10](docs/decisions.md#d10-releasing-a-lease-does-not-revoke-its-certificate)). **Once
+   v0.08 is installed, it ends every ssh client on the laptop whose destination is the lease's
+   alias, the keeper's holder included, before it deletes the alias**
+   ([D59](docs/decisions.md#d59-a-release-ends-the-leases-own-connections-on-the-laptop); its
+   exact behavior is [lease-api.md](docs/lease-api.md)'s and [driver.md](docs/driver.md)'s), and
+   the host drops each ended session about 90 seconds later. **Archiving a desktop-app session
+   does not close its SSH connections** (E0.02-T03-S01); the release ends them, and no session
+   keeps a host up once the project holds no live lease: the guard stops it within 25 minutes of
+   the release ([A host's life](#a-hosts-life)). The desktop app's SSH environment SHOULD then be
+   removed, since its alias no longer exists. The project's checkout stays on the box.
 
    **A closed holder keeps its forwards on the box for about 90 seconds.** The Session Manager
    tunnel does not tell sshd that the client has gone, so the box drops a dead holder's session,
@@ -344,9 +366,9 @@ summarizes the record.
 
 Before step 1:
 - **The lease MUST be created** (lease step 1), and its `expires_at` MUST leave the turn plus a
-  margin. `--for` MUST end before `expires_at`, and SHOULD be the turn's expected length plus
-  about half again: when the alias goes, the record is stranded on the box, where only a new
-  lease reaches it.
+  margin, since the host is stopped a grace after it ([A host's life](#a-hosts-life)). `--for`
+  MUST end before `expires_at`, and SHOULD be the turn's expected length plus about half again:
+  when the alias goes, the record is stranded on the box, where only a new lease reaches it.
 - **Both tools are installed on the box by agentspace's `sync`, which agentspace's architect
   runs.** A project's agent MUST NOT run `sync`. When a tool is not found on the box, the agent
   MUST report it to agentspace's architect.
@@ -415,8 +437,9 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
      still summarized, and `agentspace-footprint` says so.
    - **Exit 2** means no record has that `<run>`.
    - **The sampler also ends by itself at its deadline**, with its end line. A forgotten one keeps
-     the box awake until then, because its own CPU counts as activity to the idle check (D33),
-     so a `--for` much longer than the turn SHOULD NOT be given.
+     the box awake until then, or until the guard or the lease horizon stops the host, because
+     its own CPU counts as activity to the idle check (D33; [A host's life](#a-hosts-life)), so a
+     `--for` much longer than the turn SHOULD NOT be given.
 5. **Fetch the record to the laptop**, after `stop` and before the lease is released. The agent
    MUST `cd` to the folder that is to hold the record first, and give `.` as the destination:
 
@@ -468,6 +491,80 @@ The steps MUST run before lease step 5, because the record has to be fetched fir
    Every CPU and memory figure is given as peak, p95 and p50. The tools processes and the most
    sessions at once are given as peak only.
 
+### A host's life
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+**This section is v0.08's, and holds once v0.08 is installed** (E0.08-T05-S01, #0186). Until then
+no guard runs, no host holds a lease horizon, the backstop stops a host after 3 hours averaging
+under 1% CPU, a release ends no connection, and every host a turn starts is stopped at its close
+(D51).
+
+**A host runs only while its project holds a live lease** (v0.08;
+[D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise),
+[D57](docs/decisions.md#d57-a-host-bounds-itself-by-its-lease-horizon-while-the-laptop-is-away),
+[D58](docs/decisions.md#d58-the-cloudwatch-backstop-stays-lengthened-from-3-hours-to-24),
+[D60](docs/decisions.md#d60-status--all-is-the-one-command-that-lists-every-host-with-its-live-leases)).
+A live lease explains its host whatever the host is doing, a quiet lease with no session and no
+CPU work included. What counts as a project's live lease, its last lease end and its horizon is
+[state.md, Live leases and the lease horizon](docs/state.md#live-leases-and-the-lease-horizon)'s.
+Three things stop a host:
+
+| Stop | Where it runs | When |
+|---|---|---|
+| The guard | The laptop, while the keeper runs | Within 25 minutes of the project's last live lease's end, by release or by expiry |
+| The idle check | The host | After 60 minutes with no session, no patch run and no CPU work; and, past the host's lease horizon plus the grace, at the first check with no session and no patch run, whatever its CPU is doing |
+| The backstop | CloudWatch | After 24 hours averaging under 1% CPU, for a host whose idle check has died |
+
+- **The guard is `agentspace-operator guard`**
+  ([operator.md, guard](docs/operator.md#guard)). The keeper starts it at its first pass and then
+  at most once every 5 minutes, never while one runs
+  ([keeper.md, Starting the guard](docs/keeper.md#starting-the-guard)). In one
+  run it reads `hosts.json`, the lease state file and every host's EC2 state, and stops each
+  running host that no live lease explains, as `down -Host` stops it, once the grace has passed
+  since the later of the host's launch and its project's last lease end. It never stops a host
+  whose provisioning run is under way.
+- **The grace is 15 minutes, a constant** (Terry, 2026-11-21). With up to 5 minutes until the next
+  guard run and the rest for the stop itself, a host is `stopped` within 25 minutes of its last
+  live lease's end. A host started with no lease at all is stopped within 25 minutes of its launch.
+- **A stopped host stays `ready`** in the host registry, and its project's next lease starts it with
+  its first connection, as before.
+- **Each guard run sends every running host its lease horizon, or its launch time when that is
+  later**, in short the latest `expires_at` among its project's live leases, which the host keeps
+  until its next boot ([operator.md, guard](docs/operator.md#guard)). With the laptop off or
+  asleep, the guard cannot run, and the host bounds itself: an idle host stops after 60 minutes,
+  as it always has, and a busy one no later than its horizon, the grace and one 5-minute check
+  after its last session or patch run ends. A host that has just booted holds no horizon until the
+  next guard run, and keeps the 60-minute rule alone until then.
+- **`agentspace-operator status -All` shows it**, after each host's existing lines: `Leases` with
+  the count of its live leases, and, for a running host no live lease explains, `Guard` with
+  `unexplained` and the time the guard stops it ([operator.md, status](docs/operator.md#status)).
+  It prints counts, never lease IDs. When the lease file cannot be read, it prints the host lines
+  without `Leases` and `Guard`, and says why once ([operator.md, status](docs/operator.md#status)).
+- **The guard logs to `%USERPROFILE%\.agentspace\guard.log`**: one line for each host it stops,
+  finds unexplained, or fails on, a failed horizon send included, and nothing for a host that is
+  explained or stopped. A run whose AWS call fails, an expired sign-in included, logs that and
+  stops nothing. So does a run that cannot read the lease state file, or finds it missing or
+  invalid: a missing lease file is never taken as no leases, so a lost `leases.json` never costs a
+  working agent its host. The file's form is
+  [state.md, The guard's files](docs/state.md#the-guards-files)'s, and each line's text
+  [operator.md, guard](docs/operator.md#guard)'s. An unexplained host is reported there and by
+  `status -All`, and nowhere else (Terry, 2026-11-21): nothing reaches his phone, since the guard
+  stops it on its own.
+- **Nothing renews a lease on its own.** A lease ends at its `expires_at` unless whoever holds it
+  renews it
+  ([D24](docs/decisions.md#d24-a-leases-ttl-is-8-hours-by-default-at-least-1-minute-and-at-most-24-hours)),
+  and its host is stopped a grace later. Whoever needs a host past its lease's `expires_at` MUST
+  renew the lease before then. Sessions open at expiry stay open, since a certificate is checked
+  only at login, and end when the host stops. The architect's turns SHOULD give a dev lead's lease
+  a TTL that covers the turn, and renew it when a turn runs long.
+- **Work on a host by hand MUST be done under a live lease of its project**: the sign-in below, a
+  `sync`, `grow` or `bootstrap` run by a person, and any direct session. Without one, the guard
+  stops the host within 25 minutes of the later of its launch and its project's last lease end,
+  whatever is running there.
+- **Every host is guarded, the box included** (Terry, 2026-11-21). Direct work on the box through
+  his own `agentspace` entry is done under a swimcoach lease, as on any host.
+
 ### Signing in on a new host
 
 RFC 2119 keywords; the capitals are load-bearing.
@@ -476,14 +573,27 @@ RFC 2119 keywords; the capitals are load-bearing.
 (D52; `ready` means a connection is expected to succeed, not that an agent can work there yet). This
 procedure is done by hand, once per new host, by Terry, on his laptop. Card #0009 automates it
 after 1.0. The operator's provisioning run ends by printing where it is:
-`Sign in on this host once, by hand: run 'agentspace-operator status -Host <project>' first and
-again after an hour, then see "Signing in on a new host" in the agentspace README.` Only a run
-started by hand shows that line: a run a lease starts is detached, its output goes to a hidden
-console that nothing reads, and its log is its only record
+`Sign in on this host once, by hand, under a lease: see "Signing in on a new host" in the
+agentspace README.` (architect, 2026-11-21, for v0.08-T01; built by E0.08-T03-S05, so a run of
+v0.07's operator still prints the line it had). Only a run started by hand shows that line: a run
+a lease starts is detached, its output goes to a hidden console that nothing reads, and its log is
+its only record
 ([operator.md, provision](docs/operator.md#provision)).
 
-1. **Start once the host is `ready`**: its log,
-   `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, ends `run done`, and step 2's
+1. **Create a lease for the project first**, and keep it live until step 8 releases it
+   ([D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise)).
+   Without one, the guard stops the host within 25 minutes of the later of its launch and its
+   project's last lease end, mid sign-in or not ([A host's life](#a-hosts-life)):
+
+   ```bat
+   agentspace lease create --project <project>
+   ```
+
+   The full path, `%USERPROFILE%\.agentspace\bin\agentspace.exe`, is used until the install
+   folder is on `PATH`. Its JSON gives the lease's `id` for step 8. A lease that would end before
+   the sign-in does MUST be renewed before its `expires_at`, since nothing renews it on its own.
+2. **Start once the host is `ready`**: its log,
+   `%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, ends `run done`, and step 3's
    `status -Host <project>` shows the host `ready`. Only a project listed in
    `%USERPROFILE%\.agentspace\projects.json` gets a host (D54), and adding one takes Terry's yes.
    A lease for the project answers `pending` until its host is ready.
@@ -496,7 +606,7 @@ console that nothing reads, and its log is its only record
      run's start (D48), so whoever waits on the lease SHOULD run
      `agentspace lease get <lease id>` once the log ends `sync failed`. That run made the host
      `ready` in about 2 minutes.
-2. **Sign the operator's one-hour certificate:**
+3. **Sign the operator's one-hour certificate:**
 
    ```bat
    %USERPROFILE%\.agentspace\bin\agentspace-operator.exe status -Host <project>
@@ -506,30 +616,39 @@ console that nothing reads, and its log is its only record
    ([The lease CLI](#the-lease-cli)). The certificate lasts an hour, so the same command MUST be
    run again after an hour, before any new `ssh` to the host
    ([operator.md, How the operator reaches a host](docs/operator.md#how-the-operator-reaches-a-host)).
-3. **Connect, with Codex's port forwarded:**
+4. **Connect, with Codex's port forwarded:**
 
    ```bat
    ssh -L 1455:localhost:1455 agentspace-host.<project>
    ```
 
    The alias `agentspace-host.<project>` is written by the provisioning run, and written again by
-   any operator command given `-Host <project>`, step 2's `status` included, whenever its bytes
+   any operator command given `-Host <project>`, step 3's `status` included, whenever its bytes
    differ ([operator.md, How the operator reaches a host](docs/operator.md#how-the-operator-reaches-a-host)).
-4. **Sign in to each tool at the host's prompt, as [Signing the tools in](#signing-the-tools-in)
+5. **Sign in to each tool at the host's prompt, as [Signing the tools in](#signing-the-tools-in)
    gives them:** Claude Code
    (`claude`, then its URL-and-code option), Codex (`codex login`, its URL opened in the laptop
    browser) and gh (`gh auth login`, HTTPS and the web browser).
-5. **Clone the project's checkout after gh's sign-in**, never before it, since a private
+6. **Clone the project's checkout after gh's sign-in**, never before it, since a private
    repository needs gh's credential (D52):
 
    ```sh
    gh repo clone <owner>/<repo> ~/<project>
    ```
 
-6. **The host's laptop files are agentspace's and MUST NOT be edited by hand:** the operator's alias
+7. **The host's laptop files are agentspace's and MUST NOT be edited by hand:** the operator's alias
    `agentspace-host.<project>` and its key. A new host adds nothing to Terry's `~/.ssh/config` but
    agentspace's `Include` line, when it is missing, and never writes his `known_hosts` (D47);
    agentspace's host keys are in `%USERPROFILE%\.agentspace\known_hosts`, written only by ssh.
+8. **Release the lease** once the sign-ins and the clone are done, with step 1's `id`. Step 4's
+   connection is the operator's, which the release does not end; close it first:
+
+   ```bat
+   agentspace lease release <id>
+   ```
+
+   The guard then stops the host within 25 minutes, unless another live lease of the project
+   explains it ([A host's life](#a-hosts-life)).
 
 ### The localswim board on the box
 
@@ -688,9 +807,17 @@ RFC 2119 keywords; the capitals are load-bearing.
   `CLAUDE.md`. Machine-readable timestamps keep their own form.
 - **The disk SHOULD stay above about 70% used**, by Terry's preference: grow it in small steps
   when it passes 85%. EBS volumes cannot shrink, and allow one change every 6 hours.
-- **Long agent runs SHOULD stay attached to a session or keep the CPU busy.** The idle check
-  counts an SSH or Session Manager session, or 6 CPU-seconds of work per 5 minutes, as activity;
-  an agent left alone and waiting for 60 minutes gets the box powered off.
+- **Long agent runs SHOULD stay attached to a session or keep the CPU busy, and MUST run under a
+  live lease that covers them.** The idle check counts an SSH or Session Manager session, or 6
+  CPU-seconds of work per 5 minutes, as activity; an agent left alone and waiting for 60 minutes
+  gets the host powered off. An agent run left on a host with the laptop away keeps the host up
+  only until its lease horizon, plus the 15-minute grace and one 5-minute check, whatever its CPU
+  is doing
+  ([D57](docs/decisions.md#d57-a-host-bounds-itself-by-its-lease-horizon-while-the-laptop-is-away)),
+  so its lease MUST be renewed to cover the run before the laptop goes away, and SHOULD be renewed
+  at least 5 minutes before, since the host learns the new horizon only at the next guard run.
+  With the laptop on, the guard stops the host within 25 minutes of the lease's end
+  ([A host's life](#a-hosts-life)).
 - **Credentials MUST come from `aws login`**, never from long-lived access keys. When a sign-in
   expires, run `aws login --remote` and open the URL it prints in a fresh Incognito window, with
   every other Incognito window closed first; a browser holding another AWS session returns a 400.
@@ -736,6 +863,10 @@ Each tool is signed in once per instance, by Terry, at the box's shell prompt.
 ssh agentspace journalctl -u agentspace-idle --since -1h
 ssh agentspace journalctl -u agentspace-patch -b
 ```
+
+The guard's log is on the laptop, `%USERPROFILE%\.agentspace\guard.log`
+([A host's life](#a-hosts-life)). How many connections each release ended is in
+`%USERPROFILE%\.agentspace\release.log`.
 
 ### Which lease connected
 
