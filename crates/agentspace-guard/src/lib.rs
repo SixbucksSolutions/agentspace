@@ -45,6 +45,12 @@ pub struct Report {
     /// `<n>`: the hosts whose part failed. The operator prints `-All`'s count line and exits 1
     /// when it is more than 0, and exits 0 otherwise.
     pub failed: usize,
+    /// A `guard.log` line was dropped (operator.md, guard, Its log). The run printed
+    /// `agentspace: Cannot write the guard's log <path>: <error>.` once, through `say.warning`, at
+    /// the first line it dropped, and went on. The operator exits 1 when it is `true`, whatever
+    /// `failed` is, and prints the count line only when `failed` is more than 0 (architect,
+    /// 2026-11-22, for v0.08-T03).
+    pub log_dropped: bool,
 }
 
 /// One run of the guard (operator.md, guard, steps 1 to 8).
@@ -54,6 +60,10 @@ pub struct Report {
 ///   has printed its own lines through `say`, the closing `Hosts:` line among them unless
 ///   `-Quiet`, and logged to `guard.log`; the operator prints nothing more but the count line of a
 ///   failed host, and exits by the report.
+/// - **A host's failure, and a dropped log line, go through `say.warning`**, which the guard uses
+///   for failures alone: operator.md gives it no other warning. The operator's `Say` for `guard`
+///   MUST print `warning` whatever `-Quiet` says, and suppress `progress` under it (architect,
+///   2026-11-22, for v0.08-T03).
 /// - **`Err(failure)`** for a failure that ends the run, with the message operator.md gives:
 ///   `guard.lock` that cannot be taken, a host registry or lease state file that cannot be read,
 ///   a failed `ec2 describe-instances`, and #0034's sign-in message from any call. The run has
