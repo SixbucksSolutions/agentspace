@@ -65,13 +65,18 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
     param($Want, [string]$What)
     if (-not (Test-SameBytes (Get-FileBytesOrNull $fx.HostsFile) (Get-HostsBytes $Want))) { "hosts.json is not $What" }
   }
+  # The harness names the throwaway home's state folder by AGENTSPACE_STATE_DIR and writes no leases.json there.
+  # operator.md, status -All: a missing lease state file is reported once, after the last host's part and
+  # before any closing count, with the reason 'the file does not exist' (P24, P25, P27).
+  $leasesMissing = "agentspace: The lease state file $(Join-Path $fx.H.StateDir 'leases.json') cannot be read: the file does not exist."
   $statusAll = Join-Lines @(
     (Get-HostLine 'swimcoach' 'ready'), (Get-StatusLines $idBox).TrimEnd("`n"),
     (Get-HostLine 'agentspace' 'ready'), (Get-StatusLines $idA).TrimEnd("`n"),
     (Get-HostLine 'gamma' 'creating'), 'Instance  none recorded',
     (Get-HostLine 'delta' 'failed'), 'Instance  none recorded',
     (Get-HostLine 'epsilon' 'ready'), (Get-StatusLines $idC).TrimEnd("`n"),
-    (Get-HostLine 'zeta' 'creating'), (Get-StatusLines $idB).TrimEnd("`n"))
+    (Get-HostLine 'zeta' 'creating'), (Get-StatusLines $idB).TrimEnd("`n"),
+    $leasesMissing)
   $statusCalls = @(
     (Get-CallDescribe $idBox), (Get-CallVolumes $idBox), (Get-CallSsm $idBox),
     (Get-CallDescribe $idA), (Get-CallVolumes $idA), (Get-CallSsm $idA),
@@ -93,7 +98,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
     Hide-Ca
   }
   Test-HostCase "${s}: status -All of a missing registry reports the box's record alone, reading its instance ID from the agentbox stack" @('status', '-All') @{
-    Exit = 0; Stderr = (Join-Lines @((Get-HostLine 'swimcoach' 'ready'), (Get-StatusLines $idBox).TrimEnd("`n")))
+    Exit = 0; Stderr = (Join-Lines @((Get-HostLine 'swimcoach' 'ready'), (Get-StatusLines $idBox).TrimEnd("`n"), $leasesMissing))
     Calls = @((Get-CallStack 'agentbox'), (Get-CallDescribe $idBox), (Get-CallVolumes $idBox), (Get-CallSsm $idBox))
     Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdBox)) 'the box''s record holding the instance ID' } } -Setup {
     Remove-HomePath $fx.HostsFile
@@ -108,6 +113,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
         (Get-HostLine 'delta' 'failed'), 'Instance  none recorded',
         (Get-HostLine 'epsilon' 'ready'), (Get-StatusLines $idC).TrimEnd("`n"),
         (Get-HostLine 'zeta' 'creating'), (Get-StatusLines $idB).TrimEnd("`n"),
+        $leasesMissing,
         'agentspace: 1 of 6 hosts failed.'))
     Calls = @(
       (Get-CallDescribe $idBox), (Get-CallVolumes $idBox), (Get-CallSsm $idBox),
