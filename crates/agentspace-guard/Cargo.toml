@@ -1,0 +1,16 @@
+[package]
+name = "agentspace-guard"
+version = "0.8.0"
+edition.workspace = true
+description = "The guard's run: stops every host no live lease explains and sends each running host its lease horizon (docs/operator.md, guard; D56, D57, D63)"
+publish = false
+
+[lib]
+name = "agentspace_guard"
+path = "src/lib.rs"
+
+# The architect's stub (D63), committed before v0.08-T03: E0.08-T03-S01 (#0177) builds the run
+# behind this API, and adds the crates it needs (agentspace-state, agentspace-hosts and
+# agentspace-box among them). E0.08-T03-S02 (#0178) calls it from the operator.
+[dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }

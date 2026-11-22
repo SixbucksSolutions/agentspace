@@ -92,6 +92,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentspace-guard"
+version = "0.8.0"
+dependencies = [
+ "agentspace-operator-api",
+]
+
+[[package]]
 name = "agentspace-hosts"
 version = "0.7.0"
 dependencies = [
