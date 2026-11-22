@@ -253,6 +253,13 @@ IDs and project names, because the mask had no rule for a UUID.
   is never printed whole.
 - **The mask covers UUIDs and lease aliases** as well as the account, instance, network and host
   shapes, and is shown to catch a planted value of each before the run.
+- **A command's error text is masked like its output** (found in v0.07-T05, 2026-11-21). A read of
+  a log that failed on a sharing lock printed its unmasked error, which named the profile path and
+  so the Windows user name, into a dev lead's transcript.
+- **A dev lead's brief names every slip of this kind from the release so far** (v0.07). T04 and
+  T05 had four between them, a listing of the installed `bin`, a copy of the installed operator, a
+  listing of `hosts\agentspace` and the unmasked error above; T06's brief named all four, and T06
+  had none.
 
 ## Watching a measurement
 
