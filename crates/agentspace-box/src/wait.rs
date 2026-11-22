@@ -210,8 +210,9 @@ fn session_manager_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 }
 
 /// Asks the box whether its patch run has finished (operator.md, What up waits for), and whether
-/// the answer is `pending`. Every other answer counts as ready: `patched`, `unknown`, and an empty
-/// or unexpected answer from a failed check (Q6).
+/// the answer is `pending`. Every other answer counts as ready: `patched`, `unknown`, `failed` (a
+/// patch run that ended this boot without the marker; P24), and an empty or unexpected answer from
+/// a failed check (Q6).
 ///
 /// The invocation is polled at once and then each second, at most 20 times. A poll that fails, or
 /// whose status is `Pending`, `InProgress` or `Delayed`, polls again; any other status ends the

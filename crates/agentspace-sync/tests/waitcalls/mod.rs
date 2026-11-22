@@ -16,7 +16,7 @@
 //!
 //! **The seam** (the one place it is used is `with_clock`): `Seams::real_except_go_and_clock(find_go,
 //! localswim_checkout, clock, run)`, which is `Seams::real_except_go` with the clock inserted before
-//! `run`. This file was settled on that order and MUST NOT be flipped back and forth.
+//! `run`.
 #![cfg(windows)]
 #![allow(dead_code)]
 
@@ -65,8 +65,8 @@ impl FakeClock {
         self.sleeps.borrow().clone()
     }
 
-    /// The pauses of the wait's checks: the ones of 5 seconds or more (the invocation's polls are
-    /// a second apart).
+    /// The pauses of the wait's checks: the ones of 2 seconds or more, so a last pause cut short to
+    /// land on the deadline is counted too (the invocation's polls are a second apart).
     pub fn check_pauses(&self) -> Vec<Duration> {
         self.sleeps()
             .into_iter()
