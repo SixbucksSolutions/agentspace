@@ -24,6 +24,11 @@ rather than restating it:
 - **When the driver starts a provisioning run, what the run does, and which host an operator
   command acts on:** [driver.md](driver.md) and [operator.md](operator.md) (D48, D49). This page
   owns the files they read and write.
+- **What the guard does with its files, and each line it logs:** [operator.md](operator.md#guard)
+  (D56, D57). When the keeper starts it, and what the keeper does with its lock, is keeper.md's, at
+  [Starting the guard](keeper.md#starting-the-guard) and
+  [guard.lock: tried, never held](keeper.md#guardlock-tried-never-held). This page owns the files, and the definition of a live lease, a
+  lease's end and the horizon.
 
 **A host per project (v0.07, D43 to D55).** Each project's leases are placed on its own host. The
 box, today's one instance, is swimcoach's host and keeps every file and every byte v0.06 gave it
@@ -34,6 +39,17 @@ box, today's one instance, is swimcoach's host and keeps every file and every by
 [Another host's holder](#another-hosts-holder). Every name here is D55's. The rulings this page
 cites as "architect, 2026-11-20, for v0.07-T01" are the facts D43 to D55 left open, as the
 architect ruled on them for v0.07's first turn.
+
+**The guard (v0.08, D56 to D63).** A program of the operator stops each host that no live lease
+explains, and it keeps two files of its own, [The guard's files](#the-guards-files). The words it
+uses for a project's leases are defined once, in
+[Live leases and the lease horizon](#live-leases-and-the-lease-horizon). Every name there is D63's.
+**The architect ruled on the dev lead's pins P1 to P4, P10 to P12 and P16 for v0.08-T01 on
+2026-11-21, and those facts are cited as "architect, 2026-11-21, for v0.08-T01".** The choices
+this page's drafter made in those two sections, and in the changes made for the guard to the
+sections around them, where D56 to D63 left the point open, were ruled the same day by pin P18,
+and are cited the same way with it. **The release log ([The release log](#the-release-log)),
+which D59 and D63 call for and the dev lead's pin P16 settles, is cited the same way.**
 
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
@@ -72,7 +88,8 @@ the conformance file for each of these points passes against it. The last column
   [what moves which files](#what-moves-which-files), [access rules](#access-rules),
   [replacing a file](#replacing-a-file)
 - [Every file at a glance](#every-file-at-a-glance)
-- [The lease state file](#the-lease-state-file)
+- [The lease state file](#the-lease-state-file), with
+  [live leases and the lease horizon](#live-leases-and-the-lease-horizon)
 - [The host registry](#the-host-registry)
 - [The project list](#the-project-list)
 - [A lease's credential](#a-leases-credential), with
@@ -82,6 +99,8 @@ the conformance file for each of these points passes against it. The last column
 - [The CA](#the-ca)
 - [The push stamp](#the-push-stamp)
 - [The keeper's files](#the-keepers-files), with [another host's holder](#another-hosts-holder)
+- [The guard's files](#the-guards-files): [the guard's log](#the-guards-log) and
+  [the guard's lock](#the-guards-lock)
 - [Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)
 - [Files in the checkout](#files-in-the-checkout)
 - [Project tooling](#project-tooling)
@@ -109,7 +128,8 @@ the conformance file for each of these points passes against it. The last column
   the checkout that are not state ([Files in the checkout](#files-in-the-checkout)). The host
   registry, the project list, each host's folder and agentspace's own `known_hosts` are state, so
   D21 puts them here too (D45, D47, D54, D55). They replace the instance-ID cache, which was here
-  until v0.07 ([Files in the checkout](#files-in-the-checkout)).
+  until v0.07 ([Files in the checkout](#files-in-the-checkout)). **The guard's log and lock are
+  state too**, so they live here as well (D56; [The guard's files](#the-guards-files)).
 - **`<state folder>`** is the folder that `AGENTSPACE_STATE_DIR` names when it is set and not
   empty, and `%USERPROFILE%\.agentspace` otherwise.
 - **`<ssh folder>`** is the folder that `AGENTSPACE_SSH_DIR` names when it is set and not empty,
@@ -143,7 +163,7 @@ starts; unset or empty means the default. What each means to the lease CLI is
 | Variable | Moves | Does not move |
 |---|---|---|
 | `USERPROFILE` | Everything on this page under `%USERPROFILE%`: `.agentspace` and all in it, and `.ssh`; and `.aws`, which the AWS CLI reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | The checkout; `%LOCALAPPDATA%`; and where a program finds agentspace's other programs, which is its own folder ([operator.md](operator.md#how-each-program-finds-the-others)) |
-| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)), and another host's holder record and holder log among them ([Another host's holder](#another-hosts-holder)) | The lease folders, the CA, the push stamps (the box's and every host's), the host registry and its lock, the project list, every host's folder, agentspace's `known_hosts`, the retired instance-ID cache, the stack parameters file, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
+| `AGENTSPACE_STATE_DIR` | The lease state file and its lock, the release log ([The release log](#the-release-log); architect, 2026-11-21, for v0.08-T01), and every keeper file but the task's launcher program, the task launcher's error log included, as the task's logon environment sets it ([The keeper's logs](#the-keepers-logs)), and another host's holder record and holder log among them ([Another host's holder](#another-hosts-holder)) | The lease folders, the CA, the push stamps (the box's and every host's), the host registry and its lock, the guard's log and lock (D63), the project list, every host's folder, agentspace's `known_hosts`, the retired instance-ID cache, the stack parameters file, the operator's folder, the install folder with the task's launcher in it, the prototype's `BoardHolderLauncher.exe`, and the project tooling, which stay under `%USERPROFILE%\.agentspace` |
 | `AGENTSPACE_SSH_DIR` | `config`, its backups, `agentspace.d` and the alias files, for `create` and `release`, and `config`, its backups and `agentspace.d` for the operator; and a host's operator alias and its temporary file, for the operator's commands that write it ([A host's operator alias](#a-hosts-operator-alias)) | The user's `known_hosts`, agentspace's `known_hosts`, and the user's own key; ssh itself reads neither variable |
 | `LOCALAPPDATA` | The localswim receipt, which the operator reads ([Files agentspace reads and never writes](#files-agentspace-reads-and-never-writes)) | Anything agentspace writes |
 
@@ -163,6 +183,17 @@ starts; unset or empty means the default. What each means to the lease CLI is
   v0.07-T01). So the run uses the
   files of the command that started it
   ([The provisioning run's start](#the-provisioning-runs-start)).
+- **The guard's log and lock move with `USERPROFILE` and not with `AGENTSPACE_STATE_DIR`** (D56;
+  D63 pins both beside `hosts.json`), as the host registry and its lock do, so a conformance home
+  that sets `USERPROFILE` gets its own guard log and lock. **The lease state file the guard reads
+  is the one in the `<state folder>` the guard runs with**, so a guard that the keeper starts is
+  given the keeper's `AGENTSPACE_STATE_DIR` along with the rest of its environment (the dev lead's
+  pin P4; architect, 2026-11-21, for v0.08-T01;
+  [keeper.md, The guard's environment](keeper.md#the-guards-environment) and
+  [operator.md](operator.md#guard) say how). **That environment is built from the user's logon environment as `agentspace-detach`
+  builds it**, so the AWS CLI's own variables reach the guard (the same ruling).
+  A lease recorded under another `AGENTSPACE_STATE_DIR` is not seen by that guard
+  ([Live leases and the lease horizon](#live-leases-and-the-lease-horizon)).
 - **The OpenSSH client does not read `USERPROFILE` or `AGENTSPACE_SSH_DIR`.** An alias written into
   a moved `<ssh folder>` is usable only by an ssh pointed at the alias file itself with `-F`, or
   at a config of its own whose `Include` names that `agentspace.d` by its full path, since a
@@ -283,13 +314,16 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | Path | What it is | Written by | Read by | Removed |
 |---|---|---|---|---|
 | `%USERPROFILE%\.agentspace\` | The agentspace folder (D21) | The first writer | Everything below | Never |
-| `<state folder>\leases.json` | [The lease state file](#the-lease-state-file) | `create`, `renew`, `release`; a provisioning run, through `place_pending` | Every lease command; the keeper; the ProxyCommand; a provisioning run | Never |
+| `<state folder>\leases.json` | [The lease state file](#the-lease-state-file) | `create`, `renew`, `release`; a provisioning run, through `place_pending` | Every lease command; the keeper; the ProxyCommand; a provisioning run; the guard and `status -All`, read-only and without the lock (architect, 2026-11-21, for v0.08-T01, pin P18) | Never |
 | `<state folder>\leases.lock` | [The lease state lock](#the-lease-state-lock) | Every lease command that changes leases; a provisioning run, through `place_pending` | None; it is held, not read | Never |
 | `<state folder>\leases.json.<hex>.tmp` | The state file's temporary file | The same | None | At once |
-| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`; an operator command that caches a host's instance ID; the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock. Never `list`, `renew` or `release` | Never |
+| `<state folder>\release.log` | [The release log](#the-release-log) (D59, D63; pin P16; architect, 2026-11-21, for v0.08-T01) | The EC2 driver's `release`, which appends to it, and nobody else | People | Never |
+| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`; an operator command that caches a host's instance ID; the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock; the guard, read-only and without its lock (architect, 2026-11-21, for v0.08-T01, pin P18). Never `list`, `renew` or `release` | Never |
 | `%USERPROFILE%\.agentspace\hosts.lock` | [The host registry lock](#the-host-registry-lock) | Every writer of `hosts.json` | None; it is held, not read | Never |
 | `%USERPROFILE%\.agentspace\hosts.json.<hex>.tmp` | The host registry's temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\projects.json` | [The project list](#the-project-list) (D54) | A person, or the architect with Terry's yes; never agentspace | The driver and `provision`, for a project with no host | Never |
+| `%USERPROFILE%\.agentspace\guard.log` | [The guard's log](#the-guards-log) (D56, D63) | `agentspace-operator guard`, which appends to it, and nobody else | People | Never |
+| `%USERPROFILE%\.agentspace\guard.lock` | [The guard's lock](#the-guards-lock) (D56, D63) | `agentspace-operator guard`, for the run's life; the keeper, which only tries it | None; it is held, not read | Never |
 | `%USERPROFILE%\.agentspace\hosts\` | The folder of host folders | The first writer of a host's folder | Everything in it | Never |
 | `%USERPROFILE%\.agentspace\hosts\<project>\` | [A host's folder](#a-hosts-folder) | The first writer of a file in it; the driver, if it is missing, before it starts a provisioning run, which is not started if the folder cannot be made ([The provisioning run's start](#the-provisioning-runs-start)) | The operator; ssh | Never |
 | `...\hosts\<project>\id_ed25519`, `id_ed25519.pub` | [The operator's key](#the-operators-key-and-certificate) for that host | The first operator command that signs a certificate for the host | `ssh`, through the operator alias; the operator, to sign | Never |
@@ -469,8 +503,8 @@ point (2026-11-18):
   release left, which the prototype does not
   ([Release, and what it leaves](#release-and-what-it-leaves)). **`release` of an
   `unsatisfiable` record** changes nothing.
-- **`get` and `list` MUST NOT write it, and the keeper and the ProxyCommand MUST NOT write it
-  either.** `get`'s `check_pending` MAY start a provisioning run, which writes it later in a
+- **`get` and `list` MUST NOT write it, and the keeper, the ProxyCommand and the guard MUST NOT
+  write it either** (the guard's: D56). `get`'s `check_pending` MAY start a provisioning run, which writes it later in a
   process of its own ([driver.md](driver.md#check_pending)); `get` itself never does (card #0143,
   D48).
 - **This page requires no single reading of the clock per command.** The prototype reads it
@@ -503,17 +537,151 @@ opened, is not a missing file** (architect, 2026-11-19, gap FB-21). Every lease 
 ([lease-api.md](lease-api.md#messages)), and changes nothing. A changing command finds that before
 it asks any driver anything.
 
-**A missing file means no leases.** The first command that changes leases creates the state
-folder, if needed, and the file. No command deletes the file, and no command forgets a lease in v0
+**A missing file means no leases**, to every reader but the guard and `status -All` (below). The
+first command that changes leases creates the state folder, if needed, and the file. No command deletes the file, and no command forgets a lease in v0
 ([lease-api.md](lease-api.md#states)). **Access rules:** inherited.
 
 **Who reads it:** every lease command; a provisioning run, under the lock; and the keeper and the
 ProxyCommand, which read it without taking the lock and never write it
 ([keeper.md#locks](keeper.md#locks); [operator.md, The ProxyCommand](operator.md#the-proxycommand)).
+**From v0.08 the guard and `status -All` read it too, read-only and without the lock**, as the
+keeper does, to find which leases are live ([Live leases and the lease
+horizon](#live-leases-and-the-lease-horizon); architect, 2026-11-21, for v0.08-T01, pin P18).
+**The guard and `status -All` MUST NOT take a file that is not valid, or that cannot be read, for
+no live lease**, and neither takes a missing one for no leases
+([Live leases and the lease horizon](#live-leases-and-the-lease-horizon)).
 The ProxyCommand reads it only to find the record whose `ssh.host_alias` is its argument, and so
 the host that lease is on ([Which host a connection reaches](#which-host-a-connection-reaches)).
 **A reader that finds the file missing, or not valid, reads no lease from it**; what the
 ProxyCommand then does is operator.md's.
+
+## Live leases and the lease horizon
+
+**The words below, about a project's leases, are defined once here as functions of the lease
+state file's records at a reading's time** (D56, D57, D63; the dev lead's pin P1 and its rulings P10 and P11; architect, 2026-11-21, for
+v0.08-T01). The guard ([operator.md, guard](operator.md#guard)) and `agentspace-operator status -All`
+([operator.md, status](operator.md#status)) use them, and cite this section without restating it.
+**They are functions of `agentspace-state`**, one home for both programs (D63), and their
+signatures are pinned on E0.08-T02-S01's card. This section says what they return, never how a
+program calls them.
+
+- **A reading's time** is one instant, which a program takes once for a run and uses for every
+  lease in it, so no lease is live at one step of a run and not live at the next (architect,
+  2026-11-21, for v0.08-T01, pin P18). Times are compared as instants, to the second, from the strings the file stores
+  ([The lease state file](#the-lease-state-file)).
+- **A project's leases** are the lease state file's records whose `project` equals the `project`
+  of the host's record in [the host registry](#the-host-registry), compared exactly, as the
+  normalized strings both are stored as. The box is the record whose `stack` is `agentbox`, and its
+  `project` is `swimcoach` ([The host registry](#the-host-registry), rule 3), so the box's leases
+  are swimcoach's, and no function takes a stack. This is not keeper.md's "which host a lease is
+  on" ([keeper.md, Which host a lease is on](keeper.md#which-host-a-lease-is-on)): a lease of a
+  project with no host record explains no host, the box included.
+- **A live lease** is one whose state at the reading's time is `pending` or `ready`, the state
+  decided as [lease-api.md, States](lease-api.md#states) decides it, with expiry applied by that
+  time: a record stored `ready` is `expired`, and so not live, when the reading's time is at or
+  after its `expires_at` ([The lease state file](#the-lease-state-file)). `released`, `expired` and
+  `unsatisfiable` are not live.
+- **A lease's end** is the instant the lease stopped being live, and a live lease has none
+  (architect, 2026-11-21, for v0.08-T01, on pin P11):
+  - **For a `released` lease, the earlier of its `released_at` and its `expires_at`.** A lease
+    released after it expired stopped being live when it expired (D56: "whether by release or by
+    expiry"), so its end is its `expires_at`, and not a `released_at` that came later. A `released`
+    record keeps its `expires_at` when the lease was ever `ready` ([The lease state
+    file](#the-lease-state-file)).
+  - **For a `released` lease that was never `ready`, its `released_at`**, since such a record has
+    no `expires_at`: it was a `pending` lease, live until it was released.
+  - **`expires_at`** for a lease that expired, a stored `ready` record at or past its `expires_at`.
+  - **None** for an `unsatisfiable` lease, which never became `ready`.
+- **The project's last lease end** is the latest end among its leases that are not live, or
+  none when no lease of the project has an end.
+- **The project's horizon** is the latest `expires_at` among its live leases that have one; with
+  live leases but none that has one, which is to say only `pending` leases, the reading's time;
+  with no live lease, its last lease end; with none of these, the host's launch time, which the
+  caller takes from `ec2 describe-instances` (D57, as D63 changed it) and passes in, since no
+  file on the laptop holds it.
+  - **A `pending` lease has no `expires_at`, and a project whose only live leases are `pending`
+    has the reading's time as its horizon** (architect, 2026-11-21, for v0.08-T01, on pin P10).
+    A host waiting on a placement is then not powered off by its own check while the laptop's
+    guard runs, and it stops a grace after the last guard run when the laptop goes away
+    (decisions.md, "Words used here"). A `ready` lease that is live has an `expires_at` after the
+    reading's time, so a project with a live `ready` lease has that later time as its horizon
+    whether or not it also has a `pending` lease.
+  - **A project's horizon can move later at each reading while a `pending` lease waits**, since
+    the reading's time is the horizon then. No file records it ([The guard's
+    files](#the-guards-files)).
+- **A note on the guard's send** (D57, architect, 2026-11-21, for v0.08-T01, on pin P12): the
+  horizon above is
+  not what the guard sends a running host. **The guard sends each running host the later of its
+  project's horizon and the host's `LaunchTime`**, so a host started with no lease is not sent a
+  time before its own launch, and the host's bound and the guard's grace agree. The send is
+  operator.md's ([operator.md, guard](operator.md#guard)); this section's horizon stays as
+  defined above.
+
+| A record, at the reading's time | Its state | Live | Its end |
+|---|---|---|---|
+| Stored `pending` | `pending` | Yes | None |
+| Stored `ready`, the time before `expires_at` | `ready` | Yes | None |
+| Stored `ready`, the time at or after `expires_at` | `expired` | No | `expires_at` |
+| Stored `released`, with an `expires_at` | `released` | No | The earlier of `released_at` and `expires_at` |
+| Stored `released`, with no `expires_at` (never `ready`) | `released` | No | `released_at` |
+| Stored `unsatisfiable` | `unsatisfiable` | No | None |
+
+**What they read, and what they never do:**
+- **They read only the records, the reading's time and, for the horizon, the launch time.** They
+  write nothing and read no other file, so the guard and `status -All` agree on every lease at the
+  same reading, which is why D63 gave them one home.
+- **For a file that is not valid, or that cannot be read, the functions are not called at all: a
+  program MUST NOT take that for "no live lease"**, since the guard would then stop a host that a
+  live lease explains.
+- **A missing lease state file is not "no leases" for the guard or `status -All` either**
+  (architect, 2026-11-21, for v0.08-T01, pin P18; D36). A laptop that lost its `leases.json` MUST
+  NOT cost a working agent its host. So the functions are not called for a missing file either,
+  and:
+  - **The guard stops nothing, sends no horizon, logs one failed line and exits 1.**
+  - **`status -All` prints its host lines without `Leases` and `Guard`, and says why once.**
+
+  What the guard logs and `status -All` prints are operator.md's words
+  ([operator.md, guard](operator.md#guard), [operator.md, status](operator.md#status)). Every other
+  reader still takes a missing file for no leases ([The lease state file](#the-lease-state-file)).
+- **The records are those of the `<state folder>` the program runs with.** A lease recorded under
+  another `AGENTSPACE_STATE_DIR` is not seen, and its host looks unexplained to a guard run with
+  the first one ([What moves which files](#what-moves-which-files)). **Pin P4 prevents it** for a
+  guard that the keeper starts (architect, 2026-11-21, for v0.08-T01, ruled with P10 and P11).
+- **A released lease's own `expires_at` adds nothing to the horizon**: only a live lease's does.
+
+**An example,** every time invented, for one project whose host record exists:
+
+| Records of the project | At 09:45 | At 10:05 | At 11:30 |
+|---|---|---|---|
+| A: `ready`, `expires_at` 10:00 | Live | Expired, its end 10:00 | Expired, its end 10:00 |
+| B: `released`, `released_at` 09:30, `expires_at` 11:00 | Its end 09:30 | Its end 09:30 | Its end 09:30 |
+| C: stored `ready`, `expires_at` 08:00 | Expired, its end 08:00 | The same | The same |
+| D: `unsatisfiable` | No end | No end | No end |
+| E: `released`, `released_at` 09:35, `expires_at` 09:20 | Its end 09:20 | Its end 09:20 | Its end 09:20 |
+| **Live leases** | A | None | None |
+| **Last lease end** | 09:30 | 10:00 | 10:00 |
+| **Horizon** | 10:00, A's `expires_at` | 10:00, the last lease end | 10:00, the last lease end |
+
+At 09:45, A is the project's only live lease, so its host is explained and its horizon is A's
+`expires_at`; B's later `expires_at` of 11:00 does not count, since B is released. B ended at its
+`released_at`, 09:30, the earlier of the two. E was released at 09:35, after it expired at 09:20,
+so its end is 09:20, and not 09:35. At 10:05 and after, no lease is live, so the host is
+unexplained and the horizon is the last lease end, 10:00. **A project with no lease at all has no
+last lease end**, and its horizon is its host's launch time.
+
+**A second example,** for one project with two records:
+
+| Records of the project | At 09:50 | At 10:10 |
+|---|---|---|
+| F: stored `pending`, no `expires_at` | Live, no end | Live, no end |
+| G: `released`, `released_at` 09:10, never `ready`, so no `expires_at` | Its end 09:10 | Its end 09:10 |
+| **Live leases** | F | F |
+| **Last lease end** | 09:10 | 09:10 |
+| **Horizon** | 09:50, the reading's time | 10:10, the reading's time |
+
+F is the only live lease and has no `expires_at`, so the horizon is the reading's time at each
+reading. G, a lease released while it was `pending`, ended at its `released_at`. Once F is placed
+and is `ready`, its `expires_at` is the horizon.
 
 ## The host registry
 
@@ -629,7 +797,9 @@ about, leaving every other record's members and values as it read them. The writ
 - **`provision`**: the run's start, its outcome and the instance ID
   ([operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
 - **Every other operator command that needs a host's instance ID**: that record's `instance_id`
-  alone. **No other operator command adds a record** (architect, 2026-11-20, for v0.07-T01): one given `-Host`
+  alone. **The guard is the exception: it never writes the registry**, though it is an operator
+  command (D56 has it read the registry and EC2's state; architect, 2026-11-21, for v0.08-T01,
+  pin P18; [The guard's files](#the-guards-files)). **No other operator command adds a record** (architect, 2026-11-20, for v0.07-T01): one given `-Host`
   for a project with no record fails, writing nothing, with operator.md's message
   ([Which host a command acts on](operator.md#which-host-a-command-acts-on)).
 - **The ProxyCommand**: a missing `instance_id` alone, into its host's existing record, as
@@ -638,7 +808,9 @@ about, leaving every other record's members and values as it read them. The writ
 
 **Who reads it:** the driver, in `create` and in `get` of a `pending` lease; every operator
 command that acts on a host, to find it, and `status -All`, `down -All` and `sync -All` for
-every record; and the ProxyCommand and the keeper, without its lock
+every record; the guard, for every record, read-only and without its lock (architect, 2026-11-21,
+for v0.08-T01, pin P18); and the
+ProxyCommand and the keeper, without its lock
 ([Which host a connection reaches](#which-host-a-connection-reaches)), but for the ProxyCommand's
 write of a missing `instance_id`, which it makes under the lock. **`list`, `renew` and
 `release` never read it.** No program prints it, or any record's members, to a lease command's
@@ -1377,9 +1549,14 @@ go before the lease folder, so that an alias never points at a key that is gone.
    nothing, its message saying which folder is a file (architect, 2026-11-19, from
    E0.05-T02-S03).
 2. **Write the record as `released`**, unless it is already ([The lease state file](#the-lease-state-file)).
-3. **Delete the alias file, then the lease folder**, as above.
+3. **End the lease's connections on the laptop** (D59, as D63 changed it): the driver ends the ssh
+   clients that use the lease's alias, the keeper's holder among them, through
+   `agentspace-connections`, and logs one line in [the release log](#the-release-log). What it ends,
+   how, and the line's text are
+   [driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)'s.
+4. **Delete the alias file, then the lease folder**, as above.
 
-- **A failure in step 3 fails `release` with `internal`**, with lease-api.md's "Credential or alias
+- **A failure in step 4 fails `release` with `internal`**, with lease-api.md's "Credential or alias
   not deleted" message ([Messages](lease-api.md#messages)), and the record stays `released`. A file
   that another process holds open without sharing delete is such a failure. `release` run again
   finishes the job.
@@ -1396,8 +1573,9 @@ go before the lease folder, so that an alias never points at a key that is gone.
   how the next lease's alias is found.
 - **`release` of a `pending` record that carries a `driver` hands it to that driver's release, as
   for a `ready` one** (architect, 2026-11-20, for v0.07-T01; [driver.md](driver.md#release-a-lease)):
-  under the lease state lock it checks the alias file's owner mark, writes `released`, then removes
-  the alias file at the lease's alias only if its owner mark names this lease, then the lease's
+  under the lease state lock it checks the alias file's owner mark, writes `released`, ends the
+  lease's connections, finds none, and logs its line ([The release log](#the-release-log)), then
+  removes the alias file at the lease's alias only if its owner mark names this lease, then the lease's
   folder with everything in it. A missing file or folder is not a failure. Only a killed placement
   can have left them, since a `pending` lease has none by contract. It reads neither the host
   registry nor the project list. **With no home folder, the cleanup is skipped and the release still
@@ -1413,17 +1591,56 @@ go before the lease folder, so that an alias never points at a key that is gone.
 **What release leaves:**
 - **The certificate stays valid until it expires**, on every host that trusts the CA, for anyone
   who copied it and its key. It is not revoked (D10; card #0010 replaces this).
-- **Connections already open stay open** ([lease-api.md](lease-api.md#states)).
+- **No connection through the lease's alias**, since step 3 of the order above ended them, and
+  the lease's alias is gone for any new one. A connection that step could not end is logged
+  ([driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)).
 - **The record**, `released`, in the lease state file.
 - **The `Include` line, `agentspace.d` (empty if no other lease is ready) and any config backup.**
 - **`%USERPROFILE%\.agentspace\leases\`**, empty or not. Release removes only the lease's own
   folder.
-- **The keeper's holder, if it was holding the board's forwards through this lease's alias**, until
-  the keeper's next pass stops it and logs that it did
-  ([keeper.md#log-lines](keeper.md#log-lines)). That is the holder of the lease's host, the box's
-  or [another host's](#another-hosts-holder).
+- **The keeper's holder, if it was holding the board's forwards through this lease's alias, is
+  one of the clients that step 3 ended.** That is the holder of the lease's host, the box's or
+  [another host's](#another-hosts-holder). The keeper finds it gone, waits its release grace, and
+  then starts a holder through another of the host's ready leases, if there is one
+  ([keeper.md, Release grace](keeper.md#release-grace)).
 - **The lease's host, its record in the host registry, and every file in its folder.** Releasing a
   lease never changes a host (D25).
+
+### The release log
+
+**`<state folder>\release.log` records what a release did to the lease's connections** (D59, as D63
+changed it; the dev lead's pin P16; architect, 2026-11-21, for v0.08-T01). It is written by the
+EC2 driver's `release` at step 3 of [the order above](#release-and-what-it-leaves), after the
+driver has ended the lease's ssh clients and before it deletes the alias file, and its line texts
+are [driver.md, Where the count is logged](driver.md#where-the-count-is-logged)'s. This section
+owns the file as a file.
+- **A line's form is [the guard's log's](#the-guards-log) (v0.08-T01's pin P2)**, with the lease in place of
+  the host: a UTC time in the form `YYYY-MM-DDTHH:MM:SSZ`, one space, `lease=<id>`, one space, then
+  driver.md's text:
+
+  ```
+  <time> lease=<id> <text>
+  ```
+
+  `<id>` is the lease's normalized ID ([The lease state file](#the-lease-state-file)).
+- **Its bytes:** UTF-8 without a byte order mark, each line ending in one LF. **Opened for append,
+  sharing read, write and delete**, as the guard's log is, and each line written whole, in one
+  write at the end of the file. **A reader SHOULD share the same.**
+- **It is created when the driver writes its first line**, if it is missing, in the `<state
+  folder>`, which `release` has already made by writing the record. **It follows
+  `AGENTSPACE_STATE_DIR`**, as `leases.json` does ([What moves which
+  files](#what-moves-which-files)), so a check that sets the variable gets a log of its own.
+- **Written by the EC2 driver's `release` alone. Read by people**; no program of agentspace reads
+  it.
+- **A log that cannot be written is ignored**: `release` goes on to step 4 and does not fail for
+  it, since the log reports on the release and the release MUST NOT depend on it.
+- **It never holds the alias**, nor a key, a certificate, a whole `ssh` command line or any
+  other secret ([The lease folder](#the-lease-folder)): the lease's ID is its only name for it,
+  and the alias, which is the lease's address, stays out.
+- **Never rotated or removed by agentspace.** A person MAY delete or move it between releases.
+- **It is not under the lease state lock's protection as a file**, but it is written while
+  `release` holds that lock, so two releases never write it at once; a person's tool that holds
+  it open without sharing makes the write fail, which is ignored.
 
 ### Between the prototype and the rewrite
 
@@ -1644,8 +1861,9 @@ D48's `<state folder>\hosts\<project>.log` is not used.
   error text included; the programs' other output goes to the run's own streams, not the log
   (architect, 2026-11-21, for v0.07-T03, replacing the T01 ruling that copied it;
   [operator.md, provision](operator.md#provision)).
-- **Opened for append, sharing read, write and delete**, as the keeper's logs are, so a reader, a
-  second writer or a run by hand never blocks a run. A reader SHOULD share the same.
+- **Opened for append, sharing read, write and delete**, as a holder's log is
+  ([The keeper's logs](#the-keepers-logs)), so a reader, a second writer or a run by hand never
+  blocks a run. A reader SHOULD share the same.
 - **Written by `provision` alone**, whether the driver started it or a person ran it; **never by
   the driver**, which neither creates nor opens it
   (architect, 2026-11-20, for v0.07-T01). **Read by people.**
@@ -2127,6 +2345,116 @@ and the install folder and its programs are
   its `-Uninstall` deletes. The rewrite's installer removes that file
   ([keeper.md, The installer](keeper.md#the-installer)).
 
+## The guard's files
+
+**The guard keeps two files of its own, `guard.log` and `guard.lock`, beside the host registry**
+(D56, D63). The guard is `agentspace-operator guard`
+([operator.md, guard](operator.md#guard)): it stops each running host that no live lease explains,
+and sends each running host its horizon. What it does, when, and why is operator.md's, and when
+the keeper starts it is [keeper.md, Starting the guard](keeper.md#starting-the-guard)'s. This
+section owns each file as a file: its path, format, bytes, share modes, writer, reader and
+lifetime. **The facts the architect ruled on (pins P2 and P3, and the drafter's choices, pin P18)
+are cited "architect, 2026-11-21, for v0.08-T01".**
+
+- **Both are in `%USERPROFILE%\.agentspace`**, beside `hosts.json` and `hosts.lock`. **The guard
+  creates the folder first if it is missing**, as every writer there does
+  ([The home folder](#the-home-folder)).
+- **`USERPROFILE` moves them, and `AGENTSPACE_STATE_DIR` does not** (D63 pins both beside
+  `hosts.json`), as with `hosts.json` and its lock, since every state folder on the machine shares one set of hosts
+  and so one guard ([What moves which files](#what-moves-which-files)).
+- **Access rules for both: inherited.** The guard sets none.
+- **No other file on the laptop records what the guard sent or when** (D57, as D63 changed it): the
+  guard sends every running host its horizon at every run, so nothing has to remember what was
+  sent last, and **no laptop file records the horizon sent to a host**, nor the time a host will
+  stop, which each run works out again ([Live leases and the lease
+  horizon](#live-leases-and-the-lease-horizon)).
+- **The guard reads `hosts.json` and the lease state file, and never writes either**
+  (D56; architect, 2026-11-21, for v0.08-T01, pin P18), and takes neither file's lock to read it, as the keeper does not
+  ([Concurrency](#concurrency)). **A host it stops stays `ready` in the registry**, which records
+  whether a host is made and never whether it runs (D45, D56).
+
+### The guard's log
+
+**`%USERPROFILE%\.agentspace\guard.log` records what the guard did to a host that needed
+saying: a host it stopped, found unexplained, or failed to stop or to send its horizon** (D56,
+D63). Which events write a line, and the exact text of each line, are operator.md's
+([operator.md, guard](operator.md#guard)); this section gives the form that every line shares.
+- **A line's form is provision.log's and the keeper's** (the dev lead's pin P2; architect, 2026-11-21,
+  for v0.08-T01; [The provisioning run's log](#the-provisioning-runs-log),
+  [keeper.md](keeper.md#log-lines)): a UTC time in the form `YYYY-MM-DDTHH:MM:SSZ` ([lease-api.md,
+  Times](lease-api.md#times)), one space, `host=<project>`, one space, then the event's text:
+
+  ```
+  <time> host=<project> <text>
+  ```
+
+  - **`<project>` is the host's record's `project`** in [the host registry](#the-host-registry),
+    the box's included, as `swimcoach`.
+  - **A line that is not about one host carries no `host=` field and no space for it**: it is
+    `<time> <text>`. A failed AWS call, an expired AWS sign-in and the guard's own failure are such
+    lines.
+  - **`<time>` is the time the guard writes the line**, read from the clock for that line, not the
+    run's start (architect, 2026-11-21, for v0.08-T01, pin P18).
+- **Its bytes:** UTF-8 without a byte order mark, each line ending in one LF. **A line's text MUST
+  NOT contain a carriage return or a line feed**; how a message's control characters are written
+  is operator.md's ([operator.md, guard](operator.md#guard)).
+- **Opened for append, sharing read, write and delete**, as the provisioning run's log is
+  ([The provisioning run's log](#the-provisioning-runs-log)), so a reader never blocks the guard and a person's
+  tool never blocks a rename or a delete. **A reader SHOULD share the same.** Each line is
+  written whole, in one write at the end of the file, never found and then written as two steps.
+- **It is created when the guard writes its first line**, if it is missing, after the folder
+  (architect, 2026-11-21, for v0.08-T01, pin P18). A run with nothing to log creates nothing, and a missing file is a log
+  with no lines.
+- **Written by the guard alone**, whoever started it, the keeper or a person. **Read by people.**
+  No program of agentspace reads it, not even `status -All`, which works out what it prints again
+  from the registry, the lease state file and EC2 (D60).
+- **Never rotated or removed by agentspace.** The rotation of
+  [keeper.md, Rotation](keeper.md#the-holders-log) is `board-holder-ssh.log`'s alone and does not
+  apply to this file: it grows only by one line for each event, and a person MAY delete or move
+  it between runs.
+- **It MUST NOT hold a secret**, nor a whole `aws` or `ssh` command line, nor the CA's comment
+  ([The CA](#its-files); operator.md, Secrecy), as `provision.log` does not
+  ([The provisioning run's log](#the-provisioning-runs-log)).
+- **The guard's exit codes, and what a guard that cannot write a line does,** are operator.md's.
+
+### The guard's lock
+
+**`%USERPROFILE%\.agentspace\guard.lock` is held for the whole life of a guard run, so a held lock
+means a guard is running** (D56, D63). It is held as
+[the provisioning run's lock](#the-provisioning-runs-lock) is (the dev lead's pin P3; architect,
+2026-11-21, for v0.08-T01):
+- **Holding it means having the file open with no sharing**, for reading and writing, creating it
+  if it is missing, after creating `%USERPROFILE%\.agentspace` if that is missing. **The file is
+  never deleted, its content is empty and meaningless, and the handle MUST NOT be inheritable**,
+  so no program the guard starts holds it. The operating system releases it however the run
+  ends, so a killed guard leaves the lock free.
+- **It is always taken without waiting**: one try, which either has it or finds it held.
+  - **The guard takes it as its first step, before it reads any file or opens its log, and holds
+    it until it exits.** It takes no other lock of this page to wait for.
+  - **A guard that finds it held exits 0 at once and logs nothing** (D63): no line in
+    [the log](#the-guards-log) and no other file written. It was started while another run was
+    running, which is no error.
+  - **The keeper tells whether a guard is running by trying it, and releases it at once if it
+    got it**, as the driver tries a provisioning run's lock
+    ([The provisioning run's lock](#the-provisioning-runs-lock)). **A try creates neither the file
+    nor `%USERPROFILE%\.agentspace`, and a missing one is free**: no guard holds a lock that does
+    not exist, and the guard creates the file when it takes it. When the keeper tries it, and what
+    it logs, is keeper.md's
+    ([guard.lock: tried, never held](keeper.md#guardlock-tried-never-held)).
+  - **A failure to open it other than its being held**, such as access denied, or a folder at its
+    path, is not a free lock: the guard treats it as a failure of its own and runs nothing, and
+    stops no host, and the keeper starts no guard in that pass and logs that, as the dev lead's
+    pin P3 puts it (architect, 2026-11-21, for v0.08-T01).
+- **The keeper's try is a hint, not a promise** (architect, 2026-11-21, for v0.08-T01, pin P18):
+  between the keeper's
+  release and a started guard's own take, another guard, such as one a person runs by hand,
+  can take the lock, and the started guard then finds it held and exits 0. **So two guards never
+  run at once, and a second is harmless.**
+- **`AGENTSPACE_STATE_DIR` does not move it** (D63 pins it beside `hosts.json`), so one guard runs at a time
+  on the machine, whichever state folder started it.
+- **Where it sits among the locks** is [The order of the locks](#the-order-of-the-locks): it is
+  taken first and held throughout, and nothing waits for it.
+
 ## Files agentspace reads and never writes
 
 **These belong to the user, to ssh, to the AWS CLI or to localswim**, but for the project list,
@@ -2301,8 +2629,9 @@ has written that lease's record, so no hold spans several placements (architect,
   behavior to copy (#0041, point 1).
 - **`create` holds it through the whole of issuing**, the CA check and signing included, which
   makes a concurrent `renew` or `release` wait ([lease-api.md Q11](lease-api.md#open-questions)).
-- **`get` and `list` MUST NOT take it, and the keeper and the ProxyCommand MUST NOT take it
-  either.**
+- **`get` and `list` MUST NOT take it, and the keeper, the ProxyCommand, the guard and
+  `status -All` MUST NOT take it either** (the guard and `status -All` from v0.08; architect,
+  2026-11-21, for v0.08-T01, pin P18).
 
 ### The host registry lock
 
@@ -2326,9 +2655,11 @@ lead's pin P10):
   of the project list for a project with no host reads it under this lock too
   ([The project list](#the-project-list)), and a command that makes a host's operator key makes it
   under this lock ([The operator's key and certificate](#the-operators-key-and-certificate)).
-- **The keeper MUST NOT take it, and the ProxyCommand takes it only to write a missing
-  `instance_id`** ([The instance ID](#the-instance-id)). Both read `hosts.json` without it, seeing
-  the file as it was before or after a change ([Replacing a file](#replacing-a-file)).
+- **The keeper, the guard and `status -All` MUST NOT take it, and the ProxyCommand takes it only
+  to write a missing `instance_id`** ([The instance ID](#the-instance-id); the guard and
+  `status -All` from v0.08, architect, 2026-11-21, for v0.08-T01, pin P18). Each reads
+  `hosts.json` without it, seeing the file as it was before or after a change
+  ([Replacing a file](#replacing-a-file)).
 - **`list`, `renew` and `release` never take it.**
 - **Every state folder shares it**: it is not moved by `AGENTSPACE_STATE_DIR`.
 
@@ -2350,6 +2681,19 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
   registry lock while it waits for the lease state lock.
 - **The keeper's two locks are outside this order**: the keeper takes none of these three, and no
   holder of these three takes the keeper's.
+- **[The guard's lock](#the-guards-lock) is the first lock a guard takes, and nothing waits for
+  it** (architect, 2026-11-21, for v0.08-T01, pin P18). Both of its takers only try it, the guard to hold it and the
+  keeper to learn whether it is held, so it is outside the order of waits, as a try is, and cannot
+  deadlock. **A guard holds it from its first step until it exits, and throughout that time:**
+  - **It tries each host's provisioning run's lock without waiting, and releases it at once if it
+    got it**, as the driver does, to learn whether a run is running on that host
+    ([operator.md, guard](operator.md#guard)). It never waits for it.
+  - **It reads `hosts.json` and the lease state file without their locks**, as the keeper does, so
+    it takes neither the host registry lock nor the lease state lock, and never writes either
+    file.
+  - **So a guard waits for no lock of this page**, and no holder of one waits for the guard's.
+    The keeper tries the guard's lock and releases it at once, and takes none of the three above,
+    so the keeper's rule above stands.
 
 ### What two commands at once can see
 
@@ -2358,7 +2702,7 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
 | `create`, `renew` or `release` | `get`, `list` and the keeper see the state file as it was before or as it is after, never part of it, and never wait ([Replacing a file](#replacing-a-file)). A second `create`, `renew` or `release` waits for the lock |
 | `create`, between writing the alias file and writing the record | `ssh` can already use the alias, while `get` does not yet show the lease. If `create` then fails, the alias and the lease folder are removed again ([Creation, in order](#creation-in-order)) |
 | `renew` | `ssh` reads the old certificate or the new one, never a part of either, since the new one arrives by one rename |
-| `release` | `ssh` finds the alias file gone before the key, never the reverse. A session already open stays open. `get` sees the lease `released` before its files are gone, in the order this page asks of the rewrite, and after, in the prototype's ([Release, and what it leaves](#release-and-what-it-leaves)) |
+| `release` | `ssh` finds the alias file gone before the key, never the reverse. A session already open through the alias is ended by `release`'s step 3 ([Release, and what it leaves](#release-and-what-it-leaves)). `get` sees the lease `released` before its files are gone, in the order this page asks of the rewrite, and after, in the prototype's ([Release, and what it leaves](#release-and-what-it-leaves)) |
 | Commands with different `AGENTSPACE_STATE_DIR` values | Two separate state files with separate locks, but one set of lease folders and, with one `<ssh folder>`, one `agentspace.d`. They do not exclude each other. IDs are random, so their folders never collide, but their aliases can; the second `create` then fails on the first's alias file ([The alias file](#the-alias-file)) |
 | Two `create`s, or a `create` and a `get`, for one project with no `ready` host | A second `create` waits for the host registry lock; a `get` tries it without waiting, and starts nothing when it is held. Either, once it has the lock, finds the record the first added or changed, and starts no second run: the first run holds its lock, or `last_attempt_at` is less than 5 minutes old ([Its states](#its-states)). Both leases are `pending`, and one run places both |
 | A provisioning run's `place_pending`, and a `create`, `renew` or `release` | Each waits for the lease state lock, which `place_pending` takes once for each lease it places, re-reading the state file each time, so no hold of it spans several placements. A lease released before `place_pending` re-reads the state file for it is skipped and never placed; one released after it was placed is released as any `ready` lease is |
@@ -2366,6 +2710,10 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
 | A provisioning run, and the ProxyCommand or the keeper | They read `hosts.json` and the lease state file without their locks, so they see each as it was before one of the run's writes or as it is after it, never part of either. A record the run makes `ready` comes before any lease it places, so neither finds a `ready` lease on a host that is not yet `ready` |
 | A provisioning run, and an operator command on the same host by hand | Their writes to `hosts.json` wait for each other at its lock. Whether the command runs at all while the run's lock is held is operator.md's ([The provisioning run's lock](#the-provisioning-runs-lock)) |
 | Commands with different `AGENTSPACE_STATE_DIR` values, from v0.07 | One host registry, one lock on it, one project list and one folder per host, but separate lease state files. A run places only the pending leases of the state file of the command that started it ([The provisioning run's start](#the-provisioning-runs-start)) |
+| A guard run, and a second guard run | The second finds [the guard's lock](#the-guards-lock) held, exits 0 at once and logs nothing, whether a keeper or a person started either. One guard runs at a time on the machine |
+| A guard run, and `create`, `renew`, `release` or a provisioning run's `place_pending` | The guard reads the lease state file without its lock, so it sees it as it was before a change or as it is after, never part of either ([Replacing a file](#replacing-a-file)), and never makes a change wait. A lease created or released an instant after the guard read the file is seen by the next run, about 5 minutes later, while a keeper runs ([keeper.md, When the keeper starts it](keeper.md#when-the-keeper-starts-it)) |
+| A guard run, and a provisioning run on a host | The guard tries the host's [provisioning run's lock](#the-provisioning-runs-lock) and releases it at once, and what it does when the lock is held is operator.md's ([operator.md, guard](operator.md#guard)). It never waits for the run, and the run never waits for the guard |
+| A guard run, and the keeper | The keeper tries the guard's lock and releases it at once. A guard a person starts during that try finds it held and exits 0, and the next run does the work (the keeper's try is a hint, [The guard's lock](#the-guards-lock)). Neither waits for the other |
 | A person editing `<ssh folder>\config` | The `Include` line is inserted only when it is missing. A save made after `create` read the config and before its backup fails the backup's hash check, and `create` changes nothing; a save made after the backup and before the replace is lost, though the backup holds the earlier content ([Q5](#open-questions)) |
 
 ### What nothing locks
@@ -2379,6 +2727,9 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
   reads a whole file either way. The key itself is made under the host registry lock
   ([The operator's key and certificate](#the-operators-key-and-certificate)).
 - **The provisioning run's log**, which every writer appends to, sharing.
+- **The guard's log**, which the guard alone appends to, sharing read, write and delete. The
+  guard's lock keeps a second writer out, so the log is locked by nothing of its own
+  ([The guard's log](#the-guards-log)).
 - **The operator's folder.** From v0.07 two operator commands can run at once, such as a
   provisioning run beside a person's `sync`, and need no lock there: each writes only its own
   `operator\<hex>\` ([Files in the checkout](#files-in-the-checkout); [Q15](#open-questions)).

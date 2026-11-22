@@ -5,8 +5,9 @@ RFC 2119 keywords; the capitals are load-bearing.
 **The reference for the keeper: the program on the laptop that holds the board's forwards on each
 project's host for as long as a lease on that host is ready (D30, D50).** It is written so that the keeper can be rebuilt
 without reading any of its code (D20, D34). It names every argument, decision, timing, lock, log
-line and exit code, the handshake that starts a holder, and the logon task that runs the keeper
-unattended. The reasoning behind each rule is in [decisions.md](decisions.md), cited as `D<n>`.
+line and exit code, the handshake that starts a holder, when and how the keeper starts the guard
+(v0.08, D56), and the logon task that runs the keeper unattended. The reasoning behind each rule is
+in [decisions.md](decisions.md), cited as `D<n>`.
 
 **What it does not own:**
 - **Every file the keeper reads or writes is [docs/state.md](state.md#the-keepers-files)'s**: its
@@ -28,6 +29,16 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 - **Why only one connection on a host can hold the board's forwards** is D12. Why they need a
   holder at all is stated here, in [The board's forwards](#the-boards-forwards), and the decision
   to keep one is D30.
+- **The guard, `agentspace-operator guard`** (D56, D63): what it does, the variables it reads and
+  every line it logs are [operator.md, guard](operator.md#guard)'s. Its log, `guard.log`, and its
+  lock, `guard.lock`, are [state.md, The guard's log](state.md#the-guards-log)'s and
+  [state.md, The guard's lock](state.md#the-guards-lock)'s, and what a live lease is,
+  [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)'s. This
+  page says only when the keeper starts the guard, how, with what environment, and what the keeper
+  logs for it ([Starting the guard](#starting-the-guard)).
+- **What a release does to the lease's ssh clients**, the keeper's holder among them (D59), is
+  [driver.md](driver.md) and [lease-api.md](lease-api.md)'s. This page says what the keeper does
+  when it finds a holder a release ended ([Release grace](#release-grace)).
 
 ## Contents
 
@@ -36,6 +47,7 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 - [Command line](#command-line)
 - [A pass](#a-pass)
 - [Starting a holder](#starting-a-holder)
+- [Starting the guard](#starting-the-guard) (v0.08, D56)
 - [Watching](#watching) (card #0068)
 - [Locks](#locks)
 - [Log lines](#log-lines)
@@ -63,6 +75,14 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
   keeper MUST use when the argument is not given ([Release grace](#release-grace)).
 - **A note on where a requirement came from MAY name a story or a decision, and the reader needs
   none of them**: every rule is stated in full on this page.
+- **A rule marked "architect's to confirm" is not ruled yet** (v0.08). It is a choice this page's
+  drafter made where D56 to D63 and the architect's rulings left the point open. It is written as a
+  requirement so a builder has one answer, and once the architect rules it is cited as "architect,
+  2026-11-21, for v0.08-T01". **A rule cited that way is ruled**: the dev lead's pins P3 and P4 and
+  the keeper's default guard program, here, and pin P15, in conformance.md. **The architect's pin
+  P18 ruled every choice this page's drafter made for v0.08's first draft**, and each is cited that
+  way, and its pin P19 ruled the two rules added in its review, the start during a wait and the
+  bound on the detached start. No rule on this page is marked now.
 
 ### Where it runs
 
@@ -73,6 +93,10 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 - **The keeper never talks to a host or to AWS itself.** It reads the lease state file and the host
   registry, and starts and stops local ssh clients, the holders, at most one per host. Everything a
   holder's connection does on the far side goes through the lease's alias and its ProxyCommand.
+  - **From v0.08 it also starts the guard (D56), a program that does talk to AWS and to hosts.**
+    The keeper starts it as it starts holders, as a separate process that outlives it, and never
+    does any of the guard's work itself: it makes no AWS call, connects to no host, stops no
+    instance, and never reads what the guard writes ([Starting the guard](#starting-the-guard)).
 - **A host's platform is a parameter of the contract (D4).** Nothing here depends on the host's OS,
   with one exception, marked "today's box" where it appears: the default release grace is derived
   from the keepalive settings of today's box's sshd ([Release grace](#release-grace)).
@@ -113,6 +137,9 @@ unattended. The reasoning behind each rule is in [decisions.md](decisions.md), c
 | Proven | A tracked holder seen alive by a look at least `-FastFailureSeconds` (60) after the keeper began to track it, or one the keeper adopted, whose age is unknown. A keeper begins to track a holder it started when the pass that started it ends, not when the holder started. |
 | Fast failure | A start that did not give a live holder, or a tracked holder that a look found gone, or that a pass logged `lost` for, before it was proven. |
 | State folder | `AGENTSPACE_STATE_DIR` when it is set and not empty, else `%USERPROFILE%\.agentspace` (D21; [docs/state.md](state.md#the-keepers-files)). |
+| The guard | `agentspace-operator guard`: one run of the operator's command that stops every host no live lease explains (D56; [operator.md, guard](operator.md#guard)). A keeper starts it, and never runs its logic itself ([Starting the guard](#starting-the-guard)). |
+| The guard's start | A keeper's start of the guard: due at its first iteration and then once every `-GuardIntervalSeconds` (300), never while `guard.lock` is held, through the detached start (D63; [Starting the guard](#starting-the-guard)). |
+| Attempt | Of the guard's start: one that the keeper made or tried and failed. A time the keeper found `guard.lock` held is not an attempt ([When the keeper starts it](#when-the-keeper-starts-it)). |
 
 ### What the keeper does with its files
 
@@ -132,6 +159,13 @@ share modes and access rules. This table says only what the keeper does with it.
 | `board-holder-keeper.lock` | A keeper holds it for its whole life ([Locks](#locks)). |
 | `board-holder-launch.<hex>.json`, `.claim`, `.result.json` | The launch request, its claim and its result. Every start writes them, and they exist only while a holder is being started ([Starting a holder](#starting-a-holder)). `<hex>` is the token [docs/state.md](state.md#a-holders-launch-files) defines, new for each start and shared by its three files. |
 | `board-holder-launcher-errors.log` | Written by the task's launcher, never by the keeper ([The task's launcher](#the-tasks-launcher)). |
+| `guard.lock`, the guard's lock | Beside `hosts.json`, so in `%USERPROFILE%\.agentspace` and never moved by `AGENTSPACE_STATE_DIR` ([state.md, The guard's lock](state.md#the-guards-lock)). A keeper tries it, and closes it at once if it got it, only to learn whether a guard runs, before each attempt of the guard's start. It never holds it beyond that try, its try never creates it or its folder, and it never writes or removes it ([guard.lock: tried, never held](#guardlock-tried-never-held)). A one-pass run never opens it. |
+| `guard.log`, the guard's log | Never opened, read, written or removed by the keeper. The guard writes it ([state.md, The guard's log](state.md#the-guards-log); [operator.md, guard](operator.md#guard)). |
+
+**The keeper keeps no file for the guard's start.** The time of its last attempt lives in the
+keeper's process alone ([When the keeper starts it](#when-the-keeper-starts-it)), and the guard
+needs no launch files: `guard.lock` is its proof of life, as `provision.lock` is a provisioning
+run's.
 
 **Every JSON file the keeper writes is replaced atomically
 ([docs/state.md](state.md#the-keepers-files)).**
@@ -254,6 +288,15 @@ keeps one holder running on that host through a ready lease's alias
   holder on that host for another of its ready leases. A holder
   whose record was dropped is the exception: no pass stops it
   ([Trusting the record](#trusting-the-record)).
+  - **From v0.08 a release ends the holder itself** (D59, as D63 changed it): `agentspace lease
+    release` ends every ssh client of the lease's alias on the laptop, the holder included. The
+    keeper then finds the holder gone, as if it had ended by itself, and waits the release grace
+    before the next start on that host ([Release grace](#release-grace)). It stops a holder of a
+    released lease only when the release did not end it. Expiry is unchanged: the keeper's stop is
+    what ends a holder whose lease expired.
+- **A keeper starts the guard (D56)**, at its first iteration and then once every 300 seconds,
+  never while a guard runs, so that a host no live lease explains is stopped without anyone asking
+  ([Starting the guard](#starting-the-guard)). A one-pass run does not.
 - **It MUST NOT stop a process it did not start.** A recorded PID is trusted only when the
   process's start time and command line match the record ([Trusting the record](#trusting-the-record)).
 - **The holder MUST outlive whatever started it**: the pass, the keeper, an agent's tool call and
@@ -317,6 +360,7 @@ prints.
 | `-BackoffMaxSeconds` | 1 to 86400 | `300` | `-Watch` | The longest backoff. MUST NOT be less than `-BackoffBaseSeconds`. |
 | `-ReleaseGraceSeconds` | 1 to 86400 | `95` | `-Watch` | The wait after a tracked holder ends ([Release grace](#release-grace)). |
 | `-FastFailureSeconds` | 1 to 86400 | `60` | `-Watch` | Hidden, for checks only: how long a tracked holder must have lived to be proven. It is not in the usage text. |
+| `-GuardIntervalSeconds` | 1 to 86400 | `300` | `-Watch` | Hidden, for checks only: the least time between two attempts of the guard's start ([When the keeper starts it](#when-the-keeper-starts-it)). It is not in the usage text. D63 pins 300 seconds; the argument exists so a check can see a second attempt without waiting 5 minutes (architect, 2026-11-21, for v0.08-T01, pin P18). |
 
 **A number is a whole number from 1 to 86400**, written in decimal digits only: no sign, no
 blanks, no separators. Leading zeros are allowed.
@@ -386,7 +430,7 @@ gives `Unknown argument '-Bogus'.`, since check 1 ends before check 2 begins.
 
 **Check 2 takes the numbers one at a time, in the argument table's order** (`-IntervalSeconds`,
 `-MaxPasses`, `-BackoffBaseSeconds`, `-BackoffMaxSeconds`, `-ReleaseGraceSeconds`,
-`-FastFailureSeconds`), skipping any not given (B-45). For each, without `-Watch` it reports `is
+`-FastFailureSeconds`, `-GuardIntervalSeconds`), skipping any not given (B-45). For each, without `-Watch` it reports `is
 for -Watch`, and with `-Watch` it checks the value. The first failure is reported. So
 `-IntervalSeconds abc` without `-Watch` gives `-IntervalSeconds is for -Watch.`, and
 `-Watch -MaxPasses abc -IntervalSeconds 0` gives `-IntervalSeconds '0' is not a whole number from 1
@@ -409,6 +453,9 @@ pass ran and logged what happened; the next pass tries again.
 
 - **A keeper never exits for an error once its loop has started** ([Watching](#watching)). Only
   `-MaxPasses`, a usage error, the keeper lock, or the process being killed ends it.
+- **The guard's start never changes an exit code**: an attempt that fails is logged and the keeper
+  goes on, and what the guard itself does or how it exits is never seen by the keeper
+  ([What a failed start changes](#what-a-failed-start-changes)).
 - **An error before the first pass, such as a state folder that cannot be created, ends any run
   with exit 1 and nothing logged**, since there may be nowhere to log. The prototype then prints its
   runtime's error record on stderr; the rewrite SHOULD print one line starting with its own name
@@ -461,6 +508,12 @@ pass ran and logged what happened; the next pass tries again.
     ([docs/state.md](state.md#a-holders-launch-files)).
   - **A check can see this**: its stub holder can write its environment to
     `board-holder-ssh.log` under a keeper given a variable of the check's own.
+- **The guard is not the holder, and gets some of the keeper's variables on purpose** (pin P4;
+  architect, 2026-11-21, for v0.08-T01). The keeper passes the guard its home folder, its state and ssh folders,
+  its ProxyCommand override and every `AGENTSPACE_*_CMD` seam it was given, over the user's logon
+  environment, so a check's keeper starts a guard in the check's home and with the check's stand-ins
+  ([The guard's environment](#the-guards-environment)). Nothing of this reaches a holder: the rule
+  above binds every holder and its launcher, unchanged.
 
 ## A pass
 
@@ -506,6 +559,11 @@ action, one line.
 | None trusted | None ready | Nothing | `idle` |
 | None trusted, on a host in a keeper's hold-off | One or more ready | Nothing | None ([The keeper's wait](#the-keepers-wait)) |
 | None trusted | One or more ready | Start one on this host through the chosen lease | `started`, or `failed` |
+
+**A keeper's start of the guard is not a step of a pass** ([When the keeper starts it](#when-the-keeper-starts-it)).
+It comes before step 1, or during a keeper's wait, never between step 1 and step 9, so it never
+runs while the pass holds `board-holder.lock`, never delays a host's turn, and never changes the
+pass time. A one-pass run never starts the guard.
 
 **One host's turn never changes another's.** A turn reads and writes only its own host's record,
 starts and stops only its own host's holder, and gives a holder only its own host's log.
@@ -755,6 +813,19 @@ the recorded one. A lease that expires is seen at the first pass whose pass time
 `expires_at`, so the stop comes up to about one interval after expiry. A person's edit that takes
 a host's record out of `ready` is seen the same way, at the first pass that reads it
 ([The order of a pass](#the-order-of-a-pass)).
+- **A released lease's holder is normally gone before any pass sees the release** (D59, as D63
+  changed it): the release ends it with the alias's other ssh clients, and the keeper treats it as
+  a holder found gone ([Release grace](#release-grace)), with no `stopped` line. This rule applies
+  to a released lease's holder in two other cases, and its stop, its line and the grace after it
+  are then as for any other:
+  - **The release did not end it**: a holder whose program is not `ssh.exe`, as a check's stub is,
+    or one the release could not open or end.
+  - **A pass came between the release's write and its end of the clients**: the release writes
+    `released` before it ends the lease's connections
+    ([driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)), so a pass
+    can read the record already `released` while the holder still runs. That pass stops the holder
+    and logs `stopped`,
+    and the grace follows. The release then finds the holder gone.
 - **The stop opens the holder by PID, and checks its creation time and command line again on that
   same handle, by the same rule.** While the handle is open Windows cannot reuse the PID, so the
   process checked is the process stopped.
@@ -1076,6 +1147,266 @@ hangs ([Requirements the prototype does not meet yet](#requirements-the-prototyp
   pass was stopping is already dead, the new keeper's first pass finds no trusted holder and
   starts one at once if a lease is ready, with no grace ([Q11](#open-questions)).
 
+## Starting the guard
+
+**A keeper starts the guard, `agentspace-operator guard`, which stops every host that no live
+lease explains** (D56, D63). The guard is the operator's: what it reads, what it stops, the
+horizon it sends, its exit codes and every line of `guard.log` are
+[operator.md, guard](operator.md#guard)'s, and its log and lock are
+[state.md, The guard's log](state.md#the-guards-log)'s and
+[state.md, The guard's lock](state.md#the-guards-lock)'s. This section says when the keeper starts
+it, how, with what environment, and what the keeper logs.
+
+- **The keeper still never talks to AWS or a host itself** (D56;
+  [Where it runs](#where-it-runs)). It starts a program, as it starts holders, and that program
+  does the talking.
+- **Why the keeper** is D56's: only the laptop knows that a lease ended, the keeper already reads
+  the lease state file every 30 seconds, and its task already runs at every logon, so the guard
+  needs no scheduled task of its own.
+- **Everything in this section is new in v0.08.** A keeper that starts no guard is v0.07's, and
+  every other section of this page binds a keeper that does, unchanged but where it says so.
+
+### When the keeper starts it
+
+**Only a keeper starts the guard; a one-pass run never does** (architect, 2026-11-21, for
+v0.08-T01, pin P18). A one-pass
+run never tries `guard.lock`, starts no guard and logs no line for one, so a person's or a check's
+one-pass run beside the keeper never adds a guard run. D63 pins the start to "its first pass, then
+at most once every 300 seconds"; this page reads "its" as a keeper's, since only a keeper lives
+from one pass to the next and so can keep the spacing.
+
+**The start is due at a keeper's first iteration, and after that once `-GuardIntervalSeconds`, 300
+by default, have passed since the keeper's last attempt** (D63). The seconds count from the end of
+the attempt, when its line has been written or dropped, and are measured on the clock every other
+duration of the keeper is measured on ([Times](#times)).
+- **An attempt is a start the keeper made, or tried to make and failed**, for any of the reasons
+  in [The keeper's lines for it](#the-keepers-lines-for-it) (architect, 2026-11-21, for
+  v0.08-T01, pin P18). So an attempt that fails is not tried again for 300 seconds, and a failure
+  that lasts writes one line every 300 seconds, never one per pass (D14).
+- **Finding `guard.lock` held is not an attempt** (architect, 2026-11-21, for v0.08-T01, pin
+  P18). The start stays due, and the keeper tries again at the next point below at which it may.
+  A guard that runs long, or that a person started, delays the keeper's start only while it holds
+  the lock, and until that next point.
+
+**Where the time of the last attempt is kept: in the keeper's own process, and nowhere else**
+(architect, 2026-11-21, for v0.08-T01, pin P18). A keeper's passes all run in its one process, for
+its whole life ([Watching](#watching)), so a time held in memory spans them, as each host's hold-off and count do
+([The keeper's wait](#the-keepers-wait), its last paragraph). No file records it, and the keeper
+writes nothing for the guard's start but its log line.
+- **A new keeper starts with no last attempt, so its first iteration's start is due at once**,
+  however recently the keeper before it made one. A keeper restarted by the task's trigger within
+  a minute of a crash therefore starts a guard at its first iteration. `guard.lock` keeps the two
+  guards from running at once, and the cost is one more guard run: one `describe-instances` call,
+  and a horizon sent to each running host (D56, D57).
+- **Why not a file:** a file would need its own path, bytes, access rules and a rule for a time
+  that is in the future or unreadable, to save at most one guard run per keeper start. A keeper
+  starts at logon and after a crash, rarely.
+
+**When in a keeper's loop** ([Watching](#watching), step 2): at the first of these points at which
+the start is due (architect, 2026-11-21, for v0.08-T01, pin P18):
+1. **Just before each pass**, after the look and any wait after the look, and before the pass time
+   is taken. So the first iteration's start comes before the keeper's first pass, and a keeper run
+   with `-MaxPasses 1` makes it.
+2. **During a wait, once: at the moment the start falls due, or at the wait's beginning when it is
+   already due**, whether the wait comes after a look or after a pass. A start that then finds
+   `guard.lock` held is next tried just before the next pass, never again in the same wait
+   (architect, 2026-11-21, for v0.08-T01, pin P19). The keeper makes the
+   attempt, or its try, then the wait runs on to the end it had: it ends neither sooner nor later
+   for it, and its `grace` or `backoff` line, already written, is unchanged.
+
+So:
+- **The start never comes inside a pass.** It never runs while the keeper holds
+  `board-holder.lock`, never delays a host's turn, and never changes what a pass logs. An attempt
+  just before a pass delays that pass by the attempt's own time alone, which the pass time, taken
+  after it, absorbs.
+- **A keeper's next attempt comes no later than `-GuardIntervalSeconds` plus about one pass after
+  its last**, whatever its hold-offs, when `guard.lock` is free each time the keeper tries it: a
+  wait of up to `-BackoffMaxSeconds` or the grace never holds a due start back, since the start is
+  made in the wait. That is the "up to 5 minutes until the next guard run" in D56's stated time,
+  plus at most one pass (about 95 seconds for each host the pass starts a holder on,
+  [Timings of a start](#timings-of-a-start)). A try in a wait that finds the lock held is the
+  exception: the next try comes just before the next pass, which that wait can put off by up to
+  its own length.
+- **Two attempts by one keeper are never closer than `-GuardIntervalSeconds`.** Two keepers, one
+  after the other, MAY start guards closer than that, as above.
+
+### How the keeper starts it
+
+**An attempt, in this order** (D63; pins P3 and P4; architect, 2026-11-21, for v0.08-T01):
+1. **Try `guard.lock`, without waiting**, as [guard.lock: tried, never held](#guardlock-tried-never-held)
+   says. **Held:** the keeper starts nothing, logs nothing, and the attempt does not count (above).
+   **Free:** the keeper has closed its own handle on it before step 2, so the guard it starts can
+   take it. **Could not be opened for another reason:** the attempt fails (below), and nothing is
+   started.
+2. **Find the guard's program** (below). One that cannot be found fails the attempt.
+3. **Start it detached, with the argument `guard`**, through the detached start (below).
+4. **Log one line**: `guard started pid=<pid>` when the start returned the process ID, or the
+   `failed` line of [The keeper's lines for it](#the-keepers-lines-for-it) when any step failed.
+
+**The program** (D63):
+- **`AGENTSPACE_GUARD_CMD`, when it is set and not empty in the keeper's environment:** the full
+  path of the program the keeper starts in place of the operator, so that a check can stand one in.
+  A relative value is made full against the keeper's working folder before the start, since the
+  guard's own working folder is the home folder, as the lease CLI makes `AGENTSPACE_PROVISION_CMD`
+  full ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)). It is the
+  keeper's own variable, read by no other program as a program to start, and never
+  `AGENTSPACE_OPERATOR_CMD`, which the conformance harness sets to the operator under test.
+- **Otherwise, `agentspace-operator.exe` in the folder the keeper's own executable runs from**, as
+  every program finds another ([operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others)).
+  For the installed keeper, run by the task, that folder is the install folder, `<install>`, and the
+  program is D63's "the install folder's `agentspace-operator.exe`" (architect, 2026-11-21, for v0.08-T01, on
+  pin P15: D63 names the install folder, and the keeper's own folder is meant, so that a keeper run
+  from a build's output folder starts that build's operator and never the installed one).
+- **A path that does not name an existing file is a program that cannot be found**, and the
+  attempt fails. The program is looked for at every attempt, so an install that adds or replaces
+  the operator is used from the next attempt on, with no keeper restart.
+- **Its command line is the program, then exactly the one argument `guard`**: `"<program>" guard`.
+  The keeper never passes `-Quiet` or any other argument (D63). **A `.cmd` or `.bat` program**, its
+  extension compared without regard to case, is run through Windows' command interpreter as the
+  lease CLI runs a provisioning run's: `<system folder>\cmd.exe /d /c "<program>" guard`, with
+  `<system folder>` as [state.md, The alias file](state.md#the-alias-file) gives it, and a
+  `SystemRoot` that is unset or empty makes the program one that cannot be found.
+- **These lines give the arguments, not the command line's bytes**, as
+  [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run) says of a run's:
+  the detached start quotes by its own rule. **What the program MUST receive is exactly the one
+  argument `guard`**, and a `.cmd` or `.bat` whose path holds a space MUST still run and receive
+  it. A check asserts that, never the line's quoting.
+
+**The detached start: `agentspace-detach`, as the lease CLI starts a provisioning run** (D56, D63;
+[driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run), "The detached
+start"; [state.md, The provisioning run's start](state.md#the-provisioning-runs-start)). What it
+MUST achieve, from outside:
+- **The guard is outside the Job Object of the keeper and of every process above it**: the task's
+  launcher, the task, and a check's shell. It outlives the keeper that started it, as a holder does
+  ([Starting a holder](#starting-a-holder), item 1).
+- **It starts in a new process group, with a hidden console window, and its working folder is the
+  home folder**: the keeper's `USERPROFILE`, made full against the keeper's working folder. So it
+  never holds a worktree or a checkout open, and the console program it starts, the AWS CLI, opens
+  no window of its own.
+- **It is given none of the keeper's standard handles and inherits no handle of the keeper's**, in
+  particular never `board-holder-keeper.lock`, `board-holder.lock`, or a handle on `guard.lock`,
+  which the keeper closed before the start (step 1). Its standard streams are its hidden
+  console's, which nothing reads, and it MUST NOT read its standard input.
+- **One call, which returns the guard's process ID or fails.** At most one guard is started per
+  attempt, and a failed start is not retried within the attempt (D14); the next attempt is
+  `-GuardIntervalSeconds` later.
+- **The call is bounded at 10 seconds, as a holder's create call is**
+  ([Timings of a start](#timings-of-a-start); architect, 2026-11-21, for v0.08-T01, pin P19). A
+  call that has not
+  returned by then is abandoned, and the attempt fails with the `<why>`
+  `The detached start failed: The call did not return within 10 seconds.`
+  ([The keeper's lines for it](#the-keepers-lines-for-it)). A guard such a call still makes finds
+  or takes `guard.lock` by its own rule ([operator.md, guard](operator.md#guard)), so it never runs
+  beside another, and the keeper never learns of it.
+- **The keeper never waits for the guard**, never tracks, looks at or stops it, and never reads
+  `guard.log` or the guard's exit code. Nothing the guard does changes anything in the keeper: no
+  host's state, no hold-off, no record, no line but the attempt's own.
+- **There are no launch files** for the guard, no request, claim or result: `guard.lock`, which
+  the guard holds for its life, is its proof of life, as `provision.lock` is a provisioning run's.
+
+### The guard's environment
+
+**The keeper passes the guard the environment the lease CLI passes a provisioning run, and with it
+every `AGENTSPACE_*_CMD` seam the keeper was given** (pin P4; architect, 2026-11-21, for v0.08-T01; D63). The
+guard's environment is the user's logon environment, with these set exactly as this list says:
+- **`USERPROFILE`**, the keeper's value, made full against the keeper's working folder
+  ([state.md, The home folder](state.md#the-home-folder)). The guard finds `hosts.json`,
+  `guard.lock` and `guard.log` through it ([state.md, The guard's files](state.md#the-guards-files)).
+- **`AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR`**, each in the guard's environment if and only
+  if the keeper has it set and not empty, each made full as state.md makes a relative folder full.
+  The guard reads the lease state file in the state folder it is given
+  ([state.md, What moves which files](state.md#what-moves-which-files)), so it judges the same
+  leases the keeper holds through.
+- **`AGENTSPACE_PROXY_COMMAND`**, if and only if the keeper has it set and not empty, exactly as
+  the keeper has it. It is a command line, not a folder, and is never made full.
+- **Every variable whose name starts `AGENTSPACE_` and ends `_CMD`, with at least one character
+  between**, its name compared without regard to case, as Windows compares one, in the guard's
+  environment if and only if the keeper has it set and not empty, exactly as the keeper has it
+  (architect, 2026-11-21, for v0.08-T01, pin P18: passed as given, not made full, since a seam's
+  value is the harness's and the harness gives full paths). Among them
+  are the operator's test seam, `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`
+  ([operator.md, The test seam](operator.md#the-test-seam)), and `AGENTSPACE_GUARD_CMD` itself.
+- **A value of any of those that the logon environment holds and the keeper does not have set and
+  not empty is removed**, so the guard never takes a folder, a ProxyCommand line or a stand-in that
+  the keeper which started it did not use, as a provisioning run never does.
+- **No other variable of the keeper's reaches the guard.** `AGENTSPACE_TIMEZONE` and
+  `AGENTSPACE_DIAGNOSTIC` are among those that do not (pin P4; architect, 2026-11-21, for
+  v0.08-T01: the guard writes UTC times and prints no backend detail,
+  [operator.md, guard](operator.md#guard)).
+
+**Why the guard's environment differs from the holder's:**
+- **A check's home has to reach the guard.** A keeper under a check runs in a throwaway home with a
+  throwaway lease state file. A guard started with the logon environment would read the user's
+  real registry and the real AWS CLI, find none of the check's leases, and could stop a real host.
+  So the guard gets the keeper's home, state folder and stand-ins, and a check also replaces the
+  guard itself ([Checking the keeper](#checking-the-keeper)).
+- **The holder MUST behave as the user's own ssh** ([Streams and environment](#streams-and-environment)),
+  so it gets the logon environment alone. The guard is agentspace's own program, started for the
+  keeper's home, so it gets that home.
+- **Under the installed task nothing changes in practice**: the keeper runs with the logon
+  environment, which sets none of these, so the guard gets the logon environment and the real home.
+
+### The keeper's lines for it
+
+**Each attempt writes one line to `board-holder.log`, and to stdout, as every keeper line is
+written** ([Log lines](#log-lines)). They are the keeper's own lines
+([A keeper's own lines](#a-keepers-own-lines)): `<time>` is the current second when the line is
+written, in UTC, and neither line has a `host=` field, since the guard concerns every host. Their
+text is pinned here byte for byte (D56: "Its log line for the start is keeper.md's"; the text is
+the architect's, 2026-11-21, for v0.08-T01, pin P18):
+
+```
+<time> guard started pid=<pid>
+<time> failed lease=- alias=- pid=- reason=The guard could not be started: <why>
+```
+
+- **`guard started pid=<pid>`** is written once the detached start has returned, with the process
+  ID it returned, in decimal: the operator's, or for a `.cmd` or `.bat` program, the `cmd.exe`
+  that runs it. It says that a guard process was created, not that the guard ran to the end or
+  stopped anything; what the guard did is in `guard.log`.
+- **The `failed` line** has the grammar and the reason rules of a keeper's `failed` line, with `-`
+  in every field ([A keeper's own lines](#a-keepers-own-lines)). A check tells it from the keeper's
+  other `failed` lines by its reason's start, `The guard could not be started:`.
+- **No line is written when the keeper finds `guard.lock` held**, as the guard itself logs nothing
+  when it finds it held (D63). With a guard running, the keeper's log is silent about the guard.
+
+**`<why>`**, by the first step that failed. Each names no path, so a line never carries the
+Windows user name (AGENTS.md, "A live run on Terry's real setup MUST mask what it reads before it
+prints it"):
+
+| What failed | `<why>` |
+|---|---|
+| `guard.lock` could not be opened, for a reason other than its being held | `guard.lock could not be opened: Windows error <n>.`, the number alone, never the system's localized text, as a lock's error is ([Stopping a holder](#stopping-a-holder), the rulings) |
+| `AGENTSPACE_GUARD_CMD` names no existing file | `The program that AGENTSPACE_GUARD_CMD names does not exist.` |
+| `AGENTSPACE_GUARD_CMD` unset or empty, and no `agentspace-operator.exe` beside the keeper | `The operator program is not installed beside this program.` |
+| A `.cmd` or `.bat` program, with `SystemRoot` unset or empty | `Windows' command interpreter cannot be found, because SystemRoot is not set.` |
+| The detached start failed | `The detached start failed: <error>`, where `<error>` is the detached start's own error, in agentspace's words, with a Windows error as its number alone and no path; for a call that reached its bound, `The call did not return within 10 seconds.` ([How the keeper starts it](#how-the-keeper-starts-it); architect, 2026-11-21, for v0.08-T01, pin P19) |
+| Any other error, a panic included, that escapes the attempt | `The start stopped on an error: <error>` |
+
+**Examples:**
+
+```
+2026-11-21T22:00:00Z guard started pid=31244
+2026-11-21T22:05:04Z guard started pid=31876
+2026-11-21T22:10:09Z failed lease=- alias=- pid=- reason=The guard could not be started: The operator program is not installed beside this program.
+```
+
+### What a failed start changes
+
+**Nothing but its own line, and when the next attempt comes** (D63):
+- **No host's state changes**: no tracked holder, proof, count of fast failures or hold-off, on any
+  host. No record is written or removed, and no holder is started or stopped for it.
+- **No pass changes.** The attempt is never inside a pass ([When the keeper starts it](#when-the-keeper-starts-it)),
+  so a pass before or after it runs, and logs, exactly as it would have.
+- **No wait changes**: a wait in which an attempt failed ends when it would have.
+- **The keeper never exits for it**, and `-MaxPasses` counts passes alone, never attempts.
+- **The next attempt is `-GuardIntervalSeconds` later**, as after any attempt.
+- **A line that cannot be logged is dropped**, as any keeper's own line is
+  ([Log lines](#log-lines)), and the attempt stands: a guard that started still runs, and the
+  attempt still counts.
+- **A guard that started and then failed is the guard's to log**, in `guard.log`
+  ([operator.md, guard](operator.md#guard)). The keeper's line for it is `guard started`.
+
 ## Watching
 
 **A keeper (`-Watch`) runs passes in one process, for its whole life.** It first takes
@@ -1087,7 +1418,8 @@ the host's hold-off, if one is running. Every rule in this section about "the ho
 or a grace or backoff is about one host's, and applies to each host on its own (D50; the card's
 "backoff and release grace per host"). **With only the box, there is one host's state, and the
 loop is v0.06's step for step**: every look, pass, line and wait is the same, but for the `host=`
-field of [Log lines](#log-lines).
+field of [Log lines](#log-lines) and, from v0.08, the guard's start and its lines (step 2;
+[Starting the guard](#starting-the-guard)), which add lines and change no look, pass or wait.
 
 1. **The look**, before the pass, at each host on which the keeper tracks a holder, the box first
    and then the others in the ordinal order of their projects. It checks that host's holder by
@@ -1106,10 +1438,18 @@ field of [Log lines](#log-lines).
    - **When the look set a hold-off, the keeper waits before the pass**, as
      [The keeper's wait](#the-keepers-wait) says. With only the box, that waits out the box's
      hold-off, as v0.06's wait after the look did. Then it goes on to the pass.
-2. **The pass**, with the pass time taken now ([A pass](#a-pass)). It counts toward `-MaxPasses`
+2. **The guard's start, when it is due** (v0.08, D56; its place: architect, 2026-11-21, for
+   v0.08-T01, pin P18): the
+   keeper tries `guard.lock` and, when no guard holds it, starts the guard and logs `guard started
+   pid=<pid>` or its `failed` line ([Starting the guard](#starting-the-guard)). It is due at the
+   first iteration, so it comes before the keeper's first pass, and then once every
+   `-GuardIntervalSeconds`. When it falls due during a wait instead, the keeper makes it there and
+   the wait runs on to its end ([When the keeper starts it](#when-the-keeper-starts-it)). It
+   changes no host's state, whatever it logs.
+3. **The pass**, with the pass time taken now ([A pass](#a-pass)). It counts toward `-MaxPasses`
    whether or not it ran to the end. A host whose hold-off is still running gets its turn, but no
    holder is started on it ([The order of a pass](#the-order-of-a-pass)).
-3. **What each host's turn did**, for tracking on that host:
+4. **What each host's turn did**, for tracking on that host:
 
 | The host's turn | Then, on that host |
 |---|---|
@@ -1122,8 +1462,8 @@ field of [Log lines](#log-lines).
 | Anything else (`idle`, no line on a host in hold-off, a turn that failed before deciding) | Nothing changes |
 
    A pass that logged `skipped`, or failed before any host's turn, changes no host's state.
-4. **If `-MaxPasses` passes have run, exit 0.**
-5. **The hold-offs the pass set**, each counted from the end of the pass, one per host whose turn
+5. **If `-MaxPasses` passes have run, exit 0.**
+6. **The hold-offs the pass set**, each counted from the end of the pass, one per host whose turn
    calls for one, logged in the order of the turns:
 
 | After the host's turn | The host's hold-off | Line |
@@ -1133,8 +1473,9 @@ field of [Log lines](#log-lines).
 | A turn that logged `lost` (card #0068) | The release grace, or the longer backoff if the holder was unproven, at least `-IntervalSeconds` | `grace seconds=<n>` or `backoff seconds=<n>` |
 | Anything else | None set; a running one runs on | None |
 
-6. **The wait**, as [The keeper's wait](#the-keepers-wait) says. With only the box, it is v0.06's:
-   the box's hold-off when the pass set one, else `-IntervalSeconds`.
+7. **The wait**, as [The keeper's wait](#the-keepers-wait) says. With only the box, it is v0.06's:
+   the box's hold-off when the pass set one, else `-IntervalSeconds`. A guard's start that falls
+   due during it is made then, and the wait ends when it would have (step 2).
 
 **A new hold-off on a host replaces any that is running there.** A hold-off ends once its seconds
 have passed on the clock the keeper measures durations on ([Times](#times)); while it runs, no
@@ -1174,15 +1515,19 @@ and after the pass, always.** Each wait ends when the first of the keeper's host
   ([Q23](#open-questions)). The box is always one of the keeper's hosts, so this happens only
   while the box is in a hold-off too.
 
-**No error ends the loop.** Each of the look, the pass and the wait runs on its own: an error that
-escapes one is logged as a `failed lease=- alias=- pid=- reason=<text>` line, if the log can be
-written, and the loop goes on. **Every iteration MUST wait at least `-IntervalSeconds`, on every
+**No error ends the loop.** Each of the look, the guard's start, the pass and the wait runs on its
+own: an error that escapes one is logged as a `failed lease=- alias=- pid=- reason=<text>` line, if
+the log can be written, and the loop goes on. For the guard's start, `<text>` is
+`The guard could not be started: The start stopped on an error: <error>`, and the error counts as
+an attempt ([The keeper's lines for it](#the-keepers-lines-for-it)). **Every iteration MUST wait at least `-IntervalSeconds`, on every
 path, the error paths included**, so no failure can make a tight loop (D14). A wait whose line
 cannot be logged still waits its full time.
 
 **The keeper's state lives only in its process.** Each host's count of fast failures, tracked
-holder, proof and hold-off start empty in a new keeper. What a new keeper inherits is the records,
-and its first pass adopts the holder each host's record names, if it is trusted.
+holder, proof and hold-off start empty in a new keeper, and so does the time of its last attempt
+of the guard's start, so a new keeper's first iteration starts the guard
+([When the keeper starts it](#when-the-keeper-starts-it)). What a new keeper inherits is the
+records, and its first pass adopts the holder each host's record names, if it is trusted.
 
 ### Fast failures and backoff
 
@@ -1236,6 +1581,45 @@ on each host's own loopback, so a session left on one host holds nothing on anot
   the box, the wait comes after that pass.
 - **A tracked holder that a pass logged `lost` for (card #0068, below):** from the end of that
   pass. With only the box, the wait comes after that pass.
+
+**A holder ended by a release is a holder a look finds gone, with its release grace** (D59, as D63
+changed it). From v0.08, `agentspace lease release` ends every ssh client on the laptop whose
+destination is the lease's alias, each with its tree, before it deletes the alias
+([driver.md](driver.md), [lease-api.md](lease-api.md)). The keeper's holder, `ssh.exe -N -o
+ExitOnForwardFailure=yes <alias>`, is one of them, so the release ends it, and the keeper does not.
+- **A keeper that tracks it finds it gone at its next look**, and sets the host's hold-off from
+  that look exactly as for any holder that ended by itself: the release grace, or the longer
+  backoff when the holder was never proven, at least `-IntervalSeconds`, logged `grace seconds=<n>`
+  or `backoff seconds=<n>`. With the defaults and a proven holder, `grace seconds=95`. A holder
+  released less than `-FastFailureSeconds` after the keeper began to track it is an unproven one,
+  and so counts a fast failure on its host, as any unproven holder found gone does.
+- **When it ends between a look and its pass's trust check**, the pass logs `lost` for it and the
+  grace follows that pass, as card #0068's rule says (below).
+- **When a pass comes between the release's write of `released` and its end of the clients**, the
+  pass reads the lease already released while the holder still runs, and stops it as any holder
+  whose lease is not ready ([Stopping a holder](#stopping-a-holder)): a `stopped` line, then the
+  grace after that pass. The release then finds the holder gone. The release writes the record
+  before it ends the clients
+  ([driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)), so this
+  third outcome is rare and allowed.
+- **A one-pass run, or a keeper that does not track it**, finds a record that names a process that
+  is gone, removes it, and logs `idle` or starts a holder for another of the host's ready leases at
+  once, with no grace, as for any record whose holder is gone
+  ([Trusting the record](#trusting-the-record)).
+- **No `stopped` line is logged for it**, but in the third outcome above, since the keeper stopped
+  nothing. Its lines read as a holder that ended by itself, and say nothing of the release.
+- **Why the grace still applies:** the release ends only the laptop's end of the connection. The
+  Session Manager tunnel never passes the close on, so the host keeps the holder's session, and the
+  forwards it bound, until its sshd drops it within about 90 seconds (D59), which is what the grace
+  waits out. It costs what the keeper's own stop at its next pass would have cost: one grace on
+  that host.
+- **This changes nothing for an expired lease**: nothing ends a holder at expiry but the keeper's
+  stop ([Stopping a holder](#stopping-a-holder)), and the grace follows that stop.
+- **A check's stub holder is not ended by a release**, since its program is `cmd.exe`, not
+  `ssh.exe`, so a conformance case of a release still sees the keeper's `stopped` line. The keeper's
+  side of a release ending a real holder is shown live (E0.08-T06, below in
+  [Checking the keeper](#checking-the-keeper)); what the keeper does with a holder found gone is
+  the same whatever ended it, which the existing cases of a killed holder show.
 
 > **Note, observed.** Before the grace, a killed holder left the board down for 2 minutes 49
 > seconds, against about 90 seconds of sshd's bound; with it, 1 minute 56 seconds, with no failed
@@ -1324,13 +1708,17 @@ pass also logs a line for every other host it acts on.
 | A holder on another host keeps failing to start | Its `failed ... host=<project>` lines, with `backoff ... host=<project>` hold-offs growing to 300 seconds; the box's `kept` line every 30 seconds or so throughout |
 | An upgrade from v0.06 with the box's holder running | `kept ... host=swimcoach` on the new keeper's first pass, with no new holder and no new login on the box ([Stopping and starting the keeper](#stopping-and-starting-the-keeper)) |
 | Logon or restart with a running, recorded holder | `kept` on the first pass, with no new holder and no new login on the box |
-| The lease is released or expires | `stopped`, then `grace seconds=95`, then `idle` (or `started` for another ready lease) |
+| The lease expires | `stopped`, then `grace seconds=95`, then `idle` (or `started` for another ready lease) |
+| The lease is released, from v0.08 (D59) | No `stopped` line: the release ended the holder. Within about 30 seconds `grace seconds=95`, from the look that found it gone, or `lost` and then `grace seconds=95` when it ended between a look and its pass; or, when a pass came between the release's write and its end of the clients, `stopped` and then `grace seconds=95`; then `idle` (or `started` for another ready lease) |
 | The holder is killed | Within about 30 seconds, `grace seconds=95`; then `started` |
 | The holder ends between a look and its pass, or its record is removed | `lost` for it, then `grace seconds=95`; then `started` if a lease is ready |
 | A holder that exits at once (the ports still held) | `failed ... reason=The holder could not be started: The holder exited at once; ...`, then `backoff seconds=30` |
 | Another connection holds the forwards | `failed ... reason=The holder could not be started: The holder exited at once; ...` after each start, with `backoff` waits growing to `backoff seconds=300` |
-| A second keeper starts | One `another keeper is running pid=<n>` line, from the second keeper, which exits |
+| A second keeper starts | One `another keeper is running pid=<pid>` line, from the second keeper, which exits |
 | The keeper is killed | No line. The task starts a new keeper within about a minute, and its first pass logs `kept` for a holder that still runs, or `started` or `idle` |
+| A keeper starts, from v0.08 | `guard started pid=<pid>` before its first pass's lines, then one about every 300 seconds, with no `host=` ([Starting the guard](#starting-the-guard)) |
+| A guard is still running when the start falls due | No line; the start comes at the next point at which no guard holds `guard.lock` |
+| The guard's program is missing, or `guard.lock` cannot be opened | `failed lease=- alias=- pid=- reason=The guard could not be started: ...` about every 300 seconds, and every host's lines as before |
 
 **Passes are spaced by the wait plus the pass's own time**, so a keeper notices a holder's end up
 to `-IntervalSeconds` after it, and the grace counts from that notice. A pass that starts holders
@@ -1349,11 +1737,19 @@ never takes it.
 **Both locks are per state folder, and serve every host**: there is no lock per host (D55;
 architect, 2026-11-20, for v0.07-T01). A keeper with another `AGENTSPACE_STATE_DIR` (a check's,
 say) runs beside the real one, and neither lock sees the other.
+- **From v0.08, a keeper with another state folder under the user's real `USERPROFILE` MUST be
+  given a stand-in `AGENTSPACE_GUARD_CMD`.** Its guard would read the real registry, find
+  `guard.lock` beside it, and judge every host by that state folder's leases alone
+  ([The guard's environment](#the-guards-environment)), so it could stop a host a real lease
+  explains.
 
 **The host registry's lock, `hosts.lock`, is not the keeper's either**
 ([state.md, The host registry](state.md#the-host-registry)). The keeper never takes, opens or
 creates it, and reads `hosts.json` without it ([Hosts](#hosts)), so a provisioning run or a lease
 command that holds it never delays a pass, and a pass never delays them.
+
+**The guard's lock, `guard.lock`, is the guard's, and the keeper only tries it** (v0.08, D56, D63;
+[guard.lock: tried, never held](#guardlock-tried-never-held)).
 
 ### board-holder.lock: one pass at a time
 
@@ -1400,6 +1796,44 @@ while a keeper waits out a grace on a host can start a holder there at once, whi
 `ExitOnForwardFailure` and leaves another session on that host for sshd to time out. That is
 allowed; anything that runs passes beside a keeper SHOULD expect it. The keeper then finds a record
 it did not write: its next pass adopts the holder if it is trusted, or drops the record if not.
+
+### guard.lock: tried, never held
+
+**`guard.lock` is the guard's lock: a guard holds it for its whole run, so a held lock means a
+guard is running** (D56, D63). Its path, its share mode and the guard's hold of it are
+[state.md, The guard's lock](state.md#the-guards-lock)'s, and what a guard does when it finds it
+held (exit 0 at once, logging nothing) is [operator.md, guard](operator.md#guard)'s.
+
+- **Where:** beside `hosts.json`, so in `%USERPROFILE%\.agentspace` under the keeper's own
+  `USERPROFILE`. **`AGENTSPACE_STATE_DIR` does not move it**, as it does not move the host
+  registry ([Hosts](#hosts)), so a keeper given another state folder tries the same lock as the
+  guard it starts, which finds it through the `USERPROFILE` the keeper gives it
+  ([The guard's environment](#the-guards-environment)).
+- **What the keeper does with it: tries it, and releases it at once if it got it, only to learn
+  whether a guard runs** (pin P3; architect, 2026-11-21, for v0.08-T01), as the lease CLI tries `provision.lock`
+  ([state.md, The provisioning run's lock](state.md#the-provisioning-runs-lock)). It does this once
+  per attempt of the guard's start, just before the start, and never otherwise.
+- **The try is one open, without waiting**: for reading and writing, sharing nothing, opening the
+  file only if it exists, with a handle that is not inheritable.
+  - **Refused because another process has it open** (a sharing or lock violation): it is held. The
+    keeper starts no guard, logs nothing, and the start stays due
+    ([When the keeper starts it](#when-the-keeper-starts-it)).
+  - **The file, or its folder, does not exist:** no guard holds it. The try creates neither; the
+    guard creates the file when it takes it.
+  - **Opened:** no guard holds it. The keeper closes the handle at once, before it starts the
+    guard, so the guard it starts can take it.
+  - **Any other failure**, such as access denied, or a folder at its path, is not a free lock: the
+    attempt fails with `guard.lock could not be opened: Windows error <n>.`, and no guard is
+    started ([The keeper's lines for it](#the-keepers-lines-for-it)). The pass's holders go on
+    ([What a failed start changes](#what-a-failed-start-changes)). Pin P3; architect, 2026-11-21,
+    for v0.08-T01.
+- **The keeper never holds it beyond the try**, never writes, creates or removes it, and never
+  waits on it. A one-pass run never opens it.
+- **A guard can take it between the keeper's try and the start**, one a person started, say. The
+  guard the keeper then starts finds it held and exits at once, logging nothing, which is the
+  guard's own rule; the attempt still counts, and its line is `guard started`.
+- **It is not one of the keeper's two locks**: a pass never takes it, and holding
+  `board-holder.lock` or `board-holder-keeper.lock` never touches it.
 
 ## Log lines
 
@@ -1509,10 +1943,15 @@ it:**
 ```
 <time> backoff seconds=<n>[ host=<project>]
 <time> grace seconds=<n>[ host=<project>]
-<time> another keeper is running pid=<n>
+<time> another keeper is running pid=<pid>
+<time> guard started pid=<pid>
 <time> failed lease=- alias=- pid=- reason=<reason>
 ```
 
+- **`guard started pid=<pid>`** (v0.08) is written when the keeper has started the guard. It never
+  carries `host=`. It and the `failed` line of a guard's start are
+  [Starting the guard](#starting-the-guard)'s
+  ([The keeper's lines for it](#the-keepers-lines-for-it)).
 - **`<time>` is the current second when the line is written**, not a pass time.
 - **`seconds=<n>`** is the whole seconds the host's hold-off has left when the line is written, the
   `-IntervalSeconds` floor included. With only the box, it is the whole seconds the keeper waits
@@ -1521,8 +1960,9 @@ it:**
   and never for the box, whose lines read exactly as v0.06's (architect, 2026-11-20, for
   v0.07-T01; [A pass's line](#a-passs-line)). The keeper's
   `another keeper is running` and `failed` lines concern no host and never carry it.
-- **`pid=<n>`** is the running keeper's PID as its lock file gives it, or `-`
-  ([Locks](#locks)).
+- **`pid=<pid>`** is, on an `another keeper is running` line, the running keeper's PID as its lock
+  file gives it, or `-` ([Locks](#locks)); on a `guard started` line, the process ID the detached
+  start returned, in decimal, and never `-`.
 - **A keeper's `failed` line** has the pass line's grammar and reason rules, with `-` in every
   field.
 
@@ -1545,6 +1985,7 @@ and so MUST a holder left running because its record could not be written.
 | A keeper's look | `The look at the holder stopped on an error: <error>` |
 | A keeper's pass, escaping the pass's own handling | `The pass stopped on an error: <error>` |
 | A keeper's wait | `The wait stopped on an error: <error>` |
+| A keeper's start of the guard (v0.08) | `The guard could not be started: <why>`, where `<why>` is from [The keeper's lines for it](#the-keepers-lines-for-it). Unlike the texts above, this one is pinned: a keeper MUST write it byte for byte, and a check MAY match all of it, but for an `<error>` or `<n>` in it |
 | The keeper lock | `The keeper lock could not be taken: <error>` |
 
 ### The holder's log
@@ -1904,8 +2345,14 @@ arguments are bound by PowerShell, so an unknown argument there is PowerShell's 
 **Every host's holder keeps running throughout**, unsupervised. Each holds the board on its host
 until it dies or a keeper stops it.
 
+**A guard the keeper started runs on to its end**, since it is outside the keeper's job
+([How the keeper starts it](#how-the-keeper-starts-it)). **While no keeper runs, no guard is
+started**, so no host is stopped for want of a live lease until a keeper runs again, and each host
+bounds itself by its lease horizon and its idle check alone (D57). A guard run by hand
+(`agentspace-operator guard`) still works then ([operator.md, guard](operator.md#guard)).
+
 **An orphaned keeper**, left by step 1 without step 2, keeps the board held, and the task's next
-firing starts a second keeper that logs one `another keeper is running pid=<n>` line and exits. That
+firing starts a second keeper that logs one `another keeper is running pid=<pid>` line and exits. That
 is one line a minute, about 90 KB of `board-holder.log` a day, until the orphan is stopped. That is
 accepted (D30): End is a step taken on purpose.
 
@@ -1954,7 +2401,15 @@ page documents:
   ([Streams and environment](#streams-and-environment)).
 - **It controls time with `-Now`** for a one-pass run, and with `-IntervalSeconds`,
   `-BackoffBaseSeconds`, `-BackoffMaxSeconds`, `-ReleaseGraceSeconds`, `-MaxPasses` and the hidden
-  `-FastFailureSeconds` for a keeper.
+  `-FastFailureSeconds` and `-GuardIntervalSeconds` for a keeper.
+- **From v0.08, every check that runs a keeper (`-Watch`) MUST set `AGENTSPACE_GUARD_CMD` to a
+  stand-in**, which touches nothing outside the check's home, and SHOULD set the operator's test
+  seam (`AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`) to stand-ins as well. The
+  rule is [conformance.md, The harness](conformance.md#the-harness)'s (pin P15; architect,
+  2026-11-21, for v0.08-T01). A keeper with no `AGENTSPACE_GUARD_CMD` starts the operator beside it
+  as a real guard ([Starting the guard](#starting-the-guard)), which could stop a real host. A
+  check MUST NOT run a real guard. A one-pass run starts no guard; its check SHOULD set the
+  stand-in all the same, so a build that got this wrong starts nothing real (G12).
 - **It MAY watch the state folder for the launch files** while a holder is started, and hold them
   to [docs/state.md](state.md#a-holders-launch-files) and [The handshake](#the-handshake): that
   each start writes a request, a claim and a result under one `<hex>`, and that the pass removes
@@ -2002,7 +2457,7 @@ holder's connection is a stub's.
 
 | # | The case | It shows |
 |---|---|---|
-| H1 | Every v0.06 case of the keeper, run twice: once with no registry, and once with a registry that holds the box's record alone, `{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}` | Each time, the box alone behaves as v0.06's keeper did, line for line, but for ` host=swimcoach` on the box's lines that name a holder ([Log lines](#log-lines)) |
+| H1 | Every v0.06 case of the keeper, run twice: once with no registry, and once with a registry that holds the box's record alone, `{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}` | Each time, the box alone behaves as v0.06's keeper did, line for line, but for ` host=swimcoach` on the box's lines that name a holder ([Log lines](#log-lines)), and, from v0.08, but for the guard's start lines of a keeper, run with a stand-in guard ([Conformance cases for the guard's start](#conformance-cases-for-the-guards-start); architect, 2026-11-21, for v0.08-T01, pin P18) |
 | H2 | No registry; a ready lease of any project; one-pass run | The holder is the box's: `board-holder.json` is written, the request's `log` is `board-holder-ssh.log`, and no `board-holder.<project>.json` appears ([Hosts](#hosts)) |
 | H3 | Registry with the box and `<p>`, both `ready`; a ready swimcoach lease and a ready `<p>` lease; one-pass run | One pass starts two holders, the box's first: two `started` lines, `host=swimcoach` then `host=<p>`; records `board-holder.json` and `board-holder.<p>.json`; each launch request's `log` is its host's; and the two starts' launch files never exist at the same time: the second start's request appears only after the first start's three files are gone ([The order of a pass](#the-order-of-a-pass), [Timings of a start](#timings-of-a-start)) |
 | H4 | Two ready leases on each of two hosts, with differing and with equal `expires_at` | Each host's holder goes through that host's latest-expiring lease, ties to the lowest ID, and never through the other host's ([Which lease](#which-lease)) |
@@ -2023,6 +2478,68 @@ holder's connection is a stub's.
 
 **The rest of v0.07's done-when for the keeper is live** (D53): that the keeper holds the board on
 agentspace's own host, which no stand-in can show.
+
+### Conformance cases for the guard's start
+
+**Each behavior below is one that a stand-in can show, and MUST be a conformance case of the
+keeper, written by E0.08-T04-S03** (D62, D63). Each runs with a throwaway `USERPROFILE` and state
+folder, written `<home>` and `<state>`, a stub `-SshExe` where a holder is needed, and
+`AGENTSPACE_GUARD_CMD` naming a stand-in guard: a `.cmd` that appends one line to a file of the
+case's own in `<home>` for each run, with its arguments, its working folder and the time, and
+exits 0, or stays alive until the case stops it where the case says so. Where a case reads the
+guard's environment, the stand-in writes the variables the case names to that file, and the case
+compares them and reports a mismatch by the variable's name, never by its value (AGENTS.md, "A
+test MUST NOT print, log or format the values of an environment it captured"). No case runs a
+real guard, and no case touches `<home>`'s `guard.log`, which only a guard writes.
+
+| # | The case | It shows |
+|---|---|---|
+| G1 | Keeper, `-MaxPasses 1`, no lease, no registry | One `guard started pid=<pid>` line, with no `host=`, before the pass's `idle` line; the stand-in ran once, with exactly the one argument `guard`, in the working folder `<home>`; exit 0 ([When the keeper starts it](#when-the-keeper-starts-it), [How the keeper starts it](#how-the-keeper-starts-it)) |
+| G2 | Keeper, `-IntervalSeconds 1`, `-MaxPasses 5`, `-GuardIntervalSeconds` not given | Exactly one `guard started` line and one run of the stand-in: at most one start every 300 seconds |
+| G3 | Keeper, `-IntervalSeconds 1`, `-GuardIntervalSeconds 3`, passes over about 10 seconds | Two or more `guard started` lines, each one's `<time>` at least 3 seconds after the one before's, and one run of the stand-in for each ([When the keeper starts it](#when-the-keeper-starts-it): the seconds count from the end of the attempt) |
+| G4 | Keeper, no lease, `-IntervalSeconds 20`, `-GuardIntervalSeconds 12`, `-MaxPasses 2` | Exactly two `guard started` lines: the second between the first pass's `idle` line and the second's, about 12 seconds after the first start; the second `idle` line still about 20 seconds after the first: a start that falls due in a wait is made there, and the wait ends when it would have |
+| G5 | Keeper, `-IntervalSeconds 1`; the case holds `<home>\.agentspace\guard.lock` open sharing nothing from before the keeper starts, then closes it | No run of the stand-in and no guard line while it is held, and the passes go on; after it is closed, a `guard started` line no later than just before the first pass that starts after the close, without waiting `-GuardIntervalSeconds` ([guard.lock: tried, never held](#guardlock-tried-never-held)) |
+| G6 | Keeper; a folder in place of `<home>\.agentspace\guard.lock`; `-GuardIntervalSeconds 5` | `failed lease=- alias=- pid=- reason=The guard could not be started: guard.lock could not be opened: Windows error <n>.`, no run of the stand-in, the next such line no sooner than 5 seconds later, and every pass's lines as without it |
+| G7 | Keeper; no `<home>\.agentspace` folder (the state folder elsewhere) | A `guard started` line, and the keeper creates neither `<home>\.agentspace` nor `guard.lock` |
+| G8 | Keeper; `AGENTSPACE_GUARD_CMD` naming no file; a box holder running through a ready lease | `failed ... reason=The guard could not be started: The program that AGENTSPACE_GUARD_CMD names does not exist.`; the holder kept in every pass, no hold-off set, no record changed, exit 0 at `-MaxPasses` ([What a failed start changes](#what-a-failed-start-changes)) |
+| G9 | Keeper run in a working folder that holds the stand-in; `AGENTSPACE_GUARD_CMD` the stand-in's relative path | The stand-in runs: the relative value was made full against the keeper's working folder |
+| G10 | Keeper given `AGENTSPACE_STATE_DIR` as a relative path, `AGENTSPACE_SSH_DIR`, `AGENTSPACE_PROXY_COMMAND`, `AGENTSPACE_AWS_CMD`, and a variable of the case's own whose name does not end `_CMD` | The stand-in sees `USERPROFILE` as `<home>`, the state and ssh folders full, `AGENTSPACE_PROXY_COMMAND` and `AGENTSPACE_AWS_CMD` exactly as given, `AGENTSPACE_GUARD_CMD` as given, and not the case's own variable ([The guard's environment](#the-guards-environment)) |
+| G11 | Keeper, `-MaxPasses 1`; the stand-in stays alive; then, while it still runs, a new keeper | The keeper exits 0 while the stand-in still runs, outside the keeper's job; the new keeper takes `board-holder-keeper.lock` while the stand-in runs, logging no `another keeper is running` line, so the guard holds no handle of the keeper's lock; the case then stops the stand-in by the PID of the first `guard started` line, checked first ([How the keeper starts it](#how-the-keeper-starts-it)) |
+| G12 | One-pass run, with `AGENTSPACE_GUARD_CMD` set | No run of the stand-in and no guard line ([When the keeper starts it](#when-the-keeper-starts-it)) |
+| G13 | Keeper, `-MaxPasses 1`; the case holds `board-holder.lock`, so the pass logs `skipped` | A `guard started` line all the same: the start is not inside a pass, and does not wait on `board-holder.lock` |
+| G14 | Keeper; the stand-in a `.cmd` whose path holds a space | The stand-in receives exactly the one argument `guard` |
+| G15 | `-GuardIntervalSeconds 5` without `-Watch`; `-Watch -GuardIntervalSeconds 0` | `-GuardIntervalSeconds is for -Watch.` and `-GuardIntervalSeconds '0' is not a whole number from 1 to 86400.`, each with exit 2 and nothing logged ([Usage errors](#usage-errors)) |
+| G16 | A second keeper, started while the case holds `<state>\board-holder-keeper.lock` as a keeper would | Its one `another keeper is running pid=<pid>` line, exit 0, no run of the stand-in and no guard line: a keeper that cannot take its lock starts no guard ([board-holder-keeper.lock: one keeper at a time](#board-holder-keeperlock-one-keeper-at-a-time)) |
+
+**Every existing keeper case is run with a stand-in guard from v0.08 on**, and ignores the guard's
+lines where it reads a keeper's log line for line (H1; architect, 2026-11-21, for v0.08-T01, pin
+P18). A case MUST NOT assume a keeper's first line is a pass's.
+
+**Three `<why>` rows of [The keeper's lines for it](#the-keepers-lines-for-it) are the keeper
+crate's own tests, not conformance cases**, since no case can bring them about from outside
+without touching the program under test: `The operator program is not installed beside this
+program.`, which needs a keeper with no `AGENTSPACE_GUARD_CMD` and no operator beside it;
+`Windows' command interpreter cannot be found, because SystemRoot is not set.`; and
+`The detached start failed: <error>`, the bound's text among them.
+
+**What no stand-in can show is live, and is named here for the live turns** (D62):
+- **E0.08-T05-S01, after the install:** the installed keeper, restarted to load the new build
+  ([Stopping and starting the keeper](#stopping-and-starting-the-keeper)), logs `guard started
+  pid=<pid>` at its first iteration and then about every 300 seconds. `guard.log` gains a line
+  only for a run that stops a host, finds one unexplained, or fails
+  ([operator.md, guard](operator.md#guard)), so a run that leaves every host as it was adds none.
+  The laptop-away check, which stops the keeper, sees no `guard started` line while it is stopped.
+- **E0.08-T06-S01 and S02, release:** with the keeper's real holder on the host, the release ends
+  it, and `board-holder.log` shows no `stopped` line for it, then `grace seconds=95` (with the
+  host's `host=` field for a host that is not the box), or `lost` and the grace, or, when a pass
+  came between the release's write and its end of the clients, `stopped` and the grace; and no
+  `ssh.exe` of that alias is left on the laptop ([Release grace](#release-grace)). The host is then `stopped`
+  within D56's bound by a guard the keeper started.
+- **E0.08-T06-S01 and S02, expiry, a quiet held lease and the next lease:** each host stop or
+  keep is made by guards the keeper started, at most about 300 seconds apart.
+- **E0.08-T06, an unexplained host on agentspace's host:** a host started with `up -Host` and no
+  lease is reported by `guard.log` and `status -All`, and stopped within the bound, by a guard the
+  keeper started.
 
 ## Requirements the prototype does not meet yet
 
