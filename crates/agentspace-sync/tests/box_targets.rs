@@ -91,12 +91,26 @@ fn the_box_through_deploy_target_passes_every_member_and_neither_host_name_nor_c
         rig.succeeded(rig.do_deploy_target(&say, Target::Box), "deploy");
         let log = rig.log();
         let aws = log.calls("aws");
+        // The deploy, the read of the stack's output, sync's two `ec2 describe-instances`, and from
+        // v0.08 the three calls of sync's patch wait (operator.md, The patch wait).
         rig.check(
-            aws.len() == 4,
+            aws.len() == 7,
             &format!(
-                "deploy and sync MUST make 4 AWS calls here, with no existence check, and made {}",
+                "deploy and sync MUST make 7 AWS calls here, with no existence check, and made {}",
                 aws.len()
             ),
+        );
+        rig.same_list(
+            "The calls of sync's patch wait, after its start-and-wait",
+            &aws[4..]
+                .iter()
+                .map(|c| format!("{} {}", c.args[0], c.args[1]))
+                .collect::<Vec<_>>(),
+            &svec(&[
+                "ssm describe-instance-information",
+                "ssm send-command",
+                "ssm get-command-invocation",
+            ]),
         );
         let template = template_arg(&aws[0].args);
         rig.same_list(

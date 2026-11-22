@@ -92,14 +92,15 @@ fn the_comment_and_the_command_hold_nothing_the_cli_would_split_on() {
 }
 
 #[test]
-fn the_question_can_give_each_of_the_three_answers() {
-    // The box MUST answer with exactly one of three words; the command has to be able to say each.
+fn the_question_can_give_each_of_the_four_answers() {
+    // The box MUST answer with exactly one of four words, `failed` among them since P21; the
+    // command has to be able to say each.
     let sim = Sim::new(Mode::Person);
     sim.script(DESCRIBE, vec![state("pending")]);
     online_with(&sim, &["patched"]);
     sim.run().unwrap();
     let question = sim.calls_of(SEND)[0].args[7].clone();
-    for word in ["patched", "pending", "unknown"] {
+    for word in ["patched", "failed", "pending", "unknown"] {
         assert!(question.contains(word), "No {word:?} in {question:?}");
     }
 }

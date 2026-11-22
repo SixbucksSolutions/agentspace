@@ -16,14 +16,25 @@ use crate::launch_time;
 /// The comment the patch question is sent with (operator.md, What up waits for).
 pub const PATCH_COMMENT: &str = "agentspace up: patch check";
 
-/// The patch question, run as root by `AWS-RunShellScript` on today's box: `patched` when this
-/// boot's marker exists, otherwise `pending` when the patch unit is enabled, and `unknown` when it
-/// is not (operator.md, What up waits for).
+/// The patch question, run as root by `AWS-RunShellScript` on today's box, and asked by `up` and by
+/// `sync`'s patch wait alike (operator.md, What up waits for; P21, P24): `patched` when this boot's
+/// marker exists; otherwise, for a unit in systemd's `failed` state, `pending` when a start job is
+/// queued for it and `failed` when none is; otherwise `pending` when the patch unit is enabled, and
+/// `unknown` when it is not. It reads the marker, the unit's state, whether a start job is queued
+/// and whether the unit is enabled, in that order.
+///
+/// A queued start job is a line of `systemctl list-jobs` for the unit whose type is the word
+/// `start`, so a check made between the install's `systemctl start --no-block` and the run's start
+/// never reads the earlier run's failure as this run's (pin P24).
 ///
 /// It MUST hold no `,`, `[`, `]` or `=`, on which the AWS CLI's shorthand syntax for
 /// `--parameters` splits, and none of what FA-15 forbids: no `%`, no double quote, no control
-/// character, and no backslash at its end (operator.md, What the laptop sends). A test checks it.
+/// character, and no backslash at its end (operator.md, What the laptop sends). A test checks it,
+/// and another runs it under bash with a stand-in `systemctl`.
 pub const PATCH_QUESTION: &str = "if test -e /run/agentspace/patched; then echo patched; \
+elif systemctl is-failed --quiet agentspace-patch.service; then \
+if systemctl list-jobs --no-legend agentspace-patch.service | grep -qw start; \
+then echo pending; else echo failed; fi; \
 elif systemctl is-enabled --quiet agentspace-patch.service; then echo pending; \
 else echo unknown; fi";
 
@@ -278,6 +289,248 @@ mod tests {
         }
         assert!(!PATCH_QUESTION.ends_with('\\'));
         assert!(PATCH_QUESTION.is_ascii());
+    }
+
+    /// A throwaway folder under the temp folder, removed when it drops.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let unique = format!(
+                "agentspace-box-unit-{name}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            );
+            let path = std::env::temp_dir().join(unique);
+            std::fs::create_dir_all(&path).unwrap();
+            Scratch(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The marker's path in the question, which the test of its text replaces with a file of its
+    /// own throwaway folder, so that no real host's marker is ever read.
+    const MARKER: &str = "/run/agentspace/patched";
+
+    /// A stand-in `systemctl`: it records each call's arguments in `calls`, and answers from the
+    /// files of the working folder: `is-failed` succeeds when `unit-failed` exists, `is-enabled`
+    /// when `unit-enabled` exists, and `list-jobs` prints the line in `unit-job` when it exists.
+    const STAND_IN_SYSTEMCTL: &str = "#!/bin/sh\n\
+echo \"$*\" >> calls\n\
+case \"$1\" in\n\
+is-failed) test -e unit-failed ;;\n\
+is-enabled) test -e unit-enabled ;;\n\
+list-jobs) if test -e unit-job; then cat unit-job; fi ;;\n\
+*) exit 3 ;;\n\
+esac\n";
+
+    /// Runs `bash <script>` in `dir`, with no argument but the script's name, so that a `bash` that
+    /// hands its arguments to another shell reads them the same; its stdout, or `None` when it
+    /// could not be run or failed.
+    fn bash(dir: &std::path::Path, script: &str) -> Option<String> {
+        let output = std::process::Command::new("bash")
+            .arg(script)
+            .current_dir(dir)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8(output.stdout).ok()
+    }
+
+    /// The conformance table's test of the command's text (E0.08-T03-S05, #0181): run under bash
+    /// with a stand-in `systemctl` first on `PATH`, it answers `failed` for a unit in systemd's
+    /// `failed` state without a start job queued, `pending` for one with a start job queued,
+    /// `pending` for an enabled unit otherwise, and `unknown` for one not enabled; `patched` when
+    /// the marker exists, whatever the unit's state. It is skipped, saying so, when no `bash` can
+    /// be run.
+    #[test]
+    fn the_patch_question_gives_each_answer_under_bash() {
+        let dir = Scratch::new("patch-question");
+        std::fs::write(dir.0.join("probe.sh"), "echo bash-runs\n").unwrap();
+        if bash(&dir.0, "probe.sh").as_deref().map(str::trim) != Some("bash-runs") {
+            eprintln!("Skipped: no bash could be run, so the patch question's text was not run.");
+            return;
+        }
+        assert_eq!(PATCH_QUESTION.matches(MARKER).count(), 1);
+        let question = PATCH_QUESTION.replace(MARKER, "marker");
+        let stub = dir.0.join("stub");
+        std::fs::create_dir_all(&stub).unwrap();
+        let systemctl = stub.join("systemctl");
+        std::fs::write(&systemctl, STAND_IN_SYSTEMCTL).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(
+            dir.0.join("question.sh"),
+            format!("PATH=\"$PWD/stub:$PATH\"\n{question}\n"),
+        )
+        .unwrap();
+
+        const START_JOB: &str = "  123 agentspace-patch.service start waiting\n";
+        const STOP_JOB: &str = "  124 agentspace-patch.service stop waiting\n";
+        // (marker, failed, enabled, job line, answer, systemctl calls in order)
+        type Case = (
+            bool,
+            bool,
+            bool,
+            Option<&'static str>,
+            &'static str,
+            &'static [&'static str],
+        );
+        let cases: [Case; 9] = [
+            (true, true, true, Some(START_JOB), "patched", &[]),
+            (
+                false,
+                true,
+                true,
+                None,
+                "failed",
+                &["is-failed", "list-jobs"],
+            ),
+            (
+                false,
+                true,
+                false,
+                None,
+                "failed",
+                &["is-failed", "list-jobs"],
+            ),
+            // A job that is not a start job leaves a failed unit failed.
+            (
+                false,
+                true,
+                true,
+                Some(STOP_JOB),
+                "failed",
+                &["is-failed", "list-jobs"],
+            ),
+            (
+                false,
+                true,
+                true,
+                Some(START_JOB),
+                "pending",
+                &["is-failed", "list-jobs"],
+            ),
+            (
+                false,
+                true,
+                false,
+                Some(START_JOB),
+                "pending",
+                &["is-failed", "list-jobs"],
+            ),
+            (
+                false,
+                false,
+                true,
+                None,
+                "pending",
+                &["is-failed", "is-enabled"],
+            ),
+            (
+                false,
+                false,
+                true,
+                Some(START_JOB),
+                "pending",
+                &["is-failed", "is-enabled"],
+            ),
+            (
+                false,
+                false,
+                false,
+                None,
+                "unknown",
+                &["is-failed", "is-enabled"],
+            ),
+        ];
+        for (n, (marker, failed, enabled, job, answer, calls)) in cases.into_iter().enumerate() {
+            for (name, present) in [
+                ("marker", marker),
+                ("unit-failed", failed),
+                ("unit-enabled", enabled),
+            ] {
+                let path = dir.0.join(name);
+                if present {
+                    std::fs::write(&path, "").unwrap();
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            let job_path = dir.0.join("unit-job");
+            match job {
+                Some(line) => std::fs::write(&job_path, line).unwrap(),
+                None => {
+                    let _ = std::fs::remove_file(&job_path);
+                }
+            }
+            let _ = std::fs::remove_file(dir.0.join("calls"));
+
+            let out = bash(&dir.0, "question.sh").unwrap_or_else(|| panic!("Case {n} failed"));
+            assert_eq!(out, format!("{answer}\n"), "Case {n}");
+            let recorded = std::fs::read_to_string(dir.0.join("calls")).unwrap_or_default();
+            let recorded: Vec<&str> = recorded.lines().collect();
+            assert_eq!(recorded.len(), calls.len(), "Case {n}");
+            for (line, verb) in recorded.iter().zip(calls) {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                assert_eq!(words.first(), Some(verb), "Case {n}");
+                assert_eq!(words.last(), Some(&"agentspace-patch.service"), "Case {n}");
+            }
+        }
+    }
+
+    /// `up` reads `failed` as it reads `unknown`: its wait ends with `Ready: <id>` and no message
+    /// of its own (P21; pin P24), on a host launched less than 20 minutes ago as on one it starts.
+    #[test]
+    fn a_failed_answer_ends_ups_wait_with_ready_and_no_message() {
+        let aws = Script::new(vec![
+            state("running"),
+            launched("2026-11-19T07:52:35Z"),
+            ping(Some("Online")),
+            sent(),
+            invocation("Success", "failed\n"),
+        ]);
+        let f = fake();
+        start_and_wait_for(&aws, &f, &f, ID).unwrap();
+        assert_eq!(*f.lines.borrow(), vec![format!("Ready: {ID}")]);
+        assert!(aws.answers.borrow().is_empty());
+
+        let aws = Script::new(vec![
+            state("stopped"),
+            ("start-instances", Ok(json!({}))),
+            ping(Some("Online")),
+            sent(),
+            invocation("Success", "pending"),
+            ping(Some("Online")),
+            sent(),
+            invocation("Success", "failed"),
+        ]);
+        let f = fake();
+        start_and_wait_for(&aws, &f, &f, ID).unwrap();
+        assert_eq!(
+            *f.lines.borrow(),
+            vec![
+                format!("Starting {ID}..."),
+                PATCHING.to_string(),
+                format!("Ready: {ID}"),
+            ]
+        );
+        assert!(aws.answers.borrow().is_empty());
     }
 
     /// A fake AWS that answers each call, in order, from a script keyed by its operation.

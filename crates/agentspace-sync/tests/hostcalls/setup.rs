@@ -145,12 +145,12 @@ pub fn state_is(record: &str, state: &str) -> bool {
     record.contains(&format!("\"state\":\"{state}\""))
 }
 
-/// The line a run ends with for a host that was not `ready` when it began (operator.md, provision,
-/// step 10).
-pub fn sign_in_line(project: &str) -> String {
-    format!(
-        "Sign in on this host once, by hand: run 'agentspace-operator status -Host {project}' first and again after an hour, then see \"Signing in on a new host\" in the agentspace README."
-    )
+/// The line a run ends with for a host that was not `ready` when it began, byte for byte (operator.md,
+/// provision, step 10; pin P20, E0.08-T03-S05). From v0.08 a host runs only while its project holds
+/// a live lease, so the line sends a person to take a lease first, never to `status -Host`.
+pub fn sign_in_line(_project: &str) -> String {
+    "Sign in on this host once, by hand, under a lease: see \"Signing in on a new host\" in the agentspace README."
+        .to_string()
 }
 
 /// The CA's public key as `CaPublicKey` carries it: the key type and the base64 key, joined by

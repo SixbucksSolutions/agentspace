@@ -115,13 +115,18 @@ impl FakeSay {
     }
 }
 
-/// Answers the calls of `sync` and `deploy`: a box `running` since long ago, and a stack with an
-/// `InstanceId` output. Records each call as one line.
+/// Answers the calls of `sync` and `deploy`: a box `running` since long ago, a stack with an
+/// `InstanceId` output, and a patch wait whose host is `Online` and answers `patched`. Records each
+/// call as one line.
 struct FakeAws {
     calls: RefCell<Vec<String>>,
     deploy: RefCell<Result<Value, AwsError>>,
     stack: RefCell<Value>,
     describe: RefCell<Result<Value, AwsError>>,
+    /// `ssm send-command`'s answer.
+    send: RefCell<Result<Value, AwsError>>,
+    /// The patch check's answer, the invocation's trimmed stdout.
+    answer: RefCell<&'static str>,
 }
 
 impl Default for FakeAws {
@@ -137,6 +142,8 @@ impl Default for FakeAws {
                 "State": {"Name": "running"},
                 "LaunchTime": "2020-01-01T00:00:00+00:00"
             }]}]}))),
+            send: RefCell::new(Ok(json!({"Command": {"CommandId": "c-0123"}}))),
+            answer: RefCell::new("patched"),
         }
     }
 }
@@ -159,6 +166,14 @@ impl Aws for FakeAws {
             ("cloudformation", "deploy") => self.deploy.borrow().clone(),
             ("cloudformation", "describe-stacks") => Ok(self.stack.borrow().clone()),
             ("ec2", "describe-instances") => self.describe.borrow().clone(),
+            ("ssm", "describe-instance-information") => {
+                Ok(json!({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+            }
+            ("ssm", "send-command") => self.send.borrow().clone(),
+            ("ssm", "get-command-invocation") => Ok(json!({
+                "Status": "Success",
+                "StandardOutputContent": format!("{}\n", self.answer.borrow())
+            })),
             _ => Err(AwsError::Failed("unexpected call".into())),
         }
     }
@@ -212,17 +227,23 @@ impl Remote for FakeRemote {
     }
 }
 
-/// A clock that never waits.
-struct FakeClock;
+/// A clock that never waits: a sleep moves its monotonic time on at once. Its wall clock is the
+/// system's, so the fake box is running since long ago.
+#[derive(Default)]
+struct FakeClock {
+    now: Cell<Duration>,
+}
 
 impl Clock for FakeClock {
     fn now(&self) -> Duration {
-        Duration::ZERO
+        self.now.get()
     }
     fn utc_now(&self) -> SystemTime {
         SystemTime::now()
     }
-    fn sleep(&self, _: Duration) {}
+    fn sleep(&self, d: Duration) {
+        self.now.set(self.now.get() + d);
+    }
 }
 
 /// One run's world: a throwaway home, a localswim checkout, a `go` stand-in, and what the CA
@@ -237,6 +258,7 @@ struct World {
     /// Each push as `<alias> <project, or <box>>`.
     pushes: RefCell<Vec<String>>,
     ca_checked: Cell<bool>,
+    clock: FakeClock,
 }
 
 impl World {
@@ -258,6 +280,7 @@ impl World {
             pushed: RefCell::default(),
             pushes: RefCell::default(),
             ca_checked: Cell::new(false),
+            clock: FakeClock::default(),
         }
     }
 
@@ -304,7 +327,7 @@ impl World {
         };
         // The command's folder is left in place, so a test finds what the command sent.
         f(&Seams {
-            clock: &FakeClock,
+            clock: &self.clock,
             ca_check: &ca_check,
             find_go: &find_go,
             localswim_checkout: self.checkout.clone(),
@@ -437,6 +460,32 @@ const BUILDING: &str = "progress: Building the localswim CLI for linux/arm64..."
 const COPY_CLI: &str = "progress: Copying the localswim CLI to the instance...";
 const SKIP: &str =
     "progress: Skipping the localswim CLI: Go or C:\\Projects\\localswim is missing on the laptop.";
+const CHECKING: &str =
+    "progress: Checking that i-1234567890abcdef0 has finished this boot's patch run...";
+const PATCHED: &str = "progress: Patched: i-1234567890abcdef0";
+const PATCH_FAILED: &str = "warning: agentspace: The patch run on i-1234567890abcdef0 failed; sync goes on without it. Check: ssh agentspace journalctl -u agentspace-patch";
+const PATCHING: &str = "progress: Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...";
+/// The patch wait's three calls, as [`FakeAws`] records them, for one check.
+const PATCH_CHECK: [&str; 3] = [
+    "ssm describe-instance-information [json] --filters | Key=InstanceIds,Values=i-1234567890abcdef0",
+    "ssm send-command [json] --instance-ids | i-1234567890abcdef0 | --document-name | AWS-RunShellScript | --comment | agentspace sync: patch check | --parameters | commands=",
+    "ssm get-command-invocation [json] --command-id | c-0123 | --instance-id | i-1234567890abcdef0",
+];
+
+/// The patch wait's calls among `calls`, with the question's text cut from `send-command`'s line.
+fn patch_calls(calls: &[String]) -> Vec<String> {
+    calls
+        .iter()
+        .filter(|c| c.starts_with("ssm "))
+        .map(|c| match c.split_once("commands=") {
+            Some((head, question)) => {
+                assert_eq!(question, agentspace_box::PATCH_QUESTION);
+                format!("{head}commands=")
+            }
+            None => c.clone(),
+        })
+        .collect()
+}
 
 #[test]
 fn sync_makes_all_nine_calls_in_order_with_each_steps_message() {
@@ -452,17 +501,30 @@ fn sync_makes_all_nine_calls_in_order_with_each_steps_message() {
     assert_eq!(*w.pushed.borrow(), vec![ID.to_string()]);
     assert_eq!(
         say.lines(),
-        vec![READY, COPY_SYSTEM, COPY_CA, COPY_CLAUDE, BUILDING, COPY_CLI]
+        vec![
+            READY,
+            COPY_SYSTEM,
+            COPY_CA,
+            CHECKING,
+            PATCHED,
+            COPY_CLAUDE,
+            BUILDING,
+            COPY_CLI
+        ]
     );
-    // The start-and-wait's calls: the cache rebuilt from the stack, the state, the launch time.
+    // The start-and-wait's calls: the cache rebuilt from the stack, the state, the launch time;
+    // then the patch wait's, with no `ec2 describe-instances` of its own.
+    let calls = aws.calls.borrow().clone();
     assert_eq!(
-        *aws.calls.borrow(),
+        calls[..3].to_vec(),
         vec![
             "cloudformation describe-stacks [json] --stack-name | agentbox",
             "ec2 describe-instances [json] --instance-ids | i-1234567890abcdef0",
             "ec2 describe-instances [json] --instance-ids | i-1234567890abcdef0",
         ]
     );
+    assert_eq!(calls.len(), 6);
+    assert_eq!(patch_calls(&calls[3..]), PATCH_CHECK.to_vec());
     // The ID read from the stack is written into the box's record, in a first change that writes
     // `hosts.json`.
     assert_eq!(w.box_instance_id().as_deref(), Some(ID));
@@ -482,7 +544,10 @@ fn sync_without_claude_md_or_go_makes_the_four_calls_and_the_push() {
     );
     w.sync(&say, &aws, &remote).unwrap();
     assert_eq!(remote.lines(), w.table()[..4].to_vec());
-    assert_eq!(say.lines(), vec![READY, COPY_SYSTEM, COPY_CA, SKIP]);
+    assert_eq!(
+        say.lines(),
+        vec![READY, COPY_SYSTEM, COPY_CA, CHECKING, PATCHED, SKIP]
+    );
     assert_eq!(w.pushed.borrow().len(), 1);
 }
 
@@ -597,6 +662,139 @@ fn a_failed_start_and_wait_reaches_no_box() {
 }
 
 #[test]
+fn the_patch_wait_runs_after_the_install_and_before_row_5() {
+    // #0034's sign-in failure at `ssm send-command` fails sync at once: rows 1 to 4 have run, and
+    // nothing after them.
+    let w = World::new("sync-wait-place").with_claude_md();
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    *aws.send.borrow_mut() = Err(AwsError::SignIn);
+    let failure = w.sync(&say, &aws, &remote).unwrap_err();
+    assert_eq!(failure.message, SIGN_IN_MESSAGE);
+    assert_eq!(remote.lines(), w.table()[..4].to_vec());
+    assert!(w.pushed.borrow().is_empty());
+    assert_eq!(say.lines(), vec![READY, COPY_SYSTEM, COPY_CA, CHECKING]);
+}
+
+#[test]
+fn no_patch_wait_follows_an_install_that_failed() {
+    let w = World::new("sync-no-wait").with_claude_md();
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::failing(4, 1),
+    );
+    w.sync(&say, &aws, &remote).unwrap_err();
+    assert!(aws.calls.borrow().iter().all(|c| !c.starts_with("ssm ")));
+    assert!(!say.lines().contains(&CHECKING.to_string()));
+}
+
+#[test]
+fn a_failed_patch_run_warns_once_and_sync_goes_on() {
+    let w = World::new("sync-patch-failed").with_claude_md();
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    *aws.answer.borrow_mut() = "failed";
+    w.sync(&say, &aws, &remote).unwrap();
+    assert_eq!(remote.lines(), w.table());
+    assert_eq!(*w.pushed.borrow(), vec![ID.to_string()]);
+    assert_eq!(
+        say.lines(),
+        vec![
+            READY,
+            COPY_SYSTEM,
+            COPY_CA,
+            CHECKING,
+            PATCH_FAILED,
+            COPY_CLAUDE,
+            BUILDING,
+            COPY_CLI
+        ]
+    );
+    // The wait ended at that answer: one check, and no other.
+    assert_eq!(patch_calls(&aws.calls.borrow()), PATCH_CHECK.to_vec());
+}
+
+#[test]
+fn a_later_rows_failure_after_a_failed_patch_run_fails_sync_with_its_message() {
+    let w = World::new("sync-patch-failed-later").with_claude_md();
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::failing(6, 1),
+    );
+    *aws.answer.borrow_mut() = "failed";
+    let failure = w.sync(&say, &aws, &remote).unwrap_err();
+    assert_eq!(
+        failure.message,
+        "agentspace: Copying CLAUDE.md to the instance failed."
+    );
+    assert!(say.lines().contains(&PATCH_FAILED.to_string()));
+}
+
+#[test]
+fn a_patch_run_that_never_finishes_fails_sync_at_thirty_minutes_before_row_5() {
+    let w = World::new("sync-patch-deadline").with_claude_md();
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    *aws.answer.borrow_mut() = "pending";
+    let failure = w.sync(&say, &aws, &remote).unwrap_err();
+    assert_eq!(
+        failure.message,
+        format!(
+            "agentspace: {ID} did not finish its patch run within 30 minutes; check: ssh agentspace journalctl -u agentspace-patch"
+        )
+    );
+    assert_eq!(w.clock.now.get(), Duration::from_secs(30 * 60));
+    assert_eq!(remote.lines(), w.table()[..4].to_vec());
+    assert!(w.pushed.borrow().is_empty());
+    assert_eq!(
+        say.lines(),
+        vec![READY, COPY_SYSTEM, COPY_CA, CHECKING, PATCHING]
+    );
+    // 361 checks, 5 seconds apart, each its three calls.
+    assert_eq!(patch_calls(&aws.calls.borrow()).len(), 361 * 3);
+}
+
+#[test]
+fn a_failed_send_command_is_a_check_that_was_not_ready() {
+    // The fake answers every `send-command` the same way, so the wait goes on to its deadline,
+    // printing the Session Manager message once.
+    let w = World::new("sync-send-failed");
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    *aws.send.borrow_mut() = Err(AwsError::Failed("InvalidInstanceId".into()));
+    let failure = w.sync(&say, &aws, &remote).unwrap_err();
+    assert!(
+        failure
+            .message
+            .contains("did not finish its patch run within 30 minutes")
+    );
+    assert_eq!(
+        say.lines(),
+        vec![
+            READY,
+            COPY_SYSTEM,
+            COPY_CA,
+            CHECKING,
+            "progress: Waiting for Session Manager..."
+        ]
+    );
+}
+
+#[test]
 fn a_failed_build_fails_before_its_copy() {
     let mut w = World::new("sync-build");
     w.go = Some(exit_stand_in(w.dir.path(), "badgo", 2));
@@ -660,7 +858,9 @@ fn deploy_passes_its_arguments_in_order_then_refreshes_the_cache_and_syncs() {
     );
     // The old cache was deleted, so sync read the new one and asked the stack nothing more.
     assert!(calls[2].starts_with("ec2 describe-instances"));
-    assert_eq!(calls.len(), 4);
+    assert!(calls[3].starts_with("ec2 describe-instances"));
+    // Then sync's patch wait.
+    assert_eq!(patch_calls(&calls[4..]), PATCH_CHECK.to_vec());
     assert!(std::fs::read(&template).unwrap() == crate::embedded::TEMPLATE);
     // The box's record holds the ID the stack gave, and the retired cache is never written.
     assert_eq!(w.box_instance_id().as_deref(), Some(ID));
@@ -1245,6 +1445,8 @@ fn sync_all_syncs_ready_hosts_and_skips_the_others_with_their_line() {
             READY,
             COPY_SYSTEM,
             COPY_CA,
+            CHECKING,
+            PATCHED,
             BUILDING,
             COPY_CLI,
             "progress: Skipping: the host is creating; its next provisioning run syncs it.",
@@ -1275,6 +1477,40 @@ fn sync_all_goes_on_past_a_failed_host_and_counts_the_failures() {
     assert_eq!(
         say.lines().last().unwrap(),
         "progress: Skipping: the host is failed; its next provisioning run syncs it."
+    );
+}
+
+#[test]
+fn sync_all_does_not_count_a_failed_patch_run_as_a_failed_host() {
+    let w = World::new("sync-all-patch-failed");
+    w.seed_registry(None, &[]);
+    let (say, aws, remote) = (
+        FakeSay::default(),
+        FakeAws::default(),
+        FakeRemote::default(),
+    );
+    *aws.answer.borrow_mut() = "failed";
+    w.sync_all(&say, &aws, &remote).unwrap();
+    assert!(say.lines().contains(&PATCH_FAILED.to_string()));
+    assert_eq!(*w.pushes.borrow(), vec!["agentspace <box>".to_string()]);
+}
+
+#[test]
+fn the_sign_in_message_at_the_patch_waits_send_ends_sync_all_at_once() {
+    let w = World::new("sync-all-wait-sign-in");
+    w.seed_registry(None, &[("agentspace", HostState::Ready)]);
+    let aws = FakeAws::default();
+    *aws.send.borrow_mut() = Err(AwsError::SignIn);
+    let remote = FakeRemote::default();
+    let failure = w.sync_all(&FakeSay::default(), &aws, &remote).unwrap_err();
+    assert_eq!(failure.message, SIGN_IN_MESSAGE);
+    // The box's rows 1 to 4, and nothing of the next host's.
+    assert_eq!(remote.lines().len(), 4);
+    assert!(
+        aws.calls
+            .borrow()
+            .iter()
+            .all(|c| !c.contains("agentspace-host-agentspace"))
     );
 }
 
@@ -1686,6 +1922,58 @@ mod host_deploy_and_provision {
         assert_eq!(
             log_lines(&w).last().unwrap(),
             &format!("start failed reason={want}")
+        );
+    }
+
+    /// Step 6's patch wait running out: the run logs `sync failed` with the deadline's message as
+    /// its reason, leaves a `ready` host `ready`, prints no sign-in line, and runs no bootstrap.
+    #[test]
+    fn a_patch_wait_that_runs_out_fails_step_6_with_its_message() {
+        let w = World::new("prov-deadline").with_deploy_files();
+        w.seed_registry(None, &[]);
+        let aws = FakeAws::default();
+        *aws.answer.borrow_mut() = "pending";
+        let say = FakeSay::default();
+        let f = w
+            .run(|seams| {
+                crate::provision_using(
+                    &w.ctx,
+                    &CaEnv::default(),
+                    agentspace_hosts::BOX_PROJECT,
+                    &say,
+                    &aws,
+                    &FakeRemote::default(),
+                    seams,
+                )
+            })
+            .unwrap_err();
+        let want = format!(
+            "{ID} did not finish its patch run within 30 minutes; check: ssh agentspace journalctl -u agentspace-patch"
+        );
+        assert_eq!(f.message, format!("agentspace: {want}"));
+        let path = agentspace_hosts::host_log_path(&home(&w), agentspace_hosts::BOX_PROJECT);
+        let lines: Vec<String> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|l| l.split_once(' ').unwrap().1.to_string())
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                "run begun".to_string(),
+                "deploy done".to_string(),
+                "start done".to_string(),
+                format!("sync failed reason={want}"),
+            ]
+        );
+        assert_eq!(
+            record(&w, agentspace_hosts::BOX_PROJECT).state,
+            HostState::Ready
+        );
+        assert!(
+            say.lines()
+                .iter()
+                .all(|l| !l.contains("Sign in on this host") && !l.contains("bootstrap"))
         );
     }
 

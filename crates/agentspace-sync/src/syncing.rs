@@ -27,6 +27,7 @@ use agentspace_hosts::{Host, HostState, Hosts, Target, host_alias};
 use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Remote, SIGN_IN_MESSAGE, Say};
 
 use crate::files::{self, Places};
+use crate::patch_wait::{self, PatchOutcome};
 use crate::registry::{self, RegistryCache};
 use crate::{ALIAS, Seams, check, go, host, scp, ssh_to, step_failed, steps, text};
 
@@ -118,7 +119,8 @@ impl Shared {
     }
 }
 
-/// `sync` for `target` over [`Seams`].
+/// `sync` for `target` over [`Seams`], and how its patch wait ended, which `provision`'s step 6
+/// logs.
 pub(crate) fn sync_target(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -127,7 +129,7 @@ pub(crate) fn sync_target(
     aws: &dyn Aws,
     remote: &dyn Remote,
     seams: &Seams,
-) -> Result<(), Failure> {
+) -> Result<PatchOutcome, Failure> {
     let places = Places::new(ctx);
     let plan = plan(&places, target)?;
     run(
@@ -178,6 +180,7 @@ pub(crate) fn sync_all(
             continue;
         }
         let plan = Plan::for_record(&places, record);
+        // A part whose patch wait ended on `failed` is not a failed part (P21).
         if let Err(failure) = run(
             ctx, ca_env, &places, &plan, say, aws, remote, seams, &shared,
         ) {
@@ -199,7 +202,8 @@ pub(crate) fn sync_all(
     Ok(())
 }
 
-/// One host's part of `sync`: operator.md's steps 1 to 8, with `plan`'s alias in every call.
+/// One host's part of `sync`: operator.md's steps 1 to 8, with `plan`'s alias in every call, and
+/// the patch wait between rows 4 and 5. Returns how the patch wait ended.
 #[allow(clippy::too_many_arguments)]
 fn run(
     ctx: &Context,
@@ -211,7 +215,7 @@ fn run(
     remote: &dyn Remote,
     seams: &Seams,
     shared: &Shared,
-) -> Result<(), Failure> {
+) -> Result<PatchOutcome, Failure> {
     let alias = plan.alias.as_str();
 
     // Step 1: the CA, before the host is touched. A missing, half-made, mismatched or loosened CA
@@ -269,6 +273,11 @@ fn run(
         "agentspace: Install on the instance failed.",
     )?;
 
+    // Then, before step 6, the patch wait, only after an install that exited 0 (D61's change,
+    // #0163): until the host answers `patched`, or `failed`, which warns and goes on (P21). Its
+    // deadline fails `sync` here, with nothing after row 4 run.
+    let outcome = patch_wait::wait(aws, say, seams.clock, &instance_id, alias)?;
+
     // Step 6: CLAUDE.md, when the laptop has one. The folder step's exit code is not checked
     // (B-34): the copy after it is the check.
     let claude_md = places.claude_md();
@@ -288,7 +297,7 @@ fn run(
     // Step 8: the push over the host's alias, forced, with the host's own stamp. It never fails
     // `sync`.
     (seams.push)(ctx, say, &instance_id, alias, plan.push_host());
-    Ok(())
+    Ok(outcome)
 }
 
 /// Step 7: builds (once for the command), copies and installs the localswim CLI.
