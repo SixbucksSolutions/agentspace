@@ -2,7 +2,7 @@
 name = "agentspace-hosts"
 version = "0.7.0"
 edition.workspace = true
-description = "The host registry, the project list and a host's provisioning run lock (docs/state.md; D45, D54, D55)"
+description = "The host registry, the project list, a host's provisioning run lock and the guard's files (docs/state.md; D45, D54, D55, D56)"
 publish = false
 
 [lib]
@@ -15,6 +15,13 @@ path = "src/lib.rs"
 [[bin]]
 name = "hosts-run-lock-helper"
 path = "src/bin/hosts-run-lock-helper.rs"
+test = false
+
+# Test-only. The same for the guard's lock: tries it once and says whether it got it. Never
+# installed. Tests reach it as env!("CARGO_BIN_EXE_hosts-guard-lock-helper").
+[[bin]]
+name = "hosts-guard-lock-helper"
+path = "src/bin/hosts-guard-lock-helper.rs"
 test = false
 
 [dependencies]

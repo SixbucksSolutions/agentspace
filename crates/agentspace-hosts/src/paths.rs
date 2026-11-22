@@ -23,6 +23,18 @@ pub fn hosts_lock_path(home: &Path) -> PathBuf {
     agentspace_dir(home).join("hosts.lock")
 }
 
+/// `<home>\.agentspace\guard.lock`, the guard's lock (D56, D63). `AGENTSPACE_STATE_DIR` does not
+/// move it.
+pub fn guard_lock_path(home: &Path) -> PathBuf {
+    agentspace_dir(home).join("guard.lock")
+}
+
+/// `<home>\.agentspace\guard.log`, the guard's log (D56, D63). `AGENTSPACE_STATE_DIR` does not
+/// move it.
+pub fn guard_log_path(home: &Path) -> PathBuf {
+    agentspace_dir(home).join("guard.log")
+}
+
 /// `<home>\.agentspace\projects.json`, the project list (D54).
 pub fn projects_path(home: &Path) -> PathBuf {
     agentspace_dir(home).join("projects.json")
@@ -79,6 +91,8 @@ mod tests {
         assert_eq!(agentspace_dir(home), a);
         assert_eq!(hosts_path(home), a.join("hosts.json"));
         assert_eq!(hosts_lock_path(home), a.join("hosts.lock"));
+        assert_eq!(guard_lock_path(home), a.join("guard.lock"));
+        assert_eq!(guard_log_path(home), a.join("guard.log"));
         assert_eq!(projects_path(home), a.join("projects.json"));
         assert_eq!(known_hosts_path(home), a.join("known_hosts"));
         let d = a.join("hosts").join("p");
