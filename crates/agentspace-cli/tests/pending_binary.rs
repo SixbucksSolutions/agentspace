@@ -43,6 +43,25 @@ echo proxy=%AGENTSPACE_PROXY_COMMAND% >> \"%~dp0started.tmp\"\r\n\
 echo seam=%AGENTSPACE_CHECK_SEAM% >> \"%~dp0started.tmp\"\r\n\
 move /y \"%~dp0started.tmp\" \"%~dp0started.txt\" > nul\r\n";
 
+/// A UUIDv4 drawn at random from the operating system's source, lowercase and hyphenated. A test
+/// whose lease the built program releases uses one, so that the release's walk over the laptop's
+/// process list cannot match a process of Terry's.
+fn fresh_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("The operating system has random bytes");
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: String = b.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 /// A throwaway home, a working folder and a stand-in, all under the temp folder.
 struct Throwaway {
     _tmp: tempfile::TempDir,
@@ -114,9 +133,9 @@ impl Throwaway {
     }
 
     /// The lease record of a pending lease as the CLI writes it, with this `driver` member.
-    fn pending_record(project: &str, driver: Option<&str>) -> String {
+    fn pending_record(id: &str, project: &str, driver: Option<&str>) -> String {
         let mut text = format!(
-            "{{\"id\":\"{ID}\",\"project\":\"{project}\",\"state\":\"pending\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\"ttl_seconds\":3600,\"created_at\":\"{CREATED}\""
+            "{{\"id\":\"{id}\",\"project\":\"{project}\",\"state\":\"pending\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\"ttl_seconds\":3600,\"created_at\":\"{CREATED}\""
         );
         if let Some(d) = driver {
             text.push_str(&format!(",\"driver\":\"{d}\""));
@@ -134,14 +153,17 @@ impl Throwaway {
         .unwrap();
     }
 
-    fn write_pending(&self, project: &str, driver: Option<&str>) {
-        self.write_leases_in(&self.dot(), &[Throwaway::pending_record(project, driver)]);
+    fn write_pending(&self, id: &str, project: &str, driver: Option<&str>) {
+        self.write_leases_in(
+            &self.dot(),
+            &[Throwaway::pending_record(id, project, driver)],
+        );
     }
 
     /// The lease document a `get` of that pending lease prints.
-    fn pending_doc(project: &str) -> Value {
+    fn pending_doc(id: &str, project: &str) -> Value {
         json!({
-            "id": ID, "project": project, "state": "pending", "platform": "linux/arm64",
+            "id": id, "project": project, "state": "pending", "platform": "linux/arm64",
             "profile": "agent-linux", "size": "m", "ttl_seconds": 3600, "created_at": CREATED
         })
     }
@@ -279,7 +301,7 @@ fn get_of_a_pending_lease_on_a_ready_host_starts_the_run_once_and_changes_no_lea
     // Conformance C7, C11, C12, C19, C27 and C28.
     let t = Throwaway::new();
     t.write_hosts(&[HOST_READY]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     let leases = t.read("leases.json");
     let run1 = t.run_with(
         &["lease", "get", ID],
@@ -291,7 +313,7 @@ fn get_of_a_pending_lease_on_a_ready_host_starts_the_run_once_and_changes_no_lea
             ),
         ],
     );
-    assert_eq!(stdout_doc(&run1), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run1), Throwaway::pending_doc(ID, "agentspace"));
     assert_eq!(
         t.read("leases.json"),
         leases,
@@ -356,7 +378,7 @@ fn get_of_a_pending_lease_on_a_ready_host_starts_the_run_once_and_changes_no_lea
     fs::remove_file(t.marker()).unwrap();
     let after_first = t.read("hosts.json");
     let run2 = t.run(&["lease", "get", ID]);
-    assert_eq!(stdout_doc(&run2), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run2), Throwaway::pending_doc(ID, "agentspace"));
     t.assert_not_started();
     assert_eq!(t.read("hosts.json"), after_first);
     assert_eq!(t.read("leases.json"), leases);
@@ -371,7 +393,7 @@ fn the_run_gets_the_clis_folders_made_full_and_its_override_exactly() {
     let state = t.root.join("state elsewhere");
     t.write_leases_in(
         &state,
-        &[Throwaway::pending_record("agentspace", Some("ec2"))],
+        &[Throwaway::pending_record(ID, "agentspace", Some("ec2"))],
     );
     let run = t.run_with(
         &["lease", "get", ID],
@@ -384,7 +406,7 @@ fn the_run_gets_the_clis_folders_made_full_and_its_override_exactly() {
             ),
         ],
     );
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "agentspace"));
     let started = t
         .started(Duration::from_secs(20))
         .expect("The run was started");
@@ -407,7 +429,7 @@ fn the_run_gets_the_clis_folders_made_full_and_its_override_exactly() {
 fn a_relative_userprofile_is_made_full_for_the_run() {
     let t = Throwaway::new();
     t.write_hosts(&[HOST_READY]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     // The working folder is the throwaway root, and the home is given relative to it.
     let all = [
         ("AGENTSPACE_PROVISION_CMD", t.stand_in().into_os_string()),
@@ -415,7 +437,7 @@ fn a_relative_userprofile_is_made_full_for_the_run() {
         ("HOME", OsString::from("home")),
     ];
     let run = run(t.command(&["lease", "get", ID], &t.root, &all));
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "agentspace"));
     let started = t
         .started(Duration::from_secs(20))
         .expect("The run was started");
@@ -434,10 +456,10 @@ fn get_of_a_pending_lease_with_no_host_record_starts_the_run_for_a_listed_projec
     // Conformance C25.
     let t = Throwaway::new();
     t.write_projects(&["agentspace"]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     let leases = t.read("leases.json");
     let run = t.run(&["lease", "get", ID]);
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "agentspace"));
     assert!(
         t.started(Duration::from_secs(20)).is_some(),
         "The run was started"
@@ -451,9 +473,9 @@ fn get_of_a_pending_lease_with_no_host_record_starts_the_run_for_a_listed_projec
 
     // A project that is not listed: nothing is written and nothing is started.
     let t = Throwaway::new();
-    t.write_pending("unlisted", Some("ec2"));
+    t.write_pending(ID, "unlisted", Some("ec2"));
     let run = t.run(&["lease", "get", ID]);
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("unlisted"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "unlisted"));
     t.assert_not_started();
     assert!(
         t.read("hosts.json").is_none(),
@@ -466,11 +488,11 @@ fn get_succeeds_and_starts_nothing_when_the_registry_is_not_valid() {
     // Conformance C13, the first case.
     let t = Throwaway::new();
     t.write("hosts.json", b"{");
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     let started = Instant::now();
     let run = t.run(&["lease", "get", ID]);
     assert!(started.elapsed() < Duration::from_secs(20));
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "agentspace"));
     t.assert_not_started();
     assert_eq!(
         t.read("hosts.json").as_deref(),
@@ -485,7 +507,7 @@ fn get_succeeds_and_changes_nothing_when_the_program_named_does_not_exist() {
     // `ready`, with no last_attempt_at written.
     let t = Throwaway::new();
     t.write_hosts(&[HOST_READY]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     let hosts = t.read("hosts.json");
     let leases = t.read("leases.json");
     let run = run(t.command(
@@ -496,7 +518,7 @@ fn get_succeeds_and_changes_nothing_when_the_program_named_does_not_exist() {
             t.root.join("no such program.cmd").into_os_string(),
         )],
     ));
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "agentspace"));
     t.assert_not_started();
     assert_eq!(t.read("hosts.json"), hosts, "The registry is as it was");
     assert_eq!(t.read("leases.json"), leases);
@@ -507,7 +529,7 @@ fn get_succeeds_and_starts_nothing_while_the_registry_lock_is_held() {
     // Conformance C13, the third case: get tries hosts.lock once and does not wait for it.
     let t = Throwaway::new();
     t.write_hosts(&[HOST_READY]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     let hosts = t.read("hosts.json");
     let held = fs::OpenOptions::new()
         .read(true)
@@ -525,7 +547,7 @@ fn get_succeeds_and_starts_nothing_while_the_registry_lock_is_held() {
         took < Duration::from_secs(20),
         "get waited for hosts.lock: {took:?}"
     );
-    assert_eq!(stdout_doc(&run), Throwaway::pending_doc("agentspace"));
+    assert_eq!(stdout_doc(&run), Throwaway::pending_doc(ID, "agentspace"));
     t.assert_not_started();
     assert_eq!(t.read("hosts.json"), hosts);
 }
@@ -536,12 +558,12 @@ fn get_of_a_pending_record_with_no_driver_or_an_unknown_one_starts_nothing() {
     for driver in [None, Some("no-such-driver")] {
         let t = Throwaway::new();
         t.write_hosts(&[HOST_READY]);
-        t.write_pending("agentspace", driver);
+        t.write_pending(ID, "agentspace", driver);
         let hosts = t.read("hosts.json");
         let run = t.run(&["lease", "get", ID]);
         assert_eq!(
             stdout_doc(&run),
-            Throwaway::pending_doc("agentspace"),
+            Throwaway::pending_doc(ID, "agentspace"),
             "{driver:?}"
         );
         t.assert_not_started();
@@ -556,24 +578,32 @@ fn list_never_starts_the_run() {
     // Conformance C14.
     let t = Throwaway::new();
     t.write_hosts(&[HOST_READY]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(ID, "agentspace", Some("ec2"));
     let hosts = t.read("hosts.json");
     let run = t.run(&["lease", "list"]);
     let doc = stdout_doc(&run);
-    assert_eq!(doc["leases"], json!([Throwaway::pending_doc("agentspace")]));
+    assert_eq!(
+        doc["leases"],
+        json!([Throwaway::pending_doc(ID, "agentspace")])
+    );
     t.assert_not_started();
     assert_eq!(t.read("hosts.json"), hosts);
 }
 
 #[test]
 fn release_of_a_pending_lease_records_it_released_and_starts_nothing() {
-    // Conformance C15: the driver is asked, finds nothing to remove, and the host is kept.
+    // Conformance C15: the driver is asked, finds nothing to remove, and the host is kept. The
+    // built program's release walks the laptop's whole process list, and no seam scopes it, so the
+    // lease ID is a UUIDv4 drawn at random for this run, never a fixed one (driver.md, "How it is
+    // checked"), and no process of Terry's can match its alias.
+    let id = fresh_id();
     let t = Throwaway::new();
     t.write_hosts(&[HOST_READY]);
-    t.write_pending("agentspace", Some("ec2"));
+    t.write_pending(&id, "agentspace", Some("ec2"));
     let hosts = t.read("hosts.json");
-    let run = t.run(&["lease", "release", ID]);
+    let run = t.run(&["lease", "release", &id]);
     let doc = stdout_doc(&run);
+    assert_eq!(doc["id"], id.as_str());
     assert_eq!(doc["state"], "released");
     assert!(
         doc.get("expires_at").is_none(),

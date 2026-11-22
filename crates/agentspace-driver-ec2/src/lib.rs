@@ -22,12 +22,17 @@ mod host;
 mod ops;
 mod pending;
 mod reasons;
+#[cfg(test)]
+mod release_tests;
 mod text;
+mod walk;
 
 use std::sync::Arc;
 
 use agentspace_detach::Detach;
 use agentspace_driver_api::{Context, Driver, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
+
+use crate::walk::Walker;
 
 /// The driver's name, which the CLI stores with every lease it places (driver.md, The driver's
 /// name). `place_pending` places only the records that carry it.
@@ -38,6 +43,7 @@ pub(crate) const NAME: &str = "ec2";
 #[derive(Clone)]
 pub struct Ec2Driver {
     detach: Arc<dyn Detach + Send + Sync>,
+    walk: Walker,
 }
 
 /// Prints the type's name alone: the detached start has nothing a reader needs.
@@ -61,13 +67,28 @@ impl Ec2Driver {
         let detach: Arc<dyn Detach + Send + Sync> = Arc::new(agentspace_detach::WmiDetach);
         #[cfg(not(windows))]
         let detach: Arc<dyn Detach + Send + Sync> = Arc::new(agentspace_detach::NoDetach);
-        Ec2Driver { detach }
+        Ec2Driver::with_detach(detach)
     }
 
     /// A driver that starts a provisioning run through `detach`: the seam through which a test
     /// stands in a fake start.
     pub fn with_detach(detach: Arc<dyn Detach + Send + Sync>) -> Ec2Driver {
-        Ec2Driver { detach }
+        Ec2Driver {
+            detach,
+            walk: Walker::default(),
+        }
+    }
+
+    /// TEST-ONLY. The same driver, whose release walks for the alias's clients through
+    /// `agentspace_connections::end_alias_clients_under`: a process is a client only when its
+    /// executable is inside `dir`, besides every rule of driver.md's section. A test that releases
+    /// a lease MUST use it, over a throwaway folder and with a lease ID drawn at random for the run
+    /// (driver.md, "How it is checked"). The product never calls it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_walk_under(mut self, dir: impl Into<std::path::PathBuf>) -> Ec2Driver {
+        self.walk = Walker::under(dir.into());
+        self
     }
 }
 
@@ -93,11 +114,12 @@ impl Driver for Ec2Driver {
         ops::check_release(ctx, lease)
     }
 
-    /// The same for a `ready`, `released` or `pending` lease: the alias file only when its owner
-    /// mark names the lease, then its folder, a missing one being no failure, so a placement that
-    /// was killed part way leaves nothing once its lease is released.
+    /// The same for a `ready`, `expired`, `released` or `pending` lease: the owner mark checked,
+    /// the alias's clients ended, the alias file deleted, the clients ended again, one line logged
+    /// to `release.log`, then the lease's folder deleted, a missing one being no failure, so a
+    /// placement that was killed part way leaves nothing once its lease is released.
     fn release(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
-        ops::release(ctx, lease)
+        ops::release(ctx, lease, &self.walk)
     }
 
     fn check_pending(&self, ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {

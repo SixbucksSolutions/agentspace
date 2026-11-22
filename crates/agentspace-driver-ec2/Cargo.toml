@@ -9,6 +9,14 @@ publish = false
 name = "agentspace_driver_ec2"
 path = "src/lib.rs"
 
+# TEST-ONLY. A stand-in for ssh.exe and agentspace-ssh-proxy.exe that the integration tests copy
+# under those names into a throwaway folder and start with ssh-like arguments. It MUST NOT be
+# installed or shipped. Its source is the test author's.
+[[bin]]
+name = "agentspace-driver-ec2-stub"
+path = "tests/support/stub.rs"
+test = false
+
 [dependencies]
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-credential = { path = "../agentspace-credential" }
@@ -17,6 +25,8 @@ agentspace-alias = { path = "../agentspace-alias" }
 agentspace-hosts = { path = "../agentspace-hosts" }
 # The detached start of a provisioning run (D48, D55).
 agentspace-detach = { path = "../agentspace-detach" }
+# The release's two walks for the alias's clients, and the text of its log line (D59, D63).
+agentspace-connections = { path = "../agentspace-connections" }
 # The lease state file and its lock, for place_pending, and the contract's times.
 agentspace-state = { path = "../agentspace-state" }
 

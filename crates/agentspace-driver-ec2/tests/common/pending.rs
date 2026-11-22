@@ -249,9 +249,10 @@ pub fn assert_run_env(s: &Start, ctx: &Context) {
 // ---- The fixture ----------------------------------------------------------------------------------
 
 impl Fx {
-    /// A driver that starts through `detach`.
+    /// A driver that starts through `detach`, and whose release, should a test make one, walks only
+    /// inside a folder of the throwaway root that holds nothing (driver.md, "How it is checked").
     pub fn driver_with(&self, detach: &Arc<FakeDetach>) -> Ec2Driver {
-        Ec2Driver::with_detach(detach.clone())
+        Ec2Driver::with_detach(detach.clone()).with_walk_under(self.root.join("no clients"))
     }
 
     /// Puts an empty `agentspace-operator.exe` beside the program and names it as the context's

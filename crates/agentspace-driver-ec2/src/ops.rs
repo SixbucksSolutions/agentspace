@@ -9,6 +9,8 @@
 //!   owner mark names this lease, and MUST keep the `Include` line, any backup and `agentspace.d`.
 //! - **Release MUST remove the alias file before the lease folder,** and MUST work for a lease
 //!   that was just placed and has no record.
+//! - **Release MUST walk for the alias's clients before it deletes the alias file and again after
+//!   it, and MUST log one line for both walks before it deletes the lease folder.**
 
 use std::fs;
 use std::io::ErrorKind;
@@ -20,6 +22,8 @@ use agentspace_alias::{
     default_proxy_command, ensure_include, find_proxy_program, is_valid_alias, known_hosts_text,
     lease_file_text, remove_alias, write_alias,
 };
+use agentspace_connections::Result as WalkResult;
+use agentspace_connections::line::release_text;
 use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
 };
@@ -31,6 +35,7 @@ use crate::text::{
     capitalize, delete_failed, failure, lease_file_name, lease_folder_name, still_there,
     transport_failed,
 };
+use crate::walk::{Walker, append_release_line};
 
 /// The certificate's one principal, the returned user and the alias's login user (D3).
 pub const USER: &str = "ubuntu";
@@ -264,18 +269,15 @@ pub fn check_release(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
     check_alias_owner(&ctx.ssh_dir, &alias, lease.id).map_err(|f| check_failure(&f))
 }
 
-pub fn release(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
-    let alias = alias_name(lease.project, lease.id);
-    // Step 1 again, so that a refused alias deletes nothing, the lease folder included.
-    check_alias_owner(&ctx.ssh_dir, &alias, lease.id).map_err(|f| check_failure(&f))?;
-
-    // The alias file goes first, so that it never points at a key that is gone. When it cannot be
-    // removed the lease folder is left alone, and both are named.
-    if let Err(f) = remove_alias(&ctx.ssh_dir, &alias, lease.id) {
+/// Deletes the lease's alias file, when its owner mark allows it. When it cannot be, the failure
+/// names it and the lease folder, which is then left alone.
+fn delete_alias_file(ctx: &Context, lease: &LeaseRef, alias: &str) -> Result<(), Failure> {
+    // The alias file goes before the lease folder, so that it never points at a key that is gone.
+    if let Err(f) = remove_alias(&ctx.ssh_dir, alias, lease.id) {
         if f.kind == AliasFailureKind::Foreign {
             return Err(check_failure(&f));
         }
-        let mut left = vec![alias_leftover(&ctx.home, &ctx.ssh_dir, &alias)];
+        let mut left = vec![alias_leftover(&ctx.home, &ctx.ssh_dir, alias)];
         if fs::symlink_metadata(lease_dir(&ctx.home, lease.id)).is_ok() {
             left.push(lease_folder_name(lease.id));
         }
@@ -285,7 +287,11 @@ pub fn release(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
             leftovers: left,
         });
     }
+    Ok(())
+}
 
+/// Deletes the lease's folder. A missing one is no failure.
+fn delete_lease_folder(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
     remove_lease_folder(&ctx.home, lease.id).map_err(|f| {
         // The crate's message is a phrase that fits the template's `<why>`: either a lowercase
         // phrase, or one that starts with a home-relative leftover (`~/...`) and names every
@@ -302,6 +308,90 @@ pub fn release(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
             failure(capitalize(&f.message), f.leftovers)
         }
     })
+}
+
+/// Removes a lease's files as release's step 3 does, and nothing else: the owner mark is checked,
+/// then the alias file is deleted, then the lease's folder. It walks for no client and logs
+/// nothing, so it is not a release (docs/driver.md, "The order of a release", "For which leases":
+/// `place_pending`'s steps 4 and 7 remove files this way, since no client of those aliases can
+/// exist).
+pub fn remove_files(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
+    let alias = alias_name(lease.project, lease.id);
+    check_alias_owner(&ctx.ssh_dir, &alias, lease.id).map_err(|f| check_failure(&f))?;
+    delete_alias_file(ctx, lease, &alias)?;
+    delete_lease_folder(ctx, lease)
+}
+
+/// What release's step 3 holds between its first walk and the alias file's deletion: the alias
+/// and the first walk's result.
+struct FirstWalk {
+    alias: String,
+    first: WalkResult<usize>,
+}
+
+/// Release's step 3, up to the alias file's deletion (docs/driver.md, "The order of a release"):
+/// the owner mark is checked again, so that a refused alias ends nothing, logs nothing and deletes
+/// nothing, the lease folder included, and then the first walk for the alias's clients runs, before
+/// the alias goes, so that the release reaches every connection the alias had before its credential
+/// goes. A pending lease's alias has no client, so its walk finds none.
+fn first_walk(ctx: &Context, lease: &LeaseRef, walk: &Walker) -> Result<FirstWalk, Failure> {
+    let alias = alias_name(lease.project, lease.id);
+    check_alias_owner(&ctx.ssh_dir, &alias, lease.id).map_err(|f| check_failure(&f))?;
+    let first = walk.end(&alias);
+    Ok(FirstWalk { alias, first })
+}
+
+/// Release's step 3, from the alias file's deletion on: the alias file's deletion, the second walk,
+/// the one line of `release.log`, and, when the alias file's deletion succeeded, the lease's
+/// folder's. A client that cannot be ended never fails it.
+fn after_first_walk(
+    ctx: &Context,
+    lease: &LeaseRef,
+    walk: &Walker,
+    held: FirstWalk,
+) -> Result<(), Failure> {
+    let removed = delete_alias_file(ctx, lease, &held.alias);
+
+    // The second walk runs whether or not the deletion succeeded: a client that came back through
+    // the alias while the first walk ran is ended here, and none can after the alias is gone.
+    let second = walk.end(&held.alias);
+
+    // One line for both walks, written before the lease folder is deleted. A log that cannot be
+    // written is ignored.
+    append_release_line(
+        &ctx.state_dir,
+        lease.id,
+        &release_text(&held.first, &second),
+    );
+
+    // When the alias file could not be deleted, the lease folder is left alone.
+    removed?;
+    delete_lease_folder(ctx, lease)
+}
+
+/// Release's step 3 (docs/driver.md, "The order of a release"): the owner mark is checked again,
+/// then, in this order, the first walk for the alias's clients, the alias file's deletion, the
+/// second walk, the one line of `release.log`, and, when the alias file's deletion succeeded, the
+/// lease's folder's. A client that cannot be ended never fails it.
+pub fn release(ctx: &Context, lease: &LeaseRef, walk: &Walker) -> Result<(), Failure> {
+    let held = first_walk(ctx, lease, walk)?;
+    after_first_walk(ctx, lease, walk, held)
+}
+
+/// TEST-ONLY, and only under `cfg(test)`: no build of this crate that ships has it. The same
+/// release, with `pause` called once between the first walk and the alias file's
+/// deletion, so that a test can start a client in that gap and show that the second walk ends it
+/// (docs/driver.md, "How it is checked"). A release whose owner mark is refused never calls it.
+#[cfg(test)]
+pub fn release_pausing(
+    ctx: &Context,
+    lease: &LeaseRef,
+    walk: &Walker,
+    pause: &mut dyn FnMut(),
+) -> Result<(), Failure> {
+    let held = first_walk(ctx, lease, walk)?;
+    pause();
+    after_first_walk(ctx, lease, walk, held)
 }
 
 #[cfg(test)]
@@ -335,6 +425,12 @@ mod tests {
             size: "m",
             ttl_seconds: 3600,
         }
+    }
+
+    /// A release whose walks can end only a process inside a folder that holds none, so that a
+    /// test with a fixed lease ID never ends a process of the laptop's.
+    fn scoped_release(c: &Context, lease: &LeaseRef) -> Result<(), Failure> {
+        release(c, lease, &Walker::under(c.home.join("no-process-here")))
     }
 
     #[test]
@@ -496,8 +592,8 @@ mod tests {
             project: "swim",
         };
         assert!(check_release(&c, &lease).is_ok());
-        assert!(release(&c, &lease).is_ok());
-        assert!(release(&c, &lease).is_ok());
+        assert!(scoped_release(&c, &lease).is_ok());
+        assert!(scoped_release(&c, &lease).is_ok());
 
         let folder = lease_dir(&c.home, ID);
         fs::create_dir_all(&folder).unwrap();
@@ -505,7 +601,7 @@ mod tests {
         let foreign = write_alias_for(&c, "agentspace-swim-3f2a9c1e", OTHER);
         let f = check_release(&c, &lease).unwrap_err();
         assert_eq!(f.message, FOREIGN_ALIAS);
-        let f = release(&c, &lease).unwrap_err();
+        let f = scoped_release(&c, &lease).unwrap_err();
         assert_eq!(f.message, FOREIGN_ALIAS);
         assert!(foreign.exists());
         assert!(folder.join("id_ed25519").exists());
@@ -523,7 +619,7 @@ mod tests {
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("id_ed25519"), b"k").unwrap();
         let alias = write_alias_for(&c, "agentspace-swim-3f2a9c1e", ID);
-        release(&c, &lease).unwrap();
+        scoped_release(&c, &lease).unwrap();
         assert!(!alias.exists());
         assert!(!folder.exists());
         // The `agentspace.d` folder stays.
@@ -575,7 +671,7 @@ mod tests {
         };
         fs::create_dir_all(c.home.join(".agentspace")).unwrap();
         fs::write(c.home.join(".agentspace").join("leases"), b"x").unwrap();
-        let f = release(&c, &lease).unwrap_err();
+        let f = scoped_release(&c, &lease).unwrap_err();
         assert_eq!(
             f.message,
             "The lease's local key, certificate or host alias could not be deleted: the folder for leases is a file, not a folder. Run release again to finish."
