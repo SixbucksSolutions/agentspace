@@ -1549,14 +1549,19 @@ go before the lease folder, so that an alias never points at a key that is gone.
    nothing, its message saying which folder is a file (architect, 2026-11-19, from
    E0.05-T02-S03).
 2. **Write the record as `released`**, unless it is already ([The lease state file](#the-lease-state-file)).
-3. **End the lease's connections on the laptop** (D59, as D63 changed it): the driver ends the ssh
-   clients that use the lease's alias, the keeper's holder among them, through
-   `agentspace-connections`, and logs one line in [the release log](#the-release-log). What it ends,
-   how, and the line's text are
-   [driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)'s.
-4. **Delete the alias file, then the lease folder**, as above.
+3. **End the lease's connections on the laptop, and delete the alias file between two walks**
+   (D59, as D63 and pin P23.3 changed it): the driver ends the ssh clients that use the lease's
+   alias, the keeper's holder among them, through `agentspace-connections`; deletes the alias file;
+   ends them again; and logs one line for both walks in [the release log](#the-release-log). The
+   second walk runs whether or not the alias file's deletion succeeded. What it ends, how, the
+   order and the line's text are
+   [driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)'s (corrected
+   by the architect, 2026-11-22, for v0.08-T03: this step read one walk before the alias's
+   deletion, from before P23.3).
+4. **Delete the lease folder**, as above, only when the alias file's deletion in step 3 succeeded.
 
-- **A failure in step 4 fails `release` with `internal`**, with lease-api.md's "Credential or alias
+- **A failed deletion, of the alias file in step 3 or of the lease folder in step 4, fails
+  `release` with `internal`**, after step 3's second walk and its log line, with lease-api.md's "Credential or alias
   not deleted" message ([Messages](lease-api.md#messages)), and the record stays `released`. A file
   that another process holds open without sharing delete is such a failure. `release` run again
   finishes the job.
@@ -1610,8 +1615,8 @@ go before the lease folder, so that an alias never points at a key that is gone.
 
 **`<state folder>\release.log` records what a release did to the lease's connections** (D59, as D63
 changed it; the dev lead's pin P16; architect, 2026-11-21, for v0.08-T01). It is written by the
-EC2 driver's `release` at step 3 of [the order above](#release-and-what-it-leaves), after the
-driver has ended the lease's ssh clients and before it deletes the alias file, and its line texts
+EC2 driver's `release` at step 3 of [the order above](#release-and-what-it-leaves), after both
+walks, so after the alias file's deletion and before the lease folder's, and its line texts
 are [driver.md, Where the count is logged](driver.md#where-the-count-is-logged)'s. This section
 owns the file as a file.
 - **A line's form is [the guard's log's](#the-guards-log) (v0.08-T01's pin P2)**, with the lease in place of
