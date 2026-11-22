@@ -3376,7 +3376,10 @@ and each of these is about a host's start, size or tools.
   OS call behaves).
 - **#0164, `grow -GiB 0`.** `grow` refuses an `<n>` of 0 or less as a usage error, with exit 2 and
   no AWS call. The AWS stand-in stops modelling EC2's refusal, and a conformance case counts no
-  `ec2 modify-volume` call.
+  `ec2 modify-volume` call. **Changed for v0.08-T01 (architect, 2026-11-21, on the dev lead's pin
+  P7): exit 1, not 2.** operator.md's Exit codes give every operator usage error exit 1, and grow
+  is not made the one exception. A negative `<n>` is refused the same way, so conformance's
+  existing `-GiB -1` case in `test-unmet-commands.ps1` changes with it, in E0.08-T04-S01.
 - **#0166, tools on an interactive shell's `PATH` only.** Every tool the `agent-linux` profile's
   agents use (`rustc`, `cargo`, `codex`, `claude`, `gh`) MUST be found by a non-login,
   non-interactive shell over ssh. The bootstrap links each into `/usr/local/bin`, through rustup's
