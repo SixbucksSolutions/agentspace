@@ -108,6 +108,7 @@ fn a_name_given_twice_is_refused_watch_included() {
         "-BackoffMaxSeconds",
         "-ReleaseGraceSeconds",
         "-FastFailureSeconds",
+        "-GuardIntervalSeconds",
     ] {
         expect_usage(
             &b,
@@ -129,6 +130,7 @@ fn a_name_with_no_value_is_refused() {
         "-BackoffMaxSeconds",
         "-ReleaseGraceSeconds",
         "-FastFailureSeconds",
+        "-GuardIntervalSeconds",
     ] {
         expect_usage(&b, &["-Watch", name], &format!("{name} needs a value."));
     }
@@ -208,13 +210,14 @@ fn a_value_is_skipped_and_never_read_as_a_name() {
 
 // ---- Check 2: the numbers ----
 
-const WATCH_ONLY: [&str; 6] = [
+const WATCH_ONLY: [&str; 7] = [
     "-IntervalSeconds",
     "-MaxPasses",
     "-BackoffBaseSeconds",
     "-BackoffMaxSeconds",
     "-ReleaseGraceSeconds",
     "-FastFailureSeconds",
+    "-GuardIntervalSeconds",
 ];
 
 #[test]
@@ -366,11 +369,84 @@ fn every_good_number_passes_check_two_and_the_ends_and_leading_zeros_are_allowed
             "00001",
             "-FastFailureSeconds",
             "000086400",
+            "-GuardIntervalSeconds",
+            "00086400",
             "-Now",
             NOW,
         ],
         "-Now is not allowed with -Watch.",
     );
+}
+
+// ---- The hidden -GuardIntervalSeconds (keeper.md, Command line; G15) ----
+
+#[test]
+fn guard_interval_seconds_without_watch_is_refused_and_starts_no_guard() {
+    // G15. Nothing is logged, and no stand-in guard ran, since a usage error ends the program
+    // before any pass and before any start.
+    let b = Bin::new();
+    expect_usage(
+        &b,
+        &["-GuardIntervalSeconds", "5"],
+        "-GuardIntervalSeconds is for -Watch.",
+    );
+    assert_eq!(guard_runs_in(&b.standin_dir()).len(), 0);
+}
+
+#[test]
+fn a_guard_interval_of_zero_with_watch_is_refused_and_starts_no_guard() {
+    // G15.
+    let b = Bin::new();
+    expect_usage(
+        &b,
+        &["-Watch", "-GuardIntervalSeconds", "0"],
+        "-GuardIntervalSeconds '0' is not a whole number from 1 to 86400.",
+    );
+    assert_eq!(guard_runs_in(&b.standin_dir()).len(), 0);
+}
+
+#[test]
+fn a_guard_interval_above_a_day_is_refused() {
+    let b = Bin::new();
+    expect_usage(
+        &b,
+        &["-Watch", "-GuardIntervalSeconds", "86401"],
+        "-GuardIntervalSeconds '86401' is not a whole number from 1 to 86400.",
+    );
+}
+
+#[test]
+fn the_guard_interval_is_the_last_number_check_two_takes() {
+    // The table's order: -FastFailureSeconds comes before -GuardIntervalSeconds, whatever order
+    // the caller wrote them in.
+    let b = Bin::new();
+    expect_usage(
+        &b,
+        &[
+            "-Watch",
+            "-GuardIntervalSeconds",
+            "0",
+            "-FastFailureSeconds",
+            "0",
+        ],
+        "-FastFailureSeconds '0' is not a whole number from 1 to 86400.",
+    );
+    // Without -Watch the same order gives the first of them that was given.
+    expect_usage(
+        &b,
+        &["-GuardIntervalSeconds", "1", "-FastFailureSeconds", "1"],
+        "-FastFailureSeconds is for -Watch.",
+    );
+}
+
+#[test]
+fn the_guard_interval_is_not_in_the_usage_text() {
+    // Hidden, for checks only (keeper.md, Command line).
+    assert!(!USAGE.contains("GuardInterval"));
+    let b = Bin::new();
+    let r = b.run(&["-Bogus"]);
+    assert_eq!(r.status, Some(2));
+    assert!(!r.stderr.contains("GuardInterval"));
 }
 
 // ---- Check 3: -Now with -Watch ----

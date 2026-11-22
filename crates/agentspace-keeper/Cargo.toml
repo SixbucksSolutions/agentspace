@@ -24,6 +24,9 @@ agentspace-keeper-files = { path = "../agentspace-keeper-files" }
 agentspace-hosts = { path = "../agentspace-hosts" }
 # `Starter` and the launcher role: the private argument and `run_launcher` (D42).
 agentspace-launch = { path = "../agentspace-launch" }
+# The guard's detached start, as the lease CLI starts a provisioning run (keeper.md, Starting the
+# guard; D56, D63).
+agentspace-detach = { path = "../agentspace-detach" }
 
 # The real `Processes` and `Locks` exist on Windows only (keeper.md, Where it runs).
 [target.'cfg(windows)'.dependencies]

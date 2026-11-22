@@ -159,7 +159,32 @@ impl World {
             locks: self,
             clock: self,
             records: self,
+            guard: self,
         }
+    }
+}
+
+/// The guard's start: it records the try and the start, and starts nothing.
+impl crate::GuardStarter for World {
+    fn try_lock(&self, _: &Path) -> crate::GuardLockTry {
+        self.call("guard lock");
+        crate::GuardLockTry::Free
+    }
+    fn start(
+        &self,
+        program: &Path,
+        args: &[&str],
+        _: &Path,
+        _: &[(&str, &std::ffi::OsStr)],
+    ) -> Result<Option<u32>, String> {
+        self.call(format!(
+            "guard start {} {}",
+            program
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+            args.join(" ")
+        ));
+        Ok(Some(31244))
     }
 }
 
@@ -1139,12 +1164,20 @@ struct Front {
     stderr: String,
 }
 
+/// The stand-in guard every run of `front` names, in its throwaway folder.
+const STAND_IN: &str = "guard-stand-in.exe";
+
 fn front(args: &[&str], vars: &[(&str, &Path)], world: &World, cwd: &Path) -> Front {
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let map: HashMap<String, OsString> = vars
+    let mut map: HashMap<String, OsString> = vars
         .iter()
         .map(|(k, v)| (k.to_string(), v.as_os_str().to_owned()))
         .collect();
+    // Every run of the keeper names a stand-in guard in its throwaway folder (AGENTS.md;
+    // conformance.md, The harness); the fake guard starts nothing all the same.
+    let stand_in = cwd.join(STAND_IN);
+    std::fs::write(&stand_in, b"stand-in").unwrap();
+    map.insert("AGENTSPACE_GUARD_CMD".into(), stand_in.into_os_string());
     let var = move |name: &str| map.get(name).cloned();
     let own = cwd.join("agentspace-keeper.exe");
     let env = Env {
@@ -1322,12 +1355,41 @@ fn watch_takes_the_keeper_lock_once_and_ends_at_max_passes() {
         t.path(),
     );
     assert_eq!(f.code, 0);
-    assert_eq!(f.stdout.lines().count(), 1);
-    assert!(f.stdout.contains(" idle lease=- alias=- pid=-"));
+    // From v0.08 the keeper's first line is its start of the guard, before the pass's.
+    let lines: Vec<&str> = f.stdout.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines[0].ends_with(" guard started pid=31244"),
+        "{}",
+        lines[0]
+    );
+    assert!(lines[1].ends_with(" idle lease=- alias=- pid=-"));
     let calls = w.calls();
     assert_eq!(calls.iter().filter(|c| *c == "keeper lock").count(), 1);
     assert_eq!(calls.first().map(String::as_str), Some("keeper lock"));
     assert!(!calls.iter().any(|c| c.starts_with("sleep")));
+    // The start comes after the keeper lock and before the pass's lock, not inside the pass.
+    let at = |what: &str| calls.iter().position(|c| c == what).unwrap();
+    assert!(at("keeper lock") < at("guard lock"));
+    assert!(at(&format!("guard start {STAND_IN} guard")) < at("lock"));
+}
+
+/// keeper.md, When the keeper starts it (G12): a one-pass run never tries `guard.lock` and starts
+/// no guard, though `AGENTSPACE_GUARD_CMD` is set.
+#[test]
+fn a_one_pass_run_never_starts_the_guard() {
+    let t = TempDir::new();
+    let home = t.path().join("home");
+    let w = World::new();
+    let f = front(
+        &["-SshExe", r"C:\x\ssh.exe", "-Now", NOW_TEXT],
+        &[("USERPROFILE", &home)],
+        &w,
+        t.path(),
+    );
+    assert_eq!(f.code, 0);
+    assert_eq!(f.stdout, format!("{NOW_TEXT} idle lease=- alias=- pid=-\n"));
+    assert!(!w.calls().iter().any(|c| c.starts_with("guard")));
 }
 
 // ---------------------------------------------------------------------------------------------

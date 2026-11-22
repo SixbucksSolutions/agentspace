@@ -7,7 +7,9 @@
 #   . (Join-Path $PSScriptRoot 'keeper-common.ps1')
 # and then sets $keeperCmd to Resolve-KeeperProgram's answer and calls Initialize-KeeperRun, both
 # before the first case: a case strips every AGENTSPACE_* variable from the environment, that
-# one among them. The caller MUST set $ErrorActionPreference = 'Stop'. Nothing here loads prototype
+# one among them. New-CaseHome then names four tripwires in the case's home (AGENTSPACE_GUARD_CMD,
+# AGENTSPACE_AWS_CMD, AGENTSPACE_SSH_CMD, AGENTSPACE_SCP_CMD), and Get-KeeperTripwireStarts counts
+# the starts each recorded. The caller MUST set $ErrorActionPreference = 'Stop'. Nothing here loads prototype
 # code, and nothing names the prototype's keeper (docs/conformance.md, "Naming the program under test").
 #
 # What it touches:
@@ -198,15 +200,65 @@ function Restore-CaseEnvironment {
   $script:savedEnvironment.Clear()
 }
 
+# The tripwires of v0.08 (E0.08-T03-S03; conformance.md, "The harness"; keeper.md, "Conformance cases for
+# the guard's start"). Every case's environment names one for AGENTSPACE_GUARD_CMD, and one each for the
+# operator's test seam, AGENTSPACE_AWS_CMD, AGENTSPACE_SSH_CMD and AGENTSPACE_SCP_CMD, so that a keeper
+# that starts a guard, or a guard that starts aws, ssh or scp, reaches nothing real: unset, the guard
+# is the build's own agentspace-operator.exe, which sees every host in a throwaway home as unexplained.
+# A tripwire is a .cmd in <home>\tripwire that appends one line to <name>-starts.log beside itself and
+# exits 1 at once. It records no argument and no variable, so that an argument holding a shell
+# character cannot change what it does. A keeper starts a .cmd through cmd.exe, as keeper.md gives.
+$script:tripwireNames = [ordered]@{ guard = 'AGENTSPACE_GUARD_CMD'; aws = 'AGENTSPACE_AWS_CMD'; ssh = 'AGENTSPACE_SSH_CMD'; scp = 'AGENTSPACE_SCP_CMD' }
+$script:tripwireDir = $null
+
+# Writes the four tripwires into the home's tripwire folder, each write checked at the call, and returns
+# the variables that name them.
+function New-KeeperTripwires($CaseHome) {
+  $dir = Join-Path $CaseHome.UserProfile 'tripwire'
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $runHome -Path $dir) | Out-Null
+  $script:tripwireDir = $dir
+  $named = [ordered]@{}
+  foreach ($name in $script:tripwireNames.Keys) {
+    $path = Join-Path $dir "$name-tripwire.cmd"
+    $body = ('@echo off', ">>`"%~dp0$name-starts.log`" echo Started", 'exit /b 1') -join "`r`n"
+    [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path $path), $body + "`r`n")
+    $named[$script:tripwireNames[$name]] = $path
+  }
+  $named
+}
+
+# The number of times the named tripwire (guard, aws, ssh or scp) was started in the current case's
+# home: the lines of its <name>-starts.log, which is 0 when the file does not exist. Read shared, so a
+# tripwire that is appending is never blocked.
+function Get-KeeperTripwireStarts([Parameter(Mandatory)][ValidateSet('guard', 'aws', 'ssh', 'scp')][string]$Name) {
+  if ($null -eq $script:tripwireDir) { return 0 }
+  $p = Join-Path $script:tripwireDir "$Name-starts.log"
+  if (-not (Test-Path -LiteralPath $p)) { return 0 }
+  try {
+    $fs = [IO.File]::Open($p, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    try { $text = [IO.StreamReader]::new($fs, [Text.UTF8Encoding]::new($false)).ReadToEnd() } finally { $fs.Dispose() }
+    @($text -split "`r?`n" | Where-Object { $_ -ne '' }).Count
+  } catch { 0 }
+}
+
 # Makes a case's throwaway folders and puts the harness's child environment for them on this
-# process, which every process the case starts inherits. Returns the home object the harness takes:
+# process, which every process the case starts inherits. The environment names the four tripwires
+# (above), set after the harness has stripped the caller's AGENTSPACE_* variables. A case that names
+# its own value for one of them passes it in -Environment (a hashtable, as the harness's -Override
+# takes it; an empty value or $null removes the variable), and then gets no tripwire for that
+# variable: a case's own value wins. Returns the home object the harness takes:
 # Root (the run's folder), UserProfile, StateDir and SshDir. The state folder is beside the home.
-function New-CaseHome {
+function New-CaseHome([hashtable]$Environment = @{}) {
   $dir = Join-Path $temp ([guid]::NewGuid().ToString('N'))
   $userProfile = Join-Path $dir 'home'
   $h = [pscustomobject]@{ Root = $temp; UserProfile = $userProfile; StateDir = Join-Path $dir 'state'; SshDir = Join-Path $userProfile '.ssh' }
   New-Item -ItemType Directory -Force -Path @($h.StateDir, $h.SshDir, (Join-Path $userProfile 'AppData\Local'), (Join-Path $userProfile 'AppData\Roaming') | ForEach-Object { Assert-ConformancePath -ConformanceHome $runHome -Path $_ }) | Out-Null
-  Set-CaseEnvironment (Get-ConformanceChildEnvironment -ConformanceHome $h)
+  $child = Get-ConformanceChildEnvironment -ConformanceHome $h -Override $Environment
+  $tripwires = New-KeeperTripwires $h
+  foreach ($variable in $tripwires.Keys) {
+    if (-not $Environment.ContainsKey($variable)) { $child[$variable] = $tripwires[$variable] }
+  }
+  Set-CaseEnvironment $child
   Write-CaseRegistry $h
   $h
 }

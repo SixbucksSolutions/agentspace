@@ -12,6 +12,7 @@
 //! | `Matcher` | `agentspace-keeper-files`' `HolderMatcher`, for the system folder Windows reports |
 //! | `Records` | `FileRecords`, the holder record's file |
 //! | `Clock` | the system's |
+//! | `GuardStarter` | `DetachGuard` over `agentspace-detach`'s `WmiDetach` (Windows; `NoDetach` elsewhere), with the names of the keeper's own environment variables |
 //!
 //! **The launcher role comes first.** The keeper's own program is the launcher a start creates, run
 //! as `agentspace-keeper -Launch <request>` (D42): exactly those two arguments go to
@@ -28,7 +29,7 @@
 
 #![forbid(unsafe_code)]
 
-use agentspace_keeper::{Deps, Env, FileRecords, PROGRAM, run};
+use agentspace_keeper::{Deps, DetachGuard, Env, FileRecords, PROGRAM, run};
 use agentspace_keeper_api::Clock;
 use agentspace_keeper_files::HolderMatcher;
 use agentspace_launch::{WmiStarter, launcher_request, run_launcher};
@@ -192,6 +193,14 @@ fn keeper(args: &[String]) -> i32 {
     );
     #[cfg(not(windows))]
     let (processes, locks) = (NotWindows, NotWindows);
+    // The names of the keeper's own variables, never their values: the guard gets each
+    // AGENTSPACE_*_CMD the keeper has (keeper.md, The guard's environment).
+    let names: Vec<OsString> = std::env::vars_os().map(|(name, _)| name).collect();
+    #[cfg(windows)]
+    let detach = std::sync::Arc::new(agentspace_detach::WmiDetach);
+    #[cfg(not(windows))]
+    let detach = std::sync::Arc::new(agentspace_detach::NoDetach);
+    let guard = DetachGuard::new(detach, names);
     let deps = Deps {
         processes: &processes,
         matcher: &matcher,
@@ -199,6 +208,7 @@ fn keeper(args: &[String]) -> i32 {
         locks: &locks,
         clock: &clock,
         records: &records,
+        guard: &guard,
     };
     guarded_run(
         args,
@@ -320,6 +330,22 @@ mod tests {
         }
     }
 
+    /// The guard's start for these tests: it starts nothing, and no test here runs a keeper.
+    impl agentspace_keeper::GuardStarter for Fake {
+        fn try_lock(&self, _: &Path) -> agentspace_keeper::GuardLockTry {
+            agentspace_keeper::GuardLockTry::Held
+        }
+        fn start(
+            &self,
+            _: &Path,
+            _: &[&str],
+            _: &Path,
+            _: &[(&str, &std::ffi::OsStr)],
+        ) -> Result<Option<u32>, String> {
+            Err("Not started.".to_string())
+        }
+    }
+
     /// Runs `guarded_run` over the fake in a throwaway home; gives the code, stdout and stderr.
     fn run_fake(fake: &Fake, args: &[&str]) -> (i32, String, String) {
         let dir = tempfile::Builder::new()
@@ -330,10 +356,15 @@ mod tests {
         let home = root.join("home");
         let state = root.join("state");
         std::fs::create_dir_all(&home).unwrap();
+        // Every run of the keeper names a stand-in guard in its throwaway home (AGENTS.md;
+        // conformance.md, The harness), whatever its arguments.
+        let stand_in = home.join("guard-stand-in.cmd");
+        std::fs::write(&stand_in, b"@exit /b 0\r\n").unwrap();
         let var = |name: &str| -> Option<OsString> {
             match name {
                 "USERPROFILE" => Some(home.clone().into_os_string()),
                 "AGENTSPACE_STATE_DIR" => Some(state.clone().into_os_string()),
+                "AGENTSPACE_GUARD_CMD" => Some(stand_in.clone().into_os_string()),
                 "SystemRoot" => Some(root.join("winroot").into_os_string()),
                 _ => None,
             }
@@ -352,6 +383,7 @@ mod tests {
             locks: fake,
             clock: &clock,
             records: &records,
+            guard: fake,
         };
         let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
         let (mut out, mut err) = (Vec::new(), Vec::new());

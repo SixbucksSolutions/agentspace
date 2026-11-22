@@ -190,8 +190,8 @@ fn a_failed_write_to_stdout_or_stderr_is_no_error() {
     for name in ["USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA"] {
         cmd.env(name, &bin.home);
     }
-    cmd.env("AGENTSPACE_STATE_DIR", &bin.state)
-        .env("SystemRoot", bin.full(&["winroot"]));
+    cmd.env("AGENTSPACE_STATE_DIR", &bin.state);
+    bin.guard_env(&mut cmd);
     let mut child = cmd.spawn().expect("The program starts");
     drop(child.stdout.take());
     drop(child.stderr.take());
@@ -232,8 +232,8 @@ fn a_keeper_with_dead_pipes_runs_its_passes() {
     for name in ["USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA"] {
         cmd.env(name, &bin.home);
     }
-    cmd.env("AGENTSPACE_STATE_DIR", &bin.state)
-        .env("SystemRoot", bin.full(&["winroot"]));
+    cmd.env("AGENTSPACE_STATE_DIR", &bin.state);
+    bin.guard_env(&mut cmd);
     let mut child = cmd.spawn().expect("The program starts");
     drop(child.stdout.take());
     drop(child.stderr.take());
@@ -265,8 +265,8 @@ fn a_one_pass_run_with_null_handles_ends_0_and_logs() {
     for name in ["USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA"] {
         cmd.env(name, &bin.home);
     }
-    cmd.env("AGENTSPACE_STATE_DIR", &bin.state)
-        .env("SystemRoot", bin.full(&["winroot"]));
+    cmd.env("AGENTSPACE_STATE_DIR", &bin.state);
+    bin.guard_env(&mut cmd);
     let status = cmd.status().expect("The program runs");
     // On a system that is not Windows the pass fails at its lock and logs it; the line is the
     // log's, and the exit is 0 whichever the pass did.

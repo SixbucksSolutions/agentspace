@@ -11,7 +11,9 @@
 //! | `Detach` | The trait: `start` creates `program` with `args`, in the working folder `cwd`, with the variables `env` on top of the logon environment, and returns once the process is created, never waiting for it. |
 //! | `WmiDetach` | Windows only. It creates the process through WMI's `Win32_Process.Create`, so no job object of the caller or of any process above it holds it, with a hidden console window in a new process group, whose standard handles are never the caller's. |
 //! | `NoDetach` | Every system. Its `start` always refuses. |
+//! | `Detach::start_pid` | `start`, and the process ID of the process it made, when it is known (below, The process ID). |
 //! | `wmi::create` | Windows only. The `Win32_Process.Create` call itself, which agentspace-launch's starter shares (D42). |
+//! | `wmi::create_with_pid` | Windows only. `create`, and the `ProcessId` of the same call's output. |
 //!
 //! # What `start` refuses
 //!
@@ -37,6 +39,17 @@
 //! backslash precedes one); an unquoted argument holds no quote and no space, so it needs no
 //! escaping. The program is the command line's first word, which Windows reads up to the next
 //! quote with no escapes, so its backslashes are kept as they are.
+//!
+//! # The process ID
+//!
+//! **`start_pid` is `start` that also gives the process ID** (architect, 2026-11-22, for
+//! v0.08-T03, for the keeper's `guard started pid=<pid>` line, keeper.md, Starting the guard). It
+//! takes `start`'s inputs and gives `start`'s refusals, bound and errors. `WmiDetach` answers
+//! `Some(pid)`, the `ProcessId` that the same `Win32_Process.Create` call returns beside its
+//! `ReturnValue`: the process the call created, which for a `.cmd` or `.bat` program run through
+//! `cmd.exe` is the `cmd.exe`, not the script's own. A `ProcessId` the call does not give answers
+//! `None`. The default answers `None` for every start, and `NoDetach` keeps it. `start` and
+//! `wmi::create` are as they were.
 //!
 //! # The bound
 //!
@@ -109,6 +122,22 @@ pub trait Detach {
         cwd: &Path,
         env: &[(&str, &OsStr)],
     ) -> Result<(), String>;
+
+    /// `start`, and the process ID of the process it created, when it is known: `Ok(Some(pid))`
+    /// for the process `Win32_Process.Create` made (for a `.cmd` or `.bat` program run through
+    /// `cmd.exe`, the `cmd.exe`'s), `Ok(None)` for a start that created the process and does not
+    /// know its ID. The inputs, the refusals, the bound and the `Err` are `start`'s exactly. The
+    /// default is `start`'s answer with no process ID, which `NoDetach` keeps; `WmiDetach`
+    /// overrides it (the crate's docs, The process ID).
+    fn start_pid(
+        &self,
+        program: &Path,
+        args: &[&str],
+        cwd: &Path,
+        env: &[(&str, &OsStr)],
+    ) -> Result<Option<u32>, String> {
+        self.start(program, args, cwd, env).map(|()| None)
+    }
 }
 
 /// The detached start on a system that has none: `start` always refuses.
@@ -145,6 +174,38 @@ impl Detach for WmiDetach {
         let call = prepare(Call::new(program, args, cwd, env)?, logon::environment)?;
         within(CREATE_BOUND, move || {
             wmi::create(
+                &call.command_line,
+                &call.directory,
+                &call.environment,
+                call.create_flags,
+            )
+        })
+    }
+
+    fn start_pid(
+        &self,
+        program: &Path,
+        args: &[&str],
+        cwd: &Path,
+        env: &[(&str, &OsStr)],
+    ) -> Result<Option<u32>, String> {
+        WmiDetach::call_pid(program, args, cwd, env)
+    }
+}
+
+#[cfg(windows)]
+impl WmiDetach {
+    /// The call `start_pid` makes: checked, prepared and bounded as `start`'s is, through
+    /// `wmi::create_with_pid`.
+    fn call_pid(
+        program: &Path,
+        args: &[&str],
+        cwd: &Path,
+        env: &[(&str, &OsStr)],
+    ) -> Result<Option<u32>, String> {
+        let call = prepare(Call::new(program, args, cwd, env)?, logon::environment)?;
+        within_pid(CREATE_BOUND, move || {
+            wmi::create_with_pid(
                 &call.command_line,
                 &call.directory,
                 &call.environment,
@@ -192,6 +253,15 @@ fn within<F>(bound: Duration, call: F) -> Result<(), String>
 where
     F: FnOnce() -> Result<u32, String> + Send + 'static,
 {
+    within_pid(bound, move || call().map(|code| (code, None))).map(|_| ())
+}
+
+/// `within` for a call that also gives the process ID: the same thread, bound and errors, and the
+/// ID of a call whose `ReturnValue` is 0.
+fn within_pid<F>(bound: Duration, call: F) -> Result<Option<u32>, String>
+where
+    F: FnOnce() -> Result<(u32, Option<u32>), String> + Send + 'static,
+{
     let (answer, receive) = mpsc::channel();
     std::thread::Builder::new()
         .name("agentspace-detach-create".to_string())
@@ -208,8 +278,8 @@ where
         }
     };
     match answer {
-        Ok(0) => Ok(()),
-        Ok(code) => Err(returned(code)),
+        Ok((0, pid)) => Ok(pid),
+        Ok((code, _)) => Err(returned(code)),
         Err(error) => Err(format!("Win32_Process.Create could not be called: {error}")),
     }
 }
@@ -631,6 +701,46 @@ mod tests {
         );
         assert!(took >= Duration::from_millis(100), "{took:?}");
         assert!(took < Duration::from_millis(600), "{took:?}");
+    }
+
+    /// A detach that implements `start` alone: its `start_pid` is the default.
+    struct StartOnly;
+
+    impl Detach for StartOnly {
+        fn start(
+            &self,
+            _: &Path,
+            _: &[&str],
+            _: &Path,
+            _: &[(&str, &OsStr)],
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_default_start_pid_is_start_with_no_process_id() {
+        let go = |d: &dyn Detach| d.start_pid(Path::new(FULL), &[], Path::new("."), &[]);
+        assert_eq!(go(&StartOnly), Ok(None));
+        assert_eq!(
+            go(&NoDetach),
+            Err("A detached start is only on Windows.".to_string())
+        );
+    }
+
+    #[test]
+    fn a_call_that_gives_a_process_id_returns_it_only_for_a_zero_return_value() {
+        let bound = Duration::from_secs(5);
+        assert_eq!(within_pid(bound, || Ok((0, Some(4242)))), Ok(Some(4242)));
+        assert_eq!(within_pid(bound, || Ok((0, None))), Ok(None));
+        assert_eq!(
+            within_pid(bound, || Ok((9, Some(4242)))),
+            Err("Win32_Process.Create returned 9: the path was not found.".to_string())
+        );
+        assert_eq!(
+            within_pid(bound, || Err("No.".to_string())),
+            Err("Win32_Process.Create could not be called: No.".to_string())
+        );
     }
 
     #[test]

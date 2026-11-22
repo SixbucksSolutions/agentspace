@@ -22,7 +22,11 @@
 //!   [`PassReport`], whose [`Action`] a keeper (`-Watch`) tracks by.
 //! - [`Records`]: the holder record's file, read, written and removed; [`FileRecords`] is the
 //!   real one.
-//! - [`Deps`]: the pinned traits and [`Records`], as one pass uses them.
+//! - [`Deps`]: the pinned traits and [`Records`], as one pass uses them, and the keeper's
+//!   [`GuardStarter`].
+//! - [`GuardStarter`]: the keeper's seam for the guard's start, the try of `guard.lock` and the
+//!   detached start (keeper.md, Starting the guard; D56, D63); [`DetachGuard`] is the real one,
+//!   over `agentspace-detach`, and a test gives its own, which starts nothing.
 //!
 //! A library: it writes to no stream but the ones it is given, and reads no environment but
 //! through [`Env`].
@@ -31,6 +35,7 @@
 
 mod args;
 mod front;
+mod guard;
 mod hosts;
 mod log;
 mod pass;
@@ -42,6 +47,7 @@ use std::path::Path;
 
 pub use args::{Options, PROGRAM, USAGE, WatchOptions, parse_args};
 pub use front::{Env, run};
+pub use guard::{DetachGuard, GUARD_CMD, GuardLockTry, GuardStarter, START_BOUND};
 pub use pass::{Action, PassContext, PassReport, run_pass};
 pub use records::FileRecords;
 
@@ -97,7 +103,8 @@ pub trait Records {
     }
 }
 
-/// What a pass works through: the pinned keeper boundary and the record.
+/// What a pass works through: the pinned keeper boundary and the record; and what a keeper's
+/// start of the guard works through.
 #[derive(Clone, Copy)]
 pub struct Deps<'a> {
     pub processes: &'a dyn Processes,
@@ -106,6 +113,11 @@ pub struct Deps<'a> {
     pub locks: &'a dyn Locks,
     pub clock: &'a dyn Clock,
     pub records: &'a dyn Records,
+    /// The guard's start (keeper.md, Starting the guard). Only a keeper (`-Watch`) uses it; a pass
+    /// and a one-pass run never do. A test MUST give a fake that starts no real program, and MUST
+    /// still set `AGENTSPACE_GUARD_CMD` to a stand-in in its throwaway home (conformance.md, The
+    /// harness; pin P15).
+    pub guard: &'a dyn GuardStarter,
 }
 
 #[cfg(test)]

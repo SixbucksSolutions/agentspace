@@ -30,7 +30,6 @@ use agentspace_keeper_api::{
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -98,7 +97,12 @@ pub struct World {
     pub state: PathBuf,
     pub ssh: PathBuf,
     pub own_exe: PathBuf,
-    vars: BTreeMap<String, String>,
+    /// The keeper's variables, a throwaway home's. A test of the guard changes them before a run.
+    pub vars: RefCell<BTreeMap<String, String>>,
+    /// Stdout of the last run, with the keeper's lines for the guard in it.
+    raw_stdout: RefCell<String>,
+    /// The keeper's start of the guard: it starts nothing, and records what it was asked.
+    pub guard: common::FakeGuard,
     events: RefCell<Vec<(String, Duration)>>,
     counts: RefCell<HashMap<String, usize>>,
     hooks: RefCell<Vec<(String, usize, Hook)>>,
@@ -140,7 +144,11 @@ impl World {
             .prefix("agentspace-keeper-watch-")
             .tempdir()
             .expect("A throwaway folder can be made");
-        let root = tmp.path().to_path_buf();
+        let root = common::plain(
+            tmp.path()
+                .canonicalize()
+                .expect("The throwaway folder has a full path"),
+        );
         let home = root.join("home");
         let state = root.join("state");
         std::fs::create_dir_all(&home).unwrap();
@@ -156,17 +164,24 @@ impl World {
             "AGENTSPACE_STATE_DIR".to_string(),
             state.to_string_lossy().into_owned(),
         );
+        // The real system folder: a `.cmd` stand-in guard is run through its cmd.exe.
         vars.insert(
             "SystemRoot".to_string(),
-            root.join("winroot").to_string_lossy().into_owned(),
+            common::system_root().to_string_lossy().into_owned(),
         );
+        // Every keeper of these tests has a stand-in guard and tripwires (AGENTS.md).
+        for (name, path) in common::guard_vars(&home) {
+            vars.insert(name.to_string(), path.to_string_lossy().into_owned());
+        }
         let w = Rc::new(World {
             tmp,
             home,
             state,
             ssh,
             own_exe,
-            vars,
+            vars: RefCell::new(vars),
+            raw_stdout: RefCell::new(String::new()),
+            guard: common::FakeGuard::new(),
             events: RefCell::new(Vec::new()),
             counts: RefCell::new(HashMap::new()),
             hooks: RefCell::new(Vec::new()),
@@ -195,6 +210,15 @@ impl World {
     // -----------------------------------------------------------------------------------------
     // The script
     // -----------------------------------------------------------------------------------------
+
+    /// The throwaway folder that holds the home, the state folder and the program folder: the
+    /// keeper's working folder.
+    pub fn root(&self) -> PathBuf {
+        self.home
+            .parent()
+            .expect("The home is inside the throwaway folder")
+            .to_path_buf()
+    }
 
     pub fn set_leases(&self, records: Vec<Value>) {
         self.set_leases_raw(&common::file_bytes(records));
@@ -377,10 +401,32 @@ impl World {
         self.state.join("board-holder.log")
     }
 
+    /// The log without the keeper's lines for the guard's start: a case that existed before v0.08
+    /// reads a keeper's log line for line and ignores them (keeper.md, Conformance cases for the
+    /// guard's start: H1). `log_raw` has them.
     pub fn log(&self) -> String {
+        common::without_guard_lines(&self.log_raw())
+    }
+
+    pub fn log_raw(&self) -> String {
         std::fs::read(self.log_path())
             .map(|b| String::from_utf8(b).expect("The log is UTF-8"))
             .unwrap_or_default()
+    }
+
+    /// Stdout of the last run, with the guard's lines in it.
+    pub fn stdout_raw(&self) -> String {
+        self.raw_stdout.borrow().clone()
+    }
+
+    pub fn set_var(&self, name: &str, value: &str) {
+        self.vars
+            .borrow_mut()
+            .insert(name.to_string(), value.to_string());
+    }
+
+    pub fn unset_var(&self, name: &str) {
+        self.vars.borrow_mut().remove(name);
     }
 
     fn last_log_line(&self) -> String {
@@ -422,35 +468,62 @@ impl World {
         self.run_args(&args)
     }
 
+    /// Runs the keeper for a case that existed before v0.08: with `-GuardIntervalSeconds 86400`
+    /// added to a keeper's arguments, so that the guard's start comes once, at its first
+    /// iteration, and never again in a timeline, and with the guard's lines left out of the
+    /// stdout it gives back (`stdout_raw` has them, and so does `log_raw`).
     pub fn run_args(self: &Rc<World>, args: &[String]) -> Ran {
-        let var = |name: &str| -> Option<OsString> { self.vars.get(name).map(OsString::from) };
-        let env = agentspace_keeper::Env {
-            var: &var,
-            cwd: self.tmp.path(),
-            own_exe: &self.own_exe,
-        };
+        let mut args = args.to_vec();
+        if args.iter().any(|a| a.eq_ignore_ascii_case("-Watch"))
+            && !args
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case("-GuardIntervalSeconds"))
+        {
+            args.push("-GuardIntervalSeconds".to_string());
+            args.push("86400".to_string());
+        }
+        let mut ran = self.run_args_raw(&args);
+        ran.stdout = common::without_guard_lines(&ran.stdout);
+        ran
+    }
+
+    /// Runs `-Watch -SshExe <the stub>` with `extra` after them, as a case of the guard's start
+    /// does: no argument added, and the guard's lines kept in the stdout it gives back.
+    pub fn run_guard(self: &Rc<World>, extra: &[&str]) -> Ran {
+        let mut args = vec![
+            "-Watch".to_string(),
+            "-SshExe".to_string(),
+            self.ssh.to_string_lossy().into_owned(),
+        ];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        self.run_args_raw(&args)
+    }
+
+    /// Runs the keeper's command line exactly as given.
+    pub fn run_args_raw(self: &Rc<World>, args: &[String]) -> Ran {
         let procs = Procs(self.clone());
         let matcher = Match(self.clone());
         let starter = Start(self.clone());
         let locks = Lock(self.clone());
         let clock = Clk(self.clone());
         let records = Store(self.clone());
-        let deps = agentspace_keeper::Deps {
-            processes: &procs,
-            matcher: &matcher,
-            starter: &starter,
-            locks: &locks,
-            clock: &clock,
-            records: &records,
-        };
-        let mut stdout: Vec<u8> = Vec::new();
-        let mut stderr: Vec<u8> = Vec::new();
-        let exit = agentspace_keeper::run(args, &env, &deps, &mut stdout, &mut stderr);
-        Ran {
-            exit,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-        }
+        let vars = self.vars.borrow().clone();
+        self.guard.set_names(vars.keys());
+        let ran = common::keeper_run(
+            args,
+            &vars,
+            &self.root(),
+            &self.own_exe,
+            &procs,
+            &matcher,
+            &starter,
+            &locks,
+            &clock,
+            &records,
+            &self.guard,
+        );
+        *self.raw_stdout.borrow_mut() = ran.stdout.clone();
+        ran
     }
 }
 
