@@ -3297,6 +3297,12 @@ under it.
   remember what was sent, and a host that rebooted gets it back within 5 minutes. A host whose
   project has never had a lease is sent its launch time. A send that fails is logged and tried
   again at the next run.
+- **Changed for v0.08-T01 (architect, 2026-11-21, on the dev lead's pin P12): the guard sends the
+  later of the horizon and the host's launch time.** A host started with no live lease would
+  otherwise be sent a last lease end from before its launch, and power itself off at its first
+  check with no session, before the guard's grace, which D56 counts from the later of the two. With
+  the later of the two, the host's bound and the guard's agree. state.md's horizon is unchanged;
+  operator.md's guard section states the send.
 - **Changed for v0.08-T01 (architect, 2026-11-21, on the dev lead's pin P9): a running patch run
   holds off the horizon power-off, as a session does**, and as it holds off D11's rule. A power-off
   in the middle of an upgrade can leave dpkg half configured, and the patch unit is bounded by its
