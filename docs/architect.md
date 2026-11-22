@@ -51,6 +51,10 @@ first.**
   reporter re-reads the file each pass and would report a stopped milestone back.
 - **A new milestone's `start` is now, in UTC with `Z`, and `cap_hours` is the plan's wall-clock
   budget:** the turn's length for a turn, the sum of its turns for a release.
+- **Every edit MUST leave the file valid as written: the real time goes in the same edit**, never a
+  placeholder filled in after (v0.08-T01, 2026-11-21). The running reporter re-reads the file each
+  pass, read a `start` of `TIME` in the second before a second edit replaced it, and exited; it was
+  restarted at once.
 - **A story added to a turn raises both milestones' `tickets` and `cap_hours`** (v0.06-T05, when
   #0140 was added).
 - **A cap is extended only on Terry's word.** He MAY delegate one ("if there's good progress I'm
