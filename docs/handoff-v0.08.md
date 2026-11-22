@@ -1,0 +1,89 @@
+# Handoff: agentspace during v0.08
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+> **The live record of v0.08 (#0048), started at T01's close, 1:47am Pacific on 2026-11-22, and
+> refreshed at each turn's close.** It becomes the handoff for the architect who starts v0.09 when
+> v0.08 closes. Where this file and AGENTS.md, the board or decisions.md disagree, they win.
+
+## Start here
+
+**An architect picking v0.08 up mid-release does these first.** They are
+[handoff-v0.07.md](handoff-v0.07.md#start-here)'s steps 2 to 5, unchanged: check for an orphan
+reader by PID, check the board answers, start the standing duties, and check AWS and the hosts
+through a mask. Then:
+
+1. **Read** [AGENTS.md](../AGENTS.md), [architect.md](architect.md), and D56 to D63 in
+   [decisions.md](decisions.md) with every "Changed for v0.08-T01" note under them.
+2. **Find the next turn** in the table below, and run it by architect.md, "Running a turn".
+3. **The reporter runs whenever `scripts/milestones.json` lists a milestone.** It lists `v0.08`
+   now, so exactly one `scripts\report-milestones.ps1 -Watch` MUST be running.
+
+## Where things stand
+
+**As of 1:47am Pacific, 2026-11-22.**
+
+| What | State |
+|---|---|
+| v0.08 (#0048), host lifecycle and cost guard | In Progress. Laid out by D63 as twenty-one stories, #0168 to #0188, in six turns, on Terry's word the night of 2026-11-21 |
+| T01, the specs, the template and the host's files | Closed at 1:47am: #111 to #115 merged, #0168 to #0172 in Ready For Review |
+| T02, the foundations | Next. Its gate is met. Its dev lead starts on Terry's word |
+| `main`'s tests | 25 failures in 22 distinct help tests, on purpose: T01's specs changed help text ahead of its code. 18 are the operator's, which #0178 (T03-S02) fixes; 4 are the lease CLI's (7 failures, some in two targets), which #0180 (T03-S04) fixes. Every other test passes, 3,873 in the architect's run on the four specs merged |
+| A build of `main` | MUST NOT be installed or used against a real host until #0181 (T03-S05) merges: #113's `install.sh` starts a patch run with nothing yet waiting for it, which on a fresh host can race the bootstrap's apt (#113's PR body) |
+| The hosts | Both stopped; T01 started no instance. The instance hours Terry approved for T05 and T06 (6, D62) are untouched |
+| Terry's laptop | v0.07 installed, unchanged. `cfn-lint` 1.61.0 added as a uv tool, on Terry's word ("we can install new dependencies if needed", 2026-11-21) |
+| Swimcoach | `v0.08` reported; `v0.08-T01` stopped at 1:47am |
+| Sessions | T01's dev lead archived; no other session of the architect's is open |
+
+### v0.08 by turn
+
+| Turn | Stories | Closed | PRs | What it left |
+|---|---|---|---|---|
+| T01 | #0168 to #0172 | 1:47am, 2026-11-22 | #111 to #115 | operator.md's guard, `status -All`'s leases, `grow`'s refusal, sync's patch wait and the host's files; keeper.md's start of the guard; state.md's live leases, horizon, `guard.log`, `guard.lock` and `release.log`; driver.md's two-walk release; the alarm at 24 hours; README's "A host's life"; `box/system`'s idle check, install and test |
+| T02 | #0173 to #0176 | | | |
+| T03 | #0177 to #0181 | | | |
+| T04 | #0182 to #0185 | | | |
+| T05 | #0186 | | | |
+| T06 | #0187, #0188 | | | |
+
+## Terry's orders from v0.08
+
+| Order | Given | Where it binds |
+|---|---|---|
+| The grace is 15 minutes; the box is guarded; an unexplained host is reported by `guard.log` and `status -All` alone (Q8 to Q10) | 2026-11-21 | D56, D60 |
+| Yes for up to 6 instance hours for T05 and T06 | 2026-11-21 | D62 |
+| As many subagents per story as can be used effectively | 2026-11-21 | D31, D63; architect.md, "Breaking an epic into stories", step 4 |
+| New dependencies MAY be installed when needed; the dev lead names each to the architect first | 2026-11-21 | This file |
+
+## Rulings made during v0.08
+
+**Each binds where its row says; this table only finds them.** T01's dev lead numbered its pins P1
+to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08-T01".
+
+| Ruling | Made | Where it binds |
+|---|---|---|
+| Live lease, a lease's end, last lease end and horizon defined once (P1); a released lease ends at the earlier of `released_at` and `expires_at` (P11); only `pending` leases make the horizon the reading's time (P10) | T01 | state.md, "Live leases and the lease horizon"; decisions.md, "Words used here" |
+| The guard sends the later of the horizon and the host's `LaunchTime` (P12) | T01 | D57's change; operator.md, guard |
+| A missing, unreadable or invalid lease file fails the guard and stops nothing (P18); `status -All` keeps its exit code and says why (P25) | T01 | state.md; operator.md, guard and status |
+| A running patch run holds off the horizon power-off (P9) | T01 | D57's change; `box/system/agentspace-idle-check` |
+| `grow -GiB` of 0 or less exits 1, as every operator usage error (P7) | T01 | D61's change; operator.md, grow |
+| A failed patch run never fails a sync (P21); `up` does not wait on it (P24.2); a failed unit with a start queued is `pending` (P24.3) | T01 | D61's changes; operator.md, the patch wait |
+| Sync's patch wait is bounded at 30 minutes (P13) | T01 | operator.md, the patch wait |
+| The push filters only the nested `The host is ready.` line, unless `AGENTSPACE_DIAGNOSTIC` is set (#0167, P14) | T01 | operator.md, the token push |
+| Every check that runs a keeper names a stand-in guard (P15) | T01 | conformance.md, The harness; AGENTS.md |
+| A release walks twice, before and after the alias goes (P23.3), and logs to `release.log` (P16) | T01 | D59's changes; driver.md, "Ending a lease's connections" |
+| `/etc/environment`'s PATH keeps its value and appends the tool folders (P5); the horizon line is in Terry's time form (P6) | T01 | `box/system/install.sh`, `box/system/agentspace-idle-check` |
+| The alarm's 24 hours is a choice, not AWS's limit | T01 | D58's change |
+| Provisioning's sign-in line sends a person to take a lease first | T01 | operator.md, provision step 10; README |
+
+## Lessons from v0.08
+
+| What happened | What to do | Where |
+|---|---|---|
+| The architect wrote a placeholder start into `milestones.json` and filled it a second later; the running reporter read the placeholder and exited | Every edit leaves the file valid as written | architect.md, "Milestones on Terry's phone" |
+| The architect named a commit's SHA in a ruling before the commit had printed one, and it was wrong | Send a message that cites a commit only after the commit's output | architect.md, "Writing in the repository" (times and SHAs) |
+| A message to a running subagent turned it into a resumed one, which pinned the dev lead to its worktree | Put the whole tasking into the launch; launch a fresh subagent for any change | AGENTS.md, the worktree bullets |
+| The dev lead launched a fix writer from the wrong worktree; it worked on a copy and wrote nothing there | Check the current worktree before every launch | This file |
+| A keeper's check would have started the build's real operator as a guard, able to stop a real host, caught by the keeper drafter before any code | Name a stand-in for every program a component under test can start | conformance.md, The harness |
+| Two of the architect's decisions carried wrong facts (D58's AWS limit, D61's exit code), both caught in T01's reviews | Read the source before stating an outside system's limit or a spec's convention in a decision | This file |
+| Two specs that link each other could not each merge after the other | Check every anchor on a local merge of all of them, then merge in an order that ends with none broken | This file; the architect's anchor check |
