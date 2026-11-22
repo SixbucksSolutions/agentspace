@@ -18,14 +18,16 @@ pub const PATCH_COMMENT: &str = "agentspace up: patch check";
 
 /// The patch question, run as root by `AWS-RunShellScript` on today's box, and asked by `up` and by
 /// `sync`'s patch wait alike (operator.md, What up waits for; P21, P24): `patched` when this boot's
-/// marker exists; otherwise, for a unit in systemd's `failed` state, `pending` when a start job is
-/// queued for it and `failed` when none is; otherwise `pending` when the patch unit is enabled, and
-/// `unknown` when it is not. It reads the marker, the unit's state, whether a start job is queued
-/// and whether the unit is enabled, in that order.
+/// marker exists; otherwise, for a unit in systemd's `failed` state, `pending` when a job that
+/// will run it is queued for it and `failed` when none is; otherwise `pending` when the patch unit
+/// is enabled, and `unknown` when it is not. It reads the marker, the unit's state, whether such a
+/// job is queued and whether the unit is enabled, in that order.
 ///
-/// A queued start job is a line of `systemctl list-jobs` for the unit whose type is the word
-/// `start`, so a check made between the install's `systemctl start --no-block` and the run's start
-/// never reads the earlier run's failure as this run's (pin P24).
+/// A queued job that will run the unit is a line of `systemctl list-jobs` for the unit that holds
+/// the word `start` or the word `restart`, so a check made between the install's `systemctl start
+/// --no-block` and the run's start never reads the earlier run's failure as this run's (pin P24),
+/// and a queued `restart` counts as a start (architect, 2026-11-22, for v0.08-T03). A job of
+/// another type, such as `stop` or `reload`, does not.
 ///
 /// It MUST hold no `,`, `[`, `]` or `=`, on which the AWS CLI's shorthand syntax for
 /// `--parameters` splits, and none of what FA-15 forbids: no `%`, no double quote, no control
@@ -33,7 +35,7 @@ pub const PATCH_COMMENT: &str = "agentspace up: patch check";
 /// and another runs it under bash with a stand-in `systemctl`.
 pub const PATCH_QUESTION: &str = "if test -e /run/agentspace/patched; then echo patched; \
 elif systemctl is-failed --quiet agentspace-patch.service; then \
-if systemctl list-jobs --no-legend agentspace-patch.service | grep -qw start; \
+if systemctl list-jobs --no-legend agentspace-patch.service | grep -qw -e start -e restart; \
 then echo pending; else echo failed; fi; \
 elif systemctl is-enabled --quiet agentspace-patch.service; then echo pending; \
 else echo unknown; fi";
@@ -333,11 +335,93 @@ list-jobs) if test -e unit-job; then cat unit-job; fi ;;\n\
 *) exit 3 ;;\n\
 esac\n";
 
-    /// Runs `bash <script>` in `dir`, with no argument but the script's name, so that a `bash` that
-    /// hands its arguments to another shell reads them the same; its stdout, or `None` when it
-    /// could not be run or failed.
-    fn bash(dir: &std::path::Path, script: &str) -> Option<String> {
-        let output = std::process::Command::new("bash")
+    /// Whether `bash` is one this test may run: under the Git for Windows install `root`, and on no
+    /// path that holds `System32`, `Windows` or `WindowsApps`, where `bash.exe` is WSL's, whose
+    /// start leaves a virtual machine running after the test (architect, 2026-11-22, for
+    /// v0.08-T03).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn acceptable_bash(root: &std::path::Path, bash: &std::path::Path) -> bool {
+        let barred = |p: &std::path::Path| {
+            p.components().any(|c| {
+                let name = c.as_os_str().to_string_lossy().to_ascii_lowercase();
+                matches!(name.as_str(), "system32" | "windows" | "windowsapps")
+            })
+        };
+        bash.starts_with(root)
+            && !barred(root)
+            && !barred(bash)
+            && bash
+                .file_name()
+                .is_some_and(|n| n.eq_ignore_ascii_case("bash.exe"))
+    }
+
+    /// Git for Windows' `bash.exe`, found from the `git` on `PATH`: `git --exec-path` is inside the
+    /// install, so the first of its ancestors that holds `bin\bash.exe` and `usr\bin\bash.exe` is
+    /// the install's root, and `bin\bash.exe` is the one used. `None` when there is no `git`, no
+    /// such root, or a bash that [`acceptable_bash`] refuses. It never looks for `bash` on `PATH`,
+    /// which from PowerShell is WSL's.
+    #[cfg(windows)]
+    fn find_bash() -> Option<std::path::PathBuf> {
+        let output = std::process::Command::new("git")
+            .arg("--exec-path")
+            .current_dir(std::env::temp_dir())
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let exec = std::path::PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
+        let exec = exec.canonicalize().ok()?;
+        exec.ancestors().skip(1).find_map(|root| {
+            let bash = root.join("bin").join("bash.exe");
+            if !bash.is_file() || !root.join("usr").join("bin").join("bash.exe").is_file() {
+                return None;
+            }
+            let bash = bash.canonicalize().ok()?;
+            acceptable_bash(root, &bash).then_some(bash)
+        })
+    }
+
+    /// Off Windows, the `bash` of `PATH` is the system's own.
+    #[cfg(not(windows))]
+    fn find_bash() -> Option<std::path::PathBuf> {
+        Some(std::path::PathBuf::from("bash"))
+    }
+
+    #[test]
+    fn only_a_bash_under_the_git_root_and_off_the_windows_folders_is_acceptable() {
+        use std::path::Path;
+        let root = Path::new("C:/Program Files/Git");
+        assert!(acceptable_bash(
+            root,
+            Path::new("C:/Program Files/Git/bin/bash.exe")
+        ));
+        assert!(acceptable_bash(
+            root,
+            Path::new("C:/Program Files/Git/usr/bin/bash.exe")
+        ));
+        for bash in [
+            "C:/Windows/System32/bash.exe",
+            "C:/Users/someone/AppData/Local/Microsoft/WindowsApps/bash.exe",
+            "C:/Program Files/Other/bin/bash.exe",
+            "C:/Program Files/Git/bin/wsl.exe",
+        ] {
+            assert!(!acceptable_bash(root, Path::new(bash)), "{bash}");
+        }
+        // A root that is itself under a barred folder is refused too.
+        assert!(!acceptable_bash(
+            Path::new("C:/Windows/System32"),
+            Path::new("C:/Windows/System32/bash.exe")
+        ));
+    }
+
+    /// Runs `<bash> <script>` in `dir`, with no argument but the script's name, so that a `bash`
+    /// that hands its arguments to another shell reads them the same; its stdout, or `None` when
+    /// it could not be run or failed.
+    fn bash(bash: &std::path::Path, dir: &std::path::Path, script: &str) -> Option<String> {
+        let output = std::process::Command::new(bash)
             .arg(script)
             .current_dir(dir)
             .stdin(std::process::Stdio::null())
@@ -352,16 +436,27 @@ esac\n";
 
     /// The conformance table's test of the command's text (E0.08-T03-S05, #0181): run under bash
     /// with a stand-in `systemctl` first on `PATH`, it answers `failed` for a unit in systemd's
-    /// `failed` state without a start job queued, `pending` for one with a start job queued,
-    /// `pending` for an enabled unit otherwise, and `unknown` for one not enabled; `patched` when
-    /// the marker exists, whatever the unit's state. It is skipped, saying so, when no `bash` can
-    /// be run.
+    /// `failed` state without a `start` or `restart` job queued (a `stop` or `reload` job does not
+    /// count), `pending` for one with either queued, `pending` for an enabled unit otherwise, and
+    /// `unknown` for one not enabled; `patched` when the marker exists, whatever the unit's state.
+    ///
+    /// **It runs under Git for Windows' `bash.exe` alone** ([`find_bash`]), never WSL's, whose
+    /// start leaves a virtual machine running after the test. It is skipped, saying so, when there
+    /// is none, or when it cannot run a script.
     #[test]
     fn the_patch_question_gives_each_answer_under_bash() {
+        let Some(shell) = find_bash() else {
+            eprintln!(
+                "Skipped: no Git for Windows bash was found, so the patch question's text was not run."
+            );
+            return;
+        };
         let dir = Scratch::new("patch-question");
         std::fs::write(dir.0.join("probe.sh"), "echo bash-runs\n").unwrap();
-        if bash(&dir.0, "probe.sh").as_deref().map(str::trim) != Some("bash-runs") {
-            eprintln!("Skipped: no bash could be run, so the patch question's text was not run.");
+        if bash(&shell, &dir.0, "probe.sh").as_deref().map(str::trim) != Some("bash-runs") {
+            eprintln!(
+                "Skipped: the Git for Windows bash could not run a script, so the patch question's text was not run."
+            );
             return;
         }
         assert_eq!(PATCH_QUESTION.matches(MARKER).count(), 1);
@@ -383,6 +478,8 @@ esac\n";
 
         const START_JOB: &str = "  123 agentspace-patch.service start waiting\n";
         const STOP_JOB: &str = "  124 agentspace-patch.service stop waiting\n";
+        const RESTART_JOB: &str = "  125 agentspace-patch.service restart waiting\n";
+        const RELOAD_JOB: &str = "  126 agentspace-patch.service reload waiting\n";
         // (marker, failed, enabled, job line, answer, systemctl calls in order)
         type Case = (
             bool,
@@ -392,7 +489,7 @@ esac\n";
             &'static str,
             &'static [&'static str],
         );
-        let cases: [Case; 9] = [
+        let cases: [Case; 13] = [
             (true, true, true, Some(START_JOB), "patched", &[]),
             (
                 false,
@@ -417,6 +514,41 @@ esac\n";
                 true,
                 Some(STOP_JOB),
                 "failed",
+                &["is-failed", "list-jobs"],
+            ),
+            // A queued `reload` job does not run a failed unit either.
+            (
+                false,
+                true,
+                true,
+                Some(RELOAD_JOB),
+                "failed",
+                &["is-failed", "list-jobs"],
+            ),
+            // A queued `stop` job, with the unit not enabled.
+            (
+                false,
+                true,
+                false,
+                Some(STOP_JOB),
+                "failed",
+                &["is-failed", "list-jobs"],
+            ),
+            // A queued `restart` job counts as a start.
+            (
+                false,
+                true,
+                true,
+                Some(RESTART_JOB),
+                "pending",
+                &["is-failed", "list-jobs"],
+            ),
+            (
+                false,
+                true,
+                false,
+                Some(RESTART_JOB),
+                "pending",
                 &["is-failed", "list-jobs"],
             ),
             (
@@ -482,7 +614,8 @@ esac\n";
             }
             let _ = std::fs::remove_file(dir.0.join("calls"));
 
-            let out = bash(&dir.0, "question.sh").unwrap_or_else(|| panic!("Case {n} failed"));
+            let out =
+                bash(&shell, &dir.0, "question.sh").unwrap_or_else(|| panic!("Case {n} failed"));
             assert_eq!(out, format!("{answer}\n"), "Case {n}");
             let recorded = std::fs::read_to_string(dir.0.join("calls")).unwrap_or_default();
             let recorded: Vec<&str> = recorded.lines().collect();

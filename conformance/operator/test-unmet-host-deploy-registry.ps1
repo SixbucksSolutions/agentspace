@@ -53,7 +53,8 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
   $registryIs = { param($Want, [string]$What) if (-not (Test-SameBytes (Get-FileBytesOrNull $fx.HostsFile) (Get-HostsBytes $Want))) { "hosts.json is not $What" } }
   # The calls a `deploy -Host` of a new stack that succeeds makes: the existence check, the deploy, the read
   # of the stack's output, then sync's start-and-wait of a running host launched long ago.
-  $fullCalls = @((Get-CallStack $stack), (Get-DeployCall $stack $createOverrides), (Get-CallStack $stack), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew))
+  # Then the patch wait's three Session Manager calls, which sync makes after its install (operator.md, The patch wait).
+  $fullCalls = @((Get-CallStack $stack), (Get-DeployCall $stack $createOverrides), (Get-CallStack $stack), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew)) + @(Get-PatchWaitCalls $idNew)
   function Set-FullFlow([string[]]$Records, $StackSteps) {
     Set-HostsRecords $Records
     Set-AwsScenario (Merge-Scenario (Get-HealthyAnswers -Id $script:IdNew) @{ "cloudformation describe-stacks $stack" = @($StackSteps) })
@@ -68,7 +69,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
   }
   Test-HostCase "${d}: step 5 removes the old instance ID from the record before it reads the stack, so the ID comes from the stack as the deploy left it, never from the record" @('deploy', '-Host', 'agentspace') @{
     Exit = 0
-    Calls = @((Get-CallStack $stack), (Get-DeployCall $stack), (Get-CallStack $stack), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew)); SshCalls = 'any'; ScpCalls = 'any'
+    Calls = @((Get-CallStack $stack), (Get-DeployCall $stack), (Get-CallStack $stack), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew)) + @(Get-PatchWaitCalls $idNew); SshCalls = 'any'; ScpCalls = 'any'
     Check = { param($run, $started)
       $c = @(Get-AwsCalls)
       if ($c.Count -ge 3) {
@@ -91,8 +92,8 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
       Check = { param($run, $started)
         $c = @(Get-AwsCalls)
         # The spec fixes SshPublicKey first and no order for the file's members (operator.md, Calls by command), so they compare as a set.
-        $wantCalls = @((Get-CallStack 'agentbox'), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew))
-        if ($c.Count -ne 4) { "The AWS CLI was called $($c.Count) times, not 4: the deploy, the read of the stack, and sync's two reads of the instance" }
+        $wantCalls = @((Get-CallStack 'agentbox'), (Get-CallDescribe $idNew), (Get-CallDescribe $idNew)) + @(Get-PatchWaitCalls $idNew)
+        if ($c.Count -ne 7) { "The AWS CLI was called $($c.Count) times, not 7: the deploy, the read of the stack, sync's two reads of the instance and its patch wait's three calls" }
         else {
           $da = @($c[0].a)
           $oi = [array]::IndexOf($da, '--parameter-overrides')
@@ -103,7 +104,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
             if ($ov[0] -cnotmatch '^SshPublicKey=') { 'The first override is not SshPublicKey=<the public key>' }
             if ((@($ov | Select-Object -Skip 1 | Sort-Object) -join '|') -cne ((@("SubnetId=$($fx.SubnetValue)", "VpcId=$($fx.VpcValue)") | Sort-Object) -join '|')) { 'The other overrides are not every member of the file, and nothing else' }
           }
-          for ($k = 0; $k -lt 3; $k++) { if (-not (Test-CallMatch $wantCalls[$k] @($c[$k + 1].a))) { "AWS CLI call $($k + 2) is not the one the box's deploy makes there" } }
+          for ($k = 0; $k -lt 6; $k++) { if (-not (Test-CallMatch $wantCalls[$k] @($c[$k + 1].a))) { "AWS CLI call $($k + 2) is not the one the box's deploy makes there" } }
         }
         if ($c.Count -ge 2) {
           if ((Get-RecordMember ([string]$c[0].hosts) 'swimcoach' 'instance_id') -cne $script:IdBox) { 'The box''s old instance ID was removed before cloudformation deploy had run' }

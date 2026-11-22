@@ -63,19 +63,37 @@ function Initialize-AllHome($H, $S, [hashtable]$Aws = @{ 'ec2 describe-instances
 }
 function Test-Same([string[]]$A, [string[]]$B) { $A.Count -eq $B.Count -and (($A -join [char]0) -ceq ($B -join [char]0)) }
 # The calls reduced to the host each one is for, consecutive repeats dropped: an AWS call by its
-# instance ID, an ssh or scp by its alias, and `go` not at all.
+# instance ID, an ssh or scp by its alias, and `go` not at all. The patch wait's calls name the instance
+# as Calls by command gives them: `--instance-ids <id>` for the send, `--filters Key=InstanceIds,Values=<id>`
+# for the describe and `--instance-id <id>` for the invocation.
 function Get-Blocks($Calls) {
   $out = [System.Collections.Generic.List[string]]::new()
   foreach ($c in $Calls) {
     $k = $null
-    if ($c['kind'] -eq 'aws') { $i = [Array]::IndexOf($c['a'], '--instance-ids'); if ($i -ge 0) { $k = 'id:' + $c['a'][$i + 1] } }
+    if ($c['kind'] -eq 'aws') {
+      $i = [Array]::IndexOf($c['a'], '--instance-ids')
+      if ($i -ge 0) { $k = 'id:' + $c['a'][$i + 1] }
+      else {
+        $i = [Array]::IndexOf($c['a'], '--instance-id')
+        if ($i -ge 0) { $k = 'id:' + $c['a'][$i + 1] }
+        else {
+          $i = [Array]::IndexOf($c['a'], '--filters')
+          if ($i -ge 0 -and [string]$c['a'][$i + 1] -cmatch '^Key=InstanceIds,Values=(.+)$') { $k = 'id:' + $Matches[1] }
+        }
+      }
+    }
     elseif ($c['kind'] -in 'ssh', 'scp') { $k = 'alias:' + $c['alias'] }
     if ($k -and ($out.Count -eq 0 -or $out[$out.Count - 1] -cne $k)) { $out.Add($k) }
   }
   , @($out)
 }
 function Get-HostLineIndexes($Lines) { @($hostLines | ForEach-Object { [Array]::IndexOf($Lines, $_) }) }
-$allBlocks = @("id:$($script:HpBoxId)", 'alias:agentspace', "id:$($script:HpIdA)", "alias:$aliasAlpha", "id:$($script:HpHostId)", "alias:$aliasDelta")
+# Each synced host: its start and wait's calls, its ssh and scp up to the install (row 4), its patch wait's
+# three calls (operator.md, The patch wait: after row 4, before row 5), then the rest of its ssh and scp.
+$allBlocks = @(
+  "id:$($script:HpBoxId)", 'alias:agentspace', "id:$($script:HpBoxId)", 'alias:agentspace',
+  "id:$($script:HpIdA)", "alias:$aliasAlpha", "id:$($script:HpIdA)", "alias:$aliasAlpha",
+  "id:$($script:HpHostId)", "alias:$aliasDelta", "id:$($script:HpHostId)", "alias:$aliasDelta")
 
 # ---- 1 and 2. A run that fails no host --------------------------------------------------------------------------
 Invoke-HpInHome -Name "${sec}: sync -All over five records" -NeedsLocalswim -Body {
@@ -100,8 +118,11 @@ Invoke-HpInHome -Name "${sec}: sync -All over five records" -NeedsLocalswim -Bod
 
   $p = New-HpProblems
   $blocks = Get-Blocks $calls
-  if (-not (Test-Same $blocks $allBlocks)) { $p.Add("The calls are not one block per synced host in the registry's order (the box, alpha, delta), with no call for beta or gamma: $($blocks -join ' ')") }
-  Write-HpProblems "${sec}: sync -All syncs only the ready hosts, each host's calls in one block through its own alias, each AWS call naming one instance, and no call for a creating or failed host (Every host at once; Calls by command)" $p
+  if (-not (Test-Same $blocks $allBlocks)) { $p.Add("The calls are not one part per synced host in the registry's order (the box, alpha, delta), each part its start and wait, its ssh and scp to the install, its patch wait and the rest of its ssh and scp, with no call for beta or gamma: $($blocks -join ' ')") }
+  foreach ($id in $script:HpBoxId, $script:HpIdA, $script:HpHostId) {
+    if (@($lines | Where-Object { $_ -ceq "Checking that $id has finished this boot's patch run..." }).Count -ne 1 -or @($lines | Where-Object { $_ -ceq "Patched: $id" }).Count -ne 1) { $p.Add('A synced host''s part does not print Checking that <id> has finished this boot''s patch run... and Patched: <id> once each'); break }
+  }
+  Write-HpProblems "${sec}: sync -All syncs only the ready hosts, each host's calls together in its part through its own alias, with its patch wait after the install, each AWS call naming one instance, and no call for a creating or failed host (Every host at once; The patch wait; Calls by command)" $p
 
   $p = New-HpProblems
   $goCalls = @($calls | Where-Object { $_['kind'] -eq 'go' })

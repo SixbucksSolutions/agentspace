@@ -694,6 +694,105 @@ fn a_refused_send_command_that_is_not_a_sign_in_failure_is_a_check_not_ready() {
     });
 }
 
+/// A check whose `ssm send-command` exited 0 with an answer that names no command, then
+/// `patched`: the wait goes on, with `Waiting for Session Manager...` as for a refused send, and
+/// no poll is made for the command that was never named.
+fn a_send_answer_is_not_ready(answer: &'static str) {
+    let rig = box_rig();
+    let checks = [Check::SendAnswers(answer), Check::Answer("patched")];
+    rig.script_checks(ID, &checks);
+    rig.run(|rig| {
+        let say = rig.say();
+        let clock = FakeClock::new();
+        rig.succeeded(rig.do_sync_clocked(&say, Target::Box, &clock), "sync");
+        let log = rig.log();
+        let want = expected(
+            rig,
+            Want::new()
+                .line(checking(ID))
+                .check(&checks[0])
+                .line(WAITING)
+                .check(&checks[1])
+                .line(patched(ID)),
+        );
+        rig.same_list(
+            "A send-command answer that is empty, not JSON or without `Command.CommandId` MUST be a check that was not ready, with the message `Waiting for Session Manager...`",
+            &wait_timeline(&log),
+            &want,
+        );
+        rig.check(
+            clock.check_pauses() == vec![FIVE],
+            "One check was not ready, and it was followed by a pause of 5 seconds",
+        );
+        rig.check(
+            say.warnings().is_empty(),
+            "A check that is not ready is no warning",
+        );
+    });
+}
+
+#[test]
+fn an_empty_send_command_answer_is_a_check_not_ready() {
+    a_send_answer_is_not_ready("");
+}
+
+#[test]
+fn a_send_command_answer_that_is_not_json_is_a_check_not_ready() {
+    a_send_answer_is_not_ready("this is not json");
+}
+
+#[test]
+fn a_send_command_answer_with_no_command_id_is_a_check_not_ready() {
+    a_send_answer_is_not_ready("{}");
+}
+
+#[test]
+fn a_send_command_answer_with_an_empty_command_is_a_check_not_ready() {
+    a_send_answer_is_not_ready("{\"Command\":{}}");
+}
+
+/// Twenty polls that each answer with `answer`, which names no `Status`, are a check that was not
+/// ready, with the patching message, and the wait goes on to `patched`.
+fn a_poll_answer_is_not_ready(answer: &'static str) {
+    let rig = box_rig();
+    let checks = [Check::PollAnswers(answer), Check::Answer("patched")];
+    rig.script_checks(ID, &checks);
+    rig.run(|rig| {
+        let say = rig.say();
+        let clock = FakeClock::new();
+        rig.succeeded(rig.do_sync_clocked(&say, Target::Box, &clock), "sync");
+        let want = expected(
+            rig,
+            Want::new()
+                .line(checking(ID))
+                .check(&checks[0])
+                .line(PATCHING)
+                .check(&checks[1])
+                .line(patched(ID)),
+        );
+        rig.same_list(
+            "An empty or not JSON poll answer MUST be polled again, and 20 of them are a check that was not ready",
+            &wait_timeline(&rig.log()),
+            &want,
+        );
+    });
+}
+
+#[test]
+fn an_empty_poll_answer_is_a_check_not_ready() {
+    a_poll_answer_is_not_ready("");
+}
+
+#[test]
+fn a_poll_answer_that_is_not_json_is_a_check_not_ready() {
+    a_poll_answer_is_not_ready("this is not json");
+}
+
+#[test]
+fn a_poll_answer_with_no_status_is_a_check_not_ready() {
+    a_poll_answer_is_not_ready("{}");
+}
+
 #[test]
 fn an_agent_with_an_empty_list_is_not_online() {
     let rig = box_rig();

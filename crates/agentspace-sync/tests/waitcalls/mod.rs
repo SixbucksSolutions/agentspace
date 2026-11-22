@@ -163,6 +163,12 @@ pub enum Check {
     SendFails,
     /// Online, and `ssm send-command` fails with the AWS sign-in's text (#0034).
     SendSignIn,
+    /// Online, and `ssm send-command` exits 0 with this raw output: empty, not JSON, or JSON with
+    /// no `Command.CommandId`.
+    SendAnswers(&'static str),
+    /// Online, a command sent, and each of the 20 polls exits 0 with this raw output: empty, not
+    /// JSON, or JSON with no `Status`.
+    PollAnswers(&'static str),
     /// `ssm describe-instance-information` fails, and not as a sign-in failure.
     DescribeFails,
     /// `ssm describe-instance-information` fails with the AWS sign-in's text (#0034).
@@ -218,6 +224,10 @@ impl Rig {
                     self.seq("aws", &send, 255, "", &format!("{SIGN_IN_TEXT}\\n"));
                     continue;
                 }
+                Check::SendAnswers(out) => {
+                    self.seq("aws", &send, 0, out, "");
+                    continue;
+                }
                 _ => self.seq("aws", &send, 0, &json_sent(), ""),
             }
             match check {
@@ -231,6 +241,11 @@ impl Rig {
                 Check::NoEnd => {
                     for _ in 0..20 {
                         self.seq("aws", &get, 0, &json_invocation("InProgress", None), "");
+                    }
+                }
+                Check::PollAnswers(out) => {
+                    for _ in 0..20 {
+                        self.seq("aws", &get, 0, out, "");
                     }
                 }
                 _ => {}
@@ -317,8 +332,8 @@ impl Want {
             Check::Offline | Check::EmptyList | Check::DescribeFails | Check::DescribeSignIn => {
                 vec![DESCRIBE]
             }
-            Check::SendFails | Check::SendSignIn => vec![DESCRIBE, SEND],
-            Check::NoEnd => {
+            Check::SendFails | Check::SendSignIn | Check::SendAnswers(_) => vec![DESCRIBE, SEND],
+            Check::NoEnd | Check::PollAnswers(_) => {
                 let mut v = vec![DESCRIBE, SEND];
                 v.extend(std::iter::repeat_n(GET, 20));
                 v

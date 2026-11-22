@@ -9,9 +9,10 @@
 //!   [`PATCH_COMMENT`], so Run Command's history tells `sync`'s questions from `up`'s.
 //! - **Only `patched` and `failed` end it**, each from an invocation that ended in `Success`.
 //!   Every other outcome is a check that was not ready: `pending`, `unknown`, an empty or
-//!   unexpected answer, an invocation that ended in another status, 20 polls without an end, and a
-//!   failed `ssm send-command` other than #0034's sign-in failure. It has none of the four
-//!   exceptions of `up`'s wait.
+//!   unexpected answer, an invocation that ended in another status, 20 polls without an end, a
+//!   failed `ssm send-command` other than #0034's sign-in failure, and a `send-command` answer that
+//!   is empty, is not JSON or has no `Command.CommandId`. It has none of the four exceptions of
+//!   `up`'s wait.
 //! - **A `failed` answer MUST NOT fail `sync`**: it ends the wait at once with one warning, and
 //!   `sync` goes on (P21).
 //! - **It fails at its 30-minute deadline**, with the host's alias in its `journalctl` hint, and
@@ -134,14 +135,13 @@ fn check(aws: &dyn Aws, clock: &dyn Clock, id: &str) -> Result<Check, Failure> {
         // read it `Online`.
         Err(_) => return Ok(Check::NotOnline),
     };
-    let command_id = sent
-        .pointer("/Command/CommandId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            step_failed(
-                "agentspace: Unexpected answer from ssm send-command: no Command.CommandId.",
-            )
-        })?;
+    // An empty answer, or one with no string `Command.CommandId`, is a check that was not ready,
+    // as a failed send is, with the same message (architect, 2026-11-22, for v0.08-T03): only
+    // #0034's sign-in failure ends this wait early. An answer that is not JSON reaches here as a
+    // failed call, handled above.
+    let Some(command_id) = sent.pointer("/Command/CommandId").and_then(Value::as_str) else {
+        return Ok(Check::NotOnline);
+    };
 
     for poll in 0..POLL_LIMIT {
         // The first poll is at once, and each pause of a second is between two polls.
@@ -461,6 +461,35 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_or_unexpected_poll_answer_is_polled_again() {
+        // An empty answer is `Null`, and one that is not JSON is a failed call.
+        let mut answers = vec![ping(Some("Online")), sent()];
+        for answer in [
+            Ok(Value::Null),
+            Ok(json!("Success")),
+            Ok(json!([])),
+            Ok(json!({"Status":5})),
+            Ok(json!({"Status":null,"StandardOutputContent":"failed"})),
+            Err(AwsError::Failed(
+                "Unexpected answer from ssm get-command-invocation: not JSON.".into(),
+            )),
+        ] {
+            answers.push(("get-command-invocation", answer));
+        }
+        answers.push(invocation("Success", "patched"));
+        let aws = Script::new(answers);
+        let f = fake();
+        assert_eq!(
+            wait(&aws, &f, &f, ID, "agentspace").unwrap(),
+            PatchOutcome::Patched
+        );
+        assert_eq!(*f.lines.borrow(), vec![checking(), patched()]);
+        assert!(aws.answers.borrow().is_empty());
+        // Six pauses of a second, between seven polls of one check.
+        assert_eq!(f.now.get(), Duration::from_secs(6));
+    }
+
+    #[test]
     fn a_wait_through_a_reboot_prints_each_phase_again_when_it_changes() {
         let mut answers = vec![
             ping(Some("Online")),
@@ -533,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_with_a_missing_member_fails() {
+    fn a_describe_answer_with_a_missing_member_fails() {
         for (answers, message) in [
             (
                 vec![("describe-instance-information", Ok(json!({})))],
@@ -546,19 +575,84 @@ mod tests {
                 )],
                 "agentspace: Unexpected answer from ssm describe-instance-information: no InstanceInformationList[0].PingStatus.",
             ),
-            (
-                vec![
-                    ping(Some("Online")),
-                    ("send-command", Ok(json!({"Command":{}}))),
-                ],
-                "agentspace: Unexpected answer from ssm send-command: no Command.CommandId.",
-            ),
         ] {
             let aws = Script::new(answers);
             let f = fake();
             assert_eq!(
                 wait(&aws, &f, &f, ID, "agentspace").unwrap_err().message,
                 message
+            );
+        }
+    }
+
+    #[test]
+    fn a_send_command_answer_that_is_empty_or_unexpected_is_not_ready() {
+        // The runner gives an empty answer as `Null`, and an answer that is not JSON as a failed
+        // call (operator.md, AWS failures); the rest are JSON with no string `Command.CommandId`.
+        let unexpected = [
+            Ok(Value::Null),
+            Ok(json!({})),
+            Ok(json!({"Command":{}})),
+            Ok(json!({"Command":null})),
+            Ok(json!({"Command":{"CommandId":7}})),
+            Ok(json!({"Command":{"CommandId":null}})),
+            Ok(json!("c-0123")),
+            Ok(json!([])),
+            Err(AwsError::Failed(
+                "Unexpected answer from ssm send-command: not JSON.".into(),
+            )),
+        ];
+        for answer in unexpected {
+            let shown = format!("{answer:?}");
+            let mut answers = vec![ping(Some("Online")), ("send-command", answer)];
+            answers.extend(asked(invocation("Success", "patched")));
+            let aws = Script::new(answers);
+            let f = fake();
+            assert_eq!(
+                wait(&aws, &f, &f, ID, "agentspace").unwrap(),
+                PatchOutcome::Patched,
+                "{shown}"
+            );
+            // The same message as for a failed send, then the next check.
+            assert_eq!(
+                *f.lines.borrow(),
+                vec![
+                    checking(),
+                    WAITING_FOR_SESSION_MANAGER.to_string(),
+                    patched()
+                ],
+                "{shown}"
+            );
+            assert!(aws.answers.borrow().is_empty(), "{shown}");
+            assert_eq!(f.now.get(), CHECK_INTERVAL, "{shown}");
+            // No poll was made for a command that was never named.
+            assert_eq!(
+                aws.calls
+                    .borrow()
+                    .iter()
+                    .filter(|c| c.starts_with("ssm get-command-invocation"))
+                    .count(),
+                1,
+                "{shown}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_sign_in_failure_ends_the_wait_early_at_send_command() {
+        // Every other failed send, whatever its text, is a check that was not ready.
+        for error in [
+            AwsError::Failed("InvalidInstanceId: not in a valid state".into()),
+            AwsError::Failed(String::new()),
+            AwsError::CannotRun("agentspace: Could not run aws.".into()),
+        ] {
+            let mut answers = vec![ping(Some("Online")), ("send-command", Err(error))];
+            answers.extend(asked(invocation("Success", "patched")));
+            let aws = Script::new(answers);
+            let f = fake();
+            assert_eq!(
+                wait(&aws, &f, &f, ID, "agentspace").unwrap(),
+                PatchOutcome::Patched
             );
         }
     }

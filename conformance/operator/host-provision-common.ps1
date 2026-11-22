@@ -16,6 +16,8 @@
 #     last one repeating, and ssh, scp and go by rules. A rule MAY make the stand-in stop at a named
 #     hook until the check releases it, so that a check can change the throwaway home at a given point
 #     of a run.
+#     The three `ssm` calls of a finished patch check have default answers, `Online`, a command ID of
+#     zeros and `patched` (docs/operator.md, The patch wait), which a scenario's own key replaces.
 #   - A box that answers the token push as docs/operator.md, "What the box does", says.
 #   - Seeding of the throwaway home (the host registry, the project list, the stack parameters, the
 #     public key, a fake localswim receipt and credential), reading of the registry and the log, and
@@ -128,6 +130,17 @@ if ($kind -eq 'aws') {
   $steps = $null
   if ($cfg.ContainsKey('aws') -and $cfg['aws'].ContainsKey($key)) { $steps = @($cfg['aws'][$key]) }
   if ($steps -and $steps.Count -gt 0) { $step = $steps[[Math]::Min($same, $steps.Count - 1)] }
+  # The default answers of the three Session Manager calls of a patch check that has finished (docs/operator.md,
+  # Calls by command; The patch wait). A case that gives a key of its own for one of them keeps its answer.
+  if ($null -eq $step) {
+    $default = switch ($key) {
+      'ssm describe-instance-information' { '{"InstanceInformationList":[{"PingStatus":"Online"}]}' }
+      'ssm send-command' { '{"Command":{"CommandId":"00000000-0000-0000-0000-000000000000"}}' }
+      'ssm get-command-invocation' { '{"Status":"Success","StandardOutputContent":"patched\n"}' }
+      default { $null }
+    }
+    if ($null -ne $default) { $step = @{ out = $default; code = 0 } }
+  }
 } elseif ($kind -eq 'go') {
   $step = if ($cfg.ContainsKey('go')) { $cfg['go'] } else { @{} }
 } else {
@@ -546,6 +559,40 @@ function Get-HpBootstrapRule { @{ kind = 'ssh'; class = 'bootstrap'; out = "boot
 # The names of every call in order, with an ssh as ssh:<class>.
 function Get-HpSequence($Calls) {
   @($Calls | ForEach-Object { if ($_['kind'] -eq 'ssh') { 'ssh:' + $_['class'] } else { Get-HpCallName $_ } })
+}
+# The AWS calls of `sync`'s patch wait for the host whose instance is $Id, as the argument lists the stand-in
+# logs, in the order of docs/operator.md, Calls by command, and The patch wait: one `ssm
+# describe-instance-information`, one `ssm send-command` with the comment `agentspace sync: patch check`, and
+# one `ssm get-command-invocation` of the command the send answered, which with the stand-in's default
+# answers is the command ID of zeros. The send's question is the box's own wording, so its value is `commands=`
+# and then anything.
+$script:HpPatchWaitCommandId = '00000000-0000-0000-0000-000000000000'
+$script:HpPatchWaitSequence = @('aws ssm describe-instance-information', 'aws ssm send-command', 'aws ssm get-command-invocation')
+function Get-HpPatchWaitCalls([string]$Id) {
+  $calls = [System.Collections.Generic.List[object]]::new()
+  $calls.Add([string[]]@('ssm', 'describe-instance-information', '--region', 'us-west-2', '--output', 'json', '--filters', "Key=InstanceIds,Values=$Id"))
+  $calls.Add([string[]]@('ssm', 'send-command', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $Id, '--document-name', 'AWS-RunShellScript', '--comment', 'agentspace sync: patch check', '--parameters', 're:^commands='))
+  $calls.Add([string[]]@('ssm', 'get-command-invocation', '--region', 'us-west-2', '--output', 'json', '--command-id', $script:HpPatchWaitCommandId, '--instance-id', $Id))
+  $calls.ToArray()
+}
+# Problems found in the `ssm` calls among $Calls (a run's calls) for a run whose `sync` waited once, for the host
+# whose instance is $Id, and whose host answered the stand-in's defaults at once: none means exactly the three
+# calls of Get-HpPatchWaitCalls, in that order.
+function Get-HpPatchWaitProblems($Calls, [string]$Id) {
+  $problems = [System.Collections.Generic.List[string]]::new()
+  $ssm = @($Calls | Where-Object { $_['kind'] -eq 'aws' -and $_['a'][0] -ceq 'ssm' })
+  $want = @(Get-HpPatchWaitCalls $Id)
+  if ($ssm.Count -ne 3) { $problems.Add("There were $($ssm.Count) ssm calls, not the patch wait's 3"); return $problems.ToArray() }
+  for ($i = 0; $i -lt 3; $i++) {
+    $got = @($ssm[$i]['a'])
+    $w = @($want[$i])
+    $ok = $got.Count -eq $w.Count
+    for ($j = 0; $ok -and $j -lt $w.Count; $j++) {
+      if ($w[$j].StartsWith('re:')) { if ($got[$j] -cnotmatch $w[$j].Substring(3)) { $ok = $false } } elseif ($got[$j] -cne $w[$j]) { $ok = $false }
+    }
+    if (-not $ok) { $problems.Add("The patch wait's ssm call $($i + 1) is not '$(($w -join ' ') -replace 're:\^commands=', 'commands=<question>')'") }
+  }
+  $problems.ToArray()
 }
 # A time in the log's or the registry's form, as a DateTime in UTC, or $null.
 function ConvertFrom-HpTime([string]$Text) {
