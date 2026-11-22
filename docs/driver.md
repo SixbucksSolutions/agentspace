@@ -1380,10 +1380,18 @@ release's line therefore says `1 could not be ended` for it
   opened and checked to have been created no later than the process below it, as the trees below
   are checked. **A process on that walk that cannot be checked**, because it cannot be opened or
   its creation time cannot be read, **is treated as an ancestor**, and the walk stops there.
-- **A spared ancestor's tree is left whole: a descendant of it MUST NOT be ended** (architect,
-  2026-11-21, for v0.08-T01, pin P23). So the release's own process, and any process beside it
-  under that ancestor, are never ended, nor is a client inside that tree, which is not counted on
-  its own ([Each with its tree](#each-with-its-tree)).
+- **A spared client's tree is left whole: a descendant of it MUST NOT be ended** (architect,
+  2026-11-21, for v0.08-T01, pin P23). A spared client is a client that is the release's own
+  process or one of its ancestors, and only such a client's tree is spared: an ancestor that is
+  not a client, such as the desktop app or the shell, spares nothing, so the desktop app's own ssh
+  clients are still ended (architect, 2026-11-22, for v0.08-T02, #0174 Q1). So the release's own
+  process, and any process beside it under a spared client, are never ended, nor is a client
+  inside that tree, which is not counted on its own ([Each with its tree](#each-with-its-tree)).
+- **A client whose tree holds the release's own process or a spared client is spared too**
+  (architect, 2026-11-22, for v0.08-T02, #0174 Q2): it is an ancestor that the walk up could not
+  reach, and is counted once as a client that could not be ended. **An ancestor's process ID that
+  no process holds ends the walk up there**, and that ID is spared nowhere, so a client that later
+  reuses it is not taken for an ancestor.
 
 **The alias is compared whole, without regard to ASCII case** (architect, 2026-11-21, for
 v0.08-T01). Whole: a longer or shorter text never matches, so `agentspace-foo-1234abcd` matches
