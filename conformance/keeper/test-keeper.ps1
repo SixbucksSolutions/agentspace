@@ -761,8 +761,10 @@ try {
       $code = Wait-Watch $p 240
     } finally { Remove-Item Env:\AGENTSPACE_TEST_SECRET_TOKEN -ErrorAction SilentlyContinue }
     Write-Result ($code -eq 0) 'Watch secrets: The loop ends on its own with exit 0' "The exit code was $code."
-    $log = Read-LogLines
-    Write-Result ($log.Count -ge 2) "Watch secrets: The log has lines to check (got $($log.Count))"
+    # Every line is scanned for content, the guard's included, and none is read by position.
+    $log = Read-LogLines -IncludeGuard
+    $passLines = @(Remove-GuardLines $log)
+    Write-Result ($passLines.Count -ge 2) "Watch secrets: The log has lines to check (got $($passLines.Count))"
     $text = $log -join "`n"
     Write-Result (-not $text.Contains($sentinel)) 'Watch secrets: A token in the environment is not logged'
     Write-Result ($text -cnotmatch '-----BEGIN') 'Watch secrets: No private key block'

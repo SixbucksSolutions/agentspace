@@ -324,7 +324,23 @@ function Read-Record {
   try { Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable -DateKind String } catch { $null }
 }
 
-function Read-LogLines {
+# True when the line is one the keeper writes for the start of its guard (keeper.md, "The keeper's lines
+# for it"; pin P18): "<time> guard started pid=<pid>", or the "failed" line whose reason starts "The guard
+# could not be started:". They are the keeper's own lines and belong to no pass, no wait and no holder.
+function Test-GuardLine([string]$Line) {
+  $Line -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ guard started pid=(\d+|-)\z' -or
+    $Line -cmatch '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ failed lease=- alias=- pid=- reason=The guard could not be started: '
+}
+
+# The lines without the guard's. "A case MUST NOT assume a keeper's first line is a pass's" (keeper.md,
+# "Conformance cases for the guard's start"): a guard line MUST NOT count as a pass's line, a timed line, a
+# wait line or a pass boundary. Where a case counts lines or reads one by position, it MUST read through
+# this filter, which Read-LogLines applies unless it is given -IncludeGuard.
+function Remove-GuardLines($Lines) { @($Lines | Where-Object { -not (Test-GuardLine $_) }) }
+
+# The lines of board-holder.log, without the guard's. A case that reads the guard's own lines, or that
+# scans every line for content and not by position, passes -IncludeGuard.
+function Read-LogLines([switch]$IncludeGuard) {
   $p = Join-Path $env:AGENTSPACE_STATE_DIR 'board-holder.log'
   if (-not (Test-Path -LiteralPath $p)) { return , @() }
   try {
@@ -333,6 +349,7 @@ function Read-LogLines {
     try { $text = [IO.StreamReader]::new($fs, [Text.UTF8Encoding]::new($false)).ReadToEnd() } finally { $fs.Dispose() }
     $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
     Register-LogLines $lines
+    if (-not $IncludeGuard) { $lines = @(Remove-GuardLines $lines) }
     , $lines
   } catch { , @() }
 }
