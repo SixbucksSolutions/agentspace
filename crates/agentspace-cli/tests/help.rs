@@ -274,6 +274,34 @@ fn help_is_not_a_request_when_it_only_looks_like_one() {
 }
 
 #[test]
+fn lease_release_help_says_it_ends_connections_and_is_the_docs_block_byte_for_byte() {
+    // docs/lease-api.md, "agentspace lease release": from v0.08 the release ends this computer's ssh
+    // connections to the lease (D59, #0064). The lines are spot-checked first, so that the block
+    // read from the doc is known to be the release's and not another level's, and the old line that
+    // said open connections were not closed is known to be gone.
+    let blocks = help_blocks();
+    let block = &blocks["agentspace lease release"];
+    for line in [
+        "Ends this computer's ssh connections to the lease, then deletes the lease's local key,\n",
+        "certificate and host alias. A pending lease has no connections to end.\n",
+        "Connections made from other computers are not ended.\n",
+        "Releasing a released or unsatisfiable lease again keeps its record and exits 0.\n",
+    ] {
+        assert!(block.contains(line), "The doc's block lacks a line");
+    }
+    assert!(
+        !block.contains("Connections already open are not closed."),
+        "The doc's block still says open connections are not closed"
+    );
+    for flag in ["-h", "--help"] {
+        let run = run_str(&["lease", "release", flag]);
+        let problems = help_problems(&run, "agentspace lease release");
+        assert!(problems.is_empty(), "lease release {flag}: {problems:?}");
+        assert_eq!(run.stdout, block.as_bytes());
+    }
+}
+
+#[test]
 fn help_prints_lf_line_endings_only() {
     for (level, words) in LEVELS {
         let mut line: Vec<&str> = words.to_vec();

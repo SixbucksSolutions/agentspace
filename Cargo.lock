@@ -81,9 +81,11 @@ version = "0.5.0"
 dependencies = [
  "agentspace-alias",
  "agentspace-ca",
+ "agentspace-connections",
  "agentspace-credential",
  "agentspace-detach",
  "agentspace-driver-api",
+ "agentspace-driver-ec2",
  "agentspace-hosts",
  "agentspace-operator-api",
  "agentspace-state",

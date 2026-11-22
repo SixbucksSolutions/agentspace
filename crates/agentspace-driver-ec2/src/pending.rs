@@ -75,7 +75,7 @@ fn place_one(
         id: &record.id,
         project: &record.project,
     };
-    ops::release(ctx, &lease)?;
+    ops::remove_files(ctx, &lease)?;
     let ttl_seconds = u32::try_from(record.ttl_seconds)
         .ok()
         .filter(|t| (60..=86_400).contains(t))
@@ -172,7 +172,7 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
                         // The lease stays `pending`, so its files go as release removes them; what
                         // cannot be removed is named, and goes with the next placement's leftovers
                         // or the lease's release.
-                        let left = ops::release(ctx, &LeaseRef { id: &id, project })
+                        let left = ops::remove_files(ctx, &LeaseRef { id: &id, project })
                             .err()
                             .map(|f| f.leftovers)
                             .unwrap_or_default();

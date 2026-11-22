@@ -106,11 +106,12 @@ Exit 4 means the lease is not ready; the error names its state.
 pub const RELEASE: &str = r##"Usage: agentspace lease release <id>
 
 Gives a lease back, and prints it as JSON.
-Deletes the lease's local key, certificate and host alias.
+Ends this computer's ssh connections to the lease, then deletes the lease's local key,
+certificate and host alias. A pending lease has no connections to end.
 No certificate is revoked. Each stays valid until its own expiry.
 An older certificate's expiry is later than the lease's if a renew shortened it.
-Connections already open are not closed.
-Releasing a released or unsatisfiable lease changes nothing and exits 0.
+Connections made from other computers are not ended.
+Releasing a released or unsatisfiable lease again keeps its record and exits 0.
 
 Arguments:
   <id>        The lease ID, a UUIDv4 in any case

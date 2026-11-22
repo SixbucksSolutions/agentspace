@@ -118,14 +118,39 @@ fn release_needs_no_ca() {
 }
 
 #[test]
-fn a_second_release_succeeds_and_changes_nothing() {
+fn a_second_release_succeeds_and_changes_nothing_but_the_release_log() {
     let fx = Fx::with_ca();
     fx.place_ready(600);
     fx.driver().release(&fx.ctx, &fx.lease()).unwrap();
-    let before = fx.snapshot();
+    let mut before = fx.snapshot();
     fx.driver().release(&fx.ctx, &fx.lease()).unwrap();
     fx.driver().check_release(&fx.ctx, &fx.lease()).unwrap();
-    assert_eq!(fx.snapshot(), before);
+    let mut after = fx.snapshot();
+
+    // Every release appends one line to release.log (driver.md, "Where the count is logged"), and
+    // the check step none: the log is the only file that changes.
+    let log = fx
+        .ctx
+        .state_dir
+        .join("release.log")
+        .strip_prefix(&fx.root)
+        .unwrap()
+        .display()
+        .to_string();
+    let lines = |s: &Snapshot| -> usize {
+        s.get(&log)
+            .and_then(|b| b.as_ref())
+            .map_or(0, |b| b.iter().filter(|c| **c == b'\n').count())
+    };
+    assert_eq!(lines(&before), 1, "The first release's line");
+    assert_eq!(
+        lines(&after),
+        2,
+        "The second release's line, and none from the check"
+    );
+    before.remove(&log);
+    after.remove(&log);
+    assert_eq!(after, before);
 }
 
 #[test]

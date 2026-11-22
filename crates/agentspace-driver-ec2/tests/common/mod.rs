@@ -217,8 +217,12 @@ impl Fx {
         Fx::build(true, false, ext)
     }
 
+    /// The driver, whose release walks for clients only inside a folder of the throwaway root that
+    /// holds nothing, so that no test that releases a lease can end a real process (driver.md,
+    /// "How it is checked"). A test that needs a stand-in client builds its own driver over the
+    /// folder of its stand-ins.
     pub fn driver(&self) -> Ec2Driver {
-        Ec2Driver::new()
+        Ec2Driver::new().with_walk_under(self.root.join("no clients"))
     }
     pub fn lease(&self) -> LeaseRef<'static> {
         LeaseRef {
