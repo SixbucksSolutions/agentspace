@@ -44,6 +44,7 @@ of the change.
   [times](#times), [input tolerance](#input-tolerance), [command lines](#command-lines),
   [concurrency and atomicity](#concurrency-and-atomicity)
 - [The lease](#the-lease): [fields](#fields), [states](#states),
+  [a host's life follows its leases](#a-hosts-life-follows-its-leases),
   [the credential](#the-credential)
 - [Values](#values)
 - [Profiles](#profiles)
@@ -113,10 +114,11 @@ of the change.
     stdout still fails there.
   - **A change the command already recorded stays recorded.** A `create`, `renew` or `release`
     whose record was written before its document failed to reach stdout has made its change, and
-    is not undone, which is the one exception to [Concurrency and atomicity](#concurrency-and-atomicity)'s
-    rule for a failed command. Its message MUST say that the change was made and that `get` or
-    `list` shows it, as in `agentspace lease create failed: The lease was recorded, but its
-    document could not be written. Run 'agentspace lease list' to see it.`
+    is not undone, which is an exception to
+    [Concurrency and atomicity](#concurrency-and-atomicity)'s rule for a failed command, as the
+    connections a failed `release` ended are. Its message MUST say that the change was made and
+    that `get` or `list` shows it, as in `agentspace lease create failed: The lease was
+    recorded, but its document could not be written. Run 'agentspace lease list' to see it.`
 - **Members appear in the order this page lists them**, but a caller MUST NOT depend on the order.
 - **A string MAY use any escape that JSON allows**, and MUST escape what JSON requires. A caller
   MUST compare parsed values, never bytes.
@@ -283,6 +285,8 @@ covers form only:
     alias gone (#0041).** It leaves the lease as it was, or `released` with some of the three left
     behind. A retried `release` MUST then delete whatever is left
     ([`release`](#agentspace-lease-release)).
+  - **The connections a failed `release` already ended stay ended.** They cannot be restored, and
+    are a change of a failed command that is not undone (architect, 2026-11-21, for v0.08-T01).
 
 ## The lease
 
@@ -408,9 +412,16 @@ runs at or after its `expires_at`, to the second. Nothing has to run at that mom
 `renew` and `release` each decide it when they read the lease, so the same lease can be `ready` in
 one call and `expired` in the next with nothing in between. An `expired` lease has no `ssh`.
 
-**What expiry and release do not do:**
-- **A connection that is already open MUST NOT be closed by expiry or release.** The expiry is
-  checked only when a connection is made, so both stop new connections only.
+**What expiry and release do, and do not do, to a connection:**
+- **Expiry MUST NOT close a connection that is already open.** The expiry is checked only when a
+  connection is made, so it stops new connections only. A connection open past `expires_at` stays
+  open until it ends or its host's compute stops
+  ([A host's life follows its leases](#a-hosts-life-follows-its-leases)).
+- **`release` ends the lease's connections on the caller's machine, as
+  [`release`](#agentspace-lease-release) says (D59; architect, 2026-11-21, for v0.08-T01).** A
+  connection made from another machine is not ended by it.
+- **Today every client of a lease is on the caller's machine** (D59), so every connection of a
+  lease is one that `release` looks for.
 - **Neither `release` nor `renew` revokes a certificate (D10).** `release` deletes the caller's
   copy, and `renew` replaces it. A copy of any certificate that leaked stays valid until its own
   expiry. That is `expires_at` for the current certificate, and for an older one it MAY be later
@@ -423,6 +434,40 @@ forgotten, and `get` then answers `not_found`. In v0 no lease is forgotten.
 **Where leases are kept:** in v0, on the caller's machine, so `get` and `list` see the leases
 created there and no others. The files are [docs/state.md](state.md)'s, and
 [`AGENTSPACE_STATE_DIR`](#environment) moves them.
+
+### A host's life follows its leases
+
+**From agentspace's v0.08 release (#0048), a project's compute is not stopped for want of a lease
+while the project holds a live lease, and is stopped a short grace after its last live lease ends
+(D56; architect, 2026-11-21, for v0.08-T01, S03 marks).** What a caller sees of it:
+- **A live lease is one that is `pending` or `ready`** when it is read, with expiry decided as
+  [States](#states) says. A lease that is `expired`, `released` or `unsatisfiable` is not live.
+  The three words this section uses, live lease, a lease's end and the lease horizon, are defined
+  in [docs/state.md](state.md#live-leases-and-the-lease-horizon) (architect, 2026-11-21, for
+  v0.08-T01, S03 marks).
+- **A lease's end is its release or its expiry**, whichever comes first.
+- **A live lease does not promise running compute.** While one is live, the project's compute is
+  not stopped for want of a lease, but it MAY still stop when it is idle, and the next connection
+  starts it again: `ready` means a connection is expected to succeed, not that compute is running
+  ([States](#states)). That is why the first connection after a quiet spell MAY take a few
+  minutes.
+- **A quiet live lease MAY cost compute**, with no connection open, until it ends or its compute
+  stops idle. A lease that is no longer needed therefore SHOULD be released (architect,
+  2026-11-21, for v0.08-T01, pin P23).
+- **The grace is 15 minutes, fixed.** While agentspace's guard runs on the caller's machine, a
+  project's compute is stopped within 25 minutes of the end of its last live lease: the grace, and
+  up to 10 minutes for the stop to be noticed and done (D56). It is stopped whatever is running on
+  it, and whether or not a connection is open. How compute is bounded when the guard does not run,
+  how the stop is done, and what keeps it from stopping compute that is being made, are the
+  operator's ([docs/operator.md](operator.md)), never a command of this CLI.
+- **Nothing renews a lease on its own (D56).** A lease ends at its `expires_at` unless its holder
+  renews it ([`renew`](#agentspace-lease-renew)), and its compute is stopped a grace later. The
+  holder of a lease it still uses SHOULD renew it before `expires_at`, and SHOULD choose a TTL
+  that covers the work it expects (architect, 2026-11-21, for v0.08-T01, pin P23).
+- **No output, field, state or error changes for this.** It is a promise about when compute runs,
+  never a field of a lease, and the lease's documents say nothing of it.
+- **No stand-in can show a host stop**, so this section has no conformance case. The live checks
+  of D62 show it (E0.08-T06).
 
 ### The credential
 
@@ -966,26 +1011,72 @@ agentspace lease release <id>
 
 | State before | What `release` does | State after |
 |---|---|---|
-| `ready` | Deletes the key, certificate and alias, drops `ssh`, keeps `expires_at`, and sets `released_at` | `released` |
+| `ready` | First ends the lease's connections on the caller's machine; then deletes the alias, ends any connection that came back through it meanwhile, and deletes the key and certificate; drops `ssh`, keeps `expires_at`, and sets `released_at` | `released` |
 | `expired` | The same | `released` |
-| `pending` | Gives up the request, and sets `released_at`; the lease has no `expires_at` | `released` |
-| `released` | Deletes whatever is left of the lease's key, certificate and alias, and changes nothing else; prints the lease with its first `released_at` | `released` |
+| `pending` | Gives up the request, and sets `released_at`; the lease has no `expires_at`. It ends no connection, since a `pending` lease has no alias to connect through | `released` |
+| `released` | Ends any connection of the lease that remains on the caller's machine, then deletes whatever is left of the lease's key, certificate and alias, looking for connections again once the alias is gone as for `ready`, and changes nothing else; prints the lease with its first `released_at` | `released` |
 | `unsatisfiable` | Nothing; prints the lease unchanged | `unsatisfiable` |
+
+**`release` ends the lease's connections on the caller's machine, before it removes the lease's
+credential (D59; architect, 2026-11-21, for v0.08-T01).** The mechanism is
+[docs/driver.md's release](driver.md#release-a-lease), and this page defines only what a caller
+sees:
+- **A lease's connections are every ssh client on the caller's machine that reaches the lease
+  through its host alias**, whichever program started it, as the user that runs `release`, and the
+  process that carries its traffic to the host for it. A client of another lease's alias, or of no
+  lease's, MUST NOT be ended.
+- **They are ended first**, before the alias, the key or the certificate is deleted, so that a
+  release reaches every connection the alias had before its credential goes (architect,
+  2026-11-21, for v0.08-T01, pin P23). A `release` that fails after ending them has still ended
+  them: an ended connection is not restored, which is a change of a failed `release` that
+  [Concurrency and atomicity](#concurrency-and-atomicity) does not undo.
+- **They are looked for again once the alias is deleted, and any found is ended** (D59's change
+  for v0.08-T01; architect, 2026-11-21, for v0.08-T01, pin P23). The reason is a window the first
+  search alone would leave: a client that reconnects by itself, as the desktop app's can, can come
+  back through the alias between its end and the alias's deletion, up to the first search's 10
+  seconds, while the credential still exists. The second search ends any client that came back
+  that way, and after it none can, since the alias is gone. Each search is bounded at 10 seconds
+  of its own ([docs/driver.md, The order of a release](driver.md#the-order-of-a-release)).
+- **Ending a connection is best effort** (architect, 2026-11-21, for v0.08-T01): a connection that
+  cannot be ended MUST NOT make `release` fail, change its document, or change its exit code, and
+  `release` goes on to remove the credential. While agentspace's guard runs on the caller's
+  machine, a connection missed costs at most the grace of running time, because compute is
+  stopped whatever it holds ([A host's life follows its leases](#a-hosts-life-follows-its-leases),
+  D59).
+- **`release` MUST NOT make a call to the lease's host**, and works when the host is stopped. The
+  host's end of each ended connection is dropped by the host on its own, within about 90 seconds
+  on today's hosts (D59).
+- **The number of connections ended is in no output** (architect, 2026-11-21, for v0.08-T01). It
+  is logged, in `release.log` in the lease CLI's state folder, which
+  [`AGENTSPACE_STATE_DIR`](#environment) moves ([docs/state.md](state.md#the-release-log)). What
+  the log holds, and when it is written, are
+  [docs/driver.md's](driver.md#where-the-count-is-logged). A release that cannot write it is not
+  failed by it.
+- **A repeated `release` ends what remains** (architect, 2026-11-21, for v0.08-T01): each `release`
+  of a `ready`, `expired` or `released` lease looks for the lease's connections again, so a
+  connection that appeared after an earlier one is ended by the next. A `pending` lease's release
+  ends nothing, as the table says.
 
 - **Release is idempotent:** releasing a lease again succeeds and prints the same lease, so a
   caller MAY retry it freely.
-  - **The help's "Releasing a released or unsatisfiable lease changes nothing" means that its
-    record does not change** (architect, 2026-11-19, gap FB-03). The table above binds: a second
-    `release` of a `released` lease still deletes what a failed one left. The help text stays as
-    it is, since the conformance suite compares it with this page byte for byte.
+  - **The help's "Releasing a released or unsatisfiable lease again keeps its record" means that
+    the record does not change** (architect, 2026-11-19, gap FB-03; reworded in v0.08-T01, since
+    a second `release` now ends connections too). The table above binds: a second `release` of a
+    `released` lease still deletes what a failed one left, and ends a connection of its alias that
+    remains.
   - Note on where this came from: the prototype's `release` of a `released` lease touches no
     files. It never needs to, because it deletes the files before it records `released`; that
     order is #0041's defect, and the rule above is what lets an implementation record first.
 - **Release does not revoke any certificate (D10).** A leaked copy of the current certificate works
   until `expires_at`, which a released lease still shows when it had one. A leaked copy of an older
   certificate works until its own expiry, which MAY be later if a `renew` shortened the lease.
-  Connections already open are not closed.
+  A connection made with a certificate is ended by `release` only when it is one of the lease's
+  connections on the caller's machine, as above.
 - **Release needs no CA,** and works on a machine whose CA is missing.
+- **Contract v0's release document, its schemas and its reason codes are unchanged.** `release`
+  prints the same lease document as before, with the same fields, exit codes and errors, whether
+  it ended no connection or many. Its new effect is on the connections on the caller's machine
+  alone, and is [not a new contract version](#versioning).
 - **An ID that names no lease is `not_found` (exit 3)**, not a success: there is no lease document
   to print, and success would hide a mistyped ID.
 - **A caller retrying `release` MAY treat exit 3 as nothing left to release.** A lease is kept for at
@@ -1014,17 +1105,46 @@ agentspace lease release <id>
 | `not_found` | `lease_id` | No kept lease has that ID. |
 | `internal` | None | The credential or alias could not be deleted, or the lease records could not be read, written or locked. |
 
+**Conformance cases for E0.08-T04-S02 (architect, 2026-11-21, for v0.08-T01).** Each behavior
+that `release` gained is a case, run in a throwaway home with a throwaway alias of the case's own
+lease and a stand-in client of that alias that the case started. A case MUST NOT end, count, list
+or read any other client on the machine it runs on. The cases are
+[docs/driver.md's](driver.md#conformance-cases-for-v008), by their numbers there:
+- **A `ready` lease's release ends its connection** (R1). The stand-in client is gone after the
+  release, and the lease is `released` with the document of a release that ended nothing.
+- **An `expired` lease's release does the same** (R14).
+- **A client of another lease's alias is left running**, and so is one of no lease's (R4).
+- **A `pending` lease's release ends no connection of a caller's**, and a stand-in client of
+  another lease's alias is left running (R9).
+- **A repeated release of a `released` lease ends a client of its alias that remains** (R8).
+- **A client that comes back through the alias while the release ends the first is gone after the
+  release** (R15; architect, 2026-11-21, for v0.08-T01, pins P23 and P26). The case assumes no
+  timing: its stand-in starts exactly one new matching client once its first is ended, and the case
+  asserts that no matching client is left and that the logged count is at least 2, never which
+  walk ended the second client. The second walk itself is proved by E0.08-T03-S04 (#0180)'s crate
+  test ([docs/driver.md, How it is checked](driver.md#how-it-is-checked)).
+- **A connection that cannot be ended does not fail the release** (R7): the document and exit
+  code are those of a release that ended nothing, and the credential is deleted. A connection that
+  cannot be ended is counted once in the release's log line, though both of its searches find it
+  (architect, 2026-11-21, for v0.08-T01, pin P26).
+- **A release whose log cannot be written succeeds as usual** (R11).
+- **A release with no connection to end changes nothing in the document or the exit code** (R12).
+  Every document a case prints validates against
+  [`lease.output.schema.json`](../schemas/lease.output.schema.json).
+- **The help above is checked byte for byte**, as every help is ([Commands](#commands)).
+
 **Help:**
 
 ```
 Usage: agentspace lease release <id>
 
 Gives a lease back, and prints it as JSON.
-Deletes the lease's local key, certificate and host alias.
+Ends this computer's ssh connections to the lease, then deletes the lease's local key,
+certificate and host alias. A pending lease has no connections to end.
 No certificate is revoked. Each stays valid until its own expiry.
 An older certificate's expiry is later than the lease's if a renew shortened it.
-Connections already open are not closed.
-Releasing a released or unsatisfiable lease changes nothing and exits 0.
+Connections made from other computers are not ended.
+Releasing a released or unsatisfiable lease again keeps its record and exits 0.
 
 Arguments:
   <id>        The lease ID, a UUIDv4 in any case
@@ -1346,6 +1466,9 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 - **Accepting an input that v0 refused is not a new version.** Refusing one that v0 accepted is.
 - **Supporting a platform, profile or size that v0 answered `unsatisfiable` is not a new version.**
   The fields have been in the contract from v0 so that it is not (D5).
+- **`release` ending the lease's connections on the caller's machine is not a new version**
+  (v0.08, D59; architect, 2026-11-21, for v0.08-T01): no document, schema, field, state, exit
+  code, error or reason code changes, and a caller never parsed what `release` left running.
 - **Changing a message's wording is not a new version**, since no caller parses one.
 - **Changing help text is not a new version either.** Help is for people, and a caller MUST NOT
   parse it. This page and the CLI still change together ([Commands](#commands)).

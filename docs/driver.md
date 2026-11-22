@@ -67,7 +67,9 @@ prototype stay as the record of the change.
 - [Reachability](#reachability)
 - [The EC2 driver](#the-ec2-driver): [where it places a lease](#where-it-places-a-lease),
   [starting a provisioning run](#starting-a-provisioning-run), [`place_pending`](#place_pending),
-  [lock order](#lock-order), [conformance cases for v0.07](#conformance-cases-for-v007)
+  [lock order](#lock-order), [ending a lease's connections](#ending-a-leases-connections),
+  [conformance cases for v0.07](#conformance-cases-for-v007),
+  [conformance cases for v0.08](#conformance-cases-for-v008)
 - [Writing another driver](#writing-another-driver)
 - [Hardening carried in](#hardening-carried-in)
 - [Open questions](#open-questions)
@@ -210,7 +212,9 @@ MUST NOT read it as a contract. `ssh -G <alias>` prints it all the same, which i
 ### Ordering and concurrency
 
 **The CLI takes the lease state file's lock before it asks a driver anything, and holds it until
-it has recorded the outcome** ([state.md](state.md#the-lease-state-file) owns the file, and
+the operation is over**: until it has recorded the outcome, or, for a release, until the driver's
+release step has returned, since a release's record is written between its two steps
+([Release a lease](#release-a-lease); [state.md](state.md#the-lease-state-file) owns the file, and
 [its lock](state.md#concurrency)). So, for one state folder:
 - **At most one operation is in flight at a time.** A driver MUST NOT rely on that, because two
   CLI processes with different state folders ([lease-api.md](lease-api.md#environment)) run their
@@ -238,11 +242,13 @@ it has recorded the outcome** ([state.md](state.md#the-lease-state-file) owns th
 |---|---|---|---|
 | `create` | Reads the records; picks a new lease ID whose alias no kept lease uses | To place the lease | Records the lease, validates the records, writes them |
 | `renew` | Finds the lease; checks that it is `ready`, so an expired lease is refused before any driver is asked ([lease-api.md](lease-api.md#agentspace-lease-renew)) | To renew the lease's certificate | Records the new `expires_at` and `ttl_seconds`, writes |
-| `release` | Finds the lease | To release it, when its stored state is `ready` or `released`, or `pending` with a `driver` (pin P16, architect, 2026-11-20, for v0.07-T01; [Release a lease](#release-a-lease)) | Records `released`, drops `ssh`, sets `released_at`, writes |
+| `release` | Finds the lease; when it will ask the release step, asks first the driver's check step, release's first step ([Release a lease](#release-a-lease)), and fails with `internal` when it fails, with nothing ended; records `released`, drops `ssh`, sets `released_at` (unless it is already), writes | For release's second step, the release step, when its stored state is `ready` or `released`, or `pending` with a `driver` (pin P16, architect, 2026-11-20, for v0.07-T01; [Release a lease](#release-a-lease)): it checks the owner mark again, ends the alias's clients, then deletes the alias file and the lease folder (D59; [the order](#the-order-of-a-release)) | Nothing more: a failure of the release step fails the release with `internal`, and the record stays `released` |
 | `get` | Nothing: `get` takes no lock. It reads the records and finds the lease | To check it, when its stored state is `pending` ([`check_pending`](#check_pending)) | Prints the lease as it read it, whatever the check did; writes nothing |
 
 **A failure of the driver ends the command at once, with the records untouched**, but for a
-failure of `check_pending`, which `get` drops ([`check_pending`](#check_pending)). **A failure in
+failure of `check_pending`, which `get` drops ([`check_pending`](#check_pending)), and for a
+release's, whose record is written `released` first and stays so
+([The order of a release](#the-order-of-a-release)). **A failure in
 recording a `pending` lease asks no driver anything:** the lease has no credential or alias, and
 what the EC2 driver started stays, its host registry record and any run, which makes the host and
 finds no lease of this `create` to place; the host is kept (D25). A failure after
@@ -254,12 +260,16 @@ record**, given only the driver's name, the lease ID, the project and the ssh fo
 A release that fails there does not replace the first failure; the files it could not remove stay,
 and the first failure's message names them ([Q8](#open-questions), closed).
 
-**A renew or a release whose driver step succeeded, and whose recording then failed, is a failed
-renew or release** ([lease-api.md](lease-api.md#concurrency-and-atomicity), #0041). The prototype
-leaves the new certificate in place after such a renew, and deletes the credential before such a
-release. The boundary MUST let the CLI meet lease-api.md's rule, which needs either a way to undo
+**A renew whose driver step succeeded, and whose recording then failed, is a failed renew**
+([lease-api.md](lease-api.md#concurrency-and-atomicity), #0041). The prototype leaves the new
+certificate in place after such a renew, and deletes the credential before it records a release.
+The boundary MUST let the CLI meet lease-api.md's rule for renew, which needs either a way to undo
 a driver's step, or recording before the step takes effect. Which is the rewrite's design
-([Q4](#open-questions)); this page requires the outcome.
+([Q4](#open-questions)); this page requires the outcome. **For release it is settled from v0.08**
+(architect, 2026-11-21, for v0.08-T01): the CLI records `released` between release's check step
+and its release step, so a recording failure leaves the lease's files and connections as they were,
+and a failed release step leaves a `released` record that a retry finishes
+([Release a lease](#release-a-lease)).
 
 ### The driver's name
 
@@ -301,7 +311,7 @@ under.
 |---|---|---|---|
 | [Place a lease](#place-a-lease) | `create` | A lease ID, project, platform, profile, size and TTL | The CLI has chosen an ID whose alias no kept lease uses |
 | [Renew a lease](#renew-a-lease) | `renew` | A lease's new certificate | The lease is `ready` |
-| [Release a lease](#release-a-lease) | `release`, and `create` when it fails after a `ready` place | A lease's local credential and alias, gone | The lease's stored state is `ready` or `released`, or it has just been placed |
+| [Release a lease](#release-a-lease) | `release`, and `create` when it fails after a `ready` place | In two steps: a check that the alias's place holds no other lease's file, then the lease's connections on the caller's machine ended and its local credential and alias gone | The lease's stored state is `ready` or `released`, or `pending` with a `driver`, or it has just been placed |
 | [Check a pending lease](#check_pending) | `get` | Nothing it returns: the driver carries on with the lease's placement, if it needs to | The lease's stored state is `pending` |
 
 ### Place a lease
@@ -326,7 +336,9 @@ credential, makes the lease reachable, and says how.**
 [state.md](state.md#a-leases-credential)'s, and the CLI's own state folder
 ([lease-api.md](lease-api.md#environment)) is the CLI's alone. From v0.07 the driver's context
 also holds it, and the EC2 driver uses it only to hand it to a provisioning run it starts, for
-[`place_pending`](#place_pending) (pin P12, architect, 2026-11-20, for v0.07-T01).
+[`place_pending`](#place_pending) (pin P12, architect, 2026-11-20, for v0.07-T01). From v0.08 a
+driver's release step also appends one line to `release.log` in it
+([Where the count is logged](#where-the-count-is-logged)).
 
 **The result, always one of these states:**
 
@@ -481,12 +493,25 @@ second gives a later expiry, and nothing else differs. A retry is safe
 
 ### Release a lease
 
-**Takes the lease's local key, certificate and alias away, so that no new connection can be made
-with them.** A driver MAY tear down compute it made for the lease (D6). Release MUST still remove
-the local key, certificate and alias, and MUST succeed, when the host cannot be reached. Today's
-driver tells the host nothing.
+**Ends the lease's connections on the caller's machine, and takes the lease's local key,
+certificate and alias away, so that no new connection can be made with them.** A driver MAY tear
+down compute it made for the lease (D6). Release MUST still end the connections it can, remove the
+local key, certificate and alias, and succeed, when the host cannot be reached. Today's driver
+tells the host nothing (D59).
 
-**The request:**
+**From v0.08, release is one operation in two steps**, which the CLI asks for in turn, in one hold
+of the lease state lock (D59; architect, 2026-11-21, for v0.08-T01, pin P23):
+1. **The check step** checks that the file at the alias's place, if there is one, is this lease's.
+   It changes nothing.
+2. **The release step** ends the lease's connections and removes its credential and alias.
+
+**Between the two, the CLI writes the record `released`**, unless it is already, or there is no
+record, as for a lease that a failed `create` has just placed. Neither step is an operation of its
+own: a driver supplies both as its release, the CLI never asks for the release step without asking
+for the check step first in the same hold, and a check step that fails ends the release there. The
+EC2 driver's order is [The order of a release](#the-order-of-a-release).
+
+**The request, the same for both steps:**
 
 | Input | Value | Notes |
 |---|---|---|
@@ -495,29 +520,59 @@ driver tells the host nothing.
 | Project | The project stored at place | The alias is found from it and the ID. |
 | OpenSSH client folder | Optional text | As for place, from the same variable, and absent when it is unset or empty. A check MUST keep the same value from place to release ([lease-api.md](lease-api.md#environment)). |
 
-**The result: nothing.** Today's driver returns a record with absolute paths and flags, which the
-CLI discards. A transport that carried it would carry those paths, so a driver MUST return
-nothing.
+**The result of each step: nothing.** Today's driver returns a record with absolute paths and
+flags, which the CLI discards. A transport that carried it would carry those paths, so a driver
+MUST return nothing.
 
-**What a driver does:**
-- **It removes the lease's alias first.** If the file at the alias's place belongs to another lease,
-  or to no lease, the driver MUST fail, MUST delete nothing else, and MUST NOT delete that file.
-  An alias file that is absent is a success, and the driver goes on to the rest.
+**What a driver does in the check step:**
+- **It reads the file at the alias's place.** If it belongs to another lease, or to no lease, the
+  step MUST fail with "The alias is another lease's" (below), and MUST end no connection, delete
+  nothing and log nothing
+  ([state.md, Release, and what it leaves](state.md#release-and-what-it-leaves), step 1, which
+  also says what counts as a file of no lease). An alias file that is absent is a
+  success.
+
+**What a driver does in the release step:**
+- **It first checks the alias's place again**, as the check step does, and fails the same way,
+  ending nothing, deleting nothing and logging nothing, so that the release step is safe on its
+  own whatever changed the file since (architect, 2026-11-21, for v0.08-T01, pin P23).
+- **From v0.08, it then ends the lease's connections on the caller's machine** (D59;
+  [lease-api.md, `agentspace lease release`](lease-api.md#agentspace-lease-release)): every client
+  there that reaches the lease through its alias, with what carries that client's traffic. Only
+  then does it remove the alias, so that the release reaches every connection the alias had before
+  its credential goes (architect, 2026-11-21, for v0.08-T01, pin P23). **Ending them is best
+  effort:** a connection that cannot be ended MUST NOT fail the release or change what the CLI
+  prints, and the driver goes on to remove the alias. A connection that is ended is not restored,
+  whatever the rest of the release does. The EC2 driver's way is
+  [Ending a lease's connections](#ending-a-leases-connections).
+- **It removes the lease's alias next.** An alias file that is absent is a success, and the driver
+  goes on to the rest.
+- **From v0.08, it then ends the lease's connections a second time** (D59's change for v0.08-T01;
+  architect, 2026-11-21, for v0.08-T01, pin P23): any client that came back through the alias
+  while the first ending ran is ended, and once the alias is gone no client can come back through
+  it. This second ending is best effort as the first is.
+- **It appends one line to `release.log` in the CLI's state folder**, how many connections the two
+  endings ended between them, in the form of
+  [Where the count is logged](#where-the-count-is-logged), whichever driver it is (architect,
+  2026-11-21, for v0.08-T01, pin P23).
 - **It then removes the lease's key, certificate and anything else it made for the lease,**
   including a leftover temporary file of a renew that was cut short.
 - **It does not edit the caller's OpenSSH client configuration.** The line that pulls the alias
   folder in stays ([state.md](state.md#a-leases-credential) says what release leaves).
 - **It needs no CA** and runs no CA check, so release works on a machine whose CA is missing.
-- **It does not revoke any certificate (D10),** and does not close an open connection.
+- **It does not revoke any certificate (D10).** Until v0.08 it closed no open connection either;
+  from v0.08 it ends those on the caller's machine, as above, and none on the host (D59).
 
 **A release that fails part way MUST NOT leave a lease `ready` or `expired` with its alias, key or
-certificate partly gone** ([lease-api.md](lease-api.md#concurrency-and-atomicity), #0041). The
-boundary MUST let the CLI meet that: by the CLI recording `released` before it asks, by a driver
-step that removes the three together, or by an undo ([Q4](#open-questions)). The prototype removes
-the alias, then the folder, and then the CLI records. A failure to remove the folder, after the
-alias went, leaves a `ready` lease with no alias. That is not behavior to copy.
+certificate partly gone** ([lease-api.md](lease-api.md#concurrency-and-atomicity), #0041). From
+v0.08 the two steps meet that (architect, 2026-11-21, for v0.08-T01, pin P23): the CLI records
+`released` after the check step and before the release step, so whatever a failed release step
+leaves, the record is `released`, and a retry finishes it. The prototype removes the alias, then
+the folder, and then the CLI records. A failure to remove the folder, after the alias went, leaves
+a `ready` lease with no alias. That is not behavior to copy.
 
-**Idempotence: release MUST be repeatable, and a repeat MUST finish what an earlier one left.**
+**Idempotence: release MUST be repeatable, and a repeat MUST finish what an earlier one left**,
+ending any connection of the lease that remains on the caller's machine as the first did.
 A lease with nothing left to remove, or one that never existed, is a success and not a failure
 ([lease-api.md](lease-api.md#agentspace-lease-release)). This is what lets the CLI try again, call
 release after a failed `create`, and, as lease-api.md requires, call it again for a `released`
@@ -552,14 +607,20 @@ or is `released`. It is asked for no lease that is `unsatisfiable`:
 **Failures of release,** each leaving the lease as the failed step found it, so that a retry
 finishes the job:
 
-| Failure | When |
-|---|---|
-| The alias is another lease's | The file at the alias's place does not name this lease. Nothing is deleted |
-| The credential or alias could not be deleted | A file cannot be removed |
+| Failure | Step | When |
+|---|---|---|
+| The alias is another lease's | The check step | The file at the alias's place does not name this lease. Nothing is ended, logged or deleted, and the CLI writes no record |
+| The alias is another lease's | The release step | The same, found by its own check. Nothing is ended, logged or deleted, and the record stays `released` |
+| The credential or alias could not be deleted | The release step | A file cannot be removed. The connections ended stay ended, both endings run and its line is logged, and the record stays `released` |
 
 A failure's message SHOULD be the wording lease-api.md's table gives for release, and MUST be in
 agentspace's own words and MUST NOT carry an absolute path. The prototype lets the underlying
 error through, path and all ([Failure](#failure)).
+
+**A connection that cannot be ended is not a failure of release** (D59; architect, 2026-11-21, for
+v0.08-T01). Neither is a failure to look for the connections at all. The release goes on, and what
+it could not end is logged, never printed
+([Ending a lease's connections](#ending-a-leases-connections)).
 
 ### check_pending
 
@@ -715,6 +776,23 @@ v0.07-T01 pinned it, or this page's writer chose it, so that the four specs writ
 agree (D55):
 - **"Architect, 2026-11-20, for v0.07-T01"** marks such a fact as the architect ruled on it. It
   binds as written.
+- **"Architect, 2026-11-21, for v0.08-T01"** marks a fact that D56 to D63 leave open, chosen by
+  this page's writer in v0.08-T01 so that the specs of that turn agree, which the architect has
+  ruled on. It binds as written. The release's order, its walks in every release, its match rules,
+  its best-effort bound and the file `release.log` are such facts. **"Architect, 2026-11-21, for
+  v0.08-T01, S03 marks"** marks the same, ruled in a later batch: the destination grammar, the tree
+  rules and the count of [Ending a lease's connections](#ending-a-leases-connections).
+  **"Architect, 2026-11-21, for v0.08-T01, pin P23"** marks the same, ruled on the review of
+  v0.08-T01's driver changes: the release's two steps and the release step's own check of the
+  owner mark, the reason for the release's order, its second walk with its own 10 seconds and how
+  both walks are counted in one line, what a spared ancestor's tree keeps, that removals which are
+  not a release end nothing and log nothing, and that every driver logs to the CLI's
+  `release.log`. **"Architect, 2026-11-21, for v0.08-T01, pin P26"** marks the same, ruled on the
+  review of those specs: a spared or unendable client is counted once in a release, the two forms
+  of `release.log`'s line, and a conformance case for the second walk that assumes nothing about
+  timing. Each binds as written.
+- **No fact on this page waits on a ruling.** Each fact chosen in v0.08-T01 carries one of the
+  citations above, so no "architect's to confirm" mark remains.
 
 ### What it supports
 
@@ -841,10 +919,11 @@ binds, and the folder itself stays. Another lease's files are never touched.
 - Note on where this came from: the prototype keeps a key it made in a folder that already
   existed. No call from the CLI reaches that case, since a new ID's folder never exists before
   place, and it is not behavior to copy. **If step 5
-fails, the credential is removed:** the driver first releases the lease as release does, and, if
-that is refused (for example because a foreign file sits at the alias), removes the lease's own
-folder directly. It keeps the foreign file. The failure it reports is a message of its own with the
-original as the cause.
+fails, the credential is removed:** the driver first removes the lease's files as release removes
+them, ending nothing and logging nothing ([The order of a release](#the-order-of-a-release), "For
+which leases"), and, if that is refused (for example because a foreign file sits at the alias),
+removes the lease's own folder directly. It keeps the foreign file. The failure it reports is a
+message of its own with the original as the cause.
 
 ### Starting a provisioning run
 
@@ -1090,9 +1169,11 @@ from its own folder, by a `create` or `get` that names that folder.
       tried yet.** When there is none, it releases the lock, and the call is done.
    4. **Removes that lease's leftover credential files first** (pin P14.5, architect, 2026-11-20, for v0.07-T01): a
       key, certificate or alias file for its ID, removed as release removes them
-      ([Release a lease](#release-a-lease)). A `pending` lease has none by contract, so any there
-      can only be a placement's that was killed part way. A removal that fails, a foreign file at
-      the alias's place among them, is a failure of this lease.
+      ([Release a lease](#release-a-lease)), ending nothing and logging nothing
+      ([The order of a release](#the-order-of-a-release), "For which leases"). A `pending` lease
+      has none by contract, so any there can only be a placement's that was killed part way. A
+      removal that fails, a foreign file at the alias's place among them, is a failure of this
+      lease.
    5. **Issues the lease's credential and alias** by steps 2 to 5 of
       [How it places a lease](#how-it-places-a-lease): the CA check, the key, the certificate and
       the alias, with the record's lease ID and project, its `ttl_seconds` as the TTL, and the
@@ -1106,8 +1187,9 @@ from its own folder, by a `create` or `get` that names that folder.
       that a failure costs only that lease.
    7. **A failure at step 4, 5 or 6 leaves that lease `pending`**, with every file this call made
       for it removed as a failed place removes them ([Place a lease](#place-a-lease)), and is
-      named in the call's result for the run's log. When the write fails, the driver releases the
-      lease's files as release does.
+      named in the call's result for the run's log. When the write fails, the driver removes the
+      lease's files as release removes them, ending nothing and logging nothing
+      ([The order of a release](#the-order-of-a-release), "For which leases").
    8. **Releases the lease state lock**, and goes on to the next lease.
 
 - **A lease's TTL starts when it becomes `ready`** (D48): its `expires_at` is its certificate's
@@ -1158,14 +1240,423 @@ lease's folder, and then moves the new certificate over the old one, so the old 
 until the new one exists. The temporary files are removed whatever happens. It does not touch the
 alias.
 
-**Release** removes the alias file, if it belongs to this lease, and then the lease's whole folder.
-If the alias file belongs to another lease or to none, release fails and deletes nothing. If it is
-absent, release goes on. It runs no CA check and starts no program. It does not touch the OpenSSH
-client configuration, and it tells the box nothing.
+**Release**, from v0.08, checks in its check step that the alias file, if there is one, belongs to
+this lease. Its release step checks that again, ends the alias's clients on the laptop, removes
+the alias file, ends any client of the alias again, logs both counts in one line, and then removes
+the lease's whole folder ([Ending a lease's connections](#ending-a-leases-connections)). If the
+alias file belongs to another lease or to none, either step fails, ends nothing, logs nothing and
+deletes nothing. If it is absent, release goes on, and still walks for the alias's clients twice.
+It runs no CA check and starts no program. It does not touch the OpenSSH client configuration, and
+it tells the lease's host nothing (D59).
 
 **Both are the same for a lease on any host** (D48): neither reads the host registry or the project
 list, neither starts a run, and a lease that [`place_pending`](#place_pending) placed is renewed
 and released as one place made `ready`.
+
+### Ending a lease's connections
+
+**From v0.08, the EC2 driver's release ends the alias's clients on the laptop before it deletes the
+alias, and again after** (D59 and its changes; D63; card #0064). Each time it calls
+`end_alias_clients(<alias>)` of the crate `agentspace-connections` (D63), which returns
+`Result<usize>`, and it logs what the two calls returned in one line. `<alias>`
+is the lease's alias, `agentspace-<project>-<first 8 hex digits of the lease ID>`
+([lease-api.md, Fields](lease-api.md#fields)), built from the request's project and normalized
+lease ID, as release builds it to find the alias file.
+
+**Why it exists** (D59): until v0.08 a released lease's connections stayed open until the host
+stopped or its sshd dropped them (#0064), so a lease given back still held sessions on its host.
+Every client of a lease is on the laptop today (D8): the Claude desktop app's connections, a
+person's `ssh`, and the keeper's holder. Ending them there needs no call to the host, so a release
+stays laptop-local and works on a stopped host (D59). **The host's sshd drops the far end of each
+ended connection on its own**, within about 90 seconds, by the `ClientAlive` bound every host has
+(D59), since the Session Manager tunnel never passes a client's close on.
+
+#### The order of a release
+
+**All of it under the lease state lock, in this order** (D59 and its change for v0.08-T01;
+architect, 2026-11-21, for v0.08-T01, pin P23):
+1. **The CLI asks the driver's check step**, which checks the alias file's owner mark
+   ([Release a lease](#release-a-lease);
+   [state.md, Release, and what it leaves](state.md#release-and-what-it-leaves), step 1). An
+   alias file of another lease or of none fails the release with `internal`, as before v0.08, and
+   **the release MUST NOT end, log or delete anything**.
+2. **The CLI writes the record `released`**, unless it is already.
+3. **The CLI asks the driver's release step.** It checks the owner mark again, as step 1 did, and
+   a mark that now fails fails the release with `internal`, with nothing ended, logged or deleted,
+   and the record left `released`. Otherwise, in this order:
+   1. **The first walk:** it ends the alias's clients, by the rules below, with one call of
+      `end_alias_clients`.
+   2. **It deletes the alias file**, as before v0.08 ([Release a lease](#release-a-lease);
+      [state.md](state.md#release-and-what-it-leaves)). An alias file that is absent is a success.
+   3. **The second walk:** it ends the alias's clients again, by the same rules, with a second
+      call of `end_alias_clients`. It runs whether or not the alias file's deletion succeeded.
+   4. **It appends one line to `release.log`**, which counts both walks
+      ([Where the count is logged](#where-the-count-is-logged)).
+4. **The release step then deletes the lease's folder**, as before v0.08, when the alias file's
+   deletion succeeded. The alias file MUST NOT be deleted after the folder, so that an alias never
+   points at a key that is gone: a release whose alias file could not be deleted deletes nothing
+   more.
+
+- **A failure at step 2 fails the release with `internal`**, as any failed write of the records
+  does: no release step is asked, so nothing is ended, logged or deleted.
+- **A failed deletion, of the alias file at step 3 or of the folder at step 4, fails the release
+  with `internal`, as before, and the clients the walks ended stay ended**
+  ([lease-api.md, Concurrency and atomicity](lease-api.md#concurrency-and-atomicity)). A failed
+  alias deletion still has its second walk and its line. A retried release runs step 3 again, and
+  ends any client that has appeared since.
+- **Ending the clients never fails the release**, whatever either call of `end_alias_clients`
+  returns ([What cannot be ended](#what-cannot-be-ended)); only the checks of the owner mark and
+  the deletions can.
+- **The release's document is unchanged** (D59; contract v0): the count and every failure of
+  either walk are logged, and reach neither its standard output, nor its standard error, nor its
+  exit code.
+
+**Why the clients go first, and why there is a second walk** (D59's change for v0.08-T01;
+architect, 2026-11-21, for v0.08-T01, pin P23). The clients are ended before the alias file is
+deleted so that the release reaches every connection the alias had before its credential goes: a
+client is found by the alias in its command line, and the alias and key are what let it connect.
+**The first walk alone would leave a window**, from a client's end to the alias file's deletion,
+up to the first walk's 10 seconds, in which a client that reconnects by itself, the desktop app's
+most likely, can come back through the alias while the credential still exists. **The second walk
+closes it:** it runs once the alias file is gone, so it ends any client that came back through the
+alias while the first walk ran, and after it no client can come back, since the alias it would
+connect through is gone. E0.08-T06-S02's live check, which looks for the alias's clients after the
+release, shows the result with the desktop app.
+
+**For which leases.** Step 3 runs in every release the driver is asked for, whatever files remain:
+a `ready` lease, an `expired` one, a `released` one released again, a `pending` one that carries a
+`driver`, and one that a failed `create` just placed ([Release a lease](#release-a-lease), "When
+the CLI asks"). So a release repeated after an earlier one left a client running ends it, as
+[lease-api.md's `released` row](lease-api.md#agentspace-lease-release) says.
+- **A `pending` lease's release ends nothing** (architect, 2026-11-21, for v0.08-T01). Its alias was
+  never handed to a caller: place answered `pending` with no alias, and a placement killed part way
+  returned nothing, so no client of that alias exists. Step 3 runs all the same, its two walks
+  find no client, and it logs that it ended none. The driver does not tell a `pending` lease from
+  a `ready` one: the request carries no state ([Release a lease](#release-a-lease)).
+- **A lease that a failed `create` just placed** ends nothing the same way: its alias was never
+  printed.
+- **A release the CLI asks no driver for ends nothing and logs nothing**: an `unsatisfiable` lease,
+  a `pending` one with no `driver`, and a `pending` one released with no home folder.
+- **Three removals of a lease's files are not a release, and remove files only: they end nothing
+  and log nothing** (architect, 2026-11-21, for v0.08-T01, pin P23). They are place's removal of
+  the credential when its alias step fails ([How it places a lease](#how-it-places-a-lease)), and
+  [`place_pending`](#place_pending)'s steps 4 and 7. Each removes the lease's files as the release
+  step removes them, walks for no client, and appends no line to `release.log`. No client of
+  those aliases can exist, since none of them was ever handed to a caller.
+
+#### Which processes are the alias's clients
+
+**A process on the laptop is one of the alias's clients when every one of these holds, and only
+then** (D63's pin; the comparison is architect, 2026-11-21, for v0.08-T01, and the grammar
+architect, 2026-11-21, for v0.08-T01, S03 marks):
+1. **It runs as the user the release runs as** (architect, 2026-11-21, for v0.08-T01): its token's
+   user is the release process's own. A process whose user cannot be read is not a client, and is
+   not reported. A process of another user is never one.
+2. **Its image file name is `ssh.exe` or `agentspace-ssh-proxy.exe`**, compared without regard to
+   ASCII case. The image file name is the last part of the full path of the executable the process
+   runs, never its first command-line token, and the folder it is in does not matter: Windows'
+   OpenSSH, another build of `ssh.exe`, and an install folder of agentspace's all count. A process
+   whose image file name cannot be read is not a client, and is not reported.
+3. **Its command line names the alias**, read from the process and split into tokens as Windows'
+   `CommandLineToArgvW` splits it, by rule 1 of
+   [keeper.md, The holder command](keeper.md#the-holder-command). The first token is the program.
+   - **An `ssh.exe` is a client when its destination's host is the alias**, by
+     [the grammar below](#an-ssh-clients-destination).
+   - **An `agentspace-ssh-proxy.exe` is a client when exactly one token follows the program, and
+     that token is the alias.** That is the form the alias's ProxyCommand line gives it
+     ([state.md, The alias file](state.md#the-alias-file);
+     [operator.md, The ProxyCommand](operator.md#the-proxycommand)).
+   - **A command line that cannot be read**, because the process cannot be opened to read it or
+     has exited, is not a client, and is not reported.
+
+**A client that is the release's own process or one of its ancestors MUST NOT be ended**
+(architect, 2026-11-21, for v0.08-T01, pins P23 and P26). It is still a client by the rules above,
+and the release counts it once, as a client that could not be ended
+([What cannot be ended](#what-cannot-be-ended)): the first walk counts it, and the second walk,
+which finds the same process again, does not count it again ([The count](#the-count)). The
+release's line therefore says `1 could not be ended` for it
+([Where the count is logged](#where-the-count-is-logged)).
+- **The ancestors are found by parent process ID**, walked up from the release's own process, each
+  opened and checked to have been created no later than the process below it, as the trees below
+  are checked. **A process on that walk that cannot be checked**, because it cannot be opened or
+  its creation time cannot be read, **is treated as an ancestor**, and the walk stops there.
+- **A spared ancestor's tree is left whole: a descendant of it MUST NOT be ended** (architect,
+  2026-11-21, for v0.08-T01, pin P23). So the release's own process, and any process beside it
+  under that ancestor, are never ended, nor is a client inside that tree, which is not counted on
+  its own ([Each with its tree](#each-with-its-tree)).
+
+**The alias is compared whole, without regard to ASCII case** (architect, 2026-11-21, for
+v0.08-T01). Whole: a longer or shorter text never matches, so `agentspace-foo-1234abcd` matches
+neither `agentspace-foo-1234abcd0` nor `agentspace-foo-1234`, and another lease's alias never
+matches. Without regard to ASCII case, so that any spelling `ssh` could have resolved to the
+alias's `Host` block is ended; no two kept leases' aliases differ in case alone, since the
+project is normalized and the ID's hex digits are lowercase
+([lease-api.md, Fields](lease-api.md#fields)).
+
+**Nothing else is a client.** In particular:
+- **A program of another name is not one by itself**, even when the alias is in its command line:
+  `scp.exe`, `sftp.exe`, the Claude desktop app's own `claude-ssh-proxy.exe`, and a `cmd.exe` that
+  runs `agentspace-ssh-proxy.cmd`. Each reaches a host only through an `ssh.exe` or ProxyCommand
+  that is a client, or is a descendant of one, and is ended in that client's tree.
+- **The keeper's holder is a client** (D59's change): it is an `ssh.exe` whose destination is the
+  alias, `<SshExe> -N -o ExitOnForwardFailure=yes <alias>`
+  ([keeper.md, The holder command](keeper.md#the-holder-command)). The release ends it with the
+  rest, reads and writes none of the keeper's files, and leaves the keeper to find its holder gone
+  at its next pass, with its release grace
+  ([keeper.md, Release grace](keeper.md#release-grace)). A holder that the keeper started through
+  `cmd.exe` for a `.cmd` `-SshExe`, which only a check does, is not an `ssh.exe`, and is not a
+  client.
+- **The Claude desktop app's connections are clients**: each is an `ssh.exe` whose destination is
+  the alias, with its own ProxyCommand that runs the alias's line, and so the alias's
+  `agentspace-ssh-proxy.exe`, as a descendant (D9's findings, E0.02-T03-S01).
+
+#### An ssh client's destination
+
+**The destination is read as OpenSSH's `ssh` reads its arguments, so that an option's value is
+never taken for the destination** (architect, 2026-11-21, for v0.08-T01, S03 marks). The tokens
+after the program are read in order:
+1. **The option letters that take a value are** `B`, `b`, `c`, `D`, `E`, `e`, `F`, `I`, `i`, `J`,
+   `L`, `l`, `m`, `O`, `o`, `P`, `p`, `Q`, `R`, `S`, `W` and `w`. **Those that take none are** `1`,
+   `2`, `4`, `6`, `A`, `a`, `C`, `f`, `G`, `g`, `K`, `k`, `M`, `N`, `n`, `q`, `s`, `T`, `t`, `V`,
+   `v`, `X`, `x`, `Y` and `y`. Letters are compared with their case. **A letter in neither list is
+   read as one that takes no value**, so a later `ssh` with a new flag before the destination is
+   still read. `P` takes a value only from OpenSSH 9.4 on (`-P tag`); an older `ssh.exe` refuses
+   it, so `ssh -P <alias>` read as having no destination is a miss on the safe side.
+2. **A token that is `-` followed by at least one character, and is not `--`, is a run of option
+   letters**, read from left to right. A letter that takes no value is read and the next is read.
+   A letter that takes a value takes the rest of the token as its value when any of it is left
+   (`-p22`, `-oPort=22`, `-vp22`), and otherwise the whole next token, whatever it holds, a
+   leading `-` and the alias included (`-J <alias>`, `-o <value>`, `-F <file>`). A letter that
+   takes a value with no token left after it leaves the line with no destination.
+3. **`--` ends the options**: the token after it is the destination.
+4. **Otherwise the first token that is neither a run of option letters nor an option's value is
+   the destination.** A lone `-` is such a token. **No token after the destination is compared**,
+   whatever it holds: `ssh` reads options after the destination too, and then the remote command,
+   and neither changes the destination.
+5. **The host is taken from the destination:**
+   - **When it starts with `ssh://`**, compared with its case: the text after `ssh://` and up to
+     the first `/`, or to the end when there is none, is the authority, and what follows it is
+     either nothing or a single `/`; anything else leaves the line with no host. In the
+     authority, the text up to and including its last `@` is the user, and is dropped. What is
+     left is the host and an optional port: when it starts with `[`, the host is the text inside
+     the brackets; otherwise it is the text up to the first `:`, or all of it.
+   - **Otherwise** the host is the text after the destination's last `@`, or the whole
+     destination when it holds none.
+6. **A line with no destination, or no host, is not a client.**
+
+**Examples, for the alias `agentspace-foo-1234abcd`, where `<a>` stands for it:**
+
+| Command line | A client |
+|---|---|
+| `ssh.exe <a>` | Yes |
+| `"C:\Windows\System32\OpenSSH\ssh.exe" -T -o ProxyCommand="x y" -o ClearAllForwardings=yes <a>` | Yes |
+| `ssh.exe -N -o ExitOnForwardFailure=yes <a>`, the keeper's holder | Yes |
+| `ssh.exe ubuntu@<a>`, and `ssh.exe ssh://ubuntu@<a>:22` | Yes |
+| `ssh.exe -l ubuntu -p 22 <a> uname -a`, and `ssh.exe -s <a> sftp` | Yes |
+| `ssh.exe -vvv -oPort=22 AGENTSPACE-FOO-1234ABCD` | Yes |
+| `ssh.exe -- <a>` | Yes |
+| `ssh.exe <a> -v`, an option after the destination | Yes |
+| `ssh.exe -J <a> other`, `ssh.exe -F <a> other`, and `ssh.exe -i<a> other` | No: the alias is an option's value |
+| `ssh.exe other <a>`, and `ssh.exe other -- <a>` | No: the alias is in the remote command |
+| `ssh.exe <a>0`, `ssh.exe agentspace-foo-1234`, and another lease's alias | No |
+| `ssh.exe ssh://<a>/path` | No: no host |
+| `ssh.exe -p` | No: no destination |
+| `scp.exe <a>:file .` | No: not an `ssh.exe` |
+| `agentspace-ssh-proxy.exe <a>` | Yes |
+| `agentspace-ssh-proxy.exe <a> extra`, and `agentspace-ssh-proxy.exe` alone | No |
+
+#### Each with its tree
+
+**Each client is ended with its process tree, and the call MUST NOT end any other process** (D30;
+architect, 2026-11-21, for v0.08-T01, S03 marks).
+
+**What carries over from [keeper.md, Stopping a holder](keeper.md#stopping-a-holder)**, a client
+taking a holder's place:
+- **The descendant walk and its checks**: the descendants are found by parent process ID, each
+  opened and checked on its own handle, its parent process ID its parent's and its creation no
+  earlier than its parent's. A descendant that cannot be opened, or fails its checks, MUST NOT be
+  ended, and is not reported.
+- **The handles held**: every handle is held until the call ends, so no process ID in a tree is
+  reused meanwhile.
+- **Leaves first**: each tree is ended leaves first, the client last.
+- **Exit code 1**: a process ended is given exit code 1.
+
+**What does not carry over:**
+- **"Nothing is ever matched by command line alone."** A client here is found by its command line,
+  by the rules above; its descendants are still found only by the walk.
+- **The keeper's wait of 2 seconds per process, for up to 5 rounds.** This call's waits are
+  bounded as the last bullet below says.
+
+**And for this call:**
+- **A client is opened by its process ID, and checked again on that handle** by rules 1 to 3
+  above, before anything is ended, so the process checked is the process ended.
+- **The tree takes in the ProxyCommand and what it runs**, among them the AWS CLI, the Session
+  Manager plugin and the nested ssh of `up`'s steps
+  ([operator.md, The ProxyCommand](operator.md#the-proxycommand)), and the desktop app's own proxy.
+- **A client inside another client's tree** (an `agentspace-ssh-proxy.exe` that an `ssh.exe`
+  client started, most often) **is ended as part of that tree, once, and is not counted on its
+  own.** The clients are counted by the processes that are a client and have no client among their
+  ancestors.
+- **The call MUST NOT end the release's own process, or any of its ancestors**, wherever they sit,
+  nor a descendant of a spared ancestor
+  ([Which processes are the alias's clients](#which-processes-are-the-aliass-clients)).
+- **After the ends, it waits for the processes to exit, and walks each tree again for a child
+  made meanwhile, at most 3 rounds in all. Every wait shares one deadline, 10 seconds from the
+  call's start, and the call MUST return by it.** **Each of a release's two walks is its own call,
+  with its own 10 seconds** (architect, 2026-11-21, for v0.08-T01, pin P23): the second walk's
+  deadline counts from its own start, never from the first's, so the two walks take at most 20
+  seconds between them, and a release stays inside the 30-second wait of every other changing
+  command ([Ordering and concurrency](#ordering-and-concurrency)). A client still running at its
+  walk's deadline has not been ended by that walk.
+
+#### The count
+
+**`end_alias_clients` returns `Ok(<n>)` when every client it found was ended, or had exited, and
+`<n>` is how many it ended** (D63; the rest of this section is architect, 2026-11-21, for
+v0.08-T01, S03 marks).
+- **A client is ended** when the call terminated it and it exited within the deadline.
+- **A client gone already is not a failure, and is not counted**: one that exits before the call
+  opens it, that has exited when it is opened, or whose termination is refused because it is
+  exiting and that has then exited. A client that exits during the walk is the same.
+- **Descendants are never counted**, ended or not, and one left running is not reported.
+- **`Ok(0)` is the common answer** for a release with no client: a lease that was never connected,
+  a `pending` lease, and a repeat release. It is also the second walk's common answer, since the
+  first has ended every client it found.
+- **A release's count is its two walks' together** (architect, 2026-11-21, for v0.08-T01, pins P23
+  and P26): the clients ended are the two calls' ended counts summed, and the clients that could
+  not be ended are counted once each in the release.
+  - **A process counted as could-not-be-ended in the first walk is not counted again in the
+    second.** The two walks tell it by process ID and creation time together, both equal. A spared
+    ancestor, and a client that neither walk could end, are found by each walk and counted once.
+  - **A client the first walk could not end and the second walk ends is counted as ended, and no
+    longer as could-not-be-ended**: a release's `<k>` holds only the clients still left when its
+    second walk is done (the dev lead, 2026-11-22, for v0.08-T01, under pin P26).
+  - **The release holds those identities, the process ID and creation time of each client the first
+    walk could not end, in memory until its line is written, and never logs, prints or stores
+    them** ([What cannot be ended](#what-cannot-be-ended)).
+  - **The release logs the sums in one line**
+    ([Where the count is logged](#where-the-count-is-logged)).
+
+#### What cannot be ended
+
+**`end_alias_clients` returns an error in two cases, and the release goes on in both**
+(architect, 2026-11-21, for v0.08-T01):
+- **The process list cannot be read at all.** Nothing is ended, and the error says why, with
+  Windows' error number and never its localized text.
+- **At least one client could not be ended**: its termination was refused, by access denied among
+  others, it was still running at the deadline, or it is the release's own process or ancestor.
+  Every other client is still ended. The error carries two counts, the clients ended and the
+  clients that could not be, and the process ID and creation time of each client that could not be
+  ended, which the release uses to count that process once across its two walks
+  ([The count](#the-count); architect, 2026-11-21, for v0.08-T01, pin P26).
+
+**Each of those errors, and an `Ok`, is a walk that read the process list or one that could not**
+(architect, 2026-11-21, for v0.08-T01, pin P26). An `Ok`, and an error with counts, are walks that
+read it. An error with no list read is a walk that could not. **A walk that could not read the
+list never makes the release throw away the other walk's counts**
+([Where the count is logged](#where-the-count-is-logged)).
+
+**A client that cannot be ended, or a list that cannot be read, MUST NOT fail the release, change
+its document, or change its exit code** (D59: the release's document is unchanged; lease-api.md's
+best effort). The driver goes on with the release in its order: after the first walk it deletes
+the alias and walks again, after the second it logs both walks and deletes the key and the
+certificate ([The order of a release](#the-order-of-a-release)).
+- **Why not fail the release:** a release that failed on a client it could not end would leave
+  the lease's credential in place, which is what a release exists to remove, and a person could
+  not release the lease until the client went. A client missed costs at most a grace of running
+  time, since the guard stops a host whatever sessions it holds (D56, D59).
+- **What the call MUST NOT reveal:** neither its result nor its error, nor anything it logs, holds
+  a process's command line, image path, user or environment. Only counts, the lease ID and a
+  Windows error number leave it, bar the process IDs and creation times of the clients it could
+  not end, which go to the release and stop there. A command line holds a ProxyCommand's paths and, for the
+  operator's own calls, AWS parameters (AGENTS.md: a live run MUST mask what it reads).
+- **It writes nothing to the CLI's standard output or standard error**, as no driver step does
+  ([The boundary](#the-boundary)).
+
+#### Where the count is logged
+
+**In `<state folder>\release.log`, one line per release step, which counts both of its walks**
+(D59 leaves the place to lease-api.md, which names this section; the file, its name and its lines
+are architect, 2026-11-21, for v0.08-T01; one line for both walks is architect, 2026-11-21, for
+v0.08-T01, pin P23). `<state folder>` is the lease CLI's state folder, which the driver's context
+holds ([lease-api.md, Environment](lease-api.md#environment); [state.md](state.md)), so a check's
+throwaway state folder holds its own log. **Every driver's release step appends its line to this
+file, in this form** (architect, 2026-11-21, for v0.08-T01, pin P23), so the log is the CLI's
+whichever driver placed the lease. A driver that does not call `end_alias_clients` writes the
+text of the row its own outcome matches.
+- **Its form is `guard.log`'s and `provision.log`'s:** UTF-8 without a byte order mark, each line
+  ending in one LF, created when missing, opened for append sharing read, write and delete, and
+  never rotated or removed by agentspace.
+- **Each line is a UTC time, `YYYY-MM-DDTHH:MM:SSZ`, one space, `lease=<id>` with the normalized
+  lease ID, one space, then one of two forms** (architect, 2026-11-21, for v0.08-T01, pin P26;
+  the line's earlier rule, that either walk failing made the whole line "could not be looked for",
+  is replaced by it, so that no count is thrown away):
+  - **When at least one walk read the process list**, the text is `Ended <n> of the lease's
+    connections`, then `; <k> could not be ended` when `<k>` is above 0, then `; a look failed:
+    Windows error <e>` when a walk could not read the list, and last a `.`. **The `Ended` part is
+    always there, `Ended 0` included.**
+  - **When both walks could not read the process list**, the text is
+    `The lease's connections could not be looked for: Windows error <e>.`
+
+  | What the two calls of `end_alias_clients` returned | The text |
+  |---|---|
+  | Both read the list, and no client could not be ended | `Ended <n> of the lease's connections.` |
+  | Both read the list, and `<k>` clients could not be ended | `Ended <n> of the lease's connections; <k> could not be ended.` |
+  | One read the list, the other could not, and no client could not be ended | `Ended <n> of the lease's connections; a look failed: Windows error <e>.` |
+  | One read the list, the other could not, and `<k>` clients could not be ended | `Ended <n> of the lease's connections; <k> could not be ended; a look failed: Windows error <e>.` |
+  | Neither could read the list | `The lease's connections could not be looked for: Windows error <e>.` |
+
+  - **A walk that read the list** is an `Ok` or an error with counts. **`<n>` is the clients the
+    walks ended, summed, and `<k>` the clients that could not be ended, each counted once
+    in the release** ([The count](#the-count)); a walk that could not read the list adds nothing to
+    either. Both are decimal counts, `<n>` 0 included.
+  - **`<e>` is Windows' error number alone, and the first failing walk's** when both failed. A
+    walk that failed never throws away the other walk's counts: the first walk's ended clients stay
+    in `<n>` when the second walk could not read the list, and the second's stay when the first
+    could not.
+  - **For example, with a made-up time and ID,** a release whose second walk could not read the
+    list, after a first that ended 3 clients and could not end 1, and the same one whose two walks
+    both could not read it, with an invented error number:
+    `2000-01-01T00:00:00Z lease=00000000-0000-4000-8000-000000000000 Ended 3 of the lease's connections; 1 could not be ended; a look failed: Windows error 5.` and
+    `2000-01-01T00:00:00Z lease=00000000-0000-4000-8000-000000000000 The lease's connections could not be looked for: Windows error 5.`
+- **The line is written once, after the second walk returns and before the lease's folder is
+  deleted** ([The order of a release](#the-order-of-a-release)), under the lease state lock, so two
+  releases of one state folder never write at once.
+- **A log that cannot be opened or written is not a failure**: the release goes on, its document
+  and exit code are as they would be, and nothing reaches its standard error.
+- **Why a file of its own:** `provision.log` is a host's run's, and a release MUST NOT need a host's
+  folder or make one; `board-holder.log` is the keeper's, and `guard.log` the guard's, whose lines
+  are operator.md's. The lease CLI writes no log before v0.08
+  ([lease-api.md, Open questions](lease-api.md#open-questions), Q10, is the causes' log, still
+  later). state.md lists the file with the lease CLI's others.
+- **It carries the lease ID and never the alias**, as the keeper's log carries lease IDs. A live run
+  that prints a line of it masks the ID, as every lease ID is masked (AGENTS.md).
+
+#### How it is checked
+
+- **Through the lease CLI with stand-ins**:
+  [Conformance cases for v0.08](#conformance-cases-for-v008), E0.08-T04-S02.
+- **Through the crate's own tests** for what no check can set up on the laptop: another user's
+  process, a process whose termination is refused, a client that exits during the walk, and a
+  process list that cannot be read. They run `end_alias_clients`'s logic over a stand-in process
+  list, built with the crate (D63, T02). **A crate test that calls the real walk**, over the
+  laptop's own process list, **MUST use an alias built from a lease ID that is a UUIDv4 drawn at
+  random for that run, never a fixed ID**, so that no process of Terry's can match it, and MUST
+  NOT print, log or format any process's command line it reads.
+- **Through the crate's own tests for the two walks' line**: the line each pair of the walks'
+  results gives, in the forms of [Where the count is logged](#where-the-count-is-logged), among
+  them a walk that could not read the list beside one that ended clients, and a process counted
+  once whichever walk found it (architect, 2026-11-21, for v0.08-T01, pin P26).
+- **Through E0.08-T03-S04 (#0180)'s crate test for the second walk itself** (architect, 2026-11-21,
+  for v0.08-T01, pin P26): a test-only pause between the first walk and the alias file's deletion,
+  which exists only under `cfg(test)`, lets the test start a client in that gap and show that the
+  second walk ends it. No check through the lease CLI can show which walk ended a client, so
+  R15 does not ([Conformance cases for v0.08](#conformance-cases-for-v008)).
+- **Live, with Terry's desktop app**, D62's "A release ends its connections" (#0064), in
+  E0.08-T06-S02 on agentspace's host: a desktop-app session left open on a lease, the lease
+  released, then no `ssh.exe` or `agentspace-ssh-proxy.exe` client of that alias left on the laptop,
+  by the rules above, reported as a count and never as command lines; `release.log`'s line for the
+  lease; and no session of that lease on the host 2 minutes later.
 
 ### What it records
 
@@ -1183,6 +1674,10 @@ list, which only the architect writes, with Terry's yes (D54), never a record's 
 `ready` or `failed`, which are the run's ([operator.md, provision](operator.md#provision)), and
 never the `state` of a record that is `ready` (D48). The lease state
 file is the CLI's, but for [`place_pending`](#place_pending)'s writes of the leases it places.
+
+**From v0.08, its release also appends one line to `<state folder>\release.log`**, how many of the
+lease's connections its two walks ended ([Where the count is logged](#where-the-count-is-logged);
+architect, 2026-11-21, for v0.08-T01, and for the two walks, pin P23). It writes no other log.
 
 **The driver keeps no other record.** Everything it needs to renew or release a lease comes from
 the lease's ID and project, the OpenSSH client folder, and those files. **Nothing is recorded on a
@@ -1259,7 +1754,10 @@ checkout are there.
   the user's own `known_hosts` (D47); every other host's key is checked under
   `agentspace-host.<project>` in agentspace's own known-hosts file
   ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)).
-- **Each host stops itself when idle,** and the transport starts it (D11, D51).
+- **Each host stops itself when idle,** and the transport starts it (D11, D51). From v0.08 the
+  laptop's guard also stops a host once no live lease of its project explains it, and a host powers
+  itself off past its lease horizon (D56, D57); a release's part in that is to end the lease's
+  connections on the laptop ([Ending a lease's connections](#ending-a-leases-connections)).
 
 ### Conformance cases for v0.07
 
@@ -1316,6 +1814,67 @@ provisioning run calls, and a run's own records, among them that a run on a `rea
 operator.md's test seam (E0.07-T04-S02), and D53's live check of a first agentspace lease that
 becomes `ready`.
 
+### Conformance cases for v0.08
+
+**Each behavior below can be shown through the lease CLI with stand-ins, and MUST be a conformance
+case of E0.08-T04-S02** (D59, D62, D63). Every case shows a rule that is architect, 2026-11-21,
+for v0.08-T01, R1, R3 and R4 by its S03 marks, and R7's spared ancestor's child, R15's second walk
+and every line that counts two walks by pin P23, and R7's count of one and R15's lack of any
+timing assumption by pin P26. E0.08-T03-S04 (#0180) builds what they show.
+Each runs in the harness's throwaway home ([conformance.md](conformance.md)).
+- **The stand-in clients are programs the harness builds**, each of which waits until it is ended,
+  whatever its arguments, and starts any child its check asks for. A check copies one into a folder
+  of its own in its throwaway home, under the image file name it needs, `ssh.exe` or
+  `agentspace-ssh-proxy.exe`, and starts it with the command line the case gives. **A check MUST
+  NOT copy, open or start the installed programs as stand-ins**, nor any `ssh.exe` of Windows'
+  (AGENTS.md, Terry's real files).
+- **A stand-in is told what to do by a file beside its program**, which the check writes before it
+  starts it and the stand-in reads once, at its start: which children to start, each with its
+  image file name and command line, for R2, the file to write and what to watch, and for R15, the
+  one child to start once its first is ended. Its command
+  line is the case's alone, and tells it nothing; the file's form is the harness's.
+- **A stand-in's command line MAY name another program than its image**: a check starts it with
+  its own image and the case's command line, first token included. So the quoted row of R3, whose
+  first token is `C:\Windows\System32\OpenSSH\ssh.exe`, runs the stand-in, never Windows' own
+  `ssh.exe`, and shows that the image file name is read from the process and never from the first
+  token.
+- **Every stand-in a check starts, the check ends at its close**, so a failed case leaves none
+  running.
+- **A check asserts on the stand-ins it started, by process ID, and on nothing else of the laptop's
+  process list.** It MUST NOT list, print or log any other process's command line.
+- **A case that starts a stand-in MUST make its leases with `create`, or seed a lease ID that is a
+  UUIDv4 drawn at random for that run, and MUST NOT use a fixed ID**, so that no process of
+  Terry's can match the case's aliases.
+- **`<a>` is the released lease's alias**, and `<b>` the alias of another `ready` lease in the same
+  state folder. Where a case uses the examples table, `<a>` stands in for its example alias: in
+  capitals for the row that writes it so, and cut short by its last four characters for the row
+  whose alias is shorter.
+
+| Case | What it shows | Where the rule is |
+|---|---|---|
+| R1 | `release` of a `ready` lease with a stand-in `ssh.exe <a>` running, which has a stand-in `agentspace-ssh-proxy.exe <a>` as its child and a grandchild of any name: all three are ended; exit 0; the document is the one v0.07's `release` prints for the lease, and standard error is empty; `release.log` gains exactly one line, `lease=<id>` and `Ended 1 of the lease's connections.` | [Each with its tree](#each-with-its-tree), [The count](#the-count) |
+| R2 | The order: a stand-in `ssh.exe <a>` that writes, every 100 milliseconds, whether the alias file exists, has written that it does in its last line before it was ended; the alias file and the lease folder are gone after the `release` | [The order of a release](#the-order-of-a-release) |
+| R3 | Every `ssh.exe` command line of the table's "Yes" rows in [An ssh client's destination](#an-ssh-clients-destination), each a stand-in of its own, is ended by one `release`, and the line logs their count | [An ssh client's destination](#an-ssh-clients-destination) |
+| R4 | Every `ssh.exe` command line of the table's "No" rows, each a stand-in of its own, is still running after the `release`, and so are `ssh.exe <b>`, `agentspace-ssh-proxy.exe <b>`, and a stand-in under another image file name whose only argument is `<a>` | [Which processes are the alias's clients](#which-processes-are-the-aliass-clients) |
+| R5 | A stand-in `agentspace-ssh-proxy.exe <a>` with no `ssh.exe` above it is ended, and counted; `agentspace-ssh-proxy.exe <a> extra` is not | [Which processes are the alias's clients](#which-processes-are-the-aliass-clients) |
+| R6 | A stand-in in the keeper's holder form, `ssh.exe -N -o ExitOnForwardFailure=yes <a>`, is ended, and the keeper's files in the throwaway state folder are byte for byte as they were | [Which processes are the alias's clients](#which-processes-are-the-aliass-clients) |
+| R7 | A `release` started as the child of a stand-in `ssh.exe <a>`, which has a second stand-in child of any name beside it, leaves that stand-in and that second child running, succeeds with exit 0 and its usual document, deletes the alias file and the lease folder, and logs `Ended 0 of the lease's connections; 1 could not be ended.`, since the spared stand-in is counted once in a release, though both walks find it (architect, 2026-11-21, for v0.08-T01, pin P26); the check's own process is never ended | [Which processes are the alias's clients](#which-processes-are-the-aliass-clients), the release's own process and its ancestors |
+| R8 | `release` of a `released` lease, with a stand-in `ssh.exe <a>` started after the first `release`, ends it, exit 0, prints the lease with its first `released_at`, and logs a line | [The order of a release](#the-order-of-a-release), for which leases |
+| R9 | `release` of a `pending` lease that carries a `driver` ends nothing (a stand-in `ssh.exe <b>` keeps running), exit 0, its document as v0.07's, and logs `Ended 0 of the lease's connections.` | [The order of a release](#the-order-of-a-release) |
+| R10 | `release` whose alias file belongs to another lease fails with `internal` as before v0.08, a stand-in `ssh.exe <a>` keeps running, and `release.log` gains no line | [The order of a release](#the-order-of-a-release), step 1 |
+| R11 | With `release.log` made a folder by the check, `release` still ends the stand-in, succeeds with exit 0 and the same document, and writes nothing to standard error | [Where the count is logged](#where-the-count-is-logged) |
+| R12 | `release` with no client running succeeds as v0.07's did and logs `Ended 0 of the lease's connections.`, and an `unsatisfiable` lease's `release` logs no line | [The order of a release](#the-order-of-a-release) |
+| R13 | With ten stand-in clients of `<a>`, `release` returns within 15 seconds of its start, and ends all ten | [Each with its tree](#each-with-its-tree) |
+| R14 | `release` of an `expired` lease, one made with the shortest TTL, 60 seconds, and released once its `expires_at` has passed, with a stand-in `ssh.exe <a>` running: the stand-in is ended, exit 0, the lease is printed `released` with its `expires_at`, the alias file and the lease folder are gone, and `release.log` gains `Ended 1 of the lease's connections.` | [The order of a release](#the-order-of-a-release), for which leases |
+| R15 | The second walk (#0183), with no timing assumed (architect, 2026-11-21, for v0.08-T01, pin P26): a stand-in under another image file name, standing for the desktop app, which is itself no match, starts a stand-in `ssh.exe <a>` as its child and, once that child is ended, starts exactly one new matching client, a second `ssh.exe <a>`, outside the first one's tree, so that nothing respawns after the release. After one `release`: no stand-in `ssh.exe <a>` is running, the parent stand-in still is, exit 0, and `release.log` gains one line that is `Ended <n> of the lease's connections.` with `<n>` at least 2. The case never asserts which walk ended the second client, and never repeats a run to wait for a timing. E0.08-T03-S04 (#0180)'s crate test proves the second walk itself, with a test-only pause between the first walk and the alias file's deletion that exists only under `cfg(test)` ([How it is checked](#how-it-is-checked)) | [The order of a release](#the-order-of-a-release), the second walk; [Where the count is logged](#where-the-count-is-logged) |
+
+**What no stand-in shows,** and so the crate's own tests show
+([How it is checked](#how-it-is-checked)): another user's process, a termination refused, a client
+that exits during the walk, a process list that cannot be read, the line's forms that say a look
+failed, and the second walk itself, which only a pause between the walks can separate from the first
+(architect, 2026-11-21, for v0.08-T01, pin P26). **The desktop app's own
+connections** are shown only live, in E0.08-T06-S02 (D62).
+
 ## Writing another driver
 
 **To be driven by the CLI without change, a driver MUST:**
@@ -1336,6 +1895,20 @@ becomes `ready`.
 7. **Keep every output free of the backend** ([What a driver never exposes](#what-a-driver-never-exposes)).
 8. **Make a failed place leave nothing, make renew replace only the certificate, and make release
    repeatable** ([The operations](#the-operations)).
+9. **From v0.08, end the lease's connections on the caller's machine at release, best effort, before
+   it removes the alias, and again after** ([Release a lease](#release-a-lease); D59 and its
+   change for v0.08-T01). The second ending catches a client that came back through the alias
+   while the first ran. A driver whose aliases are reached through `ssh` MAY call the same
+   `end_alias_clients` the EC2 driver calls, once for each
+   ([Ending a lease's connections](#ending-a-leases-connections)). Its release step appends one
+   line counting both to `release.log` in the CLI's state folder, in the line form of
+   [Where the count is logged](#where-the-count-is-logged) (architect, 2026-11-21, for v0.08-T01,
+   pin P23).
+10. **From v0.08, supply release in its two steps** ([Release a lease](#release-a-lease); architect,
+    2026-11-21, for v0.08-T01, pin P23): a check
+    step that checks the file at the alias's place and changes nothing, and a release step that
+    checks it again before it ends or deletes anything. A check step that fails MUST leave every
+    connection, file and log as it found them.
 
 **A driver MUST NOT need anything from the CLI that this page does not list,** and a CLI that works
 with the EC2 driver MUST work with it unchanged.
@@ -1426,14 +1999,16 @@ none blocks building a drop-in of contract v0.
 4. **Later, not blocking:** [lease-api.md](lease-api.md#concurrency-and-atomicity) fixes what a
    failed renew or release MUST leave, and any of the ways named below meets it, so the mechanism
    is a drop-in's choice.
-   **Q4: How does the boundary let the CLI undo a renew, or record before it takes effect, and
-   how does release avoid leaving a `ready` lease with part of its credential gone?**
-   lease-api.md requires a failed renew to leave the previous certificate, and a failed release
-   never to leave a `ready` lease without its credential (#0041). The prototype's driver changes
-   the files first, and the CLI records afterwards, so a recording failure leaves them changed,
-   and a release that removes the alias and then fails on the folder leaves a `ready` lease with
-   no alias. Either a two-step operation (prepare, then commit), an undo, or recording first
-   would meet it.
+   **Q4: How does the boundary let the CLI undo a renew, or record before it takes effect?**
+   lease-api.md requires a failed renew to leave the previous certificate (#0041). The
+   prototype's driver changes the files first, and the CLI records afterwards, so a recording
+   failure leaves them changed. Either a two-step operation (prepare, then commit), an undo, or
+   recording first would meet it. **Release's half of Q4 is closed from v0.08** (architect,
+   2026-11-21, for v0.08-T01): release is a check step and a release step, with the record written
+   `released` between them ([Release a lease](#release-a-lease)), so a release never leaves a
+   `ready` lease with part of its credential gone. The prototype's release, which removed the
+   alias and could then fail on the folder, leaving a `ready` lease with no alias, is not behavior
+   to copy.
 5. **Later, not blocking:** a caller sees the same outcome either way, so where the steps live is a
    drop-in's design choice.
    **Q5: Should the credential and the alias be the CLI's steps, with the driver supplying only
