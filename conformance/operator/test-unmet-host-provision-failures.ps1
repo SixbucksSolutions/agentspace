@@ -48,7 +48,9 @@ $deployFailed = 'Stack deploy failed; see the stack events in the console.'
 $signInReason = $script:HpSignIn.Substring('agentspace: '.Length)
 $stackNew = @('aws cloudformation describe-stacks', 'aws cloudformation deploy', 'aws cloudformation describe-stacks')
 $dsc = 'aws ec2 describe-instances'
-$syncCalls = @('ssh:sync', 'scp', 'scp', 'ssh:sync')
+# A sync that runs to its end with no CLAUDE.md, no go and no receipt: rows 1 to 4, then the patch wait's three
+# Session Manager calls (operator.md, The patch wait: after row 4, before row 5), and nothing more.
+$syncCalls = @('ssh:sync', 'scp', 'scp', 'ssh:sync') + $script:HpPatchWaitSequence
 
 # One case: $C holds N (the name), Seed (none, creating or ready), Aws (overrides of the AWS answers),
 # Rules (ssh and scp rules), Seq (the calls, in order), Shape (the log's lines), Msg (the step's failure

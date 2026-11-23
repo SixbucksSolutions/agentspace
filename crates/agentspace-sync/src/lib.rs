@@ -20,7 +20,9 @@
 //! - **`sync`'s order decides what reaches the box, and MUST be operator.md's steps 1 to 8**: the
 //!   CA check before the box is touched, the start-and-wait, then the nine calls of its table in
 //!   that order, each with its step's message, the first failure ending the command with nothing
-//!   after it run.
+//!   after it run. **Between rows 4 and 5 it waits for the host's patch run** (`patch_wait.rs`;
+//!   The patch wait): `patched` goes on, `failed` warns and goes on, and the 30-minute deadline
+//!   fails the command.
 //! - **The template and `box\system` are the repository's own, embedded at build time byte for
 //!   byte** (D37's addendum), and written out under `%USERPROFILE%\.agentspace\operator` just
 //!   before the call that reads them. What is sent to the box at run time, every remote command,
@@ -54,6 +56,7 @@ mod folder;
 mod go;
 mod host;
 mod params;
+mod patch_wait;
 mod provision;
 mod registry;
 mod steps;
@@ -149,8 +152,21 @@ impl Seams<'_> {
         run: impl FnOnce(&Seams) -> T,
     ) -> T {
         let clock = SystemClock::new();
+        Seams::real_except_go_and_clock(find_go, localswim_checkout, &clock, run)
+    }
+
+    /// [`Seams::real_except_go`], with the clock it is given in place of the operator's own: the
+    /// clock of the start-and-wait step and of `sync`'s patch wait, whose 5-second pauses, 1-second
+    /// polls and 30-minute deadline a test can then pass without waiting. For tests alone.
+    #[doc(hidden)]
+    pub fn real_except_go_and_clock<T>(
+        find_go: &dyn Fn() -> Option<PathBuf>,
+        localswim_checkout: PathBuf,
+        clock: &dyn Clock,
+        run: impl FnOnce(&Seams) -> T,
+    ) -> T {
         let seams = Seams {
-            clock: &clock,
+            clock,
             ca_check: &agentspace_ca::check_for_sync,
             find_go,
             localswim_checkout,
@@ -224,7 +240,7 @@ pub fn sync_target_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    syncing::sync_target(ctx, ca_env, target, say, aws, remote, seams)
+    syncing::sync_target(ctx, ca_env, target, say, aws, remote, seams).map(|_| ())
 }
 
 /// `operator deploy` (docs/operator.md, deploy): creates or updates the host's stack, refreshes the

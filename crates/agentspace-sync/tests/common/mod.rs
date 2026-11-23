@@ -540,6 +540,18 @@ impl Rig {
             ));
     }
 
+    /// A scripted answer for a stand-in: the first call whose arguments contain `contains` (not
+    /// empty) takes the first `seq` of that `contains`, the second call the second, and so on; a
+    /// call past the last takes the last again. It is tried in the order the rules were added,
+    /// with `rule`, and before the defaults. `\n` in `out` and `err` is a line feed.
+    pub fn seq(&self, prog: &str, contains: &str, code: i32, out: &str, err: &str) {
+        self.rules
+            .borrow_mut()
+            .entry(prog.to_string())
+            .or_default()
+            .push(format!("seq={contains}{US}{code}{US}{out}{US}{err}"));
+    }
+
     /// Makes the `n`th call of `prog` (0 for any) whose arguments contain `contains` set the file
     /// at `path` read-only before it answers, so that the next replace of that file fails.
     pub fn readonly_at(&self, prog: &str, n: u32, contains: &str, path: &Path) {
@@ -626,6 +638,19 @@ impl Rig {
                 json_instance("running")
             ),
             format!("rule=0{US}describe-stacks{US}0{US}{}{US}", json_stack(ID2)),
+            // The patch wait's questions (operator.md, The patch wait), answered as a host that has
+            // finished this boot's patch run answers them: Session Manager online, a command sent,
+            // and `patched` at once. The answer's line feed is a JSON escape, which the stand-in's
+            // own handling of `\n` leaves alone.
+            format!(
+                "rule=0{US}describe-instance-information{US}0{US}{}{US}",
+                json_online()
+            ),
+            format!("rule=0{US}send-command{US}0{US}{}{US}", json_sent()),
+            format!(
+                "rule=0{US}get-command-invocation{US}0{US}{}{US}",
+                json_invocation("Success", Some("patched"))
+            ),
         ];
         for prog in ["aws", "ssh", "scp", "go"] {
             let dir = if prog == "go" { "gobin" } else { "bin" };
@@ -670,6 +695,15 @@ impl Rig {
             }
             fs::write(self.root.join(dir).join(format!("{prog}.cfg")), text).unwrap();
             let _ = fs::remove_file(self.root.join(dir).join(format!("{prog}.count")));
+            // The counters of the scripted answers (`seq`) start again with each run.
+            if let Ok(entries) = fs::read_dir(self.root.join(dir)) {
+                for e in entries.flatten() {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if name.starts_with(&format!("{prog}.seq")) {
+                        let _ = fs::remove_file(e.path());
+                    }
+                }
+            }
         }
     }
 
@@ -976,6 +1010,25 @@ pub fn json_stack(id: &str) -> String {
     format!(
         "{{\"Stacks\":[{{\"Outputs\":[{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{id}\"}}]}}]}}"
     )
+}
+
+/// `ssm describe-instance-information`'s answer for a host whose Session Manager agent is online.
+pub fn json_online() -> String {
+    "{\"InstanceInformationList\":[{\"PingStatus\":\"Online\"}]}".to_string()
+}
+
+/// `ssm send-command`'s answer, with a made-up command ID.
+pub fn json_sent() -> String {
+    "{\"Command\":{\"CommandId\":\"00000000-0000-0000-0000-000000000000\"}}".to_string()
+}
+
+/// `ssm get-command-invocation`'s answer for an invocation with `status`, whose output is `output`
+/// followed by a line feed, written as a JSON escape (`None`: no `StandardOutputContent`).
+pub fn json_invocation(status: &str, output: Option<&str>) -> String {
+    match output {
+        Some(o) => format!("{{\"Status\":\"{status}\",\"StandardOutputContent\":\"{o}\\u000a\"}}"),
+        None => format!("{{\"Status\":\"{status}\"}}"),
+    }
 }
 
 /// The AWS arguments the start-and-wait step's first call has (operator.md, AWS failures, FB-07).

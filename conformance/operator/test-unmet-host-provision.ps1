@@ -55,7 +55,7 @@ $sec = 'operator.md#provision'
 $hr = 'operator.md#the-host-registry-as-the-operator-uses-it'
 $stack = 'agentspace-host-agentspace'
 $alias = 'agentspace-host.agentspace'
-$signInLine = 'Sign in on this host once, by hand: run ''agentspace-operator status -Host agentspace'' first and again after an hour, then see "Signing in on a new host" in the agentspace README.'
+$signInLine = 'Sign in on this host once, by hand, under a lease: see "Signing in on a new host" in the agentspace README.'
 $boxRecordText = '{"project":"swimcoach","stack":"agentbox","state":"ready","instance_id":"' + $script:HpBoxId + '"}'
 $startSteps = 'run begun,deploy done,start done,sync done,bootstrap done,record done,place done placed=0,run done'
 
@@ -98,7 +98,7 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
 
   # The steps in order, as one list of calls.
   $want = @('aws cloudformation describe-stacks', 'aws cloudformation deploy', 'aws cloudformation describe-stacks') + @(1..4 | ForEach-Object { 'aws ec2 describe-instances' }) +
-  @('ssh:sync', 'scp', 'scp', 'ssh:sync', 'go', 'scp', 'ssh:sync', 'ssh:push') + @(1..2 | ForEach-Object { 'aws ec2 describe-instances' }) + @('ssh:bootstrap')
+  @('ssh:sync', 'scp', 'scp', 'ssh:sync') + $script:HpPatchWaitSequence + @('go', 'scp', 'ssh:sync', 'ssh:push') + @(1..2 | ForEach-Object { 'aws ec2 describe-instances' }) + @('ssh:bootstrap')
   $got = Get-HpSequence $calls
   $p = New-HpProblems
   if (($got -join ',') -cne ($want -join ',')) {
@@ -106,7 +106,8 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
     while ($i -lt $got.Count -and $i -lt $want.Count -and $got[$i] -ceq $want[$i]) { $i++ }
     $p.Add("The calls differ at call $($i + 1) of $($want.Count) (expected $(if ($i -lt $want.Count) { $want[$i] } else { 'no more calls' }), got $(if ($i -lt $got.Count) { $got[$i] } else { 'none' }); $($got.Count) calls)")
   }
-  Write-HpProblems "${sec}: the steps run in order: the existence check, the deploy, the instance ID read, the start and wait, sync (its copies, its install, its build, its push), the start and wait again, then bootstrap (steps 4 to 7)" $p
+  foreach ($m in (Get-HpPatchWaitProblems $calls $script:HpHostId)) { $p.Add($m) }
+  Write-HpProblems "${sec}: the steps run in order: the existence check, the deploy, the instance ID read, the start and wait, sync (its copies, its install, its patch wait's three Session Manager calls, its build, its push), the start and wait again, then bootstrap (steps 4 to 7; The patch wait)" $p
 
   $p = New-HpProblems
   Add-AliasProblems $p $calls $alias
@@ -175,9 +176,11 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
   if ($lines.Count -eq 0 -or $lines[0] -cne 'Provisioning the host of ''agentspace''...') { $p.Add('The first line of stderr is not Provisioning the host of ''agentspace''...') }
   $iDeploy = [Array]::IndexOf($lines, "Deploying stack '$stack' in us-west-2...")
   $iInst = [Array]::IndexOf($lines, "Instance: $($script:HpHostId)")
+  $iWait = [Array]::IndexOf($lines, "Checking that $($script:HpHostId) has finished this boot's patch run...")
+  $iPatched = [Array]::IndexOf($lines, "Patched: $($script:HpHostId)")
   $iBoot = [Array]::IndexOf($lines, "Bootstrapped: $($script:HpHostId)")
   $iRec = [Array]::IndexOf($lines, 'Recorded the host of ''agentspace'' as ready.')
-  if (-not (0 -lt $iDeploy -and $iDeploy -lt $iInst -and $iInst -lt $iBoot -and $iBoot -lt $iRec)) { $p.Add('stderr does not hold Provisioning, Deploying stack, Instance: <id>, Bootstrapped: <id> and Recorded the host ... as ready., in that order') }
+  if (-not (0 -lt $iDeploy -and $iDeploy -lt $iInst -and $iInst -lt $iWait -and $iWait -lt $iPatched -and $iPatched -lt $iBoot -and $iBoot -lt $iRec)) { $p.Add('stderr does not hold Provisioning, Deploying stack, Instance: <id>, Checking that <id> has finished this boot''s patch run..., Patched: <id>, Bootstrapped: <id> and Recorded the host ... as ready., in that order') }
   Write-HpProblems "${sec}: stderr carries the run's own messages in order, ending with Recorded the host of '<project>' as ready. (steps 3, 4, 7 and 8)" $p
 
   $p = New-HpProblems
@@ -285,10 +288,11 @@ Invoke-HpInHome -Name "${sec}: provision -Host swimcoach" -NeedsLocalswim -Body 
   if ($r.Stdout -cne "deploy-out`nbootstrap-out`n") { $p.Add('Stdout is not the deploy''s and the bootstrap''s stdout') }
   Write-HpProblems "${sec}: provision -Host swimcoach provisions the box, exit 0, though the project list is not valid (step 1: the list is read only when there is no record; P14)" $p
 
-  $want = @('aws cloudformation deploy', 'aws cloudformation describe-stacks') + @(1..4 | ForEach-Object { 'aws ec2 describe-instances' }) + @('ssh:sync', 'scp', 'scp', 'ssh:sync', 'go', 'scp', 'ssh:sync', 'ssh:push') + @(1..2 | ForEach-Object { 'aws ec2 describe-instances' }) + @('ssh:bootstrap')
+  $want = @('aws cloudformation deploy', 'aws cloudformation describe-stacks') + @(1..4 | ForEach-Object { 'aws ec2 describe-instances' }) + @('ssh:sync', 'scp', 'scp', 'ssh:sync') + $script:HpPatchWaitSequence + @('go', 'scp', 'ssh:sync', 'ssh:push') + @(1..2 | ForEach-Object { 'aws ec2 describe-instances' }) + @('ssh:bootstrap')
   $got = Get-HpSequence $calls
   $p = New-HpProblems
-  if (($got -join ',') -cne ($want -join ',')) { $p.Add("The calls are not the box's own deploy (no existence check), the instance ID read, the start, sync, the start and bootstrap: $($got.Count) calls") }
+  if (($got -join ',') -cne ($want -join ',')) { $p.Add("The calls are not the box's own deploy (no existence check), the instance ID read, the start, sync with its patch wait, the start and bootstrap: $($got.Count) calls") }
+  foreach ($m in (Get-HpPatchWaitProblems $calls $script:HpBoxId)) { $p.Add($m) }
   Add-AliasProblems $p $calls 'agentspace'
   Write-HpProblems "${sec}: for the box the deploy step is the box's own deploy with no existence check, and every ssh and scp names the alias agentspace (provision; step 4)" $p
 

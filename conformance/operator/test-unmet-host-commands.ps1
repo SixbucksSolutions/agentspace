@@ -495,11 +495,13 @@ Invoke-HostFile -FileName 'test-unmet-host-commands.ps1' -Body {
     "ssm send-command $idA" = @(New-Step (ConvertTo-Json -Compress -InputObject @{ Command = @{ CommandId = $cmdId } }))
     "ssm get-command-invocation $idA" = @(New-Step (ConvertTo-Json -Compress -InputObject @{ Status = 'Success'; StandardOutputContent = "patched`n" }))
   }
-  Test-HostCase "${sw}: sync -Host <project> of a stopped host describes that host's instance, starts it, waits with Session Manager and the patch check on it, and prints Starting and Ready" @('sync', '-Host', 'agentspace') @{
+  # After the start and wait, sync's own patch wait asks Session Manager again, after its install (operator.md, The patch wait):
+  # the same three calls, with the comment `agentspace sync: patch check`, and the start and wait's patch check is `up`'s.
+  Test-HostCase "${sw}: sync -Host <project> of a stopped host describes that host's instance, starts it, waits with Session Manager and the patch check on it, prints Starting and Ready, and then makes its own patch wait's three calls" @('sync', '-Host', 'agentspace') @{
     Exit = 0; StderrLines = @("Starting $idA...", "Ready: $idA")
     Calls = @((Get-CallDescribe $idA), (Get-CallStart $idA), (Get-CallSsm $idA),
       @('ssm', 'send-command', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $idA, '--document-name', 'AWS-RunShellScript', '--comment', 'agentspace up: patch check', '--parameters', 're:^commands='),
-      "ssm get-command-invocation --region us-west-2 --output json --command-id $cmdId --instance-id $idA")
+      "ssm get-command-invocation --region us-west-2 --output json --command-id $cmdId --instance-id $idA") + @(Get-PatchWaitCalls $idA $cmdId)
     SshCalls = 'any'; ScpCalls = 'any'
     Check = { param($run, $started)
       Get-SignProblems 'agentspace'
@@ -514,7 +516,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands.ps1' -Body {
     Exit = 0; StderrLines = @("Waiting for $idA to finish stopping...", "Starting $idA...", "Ready: $idA")
     Calls = @((Get-CallDescribe $idA), "ec2 wait --region us-west-2 instance-stopped --instance-ids $idA", (Get-CallStart $idA), (Get-CallSsm $idA),
       @('ssm', 'send-command', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $idA, '--document-name', 'AWS-RunShellScript', '--comment', 'agentspace up: patch check', '--parameters', 're:^commands='),
-      "ssm get-command-invocation --region us-west-2 --output json --command-id $cmdId --instance-id $idA")
+      "ssm get-command-invocation --region us-west-2 --output json --command-id $cmdId --instance-id $idA") + @(Get-PatchWaitCalls $idA $cmdId)
     SshCalls = 'any'; ScpCalls = 'any' } -Setup {
     Set-HostsRecords @((New-BoxRecord), (New-HostRecord -Project 'agentspace' -InstanceId $script:IdA))
     Set-AwsScenario (Merge-Scenario (Get-HealthyAnswers -Id $script:IdA -State 'stopping') $patchAnswers)

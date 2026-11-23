@@ -97,7 +97,14 @@ fn deploy_makes_its_calls_in_order_and_runs_sync_last() {
 
             // The AWS calls, in order, with their arguments (Calls by command; FB-07).
             let aws = log.calls("aws");
-            rig.check(aws.len() == 4, &format!("deploy and sync MUST make 4 AWS calls here, and made {}", aws.len()));
+            // The deploy, the read of the stack's output, sync's two `ec2 describe-instances`, and
+            // from v0.08 the three calls of sync's patch wait (operator.md, The patch wait).
+            rig.check(aws.len() == 7, &format!("deploy and sync MUST make 7 AWS calls here, and made {}", aws.len()));
+            rig.same_list(
+                "The calls of sync's patch wait, after its start-and-wait",
+                &aws[4..].iter().map(|c| format!("{} {}", c.args[0], c.args[1])).collect::<Vec<_>>(),
+                &svec(&["ssm describe-instance-information", "ssm send-command", "ssm get-command-invocation"]),
+            );
             rig.same_list(
                 "The cloudformation deploy call",
                 &aws[0].args,
@@ -566,12 +573,26 @@ fn the_pinned_deploy_is_that_deploy_when_no_go_is_on_path() {
         rig.succeeded(rig.do_pinned_deploy(&say), "The pinned deploy");
         let log = rig.log();
         let aws = log.calls("aws");
+        // The deploy, the read of the stack's output, sync's two `ec2 describe-instances`, and from
+        // v0.08 the three calls of sync's patch wait (operator.md, The patch wait).
         rig.check(
-            aws.len() == 4,
+            aws.len() == 7,
             &format!(
-                "The pinned deploy and its sync MUST make 4 AWS calls here, and made {}",
+                "The pinned deploy and its sync MUST make 7 AWS calls here, and made {}",
                 aws.len()
             ),
+        );
+        rig.same_list(
+            "The calls of its sync's patch wait, after its start-and-wait",
+            &aws[4..]
+                .iter()
+                .map(|c| format!("{} {}", c.args[0], c.args[1]))
+                .collect::<Vec<_>>(),
+            &svec(&[
+                "ssm describe-instance-information",
+                "ssm send-command",
+                "ssm get-command-invocation",
+            ]),
         );
         rig.same_list(
             "The cloudformation deploy call",

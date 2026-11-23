@@ -71,6 +71,13 @@ fn main() {
             stdin_dir = v.to_string();
         } else if let Some(v) = line.strip_prefix("rule=") {
             rules.push(v.split(US).map(|s| s.to_string()).collect());
+        } else if let Some(v) = line.strip_prefix("seq=") {
+            // `seq=<contains>US<code>US<out>US<err>`: the first call whose arguments contain
+            // `contains` takes the first `seq=` line of that `contains`, the second call the
+            // second, and so on; calls past the last take the last again.
+            let mut f: Vec<String> = vec!["seq".to_string()];
+            f.extend(v.split(US).map(|s| s.to_string()));
+            rules.push(f);
         } else if let Some(v) = line.strip_prefix("confirm=") {
             confirm = v.to_string();
         } else if let Some(v) = line.strip_prefix("stdin=") {
@@ -200,6 +207,32 @@ fn main() {
     let mut err = String::new();
     let mut matched = false;
     for r in &rules {
+        if r[0] == "seq" {
+            if r.len() < 5 || r[1].is_empty() || !joined.contains(&r[1]) {
+                continue;
+            }
+            let group: Vec<&Vec<String>> = rules
+                .iter()
+                .filter(|x| x[0] == "seq" && x[1] == r[1])
+                .collect();
+            // Only the first line of a group counts the call, so a call is counted once.
+            if !std::ptr::eq(group[0], r) {
+                continue;
+            }
+            let counter = exe.with_extension(format!("seq{:016x}", fnv(r[1].as_bytes())));
+            let k: usize = fs::read_to_string(&counter)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0)
+                + 1;
+            let _ = fs::write(&counter, k.to_string());
+            let pick = group[(k - 1).min(group.len() - 1)];
+            code = pick[2].parse().unwrap_or(0);
+            out = pick[3].replace("\\n", "\n");
+            err = pick[4].replace("\\n", "\n");
+            matched = true;
+            break;
+        }
         if r.len() < 5 {
             continue;
         }

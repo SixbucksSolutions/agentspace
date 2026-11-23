@@ -195,7 +195,8 @@ function Test-SyncCalls([string]$Name, [string[]]$Arguments, [string]$Alias, [st
     $ca = Join-Path $h.UserProfile '.agentspace\ca\agentspace_ca.pub'
     $claude = Join-Path $h.UserProfile '.claude\CLAUDE.md'
 
-    $want = @('aws ec2 describe-instances', 'aws ec2 describe-instances', 'ssh:sync', 'scp', 'scp', 'ssh:sync', 'ssh:sync', 'scp', 'go', 'scp', 'ssh:sync', 'ssh:push')
+    # The patch wait's three calls follow the install, row 4, and come before row 5 (operator.md, sync, step 5; The patch wait).
+    $want = @('aws ec2 describe-instances', 'aws ec2 describe-instances', 'ssh:sync', 'scp', 'scp', 'ssh:sync') + $script:HpPatchWaitSequence + @('ssh:sync', 'scp', 'go', 'scp', 'ssh:sync', 'ssh:push')
     $got = Get-HpSequence $calls
     $p = New-HpProblems
     Add-HpRunProblems $p $r 0
@@ -204,7 +205,8 @@ function Test-SyncCalls([string]$Name, [string[]]$Arguments, [string]$Alias, [st
       while ($i -lt $got.Count -and $i -lt $want.Count -and $got[$i] -ceq $want[$i]) { $i++ }
       $p.Add("The calls differ from the order of operator.md's table at call $($i + 1) of $($want.Count) (expected $(if ($i -lt $want.Count) { $want[$i] } else { 'no more' }), got $(if ($i -lt $got.Count) { $got[$i] } else { 'none' }); $($got.Count) calls)")
     }
-    Write-HpProblems "${sy}: $($Arguments -join ' ') starts the host, then makes the table's calls in order: the staging folder removed, box/system and the CA key copied, the install, the CLAUDE.md folder and copy, the build, its copy and install, and the push (steps 2 to 8)" $p
+    foreach ($m in (Get-HpPatchWaitProblems $calls $Id)) { $p.Add($m) }
+    Write-HpProblems "${sy}: $($Arguments -join ' ') starts the host, then makes the table's calls in order: the staging folder removed, box/system and the CA key copied, the install, the patch wait's three Session Manager calls, the CLAUDE.md folder and copy, the build, its copy and install, and the push (steps 2 to 8; The patch wait)" $p
 
     $ssh = @($calls | Where-Object { $_['kind'] -eq 'ssh' })
     $scp = @($calls | Where-Object { $_['kind'] -eq 'scp' })
@@ -257,13 +259,15 @@ function Test-SyncCalls([string]$Name, [string[]]$Arguments, [string]$Alias, [st
     $p = New-HpProblems
     $iCopy = [Array]::IndexOf($lines, 'Copying box/system to the instance...')
     $iCa = -1; for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k] -cmatch '^Copying the agentspace SSH CA''s public key \(SHA256:[A-Za-z0-9+/]+\) to the instance\.\.\.$') { $iCa = $k; break } }
+    $iWait = [Array]::IndexOf($lines, "Checking that $Id has finished this boot's patch run...")
+    $iPatched = [Array]::IndexOf($lines, "Patched: $Id")
     $iMd = [Array]::IndexOf($lines, 'Copying ~/.claude/CLAUDE.md to the instance...')
     $iBuild = [Array]::IndexOf($lines, 'Building the localswim CLI for linux/arm64...')
     $iCli = [Array]::IndexOf($lines, 'Copying the localswim CLI to the instance...')
     $iPush = [Array]::IndexOf($lines, 'Sending the localswim Bot token to the instance...')
-    if (-not (0 -le $iCopy -and $iCopy -lt $iCa -and $iCa -lt $iMd -and $iMd -lt $iBuild -and $iBuild -lt $iCli -and $iCli -lt $iPush)) { $p.Add('The progress lines are not Copying box/system, Copying the agentspace SSH CA''s public key (<fp>), Copying ~/.claude/CLAUDE.md, Building, Copying the localswim CLI and Sending the localswim Bot token, in that order') }
+    if (-not (0 -le $iCopy -and $iCopy -lt $iCa -and $iCa -lt $iWait -and $iWait -lt $iPatched -and $iPatched -lt $iMd -and $iMd -lt $iBuild -and $iBuild -lt $iCli -and $iCli -lt $iPush)) { $p.Add('The progress lines are not Copying box/system, Copying the agentspace SSH CA''s public key (<fp>), Checking that <id> has finished this boot''s patch run..., Patched: <id>, Copying ~/.claude/CLAUDE.md, Building, Copying the localswim CLI and Sending the localswim Bot token, in that order') }
     $awsCalls = @($calls | Where-Object { $_['kind'] -eq 'aws' })
-    if ($awsCalls.Count -eq 0 -or @($awsCalls | Where-Object { $_['a'] -notcontains $Id }).Count -gt 0) { $p.Add("An AWS call does not name this host's instance") }
+    if ($awsCalls.Count -eq 0 -or @($awsCalls | Where-Object { $_['a'] -notcontains $Id -and $_['a'] -notcontains "Key=InstanceIds,Values=$Id" }).Count -gt 0) { $p.Add("An AWS call does not name this host's instance") }
     if ($IsBox) {
       if (Test-Path -LiteralPath (Join-Path $h.UserProfile '.agentspace\hosts\swimcoach\id_ed25519')) { $p.Add('A key was made for the box') }
       if (Test-Path -LiteralPath (Join-Path $h.SshDir 'agentspace.d')) { $p.Add('An alias was written for the box') }

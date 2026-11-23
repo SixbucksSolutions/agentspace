@@ -37,7 +37,8 @@ function Get-VolumeOf([string]$InstanceId) { 'vol-' + $InstanceId.Substring(2) }
 # template's path and the folder it is in). It answers from aws-scenario.json beside it: a key is
 # "<service> <operation>", optionally followed by one argument's value (a stack name, an instance ID,
 # a volume ID), and its value is a list of steps {out, err, code}; each call takes the next step of
-# the first key that matches, and the last step repeats. A call with no key exits 0 with no output.
+# the first key that matches, and the last step repeats. A call with no key exits 0 with no output, but
+# for the three `ssm` calls of a finished patch check, which get the answers of a host that is patched.
 $script:AwsStandInScript = @'
 $dir = $PSScriptRoot
 $a = @($args | ForEach-Object { [string]$_ })
@@ -80,7 +81,18 @@ for ($j = 2; $j -lt $a.Count; $j++) {
 $cands.Add($k)
 $match = $null
 if ($null -ne $scn) { foreach ($c in $cands) { if ($null -ne $scn.PSObject.Properties[$c]) { $match = $c; break } } }
-if ($null -eq $match) { exit 0 }
+if ($null -eq $match) {
+  # The defaults of the three Session Manager calls of a patch check that has finished (docs/operator.md,
+  # Calls by command; The patch wait): a case that gives a key of its own for one of them keeps its answer.
+  $default = switch ($k) {
+    'ssm describe-instance-information' { '{"InstanceInformationList":[{"PingStatus":"Online"}]}' }
+    'ssm send-command' { '{"Command":{"CommandId":"00000000-0000-0000-0000-000000000000"}}' }
+    'ssm get-command-invocation' { '{"Status":"Success","StandardOutputContent":"patched\n"}' }
+    default { $null }
+  }
+  if ($null -ne $default) { [Console]::Out.Write($default); [Console]::Out.Flush() }
+  exit 0
+}
 $steps = @($scn.PSObject.Properties[$match].Value)
 $countFile = Join-Path $dir ('aws-count-' + ($match -replace '[^A-Za-z0-9]', '_') + '.txt')
 $n = 0
@@ -508,6 +520,15 @@ function Get-CallStack([string]$Stack) { "cloudformation describe-stacks --regio
 function Get-CallDescribe([string]$Id) { "ec2 describe-instances --region us-west-2 --output json --instance-ids $Id" }
 function Get-CallVolumes([string]$Id) { "ec2 describe-volumes --region us-west-2 --output json --volume-ids $(Get-VolumeOf $Id)" }
 function Get-CallSsm([string]$Id) { "ssm describe-instance-information --region us-west-2 --output json --filters Key=InstanceIds,Values=$Id" }
+# The three calls of `sync`'s patch wait (docs/operator.md, Calls by command and The patch wait), in order, for the
+# host whose instance is $Id: the Session Manager read, the send with the comment `agentspace sync: patch check`
+# (its question is the box's own wording, so its value is `commands=` and then anything), and the poll of the
+# command the send answered, which with the stand-in's default answer is the command ID of zeros. A wait that
+# follows a sync's install is these three and no `ec2 describe-instances` of its own.
+$script:PatchWaitCommandId = '00000000-0000-0000-0000-000000000000'
+function Get-CallPatchSend([string]$Id) { @('ssm', 'send-command', '--region', 'us-west-2', '--output', 'json', '--instance-ids', $Id, '--document-name', 'AWS-RunShellScript', '--comment', 'agentspace sync: patch check', '--parameters', 're:^commands=') }
+function Get-CallPatchPoll([string]$Id, [string]$CommandId = $script:PatchWaitCommandId) { "ssm get-command-invocation --region us-west-2 --output json --command-id $CommandId --instance-id $Id" }
+function Get-PatchWaitCalls([string]$Id, [string]$CommandId = $script:PatchWaitCommandId) { @((Get-CallSsm $Id), (Get-CallPatchSend $Id), (Get-CallPatchPoll $Id $CommandId)) }
 function Get-CallStop([string]$Id) { "ec2 stop-instances --region us-west-2 --output json --instance-ids $Id" }
 function Get-CallStart([string]$Id) { "ec2 start-instances --region us-west-2 --output json --instance-ids $Id" }
 function Get-CallModify([string]$Id, [long]$Size) { "ec2 modify-volume --region us-west-2 --output json --volume-id $(Get-VolumeOf $Id) --size $Size" }

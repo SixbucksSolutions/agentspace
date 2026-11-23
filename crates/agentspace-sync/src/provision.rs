@@ -31,7 +31,11 @@ use agentspace_hosts::{BOX_PROJECT, Host, HostState, RunLock, Target};
 use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
 
 use crate::deploy::{self, full_home, read_hosts};
+use crate::patch_wait::PatchOutcome;
 use crate::{Seams, step_failed};
+
+/// Step 10's line, the run's last, exactly (operator.md, provision, step 10; pin P20).
+pub(crate) const SIGN_IN_LINE: &str = "Sign in on this host once, by hand, under a lease: see \"Signing in on a new host\" in the agentspace README.";
 
 /// How many times a log line is tried, and the pause between tries (keeper.md, Log lines).
 const LOG_TRIES: u32 = 5;
@@ -327,6 +331,20 @@ fn log_placed(log: &Log, placed: &PendingPlaced) {
     }
 }
 
+/// Step 6's line for a `sync` that succeeded: `sync done`, or, when its patch wait ended on
+/// `failed`, `sync done; the patch run failed, see the host's journal`, exactly, with no other
+/// field (operator.md, provision, Its log; pin P27).
+fn log_sync_done(log: &Log, outcome: PatchOutcome) {
+    match outcome {
+        PatchOutcome::Patched => log.line("sync", "done", None),
+        PatchOutcome::Failed => log.line(
+            "sync",
+            "done; the patch run failed, see the host's journal",
+            None,
+        ),
+    }
+}
+
 /// The run, steps 1 to 10.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
@@ -413,10 +431,11 @@ pub(crate) fn run(
         .map_err(|f| fail("start", f))?;
     log.line("start", "done", None);
 
-    // Step 6: sync, its forced push included.
-    crate::sync_target_using(ctx, ca_env, target, say, aws, remote, seams)
+    // Step 6: sync, its patch wait and its forced push included. A wait that ended on `failed` is
+    // recorded in the step's line, since a detached run's warning reaches no one (pin P27).
+    let outcome = crate::syncing::sync_target(ctx, ca_env, target, say, aws, remote, seams)
         .map_err(|f| fail("sync", f))?;
-    log.line("sync", "done", None);
+    log_sync_done(&log, outcome);
 
     // Step 7: bootstrap.
     crate::bootstrap_using(ctx, ca_env, target, say, aws, remote, seams)
@@ -440,14 +459,11 @@ pub(crate) fn run(
         }
     }
 
-    // Step 10: the sign-in line, only for a host that was not ready, and never for the box.
+    // Step 10: the sign-in line, only for a host that was not ready, and never for the box. From
+    // v0.08 a host runs only while its project holds a live lease (D56), so the sign-ins are made
+    // under one (pin P20).
     if !was_ready && !is_box {
-        say.progress(
-            &format!(
-                "Sign in on this host once, by hand: run 'agentspace-operator status -Host {project}' first and again after an hour, then see \"Signing in on a new host\" in the agentspace README."
-            ),
-            None,
-        );
+        say.progress(SIGN_IN_LINE, None);
     }
     log.line("run", "done", None);
     Ok(())
@@ -497,6 +513,43 @@ mod tests {
         // A second open appends.
         open_log(&path).unwrap().line("run", "done", None);
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
+    }
+
+    #[test]
+    fn step_6s_line_records_a_patch_run_that_failed() {
+        let dir = Scratch::new("provision-sync-line");
+        let path = dir.path().join("provision.log");
+        let log = open_log(&path).unwrap();
+        log_sync_done(&log, PatchOutcome::Patched);
+        log_sync_done(&log, PatchOutcome::Failed);
+        drop(log);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.split_terminator('\n').collect();
+        assert_eq!(lines.len(), 2);
+        let rests: Vec<&str> = lines
+            .iter()
+            .map(|l| {
+                let (time, rest) = l.split_once(' ').unwrap();
+                assert!(agentspace_state::parse_time(time).is_some());
+                rest
+            })
+            .collect();
+        assert_eq!(
+            rests,
+            [
+                "sync done",
+                "sync done; the patch run failed, see the host's journal"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_sign_in_line_sends_a_person_to_a_lease_first() {
+        assert_eq!(
+            SIGN_IN_LINE,
+            "Sign in on this host once, by hand, under a lease: see \"Signing in on a new host\" in the agentspace README."
+        );
+        assert!(!SIGN_IN_LINE.contains("status -Host"));
     }
 
     #[test]

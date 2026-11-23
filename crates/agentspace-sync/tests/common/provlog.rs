@@ -10,6 +10,9 @@ use std::fs;
 use super::Rig;
 use super::times::parse_utc;
 
+/// What step 6's line says after `<time> ` when its patch wait ended on `failed`, exactly.
+pub const PATCH_FAILED_LINE: &str = "sync done; the patch run failed, see the host's journal";
+
 /// One of a run's own lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogLine {
@@ -19,6 +22,9 @@ pub struct LogLine {
     /// The field between the outcome and the reason: `placed=<n>` or `lease=<id>`, for step 9.
     pub field: Option<String>,
     pub reason: Option<String>,
+    /// Whether the line is step 6's `sync done; the patch run failed, see the host's journal`
+    /// (operator.md, provision, Its log; pin P27).
+    pub patch_failed: bool,
 }
 
 impl LogLine {
@@ -32,6 +38,17 @@ impl LogLine {
 pub fn parse_log_line(line: &str) -> Option<LogLine> {
     let time = parse_utc(line.get(..20)?)?;
     let rest = line.get(20..)?.strip_prefix(' ')?;
+    // The one line with more after `done` (operator.md, provision, Its log; pin P27).
+    if rest == PATCH_FAILED_LINE {
+        return Some(LogLine {
+            time,
+            step: "sync".to_string(),
+            outcome: "done".to_string(),
+            field: None,
+            reason: None,
+            patch_failed: true,
+        });
+    }
     let (step, rest) = rest.split_once(' ')?;
     if ![
         "run",
@@ -79,6 +96,7 @@ pub fn parse_log_line(line: &str) -> Option<LogLine> {
         outcome: outcome.to_string(),
         field,
         reason,
+        patch_failed: false,
     })
 }
 
