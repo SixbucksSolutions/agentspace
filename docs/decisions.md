@@ -3687,6 +3687,19 @@ for a different size while the host runs.
 - **A lease that is only `pending` does not hold a host's size**, since it has no session there; an
   expired or released lease holds nothing. A host in its grace after its last lease (D56) is
   resized like a stopped one.
+- **Changed for v0.09-T01 (architect, 2026-11-23, on the dev lead's pins P2 and P3):**
+  - **While the project has any `pending` lease, place answers every new lease of it `pending`**,
+    whatever the table above says, and the run places it. Otherwise a lease placed `ready` on the
+    old size while a resize run is due or running would be cut when that run stops the host.
+  - **A `ready` record with no `instance_type` answers `pending` and starts a run, whatever other
+    leases hold the host**, never `no_capacity`. The run records the type without resizing when a
+    live `ready` lease holds the host (D68's change below), and then places or refuses the lease by
+    the type it found. So no lease is refused across the install only because its host's type was
+    not yet recorded.
+  - **The record a missing `hosts.json` implies, the box's (D45), has `instance_type`
+    `m9g.xlarge`**, D65's `m`, which is the template's default and the box's type today. A laptop
+    with no registry places a default lease as before v0.09; the box's first deploy or run records
+    its real type.
 
 ### D67. The stack holds a host's instance type, the host registry records it, and the size-to-type map is the EC2 driver's
 
@@ -3741,6 +3754,15 @@ idle check (D57) meet a stop and start that no lease's end explains.
 - **Whether a resize on a `ready` host runs provision's later steps** (start, `sync`, `bootstrap`),
   each safe to repeat (D48), or only its deploy and start, is the spec turn's to rule after a probe
   of their times on a `ready` host.
+- **Changed for v0.09-T01 (architect, 2026-11-23, on the dev lead's pins P1 and P2):**
+  - **The run's deploy step resizes only when no live `ready` lease holds the host at that
+    moment**, read from the lease state file then. When one does, it passes no `InstanceType`, so
+    the stack's change set holds no resize and the host is not stopped, and it records the type
+    it reads back.
+  - **`place_pending` answers the refusal**: at the run's end, under the lease state file's lock, a
+    `pending` lease the host does not meet becomes `unsatisfiable` with D66's `no_capacity` when a
+    live `ready` lease holds the host, and stays `pending` for the next run when none does.
+    driver.md's rule that `place_pending` never answers `unsatisfiable` gains this one exception.
 - **Changed when v0.09 was laid out (architect, 2026-11-23, D71):** `provision`'s command line is
   unchanged, and the run finds its type itself at its deploy step, from the lease state file
   through `resize_target`; and a resize runs provision's steps entire, with no probe first.
