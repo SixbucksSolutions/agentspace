@@ -52,17 +52,27 @@
 #   and on nothing else of the laptop's process list: it lists, reads and ends no other process, and never
 #   reads or prints any process's command line.
 # - Every stand-in gets the harness's environment for the throwaway home. The check never prints it.
+# - R7 is the one place the program under test is started outside harness.ps1, which is otherwise the only
+#   code that starts it (docs/conformance.md, "The harness"): the row requires the release to be the
+#   stand-in's child, so the stand-in starts it (the `run` line). The stand-in is given the harness's
+#   environment for the throwaway home (Get-ConformanceChildEnvironment, with the provision tripwire added),
+#   the check's wait for the release is bounded at 60 seconds, and Stop-CeAll ends the stand-in's child
+#   through its `rel` record, as it ends every process a stand-in recorded.
 # - Every write and delete the check makes calls Assert-ConformancePath at the call. The stand-ins' own
 #   writes (`pids.txt`, the R2 and R7 files) are the stand-ins' (docs/conformance.md, "The program under
 #   test is untrusted").
 # - Whether a process ended is asked by a bounded poll, never by a fixed sleep that assumes a timing. R14
-#   waits for a 60-second lease's `expires_at` to pass, which is bounded at 70 seconds after its creation.
+#   waits for a 60-second lease's `expires_at` to pass, which is bounded at 70 + 15 seconds after the
+#   lease's creation (`$r14Created + 70 + 15`).
 # - R15's second client is started by a stand-in the moment its first has exited, which the spec asks for.
 #   The case never asserts which of the two walks ended the second client, and runs once. It holds only
 #   when the stand-in starts its second client within the release's run, about 150 milliseconds, so the
 #   stand-in starts it by direct process creation, warmed first; a second client found started after the
 #   release returned makes the result SKIPPED with that reason, never FAIL (architect, 2026-11-22, for
-#   v0.08-T04; driver.md's R15 row at c932ef6).
+#   v0.08-T04; driver.md's R15 row at c932ef6). The cut-off is the moment the check's own call returns,
+#   which comes a few to tens of milliseconds after the release process exited, so a second client started
+#   in the milliseconds between the release's exit and that return is reported FAIL; the error can only go
+#   toward a false FAIL, never a false PASS.
 # - csc.exe is looked up only under %SystemRoot%\Microsoft.NET\Framework64 and \Framework (v4.0.30319),
 #   never on PATH or in the checkout, and the check reports SKIPPED when neither holds one (architect,
 #   2026-11-22, for v0.08-T04).
@@ -334,8 +344,27 @@ function New-CeBase {
   $exe = Join-Path $Lab.Root 'stubbuild\stub.exe'
   New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $Lab -Path (Split-Path -Parent $src)) | Out-Null
   [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $Lab -Path $src), $script:CeStubSource, $utf8)
-  $out = & $Csc /nologo /target:exe ("/out:" + (Assert-ConformancePath -ConformanceHome $Lab -Path $exe)) $src 2>&1
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
+  # csc.exe runs for at most 120 seconds, and is killed when it is still running then.
+  $script:CeBuildWhy = 'csc.exe did not build the stand-in program'
+  $psi = [Diagnostics.ProcessStartInfo]::new($Csc)
+  foreach ($a in '/nologo', '/target:exe', ('/out:' + (Assert-ConformancePath -ConformanceHome $Lab -Path $exe)), $src) { $psi.ArgumentList.Add($a) }
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $proc = [Diagnostics.Process]::Start($psi)
+  try {
+    $o = $proc.StandardOutput.ReadToEndAsync()
+    $e = $proc.StandardError.ReadToEndAsync()
+    if (-not $proc.WaitForExit(120000)) {
+      try { $proc.Kill($true) } catch { }
+      $script:CeBuildWhy = 'csc.exe did not finish within 120 seconds and was ended'
+      return $null
+    }
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) { return $null }
+  } finally { $proc.Dispose() }
+  if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
   return $exe
 }
 
@@ -402,7 +431,7 @@ function Get-CeSelf($Stand) {
 function Test-CeAlive($Rec) {
   if ($null -eq $Rec) { return $false }
   $p = $null
-  try { $p = [Diagnostics.Process]::GetProcessById($Rec.ProcessId) } catch { return $false }
+  try { $p = [Diagnostics.Process]::GetProcessById($Rec.ProcessId); $null = $p.SafeHandle } catch { if ($p) { $p.Dispose() }; return $false }
   try { return ((-not $p.HasExited) -and ($p.StartTime.ToFileTimeUtc() -eq $Rec.Start)) } catch { return $false } finally { $p.Dispose() }
 }
 
@@ -411,7 +440,8 @@ function Test-CeStandAlive($Stand) { Test-CeAlive (Get-CeSelf $Stand) }
 # Ends the process a stand-in recorded, only when it still has the creation time recorded.
 function Stop-CeRec($Rec) {
   $p = $null
-  try { $p = [Diagnostics.Process]::GetProcessById($Rec.ProcessId) } catch { return }
+  # One handle is held from the creation-time check through Kill, so an ID reused in between is never ended.
+  try { $p = [Diagnostics.Process]::GetProcessById($Rec.ProcessId); $null = $p.SafeHandle } catch { if ($p) { $p.Dispose() }; return }
   try {
     if ((-not $p.HasExited) -and ($p.StartTime.ToFileTimeUtc() -eq $Rec.Start)) { $p.Kill() }
   } catch { } finally { $p.Dispose() }
@@ -637,13 +667,25 @@ function Invoke-CeRelease {
   [pscustomobject]@{ Run = $run; From = $from; To = [DateTime]::UtcNow; Seconds = $sw.Elapsed.TotalSeconds; AllBefore = $before.All; LeaseBefore = $before.Lease }
 }
 
+# An error's text, masked before it is printed (AGENTS.md, Terry's real files): the throwaway homes' roots, the
+# temporary folder and the profile folder are replaced by name, literally, so a path with spaces is covered,
+# and only then is any other drive path replaced.
+function Get-CeMaskedError([string]$Text) {
+  $roots = @()
+  foreach ($h in @($script:lab, $script:lab11)) { if ($h -and $h.Root) { $roots += , @($h.Root, '<home>') } }
+  if ($env:TEMP) { $roots += , @($env:TEMP, '<temp>') }
+  if ($env:USERPROFILE) { $roots += , @($env:USERPROFILE, '<profile>') }
+  foreach ($r in $roots) { $Text = [regex]::Replace($Text, [regex]::Escape($r[0]), $r[1], [Text.RegularExpressions.RegexOptions]::IgnoreCase) }
+  ($Text -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+}
+
 # A case. A throw in its body is one FAIL line named for the row, and its stand-ins are ended whatever happens.
 function Invoke-CeCase {
-  param([Parameter(Mandatory)][string]$Row, [Parameter(Mandatory)][scriptblock]$Body)
+  param([Parameter(Mandatory)][string]$Anchor, [Parameter(Mandatory)][string]$Row, [Parameter(Mandatory)][scriptblock]$Body)
   try { & $Body }
   catch {
-    $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
-    Write-ConformanceResult -Name "$Row The case ran to its end without an unexpected error" -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
+    $why = Get-CeMaskedError $_.Exception.Message
+    Write-ConformanceResult -Name "$Anchor`: $Row The case ran to its end without an unexpected error" -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
   } finally {
     try { Stop-CeAll } catch { }
     $script:CeStands.Clear()
@@ -664,7 +706,7 @@ try {
   } else {
     $base = New-CeBase -Lab $lab -Csc $csc
     if (-not $base) {
-      Write-ConformanceResult -Name "$aTree`: Setup, the stand-in program builds" -Status FAIL -Reason 'csc.exe did not build the stand-in program'
+      Write-ConformanceResult -Name "$aTree`: Setup, the stand-in program builds" -Status FAIL -Reason $script:CeBuildWhy
     } else {
       if (-not ('CeLaunch' -as [type])) { Add-Type -TypeDefinition $script:CeLaunchSource }
 
@@ -673,7 +715,7 @@ try {
       $r14Created = [DateTime]::UtcNow
 
       # === R1: one client with its tree ===========================================================================
-      Invoke-CeCase 'R1' {
+      Invoke-CeCase $aTree 'R1' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aTree -Row 'R1'; if (-not $l) { return }
         $gc = New-CeStand -Lab $lab -Base $base -Case r1 -Name grandchild -Image 'helper.exe'
         $px = New-CeStand -Lab $lab -Base $base -Case r1 -Name proxy -Image $proxyImage -Kids @(@{ Label = 'grandchild'; Stand = $gc; Args = 'worker' })
@@ -684,16 +726,16 @@ try {
         $endedOk = Wait-CeEnded -Stands @($c, $px, $gc)
         $left = Get-CeAliveNames @($c, $px, $gc)
         $p = New-CeProblems; if (-not $endedOk) { $p.Add("Still running after the release: $left") }
-        Add-CeProblemResult -Name (Get-CeName $aTree 'R1' 'release of a ready lease ends ssh.exe <a>, its child agentspace-ssh-proxy.exe <a> and that one''s grandchild') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aTree 'R1' 'Release of a ready lease ends ssh.exe <a>, its child agentspace-ssh-proxy.exe <a> and that one''s grandchild') -Problems $p
         $p = Get-CeDocProblems -Run $rel.Run -Id $l.Id -Created $l.Doc -Expires $true
         if (Test-Path -LiteralPath $l.AliasFile) { $p.Add('The alias file is still there') }
         if (Test-Path -LiteralPath $l.LeaseDir) { $p.Add('The lease folder is still there') }
-        Add-CeProblemResult -Name (Get-CeName $aTree 'R1' 'release exits 0, prints the lease document as v0.07''s release does, writes nothing to standard error, and leaves no alias file or lease folder') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aTree 'R1' 'Release exits 0, prints the lease document as v0.07''s release does, writes nothing to standard error, and leaves no alias file or lease folder') -Problems $p
         Add-CeProblemResult -Name (Get-CeName $aCount 'R1' 'release.log gains exactly one line, lease=<id> and Ended 1 of the lease''s connections., counting the ssh.exe client alone') -Problems (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 1 of the lease''s connections\.\z')
       }
 
       # === R2: the order of a release =============================================================================
-      Invoke-CeCase 'R2' {
+      Invoke-CeCase $aOrder 'R2' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R2'; if (-not $l) { return }
         $dir = Get-CeStandDir $lab 'r2' 'watcher'
         $watchFile = Join-Path $dir 'watch.txt'
@@ -718,15 +760,15 @@ try {
         if (-not $endedOk) { $p.Add('The stand-in is still running after the release') }
         if ($complete.Count -eq 0) { $p.Add('The stand-in wrote no line') }
         elseif ($complete[$complete.Count - 1] -cne 'exists') { $p.Add("The stand-in's last line before it was ended says '$($complete[$complete.Count - 1])', not exists: the alias file was deleted before the client was ended") }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R2' 'a stand-in ssh.exe <a> that writes every 100 milliseconds whether the alias file exists has written that it does in its last line before it was ended') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R2' 'A stand-in ssh.exe <a> that writes every 100 milliseconds whether the alias file exists has written that it does in its last line before it was ended') -Problems $p
         $p = Get-CeExitProblems $rel.Run
         if (Test-Path -LiteralPath $l.AliasFile) { $p.Add('The alias file is still there') }
         if (Test-Path -LiteralPath $l.LeaseDir) { $p.Add('The lease folder is still there') }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R2' 'the alias file and the lease folder are gone after the release') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R2' 'The alias file and the lease folder are gone after the release') -Problems $p
       }
 
       # === R3: every "Yes" row of an ssh client's destination =====================================================
-      Invoke-CeCase 'R3' {
+      Invoke-CeCase $aDest 'R3' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aDest -Row 'R3'; if (-not $l) { return }
         $a = $l.Alias
         $upper = $a.ToUpperInvariant()
@@ -759,11 +801,11 @@ try {
         }
         $p = Get-CeExitProblems $rel.Run
         foreach ($q in (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 10 of the lease''s connections\.\z')) { $p.Add($q) }
-        Add-CeProblemResult -Name (Get-CeName $aDest 'R3' 'one release ends all ten, and its release.log line says Ended 10 of the lease''s connections.') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aDest 'R3' 'One release ends all ten, and its release.log line says Ended 10 of the lease''s connections.') -Problems $p
       }
 
       # === R4: every "No" row, and the other alias's clients ======================================================
-      Invoke-CeCase 'R4' {
+      Invoke-CeCase $aClients 'R4' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aClients -Row 'R4'; if (-not $l) { return }
         $o = New-CeCaseLease -Lab $lab -Anchor $aClients -Row 'R4'; if (-not $o) { return }
         $a = $l.Alias
@@ -806,11 +848,11 @@ try {
         $p = Get-CeExitProblems $rel.Run
         if (Test-CeStandAlive $control) { $p.Add('The control ssh.exe <a> was not ended, so the release walked for no client') }
         foreach ($q in (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 1 of the lease''s connections\.\z')) { $p.Add($q) }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R4' 'the one control client, ssh.exe <a>, is ended and counted: release.log says Ended 1 of the lease''s connections.') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R4' 'The one control client, ssh.exe <a>, is ended and counted: release.log says Ended 1 of the lease''s connections.') -Problems $p
       }
 
       # === R5: a proxy program with no ssh.exe above it ===========================================================
-      Invoke-CeCase 'R5' {
+      Invoke-CeCase $aClients 'R5' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aClients -Row 'R5'; if (-not $l) { return }
         $alone = New-CeStand -Lab $lab -Base $base -Case r5 -Name alone -Image $proxyImage
         $extra = New-CeStand -Lab $lab -Base $base -Case r5 -Name extra -Image $proxyImage
@@ -825,22 +867,30 @@ try {
         Add-CeProblemResult -Name (Get-CeName $aClients 'R5' 'agentspace-ssh-proxy.exe <a> extra is not ended') -Problems $p
         $p = Get-CeExitProblems $rel.Run
         foreach ($q in (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 1 of the lease''s connections\.\z')) { $p.Add($q) }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R5' 'the proxy client is counted: release.log says Ended 1 of the lease''s connections.') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R5' 'The proxy client is counted: release.log says Ended 1 of the lease''s connections.') -Problems $p
       }
 
       # === R6: the keeper's holder form, and the keeper's files ===================================================
-      Invoke-CeCase 'R6' {
+      Invoke-CeCase $aClients 'R6' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aClients -Row 'R6'; if (-not $l) { return }
         $h = New-CeStand -Lab $lab -Base $base -Case r6 -Name holder -Image 'ssh.exe'
         Start-CeStand -Lab $lab -Stand $h -Line "ssh.exe -N -o ExitOnForwardFailure=yes $($l.Alias)"
         if (-not (Wait-CeStarted -Tops @($h))) { Write-ConformanceResult -Name (Get-CeName $aClients 'R6' 'Setup, the holder stand-in started') -Status FAIL -Reason 'A stand-in did not record itself within 30 seconds'; return }
-        # The keeper's files in the throwaway state folder: a holder record that names the stand-in, and the logs.
+        # The keeper's files in the throwaway state folder: the box's holder record and output, which a release
+        # never reads, the record and output of another host's holder, named by the lease's project, `conf`, which
+        # name this lease and the stand-in (state.md, "Another host's holder"), the keeper's log and its two lock
+        # files (state.md, "The keeper's lock files").
         $self = Get-CeSelf $h
         $started = [DateTime]::FromFileTimeUtc($self.Start).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+        $record = "{`"pid`":$($self.ProcessId),`"process_started_at`":`"$started`",`"lease_id`":`"$($l.Id)`",`"alias`":`"$($l.Alias)`"}`n"
         $files = [ordered]@{
-          'board-holder.json' = "{`"pid`":$($self.ProcessId),`"process_started_at`":`"$started`",`"lease_id`":`"$($l.Id)`",`"alias`":`"$($l.Alias)`"}`n"
+          'board-holder.json' = $record
+          'board-holder.conf.json' = $record
           'board-holder.log' = "2000-01-01T00:00:00Z A line of the keeper's log, which a release never reads.`n"
           'board-holder-ssh.log' = "A line of the holder's output.`n"
+          'board-holder-ssh.conf.log' = "A line of the holder's output.`n"
+          'board-holder.lock' = ''
+          'board-holder-keeper.lock' = "0"
         }
         New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $lab.StateDir) | Out-Null
         foreach ($k in $files.Keys) {
@@ -855,16 +905,16 @@ try {
         $p2 = Get-CeExitProblems $rel.Run
         foreach ($q in (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 1 of the lease''s connections\.\z')) { $p2.Add($q) }
         foreach ($q in $p2) { $p.Add($q) }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R6' 'a stand-in in the keeper''s holder form, ssh.exe -N -o ExitOnForwardFailure=yes <a>, is ended and counted: Ended 1 of the lease''s connections.') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R6' 'A stand-in in the keeper''s holder form, ssh.exe -N -o ExitOnForwardFailure=yes <a>, is ended and counted: Ended 1 of the lease''s connections.') -Problems $p
         $p = New-CeProblems
         foreach ($k in $files.Keys) { if ((Get-CcFileHash (Join-Path $lab.StateDir $k)) -cne $before[$k]) { $p.Add("$k changed or is gone") } }
         $namesAfter = (Get-CcFileNames $lab.StateDir | Where-Object { $_ -like 'board-holder*' }) -join ','
         if ($namesAfter -cne $namesBefore) { $p.Add('The keeper''s files in the state folder are not the same set') }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R6' 'the keeper''s files in the throwaway state folder (the holder record, the keeper''s log and the holder''s output) are byte for byte as they were') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R6' 'The keeper''s files in the throwaway state folder (the box''s and the host conf''s holder records and outputs, the keeper''s log and its two lock files) are byte for byte as they were, and the set of names is the same') -Problems $p
       }
 
       # === R7: a release started as the child of a client =========================================================
-      Invoke-CeCase 'R7' {
+      Invoke-CeCase $aClients 'R7' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aClients -Row 'R7'; if (-not $l) { return }
         $cli = Get-ConformanceProgram -Variable 'AGENTSPACE_CMD'
         if (-not $cli) { Write-ConformanceResult -Name (Get-CeName $aClients 'R7' 'Setup, the lease CLI is named') -Status FAIL -Reason 'Neither AGENTSPACE_CMD nor its default names a program'; return }
@@ -892,20 +942,22 @@ try {
         $p = New-CeProblems
         if (-not (Test-CeStandAlive $parent)) { $p.Add('The spared ssh.exe <a>, the release''s parent, was ended') }
         if (-not (Test-CeStandAlive $beside)) { $p.Add('The second child beside the release, under the spared client, was ended') }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'the ssh.exe <a> that the release is a child of, and the second child beside the release, keep running') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'The ssh.exe <a> that the release is a child of, and the second child beside the release, keep running') -Problems $p
         $p = Get-CeDocProblems -Run $run -Id $l.Id -Created $l.Doc -Expires $true
         if (Test-Path -LiteralPath $l.AliasFile) { $p.Add('The alias file is still there') }
         if (Test-Path -LiteralPath $l.LeaseDir) { $p.Add('The lease folder is still there') }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'the release succeeds with exit 0 and its usual document, and deletes the alias file and the lease folder') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'The release succeeds with exit 0 and its usual document, and deletes the alias file and the lease folder') -Problems $p
         $rel = [pscustomobject]@{ From = $from; To = $to; AllBefore = $before.All; LeaseBefore = $before.Lease }
         Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'release.log gains Ended 0 of the lease''s connections; 1 could not be ended., the spared client counted once though both walks find it') -Problems (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 0 of the lease''s connections; 1 could not be ended\.\z')
+        # Evidence only: a check whose own process was ended could not reach this line, so it cannot fail from
+        # inside; it records that the check got here alive, and the row's claim stands on that.
         $own = $null; try { $own = [Diagnostics.Process]::GetProcessById($PID) } catch { }
         $p = New-CeProblems; if ($null -eq $own -or $own.HasExited) { $p.Add('The check''s own process is gone') }
-        Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'the check''s own process, an ancestor of the release and no client, is never ended') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aClients 'R7' 'The check reached this point alive after the release, its evidence that its own process, an ancestor of the release and no client, was not ended') -Problems $p
       }
 
       # === R8: a released lease released again ====================================================================
-      Invoke-CeCase 'R8' {
+      Invoke-CeCase $aOrder 'R8' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R8'; if (-not $l) { return }
         $first = Invoke-CeRelease -Lab $lab -Id $l.Id
         $p = Get-CeDocProblems -Run $first.Run -Id $l.Id -Created $l.Doc -Expires $true
@@ -916,23 +968,27 @@ try {
         $second = Invoke-CeRelease -Lab $lab -Id $l.Id
         $endedOk = Wait-CeEnded -Stands @($s)
         $p = New-CeProblems; if (-not $endedOk) { $p.Add('It is still running after the second release') }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'release of a released lease ends an ssh.exe <a> started after the first release') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'Release of a released lease ends an ssh.exe <a> started after the first release') -Problems $p
         $p = Get-CeExitProblems $second.Run
         if ($p.Count -eq 0) {
           if ($second.Run.Json['state'] -cne 'released') { $p.Add("The state is '$($second.Run.Json['state'])', not released") }
           if ($second.Run.Json['released_at'] -cne $first.Run.Json['released_at']) { $p.Add('released_at is not the first one') }
         }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'release of a released lease exits 0 and prints the lease with its first released_at') -Problems $p
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'the second release logs a line: Ended 1 of the lease''s connections.') -Problems (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $second -TextPattern '\AEnded 1 of the lease''s connections\.\z')
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'Release of a released lease exits 0 and prints the lease with its first released_at') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'The second release logs a line: Ended 1 of the lease''s connections.') -Problems (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $second -TextPattern '\AEnded 1 of the lease''s connections\.\z')
       }
 
       # === R9: a pending lease that carries a driver ==============================================================
-      Invoke-CeCase 'R9' {
+      Invoke-CeCase $aOrder 'R9' {
         $o = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R9'; if (-not $o) { return }
         $yId = [guid]::NewGuid().ToString()
+        # The driver's name is the one the stored record of the lease `create` just made carries, never a name
+        # written here (as test-lease-cmd-renew-release.ps1 does).
+        $driverName = [string](Get-CcRecord $lab $o.Id)['driver']
+        if (-not $driverName) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R9' 'Setup, the stored record of a lease create made carries a driver') -Status FAIL -Reason 'The record has no driver'; return }
         Add-CcRecord $lab ([ordered]@{
             id = $yId; project = 'conf'; state = 'pending'; platform = 'linux/arm64'; profile = 'agent-linux'
-            size = 'm'; ttl_seconds = 28800; created_at = (ConvertTo-CcTime (Get-CcNowSecond).AddMinutes(-2)); driver = 'ec2'
+            size = 'm'; ttl_seconds = 28800; created_at = (ConvertTo-CcTime (Get-CcNowSecond).AddMinutes(-2)); driver = $driverName
           })
         $child = New-CeStand -Lab $lab -Base $base -Case r9 -Name child -Image 'helper.exe'
         $s = New-CeStand -Lab $lab -Base $base -Case r9 -Name ssh-b -Image 'ssh.exe' -Kids @(@{ Label = 'child'; Stand = $child; Args = 'worker' })
@@ -941,13 +997,13 @@ try {
         $rel = Invoke-CeRelease -Lab $lab -Id $yId
         $gone = Get-CeGoneNames @($s, $child)
         $p = New-CeProblems; if ($gone) { $p.Add("Ended: $gone") }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R9' 'release of a pending lease that carries a driver ends nothing: ssh.exe <b>, another lease''s client, keeps running') -Problems $p
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R9' 'release of a pending lease exits 0 and prints its document as v0.07''s does: released, with no expires_at, and nothing on standard error') -Problems (Get-CeDocProblems -Run $rel.Run -Id $yId -Created $null -Expires $false)
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R9' 'release of a pending lease logs Ended 0 of the lease''s connections.') -Problems (Get-CeLogProblems -Lab $lab -Id $yId -Rel $rel -TextPattern '\AEnded 0 of the lease''s connections\.\z')
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R9' 'Release of a pending lease that carries a driver ends nothing: ssh.exe <b>, another lease''s client, keeps running') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R9' 'Release of a pending lease exits 0 and prints its document as v0.07''s does: released, with no expires_at, and nothing on standard error') -Problems (Get-CeDocProblems -Run $rel.Run -Id $yId -Created $null -Expires $false)
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R9' 'Release of a pending lease logs Ended 0 of the lease''s connections.') -Problems (Get-CeLogProblems -Lab $lab -Id $yId -Rel $rel -TextPattern '\AEnded 0 of the lease''s connections\.\z')
       }
 
       # === R10: an alias file that belongs to another lease =======================================================
-      Invoke-CeCase 'R10' {
+      Invoke-CeCase $aOrder 'R10' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R10'; if (-not $l) { return }
         $s = New-CeStand -Lab $lab -Base $base -Case r10 -Name ssh -Image 'ssh.exe'
         Start-CeStand -Lab $lab -Stand $s -Line "ssh.exe $($l.Alias)"
@@ -962,13 +1018,13 @@ try {
         $rel = Invoke-CeRelease -Lab $lab -Id $l.Id
         $p = New-CeProblems
         if (-not (Test-CcFailure -Run $rel.Run -Exit 1 -Code 'internal')) { $p.Add("The release did not fail with internal as before v0.08: $(Format-CcRun $rel.Run)") }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R10' 'release of a lease whose alias file belongs to another lease fails with internal, exit 1, as before v0.08') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R10' 'Release of a lease whose alias file belongs to another lease fails with internal, exit 1, as before v0.08') -Problems $p
         $p = New-CeProblems
         if (-not (Test-CeStandAlive $s)) { $p.Add('The stand-in ssh.exe <a> was ended') }
         if (-not (Test-Path -LiteralPath $l.AliasFile -PathType Leaf)) { $p.Add('The alias file was deleted') }
         elseif ((Get-CcFileHash $l.AliasFile) -cne ((Get-FileHash -InputStream ([IO.MemoryStream]::new($changedBytes)) -Algorithm SHA256).Hash)) { $p.Add('The alias file changed') }
         if (-not (Test-Path -LiteralPath $l.LeaseDir -PathType Container)) { $p.Add('The lease folder was deleted') }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R10' 'the stand-in ssh.exe <a> keeps running, and nothing is deleted') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R10' 'The stand-in ssh.exe <a> keeps running, and nothing is deleted') -Problems $p
         $now = Get-CeLogCounts $lab $l.Id
         $p = New-CeProblems
         if ($now.Lease - $rel.LeaseBefore -ne 0) { $p.Add('release.log gained a line for the lease') }
@@ -977,10 +1033,10 @@ try {
       }
 
       # === R11: release.log is a folder, in a home of its own =====================================================
-      Invoke-CeCase 'R11' {
+      Invoke-CeCase $aLog 'R11' {
         $script:lab11 = New-ConformanceHome
         $h = $script:lab11
-        if (-not $h.CaReady) { Write-ConformanceResult -Name (Get-CeName $aLog 'R11' 'release still ends the stand-in with release.log a folder') -Status SKIPPED -Reason "No throwaway CA could be made: $($h.CaReason)"; return }
+        if (-not $h.CaReady) { Write-ConformanceResult -Name (Get-CeName $aLog 'R11' 'Release still ends the stand-in with release.log a folder') -Status SKIPPED -Reason "No throwaway CA could be made: $($h.CaReason)"; return }
         $l = New-CeCaseLease -Lab $h -Anchor $aLog -Row 'R11'; if (-not $l) { return }
         New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $h -Path (Join-Path $h.StateDir 'release.log')) | Out-Null
         $s = New-CeStand -Lab $h -Base $base -Case r11 -Name ssh -Image 'ssh.exe'
@@ -989,21 +1045,21 @@ try {
         $rel = Invoke-CeRelease -Lab $h -Id $l.Id
         $endedOk = Wait-CeEnded -Stands @($s)
         $p = New-CeProblems; if (-not $endedOk) { $p.Add('The stand-in is still running after the release') }
-        Add-CeProblemResult -Name (Get-CeName $aLog 'R11' 'with release.log made a folder, release still ends the stand-in ssh.exe <a>') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aLog 'R11' 'With release.log made a folder, release still ends the stand-in ssh.exe <a>') -Problems $p
         $p = Get-CeDocProblems -Run $rel.Run -Id $l.Id -Created $l.Doc -Expires $true
         if ($rel.Run.StderrBytes.Length -ne 0) { $p.Add("Standard error holds $($rel.Run.StderrBytes.Length) bytes") }
         if (Test-Path -LiteralPath $l.AliasFile) { $p.Add('The alias file is still there') }
         if (Test-Path -LiteralPath $l.LeaseDir) { $p.Add('The lease folder is still there') }
-        Add-CeProblemResult -Name (Get-CeName $aLog 'R11' 'release succeeds with exit 0 and the same document, and writes nothing to standard error') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aLog 'R11' 'Release succeeds with exit 0 and the same document, and writes nothing to standard error') -Problems $p
       }
 
       # === R12: no client, and an unsatisfiable lease =============================================================
-      Invoke-CeCase 'R12' {
+      Invoke-CeCase $aOrder 'R12' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R12'; if (-not $l) { return }
         $rel = Invoke-CeRelease -Lab $lab -Id $l.Id
         $p = Get-CeDocProblems -Run $rel.Run -Id $l.Id -Created $l.Doc -Expires $true
         foreach ($q in (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 0 of the lease''s connections\.\z')) { $p.Add($q) }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R12' 'release with no client running succeeds as v0.07''s did and logs Ended 0 of the lease''s connections.') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R12' 'Release with no client running succeeds as v0.07''s did and logs Ended 0 of the lease''s connections.') -Problems $p
 
         # A project with no host record and no entry on the project list: create answers unsatisfiable.
         $run = Invoke-CcLease -Lab $lab -Arguments @('create', '--project', 'nocapacity')
@@ -1020,11 +1076,11 @@ try {
         elseif ((ConvertTo-CcCanonical $rel.Run.Json) -cne (ConvertTo-CcCanonical $doc)) { $p.Add('The document is not the lease unchanged') }
         if ($now.Lease - $rel.LeaseBefore -ne 0) { $p.Add('release.log gained a line for the lease') }
         if ($now.All - $rel.AllBefore -ne 0) { $p.Add("release.log gained $($now.All - $rel.AllBefore) lines") }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R12' 'release of an unsatisfiable lease prints it unchanged and logs no line') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R12' 'Release of an unsatisfiable lease prints it unchanged and logs no line') -Problems $p
       }
 
       # === R13: ten clients =======================================================================================
-      Invoke-CeCase 'R13' {
+      Invoke-CeCase $aTree 'R13' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aTree -Row 'R13'; if (-not $l) { return }
         $stands = @()
         for ($i = 1; $i -le 10; $i++) {
@@ -1037,17 +1093,17 @@ try {
         [void](Wait-CeEnded -Stands $stands)
         $p = New-CeProblems
         if ($rel.Seconds -gt 15) { $p.Add("The release took $([int]$rel.Seconds) seconds, over 15") }
-        Add-CeProblemResult -Name (Get-CeName $aTree 'R13' 'with ten stand-in clients of <a>, release returns within 15 seconds of its start') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aTree 'R13' 'With ten stand-in clients of <a>, release returns within 15 seconds of its start') -Problems $p
         $p = New-CeProblems
         $left = Get-CeAliveNames $stands
         if ($left) { $p.Add("Still running after the release: $left") }
         foreach ($q in (Get-CeExitProblems $rel.Run)) { $p.Add($q) }
         foreach ($q in (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 10 of the lease''s connections\.\z')) { $p.Add($q) }
-        Add-CeProblemResult -Name (Get-CeName $aTree 'R13' 'release ends all ten, and release.log says Ended 10 of the lease''s connections.') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aTree 'R13' 'Release ends all ten, and release.log says Ended 10 of the lease''s connections.') -Problems $p
       }
 
       # === R15: a client that comes back is ended too, with no timing assumed =====================================
-      Invoke-CeCase 'R15' {
+      Invoke-CeCase $aOrder 'R15' {
         $l = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R15'; if (-not $l) { return }
         $first = New-CeStand -Lab $lab -Base $base -Case r15 -Name 'ssh-first' -Image 'ssh.exe'
         $second = New-CeStand -Lab $lab -Base $base -Case r15 -Name 'ssh-second' -Image 'ssh.exe'
@@ -1067,17 +1123,20 @@ try {
         while ($null -ne $secondRec -and (Test-CeAlive $secondRec) -and [DateTime]::UtcNow -lt $untilEnd) { Start-Sleep -Milliseconds 50 }
         $secondAlive = ($null -ne $secondRec -and (Test-CeAlive $secondRec))
         $late = ($secondAlive -and $secondRec.Start -gt $toFile)
+        $lateReason = 'The stand-in started its second client after the release had returned, so the build was not shown wrong'
         if ($late) {
-          Write-ConformanceResult -Name (Get-CeName $aOrder 'R15' 'A client that came back while the release ran is ended too, and no matching client is left') -Status SKIPPED -Reason 'The stand-in started its second client after the release had returned, so the build was not shown wrong'
+          Write-ConformanceResult -Name (Get-CeName $aOrder 'R15' 'A client that came back while the release ran is ended too, and no matching client is left') -Status SKIPPED -Reason $lateReason
         } else {
           $p = New-CeProblems
           if ($null -eq $secondRec) { $p.Add('The first client was not ended, so the second was never started') }
           if (Test-CeStandAlive $first) { $p.Add('The first client is still running') }
-          if ($secondAlive) { $p.Add('The second client is still running') }
+          # A correct build can miss a second client under load, so this reason says so at once (architect,
+          # 2026-11-22, for v0.08-T04: R15 is in #0189's family, and is rerun alone before it is a finding).
+          if ($secondAlive) { $p.Add('The second client is still running. This MAY be timing under load: rerun this file alone before calling it a finding (#0189)') }
           if (-not (Test-CeStandAlive $sup)) { $p.Add('The supervisor, which is no client, was ended') }
-          Add-CeProblemResult -Name (Get-CeName $aOrder 'R15' 'with a supervisor that is no match and starts one new ssh.exe <a> once its first is ended, no ssh.exe <a> is left after the release and the supervisor keeps running') -Problems $p
+          Add-CeProblemResult -Name (Get-CeName $aOrder 'R15' 'With a supervisor that is no match and starts one new ssh.exe <a> once its first is ended, no ssh.exe <a> is left after the release and the supervisor keeps running') -Problems $p
         }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R15' 'release of the lease whose client came back exits 0 with the lease document as v0.07''s') -Problems (Get-CeDocProblems -Run $rel.Run -Id $l.Id -Created $l.Doc -Expires $true)
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R15' 'Release of the lease whose client came back exits 0 with the lease document as v0.07''s') -Problems (Get-CeDocProblems -Run $rel.Run -Id $l.Id -Created $l.Doc -Expires $true)
         $p = New-CeProblems
         $lines = @(Get-CeLogLines $lab $l.Id)
         if ($lines.Count - $rel.LeaseBefore -ne 1) { $p.Add("release.log gained $($lines.Count - $rel.LeaseBefore) lines for the lease, not 1") }
@@ -1086,11 +1145,15 @@ try {
           $nm = [regex]::Match($lines[$lines.Count - 1], 'Ended (\d+) of')
           if ($nm.Success -and [int]$nm.Groups[1].Value -lt 2 -and $null -ne $secondRec -and -not $late) { $p.Add('The count is under 2') }
         }
-        Add-CeProblemResult -Name (Get-CeName $aLog 'R15' 'the release.log line is Ended <n> of the lease''s connections. with <n> at least 2, and no could-not-be-ended part') -Problems $p
+        $countName = Get-CeName $aLog 'R15' 'The release.log line is Ended <n> of the lease''s connections. with <n> at least 2, and no could-not-be-ended part'
+        # Late, the count of 2 was never owed, so a result that would be PASS is SKIPPED with the first R15
+        # result's reason; a problem the line has apart from the count is still a FAIL.
+        if ($late -and $p.Count -eq 0) { Write-ConformanceResult -Name $countName -Status SKIPPED -Reason $lateReason }
+        else { Add-CeProblemResult -Name $countName -Problems $p }
       }
 
       # === R14: an expired lease, released once its expires_at has passed =========================================
-      Invoke-CeCase 'R14' {
+      Invoke-CeCase $aOrder 'R14' {
         if (-not $r14) { return }
         $l = $r14
         $p = New-CeProblems
@@ -1099,8 +1162,8 @@ try {
         $s = New-CeStand -Lab $lab -Base $base -Case r14 -Name ssh -Image 'ssh.exe'
         Start-CeStand -Lab $lab -Stand $s -Line "ssh.exe $($l.Alias)"
         if (-not (Wait-CeStarted -Tops @($s))) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R14' 'Setup, the stand-in started') -Status FAIL -Reason 'A stand-in did not record itself within 30 seconds'; return }
-        # Waits, with a bound of 70 seconds from the lease's creation plus what the stand-in took, until the
-        # lease's expires_at has passed and get says it is expired.
+        # Waits, with a bound of 70 + 15 seconds from the lease's creation, until the lease's expires_at has
+        # passed and get says it is expired.
         $expires = ConvertFrom-CcTime ([string]$l.Doc['expires_at'])
         $limit = $r14Created.AddSeconds(70)
         $state = ''
@@ -1117,17 +1180,17 @@ try {
         $rel = Invoke-CeRelease -Lab $lab -Id $l.Id
         $endedOk = Wait-CeEnded -Stands @($s)
         $p = New-CeProblems; if (-not $endedOk) { $p.Add('The stand-in is still running after the release') }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R14' 'release of an expired lease ends the stand-in ssh.exe <a>') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R14' 'Release of an expired lease ends the stand-in ssh.exe <a>') -Problems $p
         $p = Get-CeDocProblems -Run $rel.Run -Id $l.Id -Created $l.Doc -Expires $true
         if (Test-Path -LiteralPath $l.AliasFile) { $p.Add('The alias file is still there') }
         if (Test-Path -LiteralPath $l.LeaseDir) { $p.Add('The lease folder is still there') }
-        Add-CeProblemResult -Name (Get-CeName $aOrder 'R14' 'release exits 0 and prints the lease released with its expires_at, and the alias file and the lease folder are gone') -Problems $p
+        Add-CeProblemResult -Name (Get-CeName $aOrder 'R14' 'Release exits 0 and prints the lease released with its expires_at, and the alias file and the lease folder are gone') -Problems $p
         Add-CeProblemResult -Name (Get-CeName $aOrder 'R14' 'release.log gains Ended 1 of the lease''s connections.') -Problems (Get-CeLogProblems -Lab $lab -Id $l.Id -Rel $rel -TextPattern '\AEnded 1 of the lease''s connections\.\z')
       }
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = Get-CeMaskedError $_.Exception.Message
   Write-ConformanceResult -Name 'test-unmet-release-ends-connections.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   # Ends every process any stand-in recorded, before the homes are removed.
