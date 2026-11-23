@@ -15,7 +15,8 @@
 # with the keeper's own arguments unchanged: <program> -Watch -SshExe <stub> -IntervalSeconds ...
 # -GuardIntervalSeconds ... Each runs with a throwaway USERPROFILE and state folder and no host registry, so
 # the box alone is the keeper's host. The case names its own AGENTSPACE_GUARD_CMD: a .cmd stand-in in the
-# case's home that appends one line to guard-runs.log beside itself for each run, with its arguments, its
+# case's home that appends one line to guard-runs.log beside itself for each run, with its first two
+# arguments (%~1 and %2, so that a check asserts the arguments and never the command line's quoting), its
 # working folder and the time, and then exits (or, where a case reads the started process, stays alive until
 # the case ends it). It never runs a real guard. keeper-common.ps1 also names tripwires for the guard and for
 # the operator's test seam (AGENTSPACE_AWS_CMD, AGENTSPACE_SSH_CMD, AGENTSPACE_SCP_CMD); each case asserts
@@ -57,6 +58,34 @@
 # so a difference of two of them is at least the true gap less one second at most; a gap that keeper.md
 # pins as at least n seconds is therefore at least n whole seconds in the log.
 #
+# Gaps: the parts of keeper.md's rows that no line of this file asserts, each with its reason. A row part left out is a gap named
+# here, never a silent one.
+#   - G11, "outside the Job Object of the keeper and of every process above it: the task's launcher, the task and a check's shell":
+#     only that the stand-in outlives the keeper's exit is asserted. Whether it is outside the Job Objects of the processes above
+#     the keeper cannot be seen from outside without inspecting another process's job membership, which a check MUST NOT do to a
+#     process it did not start (the check's own shell included).
+#   - G11, "inherits no handle of the keeper's": only board-holder-keeper.lock is shown (the new keeper takes it). That the guard
+#     holds no handle on board-holder.lock, on guard.lock or on a standard handle is not asserted: a handle held by another process
+#     is not visible without inspecting it. The new keeper's own start line is also not asserted; the case needs it only to end the
+#     second stand-in by its PID.
+#   - G11, "hidden console window", "a new process group", "never reads its standard input": no stand-in can show them from outside.
+#   - "The call is bounded at 10 seconds" and the three <why> rows that keeper.md names as the keeper crate's own tests (no
+#     operator beside the program, no SystemRoot, a detached start that fails): no case can bring them about from outside.
+#   - G4, the start "about 12 seconds after the first": a lower bound of 12 and an upper bound of 16 are asserted, with 4 seconds
+#     of slack for load, and the start is shown to fall in the wait by its coming at least 4 seconds before the second idle line
+#     (nominally 8). G3 asserts no upper bound on a gap, since keeper.md H9's lesson is that a pass can stretch under load.
+#   - G5, "no later than just before the first pass that starts after the close": asserted as an order of lines (at most one more
+#     pass line than the count at the close comes before the start line), never as a time, so load cannot break it.
+#   - G13, "the start does not wait on board-holder.lock": asserted by the start line's time being no later than the skipped line's
+#     (the skipped line carries the pass time, taken before the lock retry), which a wait of less than one log second cannot show.
+#   - G10, a logon-environment variable that the keeper does not have set: its removal, and the pass-through of a logon
+#     AGENTSPACE_..._CMD that the keeper does not know, and AGENTSPACE_TIMEZONE and AGENTSPACE_DIAGNOSTIC not reaching the guard,
+#     are not asserted: G10's row does not name them, and the harness strips AGENTSPACE_* from the logon environment. The stand-in
+#     writes only the variables the case names, and for AGENTSPACE_CASE_OWN its presence alone, never a value.
+#   - Pin P19's rule, that a start which finds guard.lock held in a wait is next tried just before the next pass and never again in
+#     the same wait, is not asserted: G5 holds the lock for the whole of its first stage and shows only that the start comes after
+#     the close.
+#
 # What it touches: the same as test-keeper.ps1 (conformance/keeper/keeper-common.ps1): a throwaway folder
 # per case under $env:TEMP, the harness's child environment for it on every process, and only processes
 # this run started, each stopped by a checked PID. The real %USERPROFILE%\.agentspace, ~/.ssh, ssh.exe, the
@@ -93,7 +122,12 @@ $script:caseSpec = 'keeper.md'
 $script:caseHome = $null
 $logTimeRx = '\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ '
 
-function Test-Selected([string]$Id) { $Id -like $Case }
+# -Case is a wildcard on a case's ID, and it also selects the lettered parts of a case: -Case G8 selects G8a and G8b, and
+# -Case G1 selects G1 alone, never G10 to G16.
+function Test-Selected([string]$Id) { $Id -like $Case -or $Id -like "$Case[a-z]" }
+
+# The code page that the stand-in's cmd.exe writes its files in: the console's OEM code page, not UTF-8.
+function Get-StandInEncoding { [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) }
 
 # A message without the real profile's path or this run's folder: an error's text is masked like output.
 function Format-Masked([string]$Text) {
@@ -131,8 +165,10 @@ function Invoke-GuardCase([string]$Id, [string]$Spec, [scriptblock]$Body) {
 # named. -Missing returns the path of a file that is not written, for a case that names no file.
 # -Folder is the stand-in's folder under the home (default guard-standin). -GuardCmd is the value that
 # AGENTSPACE_GUARD_CMD is given when it is not the stand-in's full path (a relative path). -DumpEnv makes the
-# stand-in also write the AGENTSPACE_ variables and USERPROFILE of its own environment, with "set", to
-# guard-env.log beside itself, and then a line ENV-END; a value is read by the case, never printed.
+# stand-in also write the variables of $guardEnvNames from its own environment, each explicitly, and for
+# AGENTSPACE_CASE_OWN its presence alone, to guard-env.log beside itself, and then a line ENV-END; a value is read by the case,
+# never printed.
+$guardEnvNames = @('USERPROFILE', 'AGENTSPACE_STATE_DIR', 'AGENTSPACE_SSH_DIR', 'AGENTSPACE_PROXY_COMMAND', 'AGENTSPACE_AWS_CMD', 'AGENTSPACE_SSH_CMD', 'AGENTSPACE_SCP_CMD', 'AGENTSPACE_GUARD_CMD')
 function New-GuardStandIn([switch]$Stay, [switch]$Missing, [switch]$DumpEnv, [string]$Folder = 'guard-standin', [string]$GuardCmd = '') {
   $dir = Join-Path $script:caseHome.UserProfile $Folder
   $path = Join-Path $dir 'guard-standin.cmd'
@@ -141,8 +177,16 @@ function New-GuardStandIn([switch]$Stay, [switch]$Missing, [switch]$DumpEnv, [st
   if ($Missing) { $path = Join-Path $dir 'no-such-guard.cmd' }
   else {
     $lines = @('@echo off', 'REM A stand-in for the guard (a program outside agentspace) used by a conformance check. See docs/conformance.md.',
-      '>>"%~dp0guard-runs.log" echo Run args=[%*] dir=[%CD%] time=%TIME%')
-    if ($DumpEnv) { $lines += @('>>"%~dp0guard-env.log" set AGENTSPACE_', '>>"%~dp0guard-env.log" set USERPROFILE', '>>"%~dp0guard-env.log" echo ENV-END') }
+      '>>"%~dp0guard-runs.log" echo Run a1=[%~1] a2=[%2] dir=[%CD%] time=%TIME%')
+    # Only the variables the case names are written, each explicitly: a logon-environment AGENTSPACE_..._CMD that the keeper does not
+    # know is passed through to the guard (keeper.md, "The guard's environment"), and its value MUST NOT reach a file. Delayed
+    # expansion, so that a value holding a character that cmd.exe reads (a quote, an ampersand) is written as it is.
+    if ($DumpEnv) {
+      $lines += 'setlocal enabledelayedexpansion'
+      foreach ($n in $guardEnvNames) { $lines += ('if defined {0} >>"%~dp0guard-env.log" echo {0}=!{0}!' -f $n) }
+      $lines += 'if defined AGENTSPACE_CASE_OWN >>"%~dp0guard-env.log" echo AGENTSPACE_CASE_OWN=present'
+      $lines += '>>"%~dp0guard-env.log" echo ENV-END'
+    }
     if ($Stay) { $lines += 'ping -n 1200 127.0.0.1 >nul' }
     $lines += 'exit /b 0'
     [IO.File]::WriteAllText((Assert-ConformancePath -ConformanceHome $runHome -Path $path), (($lines -join "`r`n") + "`r`n"))
@@ -153,19 +197,23 @@ function New-GuardStandIn([switch]$Stay, [switch]$Missing, [switch]$DumpEnv, [st
   [pscustomobject]@{ Path = $full; Runs = (Join-Path $dir 'guard-runs.log'); EnvLog = (Join-Path $dir 'guard-env.log'); Value = $value }
 }
 
-# The stand-in's runs, in order: Args and Dir of each line of guard-runs.log, read shared.
+# The stand-in's runs, in order: A1 (its first argument, %~1), A2 (its second, %2) and Dir of each line of guard-runs.log, read shared.
 function Read-GuardRuns($Stand) {
   if (-not (Test-Path -LiteralPath $Stand.Runs -PathType Leaf)) { return }
   try {
     $fs = [IO.File]::Open($Stand.Runs, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-    try { $text = [IO.StreamReader]::new($fs, [Text.Encoding]::Default).ReadToEnd() } finally { $fs.Dispose() }
+    try { $text = [IO.StreamReader]::new($fs, (Get-StandInEncoding)).ReadToEnd() } finally { $fs.Dispose() }
   } catch { return }
   $out = foreach ($l in ($text -split "`r?`n" | Where-Object { $_ -ne '' })) {
-    if ($l -cmatch '\ARun args=\[(.*)\] dir=\[(.*)\] time=') { [pscustomobject]@{ Args = $Matches[1]; Dir = $Matches[2] } }
-    else { [pscustomobject]@{ Args = '?'; Dir = '?' } }
+    if ($l -cmatch '\ARun a1=\[(.*)\] a2=\[(.*)\] dir=\[(.*)\] time=') { [pscustomobject]@{ A1 = $Matches[1]; A2 = $Matches[2]; Dir = $Matches[3] } }
+    else { [pscustomobject]@{ A1 = '?'; A2 = '?'; Dir = '?' } }
   }
   $out
 }
+
+# The runs that received exactly the one argument guard: the first is guard, and there is no second. The check is on the
+# arguments the stand-in received, never on the command line's quoting (keeper.md, "How the keeper starts it").
+function Get-OneArgRuns($Runs) { @($Runs | Where-Object { $_.A1 -ceq 'guard' -and $_.A2 -ceq '' }) }
 
 function Get-StartLines($Log) { @($Log | Where-Object { $_ -cmatch ($logTimeRx + 'guard started pid=(\d+|-)\z') }) }
 function Get-GuardFailedLines($Log) { @($Log | Where-Object { $_ -cmatch ($logTimeRx + 'failed lease=- alias=- pid=- reason=The guard could not be started: ') }) }
@@ -228,12 +276,18 @@ function Test-SamePath([string]$A, [string]$B) {
   } catch { $false }
 }
 
-# True when the process is the case's own stand-in: running, its command line names the stand-in's path, and
-# it started no earlier than $Since, the time the case began. Only then may the case end it by this PID.
+# True when the process is the case's own stand-in: running, a cmd.exe, started no earlier than $Since (the time the case began),
+# and its command line names the stand-in's path. The command line is read only after the name and the start time say that the
+# process can be the case's own: a PID in a log may have been reused by a process that the case did not start, and the case
+# reads nothing of such a process. Only then may the case end it by this PID.
 function Test-OwnStandIn([int]$ProcessId, $Stand, [DateTime]$Since) {
-  if ($ProcessId -le 0 -or -not (Test-Alive $ProcessId)) { return $false }
-  if ((Get-CommandLine $ProcessId).IndexOf($Stand.Path, [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
-  try { (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime() -ge $Since } catch { $false }
+  if ($ProcessId -le 0) { return $false }
+  try {
+    $proc = Get-Process -Id $ProcessId -ErrorAction Stop
+    if ($proc.ProcessName -ine 'cmd') { return $false }
+    if ($proc.StartTime.ToUniversalTime() -lt $Since) { return $false }
+  } catch { return $false }
+  (Get-CommandLine $ProcessId).IndexOf($Stand.Path, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
 # The PID of a "guard started" line, or 0.
@@ -248,7 +302,7 @@ function Read-GuardEnv($Stand) {
   if (-not (Test-Path -LiteralPath $Stand.EnvLog -PathType Leaf)) { return $null }
   try {
     $fs = [IO.File]::Open($Stand.EnvLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-    try { $text = [IO.StreamReader]::new($fs, [Text.Encoding]::Default).ReadToEnd() } finally { $fs.Dispose() }
+    try { $text = [IO.StreamReader]::new($fs, (Get-StandInEncoding)).ReadToEnd() } finally { $fs.Dispose() }
   } catch { return $null }
   $map = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
   $ended = $false
@@ -265,6 +319,7 @@ try {
   if (Test-Selected 'G1') { Invoke-GuardCase 'G1' 'keeper.md#how-the-keeper-starts-it' {
     Write-Leases @()
     $stand = New-GuardStandIn -Stay
+    $began = [DateTime]::UtcNow
     $guardPid = 0
     try {
       $p = Start-Watch @('-IntervalSeconds', '1', '-MaxPasses', '1') $stub
@@ -277,22 +332,25 @@ try {
       $ran = Wait-GuardRuns $stand 1
       $runs = @(Read-GuardRuns $stand)
       Add-GuardCheck ($ran -and $runs.Count -eq 1) 'The stand-in guard ran once' "Runs seen: $($runs.Count)."
-      Add-GuardCheck ($runs.Count -ge 1 -and @($runs | Where-Object { $_.Args -ceq 'guard' }).Count -eq $runs.Count) 'The stand-in received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $(@($runs | Where-Object { $_.Args -ceq 'guard' }).Count)."
+      Add-GuardCheck ($runs.Count -ge 1 -and (Get-OneArgRuns $runs).Count -eq $runs.Count) 'The stand-in received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $((Get-OneArgRuns $runs).Count)."
       Add-GuardCheck ($runs.Count -ge 1 -and @($runs | Where-Object { Test-SameHome $_.Dir }).Count -eq $runs.Count) 'The stand-in''s working folder is the home folder, the keeper''s USERPROFILE' "Runs: $($runs.Count); runs in the home folder: $(@($runs | Where-Object { Test-SameHome $_.Dir }).Count)."
       # The line's PID is the process the start created: for a .cmd program, the cmd.exe that runs it, whose command line holds the
       # stand-in's path. The stand-in stays alive, so the process is running; it is ended by this PID, once its command line is checked.
       $m = if ($starts.Count -ge 1) { [regex]::Match($starts[0], 'pid=(\d+)\z') } else { $null }
       $guardPid = if ($m -and $m.Success) { [int]$m.Groups[1].Value } else { 0 }
+      # The command line is read only once the process is seen to be a cmd.exe that started after the case began.
       $alive = $guardPid -gt 0 -and (Test-Alive $guardPid)
-      $cl = if ($alive) { Get-CommandLine $guardPid } else { '' }
-      $at = if ($alive) { $cl.IndexOf($stand.Path, [StringComparison]::OrdinalIgnoreCase) } else { -1 }
-      $named = $alive -and $at -ge 0 -and $cl.Substring($at + $stand.Path.Length) -match '\Aguard\b|\A"?\s+"?guard\b'
-      Add-GuardCheck $named 'The pid= field is the process that was started: a running process whose command line names the stand-in, followed by the argument guard' "The pid field was $(if ($guardPid -gt 0) { 'a number' } else { 'not a number' }); that process was $(if ($alive) { 'running' } else { 'not running' }); its command line $(if ($named) { 'matched' } else { 'did not match' })."
+      $own = Test-OwnStandIn $guardPid $stand $began
+      $cl = if ($own) { Get-CommandLine $guardPid } else { '' }
+      $at = if ($own) { $cl.IndexOf($stand.Path, [StringComparison]::OrdinalIgnoreCase) } else { -1 }
+      $named = $own -and $at -ge 0 -and $cl.Substring($at + $stand.Path.Length) -match '\Aguard\b|\A"?\s+"?guard\b'
+      Add-GuardCheck $named 'The pid= field is the process that was started: a running cmd.exe, started after the case began, whose command line names the stand-in, followed by the argument guard' "The pid field was $(if ($guardPid -gt 0) { 'a number' } else { 'not a number' }); that process was $(if ($alive) { 'running' } else { 'not running' }); it $(if ($own) { 'passed' } else { 'failed' }) the check of its name and start time; its command line $(if ($named) { 'matched' } else { 'did not match' })."
       Add-GuardCheck (Test-TripwiresQuiet) 'No aws, ssh or scp stand-in was started, and neither was the default guard tripwire' (Get-TripwireReason)
     } finally {
       if ($p) { Stop-Watch $p }
-      # The process that the line names is ended only after its command line was seen to name this run's stand-in.
-      if ($guardPid -gt 0 -and (Test-Alive $guardPid) -and (Get-CommandLine $guardPid).IndexOf($stand.Path, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Stop-OwnTree $guardPid }
+      # The process that the line names is ended only after it was seen to be a cmd.exe started after the case began, whose command
+      # line names this run's stand-in.
+      if ($guardPid -gt 0 -and (Test-OwnStandIn $guardPid $stand $began)) { Stop-OwnTree $guardPid }
     }
   } }
 
@@ -315,7 +373,8 @@ try {
 
   # G3. keeper.md's table: -IntervalSeconds 1 and -GuardIntervalSeconds 3, passes over about 10 seconds: no start within 3 seconds of
   # the one before, and a start after it. 11 passes at 1 second last at least 10 seconds, so at least two starts are due. A start is
-  # made in a wait at the moment it falls due, so no upper bound on a gap is asserted but a pass between two starts.
+  # made in a wait at the moment it falls due, and a stall can put two attempts back to back, so no upper bound on a gap and no pass
+  # line between two starts is asserted (keeper.md pins neither).
   if (Test-Selected 'G3') { Invoke-GuardCase 'G3' 'keeper.md#when-the-keeper-starts-it' {
     Write-Leases @()
     $stand = New-GuardStandIn
@@ -330,18 +389,11 @@ try {
     $gapsOk = $starts.Count -ge 2
     $gaps = @()
     for ($i = 1; $i -lt $starts.Count; $i++) { $g = Get-LineGap $starts[$i - 1] $starts[$i]; $gaps += $g; if ($g -lt $interval) { $gapsOk = $false } }
-    Add-GuardCheck $gapsOk "Each start is at least $interval seconds after the one before (-GuardIntervalSeconds $interval); gaps seen: $($gaps -join ', ')" "Gaps in seconds between consecutive start lines: $($gaps -join ', ')."
-    # Between two start lines, a pass has run and no other start: the start is not made at every pass.
-    $between = @(); $count = 0; $seen = $false
-    foreach ($l in $log) {
-      if ($l -cmatch ($logTimeRx + 'guard started ')) { if ($seen) { $between += $count }; $seen = $true; $count = 0 }
-      elseif ($seen -and -not (Test-GuardLine $l)) { $count++ }
-    }
-    Add-GuardCheck ($between.Count -ge 1 -and @($between | Where-Object { $_ -lt 1 }).Count -eq 0) 'At least one pass line lies between each two start lines' "Pass lines between consecutive starts: $($between -join ', ')."
+    Add-GuardCheck $gapsOk "Each start is at least $interval seconds after the one before (-GuardIntervalSeconds $interval)" "Gaps in seconds between consecutive start lines: $($gaps -join ', ')."
     $ran = Wait-GuardRuns $stand $starts.Count
     $runs = @(Read-GuardRuns $stand)
     Add-GuardCheck ($ran -and $runs.Count -eq $starts.Count) 'The stand-in ran once for each start line' "Start lines: $($starts.Count); runs seen: $($runs.Count)."
-    Add-GuardCheck (@($runs | Where-Object { $_.Args -ceq 'guard' }).Count -eq $runs.Count) 'Every run received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $(@($runs | Where-Object { $_.Args -ceq 'guard' }).Count)."
+    Add-GuardCheck ($runs.Count -ge 1 -and (Get-OneArgRuns $runs).Count -eq $runs.Count) 'Every run received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $((Get-OneArgRuns $runs).Count)."
     Add-GuardCheck (Test-TripwiresQuiet) 'No aws, ssh or scp stand-in was started, and neither was the default guard tripwire' (Get-TripwireReason)
   } }
 
@@ -361,8 +413,15 @@ try {
     $shape = $log.Count -eq 4 -and (& $isStart $log[0]) -and (& $isIdle $log[1]) -and (& $isStart $log[2]) -and (& $isIdle $log[3])
     Add-GuardCheck $shape 'Exactly two "guard started" lines: the second between the first pass''s idle line and the second''s' "The log: $($log -join ' | ')"
     if ($shape) {
+      # The margins are the size they are because keeper.md H9's lesson is that under load a pass can stretch: the second start is
+      # due 12 seconds after the first, so 4 seconds of slack above that (at most 16) keeps a loaded laptop from failing it, while
+      # a start made just before the second pass, 20 seconds after the first, is far above it. The second start comes nominally
+      # 8 seconds before the second idle line, and at least 4 of them is the margin: a keeper that tries the start only just
+      # before each pass puts the start line next to the idle line, with a gap of about 0, and fails it.
       $startGap = Get-LineGap $log[0] $log[2]
-      Add-GuardCheck ($startGap -ge 12) 'The second start is at least 12 seconds after the first (-GuardIntervalSeconds 12)' "The gap was $startGap seconds."
+      Add-GuardCheck ($startGap -ge 12 -and $startGap -le 16) 'The second start is at least 12 seconds after the first (-GuardIntervalSeconds 12), and no more than 16 with slack for load' "The gap was $startGap seconds."
+      $beforeIdle = Get-LineGap $log[2] $log[3]
+      Add-GuardCheck ($beforeIdle -ge 4) 'The second start is made in the wait: at least 4 seconds before the second pass''s idle line (nominally about 8), not just before that pass' "The gap was $beforeIdle seconds."
       $passGap = Get-LineGap $log[1] $log[3]
       Add-GuardCheck ($passGap -ge 20 -and $passGap -le 30) 'The second pass is still about 20 seconds after the first: the start made in the wait neither shortens nor lengthens it (at least 20 seconds, and no more than 30 with slack for load)' "The gap was $passGap seconds."
     }
@@ -392,11 +451,20 @@ try {
       Add-GuardCheck (@($heldLog | Where-Object { Test-GuardLine $_ }).Count -eq 0) 'No guard line is logged while guard.lock is held: no start line and no failed line' "Guard lines seen: $(@($heldLog | Where-Object { Test-GuardLine $_ }).Count)."
       Add-GuardCheck ($heldRuns.Count -eq 0) 'The stand-in does not run while guard.lock is held' "Runs seen: $($heldRuns.Count)."
       $lock.Dispose(); $lock = $null
+      # The pass lines at the close: a pass can be in flight across it, so the start line may follow one more.
+      $passesAtClose = @(Get-PassLines (Read-LogLines -IncludeGuard)).Count
       $started = Wait-Until { @(Get-StartLines (Read-LogLines -IncludeGuard)).Count -ge 1 } 60 $p
       Add-GuardCheck $started 'Once guard.lock is closed, the start is made without waiting -GuardIntervalSeconds: a "guard started" line within 60 seconds, with 300 the default interval' "Start lines seen: $(@(Get-StartLines (Read-LogLines -IncludeGuard)).Count)."
+      # Order only, so that load cannot break it: the start is made just before a pass, so at most the pass in flight across the close
+      # comes before it, and no other.
+      $finalLog = Read-LogLines -IncludeGuard
+      $startAt = -1
+      for ($i = 0; $i -lt $finalLog.Count; $i++) { if ($finalLog[$i] -cmatch ($logTimeRx + 'guard started pid=(\d+|-)\z')) { $startAt = $i; break } }
+      $passesBefore = if ($startAt -ge 0) { @(Get-PassLines @($finalLog[0..($startAt)])).Count } else { -1 }
+      Add-GuardCheck ($startAt -ge 0 -and $passesBefore -le $passesAtClose + 1) 'The start is made no later than just before the first pass that starts after the close: at most one pass line, the one in flight across the close, between the close and the start line' "Pass lines at the close: $passesAtClose; pass lines before the start line: $passesBefore."
       $ran = Wait-GuardRuns $stand 1
       $runs = @(Read-GuardRuns $stand)
-      Add-GuardCheck ($ran -and $runs.Count -ge 1 -and @($runs | Where-Object { $_.Args -ceq 'guard' }).Count -eq $runs.Count) 'The stand-in then runs, with exactly the one argument "guard"' "Runs seen: $($runs.Count)."
+      Add-GuardCheck ($ran -and $runs.Count -ge 1 -and (Get-OneArgRuns $runs).Count -eq $runs.Count) 'The stand-in then runs, with exactly the one argument "guard"' "Runs seen: $($runs.Count)."
     } finally {
       if ($lock) { $lock.Dispose() }
       if ($p) { Stop-Watch $p }
@@ -426,7 +494,7 @@ try {
     $gapsOk = $failed.Count -ge 2
     $gaps = @()
     for ($i = 1; $i -lt $failed.Count; $i++) { $g = Get-LineGap $failed[$i - 1] $failed[$i]; $gaps += $g; if ($g -lt $interval) { $gapsOk = $false } }
-    Add-GuardCheck $gapsOk "The next failed line is no sooner than -GuardIntervalSeconds ($interval) after the last: a failure that lasts writes a line every interval, never one per pass; gaps seen: $($gaps -join ', ')" "Gaps in seconds: $($gaps -join ', ')."
+    Add-GuardCheck $gapsOk "The next failed line is no sooner than -GuardIntervalSeconds ($interval) after the last: a failure that lasts writes a line every interval, never one per pass" "Gaps in seconds: $($gaps -join ', ')."
     $pass = @(Get-PassLines $log)
     $kept = @($pass | Where-Object { Test-LogLine $_ 'kept' (Get-TestId 'a') (Get-TestAlias 'a') $holder.Pid })
     Add-GuardCheck ($pass.Count -eq 8 -and $kept.Count -eq 8) 'The holder is kept in every one of the 8 passes: one kept line each, with the lease, alias and PID, and no other pass line' "Pass lines: $($pass.Count); kept lines for the holder: $($kept.Count). The log: $($log -join ' | ')"
@@ -434,7 +502,7 @@ try {
     $after = if (Test-Path -LiteralPath $recordPath) { [IO.File]::ReadAllBytes($recordPath) } else { $null }
     Add-GuardCheck ($null -ne $after -and [Convert]::ToBase64String($after) -ceq [Convert]::ToBase64String($before)) 'The holder''s record is unchanged, byte for byte' 'The record was changed or removed.'
     Add-GuardCheck (Test-Alive $holder.Pid) 'The holder is still running' 'It was stopped.'
-    Add-GuardCheck (@(Read-GuardRuns $stand).Count -eq 0) 'No stand-in ran: the file does not exist' "Runs seen: $(@(Read-GuardRuns $stand).Count)."
+    Add-GuardCheck (-not (Test-Path -LiteralPath $stand.Path)) 'The precondition held to the end: the file that AGENTSPACE_GUARD_CMD names still does not exist, so nothing could have been started' 'The file exists.'
     Add-GuardCheck (Test-TripwiresQuiet) 'No aws, ssh or scp stand-in was started, and neither was the default guard tripwire' (Get-TripwireReason)
   } }
 
@@ -496,7 +564,7 @@ try {
     $gapsOk = $failed.Count -ge 2
     $gaps = @()
     for ($i = 1; $i -lt $failed.Count; $i++) { $g = Get-LineGap $failed[$i - 1] $failed[$i]; $gaps += $g; if ($g -lt $interval) { $gapsOk = $false } }
-    Add-GuardCheck $gapsOk "The next such line is no sooner than -GuardIntervalSeconds ($interval) after the last: never one per pass; gaps seen: $($gaps -join ', ')" "Gaps in seconds: $($gaps -join ', ')."
+    Add-GuardCheck $gapsOk "The next such line is no sooner than -GuardIntervalSeconds ($interval) after the last: never one per pass" "Gaps in seconds: $($gaps -join ', ')."
     $pass = @(Get-PassLines $log)
     $idle = @($pass | Where-Object { $_ -cmatch ($logTimeRx + 'idle lease=- alias=- pid=-\z') })
     Add-GuardCheck ($pass.Count -eq $passes -and $idle.Count -eq $passes) "Every pass's lines are as without the failure: $passes idle lines and no other pass line" "Pass lines: $($pass.Count); idle lines: $($idle.Count). The log: $($log -join ' | ')"
@@ -538,7 +606,7 @@ try {
     $ran = Wait-GuardRuns $stand 1
     $runs = @(Read-GuardRuns $stand)
     Add-GuardCheck ($ran -and $runs.Count -eq 1) 'The stand-in ran once: the relative value was made full against the keeper''s working folder' "Runs seen: $($runs.Count)."
-    Add-GuardCheck ($runs.Count -ge 1 -and @($runs | Where-Object { $_.Args -ceq 'guard' }).Count -eq $runs.Count) 'The stand-in received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $(@($runs | Where-Object { $_.Args -ceq 'guard' }).Count)."
+    Add-GuardCheck ($runs.Count -ge 1 -and (Get-OneArgRuns $runs).Count -eq $runs.Count) 'The stand-in received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $((Get-OneArgRuns $runs).Count)."
     Add-GuardCheck ($runs.Count -ge 1 -and @($runs | Where-Object { Test-SameHome $_.Dir }).Count -eq $runs.Count) 'The stand-in''s working folder is the home folder, not the keeper''s working folder' "Runs: $($runs.Count); runs in the home folder: $(@($runs | Where-Object { Test-SameHome $_.Dir }).Count)."
     Add-GuardCheck (Test-TripwiresQuiet) 'No aws, ssh or scp stand-in was started, and neither was the default guard tripwire' (Get-TripwireReason)
   } }
@@ -577,9 +645,9 @@ try {
       if (-not ($seen.ContainsKey('USERPROFILE') -and (Test-SamePath $seen['USERPROFILE'] $script:caseHome.UserProfile))) { $bad += 'USERPROFILE' }
       Add-GuardCheck ($bad.Count -eq 0) 'The guard sees USERPROFILE as the home folder' "Mismatch by name: $($bad -join ', ')."
       $bad = @()
-      if (-not ($seen.ContainsKey('AGENTSPACE_STATE_DIR') -and (Test-SamePath $seen['AGENTSPACE_STATE_DIR'] $script:caseHome.StateDir))) { $bad += 'AGENTSPACE_STATE_DIR' }
-      if (-not ($seen.ContainsKey('AGENTSPACE_SSH_DIR') -and (Test-SamePath $seen['AGENTSPACE_SSH_DIR'] $script:caseHome.SshDir))) { $bad += 'AGENTSPACE_SSH_DIR' }
-      Add-GuardCheck ($bad.Count -eq 0) 'The guard sees the relative AGENTSPACE_STATE_DIR and AGENTSPACE_SSH_DIR made full, naming the case''s own folders' "Mismatch by name: $($bad -join ', ')."
+      if (-not ($seen.ContainsKey('AGENTSPACE_STATE_DIR') -and [IO.Path]::IsPathFullyQualified($seen['AGENTSPACE_STATE_DIR']) -and (Test-SamePath $seen['AGENTSPACE_STATE_DIR'] $script:caseHome.StateDir))) { $bad += 'AGENTSPACE_STATE_DIR' }
+      if (-not ($seen.ContainsKey('AGENTSPACE_SSH_DIR') -and [IO.Path]::IsPathFullyQualified($seen['AGENTSPACE_SSH_DIR']) -and (Test-SamePath $seen['AGENTSPACE_SSH_DIR'] $script:caseHome.SshDir))) { $bad += 'AGENTSPACE_SSH_DIR' }
+      Add-GuardCheck ($bad.Count -eq 0) 'The guard sees the relative AGENTSPACE_STATE_DIR and AGENTSPACE_SSH_DIR made full (a fully qualified path, as the stand-in saw it), naming the case''s own folders' "Mismatch by name: $($bad -join ', ')."
       foreach ($name in 'AGENTSPACE_PROXY_COMMAND', 'AGENTSPACE_AWS_CMD', 'AGENTSPACE_SSH_CMD', 'AGENTSPACE_SCP_CMD', 'AGENTSPACE_GUARD_CMD') {
         $same = $seen.ContainsKey($name) -and [string]::Equals($seen[$name], [string]$exact[$name], [StringComparison]::Ordinal)
         $what = if ($name -ceq 'AGENTSPACE_PROXY_COMMAND') { 'a command line, exactly as the keeper has it' } elseif ($name -ceq 'AGENTSPACE_GUARD_CMD') { 'exactly as given, not made full' } else { 'a seam, exactly as the keeper has it' }
@@ -618,7 +686,7 @@ try {
       $log2 = Read-LogLines -IncludeGuard
       foreach ($l in @(Get-StartLines $log2)) { $q = Get-StartPid $l; if ($q -gt 0 -and $guardPids -notcontains $q) { $guardPids += $q } }
       Add-GuardCheck ($code2 -eq 0) 'The new keeper, started while the stand-in runs, runs its pass and exits 0' "The exit code was $code2."
-      Add-GuardCheck (@(Get-OtherKeeperLines $log2).Count -eq 0 -and @(Get-PassLines $log2).Count -eq 2) 'The new keeper took board-holder-keeper.lock: no "another keeper is running" line, and its pass is logged beside the first keeper''s' "Other-keeper lines: $(@(Get-OtherKeeperLines $log2).Count); pass lines: $(@(Get-PassLines $log2).Count) (2 expected). The log: $($log2 -join ' | ')"
+      Add-GuardCheck ($own -and @(Get-OtherKeeperLines $log2).Count -eq 0 -and @(Get-PassLines $log2).Count -eq 2) 'The new keeper took board-holder-keeper.lock: no "another keeper is running" line, and its pass is logged beside the first keeper''s' "Other-keeper lines: $(@(Get-OtherKeeperLines $log2).Count); pass lines: $(@(Get-PassLines $log2).Count) (2 expected). The log: $($log2 -join ' | ')"
       Add-GuardCheck (Test-OwnStandIn $first $stand $began) 'The first stand-in is still running while the new keeper ran' 'The first stand-in is no longer running.'
     } finally {
       foreach ($q in $guardPids) { if (Test-OwnStandIn $q $stand $began) { Stop-OwnTree $q } }
@@ -657,7 +725,11 @@ try {
     } finally { $held.Dispose() }
     Add-GuardCheck ($code -eq 0) 'A keeper run with -MaxPasses 1 exits 0' "The exit code was $code."
     $log = Read-LogLines -IncludeGuard
-    Add-GuardCheck ($log.Count -eq 2 -and $log[0] -cmatch ($logTimeRx + 'guard started pid=\d+\z') -and $log[1] -cmatch ($logTimeRx + 'skipped lease=- alias=- pid=- reason=locked\z')) 'The log is a "guard started" line, then the pass''s "skipped ... reason=locked" line' "The log: $($log -join ' | ')"
+    $shape = ($log.Count -eq 2 -and $log[0] -cmatch ($logTimeRx + 'guard started pid=\d+\z') -and $log[1] -cmatch ($logTimeRx + 'skipped lease=- alias=- pid=- reason=locked\z'))
+    Add-GuardCheck $shape 'The log is a "guard started" line, then the pass''s "skipped ... reason=locked" line' "The log: $($log -join ' | ')"
+    # The skipped line carries the pass's time, read before the lock's retry, so a start that waited on
+    # board-holder.lock would be logged later than it.
+    Add-GuardCheck ($shape -and (Get-LogTime $log[0]) -le (Get-LogTime $log[1])) 'The start line''s time is no later than the skipped line''s: the start did not wait on board-holder.lock' "The log: $($log -join ' | ')"
     $ran = Wait-GuardRuns $stand 1
     Add-GuardCheck ($ran -and @(Read-GuardRuns $stand).Count -eq 1) 'The stand-in ran once' "Runs seen: $(@(Read-GuardRuns $stand).Count)."
     Add-GuardCheck (Test-TripwiresQuiet) 'No aws, ssh or scp stand-in was started, and neither was the default guard tripwire' (Get-TripwireReason)
@@ -676,7 +748,7 @@ try {
     $ran = Wait-GuardRuns $stand 1
     $runs = @(Read-GuardRuns $stand)
     Add-GuardCheck ($ran -and $runs.Count -eq 1) 'The stand-in ran once' "Runs seen: $($runs.Count)."
-    Add-GuardCheck ($runs.Count -ge 1 -and @($runs | Where-Object { $_.Args -ceq 'guard' }).Count -eq $runs.Count) 'The stand-in received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $(@($runs | Where-Object { $_.Args -ceq 'guard' }).Count)."
+    Add-GuardCheck ($runs.Count -ge 1 -and (Get-OneArgRuns $runs).Count -eq $runs.Count) 'The stand-in received exactly the one argument "guard"' "Runs: $($runs.Count); runs with exactly that argument: $((Get-OneArgRuns $runs).Count)."
     Add-GuardCheck (Test-TripwiresQuiet) 'No aws, ssh or scp stand-in was started, and neither was the default guard tripwire' (Get-TripwireReason)
   } }
 
@@ -701,7 +773,9 @@ try {
       $errPath = Join-Path $script:caseHome.StateDir 'usage.err'
       $errText = if (Test-Path -LiteralPath $errPath) { [IO.File]::ReadAllText($errPath) } else { '' }
       $want = (@("agentspace-keeper: $message") + $usageLines) -join "`n"
-      $got = ($errText -replace "`r`n", "`n").TrimEnd("`n")
+      # The program's name is not asserted (keeper.md, "Command line": a check MUST NOT depend on which of the two names a message
+      # prints): agentspace-keeper and board-holder.ps1 are both taken for it, in the message and in both usage lines.
+      $got = (($errText -replace "`r`n", "`n").TrimEnd("`n") -split "`n" | ForEach-Object { $_ -replace '\A((?:Usage: |       )?)board-holder\.ps1', '${1}agentspace-keeper' }) -join "`n"
       Add-GuardCheck ($got -ceq $want) "$text writes agentspace-keeper: $message, then the two usage lines, to stderr" "The error text had $(@($got -split "`n").Count) line(s); its first line $(if (@($got -split "`n")[0] -ceq "agentspace-keeper: $message") { 'matched' } else { 'did not match' })."
       $outPath = Join-Path $script:caseHome.StateDir 'usage.out'
       $outLen = if (Test-Path -LiteralPath $outPath) { (Get-Item -LiteralPath $outPath).Length } else { 0 }
