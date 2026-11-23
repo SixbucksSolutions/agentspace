@@ -243,12 +243,13 @@ release step has returned, since a release's record is written between its two s
   waits for it as one does, and holds it until it has written ([state.md, The lease state
   lock](state.md#the-lease-state-lock)). It takes the lock once per lease it places, or, from
   v0.09, answers `unsatisfiable` (D68), so no hold spans several leases.
-- **From v0.09 a provisioning run also reads the lease state file at its deploy step**, read-only
-  and without the lease state lock, as the guard reads it, to find the type it gives its host
-  ([A resizing run](#a-resizing-run); architect, 2026-11-23, for v0.09-T01, pin P13); it writes
-  nothing then and waits for no lease command. And the EC2 driver's place reads the
-  file, read-only, under the hold its caller already has ([Where it places a
-  lease](#where-it-places-a-lease)).
+- **From v0.09 a provisioning run also takes the lease state lock at its deploy step**, to read
+  the lease state file and find the type it gives its host, and holds it from before it removes
+  the host's recorded type until it has decided, never during a call to AWS
+  ([A resizing run](#a-resizing-run); architect, 2026-11-23, for v0.09-T01, pin P26). It waits for
+  the lock as a changing command does, and writes nothing to the file, so a lease command waits
+  behind it only while it removes the type and reads the file. And the EC2 driver's place reads the file, read-only, under the
+  hold its caller already has ([Where it places a lease](#where-it-places-a-lease)).
 
 **What the CLI does, in order, around each operation:**
 
@@ -706,7 +707,7 @@ cannot meet, and never be met by something else (D5).**
   a project that has no host and is not on the project list (D54;
   [Where it places a lease](#where-it-places-a-lease)). From v0.09 it also answers it for a size
   larger than the recorded type of the project's `ready` host while another live `ready` lease of
-  the project holds that host, from place at once ([On a `ready` host](#on-a-ready-host), row 7),
+  the project holds that host, from place at once ([On a `ready` host](#on-a-ready-host), row 5),
   and from [`place_pending`](#place_pending) after a run (D66, D68; architect, 2026-11-23, for
   v0.09-T01, pins P1 and P2). A host with no recorded type is never refused so: it answers
   `pending`. It applies only to a supported request, so it is never listed beside an
@@ -818,11 +819,11 @@ agree (D55):
 - **"Architect, 2026-11-23, for v0.09-T01, pin Pn"** marks a fact that D64 to D71 and card #0197
   left open, pinned by the dev lead of v0.09-T01 or chosen by this page's writer so that the specs
   of that turn agree, which the architect has ruled on. It binds as written. Pins P1, P2, P2c, P11,
-  P18 and P20 are also recorded as change notes in D66, D67 and D68.
-- **"Architect's to confirm"** marks a fact that D64 to D71 and card #0197 leave open, chosen by
-  this page's writer in v0.09-T01 (E0.09-T01-S01), on which the architect has not yet ruled. It
-  binds as written once the architect rules on it, and the ruling's citation then replaces the
-  mark. Until then a builder of v0.09-T02's and v0.09-T03's driver stories builds it as written.
+  P18, P20 and P26 are also recorded as change notes in D66, D67 and D68.
+- **"Architect's to confirm"** is the convention for a fact chosen by this page's writer on which
+  the architect has not yet ruled. Such a fact binds as written once the architect rules on it,
+  and the ruling's citation then replaces the mark. **No fact on this page carries the mark**:
+  every fact chosen in v0.09-T01 was ruled on, and carries the citation above.
 - **Every fact chosen in v0.08-T01 carries one of the citations above**, so no fact before v0.09
   waits on a ruling.
 
@@ -893,15 +894,15 @@ table:
 - **`pub fn instance_type_for(size: &str) -> Option<&'static str>`** returns the table's type for a
   size in `SIZES`, and `None` for any other text. **The size is compared exactly, with its case**,
   as the normalized value the CLI hands a driver ([The boundary](#the-boundary)), so
-  `instance_type_for("XL")` and `instance_type_for(" m")` are `None` (architect's to confirm, pin
-  P17: the driver is only ever given a normalized size, so an exact comparison costs nothing and
+  `instance_type_for("XL")` and `instance_type_for(" m")` are `None` (architect, 2026-11-23, for
+  v0.09-T01, pin P17: the driver is only ever given a normalized size, so an exact comparison costs nothing and
   keeps the function's answer the table's).
 - **`pub fn meets(instance_type: &str, size: &str) -> bool`** is true when, and only when, the
   instance type is one the map holds, the size is in `SIZES`, and the type's size is at or after
   that size's place in `SIZES`. **A type the map does not hold meets no size**, `m9g.8xlarge` and
   the empty text among them, and **a size not in `SIZES` is met by no type.** The type is compared
-  exactly, with its case, against the table's types (architect's to confirm, pin P17, for the
-  reason above: a type comes only from the host registry, which records it as `describe-stacks`
+  exactly, with its case, against the table's types (architect, 2026-11-23, for v0.09-T01, pin
+  P17, for the reason above: a type comes only from the host registry, which records it as `describe-stacks`
   reads it back, D67). So `meets("m9g.2xlarge", "m")` is true, `meets("m9g.xlarge", "l")` is false, and
   `meets("m9g.xlarge", "m")` is true.
 - **`pub fn resize_target(leases: &[agentspace_state::Record], project: &str) -> Option<&'static
@@ -922,15 +923,26 @@ host registry ([state.md, The host registry](state.md#the-host-registry), which 
 its schema; D67). **A record with no `instance_type` meets no size** (D67), and neither does one
 whose `instance_type` the map does not hold. The driver reads the member and never writes it: it is
 written by every `deploy` that names or implies a host, `provision`'s deploy step included, after
-the stack's deploy succeeds (D71; [operator.md, deploy](operator.md#deploy)). **A deploy that
-passes an `InstanceType` first removes the member, under `hosts.lock`, before the stack's deploy
-runs**, and writes the type `describe-stacks` reads back once the deploy has succeeded, under
-`hosts.lock` again and holding no lock during the AWS calls; a deploy that passes none keeps the
-member until its own read-back writes it. So a failed or killed deploy that passed a type, or a
-read-back that fails or is malformed, leaves the record with no type, which costs one run, and
-never with a type the host might not have (D67; architect, 2026-11-23, for v0.09-T01, pin P11; the
-detail is [state.md, The host registry](state.md#the-host-registry)'s and [operator.md,
-deploy](operator.md#deploy)'s). The driver never asks AWS for a host's type (D48).
+the stack's deploy succeeds (D71; [operator.md, deploy](operator.md#deploy)). Who removes it, and
+when:
+- **A run's deploy step removes the member before it decides its type, whether it then passes a
+  type or none**, under the lease state lock and `hosts.lock` ([A resizing run](#a-resizing-run);
+  architect, 2026-11-23, for v0.09-T01, pin P26). So a run whose deploy step fails, or is killed,
+  leaves the record with no type, by design (pin P30).
+- **A deploy that is not a run's, a person's, removes the member first, under `hosts.lock`, before
+  the stack's deploy runs, only when it passes an `InstanceType`** (D67; architect, 2026-11-23, for
+  v0.09-T01, pin P11). **One that passes none keeps the member**, and when it fails keeps the type
+  it had, since it changed no type on the stack (architect, 2026-11-23, for v0.09-T01, pin P30).
+- **Every deploy writes the type `describe-stacks` reads back once the stack's deploy has
+  succeeded**, under `hosts.lock`, holding no lock during the AWS calls (pins P11 and P23). **A
+  read-back that fails or is malformed removes the member**, whichever deploy made it (pin P30).
+
+So a record is left with no type, which costs one run, and never with a type the host might not
+have: a deploy whose client is killed goes on running on AWS's side, so a kept type could be
+larger than the host (D67; pin P11). The detail is [state.md, The host
+registry](state.md#the-host-registry)'s and [operator.md, deploy](operator.md#deploy)'s and
+[operator.md, provision](operator.md#provision)'s. The driver never asks AWS for a host's type
+(D48).
 
 ### Where it places a lease
 
@@ -1032,12 +1044,10 @@ applies, and by nothing else:**
 |---|---|---|---|---|
 | 1 | The project has a `pending` lease that a run would place | `pending` | `last_attempt_at`, only when a run is due, and never `state` | A run, when one is due ([Starting a provisioning run](#starting-a-provisioning-run)) |
 | 2 | The record has no `instance_type`, or one the map does not hold | `pending`, whatever other leases hold the host | `last_attempt_at`, only when a run is due, and never `state` | A run, when one is due |
-| 3 | Exactly, and another live `ready` lease of the project exists | `ready`, as before v0.09 | Nothing | Nothing |
-| 4 | Exactly, no other live `ready` lease, and no run holds the project's `provision.lock` | `ready`, as before v0.09 | Nothing | Nothing |
-| 5 | Exactly, no other live `ready` lease, and a run holds the project's `provision.lock`, or it cannot be tried | `pending` | Nothing | Nothing: the run under way places the lease ([`place_pending`](#place_pending)) |
-| 6 | Larger, and another live `ready` lease of the project exists | `ready`, on the larger host | Nothing | Nothing |
-| 7 | Smaller, and another live `ready` lease of the project exists | `unsatisfiable`, with one reason, `no_capacity`, and the message below | Nothing | Nothing |
-| 8 | Larger or smaller, and no other live `ready` lease | `pending` | `last_attempt_at`, only when a run is due, and never `state` | A resizing run, when one is due |
+| 3 | Exactly, whatever other leases hold the host, and whether or not a run holds the project's `provision.lock` | `ready`, as before v0.09 | Nothing | Nothing |
+| 4 | Larger, and another live `ready` lease of the project exists | `ready`, on the larger host | Nothing | Nothing |
+| 5 | Smaller, and another live `ready` lease of the project exists | `unsatisfiable`, with one reason, `no_capacity`, and the message below | Nothing | Nothing |
+| 6 | Larger or smaller, and no other live `ready` lease | `pending` | `last_attempt_at`, only when a run is due, and never `state` | A resizing run, when one is due |
 
 - **Row 1: while the project has any `pending` lease, every new lease of it is `pending`, whatever
   the rest of the table says, and the run places it** (D66; architect, 2026-11-23, for v0.09-T01,
@@ -1045,10 +1055,11 @@ applies, and by nothing else:**
   would otherwise be cut when that run stops the host: with the host at `m9g.xlarge`, a lease
   asking for `l` goes `pending`, and a lease asking for `m` would be placed `ready` and then lose
   its sessions to the run that resizes the host to `l`. **Row 1 starts a run when one is due**, by
-  [Starting a provisioning run](#starting-a-provisioning-run)'s steps 2 to 5, as every other
-  `pending` answer of place does (architect's to confirm: a run that is due is one that a `get` of
-  the earlier `pending` lease would start, so starting it here only starts it sooner; a run that
-  is not due starts nothing, and the run under way places the lease).
+  [Starting a provisioning run](#starting-a-provisioning-run)'s steps 2 to 5, the 5-minute rule on
+  `last_attempt_at` among them, as every other `pending` answer of place does (architect,
+  2026-11-23, for v0.09-T01, pin P27): a run that is due is one that a `get` of the earlier
+  `pending` lease would start, so starting it here only starts it sooner; a run that is not due
+  starts nothing, and the run under way, or the next one, places the lease.
 - **Row 2: a record with no `instance_type`, or with one the map does not hold, answers `pending`
   and starts a run, whatever other leases hold the host, and never `no_capacity`** (D66, D67;
   architect, 2026-11-23, for v0.09-T01, pin P2). The run records the type without resizing when a
@@ -1056,23 +1067,18 @@ applies, and by nothing else:**
   [`place_pending`](#place_pending) then places the lease, or answers it `no_capacity`, by the type
   it found. So no lease is refused across v0.09's install only because its host's type was not
   yet recorded: each host's first lease after the install answers `pending`, and its run records
-  the type (D67).
-- **Row 5 closes a race that row 1 does not** (architect's to confirm). A run's deploy step reads
-  the lease state file, decides the type it passes, and only then removes the record's
-  `instance_type` ([A resizing run](#a-resizing-run)). If, between that read and that removal, the
-  `pending` lease the run read is released and a new lease of the project asks for exactly the
-  record's old type, rows 1 and 2 do not apply, and without row 5 the new lease would be placed
-  `ready` on a host the run then resizes and stops. **With another live `ready` lease the race
-  cannot arise** (row 3), since a run that saw one at its deploy step passes no type, and while a
-  run holds the lock no place makes a new `ready` lease of the project without one. Place tries
-  the lock once, without waiting, and releases it at once if it took it, as
-  [Starting a provisioning run](#starting-a-provisioning-run)'s step 2 tries it; a lock that cannot
-  be tried for any reason but its being held, such as a folder at its path, is not a free lock
-  ([state.md, The provisioning run's lock](state.md#the-provisioning-runs-lock)), and answers the
-  same as a held one. The lease waits `pending` for the run's [`place_pending`](#place_pending),
-  which re-reads the lease state file for each lease and so finds it, or, when that run has passed
-  its `place_pending`, for the next run, which a `get` of it starts under the 5-minute rule.
-- **Row 8 resizes a host, in either direction, only while nothing holds it** (D66): a larger
+  the type (D67). **Row 2 starts a run when one is due**, by the same steps and the same 5-minute
+  rule as row 1 (pin P27).
+- **Row 3 places a lease at exactly the host's type at once, even while a run holds the
+  project's `provision.lock`**, and place never tries that lock for it (architect, 2026-11-23, for
+  v0.09-T01, pin P26). A run's deploy step removes the record's `instance_type` and reads the
+  lease state file while it holds the lease state lock ([A resizing run](#a-resizing-run)), which
+  every `create` holds for its whole place, so a `create` is either wholly before that step or
+  wholly after it. **Wholly before**, its `ready` lease is in the file the step reads, so the run
+  passes no type and the host is not resized under it. **Wholly after**, the record has no type
+  until the run's read-back writes the type the host has, so the `create` answers `pending` by
+  row 2, or, once the type is written, is placed on a host already at it.
+- **Row 6 resizes a host, in either direction, only while nothing holds it** (D66): a larger
   host is resized down when no live `ready` lease holds it, so a host left at `xl` by one turn does
   not cost four times `m`'s rate for every lease after it. **A host in its grace after its last
   lease (D56) is resized like a stopped one**, since no live `ready` lease holds it. Whether a run
@@ -1080,7 +1086,7 @@ applies, and by nothing else:**
   steps 2 to 5, for a `ready` record: it writes only `last_attempt_at`, and its `state` stays
   `ready` (D48). A run that is not due leaves the lease `pending`, and a later `get` starts one
   ([`check_pending`](#check_pending)). Rows 1 and 2 start a run the same way.
-- **Row 7: a smaller host, with another live `ready` lease, is refused at once** (D66). Resizing a
+- **Row 5: a smaller host, with another live `ready` lease, is refused at once** (D66). Resizing a
   running host stops it (D39, D40), which ends every session on it, and waiting could last the
   other lease's whole TTL, up to 24 hours (D24).
 - **The `no_capacity` message names the project and the size asked for, and what the caller can
@@ -1106,13 +1112,14 @@ applies, and by nothing else:**
   caller holds it, and MUST NOT write the file; it MAY read it as the CLI did, in the same hold, so
   it reads what the CLI read. It takes one reading's time for the whole decision, and applies
   expiry by it, as state.md's functions do. **It reads the file for every supported request on a
-  `ready` record**, since rows 1 and 3 to 8 depend on it, and for no other request.
+  `ready` record**, since rows 1 and 4 to 6 depend on it, and for no other request.
   - **A missing lease state file means no leases**, as it does to every reader but the guard and
     `status -All` ([state.md, The lease state file](state.md#the-lease-state-file)).
   - **A lease state file that cannot be read or does not validate fails the place with
     `internal`**, writes nothing and starts nothing, with the host lookup's message,
     `The lease's host could not be looked up: <why>. Nothing was recorded.`, where `<why>` SHOULD be
-    `agentspace's lease records could not be read` (architect's to confirm, pin P19). The CLI
+    `agentspace's lease records could not be read` (architect, 2026-11-23, for v0.09-T01, pin
+    P19). The CLI
     validated the file before it asked the driver, so this is a file changed or lost under the
     lock, which only a program other than agentspace's can do.
   - **Leases recorded under another `AGENTSPACE_STATE_DIR` are not seen**, as the guard does not
@@ -1188,7 +1195,7 @@ step being safe to repeat, and ends by placing the project's `pending` leases wi
 and from [`check_pending`](#check_pending) (a `get` of a `pending` lease):**
 - **From place,** for a project whose record is `creating` or `failed`, or that has no record and
   is on the project list. **From v0.09, also for a project whose record is `ready`, when
-  [On a `ready` host](#on-a-ready-host)'s rows 1, 2 or 8 answer `pending`**: the project has a
+  [On a `ready` host](#on-a-ready-host)'s rows 1, 2 or 6 answer `pending`**: the project has a
   `pending` lease a run would place, or the record has no type the map holds, or the host is not
   at exactly the size asked for and no other live `ready` lease of the project holds it (D66, D67).
   Place for a `ready` record answers by that table, and starts nothing in any other row
@@ -1210,9 +1217,8 @@ write leaves the registry as it was.
    `check_pending` it is nothing at all (below). From place, a `pending` answer's CA check comes
    here, after this read ([Where it places a lease](#where-it-places-a-lease)), and reads only.
    **From place, for a `ready` record, [On a `ready` host](#on-a-ready-host)'s decision comes here
-   too**, with its read of the lease state file and, for its row 5, its try of `provision.lock`;
-   steps 2 to 5 follow only for its rows 1, 2 and 8, and every other row writes nothing and starts
-   nothing.
+   too**, with its read of the lease state file; steps 2 to 5 follow only for its rows 1, 2 and 6,
+   and every other row writes nothing and starts nothing.
 2. **It decides whether a run is due, by reads alone.** A run is due only when no run holds the
    project's `provision.lock`, and the record's `last_attempt_at` is absent or at least 5 minutes
    before now; a record that step 4 is about to add has none. The lock is in the host's folder
@@ -1395,66 +1401,82 @@ makes a host, or runs its steps again on a `ready` host, also gives the host its
 are [operator.md, provision](operator.md#provision)'s, and this section says only what the EC2
 driver's functions decide in it.
 
-**At its deploy step, the run finds its type itself, from the lease state file** (D71):
-1. **It reads the lease state file of its state folder, read-only and without the lease state
-   lock, as the guard reads it** (architect, 2026-11-23, for v0.09-T01, pin P13). The state
-   folder is the one its environment names, as [`place_pending`](#place_pending)'s is
+**At its deploy step, the run finds its type itself, from the lease state file, in five steps**
+(D68's change notes, D71; architect, 2026-11-23, for v0.09-T01, pin P26, which replaces pin P13's
+read of the file without a lock). The run holds its `provision.lock` throughout, and takes the
+other two locks in [the lock order](#lock-order): the lease state lock, then `hosts.lock`
+([state.md, The order of the locks](state.md#the-order-of-the-locks)). [operator.md,
+provision](operator.md#provision) owns the step, its failures and its log lines; this section
+states what the driver's functions decide in it, and what place sees of it:
+1. **It takes the lease state lock, then `hosts.lock`**, waiting for each as a changing lease
+   command does ([state.md, The lease state lock](state.md#the-lease-state-lock); [state.md, The
+   host registry lock](state.md#the-host-registry-lock)). The lease state lock is the one of the
+   state folder its environment names, as [`place_pending`](#place_pending)'s is
    ([The detached start](#starting-a-provisioning-run); a run by hand uses its own environment's).
-   It writes nothing to the file, and waits for no lock: every write of the file replaces it
-   atomically ([state.md, The lease state file](state.md#the-lease-state-file)), so the read sees
-   the file as one write left it.
-   - **A missing lease state file counts as no leases.**
-   - **A lease state file that cannot be read or does not validate fails the deploy step before
-     any call to AWS**: the host's type is unchanged, the leases stay `pending`, and the run fails
-     as a failed deploy step does ([operator.md, provision](operator.md#provision), which owns its
-     log line). The run MUST NOT change a host's type on a reading it could not make, since it
-     could not tell whether a live lease holds the host, as the guard MUST NOT take such a file for
-     "no live lease" ([state.md, Live leases and the lease
-     horizon](state.md#live-leases-and-the-lease-horizon)).
-2. **When a live `ready` lease of the project exists at that read**, by the reading's time and the
-   words of [On a `ready` host](#on-a-ready-host), **the run passes no `InstanceType`**, whatever
-   `resize_target` would give (D68; architect, 2026-11-23, for v0.09-T01, pin P2). So the stack's
-   change set holds no resize and the host is not stopped, and the deploy records the type it
-   reads back (step 4). [`place_pending`](#place_pending) then places or refuses each `pending`
-   lease by that type (pin P1). Such a lease can hold the host when the record had no type the map
-   holds, as across v0.09's install ([On a `ready` host](#on-a-ready-host), row 2), and for a run
-   started by hand.
-3. **Otherwise the run gives the type `resize_target(<the records>, <project>)` returns**, the type
-   of the largest size among the project's `pending` leases that a run would place
-   ([Sizes and instance types](#sizes-and-instance-types)), **or none when it returns `None`**.
-   This holds for a run that makes a host as for one that runs again on a `ready` host: a host
-   that is `creating` or `failed` is made at the size of the project's largest `pending` lease
-   (D66's last row; D68), and has no live `ready` lease, since its record was never `ready`.
-4. **Giving a type means passing it to the stack's deploy as its `InstanceType`, and giving none
-   means passing none**, so that an existing stack keeps its type, as a run before v0.09 always
-   did, and a stack the deploy creates takes what [operator.md, deploy](operator.md#deploy) gives a
-   new host's stack ([operator.md, provision](operator.md#provision), its deploy step). A type
-   equal to the host's own changes nothing on the stack. The run's command line never carries it.
-   **A deploy step that passes a type first removes the record's `instance_type`, under
-   `hosts.lock`, before the stack's deploy runs** (D67; architect, 2026-11-23, for v0.09-T01, pin
-   P11), so that a place made while the deploy runs finds no type and answers `pending`
+2. **It removes the record's `instance_type` and writes the registry, then releases
+   `hosts.lock`**, whether it will pass a type or none. From here until step 5 writes the type, a
+   place finds the record with no type and answers `pending`
    ([On a `ready` host](#on-a-ready-host), row 2).
+3. **It reads the lease state file, under the lease state lock still held, and decides its
+   type**, writing nothing to the file:
+   - **When a live `ready` lease of the project exists**, by the reading's time and the words of
+     [On a `ready` host](#on-a-ready-host), **it passes no `InstanceType`**, whatever
+     `resize_target` would give (D68; architect, 2026-11-23, for v0.09-T01, pin P2(a)). So the
+     stack's change set holds no resize and the host is not stopped, and step 5 records the type
+     it reads back. [`place_pending`](#place_pending) then places or refuses each `pending` lease
+     by that type (pin P1). Such a lease can hold the host when the record had no type the map
+     holds, as across v0.09's install ([On a `ready` host](#on-a-ready-host), row 2), and for a
+     run started by hand.
+   - **Otherwise it gives the type `resize_target(<the records>, <project>)` returns**, the type
+     of the largest size among the project's `pending` leases that a run would place
+     ([Sizes and instance types](#sizes-and-instance-types)), **or none when it returns `None`**.
+     This holds for a run that makes a host as for one that runs again on a `ready` host: a host
+     that is `creating` or `failed` is made at the size of the project's largest `pending` lease
+     (D66's last row; D68), and has no live `ready` lease, since its record was never `ready`.
+   - **A missing lease state file counts as no leases.**
+   - **A lease state file that cannot be read or does not validate fails the step before any call
+     to AWS, with the type already removed by step 2**, which costs one run: the leases stay
+     `pending`, and the run fails as a failed deploy step does. The run MUST NOT change a host's
+     type on a reading it could not make, since it could not tell whether a live lease holds the
+     host, as the guard MUST NOT take such a file for "no live lease" ([state.md, Live leases and
+     the lease horizon](state.md#live-leases-and-the-lease-horizon)).
+4. **It releases the lease state lock, and only then calls AWS.** Giving a type means passing it
+   to the stack's deploy as its `InstanceType`, and giving none means passing none, so that an
+   existing stack keeps its type, as a run before v0.09 always did, and a stack the deploy creates
+   takes what [operator.md, deploy](operator.md#deploy) gives a new host's stack. A type equal to
+   the host's own changes nothing on the stack. The run's command line never carries it.
+5. **Once the stack's deploy has succeeded, it writes the type `describe-stacks` reads back** as
+   the record's `instance_type`, under `hosts.lock`, holding no lock during the AWS calls (D67,
+   D71; architect, 2026-11-23, for v0.09-T01, pins P11 and P23; [state.md, The host
+   registry](state.md#the-host-registry)). It does so on every run, whether it passed a type or
+   none, so each host's first run after v0.09's install records its type, whether or not it
+   changed it (D67).
+
+**Why the order closes the race** (pin P26). A `create` holds the lease state lock for its whole
+place ([Ordering and concurrency](#ordering-and-concurrency)), so it is either wholly before step 1
+or wholly after it. **Wholly before**, its `ready` lease is in the file step 3 reads, and the run
+does not resize the host under it. **Wholly after**, it finds the record with no type and answers
+`pending` by row 2 of [On a `ready` host](#on-a-ready-host), until step 5 writes the type the
+host then has. A read of the file without the lock, before the type's removal, would leave a gap
+between them: a `pending` lease released and a new lease placed `ready` at the record's old type
+inside it would be cut by the resize (D68's change notes).
 
 - **A resize runs provision's steps entire** (D71, changing D68's probe): deploy, start and wait,
   `sync`, `bootstrap`, record, and `place_pending`, as D48's run on a `ready` host already does,
   each step safe to repeat. A faster path is not designed until a live check shows that the time
   matters; D70's checks record it.
-- **The run records the host's type itself.** Once the stack's deploy has succeeded, its deploy
-  step reads the stack's `InstanceType` parameter with `describe-stacks`, holding no lock during
-  the AWS calls, and writes it as the record's `instance_type` under `hosts.lock` (D67, D71;
-  architect, 2026-11-23, for v0.09-T01, pin P11; [state.md, The host
-  registry](state.md#the-host-registry); [operator.md, deploy](operator.md#deploy)). It does so
-  on every run, whether it passed a type or none, so each host's first run after v0.09's install
-  records its type, whether or not it changed it (D67).
 - **A run never takes a `ready` host out of `ready`** (D48): a resize keeps the record `ready`
-  throughout. **A failed or killed deploy that passed a type, or a read-back that fails or is
-  malformed, leaves the record with no type** (pin P11), which changes D68's "a failed deploy
-  leaves the type it had": a killed client's deploy goes on running on AWS's side, so a kept type
-  could be larger than the host. A failed deploy that passed none removed nothing, and leaves the
-  type it had. Either way the failure is logged in `provision.log`, **with the leases `pending`**
-  for the next run (D68), which a `get` of one of them starts under the 5-minute rule; a record
-  left with no type answers a new lease by row 2 of [On a `ready` host](#on-a-ready-host), and
-  its next run records the type, which costs one run.
+  throughout. **A run's deploy step that fails or is killed after step 2 leaves the record with no
+  type, by design** (architect, 2026-11-23, for v0.09-T01, pin P30), whether it passed a type or
+  none, and so does a read-back that fails or is malformed (pin P11). This changes D68's "a failed
+  deploy leaves the type it had": a killed client's deploy goes on running on AWS's side, so a
+  kept type could be larger than the host. The failure is logged in `provision.log`, **with the
+  leases `pending`** for the next run (D68), which a `get` of one of them starts under the 5-minute
+  rule; a record left with no type answers a new lease by row 2 of
+  [On a `ready` host](#on-a-ready-host), and its next run records the type, which costs one run.
+  A person's deploy that passes no `InstanceType` and fails keeps the type, since it is not a
+  run's deploy step and removed nothing ([Sizes and instance types](#sizes-and-instance-types);
+  pin P30).
 - **The type is read once, at the deploy step.** A `pending` lease that arrives after that read,
   and that the resized host does not meet, is not met by this run: its
   [`place_pending`](#place_pending) answers it `unsatisfiable` when a live `ready` lease then holds
@@ -1575,7 +1597,7 @@ from its own folder, by a `create` or `get` that names that folder.
       - **When a live `ready` lease of the project exists**, by the words of
         [On a `ready` host](#on-a-ready-host), the lease is answered: it removes the lease's
         leftover credential files first, as step 2.4 does, ending nothing and logging nothing
-        (architect's to confirm, pin P21), and then writes the record
+        (architect, 2026-11-23, for v0.09-T01, pin P21), and then writes the record
         `unsatisfiable`, with `reasons` holding exactly one reason, code `no_capacity`, with the
         message of [On a `ready` host](#on-a-ready-host), byte for byte, for the lease's project
         and its `size`. It adds `reasons` and changes `state`, and no other member, `created_at`,
@@ -1619,8 +1641,9 @@ lock, then `hosts.lock`** (pin P10, architect, 2026-11-20, for v0.07-T01). A pro
 later lock MUST NOT wait for an earlier one, so no two programs ever wait on each other.
 - **A try without waiting is outside the order**, and cannot deadlock: place, holding the lease
   state lock and `hosts.lock`, MAY try a host's `provision.lock` without waiting, and releases it
-  at once if it took it ([Starting a provisioning run](#starting-a-provisioning-run), step 2; from
-  v0.09 also for [On a `ready` host](#on-a-ready-host)'s row 5, the same try).
+  at once if it took it ([Starting a provisioning run](#starting-a-provisioning-run), step 2), only
+  to decide whether a run is due: from v0.09 its decision on a `ready` host tries no lock
+  ([On a `ready` host](#on-a-ready-host), row 3; architect, 2026-11-23, for v0.09-T01, pin P26).
   `check_pending`, holding `hosts.lock` alone, MAY try it the same way.
 - **From v0.09, place reads the lease state file while it holds the lease state lock and
   `hosts.lock`**, the first held by the CLI, its caller, and takes no lock for that read
@@ -1639,21 +1662,25 @@ later lock MUST NOT wait for an earlier one, so no two programs ever wait on eac
   record, and then the lease state lock once per lease, in its step 2 and, from v0.09, its step 3;
   it holds `provision.lock` throughout. `place_pending` reads the lease state file again in each
   hold, so a lease released meanwhile is never placed or answered.
-- **From v0.09, a run's deploy step reads the lease state file with no lock**, read-only, as the
-  guard reads it ([A resizing run](#a-resizing-run); architect, 2026-11-23, for v0.09-T01, pin
-  P13), so the read adds nothing to the order and never waits on a lease command. **Its removal of
-  the host's `instance_type` before a deploy that passes a type, and its write of the type after
-  the deploy, are each under `hosts.lock` alone, and it holds no lock of this page during the AWS
-  calls** (D67, D71; pin P11; [operator.md, deploy](operator.md#deploy)), as its write of the
-  instance ID is.
+- **From v0.09, a run's deploy step takes the lease state lock, then `hosts.lock`, in this
+  order** ([A resizing run](#a-resizing-run), steps 1 to 4; architect, 2026-11-23, for v0.09-T01,
+  pin P26, which replaces pin P13's read without a lock). It removes the host's `instance_type`
+  and writes the registry, releases `hosts.lock`, reads the lease state file under the lease state
+  lock still held and decides its type, and releases the lease state lock before any call to AWS.
+  It holds no lock of this page during the AWS calls, and its write of the type after the deploy
+  is under `hosts.lock` alone (D67, D71; pin P11; [operator.md, provision](operator.md#provision);
+  [state.md, The order of the locks](state.md#the-order-of-the-locks)), as its write of the
+  instance ID is. Holding `provision.lock`, it waits for the two later locks only in the order,
+  so the order is kept.
 - **So a run, from v0.09, takes its locks in this order:** `provision.lock` for its life;
-  `hosts.lock` alone to record its start; no lock for its deploy step's read of the lease state
-  file; `hosts.lock` alone to remove the type, when it passes one; none during the deploy and the
-  read-back; `hosts.lock` alone to record the type, and the instance ID, after the deploy;
-  `hosts.lock` alone to record `ready`; then `place_pending`'s `hosts.lock` alone and its lease
-  state lock once per lease. Besides `provision.lock`, it holds at most one lock of this page at a
-  time. How [operator.md, provision](operator.md#provision) groups its own writes of the record
-  under `hosts.lock` is that page's, within this order.
+  `hosts.lock` alone to record its start; at its deploy step, the lease state lock, then
+  `hosts.lock` within it to remove the type, released before the read, then the lease state lock
+  alone for the read of the lease state file; none during the deploy and the read-back;
+  `hosts.lock` alone to record the type, and the instance ID, after the deploy; `hosts.lock` alone
+  to record `ready`; then `place_pending`'s `hosts.lock` alone and its lease state lock once per
+  lease. Besides `provision.lock`, it holds at most two locks of this page at a time, and both
+  only at its deploy step's start. How [operator.md, provision](operator.md#provision) groups its
+  own writes of the record under `hosts.lock` is that page's, within this order.
 
 ### Renew and release
 
@@ -1765,7 +1792,8 @@ the CLI asks"). So a release repeated after an earlier one left a client running
   [`place_pending`](#place_pending)'s steps 2.4 and 2.7. Each removes the lease's files as the
   release step removes them, walks for no client, and appends no line to `release.log`. No client
   of those aliases can exist, since none of them was ever handed to a caller. **From v0.09
-  `place_pending`'s step 3.4 is a fourth, of the same kind** (architect's to confirm, pin P21): its removal of
+  `place_pending`'s step 3.4 is a fourth, of the same kind** (architect, 2026-11-23, for
+  v0.09-T01, pin P21): its removal of
   a lease's leftover files before it answers the lease `unsatisfiable` ends nothing and logs
   nothing, for the same reason.
 
@@ -2332,7 +2360,7 @@ record with the `instance_type` the case names or with none, the `projects.json`
 past or to come), into `leases.json`, as C26 writes its records.
 - **A check whose `create` or `get` could start a run MUST set `AGENTSPACE_PROVISION_CMD` to v0.07's
   recording stand-in** (pin P12, architect, 2026-11-20, for v0.07-T01). From v0.09 that is every
-  `create` of a supported request on a `ready` record that rows 1, 2 or 8 of
+  `create` of a supported request on a `ready` record that rows 1, 2 or 6 of
   [On a `ready` host](#on-a-ready-host) answer `pending`, the box's included.
 - **A live `ready` lease of the project is made with `create`, at the host's exact size, or written
   as a stored `ready` record with an `expires_at` after the case's run**; a written one needs no
@@ -2348,20 +2376,20 @@ past or to come), into `leases.json`, as C26 writes its records.
 
 | Case | What it shows | Where the rule is |
 |---|---|---|
-| Z1 | For each of `s`, `m`, `l` and `xl`, with no other lease of the project: a `create --size <size>` for a record `ready` at that size's type answers `ready`, exit 0, a document that validates, whose `size` is the size asked for and that names no type; it starts nothing and leaves the registry as it was | [On a `ready` host](#on-a-ready-host), row 4 |
+| Z1 | For each of `s`, `m`, `l` and `xl`, with no other lease of the project: a `create --size <size>` for a record `ready` at that size's type answers `ready`, exit 0, a document that validates, whose `size` is the size asked for and that names no type; it starts nothing and leaves the registry as it was | [On a `ready` host](#on-a-ready-host), row 3 |
 | Z2 | `create --size xxl`, and `create --size XXL`, answer `unsatisfiable` with exactly one reason, `unsupported_size`, whose message is byte for byte `Size 'xxl' is not supported; v0 supports sizes s, m, l and xl.`; neither needs a CA, reads `hosts.json` (one that does not validate gives the same answer), writes the registry or starts anything. With `--platform windows/amd64` as well, the reasons are `unsupported_platform` then `unsupported_size`, in the contract's order; with `--platform windows/amd64 --size l`, the one reason is `unsupported_platform` (pin P9) | [What it supports](#what-it-supports) |
-| Z3 | With a live `ready` lease of the project, a record `ready` at `<t:l>`: `create --size m` and `create --size s` each answer `ready`, with the alias of the project's host and the document's `size` the size asked for; each starts nothing and leaves the registry as it was. With a record at `<t:m>`, `create` with the default size answers `ready` the same way | [On a `ready` host](#on-a-ready-host), rows 3 and 6 |
-| Z4 | With a live `ready` lease of the project, a record `ready` at `<t:m>`: `create --size l` and `create --size xl` each answer `unsatisfiable`, exit 0, with exactly one reason, `no_capacity`, whose message is byte for byte D66's with the project and the size asked for; each makes no lease folder and no alias file, starts nothing, leaves the registry as it was, and leaves every other record of `leases.json` as it was | [On a `ready` host](#on-a-ready-host), row 7 and the message |
-| Z5 | With no live `ready` lease of the project and a record `ready` at `<t:m>` whose `last_attempt_at` is absent: `create --size l` answers `pending`, exit 0, a document that validates with no `expires_at`, `ssh` or `reasons`, and no lease folder or alias file; the stand-in is started once, with exactly `provision -Host <project>`, three arguments and no `-InstanceType`; the record keeps `state` `ready`, its `instance_type` and its `instance_id`, and gains `last_attempt_at` within the command's run. The same for a record at `<t:xl>` and `create --size m`, the host to be made smaller | [On a `ready` host](#on-a-ready-host), row 8; [Starting a provisioning run](#starting-a-provisioning-run), the program |
+| Z3 | With a live `ready` lease of the project, a record `ready` at `<t:l>`: `create --size m` and `create --size s` each answer `ready`, with the alias of the project's host and the document's `size` the size asked for; each starts nothing and leaves the registry as it was. With a record at `<t:m>`, `create` with the default size answers `ready` the same way | [On a `ready` host](#on-a-ready-host), rows 3 and 4 |
+| Z4 | With a live `ready` lease of the project, a record `ready` at `<t:m>`: `create --size l` and `create --size xl` each answer `unsatisfiable`, exit 0, with exactly one reason, `no_capacity`, whose message is byte for byte D66's with the project and the size asked for; each makes no lease folder and no alias file, starts nothing, leaves the registry as it was, and leaves every other record of `leases.json` as it was | [On a `ready` host](#on-a-ready-host), row 5 and the message |
+| Z5 | With no live `ready` lease of the project and a record `ready` at `<t:m>` whose `last_attempt_at` is absent: `create --size l` answers `pending`, exit 0, a document that validates with no `expires_at`, `ssh` or `reasons`, and no lease folder or alias file; the stand-in is started once, with exactly `provision -Host <project>`, three arguments and no `-InstanceType`; the record keeps `state` `ready`, its `instance_type` and its `instance_id`, and gains `last_attempt_at` within the command's run. The same for a record at `<t:xl>` and `create --size m`, the host to be made smaller | [On a `ready` host](#on-a-ready-host), row 6; [Starting a provisioning run](#starting-a-provisioning-run), the program |
 | Z6 | None of these holds a host's size: a stored `ready` lease of the project whose `expires_at` is past, a `released` one and an `unsatisfiable` one, and a live `ready` lease of another project. With all of them and a record `ready` at `<t:m>`, `create --size xl` answers `pending` and starts the stand-in, as Z5, never `unsatisfiable` | [On a `ready` host](#on-a-ready-host), the live `ready` leases |
 | Z7 | Expiry is decided by the reading's time: a lease made with `--ttl 1m` at the host's exact size holds it, so `create --size xl` answers `unsatisfiable` with `no_capacity`; once its `expires_at` has passed, the same `create` answers `pending` and starts the stand-in | [On a `ready` host](#on-a-ready-host), the live `ready` leases |
 | Z8 | A record `ready` with no `instance_type` (D67): with no live `ready` lease of the project, `create` with the default size answers `pending` and starts the stand-in, the record staying `ready` with no `instance_type`; with a live `ready` lease of the project, the same `create`, and a `create --size s`, answer `pending` too, never `unsatisfiable`, and start the stand-in when a run is due. The same answers for a record whose `instance_type` is `m9g.8xlarge`, which the map does not hold | [On a `ready` host](#on-a-ready-host), row 2 (pin P2) |
-| Z9 | With the project's `provision.lock` held by the check, no live `ready` lease of the project and a record `ready` at `<t:m>`: `create` with the default size answers `pending`, starts nothing and leaves the registry as it was. With a live `ready` lease of the project as well, the same `create` answers `ready` | [On a `ready` host](#on-a-ready-host), rows 3 and 5 (architect's to confirm) |
+| Z9 | Place's side of a run's deploy step (architect, 2026-11-23, for v0.09-T01, pin P26), with the project's `provision.lock` held by the check and no live `ready` lease of the project. With the record `ready` and no `instance_type`, as a run's deploy step leaves it from its step 2 until its read-back: `create` with the default size answers `pending`, starts nothing, since no run is due while the lock is held, and leaves the registry as it was. With the record `ready` at `<t:m>`, as the read-back leaves it: the same `create` answers `ready`, starts nothing and leaves the registry as it was, the held lock changing nothing | [On a `ready` host](#on-a-ready-host), rows 2 and 3; [A resizing run](#a-resizing-run) |
 | Z10 | With no live `ready` lease of the project, a record `ready` at `<t:m>` whose `last_attempt_at` is under 5 minutes before now: `create --size l` answers `pending`, starts nothing and leaves the registry as it was; a `get` of that lease after the check sets `last_attempt_at` 5 minutes or more before now starts the stand-in once, with exactly `provision -Host <project>` | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4, and from `check_pending` |
 | Z11 | With no CA, a `create` that would answer `pending` on a `ready` record (Z5's) fails with `internal`, records no lease, leaves the registry as it was and starts nothing; one that would answer `unsatisfiable` with `no_capacity` (Z4's) answers it, with no CA | [On a `ready` host](#on-a-ready-host), the CA bullet |
 | Z12 | The box: with `hosts.json` holding the box's record `ready` at `<t:m>`, a `create` for `swimcoach` with the default size and no other lease answers `ready` with v0.06's alias bytes, and starts nothing; with `--size l` it answers `pending` and starts the stand-in once, with exactly `provision -Host swimcoach` | [On a `ready` host](#on-a-ready-host); [What is true of today's box](#what-is-true-of-todays-box) |
 | Z13 | A live `ready` lease recorded under another `AGENTSPACE_STATE_DIR` does not hold the host: with one in a second state folder, and none in the case's own, a `create --size xl` in the case's own state folder, for a record `ready` at `<t:m>`, answers `pending` | [On a `ready` host](#on-a-ready-host), the state folder |
-| Z14 | While the project has a `pending` lease of the EC2 driver at a size in `SIZES`, every new lease of it is `pending` (pin P2): with a record `ready` at `<t:m>`, a stored `pending` lease of the project at `l`, and with and without a live `ready` lease of the project, `create` with the default size and `create --size s` each answer `pending`, never `ready` or `unsatisfiable`, and leave the `pending` record as it was. The stand-in is started once when the record's `last_attempt_at` is absent or 5 minutes or more before now, and not at all when it is under 5 minutes before now (architect's to confirm). A stored `pending` record of the project with a size outside `SIZES`, or with another `driver`, does not hold the project's leases: with it alone, `create` with the default size answers `ready` (pin P20) | [On a `ready` host](#on-a-ready-host), row 1 |
+| Z14 | While the project has a `pending` lease of the EC2 driver at a size in `SIZES`, every new lease of it is `pending` (pin P2): with a record `ready` at `<t:m>`, a stored `pending` lease of the project at `l`, and with and without a live `ready` lease of the project, `create` with the default size and `create --size s` each answer `pending`, never `ready` or `unsatisfiable`, and leave the `pending` record as it was. The stand-in is started once when the record's `last_attempt_at` is absent or 5 minutes or more before now, and not at all when it is under 5 minutes before now (architect, 2026-11-23, for v0.09-T01, pin P27). A stored `pending` record of the project with a size outside `SIZES`, or with another `driver`, does not hold the project's leases: with it alone, `create` with the default size answers `ready` (pin P20) | [On a `ready` host](#on-a-ready-host), row 1 |
 | Z15 | With no `hosts.json`, the box's implied record has `instance_type` `m9g.xlarge` (pin P2c): a `create` for `swimcoach` with the default size answers `ready` with v0.06's alias bytes, starts nothing and leaves `hosts.json` absent; a `create --size l` for it answers `pending` and starts the stand-in once, with exactly `provision -Host swimcoach` | [Where it places a lease](#where-it-places-a-lease) |
 
 **Cases of earlier releases that change with v0.09** (architect, 2026-11-23, for v0.09-T01, pin
@@ -2384,9 +2412,10 @@ build, or depends on a rule that row 1 changes:
   `conformance/lease-cli/harness.ps1`'s `Add-ConformanceReadyHost` write `instance_type`
   `m9g.xlarge` on every `ready` record it seeds, by default, with an opt-out for the cases of a
   missing type; E0.09-T03-S02 (#0204) gives the same default to any operator helper that seeds a
-  `ready` record for a place or provision case. **C3's second case and C4 write their records with
-  their case file's own helper, not `Add-ConformanceReadyHost`**, so the same default is needed
-  there, in the same turn (architect's to confirm: which of T03's two stories owns it).
+  `ready` record for a place or provision case. **C3's second case and C4 are seeded by
+  `New-PgHostRecord` in `conformance/lease-cli/test-unmet-host-alias-bytes.ps1`, not by
+  `Add-ConformanceReadyHost`**, and E0.09-T03-S01 (#0203) owns that helper too, with the same
+  default (architect, 2026-11-23, for v0.09-T01, pin P29).
 
 **What no stand-in for the lease CLI shows,** and where each is shown instead:
 - **`SIZES`, `instance_type_for`, `meets` and `resize_target`, each over its whole domain**, among
@@ -2400,8 +2429,15 @@ build, or depends on a rule that row 1 changes:
   tests, E0.09-T03-S01. **A run's `place_pending` through `provision` and operator.md's test seam**,
   and **the type a run's deploy step passes**, `resize_target`'s or none when a live `ready` lease
   holds the host, its removal and read-back of the record's `instance_type`, and its failure
-  before any AWS call when the lease state file cannot be read or does not validate: the
-  operator's cases, E0.09-T04-S02 ([operator.md, provision](operator.md#provision)).
+  before any AWS call, with the type removed, when the lease state file cannot be read or does
+  not validate: the operator's cases, E0.09-T04-S02 ([operator.md, provision](operator.md#provision)).
+  **Pin P26's order as the stack's deploy sees it**, where operator.md's test seam can show it: the
+  AWS stand-in, called for the stack's deploy, finds the record with no `instance_type` and the
+  lease state lock free, the same cases.
+- **Pin P26's order against a `create` that runs at the same time**, wholly before the deploy
+  step's first lock or wholly after it, which no stand-in through the lease CLI can time:
+  `agentspace-sync`'s own tests of provision's deploy step, E0.09-T03-S02 (#0204), which can hold
+  the lease state lock as a `create` does.
 - **A host's type changing, and everything that needs a real host**: D70's live checks on
   agentspace's host, E0.09-T05-S01, one for each of these:
   - **Bigger:** with the host stopped and no live lease, `create --size l` answers `pending`,

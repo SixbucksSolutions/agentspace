@@ -512,9 +512,7 @@ while the project holds a live lease, and is stopped a short grace after its las
     leases of the project are `ready` on it, and never `no_capacity` (D67; pin P2). Its size is
     recorded meanwhile, and changed to the size asked for only when no other lease of the project
     is `ready` on it. Each project's first lease after v0.09's install can find this.
-  - **Compute at exactly the size asked for** meets the lease at once, as before v0.09, unless
-    work on the compute is already under way with no other lease of the project `ready`, when the
-    lease waits `pending` for that work (architect's to confirm).
+  - **Compute at exactly the size asked for** meets the lease at once, as before v0.09.
   - **Compute larger than the size asked for** meets the lease at once while another lease of the
     project is `ready` on it. With none, it is changed down to the size asked for, as below, so
     that compute left large by one lease does not cost its rate for every lease after it.
@@ -960,7 +958,8 @@ In v0 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
 ```
 
-**Two parts of this help changed in v0.09** (#0049; their wording is architect's to confirm): the
+**Two parts of this help changed in v0.09** (#0049; architect, 2026-11-23, for v0.09-T01, pin
+P28): the
 `--size` row, which read `Default m.` alone, and the line that begins `In v0 only`,
 which read `In v0 only linux/arm64, agent-linux and size m can be met.` Every other byte of this
 help is as before v0.09.
