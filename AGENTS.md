@@ -11,18 +11,13 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where it stands:** [docs/handoff-v0.07.md](docs/handoff-v0.07.md), the architect's handoff
-  after v0.07, for the architect who starts v0.08 (#0048). It is final, and v0.07 is closed
-  (2026-11-21). An agent picking agentspace up SHOULD read it first. v0.08's design calls are
-  settled as D56 to D62 in [docs/decisions.md](docs/decisions.md), Terry's calls among them made
-  (Q8 to Q10, closed 2026-11-21). On his word the same night, D63 laid v0.08 out as twenty-one
-  stories in six turns, #0168 to #0188, under epic #0048. Its live record is
-  [docs/handoff-v0.08.md](docs/handoff-v0.08.md), refreshed at each turn's close; T01 closed at
-  1:47am, T02 at 8:26am, T03 at 7:48pm and T04 at 10:54pm on 2026-11-22, T03 after a laptop
-  shutdown in its middle, T05 at 10:38am and T06 at 12:49pm on 2026-11-23, with v0.08 installed
-  on Terry's laptop. Every v0.08 story and the epic are in Ready For Review; v0.08 closes on
-  Terry's word. The v0.06 handoff,
-  [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stays for its pieces and lessons.
+- **Where it stands:** [docs/handoff-v0.08.md](docs/handoff-v0.08.md), the architect's handoff
+  after v0.08, for the architect who starts v0.09 (#0049). It is final, and v0.08 is closed: Terry
+  approved its epic and twenty-one stories into Completed on 2026-11-23. An agent picking
+  agentspace up SHOULD read it first. v0.08's design is D56 to D63 in
+  [docs/decisions.md](docs/decisions.md). v0.09 is laid out only on Terry's word. The v0.07 and
+  v0.06 handoffs, [docs/handoff-v0.07.md](docs/handoff-v0.07.md) and
+  [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stay for their pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with
   [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and [docs/handoff-mvp.md](docs/handoff-mvp.md),

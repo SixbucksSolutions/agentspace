@@ -1,31 +1,35 @@
-# Handoff: agentspace during v0.08
+# Handoff: agentspace after v0.08
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **The live record of v0.08 (#0048), started at T01's close, 1:47am Pacific on 2026-11-22, and
-> refreshed at each turn's close.** It becomes the handoff for the architect who starts v0.09 when
-> v0.08 closes. Where this file and AGENTS.md, the board or decisions.md disagree, they win.
+> **The architect's handoff after v0.08 (#0048), for the architect who starts v0.09 (#0049).** It
+> was the live record of v0.08 from T01's close, 1:47am Pacific on 2026-11-22, and is final since
+> Terry approved v0.08 into Completed on 2026-11-23. Where this file and AGENTS.md, the board or
+> decisions.md disagree, they win.
 
 ## Start here
 
-**An architect picking v0.08 up mid-release does these first.** They are
-[handoff-v0.07.md](handoff-v0.07.md#start-here)'s steps 2 to 5, unchanged: check for an orphan
-reader by PID, check the board answers, start the standing duties, and check AWS and the hosts
-through a mask. Then:
+**An architect picking agentspace up after v0.08 does these first.** Steps 1 to 4 are
+[handoff-v0.07.md](handoff-v0.07.md#start-here)'s steps 2 to 5, unchanged.
 
-1. **Read** [AGENTS.md](../AGENTS.md), [architect.md](architect.md), and D56 to D63 in
-   [decisions.md](decisions.md) with every "Changed for v0.08-T01" note under them.
-2. **Find the next turn** in the table below, and run it by architect.md, "Running a turn".
-3. **The reporter runs whenever `scripts/milestones.json` lists a milestone.** It lists `v0.08`
-   now, so exactly one `scripts\report-milestones.ps1 -Watch` MUST be running.
+1. **Check what is running**: an orphan reader, reporter or watchdog, by PID and kind only.
+2. **Check the board answers** on port 8811. Starting localswim is Terry's.
+3. **Start the standing duties**: the board watcher under the Monitor tool. The reporter starts only
+   once `scripts/milestones.json` lists a milestone; today it lists none.
+4. **Check AWS and the hosts through a mask.** Both SHOULD read `stopped`. An expired sign-in is
+   Terry's `aws login --remote`, its link in a fresh Incognito window (AGENTS.md).
+5. **Read** [AGENTS.md](../AGENTS.md), [architect.md](architect.md), D56 to D63 in
+   [decisions.md](decisions.md), and this file's rulings and lessons.
+6. **Wait for Terry's word before laying out v0.09** (AGENTS.md, "The board"). Until then, do the
+   prep in [The scope ahead: v0.09](#the-scope-ahead-v009).
 
 ## Where things stand
 
-**As of 12:49pm Mountain, 2026-11-23, at T06's close, the last turn of v0.08.** The laptop moved from Pacific to Mountain time during T03; every time below is the laptop's zone when it was written.
+**As of 1:33pm Mountain, 2026-11-23, when Terry approved v0.08 into Completed.** The laptop moved from Pacific to Mountain time during T03; every time below is the laptop's zone when it was written.
 
 | What | State |
 |---|---|
-| v0.08 (#0048), host lifecycle and cost guard | Every story merged: #0168 to #0188 and the epic in Ready For Review at T06's close. It closes on Terry's word, when he moves the cards to Completed; the `v0.08` milestone stops then, not before (AGENTS.md) |
+| v0.08 (#0048), host lifecycle and cost guard | Complete: the epic and its twenty-one stories, #0168 to #0188, approved into Completed by Terry on 2026-11-23, and the `v0.08` milestone stopped at 1:33pm |
 | T01, the specs, the template and the host's files | Closed at 1:47am: #111 to #115 merged, #0168 to #0172 in Ready For Review |
 | T02, the foundations | Closed at 8:26am: #116 to #119 merged, #0173 to #0176 in Ready For Review |
 | T03, the programs | Closed at 7:48pm, after a laptop shutdown from about 10:40am to 5:11pm: #120 to #125 merged, #0177 to #0181 in Ready For Review |
@@ -37,7 +41,7 @@ through a mask. Then:
 | A build of `main` | v0.08 at 469f6f6, a release build, installed on Terry's laptop by T05 at 9:13am on 2026-11-23. `main` has changed only in docs since |
 | The hosts | Both stopped with no lease ready, confirmed by T06's step 5 and step 6 runs (11:52am and 12:27pm on 2026-11-23). Instance hours for T05 and T06: 3.805 of the 6 Terry approved (D62), T05 1.247 and T06 2.558 |
 | Terry's laptop | v0.08 installed (T05); the keeper's task enabled and running, after T05's step 6 disabled it from 9:49am to 10:16am on his yes. `cfn-lint` 1.61.0 added as a uv tool, on Terry's word ("we can install new dependencies if needed", 2026-11-21) |
-| Swimcoach | `v0.08` reported, its cap 19.5 hours after T03's extension; `v0.08-T01` to `v0.08-T06` stopped at their closes. T03's cap was extended from 3 hours to 4.5 on Terry's word |
+| Swimcoach | No milestone. `v0.08-T01` to `v0.08-T06` stopped at their closes, and `v0.08` at 1:33pm on 2026-11-23 on Terry's word; the reporter is stopped |
 | Sessions | T01's to T06's dev leads archived at their closes. T03's was resumed after the shutdown rather than started fresh, and kept its context |
 | WSL | Found running at about 9:30am, started by T03's old bash test or the architect's T01 `wsl -e` runs; left for Terry. No later test starts it (T03 ruling). #0185's box tests found it running and left it running |
 
@@ -62,6 +66,37 @@ through a mask. Then:
 | New dependencies MAY be installed when needed; the dev lead names each to the architect first | 2026-11-21 | This file |
 | Every story of a turn goes to In Progress when the turn starts, moved by the architect | 2026-11-22 | AGENTS.md, "The board"; architect.md, "Running a turn", step 6 |
 | The architect MUST be the only agent that moves a card | 2026-11-22 | AGENTS.md, "Roles and pull requests" |
+
+## Cards for Terry to move
+
+**Bot cannot move a card out of Backlog, so these stay there until Terry moves them** (architect.md,
+"Closing a release"). Each was met, or made OBE, by v0.08:
+
+| Card | What it was | Met by |
+|---|---|---|
+| #0043 | The CloudWatch backstop stopped the box under open SSH sessions | OBE: D58 lengthened the backstop from 3 hours to 24, behind the guard's lease-based stop; both stacks carry it since T05 |
+| #0064 | A release left the lease's open connections up | D59's two walks, built in T03 and shown live with Terry's desktop-app session in [#0188's record](runs/e0.08-t06-s02.md); #0196 is what remained |
+| #0163 | A new host's first provisioning run waited 15 minutes on a patch run that never started | Sync's patch wait (T03), shown live in [T05's record](runs/e0.08-t05-s01.md), step 5 |
+| #0164 | `grow -GiB 0` was not refused | `grow`'s refusal (T03, #125) and its conformance (#126) |
+| #0166 | rustc, cargo and codex were on an interactive shell's `PATH` only | `install.sh`'s `/etc/environment` edit (T01), shown live on both hosts in T05's step 4 |
+| #0167 | A connection that started a host printed "The host is ready." twice | The push's filter (T02) and its conformance (#126) |
+
+## The scope ahead: v0.09
+
+**v0.09 (#0049) is size classes:** `s` to `xl`, set by resizing a stopped host, done when
+`--size l` gets a bigger host, sized from a footprint measured again on a turn that compiles
+([roadmap.md](roadmap.md)). Prep for its design calls, before Terry's word to lay it out:
+- **#0109, the sampler that dies silently when its disk fills,** MUST be met before v0.09's
+  measurement (roadmap.md, hardening), since the size classes are sized from that record.
+- **The open cards from v0.08**, each in Backlog: #0189 (timing tests under load), #0190 (the keeper
+  helpers' process reads and `Stop-OwnTree`'s root), #0191 (workspace binaries that hang under
+  load), #0192 and #0193 (box test gaps), #0195 (a killed client's Session Manager session) and
+  #0196 (a proxy that outlived a release). Each says whether it rides with a release; none blocks
+  v0.09 by its text, and the architect proposes which ride with it.
+- **A live kit under `scripts\`** (this file's T06 lesson): the mask, its proof and the wrapper,
+  committed as process tools before the next live turn, so it is not rebuilt from a record again.
+- **Instance hours:** D62's 6 were for T05 and T06, and 3.805 were used. A live check in v0.09
+  needs Terry's yes for its own hours (D19).
 
 ## Rulings made during v0.08
 
