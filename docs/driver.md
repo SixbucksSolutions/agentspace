@@ -936,7 +936,8 @@ when:
   v0.09-T01, pin P11). **One that passes none keeps the member**, and when it fails keeps the type
   it had, since it changed no type on the stack (architect, 2026-11-23, for v0.09-T01, pin P30).
 - **Every deploy writes the type `describe-stacks` reads back once the stack's deploy has
-  succeeded**, under `hosts.lock`, holding no lock during the AWS calls (pins P11 and P23). **A
+  succeeded**, under `hosts.lock`, holding no lock during the AWS calls but the host's
+  `provision.lock`, which every deploy holds for its life (pins P11, P23 and P34). **A
   read-back that fails or is malformed removes the member**, whichever deploy made it (pin P30).
 
 So a record is left with no type, which costs one run, and never with a type the host might not
@@ -1464,8 +1465,9 @@ states what the driver's functions decide in it, and what place sees of it:
    takes what [operator.md, deploy](operator.md#deploy) gives a new host's stack. A type equal to
    the host's own changes nothing on the stack. The run's command line never carries it.
 5. **Once the stack's deploy has succeeded, it writes the type `describe-stacks` reads back** as
-   the record's `instance_type`, under `hosts.lock`, holding no lock during the AWS calls (D67,
-   D71; architect, 2026-11-23, for v0.09-T01, pins P11 and P23; [state.md, The host
+   the record's `instance_type`, under `hosts.lock`, holding no lock during the AWS calls but
+   the run's `provision.lock` (D67, D71; architect, 2026-11-23, for v0.09-T01, pins P11, P23 and
+   P34; [state.md, The host
    registry](state.md#the-host-registry)). It does so on every run, whether it passed a type or
    none, so each host's first run after v0.09's install records its type, whether or not it
    changed it (D67).
@@ -1492,9 +1494,10 @@ inside it would be cut by the resize (D68's change notes).
   leases `pending`** for the next run (D68), which a `get` of one of them starts under the 5-minute
   rule; a record left with no type answers a new lease by row 2 of
   [On a `ready` host](#on-a-ready-host), and its next run records the type, which costs one run.
-  A person's deploy that passes no `InstanceType` and fails keeps the type, since it is not a
-  run's deploy step and removed nothing ([Sizes and instance types](#sizes-and-instance-types);
-  pin P30).
+  A person's deploy that passes no `InstanceType` and whose stack deploy fails, before any
+  read-back, keeps the type, since it is not a run's deploy step and removed nothing; one whose
+  read-back fails or is malformed removes it, as every deploy's does
+  ([Sizes and instance types](#sizes-and-instance-types); pin P30).
 - **The type is read once, at the deploy step.** A `pending` lease that arrives after that read,
   and that the resized host does not meet, is not met by this run: its
   [`place_pending`](#place_pending) answers it `unsatisfiable` when a live `ready` lease then holds
