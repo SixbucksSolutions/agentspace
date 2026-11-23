@@ -69,8 +69,9 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 ## Cards for Terry to move
 
-**Bot cannot move a card out of Backlog, so these stay there until Terry moves them** (architect.md,
-"Closing a release"). Each was met, or made OBE, by v0.08:
+**Bot cannot move a card out of Backlog, so these waited on Terry** (architect.md, "Closing a
+release"). He moved them out, the architect moved them to Ready For Review on his word, and he
+approved all six into Completed on 2026-11-23. Each was met, or made OBE, by v0.08:
 
 | Card | What it was | Met by |
 |---|---|---|
