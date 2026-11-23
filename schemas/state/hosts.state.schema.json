@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/hosts.state.schema.json",
   "title": "Host registry (laptop, internal)",
-  "description": "%USERPROFILE%\\.agentspace\\hosts.json (D45, D55): the host registry, one record per host, saying which host serves which project. Internal: it is laptop state, never output, and no lease command prints anything from it. A missing file reads as one record, the box's: project swimcoach, stack agentbox, state ready. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). A file in which two records share a project is not valid, though this schema cannot refuse it; docs/state.md says how a reader treats one. A file is valid only with exactly one record whose stack is agentbox, and its project is swimcoach (docs/state.md, \"The host registry\"), which no schema can check. See docs/state.md, \"The host registry\".",
+  "description": "%USERPROFILE%\\.agentspace\\hosts.json (D45, D55, D67): the host registry, one record per host, saying which host serves which project, and from v0.09 the instance type its stack was last deployed with. Internal: it is laptop state, never output, and no lease command prints anything from it. A missing file reads as one record, the box's: project swimcoach, stack agentbox, state ready, and from v0.09 instance_type m9g.xlarge. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). A file in which two records share a project is not valid, though this schema cannot refuse it; docs/state.md says how a reader treats one. A file is valid only with exactly one record whose stack is agentbox, and its project is swimcoach (docs/state.md, \"The host registry\"), which no schema can check. See docs/state.md, \"The host registry\".",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "hosts"],
@@ -40,6 +40,12 @@
           "description": "The host's instance ID, cached from its stack's InstanceId output. Absent until it is known.",
           "type": "string",
           "pattern": "^i-([0-9a-f]{8}|[0-9a-f]{17})$(?!\\n)"
+        },
+        "instance_type": {
+          "description": "The instance type of the host's stack, its InstanceType parameter as describe-stacks read it back after the last deploy that recorded it (D67, D71). The form of the operator's -InstanceType value, at most 64 characters. Absent until a deploy of v0.09 or later has recorded it, and while a deploy that changes it is under way; a record without it meets no size. Written after instance_id and before last_attempt_at. See docs/state.md, \"The instance type\".",
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]*\\.[a-z0-9][a-z0-9-]*$(?!\\n)"
         },
         "last_attempt_at": {
           "description": "The start time of the last provisioning run, UTC. Absent while no run has been started.",

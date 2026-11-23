@@ -1,0 +1,8 @@
+{
+  "version": 0,
+  "hosts": [
+    { "project": "swimcoach", "stack": "agentbox", "state": "ready", "instance_id": "i-0123456789abcdef0", "instance_type": "m9g.xlarge", "last_attempt_at": "2026-11-24T18:30:00Z" },
+    { "project": "agentspace", "stack": "agentspace-host-agentspace", "state": "ready", "instance_id": "i-0fedcba9876543210", "instance_type": "m9g.2xlarge", "last_attempt_at": "2026-11-24T19:05:42Z" },
+    { "project": "example-two", "stack": "agentspace-host-example-two", "state": "failed", "instance_id": "i-0123456789abcdef1", "instance_type": "m7i-flex.large", "last_attempt_at": "2026-11-24T19:10:00Z" }
+  ]
+}

@@ -19,7 +19,7 @@ installed programs ([Build](#build), [Install it](#install-it)).
 
 | Piece | What |
 |---|---|
-| Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; `m9g.xlarge` (4 vCPUs, 16 GiB) by default, sized for each use with a vCPU per agent ([D39](docs/decisions.md#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent)) |
+| Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; once v0.09 is installed, a lease's `--size` sizes its project's host, `s` to `xl` (2 to 16 vCPUs), `m`, `m9g.xlarge` (4 vCPUs, 16 GiB), by default ([D65](docs/decisions.md#d65-four-sizes-s-to-xl-on-the-m9g-ladder-m-stays-the-default-and-todays-host), [D69](docs/decisions.md#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease)) |
 | Disk | gp3, encrypted, per host: the box's is 20 GiB and a new host starts at 8 GiB; each is grown on demand under the disk order ([AGENTS.md](AGENTS.md#growing-the-boxs-disk)), never shrunk |
 | Access | Session Manager only: no inbound ports, no key pair, no Elastic IP |
 | Patching | Every boot: `apt-get dist-upgrade` (phased updates included) and `snap refresh`, then one reboot if the kernel or another package needs it; then the newest Node LTS, Codex and uv |
@@ -120,7 +120,11 @@ then each runs by its full path, `%USERPROFILE%\.agentspace\bin\agentspace-opera
   JSON that a person writes and that is not committed (D40);
   `infra\stack-parameters.example.json` shows the format
   ([operator.md, deploy](docs/operator.md#deploy)). `deploy` fails before it calls AWS when the
-  file is missing or not valid.
+  file is missing or not valid. **Once v0.09 is installed, `deploy -InstanceType <type>` sizes
+  every host, the box included** (D67), and the file's `InstanceType`, if it has one, is ignored:
+  it is not passed, and a plain `deploy` keeps the host's type. A lease's `--size` normally sizes
+  a host, through its provisioning run, and every `deploy` records the stack's type in
+  `hosts.json` ([state.md, The instance type](docs/state.md#the-instance-type)).
 - **`ca`** creates the agentspace SSH CA that signs lease certificates
   ([D7](docs/decisions.md#d7-ssh-access-through-short-lived-certificates-from-an-agentspace-ca)),
   once, as `%USERPROFILE%\.agentspace\ca\agentspace_ca` and `agentspace_ca.pub`, locked to the
@@ -769,7 +773,11 @@ program makes it: a person, or an agent at the person's request, does.
    trigger started the old keeper 2 seconds before the copy ended, finding 1 of
    [docs/runs/e0.07-t05-s01.md](docs/runs/e0.07-t05-s01.md)). Disabling the task first stays the
    alternative, and on Terry's laptop it MUST have his yes (D41). An install whose copy fails part
-   way SHOULD be run again before any program in the folder is used.
+   way SHOULD be run again before any program in the folder is used. **A return to v0.08's
+   programs after v0.09's have written `instance_type` into `%USERPROFILE%\.agentspace\hosts.json`
+   MUST first remove that member by hand from every record that holds it**, since a program before
+   v0.09 refuses such a file (D67;
+   [state.md, The instance type](docs/state.md#the-instance-type)).
 4. **Add the folder to the user's `PATH`, which MUST be done only with Terry's yes**, so that
    `agentspace` and `agentspace-operator` run by name.
 

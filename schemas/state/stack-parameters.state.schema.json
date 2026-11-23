@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/stack-parameters.state.schema.json",
   "title": "Stack parameters (laptop, written by a person)",
-  "description": "%USERPROFILE%\\.agentspace\\stack-parameters.json (D40): the account's CloudFormation parameters, which deploy passes to the stack. Written by a person, read by the operator's deploy, never written or removed by agentspace, never committed. Replaces the prototype's KEY=VALUE file <checkout>\\infra\\local.parameters. Anchored patterns end with $(?!\\n). See docs/state.md, \"Files in the checkout\".",
+  "description": "%USERPROFILE%\\.agentspace\\stack-parameters.json (D40): the account's CloudFormation parameters, which deploy passes to the stack, InstanceType apart. Written by a person, read by the operator's deploy, never written or removed by agentspace, never committed. Replaces the prototype's KEY=VALUE file <checkout>\\infra\\local.parameters. Anchored patterns end with $(?!\\n). See docs/state.md, \"Files in the checkout\".",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "parameters"],
@@ -12,7 +12,7 @@
       "const": 0
     },
     "parameters": {
-      "description": "Each member is one stack parameter: its name as the template declares it, and its value as CloudFormation takes it, a string even for a Number parameter. Every member is passed; an empty object passes none.",
+      "description": "Each member is one stack parameter: its name as the template declares it, and its value as CloudFormation takes it, a string even for a Number parameter. Every member but InstanceType is passed to the box's stack, and SubnetId and VpcId alone to a stack deploy creates for another host. From v0.09 InstanceType is not passed and not read: a file MAY still name it, and it is ignored, since every host is sized by deploy -InstanceType alone (D67). An empty object passes none.",
       "type": "object",
       "propertyNames": {
         "pattern": "^[A-Za-z][A-Za-z0-9]{0,254}$(?!\\n)"

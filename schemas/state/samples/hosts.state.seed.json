@@ -1,1 +1,1 @@
-{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}
+{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready","instance_type":"m9g.xlarge"}]}
