@@ -258,10 +258,17 @@ reads before it prints it").
 
 **Run from the main checkout. Every conformance check runs its programs in a throwaway home.**
 
+- **At most three suite or workspace runs SHOULD share the laptop at once** (v0.08-T02 and T04). More
+  make #0189's timing tests fail and #0191's targets hang, and each such failure then has to be rerun
+  alone before it counts.
+- **Every command a runner runs, short or long, MUST write its exit code to a file through a wrapper**
+  (v0.08-T04), as live checks do ("Live checks on Terry's laptop and the box"), and the runner MUST
+  wait for it in the foreground. A record cannot claim a result whose exit code was not kept.
+
 | Check | Run with | Last result |
 |---|---|---|
 | The conformance suite, against the installed programs | Each `conformance\*\test-*.ps1` with no `AGENTSPACE_*` variable set, so each program is the install folder's (conformance.md, Naming the program under test) | 44 files, 1,443 passed, none failed or skipped, 7:41am to 7:55am, 2026-11-20 ([runs/e0.06-t06-s01.md](runs/e0.06-t06-s01.md)) |
 | The deadline case | `conformance\operator\test-unmet-start-paths.ps1 -Case deadline`, about 15 minutes | 5 passed in 905 seconds, the same day |
 | The crates | `cargo test --workspace --locked`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, on Windows | 2,883 passed, 50 ignored helpers; fmt and clippy clean, the same day |
-| A build to test that is not installed | The same files with `AGENTSPACE_CMD`, `AGENTSPACE_OPERATOR_CMD`, `AGENTSPACE_SSH_PROXY_CMD` and `AGENTSPACE_KEEPER_CMD` naming `target\dist`'s programs | As in [runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md) |
+| A build to test that is not installed | The same files with `AGENTSPACE_CMD`, `AGENTSPACE_OPERATOR_CMD`, `AGENTSPACE_SSH_PROXY_CMD` and `AGENTSPACE_KEEPER_CMD` naming `target\dist`'s programs, or `scripts\run-conformance-files.ps1` | 72 files and the deadline case, 2,640 passed, none failed or skipped; the crates 4,849 passed, 58 ignored, run alone; the box tests 172 OK in WSL; 2026-11-22 ([runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)) |
 | The box tools | `python3 -I -m unittest discover -s box/tests -p 'test_agentspace_*.py'`, on the box | handoff-v0.04.md, "Checking that it still works" |

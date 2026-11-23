@@ -21,7 +21,7 @@ through a mask. Then:
 
 ## Where things stand
 
-**As of 7:48pm Pacific, 2026-11-22, at T03's close.**
+**As of 10:54pm Mountain, 2026-11-22, at T04's close.** The laptop moved from Pacific to Mountain time during T03; every time below is the laptop's zone when it was written.
 
 | What | State |
 |---|---|
@@ -29,14 +29,16 @@ through a mask. Then:
 | T01, the specs, the template and the host's files | Closed at 1:47am: #111 to #115 merged, #0168 to #0172 in Ready For Review |
 | T02, the foundations | Closed at 8:26am: #116 to #119 merged, #0173 to #0176 in Ready For Review |
 | T03, the programs | Closed at 7:48pm, after a laptop shutdown from about 10:40am to 5:11pm: #120 to #125 merged, #0177 to #0181 in Ready For Review |
-| T04, conformance | Next. Its gate is met. Its dev lead starts on Terry's word |
-| `main`'s tests | Green: 4,849 passed and 0 failed in the architect's run of `main` with #125, at T03's close, every help test fixed. #0189's timing tests fail now and then under a parallel build, and are rerun alone before they are findings |
-| A build of `main` | MAY be built for T04's conformance runs. Its first install on the laptop is T05's (#0186): #0181 has merged, so `install.sh`'s patch run now has sync's wait behind it |
+| T04, conformance | Closed at 10:54pm: #126 to #129 merged, #0182 to #0185 in Ready For Review. It started at 8:08pm and ran 2 hours 46 minutes of its 3 |
+| T05, the live checks | Next. Its gate is met. Its dev lead starts on Terry's word, after `aws login --remote` and a masked check that both hosts are stopped |
+| `main`'s tests | Green: 4,849 passed, 0 failed and 58 ignored in #0185's quiet run of `cargo test --workspace` at 6e2fcbd, alone on the laptop ([its record](runs/e0.08-t04-s04.md)); `crates` is unchanged since. #0189's timing tests fail now and then under a parallel build, and #0191's four targets hung under heavy conformance load; both are rerun alone before they are findings |
+| `main`'s conformance | Green against main's build: #0185's whole-suite run at 6e2fcbd, 2,640 passed, 0 failed, 0 skipped, with T04's new files run on their PRs (#126 to #128) and both 30-minute deadline cases passing. The empty-program control failed every file, as it MUST |
+| A build of `main` | Built only into worktrees for T04's runs, never installed. Its first install on the laptop is T05's (#0186) |
 | The hosts | Stopped as far as the architect knows; T01 to T03 started no instance. Not confirmed since the restart: the AWS sign-in expired during the shutdown, and `aws login --remote` is needed before T05. The instance hours Terry approved for T05 and T06 (6, D62) are untouched |
 | Terry's laptop | v0.07 installed, unchanged. `cfn-lint` 1.61.0 added as a uv tool, on Terry's word ("we can install new dependencies if needed", 2026-11-21) |
-| Swimcoach | `v0.08` reported, its cap 19.5 hours after T03's extension; `v0.08-T01`, `v0.08-T02` and `v0.08-T03` stopped at their closes. T03's cap was extended from 3 hours to 4.5 on Terry's word |
-| Sessions | T01's, T02's and T03's dev leads archived at their closes. T03's was resumed after the shutdown rather than started fresh, and kept its context |
-| WSL | Found running at about 9:30am, started by T03's old bash test or the architect's T01 `wsl -e` runs; left for Terry. No later test starts it (T03 ruling) |
+| Swimcoach | `v0.08` reported, its cap 19.5 hours after T03's extension; `v0.08-T01` to `v0.08-T04` stopped at their closes. T03's cap was extended from 3 hours to 4.5 on Terry's word |
+| Sessions | T01's to T04's dev leads archived at their closes. T03's was resumed after the shutdown rather than started fresh, and kept its context |
+| WSL | Found running at about 9:30am, started by T03's old bash test or the architect's T01 `wsl -e` runs; left for Terry. No later test starts it (T03 ruling). #0185's box tests found it running and left it running |
 
 ### v0.08 by turn
 
@@ -45,7 +47,7 @@ through a mask. Then:
 | T01 | #0168 to #0172 | 1:47am, 2026-11-22 | #111 to #115 | operator.md's guard, `status -All`'s leases, `grow`'s refusal, sync's patch wait and the host's files; keeper.md's start of the guard; state.md's live leases, horizon, `guard.log`, `guard.lock` and `release.log`; driver.md's two-walk release; the alarm at 24 hours; README's "A host's life"; `box/system`'s idle check, install and test |
 | T02 | #0173 to #0176 | 8:26am, 2026-11-22 | #116 to #119 | `agentspace-state`'s `is_live`, `lease_end`, `live_count`, `last_lease_end` and `lease_horizon`; `agentspace-hosts`' guard lock; the new `agentspace-connections` (the two-walk end of an alias's clients and `release.log`'s text); `agentspace-box`'s `describe_hosts`, `stop_host` and `send_horizon`; the push's one-line stderr filter (#0167) |
 | T03 | #0177 to #0181 | 7:48pm, 2026-11-22 | #120 to #125 | `agentspace-guard`, the guard's run; the operator's `guard`, `status -All`'s `Leases` and `Guard` lines and `grow`'s refusal (#0164); the keeper's start of the guard, with `agentspace-detach`'s process ID; the EC2 driver's two-walk release and `release.log` (#0064); sync's patch wait (#0163); `agentspace-zone`'s laptop clock time; the keeper suite's tripwires and the operator stand-in's ssm answers |
-| T04 | #0182 to #0185 | | | |
+| T04 | #0182 to #0185 | 10:54pm, 2026-11-22 | #126 to #129 | Conformance for v0.08: the guard, `status -All`'s leases, `grow`'s refusal, sync's patch wait with its two deadline cases, and #0167's push filter (#0182); a release ending a lease's connections, R1 to R15 (#0183); the keeper's start of the guard, G1 to G16 (#0184); the whole suite, the crates and the box tests against main's build, with conformance.md's v0.08 rows (#0185) |
 | T05 | #0186 | | | |
 | T06 | #0187, #0188 | | | |
 
@@ -94,6 +96,14 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | state.md's release order follows the two walks; keeper.md's `pid=-` and the guard's known variable names | T03 | state.md (8ba4964); keeper.md (d4f46c0, 8325a55) |
 | No test starts WSL; a bash test uses Git for Windows' bash or is ignored by default | T03 | #0181's card |
 | An answer missing a member fails `describe-instance-information` and so sync; send-command and the poll get the wait's tolerance; a queued `restart` is a start | T03 | operator.md, the patch wait; #0181 |
+| A spec's conformance-case table rules over a card's shorter list: every row is a case, R1 to R15 and G1 to G16 each a case of its own | T04 | Each spec's case table; #0182 to #0184 |
+| R15 holds only for a second client started within the release; a late one is SKIPPED, in #0189's timing family | T04 | driver.md's R15 row (c932ef6); #0183 |
+| At most three suite or workspace runs at once on the laptop; every command a runner runs, short or long, writes its exit code to a file through a wrapper | T04 | Each dev lead's brief; architect.md, "Checking that it still works" |
+| A story with a 30-minute deadline case merges only once that case's result is in | T04 | #126's PR comment |
+| A workspace hang under load is #0191's, rerun alone before it is a finding, and named in the run record; a story whose scope is not those crates still lands | T04 | #0191; [#0185's record](runs/e0.08-t04-s04.md) |
+| A coverage gap a review finds outside the turn's scope is carded in Backlog and cited where conformance.md names it, never added to the next turn: #0192 (the idle check's four parts) and #0193 (`install.sh`'s `/etc/environment` edit) | T04 | conformance.md (8a86357); each card |
+| A dev lead MAY rebase a story onto `main` before its review when the review checks rows against files merged since, and names the new head | T04 | #129 |
+| operator.md's rows follow what T03 left: `grow`'s refusal, `status -All`'s files and provision's sign-in line | T04 | operator.md (27643b2, 4bb86d5, 1184365) |
 
 ## Lessons from v0.08
 
@@ -113,6 +123,13 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | A laptop shutdown stopped T03 mid-turn. Its dev lead's session survived in the app, and was resumed with its whole context; the first message after the restart ran no turn ("0 turns" in its transcript), and a second, sent on seeing that, started it | After a restart, resume a surviving dev lead rather than start a fresh one, check its transcript that a message started a turn, and send it again if not; push every branch before a shutdown, so nothing lives only on the laptop | handoff-v0.08.md, this row |
 | The architect wrote a turn's close time into the handoff before reading the clock, again; it was caught and replaced before any commit | Write a close time only from `date`'s output at the archive, never ahead of it | architect.md, "Writing in the repository" |
 | In T04 the architect sent a dev lead a commit hash, "e5fd2e9", that it had not read from git, a third slip of this kind in the release, and corrected it at once with the real one; its earlier ruling had also wrongly said T03 landed guard's help copies | Run the commit, then write the message, never in the other order; and read a file before ruling on what it holds | architect.md, "Writing in the repository"; this file |
-| In T04, #0183's reviewer counted ssh-named processes by image path under `%TEMP%`, which read the paths of processes it did not start, possibly Terry's real ssh; it printed only a count, 0 | A check names and counts only processes the case started, by PID, under its own folders | Each dev lead's brief |
+| In T04, #0183's reviewer counted ssh-named processes by image path under `%TEMP%`, and the runners of #0182 to #0184 checked for leftover processes by filtering every process by image path, so all read the paths of processes they did not start, possibly Terry's real ssh; they printed only counts or names and PIDs of matches, of which there were none | A check names and counts only processes the case started, by PID, under its own folders | Each dev lead's brief |
 | In T04, #0184's G10 stand-in guard wrote `set AGENTSPACE_` and `set USERPROFILE`'s output to a file under `%TEMP%`, so logged an environment's values, among them any `AGENTSPACE_*_CMD` the logon environment held, since keeper.md passes unknown ones to the guard; the file was never printed and was deleted at the run's end | A stand-in records the variables it names, and a case's own by presence only; never `set` or a whole environment, even to a temp file | AGENTS.md, "A test MUST NOT print, log or format the values of an environment it captured" |
 | Two specs that link each other could not each merge after the other | Check every anchor on a local merge of all of them, then merge in an order that ends with none broken | This file; the architect's anchor check |
+| T04's first taskings came from the cards alone and missed most of each spec's case table (G1 to G16, R1 to R15, about 20 of operator.md's rows, #0167 unstaffed); three follow-up writers were needed | Before launching writers, the dev lead maps every row of the spec's case table to a writer | Each dev lead's brief; this file |
+| Reviewers working beside the runners, from source and the row map alone, saved about an hour on two stories, but their fixes landed while the runners still ran, so each story needed a confirming run on its final head | Plan a confirming run on the final head from the start | This file |
+| Auto mode refused two of a fix writer's edits with "classifier gave no verdict", an infrastructure failure, not a denial; the writer stopped and the dev lead applied them. The architect's own archive of the dev lead needed a resend for the same reason | On a no-verdict refusal, stop and report the exact edit, or resend the call once as the refusal says | Each dev lead's brief |
+| A coverage writer's greppable markers differed in one text, so the dev lead's grep counted 13 of 14; the confirming pass found the 14th | Prove a pattern on every planted variant before believing its count | Terry's global rule; this file |
+| A runner recorded fmt's and clippy's streams but not their exit codes, so the record could not claim them, and both were rerun; another ended its run waiting on its own background deadline case before the wrapper rule reached it | Every command writes its exit code to a file, and a runner waits in the foreground | Each dev lead's brief |
+| Worktree isolation refuses compound git commands and `git -C` into a sibling worktree | A tasking that needs a sibling story's files says to read them with Read, Grep or `git show <sha>` | Each dev lead's brief |
+| A workspace test binary ended with exit -1, and the architect named a cause twice before reading the runner's files: first the tool's 10-minute limit, then an outside kill, which it wrote onto #0190 as context. The runner's own files showed it had ended a 28-minute hang itself; the context was taken off #0190 the same night | Ask for the runner's files and read them before stating a cause, in a message or on a card | This file |
