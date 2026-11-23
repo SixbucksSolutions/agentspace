@@ -302,7 +302,7 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 | `state` | String, [state](#states) | Always | Where the lease is in its life, as of now. |
 | `platform` | String, [platform](#platform) | Always | The platform asked for, normalized. |
 | `profile` | String, [profile](#profile) | Always | The software profile asked for, normalized. |
-| `size` | String, [size](#size) | Always | The size asked for, normalized. |
+| `size` | String, [size](#size) | Always | The size asked for, normalized, even when larger compute serves the lease (D66). |
 | `ttl_seconds` | Integer, 60 to 86400 | Always | The TTL of the current certificate, or of the one asked for if none was issued. |
 | `created_at` | String, [time](#times) | Always | When `create` recorded the lease: a whole second during the `create` command. |
 | `expires_at` | String, [time](#times) | `ready` and `expired`; `released` if it was ever ready | When the current certificate stops being accepted for new connections: its issue time plus `ttl_seconds`. An older certificate MAY outlive it; see "What expiry and release do not do" under [States](#states). |
@@ -344,27 +344,57 @@ narrower pattern of the lease state file, which is what binds a driver
 | `unsupported_platform` | No backend can provide the platform asked for. |
 | `unsupported_profile` | No backend can provide the profile asked for. |
 | `unsupported_size` | No backend can provide the size asked for. |
-| `no_capacity` | The request is supported, but no capacity can be found for it. |
+| `no_capacity` | The request is supported, but no capacity can be found for it: in v0, its project has no host and cannot have one made (D54), or its project's host is serving other leases at a smaller size (D66, D68). |
 
 **Every reason that applies MUST be listed, each code once,** in the order of the table, so a
 request with an unsupported platform and an unsupported size gets two reasons. In v0 only
-`linux/arm64`, `agent-linux` and size `m` are supported (D5). `no_capacity` is in the contract for
-backends that can run out. Until agentspace's v0.07 release (#0047) it was never reported; from
-v0.07, v0's driver reports it for a supported request whose project has no host and is not on the
-list of projects that may have one made (D54; [docs/driver.md](driver.md#where-it-places-a-lease)).
-It is never listed beside an `unsupported_*` reason, since it applies only to a supported request.
-No schema, code or field changes for it, so the contract does not.
+`linux/arm64` and `agent-linux` are supported, and the sizes `s`, `m`, `l` and `xl`
+([Size](#size); D5, D65). Until agentspace's v0.09 release (#0049), size `m` alone was.
+`no_capacity` is in the contract for backends that can run out. Until agentspace's v0.07 release
+(#0047) it was never reported. v0's driver reports it for a supported request only, in these
+cases:
+- **From v0.07, for a project that has no host and is not on the list of projects that may have
+  one made** (D54; [docs/driver.md](driver.md#where-it-places-a-lease)).
+- **From v0.09 (#0049), for a project whose host is serving another of the project's `ready`
+  leases, and is smaller than the size asked for** (D66). Changing the host's size would stop it
+  under those leases, so the request is refused at once, rather than left to wait for them to end.
+  The answer changes nothing: no lease of the project, and not the host's size or state. A host
+  whose size agentspace has not yet recorded is never refused so: the request is `pending`
+  instead, while its size is recorded (architect, 2026-11-23, for v0.09-T01, pin P2).
+- **From v0.09, for a `pending` lease that its host, once its size is changed or recorded, does
+  not meet**, because a larger lease arrived after the change was chosen, or because another of
+  the project's leases held the host at its size, **while another of the project's leases is
+  `ready` on that host** (D68; architect, 2026-11-23, for v0.09-T01, pin P1). The lease goes from
+  `pending` to `unsatisfiable`, with `no_capacity` as its one reason, by the transition that
+  [States](#states) already has.
+
+How the driver decides each case is docs/driver.md's: place's in
+[Where it places a lease](driver.md#where-it-places-a-lease) and
+[On a `ready` host](driver.md#on-a-ready-host), and a run's in
+[`place_pending`](driver.md#place_pending).
+`no_capacity` is never listed beside an `unsupported_*` reason, since it applies only to a
+supported request. No schema, code or field changes for it, so the contract does not.
 - **An `unsatisfiable` lease with `no_capacity` stays `unsatisfiable`**, as every `unsatisfiable`
   lease does ([States](#states)): nothing makes it `ready` later. **A later `create` is judged
   afresh**, and MAY be answered `pending` or `ready`, for example once agentspace's operator has
-  approved the project.
+  approved the project, or once the project's other leases are released, or when the size asked
+  for is one the host already meets.
 
-**Each reason's message quotes the normalized value**, and SHOULD read as v0's do:
+**Each reason's message quotes the normalized value**, and SHOULD read as v0's do, below. **A
+client MUST NOT parse a message: it reads the reason codes** ([Messages](#messages)). v0's driver
+emits the `unsupported_size` message and the `no_capacity` message for a host serving smaller
+leases byte for byte as below, which is its own rule, not the contract's (D71;
+[docs/driver.md, What it supports](driver.md#what-it-supports); architect, 2026-11-23, for
+v0.09-T01, pin P8):
 - `Platform '<platform>' is not supported; v0 supports linux/arm64 only.`
 - `Profile '<profile>' is not supported; v0 supports agent-linux with no version only.`
-- `Size '<size>' is not supported; v0 supports size m only.`
+- `Size '<size>' is not supported; v0 supports sizes s, m, l and xl.`
+  (D65, D71; from v0.09, #0049, in place of v0.08's `Size '<size>' is not supported; v0 supports size m only.`)
 - `No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.`
   ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's, 2026-11-20, for v0.07-T01)
+- `No capacity can be found for project '<project>' at size '<size>': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.`
+  (D66, D71; from v0.09, #0049), where `<project>` is the normalized project and `<size>` the
+  normalized size asked for. It is the message of both v0.09 cases above.
 
 **Which backend placed a lease MUST NOT appear in any output** (D1), although agentspace keeps it
 to renew and release the lease.
@@ -402,10 +432,16 @@ caller SHOULD allow for that in its SSH timeouts.
 v0.07 release (#0047), `create` answered `ready` or `unsatisfiable` straight away. **From v0.07,
 `create` MAY answer `pending`**: a lease for a project whose compute is still being made stays
 `pending` until it is, which can take minutes, and is then made `ready` by agentspace, never by a
-command of the caller's. The caller's `get`s let that work carry on, among them after a failed
-attempt (D48; [docs/driver.md](driver.md#check_pending)). A lease's TTL starts when it becomes
-`ready`, so time spent `pending` costs none of it. A caller that stops waiting SHOULD `release` the
-lease.
+command of the caller's. **From agentspace's v0.09 release (#0049), so does a lease whose
+project's compute is being changed to meet its [size](#size), or is having its size recorded, and
+a lease of a project that already has a `pending` lease** (D66, D67, D68;
+[A host's life follows its leases](#a-hosts-life-follows-its-leases)). Such a lease MAY instead
+become `unsatisfiable`, with `no_capacity`, when the compute, once changed or recorded, does not
+meet it and another of the project's leases is `ready` on it ([Fields](#fields)). The caller's
+`get`s let that work carry on, among them after a failed attempt (D48;
+[docs/driver.md](driver.md#check_pending)).
+A lease's TTL starts when it becomes `ready`, so time spent `pending` costs none of it. A caller
+that stops waiting SHOULD `release` the lease.
 
 **How `expired` is decided:** a lease that was `ready` is `expired` when the command reading it
 runs at or after its `expires_at`, to the second. Nothing has to run at that moment: `get`, `list`,
@@ -464,10 +500,36 @@ while the project holds a live lease, and is stopped a short grace after its las
   renews it ([`renew`](#agentspace-lease-renew)), and its compute is stopped a grace later. The
   holder of a lease it still uses SHOULD renew it before `expires_at`, and SHOULD choose a TTL
   that covers the work it expects (architect, 2026-11-21, for v0.08-T01, pin P23).
+- **From agentspace's v0.09 release (#0049), the compute's size follows the leases too (D66).** A
+  project's compute is changed to another [size](#size) only while no lease of the project is
+  `ready`, so a change of size never stops compute under a `ready` lease. What a supported
+  request finds, when the project's compute exists and is not being made, by the first of these
+  that applies:
+  - **While another lease of the project is `pending`, the request is `pending` too**, whatever
+    the compute's size, and is placed when the work that lease waits on finishes (D66; architect,
+    2026-11-23, for v0.09-T01, pin P2). So no lease is placed `ready` on compute whose size is
+    about to be changed under it.
+  - **Compute whose size agentspace has not yet recorded** answers `pending`, whatever other
+    leases of the project are `ready` on it, and never `no_capacity` (D67; pin P2). Its size is
+    recorded meanwhile, and changed to the size asked for only when no other lease of the project
+    is `ready` on it. Each project's first lease after v0.09's install can find this.
+  - **Compute at exactly the size asked for** meets the lease at once, as before v0.09.
+  - **Compute larger than the size asked for** meets the lease at once while another lease of the
+    project is `ready` on it. With none, it is changed down to the size asked for, as below, so
+    that compute left large by one lease does not cost its rate for every lease after it.
+  - **Compute at any other size, with no other lease of the project `ready`**, is changed to the
+    size asked for. The lease waits `pending` meanwhile, which can take minutes ([States](#states)).
+  - **Compute smaller than the size asked for, while another lease of the project is `ready` on
+    it**, answers `unsatisfiable` with `no_capacity` at once ([Fields](#fields)).
+
+  How the change is made is [docs/driver.md, On a `ready` host](driver.md#on-a-ready-host)'s and
+  [A resizing run](driver.md#a-resizing-run)'s, and how the guard and the idle stop meet it are
+  those pages' and [docs/operator.md](operator.md)'s, never a command of this CLI.
 - **No output, field, state or error changes for this.** It is a promise about when compute runs,
-  never a field of a lease, and the lease's documents say nothing of it.
+  never a field of a lease, and the lease's documents say nothing of it. The one answer the size
+  rules add, `no_capacity` for compute serving smaller leases, is a reason v0 already had.
 - **No stand-in can show a host stop**, so this section has no conformance case. The live checks
-  of D62 show it (E0.08-T06).
+  of D62 show it (E0.08-T06), and those of D70 show a change of size (E0.09-T05-S01).
 
 ### The credential
 
@@ -601,8 +663,33 @@ each supported profile promises is in [Profiles](#profiles).
 - **Accepted:** 1 to 8 letters and digits, in any case, with surrounding whitespace.
 - **Normalized to:** lowercase, whitespace trimmed.
 - **Default:** `m`.
-- **Supported in v0:** `m` only. Any other well-formed size is accepted, and the lease is
-  `unsatisfiable` with `unsupported_size`.
+- **A size is a floor of vCPUs and memory** (D65): the compute that serves a lease of that size
+  has at least that many vCPUs and at least that much memory. A size names nothing else, and never
+  a machine type (D1).
+
+  | Size | vCPUs | Memory |
+  |---|---|---|
+  | `s` | 2 | 8 GiB |
+  | `m` | 4 | 16 GiB |
+  | `l` | 8 | 32 GiB |
+  | `xl` | 16 | 64 GiB |
+
+- **Supported in v0:** `s`, `m`, `l` and `xl`, from agentspace's v0.09 release (#0049; D65), for
+  `linux/arm64`, the one platform v0 supports (D13). Before v0.09, `m` alone was. Any other
+  well-formed size, such as `xxl`, is accepted, and the lease is `unsatisfiable` with
+  `unsupported_size`.
+- **A size is judged on its own, whatever the platform asked for** (architect, 2026-11-23, for
+  v0.09-T01, pin P9). A request for another platform is `unsatisfiable` with
+  `unsupported_platform`, and gets `unsupported_size` beside it only when its size is not one of
+  the four, as a request with size `m` was answered before v0.09. So `windows/amd64` with size `l`
+  lists `unsupported_platform` alone.
+- **A lease is met by compute at least its size, in both vCPUs and memory** (D66). A lease placed
+  on larger compute is met, not swapped (D5), and its `size` stays the size asked for, so nothing
+  in the lease shows the difference (D1). When compute of another size has to be changed to meet a
+  lease, and when a lease is refused with `no_capacity` instead, is
+  [A host's life follows its leases](#a-hosts-life-follows-its-leases)'s.
+- **Which machine meets which size is the driver's alone**, and this contract never names it
+  ([docs/driver.md, Sizes and instance types](driver.md#sizes-and-instance-types)).
 
 ### TTL
 
@@ -804,8 +891,9 @@ agentspace lease create --project <name> [--platform <os/arch>] [--profile <name
 - **`ready`:** `ssh.host_alias` is usable from the caller's OpenSSH configuration, and
   `expires_at` is the issue time plus the TTL ([The credential](#the-credential)).
 - **`pending`:** call `get` until it is `ready` or `unsatisfiable`. From agentspace's v0.07 release
-  (#0047), a `create` MAY answer it for a project whose compute is still being made
-  ([States](#states)).
+  (#0047), a `create` MAY answer it for a project whose compute is still being made, and from
+  v0.09 (#0049) for one whose compute is being changed to the lease's size ([States](#states),
+  [Size](#size)).
 - **`unsatisfiable`:** `reasons` says which values cannot be met. Nothing was issued, and the lease
   needs no `release`.
 
@@ -815,14 +903,15 @@ be checked.
 
 **A platform, profile or size that cannot be met is never swapped for another (D5).** If any one of
 them cannot be met, the lease is `unsatisfiable`, whatever the others are. Whether a request can be
-met is decided before anything is issued.
+met is decided before anything is issued. A lease that larger compute serves is met, not swapped,
+and its `size` stays the size asked for ([Size](#size), D66).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--project <name>` | [Project](#project) | None; required | The project the agent works on. |
 | `--platform <os/arch>` | [Platform](#platform) | `linux/arm64` | Only `linux/arm64` is supported in v0. |
 | `--profile <name>` | [Profile](#profile) | `agent-linux` | Only `agent-linux` is supported in v0. |
-| `--size <size>` | [Size](#size) | `m` | Only `m` is supported in v0. |
+| `--size <size>` | [Size](#size) | `m` | `s`, `m`, `l` and `xl` are supported in v0, from v0.09 (#0049). |
 | `--ttl <duration>` | [TTL](#ttl) | `8h` | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
@@ -859,15 +948,21 @@ Options:
   --project <name>      Required. Letters, digits and '-', up to 32; lowercased.
   --platform <os/arch>  Default linux/arm64. Also accepts aarch64 for arm64.
   --profile <name>      Default agent-linux. Accepts name or name@version.
-  --size <size>         Default m.
+  --size <size>         Default m. One of s, m, l or xl: at least 2, 4, 8 or 16 vCPUs,
+                        with 4 GiB of memory for each.
   --ttl <duration>      Default 8h. From 1m to 24h, never clamped.
                         Examples: 8h, 90m, 1h30m, '2 hours', PT8H.
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v0 only linux/arm64, agent-linux and size m can be met.
+In v0 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
 ```
+
+**Two parts of this help changed in v0.09** (#0049; architect, 2026-11-23, for v0.09-T01, pin
+P28): the `--size` row, which read `Default m.` alone, and the line that begins `In v0 only`,
+which read `In v0 only linux/arm64, agent-linux and size m can be met.` Every other byte of this
+help is as before v0.09.
 
 ### agentspace lease get
 
@@ -879,9 +974,10 @@ agentspace lease get <id>
 passed is printed as `expired`.
 - **For a lease that is `pending`, `get` MAY let agentspace carry on placing it** (from agentspace's
   v0.07 release, #0047; D48): it asks the lease's driver to check it
-  ([docs/driver.md](driver.md#check_pending)), which can start the work that makes its compute
-  and places it. That changes no lease and nothing `get` prints: the lease is printed as stored,
-  `get` never waits for the work, and a check that fails changes neither the output nor the exit code. The
+  ([docs/driver.md](driver.md#check_pending)), which can start the work that makes its compute,
+  or from v0.09 (#0049) changes its compute's size, and places it. That changes no lease and
+  nothing `get` prints: the lease is printed as stored, `get` never waits for the work, and a
+  check that fails changes neither the output nor the exit code. The
   lease becomes `ready` later, by agentspace, as [States](#states) says.
 
 | Argument or flag | Type | Notes |
@@ -1371,12 +1467,16 @@ starts, and one that is unset or empty means the default.
 | `AGENTSPACE_STATE_DIR` | Every command keeps its lease records in this folder instead of the default ([docs/state.md](state.md)). |
 | `AGENTSPACE_SSH_DIR` | `create` makes the lease's alias usable from the OpenSSH client folder named here, instead of the calling user's own, and `release` removes it from there ([docs/state.md](state.md)). |
 | `AGENTSPACE_PROXY_COMMAND` | `create` gives the alias this command as its way to reach the lease's host, instead of agentspace's own ([docs/driver.md](driver.md)). |
-| `AGENTSPACE_PROVISION_CMD` | From agentspace's v0.07 release (#0047): the full path of the program that `create` and `get` start, instead of agentspace's own, when a lease's compute has to be made or a `pending` lease placed ([docs/driver.md](driver.md#starting-a-provisioning-run)). It changes no output. |
+| `AGENTSPACE_PROVISION_CMD` | From agentspace's v0.07 release (#0047): the full path of the program that `create` and `get` start, instead of agentspace's own, when a lease's compute has to be made, from v0.09 (#0049) when its size has to be changed, or when a `pending` lease has to be placed ([docs/driver.md](driver.md#starting-a-provisioning-run)). It changes no output. |
 
 - **They exist so that a check, or a worktree, can run the CLI without touching the caller's real
   leases or OpenSSH configuration.** A caller in normal use MUST NOT set them.
 - **A check whose `create` or `get` could reach `pending` MUST set `AGENTSPACE_PROVISION_CMD` to a
   stand-in**, so that it never starts the real work ([docs/driver.md](driver.md#conformance-cases-for-v007)).
+  From v0.09 (#0049), a `create` for a project whose compute exists can reach `pending` too: while
+  another lease of the project is `pending`, when that compute's size is not yet recorded, and when
+  it is not the size asked for and no other lease of the project is `ready`
+  ([A host's life follows its leases](#a-hosts-life-follows-its-leases); D66, D67).
 - **A check that sets `AGENTSPACE_SSH_DIR` MUST keep the same value from `create` to `release`**,
   since `release` removes the alias from the folder named when it runs. `renew` does not touch the
   alias, and reads neither `AGENTSPACE_SSH_DIR` nor `AGENTSPACE_PROXY_COMMAND`.
@@ -1466,6 +1566,12 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 - **Accepting an input that v0 refused is not a new version.** Refusing one that v0 accepted is.
 - **Supporting a platform, profile or size that v0 answered `unsatisfiable` is not a new version.**
   The fields have been in the contract from v0 so that it is not (D5).
+- **Supporting the sizes `s`, `l` and `xl` is not a new version** (v0.09, #0049; D64 to D70,
+  "What none of them changes"). v0 answered each `unsatisfiable`, as the bullet above allows, and
+  `no_capacity` was already one of v0's reasons, so its new use and its new message change no
+  document, schema, field, state, exit code, error or reason code. A lease served by larger
+  compute than its size prints the size it asked for (D66), and nothing in a lease names a
+  machine type (D1).
 - **`release` ending the lease's connections on the caller's machine is not a new version**
   (v0.08, D59; architect, 2026-11-21, for v0.08-T01): no document, schema, field, state, exit
   code, error or reason code changes, and a caller never parsed what `release` left running.
