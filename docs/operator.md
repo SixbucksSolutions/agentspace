@@ -1004,8 +1004,11 @@ committed.
 **Each operator command writes what it sends into a folder of its own,
 `%USERPROFILE%\.agentspace\operator\<hex>\`, and removes that folder as it ends** (P13, architect,
 2026-11-20, for v0.07-T01, closing [Q32](#open-questions)). From v0.07 a provisioning run works in
-the background (D48) while a person MAY run `sync` or `deploy`, and a folder per command means
-neither ever sends the other's files, or a folder the other is emptying.
+the background (D48) while a person MAY run `sync`, or a `deploy` of another host, and a folder
+per command means neither ever sends the other's files, or a folder the other is emptying. **From
+v0.09 a `deploy` of the run's own host is refused while the run works**, since it takes that
+host's `provision.lock` ([deploy](#deploy); architect, 2026-11-23, for v0.09-T01, pins P34 and
+P36).
 - **What goes there:** the template `deploy` names to the AWS CLI (`agentspace.yaml`), the
   `box\system` that `sync` copies (`system\`), and the localswim CLI that `sync` builds
   (`localswim-linux-arm64`). The bootstrap is sent on an ssh's stdin and never written to a file
@@ -1269,7 +1272,10 @@ registry](state.md#the-host-registry)'s.
   The operator never holds `hosts.lock` while it waits for another lock, and never across an AWS
   call or an ssh.
 - **A missing file reads as the box's record alone**: project `swimcoach`, stack `agentbox`, state
-  `ready`, no instance ID (D45, D55). **The first change writes that record with the change** (P9),
+  `ready`, no instance ID (D45, D55), and, from v0.09, instance type `m9g.xlarge`, only as it is
+  read: the record the first change writes holds no `instance_type` ([state.md, The host
+  registry](state.md#the-host-registry); architect, 2026-11-23, for v0.09-T01, pins P2c and P31).
+  **The first change writes that record with the change** (P9),
   so the box's first command after v0.07 lands reads its instance ID from the `agentbox` stack and
   writes `hosts.json` holding the box's record with it, as it once wrote the instance-ID cache.
 - **A file that exists and cannot be opened, or is not valid** (its bytes, its JSON, its schema, two
@@ -1630,17 +1636,21 @@ the `deploy -Host` arguments row in "the box's passing every member of the file"
 
 | Behavior | Shown by |
 |---|---|
-| The command line: `deploy -InstanceType m9g.2xlarge` without `-Host`, with `-Host swimcoach` and `-Host SwimCoach`, and with `-Host <project>`, each passing the host checks and going on to the home and the system folder (shown with `SystemRoot` unset, or by the AWS stand-in being reached); v0.07's check-6 message printed by no line; check 5 unchanged (`up`, `status`, `grow`, `guard` and `provision -Host x` given `-InstanceType` each refused with its message, in its place in the order); `-InstanceType`'s form check unchanged; the top level's, `deploy`'s and `provision`'s help byte for byte (`conformance/operator/test-unmet-usage-help.ps1`'s copies updated); `test-unmet-host-commands-line.ps1`'s check-6 cases rewritten to the acceptance | Conformance case, E0.09-T04-S02; the parse in process by the operator crate's tests, E0.09-T02-S03 (#0202) |
+| The command line: `deploy -InstanceType m9g.2xlarge` without `-Host`, with `-Host swimcoach` and `-Host SwimCoach`, and with `-Host <project>`, each passing the host checks and going on to the home and the system folder (shown with `SystemRoot` unset, or by the AWS stand-in being reached); v0.07's check-6 message printed by no line; check 5 unchanged (`up`, `status`, `grow`, `guard` and `provision -Host x` given `-InstanceType` each refused with its message, in its place in the order); `-InstanceType`'s form check unchanged; the top level's, `deploy`'s and `provision`'s help byte for byte (`conformance/operator/test-unmet-usage-help.ps1`'s copies updated); `test-unmet-host-commands-line.ps1`'s check-6 cases rewritten to the acceptance | Conformance case, E0.09-T04-S02; the parse in process by the operator crate's tests, E0.09-T02-S03 (#0202); `agentspace-sync`'s own copy of v0.07's check-6 refusal removed, with the case that requires it, by E0.09-T03-S02, in `crates/agentspace-sync/src/lib.rs` and `crates/agentspace-sync/tests/host_deploy_sized.rs` |
 | The box's `deploy` arguments: `SshPublicKey` and every member of `stack-parameters.json` but `InstanceType`, with a file that names `InstanceType` and one that does not; no `HostName` and no `CaPublicKey`; with `-InstanceType m9g.2xlarge`, `InstanceType=m9g.2xlarge` last (pin P32); the same with `-Host swimcoach`; the file left byte for byte as it was | Conformance case, E0.09-T04-S02, through the stand-in `aws`'s log of its arguments |
 | `deploy -Host <project>`'s arguments with and without `-InstanceType`, creating and updating, as v0.07's rows give them | Conformance case, E0.09-T04-S02 (v0.07's cases, kept passing) |
 | The record of the type: after a successful `cloudformation deploy`, the stand-in's `describe-stacks` answer's `InstanceType` written as the record's `instance_type`, with its `instance_id`, in one write, every other member and every other record unchanged; for the box and for another host; with and without `-InstanceType`; a type the stand-in changes between two deploys recorded anew; `hosts.json` valid by [state.md, The host registry](state.md#the-host-registry) after each | Conformance case, E0.09-T04-S02 |
-| A failure after a successful `cloudformation deploy`, with and without `-InstanceType`: `describe-stacks` failing (its text, exit 1, no `instance_id`, no `instance_type`, no `sync` step); #0034's sign-in text there; an answer with no `InstanceType` element, a non-string value, a value not of the registry's form, and two `InstanceType` elements, each giving `agentspace: Stack '<stack>' has no InstanceType parameter.`, exit 1, the `instance_id` written alone, no `instance_type` and no `sync`; an answer with no `InstanceId` output writing neither; `hosts.lock` held by the case past its 30 seconds at step 5 giving the lock's message and exit 1 | Conformance case, E0.09-T04-S02 |
+| A failure after a successful `cloudformation deploy`, with and without `-InstanceType`: `describe-stacks` failing (its text, exit 1, no `instance_id`, no `instance_type`, no `sync` step); #0034's sign-in text there; an answer with no `InstanceType` element, a non-string value, a value not of the registry's form, and two `InstanceType` elements, each giving `agentspace: Stack '<stack>' has no InstanceType parameter.`, exit 1, the `instance_id` written alone, no `instance_type` and no `sync`; an answer with no `InstanceId` output writing neither; `hosts.lock` held by the case past its 30 seconds at step 5's removal giving the lock's message, exit 1, no `describe-stacks` after it, and the record keeping its `instance_id`, and its `instance_type` without `-InstanceType`; the lock held at step 5's write of the ID and type, after a removal the case lets through, giving the lock's message, exit 1, and the record with neither | Conformance case, E0.09-T04-S02 |
 | A person's deploy's step 4: with `-InstanceType`, a record's `instance_type` removed before `cloudformation deploy` (the stand-in `aws` copying `hosts.json` when it is called for the deploy), whether it held another type or the same type, and a record holding none left without one; no write there without `-InstanceType`, and the record's type kept through a `cloudformation deploy` that fails (pin P30); with `-InstanceType`, a `cloudformation deploy` that fails leaving the record without `instance_type`; `hosts.lock` held at step 4 giving the lock's message, exit 1, and no `cloudformation deploy` called | Conformance case, E0.09-T04-S02 |
-| A person's `deploy` refused while its host's `provision.lock` is held (architect, 2026-11-23, for v0.09-T01, pin P34): with the lock held by the case, `deploy`, `deploy -Host swimcoach` and `deploy -Host <project>`, each with and without `-InstanceType m9g.2xlarge`, exiting 1 with exactly `agentspace: A provisioning run for '<project>' is already running; the deploy did not run.` on stderr (`swimcoach` for the box), nothing on stdout, no call the stand-in `aws` records (no existence check, no `cloudformation deploy`, no `describe-stacks`), no ssh or scp started, and no file changed in the throwaway home (`hosts.json` byte for byte, its `instance_type` kept, no `operator\` folder, `provision.log` unchanged or absent); the order: a usage error, a host check and a project with no record each reported before the lock, and a missing `id_ed25519.pub` reported after it, so the refusal comes first; a folder at the lock's path giving `agentspace: Cannot take <path>: <error>.`, exit 1 and no AWS call; with the lock free, the lock held from before the stand-in `aws`'s first call to the end of the `sync` step (the stand-in `aws` and `ssh` each trying it and finding it held), and free once `deploy` has exited | Conformance case, E0.09-T04-S02 |
-| `provision`'s type, against a seeded lease state file: `pending` leases of sizes `s` and `l` giving `InstanceType=m9g.2xlarge`; one of `m` alone `m9g.xlarge`; one of `xxl` alone no type; a `pending` `l` whose `driver` is not the EC2 driver's name, or that has none, ignored; another project's `pending` `l` ignored; a live `ready` lease of the project beside a `pending` `l` giving no type, the deploy still recording the type it reads back; an expired `ready` record beside it not counting, so the type is given; `released` and `unsatisfiable` records ignored; no lease state file giving no type and a run that goes on; `AGENTSPACE_STATE_DIR` moving the file read, and the lock taken; `-Host swimcoach` finding swimcoach's leases. The locks (pin P26): the record's `instance_type` removed before the stand-in `aws` is first called, whether or not a type is then passed, and `leases.lock` and `hosts.lock` both free when it is called (the stand-in trying each); `leases.lock` held by the case past its 30 seconds giving `agentspace: The lease state lock <path> is held by another program; try again.` as `deploy failed`'s reason, exit 1, no AWS call and the record's type kept; a `cloudformation deploy` that fails, with a type and without one, leaving the record without `instance_type` | Conformance case, E0.09-T04-S02; `resize_target` itself by `agentspace-driver-ec2`'s tests (driver.md's rows); the run's use of it by `agentspace-sync`'s tests, E0.09-T03-S02 |
+| A person's deploy's step 4 with no `hosts.json` (architect, 2026-11-23, for v0.09-T01, pins P2c, P11 and P31): `deploy -InstanceType m9g.2xlarge`, without `-Host` and with `-Host swimcoach`, writing a `hosts.json` that holds the seed document's box record alone, with no `instance_type`, before the stand-in `aws`'s `cloudformation deploy` is called (the stand-in copying `hosts.json` when it is called for the deploy); then, after a successful deploy, the record holding the type the stand-in's `describe-stacks` answers; plain `deploy` with no `hosts.json` writing no `hosts.json` before `cloudformation deploy` | Conformance case, E0.09-T04-S02 |
+| A person's `deploy` refused while its host's `provision.lock` is held (architect, 2026-11-23, for v0.09-T01, pin P34): with the lock held by the case, `deploy`, `deploy -Host swimcoach` and `deploy -Host <project>`, each with and without `-InstanceType m9g.2xlarge`, exiting 1 with exactly `agentspace: A provisioning run or deploy for '<project>' is already running; the deploy did not run.` on stderr (`swimcoach` for the box; pin P36), nothing on stdout, no call the stand-in `aws` records (no existence check, no `cloudformation deploy`, no `describe-stacks`), no ssh or scp started, and no file changed in the throwaway home (`hosts.json` byte for byte, its `instance_type` kept, no `operator\` folder, `provision.log` unchanged or absent); the order: a usage error, a host check and a project with no record each reported before the lock, and a missing `id_ed25519.pub` reported after it, so the refusal comes first; a folder at the lock's path giving `agentspace: Cannot take <path>: <error>.`, exit 1 and no AWS call; with the lock free, the lock held from before the stand-in `aws`'s first call to the end of the `sync` step (the stand-in `aws` and `ssh` each trying it and finding it held), and free once `deploy` has exited | Conformance case, E0.09-T04-S02 |
+| `provision`'s lease state lock held (architect, 2026-11-23, for v0.09-T01, pin P35): with `leases.lock` held by the case past its 30 seconds, the run's one `deploy` line `<time> deploy failed reason=The lease state lock <path> is held by another program; try again.`, with no `type` field and the reason without the `agentspace: ` prefix, `agentspace: The lease state lock <path> is held by another program; try again.` as the run's last stderr line, exit 1, no call the stand-in `aws` records, the record's `instance_type` kept, a `ready` host left `ready` and a `creating` host recorded `failed`, and the leases `pending` | Conformance case, E0.09-T04-S02 |
+| `provision`'s lease state lock that cannot be taken for another reason (pin P35): a folder at `leases.lock`'s path giving `<time> deploy failed reason=Cannot take <path>: <error>.` in the log, `agentspace: Cannot take <path>: <error>.` as the run's last stderr line, `<path>` the lock's full path, exit 1, no call the stand-in `aws` records, the record's `instance_type` kept, and the leases `pending` | Conformance case, E0.09-T04-S02 |
+| `provision`'s type, against a seeded lease state file: `pending` leases of sizes `s` and `l` giving `InstanceType=m9g.2xlarge`; one of `m` alone `m9g.xlarge`; one of `xxl` alone no type; a `pending` `l` whose `driver` is not the EC2 driver's name, or that has none, ignored; another project's `pending` `l` ignored; a live `ready` lease of the project beside a `pending` `l` giving no type, the deploy still recording the type it reads back; an expired `ready` record beside it not counting, so the type is given; `released` and `unsatisfiable` records ignored; no lease state file giving no type and a run that goes on; `AGENTSPACE_STATE_DIR` moving the file read, and the lock taken; `-Host swimcoach` finding swimcoach's leases. The locks (pin P26): the record's `instance_type` removed before the stand-in `aws` is first called, whether or not a type is then passed, and `leases.lock` and `hosts.lock` both free when it is called (the stand-in trying each); the lease state lock's failures in their own rows, beside the `deploy` refusal's; a `cloudformation deploy` that fails, with a type and without one, leaving the record without `instance_type` | Conformance case, E0.09-T04-S02; `resize_target` itself by `agentspace-driver-ec2`'s tests (driver.md's rows); the run's use of it by `agentspace-sync`'s tests, E0.09-T03-S02 |
 | `provision`'s lease state file not valid (bad JSON, two records with one `id`, a folder at its path): `deploy failed reason=The lease state file <path> cannot be read: <reason>.` in the log, no AWS call the stand-in records, a `ready` host left `ready`, a `creating` host recorded `failed`, the record left without `instance_type` (pin P26), the leases `pending`, exit 1 | Conformance case, E0.09-T04-S02 |
 | `provision`'s log lines: `deploy done type=<type>` and `deploy failed type=<type> reason=<message>` when a type was found, with the field in its place; `deploy done` with no `type` when none was; a resize on a `ready` host running every step (`deploy`, `start`, `sync`, `bootstrap`, `record`, `place`), its record `ready` throughout, and on a failed `cloudformation deploy` the record still `ready`, without `instance_type`, the leases `pending` and exit 1 | Conformance case, E0.09-T04-S02 |
 | `place_pending` placing only the leases the host meets, and its answer for the rest | driver.md's rows for v0.09 (E0.09-T04-S01 and the driver crate's tests); this page's run only logs what the call returns |
+| Step 9's lines (architect, 2026-11-23, for v0.09-T01, pin P37), against a seeded lease state file, with the stand-in `aws`'s `describe-stacks` answering a type smaller than some `pending` lease's size: `place done placed=<n>` first, then, in the order the call tried the leases, `place failed lease=<id> reason=<message>` for a lease whose placement failed (byte for byte as v0.07's), `place refused lease=<id>` for a `pending` lease the host does not meet beside a live `ready` lease of the project, now `unsatisfiable` with `no_capacity`, and `place left lease=<id>` for one the host does not meet with no live `ready` lease, still `pending`; neither of the last two with a `reason` field; a `pending` lease whose `size` is not in `SIZES` named by no line; a call that fails as a whole giving its one `place failed reason=<message>` as before | Conformance case, E0.09-T04-S02, by the log, with `place_pending`'s answers themselves by driver.md's rows |
 | A plain `deploy` of the box not changing its type when `stack-parameters.json` names another | Conformance case alone, E0.09-T04-S02, by the arguments: the box is not resized live, and no plain `deploy` of it is run for v0.09 (D70) |
 | **Bigger:** with agentspace's host stopped and no live lease, `create --size l` answering `pending`; the run's `deploy done type=m9g.2xlarge` in `provision.log`; the stack's `InstanceType` and the host's record's `instance_type` both `m9g.2xlarge`, read with `status -Host agentspace` and from the record; `nproc` printing 8; the real AWS CLI's `describe-stacks` answer giving `Parameters` in the form read | Live check, E0.09-T05-S01 (D70), with instance and volume IDs masked in its record |
 | **Smaller:** once every lease is released, a default-size `create` answering `pending`, and the host coming back at `m9g.xlarge`, four vCPUs, recorded so | Live check, E0.09-T05-S01 (D70) |
@@ -1746,15 +1756,18 @@ not move it.
   AWS call and file write. So while a run holds the lock, a `deploy` that would fail at step 1 on a
   missing public key is refused for the lock first (pin P34).
 - **A lock that another program holds refuses the `deploy` at once**, exit 1, with
-  `agentspace: A provisioning run for '<project>' is already running; the deploy did not run.`,
-  the message [provision](#provision) prints for a held lock in its step 2, with the refusal added
-  (pin P34). **It makes no AWS call, takes no other lock, does not go on to `sync`, and changes no
-  file**: the host's folder and the lock file already exist, since a held lock is an open file, and
-  it writes no line to `provision.log`, which is the run's alone ([state.md, The provisioning run's
-  log](state.md#the-provisioning-runs-log)). The lock does not say which program holds it, so the
-  message names a run whatever holds it, as provision's does: a provisioning run, another person's
-  `deploy`, or the moment's try of the driver or the guard, after which the `deploy` MAY be run
-  again.
+  `agentspace: A provisioning run or deploy for '<project>' is already running; the deploy did not run.`,
+  exactly, `<project>` being the host's record's `project` (architect, 2026-11-23, for v0.09-T01,
+  pins P34 and P36): the message [provision](#provision) prints for a held lock in its step 2,
+  adapted to `deploy`. **It makes no AWS call, takes no other lock, does not go on to `sync`, and
+  changes no file**: the host's folder and the lock file already exist, since a held lock is an
+  open file, and it writes no line to `provision.log`, which is the run's alone ([state.md, The
+  provisioning run's log](state.md#the-provisioning-runs-log)). The lock does not say which program
+  holds it, so the message names both that hold it for long: a provisioning run, or another
+  person's `deploy`. It can also be the moment's try of the driver or the guard, after which the
+  `deploy` MAY be run again. **provision's own held-lock message, and the guard's
+  `provisioning=running`, are unchanged** and name a run alone, though a person's `deploy` can
+  hold the lock they report (pin P36).
 - **A lock that cannot be taken for any other reason**, such as access denied or a folder at its
   path, is not a free lock ([state.md, The provisioning run's
   lock](state.md#the-provisioning-runs-lock)): `deploy` fails with
@@ -1872,10 +1885,15 @@ swimcoach` is the box's.
    `hosts.lock`, changing nothing else in it, before `cloudformation deploy` runs and before any AWS
    call that changes anything, whatever the record held, `<type>` itself included (D67's change
    note; architect, 2026-11-23, for v0.09-T01, pin P11; [state.md, The instance
-   type](state.md#the-instance-type)). A record that already holds none is left as it is. From
-   then until step 5 writes the type the stack reports, the record claims no size for a host whose
-   size can change, so the EC2 driver's place answers no lease `ready` on the old size while the
-   stack changes it (D66, D67: a record without `instance_type` meets no size). **Without
+   type](state.md#the-instance-type)). A record that already holds none is left as it is. **A
+   missing `hosts.json` is not a record that holds none**: it reads as the box's record with
+   `m9g.xlarge` ([The host registry, as the operator uses
+   it](#the-host-registry-as-the-operator-uses-it)), so step 4 then writes the registry, the seed
+   document's record with no `instance_type`, as any first change writes it (architect,
+   2026-11-23, for v0.09-T01, pins P2c, P11 and P31). From then until step 5 writes the type the
+   stack reports, the record claims no size for a host whose size can change, so the EC2
+   driver's place answers no lease `ready` on the old size while the stack changes it (D66, D67:
+   a record without `instance_type` meets no size). **Without
    `-InstanceType` nothing is written here**, and the record keeps its type until step 5's
    read-back, since the stack's type then cannot change: **a person's `deploy` that passes no
    `InstanceType` and fails before step 5, `cloudformation deploy` included, keeps the type; only a
@@ -1886,7 +1904,8 @@ swimcoach` is the box's.
    or a write that fails, fails `deploy` with the host registry's messages
    ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)),
    before `cloudformation deploy` runs. **The removal is not undone when `cloudformation deploy`
-   then fails, or when `deploy` is killed** (P11): a `cloudformation deploy` whose client is killed
+   then fails, or when `deploy` is killed** (architect, 2026-11-23, for v0.09-T01, pin P11): a
+   `cloudformation deploy` whose client is killed
    goes on running on AWS's side, and one that fails is rolled back to the type the stack had
    (D68), so the record holds no type until the next `deploy` records one. A lease of the project
    then answers `pending`, never `ready` on a size nobody has read back, and its run records the
@@ -1956,12 +1975,20 @@ swimcoach` is the box's.
      v0.09-T01, pin P22, in the form of the `InstanceId` message). The instance ID it read is
      still written, alone; the record is left with no `instance_type`; and `deploy` does not go on
      to `sync`.
-   - **A failed `describe-stacks`, a lock not taken, or a write that fails, after
-     `cloudformation deploy` succeeded, fails `deploy`, exit 1** (D36: the operator never reports a
-     false success), with the AWS CLI's text under [AWS failures](#aws-failures), #0034's sign-in
-     message first, or the host registry's message. The stack keeps what the deploy did; the
-     record has no instance ID, as above, and no `instance_type` (pins P11 and P30: a failed read
-     leaves no type, never a stale one). The next `deploy`, or the next provisioning run, records both.
+   - **A failed `describe-stacks`, or a lock not taken or a write that fails when the ID and type
+     are written after the removal, after `cloudformation deploy` succeeded, fails `deploy`,
+     exit 1** (D36: the operator never reports a false success), with the AWS CLI's text under
+     [AWS failures](#aws-failures), #0034's sign-in message first, or the host registry's message.
+     The stack keeps what the deploy did; the record has no instance ID, as above, and no
+     `instance_type` (pins P11 and P30: a failed read leaves no type, never a stale one). The next
+     `deploy`, or the next provisioning run, records both. `deploy` does not go on to `sync`.
+   - **The removal's own lock not taken within its 30 seconds, or the removal's write failing,
+     fails `deploy`, exit 1, with the host registry's message, before `describe-stacks`**, and
+     removed nothing, since a write that fails leaves the file as it was: **the record keeps its
+     `instance_id`, and keeps its `instance_type` unless step 4, or the provisioning run's step
+     4.2, had already removed it** (architect, 2026-11-23, for v0.09-T01, pins P11 and P30). That
+     kept type is the one the record held before this `deploy`, which, without `-InstanceType`,
+     asked for no change of type. The next `deploy`, or the next provisioning run, records both.
      `deploy` does not go on to `sync`.
 
    Nothing else in the record changes: `deploy` never sets a `state`.
@@ -2603,10 +2630,13 @@ failure logged in `provision.log` and the leases `pending` for the next run. The
    any lease it leaves `pending`. **On a host that is not the box, the run fails before step 9**:
    step 6's operator alias needs the same program (architect, 2026-11-21, for v0.07-T04).
    `AGENTSPACE_PROXY_COMMAND`, when the run has it, replaces the whole line. It logs `place done`.
-   **A lease the call leaves `pending` while the call succeeds is logged and not warned**: one
+   **A lease the call could not place while the call succeeds is logged and not warned**: one
    `place failed lease=<id>` line each (below), and the run goes on (architect, 2026-11-21, for
-   v0.07-T04). **A failure of the call as a whole leaves the host `ready` and the leases
-   `pending`**: it logs `place failed` with the reason, warns
+   v0.07-T04). **So, from v0.09, is a lease the call answered or left for the host it does not
+   meet**: one `place refused lease=<id>` line for each it answered `unsatisfiable` with
+   `no_capacity`, and one `place left lease=<id>` line for each it left `pending` for the next run
+   (below; architect, 2026-11-23, for v0.09-T01, pin P37). **A failure of the call as a whole
+   leaves the host `ready` and the leases `pending`**: it logs `place failed` with the reason, warns
    `agentspace: The pending leases of '<project>' could not be placed: <reason>; the next run places
    them.`, where `<reason>` is the failure message without its `agentspace: ` prefix and its last
    period (architect, 2026-11-21, for v0.07-T04), and the run goes on to step 10 and exits 0 (P3;
@@ -2678,8 +2708,10 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
 - **`<time>`** is the time the line is written, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`, the form of the
   keeper's lines.
 - **`<step>`** is one of `run`, `deploy`, `start`, `sync`, `bootstrap`, `record` and `place`.
-- **`<outcome>`** is `begun` (for `run` alone), `done` or `failed`. A run's lines are `run begun`,
-  then `done` or `failed` for each step it reached, in order, then `run done` when it succeeded.
+- **`<outcome>`** is `begun` (for `run` alone), `done`, `failed`, or, from v0.09, `refused` or
+  `left` (for `place` alone; architect, 2026-11-23, for v0.09-T01, pin P37). A run's lines are
+  `run begun`, then `done` or `failed` for each step it reached, in order, step 9's lines for each
+  lease after its `place done` (below), then `run done` when it succeeded.
   A run whose step 2 found the lock held, or could not take it, writes one line, `run failed`,
   with no `run begun` before it. **The one line with more after `done`** is step 6's when its
   patch wait ended on `failed`: `<time> sync done; the patch run failed, see the host's journal`,
@@ -2689,11 +2721,24 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
   `?`. It MUST NOT hold the token or any text of the Bot credential ([Secrecy](#secrecy)), which no
   failure message holds.
 - **Step 9, `place`, logs what `place_pending` did** (architect, 2026-11-21, for v0.07-T03): when
-  the call succeeds, `place done placed=<n>`, `<n>` the number of leases it placed, then one
-  `place failed lease=<id> reason=<message>` for each lease it left `pending`, in the order it
-  tried them, `<id>` the lease's normalized ID. When the call fails as a whole, one
+  the call succeeds, `place done placed=<n>`, `<n>` the number of leases it placed, then one line
+  for each lease it did not place, in the order it tried them, `<id>` the lease's normalized ID:
+  - **`place failed lease=<id> reason=<message>`** for each lease whose placement failed, or, from
+    v0.09, whose `unsatisfiable` answer failed on a removal or a write, so that it stays `pending`
+    ([driver.md, place_pending](driver.md#place_pending), steps 2.7 and 3.4); byte for byte as
+    v0.07 had it.
+  - **`place refused lease=<id>`**, from v0.09, for each lease `place_pending` answered
+    `unsatisfiable` with `no_capacity` (pin P1), the host not meeting it while a live `ready` lease
+    of the project holds the host.
+  - **`place left lease=<id>`**, from v0.09, for each lease the host does not meet that it left
+    `pending` for the next run, with no live `ready` lease holding the host.
+
+  `refused` and `left` lines carry no `reason` field, which stays `failed`'s alone, and the
+  message of a refused lease's reason is in its lease record, not the log (architect, 2026-11-23,
+  for v0.09-T01, pin P37). A `pending` lease whose `size` is not in `SIZES`, which `place_pending`
+  neither places nor answers (pin P20), has no line. When the call fails as a whole, one
   `place failed reason=<message>`, with the warning above. `placed` and `lease` appear on `place`
-  lines alone.
+  lines alone, `lease` on every `failed` line for a lease and on every `refused` and `left` line.
 - **`type`** is written on step 4's line alone, `deploy done` or `deploy failed`, when step 4.3
   found a type, and is that type, the value the run passed as `-InstanceType` (D68: a failed
   deploy is logged with what it was asked for, and leaves the host the type it had). A run that
@@ -5099,8 +5144,8 @@ v0.09's Q36 is closed (architect, 2026-11-23, for v0.09-T01, pin P26). Several n
 | **Q29** | **Later, not blocking:** **Does D1 at connect time cover #0034's sign-in message?** The message names AWS and its login command ([AWS failures](#aws-failures)), and a lease's caller who sees it through the ProxyCommand learns the backend ([What a caller sees](#what-a-caller-sees-d1-card-0087)). Whether it MUST be reworded inside the ProxyCommand, with the AWS text behind `AGENTSPACE_DIAGNOSTIC`, is the architect's call. | Contract v0 keeps it as the one exception (A-14): v0's caller runs on the laptop (D8), whose owner already knows the backend and is the one who can sign in again, so it tells nobody anything new. Later: the architect, with a caller off the laptop (#0011) |
 | **Q30** | **Later, not blocking:** **SHOULD the seam also cover `go`, `ssh-keygen`, `icacls` and `taskkill`?** Without it, a check cannot run `sync`'s build step or `ca`'s lockdown against a stand-in; `sync` runs its build when `go` and the localswim checkout are present, and skips it otherwise. From v0.07 the operator's key and certificate for a host also use `ssh-keygen`. | A check can still reach those steps without a stand-in: `sync` skips its build when `go` or the localswim checkout is missing, and `ca` runs against a throwaway home, as the operator's signing does with a throwaway CA ([The test seam](#the-test-seam)). Later: the architect |
 | **Q31** | **Closed (architect, 2026-11-20, for v0.07-T01, P13).** ~~How is each host sized, with one stack parameters file?~~ A host is never sized by the box's parameters: a new host's stack takes only `SubnetId` and `VpcId` from `stack-parameters.json`, with every other parameter at the template's default; an existing host's stack keeps every parameter's previous value; and a host that is not the box changes size only through `deploy -Host <project> -InstanceType <type>`. ~~Plain `deploy` of the box keeps the file as its sizing path (D39, D55).~~ **Its box rule was replaced by D67 (architect, 2026-11-23, v0.09; architect, 2026-11-23, for v0.09-T01, pin P6):** the file sizes no host, the box included; its `InstanceType` is not passed and not used, and is left in the file; and every host, the box included, changes size only through `deploy -InstanceType <type>`, with or without `-Host`, which a provisioning run gives its deploy step from its project's `pending` leases (D68, D71) ([deploy](#deploy)). | Closed; replaced in part by D67 |
-| **Q32** | **Closed (architect, 2026-11-20, for v0.07-T01, P13).** ~~Can two commands share the operator's folder at once?~~ None does: each command writes what it sends into `%USERPROFILE%\.agentspace\operator\<hex>\`, a folder of its own that it removes as it ends, and the next command that makes its own removes any such folder older than 24 hours ([The operator's folder, one per command](#the-operators-folder-one-per-command)). So a person MAY run `sync` or `deploy` while a provisioning run works. | Closed |
+| **Q32** | **Closed (architect, 2026-11-20, for v0.07-T01, P13).** ~~Can two commands share the operator's folder at once?~~ None does: each command writes what it sends into `%USERPROFILE%\.agentspace\operator\<hex>\`, a folder of its own that it removes as it ends, and the next command that makes its own removes any such folder older than 24 hours ([The operator's folder, one per command](#the-operators-folder-one-per-command)). So a person MAY run `sync`, or a `deploy` of another host, while a provisioning run works; **from v0.09 a `deploy` of the run's own host is refused while it works**, since it takes that host's `provision.lock` ([deploy](#deploy); architect, 2026-11-23, for v0.09-T01, pins P34 and P36). | Closed |
 | **Q33** | **Closed (architect, 2026-11-20, for v0.07-T01, P17 and P19).** ~~What happens to a host whose first stack creation failed?~~ `deploy -Host`'s existence check reads `Stacks[0].StackStatus`. No stack, or `REVIEW_IN_PROGRESS`, takes the create path; a state an update can start from takes the update path; a `*_IN_PROGRESS` status fails with a message to try again later; and `ROLLBACK_COMPLETE`, or any other state an update cannot start from, fails with a message that names the stack and the `aws cloudformation delete-stack` command that removes it, then says to provision again. `provision` records `failed` for a host that was never `ready`, and a `ready` host stays `ready`. No operator command deletes a stack in v0.07 ([deploy](#deploy)). | Closed |
 | **Q34** | **Later, not blocking:** **How does a replaced CA reach a host that is not the box?** The operator reaches such a host only with a certificate signed by the CA, so once the CA is replaced, `sync` cannot reach a host that still trusts the old one, and a person recovers each by hand with their own key ([ca](#ca); D17). The candidate fix: install the new public key through Session Manager's Run Command as root, as the patch check already reaches a host ([What up waits for](#what-up-waits-for)), so no ssh is needed. A second `IdentityFile` in the operator's alias was ruled out (architect, 2026-11-20, for v0.07-T01, P19). | The recovery by hand is stated in [ca](#ca), and a replacement is rare (D17). Later: the architect |
 | **Q35** | **Later, not blocking:** **SHOULD the provisioning log also hold the output of the programs the run starts?** v0.07-T01 ruled it SHOULD, but the pinned `Aws` and `Remote` hand each program's streams to the operator's own, so the run cannot read them, and v0.07-T03 kept the run's own lines alone, each failed step's line carrying the program's error text ([provision](#provision); architect, 2026-11-21). A detached run's streams are a hidden console nobody reads, so a program's progress output is lost there. | Later: the architect, if T05's live run shows a failure the log does not explain; the change is the run setting its own standard handles to the log before it starts a program |
-| **Q36** | **Closed (architect, 2026-11-23, for v0.09-T01, pin P26; and pins P2(b) and P20).** ~~Can a lease be placed `ready` on a host while its run is resizing it?~~ No. By P2(b) and P20 (D66's change note), the run passes a type only when `resize_target` finds a `pending` lease a run would place ([provision](#provision), step 4.3); while that lease exists, place answers every new lease of the project `pending`; only the run places a `pending` lease, and `provision.lock` keeps a second run out. **The case P2(b) left, that `pending` lease released between the run's read of the lease state file and the type's removal, is closed by P26**: the run's deploy step takes the lease state lock, then `hosts.lock`, removes the record's `instance_type`, reads the lease state file under the lease state lock still held, and releases it before any call to AWS ([provision](#provision), steps 4.1 to 4.4; [driver.md, A resizing run](driver.md#a-resizing-run); [driver.md, Lock order](driver.md#lock-order)). A `create` holds the lease state lock for its whole place, so it is wholly before that hold, and its `ready` lease stops the resize, or wholly after it, and finds no type and answers `pending` (P2). Nothing Q36 named remains open. The candidate fix of place trying the host's `provision.lock` was dropped: place makes no new try ([driver.md, On a `ready` host](driver.md#on-a-ready-host), row 3). | Closed |
+| **Q36** | **Closed (architect, 2026-11-23, for v0.09-T01, pin P26; and pins P2(b) and P20).** ~~Can a lease be placed `ready` on a host while its run is resizing it?~~ No. By pins P2(b) and P20 (D66's change note), the run passes a type only when `resize_target` finds a `pending` lease a run would place ([provision](#provision), step 4.3); while that lease exists, place answers every new lease of the project `pending`; only the run places a `pending` lease, and `provision.lock` keeps a second run out. **The case pin P2(b) left, that `pending` lease released between the run's read of the lease state file and the type's removal, is closed by pin P26**: the run's deploy step takes the lease state lock, then `hosts.lock`, removes the record's `instance_type`, reads the lease state file under the lease state lock still held, and releases it before any call to AWS ([provision](#provision), steps 4.1 to 4.4; [driver.md, A resizing run](driver.md#a-resizing-run); [driver.md, Lock order](driver.md#lock-order)). A `create` holds the lease state lock for its whole place, so it is wholly before that hold, and its `ready` lease stops the resize, or wholly after it, and finds no type and answers `pending` (pin P2). Nothing Q36 named remains open. The candidate fix of place trying the host's `provision.lock` was dropped: place makes no new try ([driver.md, On a `ready` host](driver.md#on-a-ready-host), row 3). | Closed |

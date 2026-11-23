@@ -799,7 +799,7 @@ and P31). The two halves, plainly:
   document's one record as if it held `"instance_type":"m9g.xlarge"`, and writes nothing.
   Reading never creates the file. So a laptop with no registry places a lease of the default
   size on the box as before v0.09.
-- **A written seed record has no type** (pin P31: P2c is read-only). **The first change writes
+- **A written seed record has no type** (pin P31: pin P2c is read-only). **The first change writes
   the seed document's record with it, as it is above, with no `instance_type`** (D45, D55): under
   [the host registry lock](#the-host-registry-lock), a writer that finds no file starts from the
   seed document, makes its change, and writes the whole document. So the box's record is first in
@@ -809,6 +809,11 @@ and P31). The two halves, plainly:
   (D67). **The bounded cost** (pin P31): on a laptop with no registry, the box's first lease after
   another project's first write answers `pending` once, and costs one run, which records the type.
   A writer MUST NOT write the default `m9g.xlarge` into the file: it is no reading of the stack.
+  **A change that removes the type is a change too**: a `deploy -InstanceType` of the box that
+  finds no file writes the seed document's record, with no `instance_type`, before
+  `cloudformation deploy` runs, so the implied `m9g.xlarge` is no longer read while the stack
+  changes the box's type (architect, 2026-11-23, for v0.09-T01, pin P11;
+  [The instance type](#the-instance-type)).
 - **`m9g.xlarge` is D65's `m`**, the template's default and the box's type when v0.09 was laid out
   (D65). The box's first `deploy`, or the deploy step of its first provisioning run, writes the
   registry with the type the stack reports (pin P2c). A file that exists keeps its records as they
@@ -875,7 +880,7 @@ names `deploy` alone as its writer; architect, 2026-11-23, for v0.09-T01, pin P1
 ProxyCommand never add, change or remove it, in a record they write `creating`, `failed` or
 `ready` alike. A record the driver or `provision` adds has none, and so does the box's record
 that a first change writes from the seed document (pin P31). **A program that cannot keep the member, because it
-does not know it, MUST NOT write the file** (P12): a program built before v0.09 refuses a file
+does not know it, MUST NOT write the file** (pin P12): a program built before v0.09 refuses a file
 that holds `instance_type` as not valid, by its schema, and so never drops it, and a program built
 against this page MUST read it and write it back unchanged ([The instance type](#the-instance-type)).
 
@@ -969,8 +974,9 @@ pins P11, P26 and P30):
   `deploy -Host <project>`, `deploy` of the box with `-Host swimcoach` or with no `-Host`, and the
   deploy step of every provisioning run, a resize included
   ([operator.md, deploy](operator.md#deploy); [operator.md, provision](operator.md#provision)).
-  Nothing else changes it (P12). Below, **a run's deploy step** is a provisioning run's, and **a
-  person's `deploy`** is every other `deploy`, run by hand, with `-InstanceType` or without.
+  Nothing else changes it (architect, 2026-11-23, for v0.09-T01, pin P12). Below, **a run's
+  deploy step** is a provisioning run's, and **a person's `deploy`** is every other `deploy`, run
+  by hand, with `-InstanceType` or without.
 - **Its value comes only from the stack after `cloudformation deploy` succeeds**: the
   `InstanceType` parameter of the host's stack as `cloudformation describe-stacks` reads it back,
   stored exactly as that call returns it, never `-InstanceType`'s value and never an older record.
@@ -981,7 +987,11 @@ pins P11, P26 and P30):
      whether it will then pass a type or none, holding [the lease state
      lock](#the-lease-state-lock) as well, as the next list says (pin P26). **A person's `deploy`
      that passes `InstanceType` removes it first, before `cloudformation deploy` runs** (pin P11),
-     whatever the record held, the type it passes included. **A person's `deploy` that passes no
+     whatever the record held, the type it passes included. **With no file, it writes the file
+     then**: the box's record that a missing file implies reads as holding `m9g.xlarge` (pin P2c),
+     so the removal writes the seed document's record, with no `instance_type`, as any first
+     change writes it (architect, 2026-11-23, for v0.09-T01, pins P2c, P11 and P31; [The
+     seed](#the-host-registry)). **A person's `deploy` that passes no
      `InstanceType` writes nothing here**, and keeps the type until its own read-back (pin P30).
   2. **Once `cloudformation deploy` has succeeded, `deploy` removes the record's `instance_id`, and
      `instance_type` with it in the same write**, as it already removes `instance_id`
@@ -1068,9 +1078,14 @@ it:
   is either wholly before the run's step 1 or wholly after it. **Wholly before**, its `ready` lease
   is in the file step 3 reads, and the run does not resize the host under it. **Wholly after**, it
   finds the record with no type and answers `pending` by pin P2, until step 5 writes the type the
-  host then has. A lease created after the run's read is not in the run's type, and is placed or
-  answered by the driver: while the project has a `pending` lease a run would place, place answers
-  every new lease of the project `pending` (D66's change note; pins P2(b) and P20), and the run's
+  host then has. **The argument holds for the leases in the run's own state folder**, the one
+  `AGENTSPACE_STATE_DIR` names for it, whose lock it takes: a lease in another state folder is
+  not seen by the run, and neither holds the host nor holds a place in the run's folder
+  `pending`, as [driver.md, On a `ready` host](driver.md#on-a-ready-host) says (architect,
+  2026-11-23, for v0.09-T01, pin P26). A lease created after the run's read is not in the run's
+  type, and is placed or answered by the driver: while the project has a `pending` lease a run
+  would place, place answers every new lease of the project `pending` (D66's change note; pins
+  P2(b) and P20), and the run's
   `place_pending` places it if the host the run leaves meets it, answers it `unsatisfiable` with
   `no_capacity` when a live `ready` lease holds the host, and otherwise leaves it `pending` for the
   next run (pin P1).
@@ -1095,8 +1110,8 @@ it:
   no `instance_type` answers `pending` and starts a run, whatever other leases hold the host, never
   `no_capacity`** (D66's change note; architect, 2026-11-23, for v0.09-T01, pin P2): so each
   project's first lease after v0.09's install answers `pending`, and its run records the type
-  (D67, D70), resizing only when no live `ready` lease holds the host (P2(a), above). No file of the
-  user's is edited for it. What place answers is driver.md's
+  (D67, D70), resizing only when no live `ready` lease holds the host (pin P2(a), above). No
+  file of the user's is edited for it. What place answers is driver.md's
   ([driver.md, On a `ready` host](driver.md#on-a-ready-host)).
 - **A type that matches the member's form but that the map does not hold**, such as one a person
   set by hand, is valid in the file, and meets no size (D71's `meets`).
@@ -1107,6 +1122,10 @@ it:
 **Its form, and programs built before v0.09:**
 - **The member is optional, and `null` is never accepted for it**, as for every optional member
   ([The host registry](#the-host-registry)).
+- **In code it is D71's pinned field, `agentspace_hosts::Host.instance_type: Option<String>`**,
+  which E0.09-T02-S01 adds to `agentspace-hosts`: `None` when the member is absent, and the
+  string as stored when it is present. A program that reads and writes the registry through that
+  crate keeps the member by keeping the field (D71's pins).
 - **It is written after `instance_id` and before `last_attempt_at`**, the order of the member
   table, which fixes a record's bytes (architect, 2026-11-23, for v0.09-T01, pin P4). A record
   without it is written as it was before v0.09, since an absent member adds no bytes. A reader
@@ -1120,7 +1139,8 @@ it:
   the member into. The install is operator.md's
   ([operator.md, The install folder](operator.md#the-install-folder)). **A return to v0.08's
   programs after v0.09 has written the member needs it removed by hand** from every record that
-  holds it (D67's change note; P15; [README](../README.md#build)).
+  holds it (D67's change note; architect, 2026-11-23, for v0.09-T01, pin P15;
+  [README](../README.md#install-it)).
 
 ### Which host a connection reaches
 
@@ -2158,11 +2178,19 @@ P34). The box's is `hosts\swimcoach\provision.lock` ([A host's folder](#a-hosts-
   - **A failure to open it other than its being held**, such as access denied, or a folder at its
     path, is not a free lock: the taker treats it as a failure of its own and starts or runs
     nothing.
-- **Which other operator commands refuse to run while it is held is operator.md's**
-  ([Which host a command acts on](operator.md#which-host-a-command-acts-on)): from v0.09 `deploy`
-  refuses, as above, and the guard leaves the host unstopped ([operator.md,
+- **Which operator commands refuse to run while it is held is operator.md's**
+  ([operator.md, deploy](operator.md#deploy) for `deploy`'s refusal; [operator.md,
+  provision](operator.md#provision), step 2, for a run's): from v0.09 `deploy` refuses, as above,
+  `provision` fails its step 2, and the guard leaves the host unstopped ([operator.md,
   guard](operator.md#guard)), whether a run or a person's `deploy` holds it (pin P34). A missing
   file is a lock nobody holds.
+- **What a held lock is reported as** (architect, 2026-11-23, for v0.09-T01, pin P36): a held lock
+  means a provisioning run or a person's `deploy` is running, and `deploy`'s refusal names both.
+  **Two older texts name a run alone, and stay byte for byte as v0.07 and v0.08 pinned them**:
+  `provision`'s held-lock message,
+  `agentspace: A provisioning run for '<project>' is already running.`, with its log line, and
+  the guard's `provisioning=running` field ([operator.md, guard](operator.md#guard)). Either can
+  report a lock a person's `deploy` holds.
 
 ### The provisioning run's start
 
