@@ -15,59 +15,28 @@ through a mask. Then:
 
 1. **Read** [AGENTS.md](../AGENTS.md), [architect.md](architect.md), and D56 to D63 in
    [decisions.md](decisions.md) with every "Changed for v0.08-T01" note under them.
-2. **T03 was stopped mid-turn by a laptop shutdown.** Pick it up by [Picking up v0.08-T03](#picking-up-v008-t03)
-   before anything else; then find the next turn in the table below, and run it by architect.md,
-   "Running a turn".
+2. **Find the next turn** in the table below, and run it by architect.md, "Running a turn".
 3. **The reporter runs whenever `scripts/milestones.json` lists a milestone.** It lists `v0.08`
    now, so exactly one `scripts\report-milestones.ps1 -Watch` MUST be running.
 
 ## Where things stand
 
-**As of 10:40am Pacific, 2026-11-22, T03 stopped mid-turn for a laptop shutdown.**
+**As of 7:48pm Pacific, 2026-11-22, at T03's close.**
 
 | What | State |
 |---|---|
 | v0.08 (#0048), host lifecycle and cost guard | In Progress. Laid out by D63 as twenty-one stories, #0168 to #0188, in six turns, on Terry's word the night of 2026-11-21 |
 | T01, the specs, the template and the host's files | Closed at 1:47am: #111 to #115 merged, #0168 to #0172 in Ready For Review |
 | T02, the foundations | Closed at 8:26am: #116 to #119 merged, #0173 to #0176 in Ready For Review |
-| T03, the programs | In Progress, stopped mid-turn at about 10:40am, 2h 9m into its 3-hour budget: #0177 (#121) and #0180 (#122) merged and in Ready For Review; #0181, #0179 and #0178 each on a pushed branch, in [Picking up v0.08-T03](#picking-up-v008-t03) |
-| `main`'s tests | 18 failures, all the operator's help tests, on purpose: T01's specs changed help text ahead of its code, and #0178 (T03-S02) fixes them. The lease CLI's four were fixed by #0180 (#122). Every other test passes: 4,293 in the architect's run at T02's close. A timing test that fails once under a parallel build is #0189's, and is rerun alone before it is a finding |
-| A build of `main` | MUST NOT be installed or used against a real host until #0181 (T03-S05) merges: #113's `install.sh` starts a patch run with nothing yet waiting for it, which on a fresh host can race the bootstrap's apt (#113's PR body) |
-| The hosts | Both stopped; T01 to T03 started no instance. The instance hours Terry approved for T05 and T06 (6, D62) are untouched |
+| T03, the programs | Closed at 7:48pm, after a laptop shutdown from about 10:40am to 5:11pm: #120 to #125 merged, #0177 to #0181 in Ready For Review |
+| T04, conformance | Next. Its gate is met. Its dev lead starts on Terry's word |
+| `main`'s tests | Green: 4,849 passed and 0 failed in the architect's run of `main` with #125, at T03's close, every help test fixed. #0189's timing tests fail now and then under a parallel build, and are rerun alone before they are findings |
+| A build of `main` | MAY be built for T04's conformance runs. Its first install on the laptop is T05's (#0186): #0181 has merged, so `install.sh`'s patch run now has sync's wait behind it |
+| The hosts | Stopped as far as the architect knows; T01 to T03 started no instance. Not confirmed since the restart: the AWS sign-in expired during the shutdown, and `aws login --remote` is needed before T05. The instance hours Terry approved for T05 and T06 (6, D62) are untouched |
 | Terry's laptop | v0.07 installed, unchanged. `cfn-lint` 1.61.0 added as a uv tool, on Terry's word ("we can install new dependencies if needed", 2026-11-21) |
-| Swimcoach | `v0.08` and `v0.08-T03` in `milestones.json`, both kept; `v0.08-T01` stopped at 1:47am and `v0.08-T02` at 8:26am. The reporter dies with the laptop and MUST be started again |
-| Sessions | T01's and T02's dev leads archived. T03's, "v0.08-T03 dev lead: the programs", dies with the laptop and is not archived: its PRs are not all merged |
+| Swimcoach | `v0.08` reported, its cap 19.5 hours after T03's extension; `v0.08-T01`, `v0.08-T02` and `v0.08-T03` stopped at their closes. T03's cap was extended from 3 hours to 4.5 on Terry's word |
+| Sessions | T01's, T02's and T03's dev leads archived at their closes. T03's was resumed after the shutdown rather than started fresh, and kept its context |
 | WSL | Found running at about 9:30am, started by T03's old bash test or the architect's T01 `wsl -e` runs; left for Terry. No later test starts it (T03 ruling) |
-
-### Picking up v0.08-T03
-
-**T03 stopped at about 10:40am on 2026-11-22, when Terry shut the laptop down.** Its dev lead's
-session died with the laptop. Every story's work is committed and pushed, and nothing lives only on
-the laptop. Each head below was read from `git ls-remote origin`.
-
-| Story | Branch | Pushed head | State | Next |
-|---|---|---|---|---|
-| #0177 the guard's run | merged | #121, fc4cd54 | Ready For Review | Nothing |
-| #0180 release ends connections | merged | #122, 1f4601c | Ready For Review | Nothing |
-| #0181 sync's patch wait | `v0.08/e0.08-t03-s05` | 371d7dac4a149490267cf663a11f258ff3103cac | Finished, on da58d58 (#122 included); whole operator suite 959 passed, and the v0.07 control run | Workspace run (cut off), then PR. **Merges first** |
-| #0179 the keeper starts the guard | `v0.08/e0.08-t03-s03` | f8aff36a78f38eb474c71065624d67e10c2ec6d8 | Finished, on d4f46c0; whole keeper suite 655 passed with guard tripwire starts and 0 for aws, ssh and scp; workspace run at that base 4,427 passed, 25 failed, main's help set then | Rebase on main, workspace run, PR |
-| #0178 the operator's guard, status -All and grow | `v0.08/e0.08-t03-s02` | 13a3da965d87f02067bc19653522125107091a9f | Finished, on fc4cd54; whole operator suite passed (33 files) | **Merges after #0181**: rebase on #0181's merge, `cargo xtask dist`, the whole operator suite again, workspace run, PR |
-
-**To pick it up:**
-1. **Do [Start here](#start-here) first**, the standing duties and the reporter included: the
-   reporter, both watchers and the watchdog all died with the laptop.
-2. **Start a fresh T03 dev lead** by architect.md, "Running a turn", step 7, with the cards already
-   In Progress (they stay there; nothing moves them back). Its brief names the three branches and
-   their next steps from the table above, and the rulings in [Rulings made during
-   v0.08](#rulings-made-during-v008), the T03 rows above all. Each story's PR body items and suite
-   results are in the dead dev lead's notes folder on the laptop (`side-session-notes`,
-   `v0.08-t03\handover.md`, with `subagent-rules.md` beside it); the new dev lead reads them there.
-3. **The T03 milestone is kept**, so its clock resumes with the reporter. T03 had used about 2h 9m
-   of its 3 hours when it stopped; ask Terry for an extension if the pickup will pass it.
-4. **Review and merge in this order:** #0181, then #0179, then #0178. #0178's 18 operator help
-   tests go green with its merge, after which `main`'s workspace is green apart from #0189's timing
-   tests. Then close T03 by architect.md, "Closing a turn".
-5. **WSL:** if it is running again after the restart, nothing of agentspace's started it.
 
 ### v0.08 by turn
 
@@ -75,7 +44,7 @@ the laptop. Each head below was read from `git ls-remote origin`.
 |---|---|---|---|---|
 | T01 | #0168 to #0172 | 1:47am, 2026-11-22 | #111 to #115 | operator.md's guard, `status -All`'s leases, `grow`'s refusal, sync's patch wait and the host's files; keeper.md's start of the guard; state.md's live leases, horizon, `guard.log`, `guard.lock` and `release.log`; driver.md's two-walk release; the alarm at 24 hours; README's "A host's life"; `box/system`'s idle check, install and test |
 | T02 | #0173 to #0176 | 8:26am, 2026-11-22 | #116 to #119 | `agentspace-state`'s `is_live`, `lease_end`, `live_count`, `last_lease_end` and `lease_horizon`; `agentspace-hosts`' guard lock; the new `agentspace-connections` (the two-walk end of an alias's clients and `release.log`'s text); `agentspace-box`'s `describe_hosts`, `stop_host` and `send_horizon`; the push's one-line stderr filter (#0167) |
-| T03 | #0177 to #0181 | | | |
+| T03 | #0177 to #0181 | 7:48pm, 2026-11-22 | #120 to #125 | `agentspace-guard`, the guard's run; the operator's `guard`, `status -All`'s `Leases` and `Guard` lines and `grow`'s refusal (#0164); the keeper's start of the guard, with `agentspace-detach`'s process ID; the EC2 driver's two-walk release and `release.log` (#0064); sync's patch wait (#0163); `agentspace-zone`'s laptop clock time; the keeper suite's tripwires and the operator stand-in's ssm answers |
 | T04 | #0182 to #0185 | | | |
 | T05 | #0186 | | | |
 | T06 | #0187, #0188 | | | |
