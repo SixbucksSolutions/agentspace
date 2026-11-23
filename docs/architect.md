@@ -111,6 +111,9 @@ first.**
 5. **If the turn changes Terry's laptop** (his ssh config, his task, his `PATH`): ask him once,
    before the dev lead starts, naming each change with its reversal (D41). Record his yes on the
    card, and give it to the dev lead in its brief.
+   - **A step that needs the keeper off for more than a minute needs its task disabled**, since the
+     task's one-minute trigger starts a new keeper (v0.08-T05). Disabling it is a change to his task,
+     so it is asked for here, with the turn, not mid-turn.
 6. **Add the turn's milestone**, commit and push, and **move every story of the turn to In
    Progress** (AGENTS.md, "The board"; Terry, 2026-11-22). The milestone's clock runs only while
    its cards are In Progress, so a turn whose cards still sit in Ready For Work is not counted.

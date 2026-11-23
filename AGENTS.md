@@ -19,7 +19,8 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   stories in six turns, #0168 to #0188, under epic #0048. Its live record is
   [docs/handoff-v0.08.md](docs/handoff-v0.08.md), refreshed at each turn's close; T01 closed at
   1:47am, T02 at 8:26am, T03 at 7:48pm and T04 at 10:54pm on 2026-11-22, T03 after a laptop
-  shutdown in its middle. T05, the live checks (#0186), is next, on Terry's word. The v0.06 handoff,
+  shutdown in its middle, and T05 at 10:38am on 2026-11-23, with v0.08 installed on Terry's laptop.
+  T06, the lifecycle live (#0187, #0188), is next, on Terry's word. The v0.06 handoff,
   [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stays for its pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with
