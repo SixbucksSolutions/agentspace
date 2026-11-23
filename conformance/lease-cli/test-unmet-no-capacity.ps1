@@ -104,9 +104,9 @@ function Test-UnsupportedNoCapacity {
 Test-UnsupportedNoCapacity -Label 'An unsupported platform for a project with no record lists unsupported_platform alone, and writes no host registry' `
   -Extra @('--platform', 'windows/amd64') -Codes @('unsupported_platform') -Seed { param($lab) }
 Test-UnsupportedNoCapacity -Label 'An unsupported platform, profile and size list their three reasons in order and no no_capacity' `
-  -Extra @('--platform', 'windows/amd64', '--profile', 'agent-linux@1', '--size', 'l') -Codes @('unsupported_platform', 'unsupported_profile', 'unsupported_size') -Seed { param($lab) }
+  -Extra @('--platform', 'windows/amd64', '--profile', 'agent-linux@1', '--size', 'xxl') -Codes @('unsupported_platform', 'unsupported_profile', 'unsupported_size') -Seed { param($lab) }
 Test-UnsupportedNoCapacity -Label 'An unsupported size reads neither file: with no CA, a host registry that is not valid and a project list that is not valid, it is still unsatisfiable with unsupported_size alone' `
-  -Extra @('--size', 'l') -Codes @('unsupported_size') -NoCaAtAll -Seed {
+  -Extra @('--size', 'xxl') -Codes @('unsupported_size') -NoCaAtAll -Seed {
   param($lab)
   Remove-PvCa -Lab $lab
   Write-PvText -Lab $lab -Path (Get-PvHostsPath $lab) -Text "this is not json`n"

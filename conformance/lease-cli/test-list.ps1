@@ -83,8 +83,8 @@ try {
     $r1 = New-Seed 'alpha'; $r2 = New-Seed 'beta'
     Clear-ConformanceHosts -ConformanceHome $h
   }
-  $u1 = New-Seed 'alpha' @('--size', 'xl')
-  $u2 = New-Seed 'beta' @('--size', 'xl')
+  $u1 = New-Seed 'alpha' @('--size', 'xxl')
+  $u2 = New-Seed 'beta' @('--size', 'xxl')
   $u3 = New-Seed 'alpha' @('--platform', 'linux/amd64')
 
   $doc = Read-ConformanceStateFile -ConformanceHome $h

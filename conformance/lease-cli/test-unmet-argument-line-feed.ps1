@@ -15,7 +15,7 @@
 # feed, so the CLI sees `a` for `--project "a<LF>b"` and makes a lease. The same cut turns the `=`
 # form into a different command line again.
 #
-# Each run gives `--size l` before `--project`, a size no profile has, so that a program that cuts the
+# Each run gives `--size xxl` before `--project`, a size no profile has, so that a program that cuts the
 # line still reaches an unsatisfiable lease with no credential and needs no CA. (A program that cuts
 # the line after `--project` loses the size, and would issue a credential.) Each run MUST give
 # `invalid_value` for `project` and exit 2, and MUST make no record, lease folder or alias file.
@@ -91,8 +91,8 @@ function Get-UnmetLeftovers {
 }
 
 $cases = @(
-  @{ Form = 'separate'; Label = '--project "a<LF>b" (the value is the next argument)'; Arguments = @('create', '--size', 'l', '--project', "a`nb") }
-  @{ Form = 'equals'; Label = '--project=a<LF>b (the value follows an equals sign)'; Arguments = @('create', '--size', 'l', "--project=a`nb") }
+  @{ Form = 'separate'; Label = '--project "a<LF>b" (the value is the next argument)'; Arguments = @('create', '--size', 'xxl', '--project', "a`nb") }
+  @{ Form = 'equals'; Label = '--project=a<LF>b (the value follows an equals sign)'; Arguments = @('create', '--size', 'xxl', "--project=a`nb") }
 )
 $lab = $null
 try {

@@ -52,10 +52,10 @@ try {
     @{ Name = 'An unsupported platform'; Args = @('--platform', 'linux/amd64'); Codes = @('unsupported_platform'); Values = @("'linux/amd64'") }
     @{ Name = 'A Windows platform'; Args = @('--platform', 'windows/amd64'); Codes = @('unsupported_platform'); Values = @("'windows/amd64'") }
     @{ Name = 'A versioned profile'; Args = @('--profile', 'agent-linux@1'); Codes = @('unsupported_profile'); Values = @("'agent-linux@1'") }
-    @{ Name = 'A size no profile has'; Args = @('--size', 'l'); Codes = @('unsupported_size'); Values = @("'l'") }
-    @{ Name = 'A platform and a size'; Args = @('--platform', 'linux/amd64', '--size', 'l'); Codes = @('unsupported_platform', 'unsupported_size'); Values = @("'linux/amd64'", "'l'") }
-    @{ Name = 'All three, given in upper case and with a padded version'; Args = @('--size', 'L', '--profile', 'Agent-Linux@03', '--platform', 'Linux/AMD64')
-      Codes = @('unsupported_platform', 'unsupported_profile', 'unsupported_size'); Values = @("'linux/amd64'", "'agent-linux@3'", "'l'") }
+    @{ Name = 'A size no profile has'; Args = @('--size', 'xxl'); Codes = @('unsupported_size'); Values = @("'xxl'") }
+    @{ Name = 'A platform and a size'; Args = @('--platform', 'linux/amd64', '--size', 'xxl'); Codes = @('unsupported_platform', 'unsupported_size'); Values = @("'linux/amd64'", "'xxl'") }
+    @{ Name = 'All three, given in upper case and with a padded version'; Args = @('--size', 'XXL', '--profile', 'Agent-Linux@03', '--platform', 'Linux/AMD64')
+      Codes = @('unsupported_platform', 'unsupported_profile', 'unsupported_size'); Values = @("'linux/amd64'", "'agent-linux@3'", "'xxl'") }
   )
   foreach ($case in $cases) {
     $issuedBefore = Get-CcIssued $lab
@@ -188,7 +188,7 @@ try {
     # ---- An unsatisfiable answer needs no CA (state.md#creation-in-order) ---------------------------------
     $caDir = Join-Path $lab.UserProfile '.agentspace\ca'
     if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path $caDir) -Recurse -Force }
-    $run = Invoke-CcLease $lab @('create', '--project', 'drvtest', '--size', 'l')
+    $run = Invoke-CcLease $lab @('create', '--project', 'drvtest', '--size', 'xxl')
     Test-Cc "state.md#creation-in-order: An unsatisfiable create runs no CA check, so a machine with no CA still gets the answer" {
       if (-not (Test-CcSuccess $run)) { return "The run was not a valid success: $(Format-CcRun $run)" }
       if ((ConvertFrom-CcJson $run.Stdout)['state'] -cne 'unsatisfiable') { return 'The state is not unsatisfiable.' }

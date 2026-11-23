@@ -271,7 +271,7 @@ try {
   }
 
   # --- An unsatisfiable lease: no CA is needed, and no credential is issued -------------------------
-  $u =Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64', '--size', 'xl')
+  $u =Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64', '--size', 'xxl')
   $made++
   $ua = $u.Json
   $p = Get-ConformanceSuccessProblems -Run $u
@@ -280,7 +280,7 @@ try {
   $p = [System.Collections.Generic.List[string]]::new()
   $codes = if ($ua -and $ua['reasons']) { @($ua['reasons'] | ForEach-Object { $_['code'] }) } else { @() }
   if (($codes -join ',') -cne 'unsupported_platform,unsupported_size') { $p.Add("The reasons are '$($codes -join ',')'") }
-  elseif (-not ([string]$ua['reasons'][0]['message']).Contains('linux/amd64') -or -not ([string]$ua['reasons'][1]['message']).Contains('xl')) { $p.Add('A reason''s message does not name the value that cannot be met') }
+  elseif (-not ([string]$ua['reasons'][0]['message']).Contains('linux/amd64') -or -not ([string]$ua['reasons'][1]['message']).Contains('xxl')) { $p.Add('A reason''s message does not name the value that cannot be met') }
   if ($u.Stdout -match '(?i)\b(ec2|aws)\b') { $p.Add('The output names a backend') }
   Complete-ConformanceCheck -Name 'lease-api.md#fields: Its reasons are unsupported_platform then unsupported_size, in table order, each message naming its value' -Problems $p
   $p = [System.Collections.Generic.List[string]]::new()
@@ -300,8 +300,8 @@ try {
   $reasonCases = @(
     @{ Args = @('--platform', 'windows/amd64'); Codes = 'unsupported_platform' }
     @{ Args = @('--profile', 'agent-linux@1'); Codes = 'unsupported_profile' }
-    @{ Args = @('--size', 'xl'); Codes = 'unsupported_size' }
-    @{ Args = @('--size', 'xl', '--profile', 'agent-linux@1', '--platform', 'linux/amd64'); Codes = 'unsupported_platform,unsupported_profile,unsupported_size' }
+    @{ Args = @('--size', 'xxl'); Codes = 'unsupported_size' }
+    @{ Args = @('--size', 'xxl', '--profile', 'agent-linux@1', '--platform', 'linux/amd64'); Codes = 'unsupported_platform,unsupported_profile,unsupported_size' }
   )
   foreach ($case in $reasonCases) {
     $line = @('lease', 'create', '--project', 'test-create') + $case.Args
@@ -371,7 +371,7 @@ try {
   # An unsatisfiable create needs no CA, and never makes one (state.md#creation-in-order). The throwaway CA is removed.
   $caDir = Join-Path $h.UserProfile '.agentspace\ca'
   if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $caDir) -Recurse -Force }
-  $n = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--size', 'xl')
+  $n = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--size', 'xxl')
   $p = Get-ConformanceSuccessProblems -Run $n
   if ($n.Json -and $n.Json['state'] -cne 'unsatisfiable') { $p.Add("State is '$($n.Json['state'])'") }
   if (Test-Path -LiteralPath $caDir) { $p.Add('create made a CA') }

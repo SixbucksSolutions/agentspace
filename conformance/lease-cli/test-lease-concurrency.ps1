@@ -212,7 +212,7 @@ try {
     $roundsA = 8
     for ($round = 1; $round -le $roundsA; $round++) {
       $countBefore = Get-CcRecordCount $lab
-      $jobs = @(1..6 | ForEach-Object { @{ Tag = "create $_"; Args = @('create', '--project', "conc$_", '--size', 'l') } }) + @(@{ Tag = 'reader list'; Args = @('list') })
+      $jobs = @(1..6 | ForEach-Object { @{ Tag = "create $_"; Args = @('create', '--project', "conc$_", '--size', 'xxl') } }) + @(@{ Tag = 'reader list'; Args = @('list') })
       $res = Invoke-CcRound $lab $jobs
       Confirm-CcRound 'A' $round $res 6
       $reader = $res | Where-Object { $_.Tag -eq 'reader list' }
@@ -416,7 +416,7 @@ try {
       $gJobs = @(
         @{ Tag = 'create ready 1'; Args = @('create', '--project', 'gatea'); Token = 'gatea' },
         @{ Tag = 'create ready 2'; Args = @('create', '--project', 'gateb'); Token = 'gateb' },
-        @{ Tag = 'create unsatisfiable'; Args = @('create', '--project', 'gatec', '--size', 'l'); Token = 'gatec' },
+        @{ Tag = 'create unsatisfiable'; Args = @('create', '--project', 'gatec', '--size', 'xxl'); Token = 'gatec' },
         @{ Tag = 'renew 1'; Args = @('renew', $gRenewA, '--ttl', '5400s'); Token = $gRenewA },
         @{ Tag = 'renew 2'; Args = @('renew', $gRenewB, '--ttl', '5460s'); Token = $gRenewB },
         @{ Tag = 'release'; Args = @('release', $gRelease); Token = $gRelease })
@@ -510,7 +510,7 @@ try {
       $issuedHeld = (Get-CcFileNames (Join-Path $lab.UserProfile '.agentspace\leases')) -join '|'
       $fStarted = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
       $fJob = Start-CcJobs -Lab $lab -Started $fStarted -Jobs @(
-        @{ Tag = 'create'; Args = @('create', '--project', 'locked', '--size', 'l') },
+        @{ Tag = 'create'; Args = @('create', '--project', 'locked', '--size', 'xxl') },
         @{ Tag = 'ready create'; Args = @('create', '--project', 'lockedready') },
         @{ Tag = 'renew'; Args = @('renew', $fRenewId) },
         @{ Tag = 'release'; Args = @('release', $fReleaseId) })
@@ -555,7 +555,7 @@ try {
       if (((Get-CcFileNames (Get-CcLeaseDir $lab $fReleaseId)) -join '|') -cne $fReleaseNames) { return "The lease folder holds '$((Get-CcFileNames (Get-CcLeaseDir $lab $fReleaseId)) -join '|')'." }
       $true
     }
-    $after = Invoke-CcLease $lab @('create', '--project', 'locked', '--size', 'l')
+    $after = Invoke-CcLease $lab @('create', '--project', 'locked', '--size', 'xxl')
     $afterRenew = Invoke-CcLease $lab @('renew', $fRenewId)
     $afterRelease = Invoke-CcLease $lab @('release', $fReleaseId)
     Test-Cc "$conc`: F. Once the lock is free, the same create, renew and release succeed (a failed command leaves nothing that blocks a later one)" {
