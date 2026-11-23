@@ -362,7 +362,7 @@ driver's release step also appends one line to `release.log` in it
 |---|---|---|
 | `ready` | Host alias, user, expires at | The lease's credential and alias are in place, and a connection through the alias is expected to succeed until the expiry |
 | `unsatisfiable` | Reasons, 1 to 4 | The request cannot be met as asked ([Unsatisfiable requests](#unsatisfiable-requests)). Nothing was issued |
-| `pending` | None | Accepted, not yet ready. No credential has been issued. The prototype's driver never answers it; the EC2 driver answers it from v0.07 for a project whose host is not `ready`, and from v0.09 for one whose `ready` host is to be resized for it, or has no recorded type, or whose recorded type a run has removed, or that has a `pending` lease already ([Where it places a lease](#where-it-places-a-lease)) |
+| `pending` | None | Accepted, not yet ready. No credential has been issued. The prototype's driver never answers it; the EC2 driver answers it from v0.07 for a project whose host is not `ready`, and from v0.09 for one whose `ready` host is to be resized for it, or has no recorded type the map holds, or that has a `pending` lease already ([Where it places a lease](#where-it-places-a-lease)) |
 
 - **A result's members that do not belong to its state MUST be left out.** A driver MUST NOT
   answer any other state.
@@ -958,7 +958,7 @@ missing `hosts.json` is read** ([state.md, The host registry](state.md#the-host-
 architect, 2026-11-23, for v0.09-T01, pin P2c). So a laptop with no `hosts.json` places every
 lease of `swimcoach` by [On a `ready` host](#on-a-ready-host), as for any `ready` record at
 `m9g.xlarge`: a default lease is `ready`, as before v0.09, unless a lease of the project is
-`pending`. **The seed document that state.md writes to disk has no `instance_type`**, like any
+`pending`. **The seed record a write puts on disk has no `instance_type`** ([state.md](state.md#the-host-registry)), like any
 record a program before v0.09 wrote (architect, 2026-11-23, for v0.09-T01, pin P31): the type is
 implied only on a read of a missing file, and is never written from one. So once a write has
 made the registry from a missing file, for example the first `create` of a listed project with no
@@ -1234,7 +1234,7 @@ write leaves the registry as it was.
    **From place, for a `ready` record, [On a `ready` host](#on-a-ready-host)'s decision comes here
    too**, with its read of the lease state file; steps 2 to 5 follow only for its rows 1, 2 and 6,
    and every other row writes nothing and starts nothing.
-2. **It decides whether a run is due, by reads alone.** A run is due only when no run holds the
+2. **It decides whether a run is due, by reads alone.** A run is due only when no program holds the
    project's `provision.lock`, and the record's `last_attempt_at` is absent or at least 5 minutes
    before now; a record that step 4 is about to add has none. The lock is in the host's folder
    ([state.md, A host's folder](state.md#a-hosts-folder)); the driver tries to take it once,
@@ -2394,7 +2394,8 @@ past or to come), into `leases.json`, as C26 writes its records.
   `XXL` where a case needs upper case (D71).
 - **A `pending` lease of the project is written as a stored `pending` record**, with the EC2
   driver's name as its `driver` and a size in `SIZES` unless the case says otherwise.
-- **`<project>` is a project of the case's own with a record**, other than `swimcoach` unless the
+- **`<project>` is a project of the case's own with a record** (in Z16, one with none until its
+  first `create`), other than `swimcoach` unless the
   case says the box; `<t:s>`, `<t:m>`, `<t:l>` and `<t:xl>` stand for `m9g.large`, `m9g.xlarge`,
   `m9g.2xlarge` and `m9g.4xlarge` ([Sizes and instance types](#sizes-and-instance-types)).
 - **"Starts nothing"** means the stand-in is not started; **"the registry as it was"** means
