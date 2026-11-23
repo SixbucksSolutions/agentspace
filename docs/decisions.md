@@ -3690,7 +3690,10 @@ for a different size while the host runs.
 - **Changed for v0.09-T01 (architect, 2026-11-23, on the dev lead's pins P2 and P3):**
   - **While the project has any `pending` lease, place answers every new lease of it `pending`**,
     whatever the table above says, and the run places it. Otherwise a lease placed `ready` on the
-    old size while a resize run is due or running would be cut when that run stops the host.
+    old size while a resize run is due or running would be cut when that run stops the host. Only
+    a `pending` lease a run would place counts: the EC2 driver's, with a size in D65's four (pin
+    P20), so a hand-edited record cannot hold the project's leases `pending` for good. The same
+    selection is all `resize_target` reads (pin P18).
   - **A `ready` record with no `instance_type` answers `pending` and starts a run, whatever other
     leases hold the host**, never `no_capacity`. The run records the type without resizing when a
     live `ready` lease holds the host (D68's change below), and then places or refuses the lease by
