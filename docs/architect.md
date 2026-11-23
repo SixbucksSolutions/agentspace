@@ -177,6 +177,13 @@ reads before it prints it").
   the exit code and end time last; the runner reads the code once the process is gone.
 - **A failure is a finding, not something to retry past.** Diagnosis runs MAY follow, each
   disclosed with its times.
+- **A host's stop is attributed by `ec2 describe-instances`' `StateReason.Code`** (v0.08-T06), one
+  read-only call that starts nothing: `Client.InstanceInitiatedShutdown` is the host's own
+  power-off, `Client.UserInitiatedShutdown` an API stop. `StateTransitionReason`'s text does not
+  tell them apart, and the idle check's power-off leaves no `guard.log` line.
+- **A subagent's shell moves a foreground command of about 3 minutes or more to the background**
+  (v0.08-T06), whatever its brief says, so a runner SHOULD wait on its wrapper's exit file rather
+  than on the command.
 - **The box ends stopped**, confirmed with `status`, and no lease the check made is left ready.
 
 ## Reviewing a pull request

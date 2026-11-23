@@ -21,24 +21,24 @@ through a mask. Then:
 
 ## Where things stand
 
-**As of 10:38am Mountain, 2026-11-23, at T05's close.** The laptop moved from Pacific to Mountain time during T03; every time below is the laptop's zone when it was written.
+**As of 12:49pm Mountain, 2026-11-23, at T06's close, the last turn of v0.08.** The laptop moved from Pacific to Mountain time during T03; every time below is the laptop's zone when it was written.
 
 | What | State |
 |---|---|
-| v0.08 (#0048), host lifecycle and cost guard | In Progress. Laid out by D63 as twenty-one stories, #0168 to #0188, in six turns, on Terry's word the night of 2026-11-21 |
+| v0.08 (#0048), host lifecycle and cost guard | Every story merged: #0168 to #0188 and the epic in Ready For Review at T06's close. It closes on Terry's word, when he moves the cards to Completed; the `v0.08` milestone stops then, not before (AGENTS.md) |
 | T01, the specs, the template and the host's files | Closed at 1:47am: #111 to #115 merged, #0168 to #0172 in Ready For Review |
 | T02, the foundations | Closed at 8:26am: #116 to #119 merged, #0173 to #0176 in Ready For Review |
 | T03, the programs | Closed at 7:48pm, after a laptop shutdown from about 10:40am to 5:11pm: #120 to #125 merged, #0177 to #0181 in Ready For Review |
 | T04, conformance | Closed at 10:54pm: #126 to #129 merged, #0182 to #0185 in Ready For Review. It started at 8:08pm and ran 2 hours 46 minutes of its 3 |
 | T05, the install and the host-side live checks | Closed at 10:38am on 2026-11-23: #130 merged, #0186 in Ready For Review. It started at 9:06am and ran 1 hour 32 minutes of its 3. One finding, #0195 ([its record](runs/e0.08-t05-s01.md)) |
-| T06, the lifecycle live | Next. Its gate is met. Its dev lead starts on Terry's word, after a masked check of AWS's sign-in and the hosts. #0188 needs Terry for a desktop-app session, and its step 2 reads "no session" as no sshd login (the card's ruling, #0195) |
+| T06, the lifecycle live | Closed at 12:49pm on 2026-11-23: #131 and #132 merged, #0187 and #0188 in Ready For Review. It started at 10:40am and ran 2 hours 9 minutes of its 4. One finding, #0196 ([#0188's record](runs/e0.08-t06-s02.md)); #0187's record has none ([its record](runs/e0.08-t06-s01.md)) |
 | `main`'s tests | Green: 4,849 passed, 0 failed and 58 ignored in #0185's quiet run of `cargo test --workspace` at 6e2fcbd, alone on the laptop ([its record](runs/e0.08-t04-s04.md)); `crates` is unchanged since. #0189's timing tests fail now and then under a parallel build, and #0191's four targets hung under heavy conformance load; both are rerun alone before they are findings |
 | `main`'s conformance | Green against main's build: #0185's whole-suite run at 6e2fcbd, 2,640 passed, 0 failed, 0 skipped, with T04's new files run on their PRs (#126 to #128) and both 30-minute deadline cases passing. The empty-program control failed every file, as it MUST |
 | A build of `main` | v0.08 at 469f6f6, a release build, installed on Terry's laptop by T05 at 9:13am on 2026-11-23. `main` has changed only in docs since |
-| The hosts | Both stopped with no live lease, confirmed at 10:17:44am on 2026-11-23 by T05's step 7. Both stacks carry D58's 24-hour alarm. T05 used 1.247 instance hours of the 6 Terry approved for T05 and T06 (D62), so 4.753 remain for T06, whose plan is about 3.75 (D63) |
+| The hosts | Both stopped with no lease ready, confirmed by T06's step 5 and step 6 runs (11:52am and 12:27pm on 2026-11-23). Instance hours for T05 and T06: 3.805 of the 6 Terry approved (D62), T05 1.247 and T06 2.558 |
 | Terry's laptop | v0.08 installed (T05); the keeper's task enabled and running, after T05's step 6 disabled it from 9:49am to 10:16am on his yes. `cfn-lint` 1.61.0 added as a uv tool, on Terry's word ("we can install new dependencies if needed", 2026-11-21) |
-| Swimcoach | `v0.08` reported, its cap 19.5 hours after T03's extension; `v0.08-T01` to `v0.08-T05` stopped at their closes. T03's cap was extended from 3 hours to 4.5 on Terry's word |
-| Sessions | T01's to T05's dev leads archived at their closes. T03's was resumed after the shutdown rather than started fresh, and kept its context |
+| Swimcoach | `v0.08` reported, its cap 19.5 hours after T03's extension; `v0.08-T01` to `v0.08-T06` stopped at their closes. T03's cap was extended from 3 hours to 4.5 on Terry's word |
+| Sessions | T01's to T06's dev leads archived at their closes. T03's was resumed after the shutdown rather than started fresh, and kept its context |
 | WSL | Found running at about 9:30am, started by T03's old bash test or the architect's T01 `wsl -e` runs; left for Terry. No later test starts it (T03 ruling). #0185's box tests found it running and left it running |
 
 ### v0.08 by turn
@@ -50,7 +50,7 @@ through a mask. Then:
 | T03 | #0177 to #0181 | 7:48pm, 2026-11-22 | #120 to #125 | `agentspace-guard`, the guard's run; the operator's `guard`, `status -All`'s `Leases` and `Guard` lines and `grow`'s refusal (#0164); the keeper's start of the guard, with `agentspace-detach`'s process ID; the EC2 driver's two-walk release and `release.log` (#0064); sync's patch wait (#0163); `agentspace-zone`'s laptop clock time; the keeper suite's tripwires and the operator stand-in's ssm answers |
 | T04 | #0182 to #0185 | 10:54pm, 2026-11-22 | #126 to #129 | Conformance for v0.08: the guard, `status -All`'s leases, `grow`'s refusal, sync's patch wait with its two deadline cases, and #0167's push filter (#0182); a release ending a lease's connections, R1 to R15 (#0183); the keeper's start of the guard, G1 to G16 (#0184); the whole suite, the crates and the box tests against main's build, with conformance.md's v0.08 rows (#0185) |
 | T05 | #0186 | 10:38am, 2026-11-23 | #130 | v0.08 installed on the laptop; the alarm deployed to both stacks; `sync -All`; #0166's tools on both hosts; #0163 and pin P24.3's probe on agentspace's host; the laptop away, which found #0195 |
-| T06 | #0187, #0188 | | | |
+| T06 | #0187, #0188 | 12:49pm, 2026-11-23 | #131, #132 | The lifecycle live on both hosts: a quiet held lease, a release, the next lease and an expiry each, every stop inside its 25 minutes; on agentspace's host #0064 with Terry's desktop-app session, and an unexplained host stopped by its own idle check; finding #0196 |
 
 ## Terry's orders from v0.08
 
@@ -110,6 +110,9 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | A step that needs the keeper off for longer than a minute disables its task, which needs Terry's yes each time: given for T05's step 6 ("Yes, disable it") | T05 | #0186's card |
 | A horizon sent is shown by the host's `/run/agentspace/lease-horizon` and `ssm list-commands`' guard entry, since `guard.log` never logs a send | T05 | operator.md, guard step 7; T05's record |
 | #0188's "no session of the lease on the host" is no sshd login; a leftover Session Manager session is recorded against #0195 | T05 | #0188's card |
+| A host's lifetime is counted from the observer's first running read to its first stopped read, with no gap when a guard stop is followed by a restart within the minute; a split at `guard.log`'s `stopped` line MAY be given as an estimate | T06 | [#0188's record](runs/e0.08-t06-s02.md), instance hours |
+| A stop is attributed by `ec2 describe-instances`' `StateReason.Code`: `Client.InstanceInitiatedShutdown` is the host's own power-off, `Client.UserInitiatedShutdown` an API stop; `StateTransitionReason`'s text does not tell them apart | T06 | #0188's record, step 5; architect.md, live checks |
+| A proxy holding a released alias alive after the release returned is a finding (#0196): driver.md has the release wait for every process it ends | T06 | #0196 |
 
 ## Lessons from v0.08
 
@@ -150,3 +153,13 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | Twice the dev lead sent counts worked out by hand that the record writer's recount corrected (14 short sessions for 13; "about 21 minutes" for 24 minutes 40 seconds) | A message carries counts and intervals only from a command over the files | Each dev lead's brief |
 | The architect's own watch on the keeper's task exited 0 without printing its line, so it said nothing; the state was then read directly, `Running` at 10:16am | A one-shot watch exits by printing its line and calling `exit`, and its silence is checked, not trusted | This file |
 | Splitting the step that waited on a ruling into its own runner, and writing the record in two passes, let T05 close in 1 hour 32 minutes of its 3 | Plan the record writer's first pass while the last live step runs | This file |
+| T06's dev lead printed the Windows user name into its own transcript with `ls -la` on a stop file, whose long listing shows the owner; nothing reached a file, the repository, a card or another session | List a file with a bare `ls` or `Test-Path`, never a long listing | Every brief |
+| Two of T06's taskings named different stop files for one story's runner and observer, so the observer ran on until the dev lead wrote the right one; the hours were unaffected | Every tasking of a story names its shared files from one list | This file |
+| A background job that a runner started died with its tool call, leaving a wrapper with no exit file and a 2-minute gap in a poll; and the subagents' shell moves a foreground command of about 180 seconds or more to the background whatever the brief says | Size each wrapper run under 3 minutes, or have the runner wait on the wrapper's exit file | Every brief |
+| T05's live kit (the mask, its proof and the wrapper) lived only in its worktree's `target\` and went with it; T06 rebuilt it from T05's record | Commit a live kit's scripts under `scripts\` as process tools (D28) after a live turn | This file; a follow-up before the next live turn |
+| The dev lead's own scan script, dot-sourced, lost its `$Path` to the sourced script's `param()` and passed every file; a runner caught it by planting a value | Prove every checker, the dev lead's own included, fails on a planted value before believing its pass | Terry's global rule; every brief |
+| With the keeper running, a new lease's holder starts within about 5 seconds and starts a stopped host before the caller's first ssh, so the caller's time to a prompt can measure a host already booting | A later spec says what "time to a prompt" measures with the keeper live | Both T06 records |
+| A once-a-minute observer missed a host's stopped state when the next lease restarted it within the minute | An observer logs `stopping` and `pending` reads as interval edges too | This file |
+| The live count of #0188's clients matched the alias as a substring, while the release counts by driver.md's token rule, so the two counts could not be compared, which left #0196 with two readings | A live count of clients uses driver.md's own token rule | #0196; this file |
+| The architect ruled "not shown by alias" on the dev lead's counts before asking how they were made; they were by alias, and the ruling was withdrawn minutes later | Ask how a count was made before ruling on what it shows | This file |
+| Splitting the runner that waited on Terry into two, as T05 did, cost his step about 17 minutes of wall time and left no runner waiting on a message | Split a step that waits on Terry into its own runner | This file |
