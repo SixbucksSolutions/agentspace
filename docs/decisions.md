@@ -3736,6 +3736,12 @@ for a different size while the host runs.
   a lease placed `ready` on a host too small for it. A failed or killed deploy, or a failed read,
   leaves no type, which costs one run. A program before v0.09 refuses a `hosts.json` holding the
   member (pin P15), so a return to v0.08's programs needs it removed by hand.
+- **Changed for v0.09-T01 (architect, 2026-11-23, on the dev lead's pin P34):** every `deploy` that
+  is not a run's own deploy step, the box's included, takes its host's `provision.lock` without
+  waiting and holds it for its life, and refuses before any AWS call while a run holds it. A
+  person's deploy whose read-back landed during a run's AWS call would write back a type that the
+  run's deploy step had removed (D68's change on pin P26), and a `create` could then be placed
+  `ready` on the old size just before the resize stopped the host.
 
 ### D68. A resize is the provisioning run, given the instance type; the guard and the idle check meet it as they meet a provisioning run
 
