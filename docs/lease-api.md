@@ -437,8 +437,9 @@ project's compute is being changed to meet its [size](#size), or is having its s
 a lease of a project that already has a `pending` lease** (D66, D67, D68;
 [A host's life follows its leases](#a-hosts-life-follows-its-leases)). Such a lease MAY instead
 become `unsatisfiable`, with `no_capacity`, when the compute, once changed or recorded, does not
-meet it and another of the project's leases is `ready` on it ([Fields](#fields)). The caller's `get`s let that
-work carry on, among them after a failed attempt (D48; [docs/driver.md](driver.md#check_pending)).
+meet it and another of the project's leases is `ready` on it ([Fields](#fields)). The caller's
+`get`s let that work carry on, among them after a failed attempt (D48;
+[docs/driver.md](driver.md#check_pending)).
 A lease's TTL starts when it becomes `ready`, so time spent `pending` costs none of it. A caller
 that stops waiting SHOULD `release` the lease.
 
@@ -959,8 +960,7 @@ Any other well-formed value gives an unsatisfiable lease, never a substitute.
 ```
 
 **Two parts of this help changed in v0.09** (#0049; architect, 2026-11-23, for v0.09-T01, pin
-P28): the
-`--size` row, which read `Default m.` alone, and the line that begins `In v0 only`,
+P28): the `--size` row, which read `Default m.` alone, and the line that begins `In v0 only`,
 which read `In v0 only linux/arm64, agent-linux and size m can be met.` Every other byte of this
 help is as before v0.09.
 
