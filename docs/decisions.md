@@ -3702,7 +3702,11 @@ for a different size while the host runs.
   - **The record a missing `hosts.json` implies, the box's (D45), has `instance_type`
     `m9g.xlarge`**, D65's `m`, which is the template's default and the box's type today. A laptop
     with no registry places a default lease as before v0.09; the box's first deploy or run records
-    its real type.
+    its real type. **The type is implied only on a read of a missing file, never written from one**
+    (pin P31): the seed record a write puts on disk has no `instance_type`, like any record a
+    program before v0.09 wrote, so once another project's first lease has written the registry,
+    the box's next lease answers `pending` once and costs one run. Writing the type into the seed
+    would change seed bytes asserted in crates that other stories own.
 
 ### D67. The stack holds a host's instance type, the host registry records it, and the size-to-type map is the EC2 driver's
 
