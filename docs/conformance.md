@@ -39,7 +39,8 @@ the prototype, never as an instruction to run it**:
 - [Running the suite](#running-the-suite)
 - [The sorting](#the-sorting): [the summary](#the-summary), then
   [the lease CLI](#the-lease-cli-suites), [the operator and the token push](#the-operator-and-the-token-push),
-  [the keeper](#the-keeper-suite), [the schemas](#the-schemas-check) and
+  [the keeper](#the-keeper-suite), [the schemas](#the-schemas-check),
+  [the idle check's test](#the-idle-checks-test) and
   [the live-box check](#the-live-box-check)
 - [The header line in each script](#the-header-line-in-each-script)
 - [Which spec section each check would enforce](#which-spec-section-each-check-would-enforce)
@@ -303,6 +304,28 @@ to see the message.
   the same line.** The case checks that the deadline falls from 14.5 to 16.5 minutes (990 seconds at
   most) after the start of the wait. (Changed by the architect the same evening: this first said the case is reported
   `SKIPPED` by default, which made every default run exit 2, "incomplete, never passed", above.)
+- **`conformance/operator/test-unmet-sync-patch-wait.ps1` holds two more such cases, each waiting
+  the real 30 minutes** (E0.08-T04-S01, #0182; D61, pin P13): the patch wait's deadline for
+  `sync`, and the same for a provisioning run. No seam variable shortens the 30-minute bound, so
+  the file shows its message and time only when asked, as `up`'s 15-minute deadline is.
+  - **`-Case deadline` runs `sync`'s**, under a limit of its own of 34 minutes so it can never
+    hang. **`-Case deadline-provision` runs the provisioning run's**, under a limit of 35 minutes.
+    Each name MUST be given exactly, in any letter case, and each takes about 32 minutes.
+  - **With any other `-Case` that would select either, the default `*` and a wildcard such as `d*`
+    included, the file neither runs nor reports it**, and prints for each one `Not run: the
+    30-minute deadline case; run it with -Case deadline.` or `Not run: the 30-minute provisioning
+    deadline case; run it with -Case deadline-provision.` A default run's results and exit code are
+    those of the other cases alone.
+  - **Both of the file's on-request cases, `deadline` and `deadline-provision`, check that the deadline falls
+    from 29 to 32 minutes after the start of the run**: the spec's 30 minutes run from the start of the wait, which begins seconds after the
+    run's start, and the stand-ins' own time over several hundred checks adds to it. Each of the two
+    cases uses a lean `aws` stand-in of its own, so that the stand-in's own time does not grow
+    over 30 minutes into delays the timing would include.
+  - **A runner that starts either case MUST go through a wrapper script** that writes the
+    command's streams to files and its exit code and end time last (architect, 2026-11-22, for
+    v0.08-T04; [architect.md, Live checks on Terry's laptop and the
+    box](architect.md#live-checks-on-terrys-laptop-and-the-box)), since a shell tool moves a long
+    command into the background and can lose its exit code.
 - A release's whole conformance run (E0.06-T04-S01 for v0.06) runs it once with `-Case deadline`
   and records the result beside the rest.
 
@@ -373,6 +396,37 @@ provisioning run, through the program `AGENTSPACE_PROVISION_CMD` names
   It holds no case. `test-unmet-host-alias-bytes.ps1` and `test-unmet-pending-get-list-release.ps1`
   write their own stand-ins, and dot-source only the harness and `lease-check-support.ps1`.
 
+**What v0.08 changes for a run of the lease CLI's checks** (D59, D63; E0.08-T04-S02, #0183). A
+`release` now ends the laptop's ssh clients of the lease's alias, so one file,
+`conformance/lease-cli/test-unmet-release-ends-connections.ps1`, runs `release` with stand-in
+clients of its own running ([driver.md, Conformance cases for
+v0.08](driver.md#conformance-cases-for-v008)); [The files that are expected to
+fail](#the-files-that-are-expected-to-fail) lists its cases. **It holds every row, R1 to R15, as
+a case of its own** (architect, 2026-11-22, for v0.08-T04: every row maps to a result line by
+name), and each result name starts with the driver.md anchor the row cites and then the row's
+number, as `driver.md#each-with-its-tree: R1 ...`. It makes its stand-ins from one small console
+program built with the .NET Framework's `csc.exe` in the throwaway home, since the harness has no
+builder. **It looks for `csc.exe` only under `%SystemRoot%\Microsoft.NET\Framework64` and
+`\Framework`, never on `PATH` or in the checkout, and reports `SKIPPED` when neither holds one**
+(architect, 2026-11-22, for v0.08-T04). A stand-in is never a copy of an installed program or of
+Windows' own `ssh.exe`. The file names no gap: every row has its result lines.
+- **R7 is the one case that starts the program under test outside `harness.ps1`**, because the
+  row requires the release to be a stand-in's child ([The harness](#the-harness)).
+- **R15 holds only for a second client started within the release's run** (architect, 2026-11-22,
+  for v0.08-T04; driver.md's R15 row at c932ef6). A second client that the stand-in starts after the
+  release returned makes R15's two results that depend on it, the client ended and the count of at
+  least 2, `SKIPPED` with that reason, never `FAIL`. **A `FAIL` for a second client found still
+  running says in its reason that it MAY be timing under load**, and it is run once more alone
+  before it is a finding (#0189's family).
+- **A case that starts a stand-in client MUST end it at the case's close**, so a failed case leaves
+  none running, and **MUST NOT copy, open or start an installed program, or Windows' own `ssh.exe`,
+  as one** (AGENTS.md, "Terry's real files in a review").
+- **A case MUST NOT list, print or log any process it did not start**, and **MUST make the leases
+  whose aliases a stand-in carries with `create`, or seed an ID drawn at random for that run**, so
+  that no process of Terry's can match one.
+- **The case that counts a reconnecting client assumes no timing** (driver.md, R15): it asserts a
+  count of at least 2, never which of the release's two walks ended the second client.
+
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
   enforces, as in `lease-api.md#agentspace-lease-get: ...`. The summary is `<n> passed, <n> failed,
@@ -428,6 +482,9 @@ provisioning run, through the program `AGENTSPACE_PROVISION_CMD` names
 how any later build that ships in a `target\dist` folder is. [The run record](runs/e0.05-t04-s01.md)
 is the first, and shows the results. **v0.06's run, of the whole suite against the Rust operator,
 ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md).**
+**v0.07's is [docs/runs/e0.07-t04-s04.md](runs/e0.07-t04-s04.md), and v0.08's, the latest whole-suite
+run, is [docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)** (E0.08-T04-S04, #0185). Their counts
+are in them, and this page quotes none of v0.08's.
 1. **Build the output folder from the workspace's root, with `cargo xtask dist`**
    ([operator.md, The install folder](operator.md#the-install-folder)). It writes `target\dist\`,
    and the lease CLI is `target\dist\agentspace.exe`. **The run MUST be made from a build of a
@@ -453,6 +510,11 @@ ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-
      case starts the real operator, from the build's output folder or the install folder.
    - **No real `hosts.json` or `projects.json` is needed**: each case seeds its own throwaway home
      ([Running the suite](#running-the-suite)).
+   - **v0.08's runs name a stand-in guard for every keeper file** (`AGENTSPACE_GUARD_CMD`, with
+     tripwires for `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`;
+     [The harness](#the-harness)), and run the idle check's test beside the suite, in a Linux
+     environment only ([The idle check's test](#the-idle-checks-test)). The run record is
+     [docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md).
 4. **A complete run exits 0 on every file, with no SKIPPED result, on a machine whose zone is not
    UTC.** Each `test-unmet-*` file is a requirement the build MUST meet, so against a build its
    `FAIL` is the build's failure ([The files that are expected to fail](#the-files-that-are-expected-to-fail)).
@@ -478,6 +540,21 @@ to show, and its variable went with it.
 code that starts the program under test.** A check makes each home it needs with
 `New-ConformanceHome`, removes it in a `finally`, and ends with `Exit-ConformanceRun`. The helpers
 the checks share, which start no program of their own, are in `conformance/lease-cli/lease-cli-common.ps1`.
+
+**One case is the named exception to that rule: R7 of
+`conformance/lease-cli/test-unmet-release-ends-connections.ps1`** (E0.08-T04-S02, #0183;
+[driver.md, Conformance cases for v0.08](driver.md#conformance-cases-for-v008); architect,
+2026-11-22, for v0.08-T04). R7's row requires the `release` to be the child of a stand-in
+`ssh.exe`, so the stand-in starts it, and the harness cannot. **R7 MUST keep the harness's
+guarantees by hand:**
+- **The stand-in is given the harness's environment for the throwaway home**
+  (`Get-ConformanceChildEnvironment`, with the provisioning-run tripwire added), so the release it
+  starts reaches nothing outside the home.
+- **The check's wait for the release is bounded at 60 seconds**, and the stand-in's child is ended
+  by its recorded PID, checked first against the creation time recorded, as every process a stand-in
+  recorded is.
+- **No other case starts the program under test outside the harness.** A new one MUST NOT, until
+  the architect names it here.
 
 **A throwaway home MUST NOT be inside a git working tree** (D37): `ca` refuses a CA folder with a
 `.git` entry in it or in any folder above it ([docs/operator.md, `ca`](operator.md#ca)), so a home
@@ -967,6 +1044,52 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
   instance-ID cache was (#0151), and are not edited by T04. **A `provision` case runs
   `provision -Host <project>` itself, with the seam set**, never through a detached start, so its
   exit code and streams are the check's to read ([operator.md, The test seam](operator.md#the-test-seam)).
+- **v0.08's operator files** (E0.08-T04-S01, #0182; D56, D57, D60, D61, D63) are `test-unmet-*` files
+  beside these, through the same AWS gate and the same seam, each dot-sourcing the helper of its
+  kind: `test-unmet-guard.ps1`, with `host-guard-common.ps1` as its own helper (which dot-sources
+  `host-commands-common.ps1`); `test-unmet-status-leases.ps1` and `test-unmet-grow-zero.ps1`,
+  through `host-commands-common.ps1`; `test-unmet-sync-patch-wait.ps1`, through
+  `host-provision-common.ps1`; and `test-unmet-push-nested.ps1`, through `host-proxy-common.ps1`.
+  Each case is a row of [operator.md, Which checks show
+  it](operator.md#which-checks-show-it), and [The files that are expected to
+  fail](#the-files-that-are-expected-to-fail) gives which file holds what.
+  - **A `guard` case runs `guard` itself, with the seam set**, never a detached start: a stand-in
+    `aws` records every call, and `ssh` and `scp` are tripwires. It seeds the throwaway home's
+    `hosts.json`, lease state file and held locks, with times set relative to the real clock,
+    because the suite has no fake clock ([operator.md, Which checks show
+    it](operator.md#which-checks-show-it)). It never reads Terry's real files, and **it never
+    touches a real host**: a host's stop and its real horizon file are the live checks of
+    [v0.08's rows](#coverage-of-the-operator-and-the-keeper).
+  - **No stand-in in these files models EC2's refusal of a size increase of 0 or less** (#0164;
+    D61, pin P7): the operator refuses `-GiB 0` and a negative `<n>` itself, so a case counts no
+    `ec2 modify-volume` call, and `test-unmet-grow-zero.ps1` holds that. **`helpers.ps1` and
+    `test-unmet-commands.ps1` were not changed by E0.08-T04-S01**: E0.08-T03-S02 (PR #125) had
+    already rewritten `test-unmet-commands.ps1`'s `-GiB 0` and `-GiB -1` cases to the refusal, and
+    they stay beside `test-unmet-grow-zero.ps1` ([operator.md, Which checks show
+    it](operator.md#which-checks-show-it); the overlap kept by the architect, 2026-11-22). The
+    refusal with `USERPROFILE` unset is the operator crate's own test, since no check runs a
+    program with it unset ([The harness](#the-harness)).
+  - **Existing files that v0.08 changes, by [operator.md's table](operator.md#which-checks-show-it)
+    and not by a card's scope. E0.08-T04-S01 changed three of them:**
+    - `test-unmet-usage-help.ps1` gained `guard`'s help block, byte for byte, and `guard` in its
+      command lists, so every per-command case covers it. The top level's, `status`'s, `grow`'s and
+      `sync`'s help texts were already v0.08's text on `main` (E0.08-T03-S02, PR #125, had
+      changed the file), so no other text of it changed.
+    - `test-unmet-host-commands-line.ps1` gained `guard`'s refusals of `-Host`, `-All`, `-Alias`
+      and `-InstanceType` in the order of the checks, and shows `-GiB` checked for form and its
+      value ignored, against a plain `guard` as the control.
+    - `host-commands-common.ps1`'s `Compare-Text` masks the spec line it quotes in a failure
+      reason (architect, 2026-11-22), so `test-unmet-host-commands-all.ps1`'s `$leasesMissing`
+      prints no Windows user name.
+  - **Four files that operator.md's table names were not changed by E0.08-T04-S01**:
+    `test-unmet-commands.ps1` (above), `test-unmet-host-commands-all.ps1` (`status -All`'s two new
+    lines, E0.08-T03-S02, PR #125) and `test-unmet-host-provision.ps1` (the sign-in line of
+    `provision`'s step 10, E0.08-T03-S05, PR #123), each already at v0.08's text on `main`, and
+    `test-unmet-start-paths.ps1`, which the table names as the model of an on-request deadline case.
+    `test-unmet-push.ps1` and `helpers.ps1` were not changed either, and the table does not name
+    them. The cases of #0167's push are the new file `test-unmet-push-nested.ps1`, which runs the
+    ProxyCommand program nested under a stand-in `ssh`, as the real `ssh` runs its alias's
+    ProxyCommand.
 
 #### `scripts/test-push-localswim.ps1` (about 460 lines): prototype code
 
@@ -1233,6 +1356,54 @@ processes as the suite above. **RFC 2119 keywords again.**
 - **What no keeper case shows is live** (D53): that the keeper holds the board on agentspace's own
   host ([Coverage of the operator and the keeper](#coverage-of-the-operator-and-the-keeper)).
 
+#### The guard's start: the keeper's v0.08 cases
+
+**E0.08-T04-S03 (#0184) adds the cases of [keeper.md, Conformance cases for the guard's
+start](keeper.md#conformance-cases-for-the-guards-start)** (D56, D62, D63; G1 to G16), through
+`keeper-common.ps1`, with the same program, environment, stubs and processes as the suite above.
+**RFC 2119 keywords again.**
+- **`conformance/keeper/test-unmet-keeper-guard.ps1` holds every case, G1 to G16.** The stand-in
+  that `AGENTSPACE_GUARD_CMD` names is started at the keeper's first pass (G1). It is not started
+  again within the interval, which the file shows two ways: the default of 300 seconds, by five
+  passes at `-IntervalSeconds 1` making exactly one start (G2), and a short
+  `-GuardIntervalSeconds`, the keeper's time seam ([keeper.md, When the keeper starts
+  it](keeper.md#when-the-keeper-starts-it)), after which it is started again (G3), also from inside
+  a wait (G4). It is never started while `guard.lock` is held (G5). A stand-in that cannot be
+  started is logged as a failed start, and every holder is unaffected by it (G8; [keeper.md, What a
+  failed start changes](keeper.md#what-a-failed-start-changes)). The rest are G6 and G7
+  (`guard.lock` a folder, and no `.agentspace` folder), G9 (a relative `AGENTSPACE_GUARD_CMD`), G10
+  (the guard's environment), G11 (a stand-in that outlives the keeper), G12 (a one-pass run), G13
+  (`board-holder.lock` held), G14 (a path with a space), G15 (the two usage errors for
+  `-GuardIntervalSeconds`) and G16 (a second keeper). **Each result name is
+  `keeper.md#<section> (G<n>): <text>`**, so each row of G1 to G16 maps to a result line by name,
+  and `-Case` takes a wildcard on a case's ID (`-Case G8` selects G8a and G8b, and `-Case G1` never
+  G10 to G16). `keeper-common.ps1` was not changed by E0.08-T04-S03.
+- **The file names its gaps in a "Gaps:" paragraph of its header**, each with its reason, and no
+  row part is left out silently. They are parts that no stand-in can show from outside: G11's
+  place outside the Job Objects of the processes above the keeper, the handles the guard inherits
+  from it, its hidden window, process group and standard input, and the call's 10-second bound
+  with the three `<why>` rows that keeper.md gives to the keeper crate's own tests. The rest are
+  parts it asserts loosely, so that load cannot break them, or leaves out because the row does not
+  name them: G4's start about 12 seconds after the
+  first (a lower bound of 12 seconds and an upper of 16), G5's "no later than just before the first
+  pass after the close" (shown as an order of lines, never a time), G13's no wait on
+  `board-holder.lock`, G10's variables the row does not name, and pin P19's single try per wait.
+- **The stand-in guard is the file's own**, a `.cmd` in the throwaway home that appends one line
+  to a file of the case's own for each run and exits 0, or stays alive until the case stops it.
+  **No case runs a real guard, and none touches `guard.log`**, which only a guard writes. A case
+  that reads the guard's environment reports a mismatch by the variable's name, never by its
+  value (AGENTS.md, "A test MUST NOT print, log or format the values of an environment it
+  captured").
+- **Every other keeper file runs with a stand-in guard too** ([The harness](#the-harness), P15),
+  and ignores the guard's lines where it reads a keeper's log line for line (keeper.md, P18).
+  E0.08-T03-S03 (#0179) brought the existing keeper files to that rule, and `keeper-common.ps1`
+  gives a default for each of the stand-in guard and the tripwires for `AGENTSPACE_AWS_CMD`,
+  `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD`.
+- **What no keeper case shows is live** (D62): that the installed keeper, restarted to load v0.08's
+  build, logs `guard started pid=<pid>` at its first iteration and then about every 300 seconds,
+  which is E0.08-T05-S01's (#0186) ([Coverage of the operator and the
+  keeper](#coverage-of-the-operator-and-the-keeper), v0.08's rows).
+
 #### The three installer cases: prototype code
 
 **These stayed in `scripts/test-board-holder.ps1`, whole and untouched, as prototype code, until
@@ -1291,6 +1462,56 @@ them. E0.06-T06-S01 removed the file, so each case now has one home.
   `schemas/state`, which is how it was shown to catch a planted bad sample, an invalid sample that
   validates, an unparsable invalid sample and a wrong `$id`.
 - **The top-level `test-schemas.ps1` still scans `schemas/` only.**
+
+### The idle check's test
+
+**`box/tests/test_agentspace_idle.py` tests `box/system/agentspace-idle-check`** (E0.08-T01-S05,
+#0172; D11, D57, D63). **It is not a conformance file:** it drives a shell script that runs on a
+host, never a program of the laptop that the harness starts, so the harness, the
+`AGENTSPACE_*_CMD` variables and the `test-unmet-` rule do not apply to it. It is a Python
+`unittest` file that runs the script as a subprocess and MUST NOT import it.
+- **What it covers.** D11's rule, in 7 cases of its `D11Rule` class: power-off after 60 or more
+  minutes with no session and no CPU work, none under 60, and each of an SSH session, a Session
+  Manager session, a patch run and CPU work keeping the host up. D57's horizon rule, in 15 cases
+  of its `HorizonRule` class:
+  - **Power-off past the horizon plus the grace** with no session and no patch run, whatever the
+    CPU is doing, with the exact line; the grace read from the settings file, 15 replacing an
+    invalid one with a warning; and the horizon shown as `@<seconds>` when `date` cannot format it.
+  - **No power-off** with an SSH session, a Session Manager session or a patch run past the
+    horizon, inside the grace, or with the horizon in the future.
+  - **D11's rule alone** with no horizon file, or a garbage, empty or unreadable one, for a host
+    busy with CPU work, and with a garbage one for an idle host; and a horizon in the future never
+    stopping D11's own idle power-off.
+  - **The 22 cases are counted from the file's methods**, not from a run; the run record gives the
+    run's own count ([docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)).
+- **Its seams** are the three variables D63 pins for `box/tests` alone: `AGENTSPACE_IDLE_STATE` (the
+  state folder, `/run/agentspace` unset), `AGENTSPACE_IDLE_CONF` (the settings file,
+  `/etc/agentspace/idle.conf` unset) and `AGENTSPACE_PROC_STAT` (the CPU reading, `/proc/stat`
+  unset). Each case builds a throwaway tree of its own and puts stub `ss`, `pgrep` and `systemctl`
+  commands first on `PATH`, and `date` for the one case that needs it, so **the real `/run`,
+  `/etc` and `/proc` are never read, and `systemctl poweroff` is only a stub that records its
+  arguments.** A test MUST NOT print the values of the environment it builds. The script's path
+  comes from the test's own variable `AGENTSPACE_IDLE_CHECK`, `../system/agentspace-idle-check`
+  beside the test unset.
+- **How it is run:** from the repository's root, in a Linux environment, with
+  `python3 -I -m unittest discover -v -s box/tests -p test_agentspace_idle.py`. That is WSL's
+  Ubuntu on the laptop, or a host. **A test and a test run MUST NOT start WSL, except E0.08-T04-S04's crates-and-box runner**
+  (T03's ruling,
+  [handoff-v0.08.md, Rulings made during v0.08](handoff-v0.08.md#rulings-made-during-v008), on
+  #0181's card): **that runner (#0185) is the only run that starts it for this file**, as its
+  tasking says how; the result is in the run record. A test that needs
+  a bash on the laptop uses Git for Windows' bash.
+- **Four parts of operator.md's idle-check row have no method in the file's 22, and no live check
+  shows them, so they are gaps** (read from the file's methods): a horizon holding a CR; a horizon
+  of 16 digits; D11's rule one second before the horizon plus the grace (the nearest case, a horizon
+  5 minutes past with a grace of 15, is far from the boundary); and `HORIZON_GRACE_MINUTES` not set
+  giving 15 (only an invalid value, and a value of 7, are tested). The settings file the cases
+  build always sets it. **The four are carded as #0192** (Backlog; the architect, 2026-11-22, for
+  v0.08-T04).
+- **What it does not show is live** (D62): that the check on a host with no seam set powers the host
+  off past its horizon plus the grace with the laptop away, and the horizon file as a real guard
+  run writes it, which are E0.08-T05-S01's ([Coverage of the operator and the
+  keeper](#coverage-of-the-operator-and-the-keeper), v0.08's rows).
 
 ### The live-box check
 
@@ -1380,6 +1601,24 @@ file's cases.
 | The keeper per host (H1 to H18), each host's holder log, and the registry's read failures | [keeper.md, Hosts](keeper.md#hosts), [The order of a pass](keeper.md#the-order-of-a-pass), [Which host a lease is on](keeper.md#which-host-a-lease-is-on), [The hosts of a pass](keeper.md#the-hosts-of-a-pass), [Which lease](keeper.md#which-lease), [Stopping a holder](keeper.md#stopping-a-holder), [Idle](keeper.md#idle), [Watching](keeper.md#watching), [The keeper's wait](keeper.md#the-keepers-wait), [Release grace](keeper.md#release-grace), [Locks](keeper.md#locks), [Log lines](keeper.md#log-lines), [Reasons](keeper.md#reasons), [The holder's log](keeper.md#the-holders-log), [Stopping and starting the keeper](keeper.md#stopping-and-starting-the-keeper); [state.md, Another host's holder](state.md#another-hosts-holder), [The host registry](state.md#the-host-registry) |
 | #0138: a missing `board-holder.json` tolerated by the keeper files' cleanup | No section of its own: it changes how a case cleans up, and each case keeps the sections it enforced |
 | The state schemas' samples | [state.md, The host registry](state.md#the-host-registry), [The project list](state.md#the-project-list); the schemas in `schemas/state/` and their samples |
+
+**v0.08's rows** (E0.08-T04-S04, #0185), one per group of T04's new files, by the spec tables that
+assign v0.08's cases: [operator.md, Which checks show it](operator.md#which-checks-show-it),
+[keeper.md, Conformance cases for the guard's start](keeper.md#conformance-cases-for-the-guards-start)
+(G1 to G16) and [driver.md, Conformance cases for v0.08](driver.md#conformance-cases-for-v008) (R1 to
+R15). [The files that are expected to fail](#the-files-that-are-expected-to-fail) gives each file's
+cases.
+
+| Check group | Spec sections it would enforce |
+|---|---|
+| `guard`: which hosts a live lease explains, the stop, the unexplained line, `provision.lock`, the horizon it sends, `guard.lock`, the failures and every `guard.log` line | [operator.md, guard](operator.md#guard); [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon), [The guard's log](state.md#the-guards-log), [The guard's lock](state.md#the-guards-lock); D56, D57 |
+| `status -All`'s `Leases` and `Guard` lines | [operator.md, status](operator.md#status), [status -All](operator.md#status--all); [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon); D60 |
+| `grow`'s refusal of `-GiB 0` and a negative `<n>` | [operator.md, grow](operator.md#grow), [Exit codes](operator.md#exit-codes); D61 (#0164, pin P7) |
+| `sync`'s patch wait, and `up` not waiting on a failed patch run | [operator.md, sync](operator.md#sync), [The patch wait](operator.md#the-patch-wait), [Starting the box and waiting for it](operator.md#starting-the-box-and-waiting-for-it); D61 (#0163; pins P13, P21, P24) |
+| #0167: no push at a start with a current stamp, one `The host is ready.` from a ProxyCommand connection whose push is due, two under `AGENTSPACE_DIAGNOSTIC`, a push that fails still showing its ssh's error lines | [operator.md, The stamp](operator.md#the-stamp), [What the laptop sends](operator.md#what-the-laptop-sends), [What the laptop checks](operator.md#what-the-laptop-checks), [up](operator.md#up), [What a caller sees](operator.md#what-a-caller-sees-d1-card-0087); D61 (P14) |
+| The keeper's start of the guard (G1 to G16) | [keeper.md, Conformance cases for the guard's start](keeper.md#conformance-cases-for-the-guards-start), [Starting the guard](keeper.md#starting-the-guard), [When the keeper starts it](keeper.md#when-the-keeper-starts-it), [How the keeper starts it](keeper.md#how-the-keeper-starts-it), [guard.lock: tried, never held](keeper.md#guardlock-tried-never-held), [What a failed start changes](keeper.md#what-a-failed-start-changes), [The guard's environment](keeper.md#the-guards-environment), [Usage errors](keeper.md#usage-errors), [board-holder-keeper.lock: one keeper at a time](keeper.md#board-holder-keeperlock-one-keeper-at-a-time); [state.md, The guard's lock](state.md#the-guards-lock); D56, D62, D63 |
+| `release` ending the lease's own connections and ssh clients, and writing `release.log` (R1 to R15) | [driver.md, Conformance cases for v0.08](driver.md#conformance-cases-for-v008), [Ending a lease's connections](driver.md#ending-a-leases-connections), [Each with its tree](driver.md#each-with-its-tree), [The order of a release](driver.md#the-order-of-a-release), [An ssh client's destination](driver.md#an-ssh-clients-destination), [Which processes are the alias's clients](driver.md#which-processes-are-the-aliass-clients), [The count](driver.md#the-count), [Where the count is logged](driver.md#where-the-count-is-logged); [state.md, The release log](state.md#the-release-log); [lease-api.md, `release`](lease-api.md#agentspace-lease-release); D59 |
+| The idle check, D11's rule and D57's horizon | [operator.md, The idle check and the lease horizon](operator.md#the-idle-check-and-the-lease-horizon); D11, D57 |
 
 ## The files that are expected to fail
 
@@ -1525,6 +1764,46 @@ or the row of [operator.md, Which checks show it](operator.md#which-checks-show-
   never does, so its per-lease results are the operator's `provision` cases and E0.07-T05-S01's
   live check of a first agentspace lease ([Coverage of the operator and the keeper](#coverage-of-the-operator-and-the-keeper)).
 
+**v0.08's files (E0.08-T04, #0182 to #0184).** **RFC 2119 keywords again.** Each is a `test-unmet-*`
+file for a MUST that v0.08 adds, and **the installed v0.07 programs, which are the suite's defaults
+until E0.08-T05-S01 (#0186) installs v0.08, do not meet them**: each story MUST show its files
+failing against them where v0.07 lacks the behavior, in a throwaway home, and passing against the
+build of `main`. **A v0.08 build MUST pass every one**, and a `FAIL` against it is the build's
+failure, as for every file above. Each case's result name says which spec case it is. **The results of
+T04's new files are in their pull requests** (#126 for E0.08-T04-S01's files, #127 for S02's and #128
+for S03's). **The run record** ([docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)) covers the
+conformance files on `main` at `6e2fcbd`, the deadline case, the crates and the box tests, and this
+page gives no count of v0.08's.
+
+| File | Cases it holds | Spec section | Card |
+|---|---|---|---|
+| `conformance/operator/test-unmet-guard.ps1` | Each outcome of D56 and D57 through the AWS stand-in: an explained host left untouched; an unexplained host that is not yet due logged; a due host stopped, with the exact calls; a host whose `provision.lock` is held left alone; a horizon sent to each running host with its comment, and the fallback to the launch time; a held `guard.lock` giving exit 0, no call and no log line; a failed describe logged and nothing stopped; every `guard.log` line byte for byte. Also the decision over eight hosts with each lease state and end (the box among them), a host that is not running, a running host with no usable `LaunchTime`, an instance missing from the answer, a record with no instance ID read from its stack, the host registry or the lease state file missing or not valid, a failed stop and a failed send (the next run sending again), #0034's sign-in message at each call in turn, `guard.log`'s bytes and a log that cannot be written, `-Quiet`, and what the guard never does | [operator.md, guard](operator.md#guard); [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon), [The guard's log](state.md#the-guards-log), [The guard's lock](state.md#the-guards-lock) | #0182 (E0.08-T04-S01) |
+| `conformance/operator/host-guard-common.ps1` | No case: the helper `test-unmet-guard.ps1` dot-sources | [operator.md, The test seam](operator.md#the-test-seam) | #0182 |
+| `conformance/operator/test-unmet-status-leases.ps1` | `status -All`'s `Leases` and `Guard` lines: the count of live leases per host's project (pending and unexpired ready live; expired, released and unsatisfiable not), the `Guard` line's text, place and time (from the launch time, a lease's end or the report's own minute, rounded up to the next whole minute, in the laptop's zone), no line for a host a live lease explains or that is not running, a lease state file missing, unreadable or not valid, a `LaunchTime` that is missing or malformed, `AGENTSPACE_STATE_DIR`, a held `leases.lock`, `-Quiet`, and `status` and `status -Host` printing their five lines alone | [operator.md, status -All](operator.md#status--all); D60 | #0182 |
+| `conformance/operator/test-unmet-grow-zero.ps1` | `grow -GiB 0`, `-0`, `+0`, `000`, `-1`, `-5`, `-007` and `-2147483648` each exit 1 as a usage error, with no AWS call, no `ec2 modify-volume` among them, nothing written in the home, and with `-Host` no key, certificate or alias; `-GiB 1` asking EC2 for the size plus 1; the refusal's place in the order of checks; `status`, `down` and `sync` not refusing a `-GiB` of 0 or less. It stands beside `test-unmet-commands.ps1`'s `-GiB 0` and `-GiB -1` cases, and shows `-GiB 0` with `USERPROFILE` unset not at all, which is the operator crate's test | [operator.md, grow](operator.md#grow); D61 (#0164) | #0182 |
+| `conformance/operator/test-unmet-push-nested.ps1` | #0167: a ProxyCommand connection whose push is due printing one `The host is ready.`, one push, one nested run and ssh's own line once; a current stamp giving no push through the ProxyCommand and through `up`, with a stopped host still started; `AGENTSPACE_DIAGNOSTIC` set giving two `The host is ready.` lines, and set and empty one; a push that fails still showing its ssh's error lines in order and once each; a person's `up` whose push is due printing the nested line; another host reached by its alias, pushed with that host's stamp; and the push's ssh carrying `AGENTSPACE_NESTED` | [operator.md, The stamp](operator.md#the-stamp), [What the laptop sends](operator.md#what-the-laptop-sends), [up](operator.md#up); D61 (P14) | #0182 |
+| `conformance/operator/test-unmet-sync-patch-wait.ps1` | `sync`'s calls after the install row, in order, with its messages; a reboot in the middle of the wait; a host already patched; the answers that keep the wait going (`unknown`, an empty and an unexpected one, an invocation that failed, 20 polls); a failed patch run, which warns while `sync` goes on, after `pending` too and for `sync -All`, `provision` and `-Quiet` (P21); a host launched less than 20 minutes ago; `up` not waiting on a failed run (P24.2); `sync` making no wait when its install fails; the wait's calls in `provision` and `deploy -Host`; #0034's sign-in failure; and, **only when asked for**, the 30-minute bound (P13) for `sync` (`-Case deadline`) and for a provisioning run (`-Case deadline-provision`), each about 32 minutes ([Cases that run only when asked for](#cases-that-run-only-when-asked-for)). A queued start (P24.3) is shown only as what the question `sync` sends reads (the marker, the unit's state, a queued start job and whether the unit is enabled): what a real host answers for a `failed` unit with a start queued is E0.08-T05-S01's live check | [operator.md, sync](operator.md#sync), [The patch wait](operator.md#the-patch-wait), [Starting the box and waiting for it](operator.md#starting-the-box-and-waiting-for-it); D61 (#0163) | #0182 |
+| `conformance/lease-cli/test-unmet-release-ends-connections.ps1` | R1 to R15, each a case, through stand-in clients built with `csc.exe` in the throwaway home: `release` ending the alias's `ssh.exe` and `agentspace-ssh-proxy.exe` clients with their trees (R1, R3, R5, R6) and none that is not the alias's (R4); the alias file still there until the clients are ended (R2); a `release` that is itself a stand-in's child sparing that stand-in (R7, the one case that starts the program under test outside the harness: [The harness](#the-harness)); a released lease released again (R8); a `pending` lease that carries a driver (R9); an alias file that belongs to another lease (R10); `release.log` a folder (R11); no client, and an `unsatisfiable` lease (R12); ten clients within 15 seconds (R13); an expired lease (R14); and a client that comes back, counted at least 2 with no timing assumed (R15, which holds only for a second client started within the release's run, a later one being `SKIPPED`; the file names no gap). Each result name starts with the driver.md anchor the row cites and the row's number. `SKIPPED` when no `csc.exe` of the .NET Framework is found | [driver.md, Conformance cases for v0.08](driver.md#conformance-cases-for-v008) (R1 to R15), [Ending a lease's connections](driver.md#ending-a-leases-connections); [state.md, The release log](state.md#the-release-log); [lease-api.md, `release`](lease-api.md#agentspace-lease-release) | #0183 (E0.08-T04-S02) |
+| `conformance/keeper/test-unmet-keeper-guard.ps1` | G1 to G16, each with a result line named `keeper.md#<section> (G<n>): ...`: `AGENTSPACE_GUARD_CMD`'s stand-in started at the first pass with the one argument `guard` (G1, G9, G14); not started again within 300 seconds, and started again after a short `-GuardIntervalSeconds`, also from inside a wait (G2 to G4); never started while `guard.lock` is held (G5); a folder at `guard.lock`'s path logged as a failed start (G6); no `.agentspace` folder, which the keeper does not create (G7); a stand-in that cannot be started logged, with every holder unaffected (G8); the guard's environment by variable name (G10); a stand-in that outlives the keeper (G11); a one-pass run (G12); `board-holder.lock` held (G13); the two usage errors (G15); and a second keeper (G16). The file's "Gaps:" paragraph names what no stand-in shows ([The guard's start: the keeper's v0.08 cases](#the-guards-start-the-keepers-v008-cases)) | [keeper.md, Conformance cases for the guard's start](keeper.md#conformance-cases-for-the-guards-start) (G1 to G16), [Starting the guard](keeper.md#starting-the-guard) | #0184 (E0.08-T04-S03) |
+| `box/tests/test_agentspace_idle.py` | Not a `test-unmet-*` file and not run by the harness: the idle check's own test, D11's rule and D57's horizon, through the idle check's three seams ([The idle check's test](#the-idle-checks-test)) | [operator.md, The idle check and the lease horizon](operator.md#the-idle-check-and-the-lease-horizon) | #0172 (E0.08-T01-S05) |
+| `test-unmet-usage-help.ps1`, `test-unmet-host-commands-line.ps1` and `host-commands-common.ps1`, changed | No case of their own to list here: the first gained `guard`'s help block and `guard` in its command lists; the second `guard`'s refusals of `-Host`, `-All`, `-Alias` and `-InstanceType`, and `-GiB` checked for form and ignored; the third `Compare-Text` masking the spec line it quotes (architect, 2026-11-22) | [operator.md, Command line](operator.md#command-line), [guard](operator.md#guard) | #0182 |
+| `test-unmet-commands.ps1`, `test-unmet-host-commands-all.ps1`, `test-unmet-host-provision.ps1`, `test-unmet-start-paths.ps1`, `test-unmet-push.ps1` and `helpers.ps1`, not changed by T04 | No new case: operator.md's table names the first four, and the first three were already at v0.08's text on `main` (E0.08-T03-S02, PR #125, for the first two; E0.08-T03-S05, PR #123, for `test-unmet-host-provision.ps1`); `test-unmet-commands.ps1` holds the `-GiB 0` and `-GiB -1` cases, and `test-unmet-start-paths.ps1` is the model of the on-request deadline cases. The table does not name `test-unmet-push.ps1` or `helpers.ps1`, and #0167's push is shown by the new `test-unmet-push-nested.ps1` | [operator.md, Which checks show it](operator.md#which-checks-show-it) | #0182 |
+
+- **Every keeper file names a stand-in guard** (`AGENTSPACE_GUARD_CMD`), and a case reaches no real
+  AWS CLI, `ssh` or `scp` ([The harness](#the-harness), the bullet for v0.08).
+- **`test-unmet-sync-patch-wait.ps1` and the real 30 minutes.** [operator.md's
+  table](operator.md#which-checks-show-it) puts a wait of the real 30 minutes, about 32, in a run
+  asked for by name, as `test-unmet-start-paths.ps1`'s `deadline` is ([Cases that run only when
+  asked for](#cases-that-run-only-when-asked-for)). **The file holds two such runs**, `-Case
+  deadline` for `sync` and `-Case deadline-provision` for a provisioning run, and a default run
+  neither runs nor reports them. **Its header names what they leave unshown:** `deploy`'s step 6
+  when its wait runs out, since that step is `sync` and a third 30-minute run would show nothing
+  more; the deadline's failure under `-Quiet`, which always prints; and the exact 30 minutes, which
+  is checked to fall from 29 to 32 minutes after the start of the run.
+- **No v0.08 case shows a host stopping**, a real Run Command or a real session, and the suite has
+  no fake clock, so the grace's timing is a live check ([Coverage of the operator and the
+  keeper](#coverage-of-the-operator-and-the-keeper), v0.08's rows).
+
 ## The gaps
 
 **A gap is a spec section that no sorted check covers.** The sorted checks leave these.
@@ -1533,7 +1812,7 @@ or the row of [operator.md, Which checks show it](operator.md#which-checks-show-
 |---|---|
 | operator.md: The token push | **Covered by `conformance/operator/test-unmet-push.ps1`**, through the seam, and it fails against the prototype until a build meets the seam ([The files that are expected to fail](#the-files-that-are-expected-to-fail)). What it leaves is in [Coverage](#coverage-of-the-operator-and-the-keeper) |
 | operator.md: The time zone | The seven legacy names and the zone check are covered by `test-unmet-push.ps1`. The conversion of a Windows zone ID is not, and [Coverage](#coverage-of-the-operator-and-the-keeper) says why |
-| operator.md: Commands (`deploy`, `up`, `sync`, `down`, `status`, `grow`), Starting the box and waiting for it, The box as the laptop sees it, The AWS side | `up` runs through the seam in `test-unmet-push.ps1` and `test-unmet-proxy-steps.ps1`, as far as the calls they stand in for go. **`down`, `status` and `grow` are covered by `test-unmet-commands.ps1`, and the start-and-wait step of `up` (the stopped and stopping boxes, the wait and its deadline, the patch question's answers) by `test-unmet-start-paths.ps1`** (E0.06-T04-S02, #0132), each failing against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)). `deploy` and `sync` have no check, and [Coverage](#coverage-of-the-operator-and-the-keeper) says why. **From v0.07, `-Host`, `-All`, `bootstrap` and `provision` have cases through the seam** (E0.07-T04-S02, #0156), and each command's real effect on a host is one of E0.07-T05-S01's live checks ([Coverage](#coverage-of-the-operator-and-the-keeper), v0.07's rows) |
+| operator.md: Commands (`deploy`, `up`, `sync`, `down`, `status`, `grow`), Starting the box and waiting for it, The box as the laptop sees it, The AWS side | `up` runs through the seam in `test-unmet-push.ps1` and `test-unmet-proxy-steps.ps1`, as far as the calls they stand in for go. **`down`, `status` and `grow` are covered by `test-unmet-commands.ps1`, and the start-and-wait step of `up` (the stopped and stopping boxes, the wait and its deadline, the patch question's answers) by `test-unmet-start-paths.ps1`** (E0.06-T04-S02, #0132), each failing against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)). `deploy` and `sync` have no check, and [Coverage](#coverage-of-the-operator-and-the-keeper) says why. **From v0.07, `-Host`, `-All`, `bootstrap` and `provision` have cases through the seam** (E0.07-T04-S02, #0156), and each command's real effect on a host is one of E0.07-T05-S01's live checks ([Coverage](#coverage-of-the-operator-and-the-keeper), v0.07's rows). **From v0.08, `guard`, `status -All`'s `Leases` and `Guard` lines, `grow`'s refusal and `sync`'s patch wait have cases** (E0.08-T04-S01, #0182: `test-unmet-guard.ps1`, `test-unmet-status-leases.ps1`, `test-unmet-grow-zero.ps1` and `test-unmet-sync-patch-wait.ps1`), and what no stand-in shows is one of D62's live checks ([Coverage](#coverage-of-the-operator-and-the-keeper), v0.08's rows) |
 | operator.md: Command line | **The usage errors and the help texts are covered by `test-unmet-usage-help.ps1`** (E0.06-T04-S02, #0132), which fails against the prototype. **The rules for an unset or empty `USERPROFILE` are shown by the programs' own tests, not from outside**, because no check runs a program with it unset or empty ([The harness](#the-harness)); `SystemRoot`'s are checked from outside, with `USERPROFILE` in the throwaway home. An alias holding a line feed has no check: `cmd.exe` cuts the value at the line feed to a valid alias, so a run could get past the refusal and reach AWS. A check of it needs a way to start the operator that does not pass through `cmd.exe` |
 | operator.md: The ProxyCommand | The argument refusals (`test-proxy-arguments.ps1`), the steps (`test-unmet-proxy-steps.ps1`) and what a caller sees (`test-unmet-proxy-connect-time.ps1`) are checked, the last two failing against the prototype ([The files that are expected to fail](#the-files-that-are-expected-to-fail)). What is left is in [Coverage](#coverage-of-the-operator-and-the-keeper) |
 | operator.md: `ca` | **Covered by `conformance/operator/test-ca.ps1`**, which passes against the prototype. What it leaves is in [Coverage](#coverage-of-the-operator-and-the-keeper) |
@@ -1564,6 +1843,10 @@ or the row of [operator.md, Which checks show it](operator.md#which-checks-show-
 | driver.md: place_pending, and a run's own records | **No lease CLI case reaches it**: only a provisioning run calls `place_pending`, and the lease CLI's stand-in run never does ([driver.md, Conformance cases for v0.07](driver.md#conformance-cases-for-v007)). Covered from the operator's side by `test-unmet-host-provision-place.ps1`, with a seeded lease state file, and by E0.07-T05-S01's live check of a first agentspace lease ([Coverage](#coverage-of-the-operator-and-the-keeper)) |
 | operator.md: deploy, provision, bootstrap and sync on a real host | **No stand-in can make a host** (D53): a real stack, a real instance, a real key exchange, sshd's trust of the CA and a real Session Manager session have no seam, and `go` and `ssh-keygen` have none either ([operator.md Q30](operator.md#open-questions)). The calls are covered by the operator's v0.07 files, and each real effect is one of E0.07-T05-S01's live checks ([Coverage](#coverage-of-the-operator-and-the-keeper)) |
 | keeper.md: the keeper on a host that is not the box | The stub holders show every rule of [Hosts](keeper.md#hosts) in a throwaway home; that the keeper holds the board on agentspace's own host is E0.07-T05-S01's live check ([Coverage](#coverage-of-the-operator-and-the-keeper)) |
+| keeper.md: Starting the guard | **Covered by `conformance/keeper/test-unmet-keeper-guard.ps1`** (E0.08-T04-S03, #0184), against a stand-in guard ([The guard's start: the keeper's v0.08 cases](#the-guards-start-the-keepers-v008-cases)). What it leaves is E0.08-T05-S01's live check that the installed keeper starts the real guard ([Coverage](#coverage-of-the-operator-and-the-keeper), v0.08's rows). Three of the `<why>` texts of [The keeper's lines for it](keeper.md#the-keepers-lines-for-it) are the keeper crate's own tests, since no case can bring them about from outside |
+| operator.md: `guard`'s timing, a host's stop and a real session | **No stand-in can show a host stopping, a real Run Command or a real session, and the suite has no fake clock**, so the grace's timing is D62's live checks, E0.08-T06-S01 (the box) and E0.08-T06-S02 (agentspace's host) ([Coverage](#coverage-of-the-operator-and-the-keeper), v0.08's rows). The time format at a chosen hour is a crate test, E0.08-T03-S02 |
+| `box/system`: the idle check on a host | **Covered in part by `box/tests/test_agentspace_idle.py`** ([The idle check's test](#the-idle-checks-test)). The check with no seam set on a real host, the laptop away, is E0.08-T05-S01's live check, and `/run/agentspace/lease-horizon` as a real guard run writes it |
+| driver.md, lease-api.md: `release` ending a desktop-app session | **Covered for stand-in clients** by `test-unmet-release-ends-connections.ps1` (E0.08-T04-S02, #0183) and, for the second walk and the cases no stand-in shows (another user's process, a refused termination), by `agentspace-connections`' and the EC2 driver's own tests ([driver.md, How it is checked](driver.md#how-it-is-checked)). The desktop app's own connections and the host's end of an ended connection are E0.08-T06-S02's live check |
 
 ## Coverage of the operator and the keeper
 
@@ -1577,17 +1860,17 @@ a check for it can be added by a later story without changing a spec.
 
 | Area | Checked by | Not checked |
 |---|---|---|
-| operator.md: The token push | `conformance/operator/test-unmet-push.ps1` (20 results, through the seam) | **Later, not blocking:** what the box does with the content (the box's half, steps 1 to 8 of [What the box does](operator.md#what-the-box-does)) runs only on a host, and the check's stand-in `ssh` is its own reading of that half, so a real box's half is shown only by the live-box check ([Q5](#open-questions)). **Later, not blocking:** `sync`'s forced push needs the build and copy steps, which the seam does not stand in for (operator.md Q30, which is itself later) |
+| operator.md: The token push | `conformance/operator/test-unmet-push.ps1` (20 results, through the seam). **From v0.08, #0167's rules** (no push at a start with a current stamp, one `The host is ready.` from a ProxyCommand connection whose push is due, two under `AGENTSPACE_DIAGNOSTIC`) are the cases of the new `conformance/operator/test-unmet-push-nested.ps1` (E0.08-T04-S01, #0182; `test-unmet-push.ps1` itself is unchanged) and unit tests of `agentspace-push` and `agentspace-ssh-proxy` (E0.08-T02-S04, #0176), by [operator.md's table](operator.md#which-checks-show-it) | **Later, not blocking:** what the box does with the content (the box's half, steps 1 to 8 of [What the box does](operator.md#what-the-box-does)) runs only on a host, and the check's stand-in `ssh` is its own reading of that half, so a real box's half is shown only by the live-box check ([Q5](#open-questions)). **Later, not blocking:** `sync`'s forced push needs the build and copy steps, which the seam does not stand in for (operator.md Q30, which is itself later) |
 | operator.md: The time zone | The seven legacy names, and eight zones that fail the zone check (`test-unmet-push.ps1`) | **Later, not blocking:** the conversion of a Windows zone ID to an IANA name, because the seam replaces the laptop's zone before it, so a check would need a machine set to each zone; the spec's table is the requirement |
 | operator.md: `ca` | `conformance/operator/test-ca.ps1` (10 results) | **Later, not blocking:** the refusal when run elevated (the suite MUST NOT run elevated), a machine with no `ssh-keygen.exe` (the program is found by its fixed path), and the access rules of the CA's folder and key (a check of a loosened key would grant another account access to a private key, which no check does; the one rule a check sets is `test-unmet-failed-create-cleanup.ps1`'s, a deny for the current user on a folder of its throwaway home, lifted in a `finally`) |
-| operator.md: `deploy`, `sync` | `deploy` up to its step 5: **`conformance/operator/test-unmet-deploy-passthrough.ps1`** (E0.06-T05-S02, #0140, 4 results): the AWS CLI's output passed through, and the call returning once the CLI exits, with a stand-in that writes to stdout as the real CLI does (architect, 2026-11-20). The suite had no `deploy` case before it, so nothing ran the pass-through through the operator's `main`, and defect #0139, a `deploy` that never returned, reached the laptop. `sync`: none until v0.07. **From v0.07** (E0.07-T04-S02, #0156), `deploy -Host` and `sync -Host` and `-All` have cases through the stand-ins, in `test-unmet-host-deploy.ps1`, `test-unmet-host-deploy-registry.ps1`, `test-unmet-host-bootstrap-sync.ps1` and `test-unmet-host-bootstrap-sync-all.ps1`, and `sync` on a new host is E0.07-T05-S01's live check ([v0.07's rows](#coverage-of-the-operator-and-the-keeper), below) | **Later, not blocking:** `deploy`'s step 6 and `sync` run `go`, `ssh-keygen` and `scp`, and the seam stands in for the AWS CLI, `ssh` and `scp` alone, so a check could not stop `go` and `ssh-keygen` from running. **Covered from v0.07:** `sync`'s calls in order through the `ssh` and `scp` stand-ins, for `sync`, `sync -Host` and `sync -Host swimcoach`, by `test-unmet-host-bootstrap-sync.ps1`. **Later, not blocking:** `sync`'s failure message for each step of that sequence, and `deploy -Quiet` quieting the `sync` it runs (D36). The prototype reads none of the seam variables, so each would be a `test-unmet-` file that fails with `seam not met`, and a check no build could be shown to pass is not written blind |
-| operator.md: `down`, `status`, `grow` | **`conformance/operator/test-unmet-commands.ps1`** (E0.06-T04-S02, #0132): each command's calls in order with their arguments, its messages and failures, and `grow`'s failed online grow (D36) | **Later, not blocking:** a real AWS answer's other members and a real `df` table, which a stand-in writes in its own words |
-| operator.md: Command line (a missing, unknown or repeated command or parameter, and the help texts) | `-Alias` (`test-alias-refusals.ps1`), and **every usage error, its order and every help block byte for byte** (`conformance/operator/test-unmet-usage-help.ps1`, E0.06-T04-S02, #0132) | **Later, not blocking:** an alias with a line feed in it (the gap above). **Not from outside, by [The harness](#the-harness)'s rule:** the rules for an unset or empty `USERPROFILE`, which the programs' own tests show |
-| operator.md: Starting the box and waiting for it | The case of a box that is running and old (`up` does not wait), through the stand-ins in `test-unmet-push.ps1` and `test-unmet-proxy-steps.ps1`; and **the whole step** in `conformance/operator/test-unmet-start-paths.ps1` (E0.06-T04-S02, #0132, 31 results by default and 5 with `-Case deadline`, 34 distinct between the two runs, the deadline's three running only with it: [Cases that run only when asked for](#cases-that-run-only-when-asked-for)): the stopped, stopping, pending and running boxes, the 20-minute rule, any other state, a launch time not of its form, the wait's messages printed once while they do not change, the poll, the patch question's answers (`patched`, `unknown`, an empty and an unexpected answer, a failed or timed-out check), the invocation's own poll and its 20-poll limit, and the 15-minute deadline with its exact message | **Later, not blocking:** the deadline with Session Manager's agent never Online (the file waits its 15 minutes once, with `-Case deadline`, on a box whose patch check never finishes, and a second wait for another phase costs another 15 minutes), the question's own text ([What up waits for](operator.md#what-up-waits-for): no comma, bracket or equals sign, or a form that is not split), which a stand-in cannot tell from another text, and the exact 5-second and 1-second pauses, which the file checks loosely |
+| operator.md: `deploy`, `sync` | `deploy` up to its step 5: **`conformance/operator/test-unmet-deploy-passthrough.ps1`** (E0.06-T05-S02, #0140, 4 results): the AWS CLI's output passed through, and the call returning once the CLI exits, with a stand-in that writes to stdout as the real CLI does (architect, 2026-11-20). The suite had no `deploy` case before it, so nothing ran the pass-through through the operator's `main`, and defect #0139, a `deploy` that never returned, reached the laptop. `sync`: none until v0.07. **From v0.07** (E0.07-T04-S02, #0156), `deploy -Host` and `sync -Host` and `-All` have cases through the stand-ins, in `test-unmet-host-deploy.ps1`, `test-unmet-host-deploy-registry.ps1`, `test-unmet-host-bootstrap-sync.ps1` and `test-unmet-host-bootstrap-sync-all.ps1`, and `sync` on a new host is E0.07-T05-S01's live check ([v0.07's rows](#coverage-of-the-operator-and-the-keeper), below). **From v0.08, `sync`'s patch wait** (its calls after the install row in order, a reboot in the middle of the wait, a failed run, a queued start and the 30-minute bound as far as a stand-in shows it) **is `conformance/operator/test-unmet-sync-patch-wait.ps1`** (E0.08-T04-S01, #0182); the install starting the run, #0163 on a real host and #0166's `PATH` are E0.08-T05-S01's live checks ([v0.08's rows](#coverage-of-the-operator-and-the-keeper), below). **Its two 30-minute deadline cases, `sync`'s and a provisioning run's, run only with `-Case deadline` and `-Case deadline-provision`** ([Cases that run only when asked for](#cases-that-run-only-when-asked-for)) | **Later, not blocking:** `deploy`'s step 6 and `sync` run `go`, `ssh-keygen` and `scp`, and the seam stands in for the AWS CLI, `ssh` and `scp` alone, so a check could not stop `go` and `ssh-keygen` from running. **Covered from v0.07:** `sync`'s calls in order through the `ssh` and `scp` stand-ins, for `sync`, `sync -Host` and `sync -Host swimcoach`, by `test-unmet-host-bootstrap-sync.ps1`. **Later, not blocking:** `sync`'s failure message for each step of that sequence, and `deploy -Quiet` quieting the `sync` it runs (D36). The prototype reads none of the seam variables, so each would be a `test-unmet-` file that fails with `seam not met`, and a check no build could be shown to pass is not written blind |
+| operator.md: `down`, `status`, `grow` | **`conformance/operator/test-unmet-commands.ps1`** (E0.06-T04-S02, #0132): each command's calls in order with their arguments, its messages and failures, and `grow`'s failed online grow (D36). **From v0.08, `status -All`'s `Leases` and `Guard` lines are `test-unmet-status-leases.ps1`, and `grow`'s refusal of `-GiB 0` and a negative `<n>` is `test-unmet-grow-zero.ps1`, beside this file's own two cases** (E0.08-T04-S01, #0182; E0.08-T03-S02, PR #125, had rewritten those two to the refusal) | **Later, not blocking:** a real AWS answer's other members and a real `df` table, which a stand-in writes in its own words |
+| operator.md: Command line (a missing, unknown or repeated command or parameter, and the help texts) | `-Alias` (`test-alias-refusals.ps1`), and **every usage error, its order and every help block byte for byte** (`conformance/operator/test-unmet-usage-help.ps1`, E0.06-T04-S02, #0132). **From v0.08, `guard`'s help block and `guard` in the command lists are added to the same file** (E0.08-T04-S01, #0182, by [operator.md's table](operator.md#which-checks-show-it)); the top level's, `status`'s, `grow`'s and `sync`'s help texts were already v0.08's text on `main` (E0.08-T03-S02, PR #125). **`guard`'s refusals of `-Host`, `-All`, `-Alias` and `-InstanceType`, and `-GiB` ignored by it, are in `test-unmet-host-commands-line.ps1`** | **Later, not blocking:** an alias with a line feed in it (the gap above). **Not from outside, by [The harness](#the-harness)'s rule:** the rules for an unset or empty `USERPROFILE`, which the programs' own tests show |
+| operator.md: Starting the box and waiting for it | The case of a box that is running and old (`up` does not wait), through the stand-ins in `test-unmet-push.ps1` and `test-unmet-proxy-steps.ps1`; and **the whole step** in `conformance/operator/test-unmet-start-paths.ps1` (E0.06-T04-S02, #0132, 31 results by default and 5 with `-Case deadline`, 34 distinct between the two runs, the deadline's three running only with it: [Cases that run only when asked for](#cases-that-run-only-when-asked-for)): the stopped, stopping, pending and running boxes, the 20-minute rule, any other state, a launch time not of its form, the wait's messages printed once while they do not change, the poll, the patch question's answers (`patched`, `unknown`, an empty and an unexpected answer, a failed or timed-out check), the invocation's own poll and its 20-poll limit, and the 15-minute deadline with its exact message. **From v0.08, `up` on a host launched less than 20 minutes ago ends its wait at a `failed` patch answer** (P24.2), shown by `test-unmet-sync-patch-wait.ps1` (E0.08-T04-S01, #0182) | **Later, not blocking:** the deadline with Session Manager's agent never Online (the file waits its 15 minutes once, with `-Case deadline`, on a box whose patch check never finishes, and a second wait for another phase costs another 15 minutes), the question's own text ([What up waits for](operator.md#what-up-waits-for): no comma, bracket or equals sign, or a form that is not split), which a stand-in cannot tell from another text, and the exact 5-second and 1-second pauses, which the file checks loosely |
 | operator.md: The ProxyCommand | The argument refusals, the steps (`test-unmet-proxy-steps.ps1`) and what a caller sees | **Later, not blocking:** the console-mode repair ([Q17](operator.md#open-questions)) needs a Windows console, and the harness gives a program pipes |
 | keeper.md: Streams and environment (the holder and its launcher run in the user's logon environment, D35) | `conformance/keeper/test-holder-environment.ps1` | The holder's environment names show neither a sentinel set only for the keeper, nor `AGENTSPACE_STATE_DIR`, nor any `AGENTSPACE_*` name, with `SystemRoot` present as a control, and the holder's `USERPROFILE` is not the keeper's changed one (a yes or no marker, never the value). **Not shown:** the launcher's own environment (only the holder's is seen) and that the keeper itself held the sentinel (set before the start, not observable from outside; the check makes it a precondition) |
 | operator.md: The Bot credential (the token push) | `test-unmet-push.ps1` writes its fake credential as `bot.json`, with the hex that PowerShell's `ConvertFrom-SecureString` makes of a dummy token as `token_dpapi_hex` | **Later, not blocking:** making the blob with `CryptProtectData` directly, as [operator.md, The Bot credential](operator.md#the-bot-credential) describes a test's credential, would make the check independent of PowerShell's own DPAPI call. It changes how a fixture is made and shows nothing new |
-| keeper.md: The installed task, the launcher, stopping and starting | None | **Later, not blocking:** the task is the machine's Task Scheduler entry, which a throwaway home does not isolate, so a check would register a real task in the user's account. The installer's usage errors change nothing on the machine ([docs/keeper.md, The installer](keeper.md#the-installer); D37; B-51), so a check of them would register no task, but none is written yet: no conformance variable names the installer ([Naming the program under test](#naming-the-program-under-test)), and it runs only from the install folder (D37), so such a check needs a fifth variable and an install to point it at. The three installer cases were in `scripts/` as prototype code until E0.06-T06-S01 removed them |
+| keeper.md: The installed task, the launcher, stopping and starting | None. **From v0.08, the installed keeper restarted to load v0.08's build and logging `guard started pid=<pid>` is E0.08-T05-S01's (#0186) live check** ([v0.08's rows](#coverage-of-the-operator-and-the-keeper), below) | **Later, not blocking:** the task is the machine's Task Scheduler entry, which a throwaway home does not isolate, so a check would register a real task in the user's account. The installer's usage errors change nothing on the machine ([docs/keeper.md, The installer](keeper.md#the-installer); D37; B-51), so a check of them would register no task, but none is written yet: no conformance variable names the installer ([Naming the program under test](#naming-the-program-under-test)), and it runs only from the install folder (D37), so such a check needs a fifth variable and an install to point it at. The three installer cases were in `scripts/` as prototype code until E0.06-T06-S01 removed them |
 
 The numbers in "Checked by" are the results of each file, run against the prototype or against a
 stand-in of a conforming build, as [The operator and the token push](#the-operator-and-the-token-push)
@@ -1661,6 +1944,61 @@ check that shows it, never "Later".
 | keeper.md: a host per project (H1 to H18), each host's holder log and the registry's read failures | `test-unmet-hosts-pass.ps1` and `test-unmet-hosts-watch.ps1`, and the existing keeper files in their registry mode for H1 ([A host per project: the keeper's v0.07 cases](#a-host-per-project-the-keepers-v007-cases)) | The keeper holding the board on agentspace's own host: D53's check of the lease's alias, which includes it |
 | state.md: the host registry's and the project list's schemas | `test-state-schemas.ps1`, and every case that seeds or reads the two files | Nothing: no behavior of the two files needs a real host |
 | A desktop-app agent working a card on agentspace's host | No case: it needs Terry's sign-ins (D52) | D53's check of an agent working a card: E0.07-T06-S01 (#0160) |
+
+**v0.08's rows: host lifecycle and the cost guard** (E0.08-T04-S04, #0185; D62, D63). **RFC 2119
+keywords again.** Every behavior that v0.08 adds to operator.md, keeper.md, state.md, driver.md and
+`box/system`, or changes on them, is shown by a conformance case of T04, by a test of a crate or of
+`box/tests`, or by a live check; **no v0.08 behavior is left with neither, but for the gaps named in the rows for the idle check
+and for #0166 below** (D62, and
+[architect.md, Breaking an epic into stories](architect.md#breaking-an-epic-into-stories), step 5).
+A "Not shown by a case" cell therefore names the live check that shows it, never "Later", and a
+part that no test and no live check shows is named as a gap, with its reason. **No
+stand-in can show a host stopping, a real Run Command or a real session, and the suite has no fake
+clock**, so the grace's timing is a live check ([operator.md, Which checks show
+it](operator.md#which-checks-show-it)). **The results of T04's new files are in their pull requests** (#126 for E0.08-T04-S01's files, #127
+for S02's and #128 for S03's); **the record of this turn's whole-suite run,
+[docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md), covers the conformance files on `main` at
+`6e2fcbd`, the deadline case, the crates and the box tests**, and the table below gives no result.
+
+**D62's live checks, each with the story that makes it** (D63's turns; each runs on the box and on
+agentspace's host unless it says one):
+- **E0.08-T05-S01 (#0186), the install and the host-side checks:**
+  - **The alarm** deployed and read back, with `agentbox`'s change set holding only the alarm's
+    modification.
+  - **`sync` on both hosts:** the install starting this boot's patch run on agentspace's host with
+    this boot's marker removed by hand, and `sync` going on with no 15-minute wait (#0163); a
+    `systemctl kill` of a run under way, the patch check answering `failed`, and the next `sync`
+    starting the run again (P24); the install starting nothing when the marker exists; and
+    `ssh <alias> 'command -v rustc cargo codex claude gh'` finding every tool (#0166).
+  - **The laptop away** (agentspace's host only): the keeper stopped, a CPU-busy process left on the
+    host, and the host powering itself off past its horizon plus the grace.
+  - **The installed keeper** restarted to load the build, logging `guard started pid=<pid>`; the
+    horizon file as a real guard run writes it; and the laptop's AWS sign-in needing no new
+    permission for the guard.
+- **E0.08-T06-S01 (#0187), the box:** a release followed by the host `stopped` within D56's bound,
+  measured from `released_at`; an expiry, the same bound from `expires_at`; a quiet held lease
+  keeping its host past the grace; and a new lease's first connection starting the stopped host,
+  the time to a prompt recorded.
+- **E0.08-T06-S02 (#0188), agentspace's host:** the same four checks, and also an unexplained host
+  (a host started with `up -Host agentspace` and no lease, reported by `guard.log` and by
+  `status -All`, then stopped within the bound) and #0064 (a desktop-app session left open on a
+  lease, the lease released, no ssh client of that alias left on the laptop and no session of that
+  lease on the host 2 minutes later), with Terry's desktop-app session.
+
+| Area | Shown by a case | Not shown by a case, and the live check that shows it |
+|---|---|---|
+| operator.md: `guard`, which hosts a live lease explains, the stop, the unexplained line, `provision.lock`, the horizon it sends, `guard.lock`, the failures and every `guard.log` line (D56, D57) | `conformance/operator/test-unmet-guard.ps1`, with `host-guard-common.ps1`, through the AWS stand-in (E0.08-T04-S01, #0182) | A host `stopped` within D56's bound, a quiet held lease keeping its host, a new lease starting the stopped host: E0.08-T06-S01 and E0.08-T06-S02. An unexplained host reported and stopped: E0.08-T06-S02. The horizon file as a real guard run writes it, its comment in Session Manager's history, and the real AWS CLI accepting the `describe-instances` filter and the send's parameters: E0.08-T05-S01. A send to a host whose Session Manager agent is not yet online failing, and the next run's reaching it: recorded where it is seen, not required (D62) |
+| state.md: live leases, a lease's end and the horizon, as the guard and `status -All` read them | Every guard and `status` case seeds the lease state file, and `agentspace-state`'s own tests (E0.08-T02-S01, #0173) | Nothing: the functions read a file |
+| operator.md: `status -All`'s `Leases` and `Guard` lines (D60) | `conformance/operator/test-unmet-status-leases.ps1`; the 12-hour form at every hour is a crate test (E0.08-T03-S02), since a case cannot choose the hour of its run | `Leases    <n> live` matching the leases held before and after each lifecycle step: E0.08-T06-S01 and E0.08-T06-S02. The `Guard` line for an unexplained host: E0.08-T06-S02 |
+| operator.md: `grow`'s refusal of `-GiB 0` and a negative `<n>` (D61, #0164) | `conformance/operator/test-unmet-grow-zero.ps1`, beside `test-unmet-commands.ps1`'s two cases; the refusal with `USERPROFILE` unset is the operator crate's test, `grows_gib_refusal_is_a_usage_error_that_needs_neither` | Nothing: the refusal reaches no host |
+| operator.md: `sync`'s patch wait, and `up` not waiting on a failed patch run (D61: #0163; P13, P21, P24) | `conformance/operator/test-unmet-sync-patch-wait.ps1`; the patch check's command text by its builder's own test under bash with a stand-in `systemctl` first on `PATH` (E0.08-T03-S05, #0181) | The install starting the run, #0163 with no 15-minute wait, a `failed` unit with a start queued, the install starting nothing when the marker exists, and a patch reboot if the run asks for one: E0.08-T05-S01 |
+| operator.md: #0166, the tool folders on every session's `PATH` | No case: it is `box/system`'s install. E0.08-T01-S05's test covers the idle check alone, and `box/tests` holds no test of `install.sh`, so the edit's edges, which operator.md leaves to such a test where there is one, are a gap: nothing shows them but the live check | The `/etc/environment` `PATH` lines as operator.md gives them with its other lines kept, the `Installed:` line's `(added)` at the first `sync` and `(already there)` at the second, and `command -v` finding every tool on both hosts: E0.08-T05-S01 |
+| box/system: the idle check, D11's rule and D57's horizon | `box/tests/test_agentspace_idle.py`, through its three seams ([The idle check's test](#the-idle-checks-test)): a horizon that is missing, empty, a folder or not digits, D11's rule alone; the power-off past the horizon plus the grace with its exact line; a session or a patch run holding the host up; the grace read from the settings file, and an invalid one replaced by 15 with a warning; `date` unable to format giving `@<h>`; D11's lines and limits | The check with no seam set, the laptop away: E0.08-T05-S01. **Four parts of operator.md's idle-check row are gaps, each because no method of E0.08-T01-S05's test covers it and no live check does:** a horizon holding a CR; a horizon of 16 digits; D11's rule one second before the horizon plus the grace; and `HORIZON_GRACE_MINUTES` not set giving 15 (#0192) |
+| The alarm's 24 hours (D58) | The template's story, E0.08-T01-S04 (#0171), read live before its merge | Deployed and read back: E0.08-T05-S01 |
+| keeper.md: the keeper's start of the guard | `conformance/keeper/test-unmet-keeper-guard.ps1`, against a stand-in guard; three of the keeper's `<why>` texts are the keeper crate's own tests | The installed keeper starting the real guard: E0.08-T05-S01 |
+| driver.md, lease-api.md, state.md: `release` ending the lease's own connections and `release.log` (D59, #0064) | `conformance/lease-cli/test-unmet-release-ends-connections.ps1` (E0.08-T04-S02, #0183), R1 to R15 with stand-in clients, R15 only for a second client started within the release's run; the second walk and what no stand-in shows are the crates' own tests (E0.08-T03-S04, #0180; `agentspace-connections`) | The desktop app's own connections, and the host's end of an ended connection: E0.08-T06-S02 |
+| operator.md: #0167, the push at a start and the nested `The host is ready.` | `conformance/operator/test-unmet-push-nested.ps1` (E0.08-T04-S01, #0182) and the unit tests of `agentspace-push` and `agentspace-ssh-proxy` (E0.08-T02-S04, #0176) | Nothing: a stand-in `ssh` runs the ProxyCommand nested |
+| operator.md: `provision`'s step 10 line | A crate test of `agentspace-sync` (E0.08-T03-S05) and `test-unmet-host-provision.ps1`'s expected line, changed by that story, E0.08-T03-S05 (PR #123), and not by E0.08-T04-S01 | Nothing: the line is text |
 
 ## The remaining work
 
