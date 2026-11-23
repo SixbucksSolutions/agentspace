@@ -81,12 +81,19 @@ function Save-State {
   New-Item -ItemType Directory -Force (Split-Path $StateFile) | Out-Null
   $state | ConvertTo-Json -Compress | Set-Content -NoNewline $StateFile
 }
+# The laptop's clock time, h:mmam, in the zone the system has now. .NET caches the local zone for the
+# life of a process, so a reporter started before Terry's laptop changed zone would otherwise print
+# the old zone's times (found 2026-11-22, Pacific to Mountain); the cache MUST be cleared each time.
+function Get-ClockStamp {
+  [TimeZoneInfo]::ClearCachedData()
+  (Get-Date).ToString('h:mmtt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
+}
 function Get-Time($v) { if ($v -is [DateTime]) { $v.ToUniversalTime() } else { ([DateTimeOffset]::Parse("$v")).UtcDateTime } }
 while ($true) {
   $milestones = (Get-Content $Config -Raw | ConvertFrom-Json).milestones
   try { $cards = @(Get-Cards) }
   catch [System.IO.IOException] {
-    $stamp = (Get-Date).ToString('h:mmtt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
+    $stamp = Get-ClockStamp
     Write-Output "$stamp The board could not be read; no report this pass."
     if (-not $Watch) { exit 1 }
     Start-Sleep -Seconds 60
@@ -113,7 +120,7 @@ while ($true) {
     $changed = $st.lanes -ne $lanes
     if (-not ($age -ge 10 -or ($changed -and $age -ge 5))) { continue }
     $r = Send-Report $report
-    $stamp = (Get-Date).ToString('h:mmtt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
+    $stamp = Get-ClockStamp
     switch ($r.Code) {
       0 {
         if (-not $DryRun) { $st.at = $now.ToString('o'); $st.lanes = $lanes; Save-State }
