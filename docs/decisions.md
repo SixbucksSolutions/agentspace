@@ -108,6 +108,7 @@ line's text after `Status:`, without its full stop.
 - [D68. A resize is the provisioning run, given the instance type; the guard and the idle check meet it as they meet a provisioning run](#d68-a-resize-is-the-provisioning-run-given-the-instance-type-the-guard-and-the-idle-check-meet-it-as-they-meet-a-provisioning-run): Decided
 - [D69. D39 ends with v0.09: the architect picks a turn's size by Terry's per-agent rule, and asks for it through the lease](#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease): Decided
 - [D70. v0.09's done-when is shown by live checks on agentspace's host, with Terry's yes for their instance hours](#d70-v009s-done-when-is-shown-by-live-checks-on-agentspaces-host-with-terrys-yes-for-their-instance-hours): Decided
+- [D71. v0.09 is twelve stories in five turns: specs, foundations, programs, conformance, live](#d71-v009-is-twelve-stories-in-five-turns-specs-foundations-programs-conformance-live): Decided
 
 ## The interface
 
@@ -3740,6 +3741,9 @@ idle check (D57) meet a stop and start that no lease's end explains.
 - **Whether a resize on a `ready` host runs provision's later steps** (start, `sync`, `bootstrap`),
   each safe to repeat (D48), or only its deploy and start, is the spec turn's to rule after a probe
   of their times on a `ready` host.
+- **Changed when v0.09 was laid out (architect, 2026-11-23, D71):** `provision`'s command line is
+  unchanged, and the run finds its type itself at its deploy step, from the lease state file
+  through `resize_target`; and a resize runs provision's steps entire, with no probe first.
 
 ### D69. D39 ends with v0.09: the architect picks a turn's size by Terry's per-agent rule, and asks for it through the lease
 
@@ -3784,6 +3788,69 @@ idle check (D57) meet a stop and start that no lease's end explains.
   Every host is confirmed `stopped` at the close.
 - **conformance.md's coverage table is read for every "None" these change** (architect.md,
   Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+
+### D71. v0.09 is twelve stories in five turns: specs, foundations, programs, conformance, live
+
+**Decided, architect, 2026-11-23, when Terry had v0.09 (#0049) broken into stories:** "Lay out
+v0.09", with "Make sure to do a staffing plan and report max subagents per turn to me". It lays
+v0.09 out as D63 laid out v0.08, on the designs of D64 to D70, and the stories' cards carry the
+detail, each with its staffing plan (D31, D63: as many subagents as can be used effectively).
+
+**Two changes to D68, made here:**
+- **`provision`'s command line is unchanged; the run finds its own instance type.** At its deploy
+  step it reads the lease state file and passes `-InstanceType`'s value to the stack as
+  `resize_target` gives it (the pins below), or none when it gives none. The driver starts the run
+  as it does today, with no new argument, so a run started by `get` and one started by `create`
+  agree.
+- **A resize runs provision's steps entire**, as D48's run on a `ready` host already does, each
+  safe to repeat. The faster path D68 left to a probe is not designed until a live check shows that
+  the time matters; D70's checks record it.
+
+**The pinned names.** Every story uses these, and the specs written in T01 own their exact forms
+(lease-api.md for sizes and messages, driver.md for the EC2 driver's map and placing, state.md for
+the registry, operator.md for `deploy`, `provision` and the help texts):
+
+| Name | Pinned as |
+|---|---|
+| The sizes | `s`, `m`, `l`, `xl`, smallest first; the EC2 driver's `pub const SIZES: [&str; 4]` in `agentspace-driver-ec2` |
+| The map | `pub fn instance_type_for(size: &str) -> Option<&'static str>`, by D65's table; `None` for any other size |
+| Meeting a size | `pub fn meets(instance_type: &str, size: &str) -> bool`: true when the type is in the map at or after the size's place in `SIZES`. A type the map does not hold meets no size |
+| The resize target | `pub fn resize_target(leases: &[agentspace_state::Record], project: &str) -> Option<&'static str>`: the type of the largest size among the project's `pending` records whose size is in `SIZES`, or `None` |
+| The registry's type | `hosts.json`'s record member `instance_type`, a string, optional; `agentspace_hosts::Host.instance_type: Option<String>` |
+| Who writes it | Every `deploy` that names or implies a host, `provision`'s deploy step included, after `cloudformation deploy` succeeds, from `describe-stacks`' `InstanceType` parameter, under `hosts.lock` |
+| The box's sizing | `deploy -InstanceType <type>` is allowed for every host, the box (`-Host swimcoach`, or no `-Host`) included; `stack-parameters.json`'s `InstanceType` is not passed and not read |
+| Messages | `Size '<size>' is not supported; v0 supports sizes s, m, l and xl.`, and D66's `no_capacity` message, both byte for byte in lease-api.md and driver.md |
+| The unsupported size in conformance | `xxl`, and `XXL` where a case needs upper case, in place of every `l` and `xl` that a case used as a size no backend has |
+| Branches | `v0.09/e0.09-tnn-smm` (D29) |
+
+**The turns.** Stories in a turn run in parallel, each in its own worktree; a turn starts when every
+pull request of the turn before is merged (D16). T01 to T04 run on the laptop and start no
+instance; T05 starts agentspace's host. Every subagent runs on the laptop, so no host is sized for
+a turn (D69 applies to none of them). The peak is the turn's subagents at once, its dev lead not
+counted.
+
+| Turn | Stories | What | Peak | Budget |
+|---|---|---|---|---|
+| T01 | S01 to S03 | **The specs, and the conformance sweep.** lease-api.md and driver.md; state.md, operator.md, README and the registry's schema; every conformance case's unsupported size moved to `xxl`, passing against the installed programs | 8 | 3 h |
+| T02 | S01 to S03 | **The foundations.** `agentspace-hosts`' `instance_type`; `agentspace-driver-ec2`'s sizes, map, `meets`, `resize_target` and reasons; the operator's `-InstanceType` and both programs' help texts, with the conformance help copies | 7 | 2.5 h |
+| T03 | S01, S02 | **The programs.** The EC2 driver's place and `place_pending` by D66 and D68; `agentspace-sync`'s deploy and provision: the target, recording the type, and the box's sizing | 6 | 3 h |
+| T04 | S01 to S03 | **Conformance.** The lease CLI's cases; the operator's cases; the whole suite, the crates and the box tests against `main`'s build, with conformance.md | 7 | 3 h |
+| T05 | S01 | **The install and the live checks** on agentspace's host, D70's list | 2 | 3 h |
+
+**The release's budget is 14.5 hours**, the sum of its turns'. **Its instance hours are T05's
+alone, up to the 4 Terry said yes to (Q11).**
+
+**Why this shape:**
+- **The same order as v0.07's and v0.08's** (D55, D63): specs before code, libraries before
+  programs, the whole suite before any instance starts.
+- **The conformance sweep goes first, in T01.** About a dozen lease CLI cases use `l` or `xl` as a
+  size no backend has, to get an `unsatisfiable` lease with no CA and no host. v0.09 makes both
+  supported, so every one of them would fail on T03's build. Moved to `xxl` against today's
+  programs, they pass before and after, and no T03 story inherits a red suite.
+- **T02's libraries are pinned by the table above**, so its three stories need nothing from each
+  other, and T03's two need only T02's merged code.
+- **One live turn, on one host.** D70's checks are sequential on agentspace's host, and the box is
+  not resized live.
 
 ## Keys
 
