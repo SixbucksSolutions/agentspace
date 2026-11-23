@@ -3726,6 +3726,13 @@ for a different size while the host runs.
 - **A person resizing a host by hand MAY still use `deploy -Host <project> -InstanceType <type>`**,
   under a lease as D56 requires, and the deploy records the type, so the registry and the stack
   agree after either path.
+- **Changed for v0.09-T01 (architect, 2026-11-23, on the dev lead's pin P11):** a deploy that passes
+  `InstanceType` removes the record's `instance_type` under `hosts.lock` before `cloudformation
+  deploy` runs, and writes the type it reads back after success. A deploy whose client is killed
+  goes on running on AWS's side, so keeping the old type could leave one larger than the host, and
+  a lease placed `ready` on a host too small for it. A failed or killed deploy, or a failed read,
+  leaves no type, which costs one run. A program before v0.09 refuses a `hosts.json` holding the
+  member (pin P15), so a return to v0.08's programs needs it removed by hand.
 
 ### D68. A resize is the provisioning run, given the instance type; the guard and the idle check meet it as they meet a provisioning run
 
