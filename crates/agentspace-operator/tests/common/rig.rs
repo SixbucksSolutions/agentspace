@@ -137,15 +137,18 @@ pub fn dummy_token() -> String {
     text.chars().take(43).collect()
 }
 
-/// An ISO 8601 UTC time `seconds_ago` seconds before now, with an explicit offset, as EC2 prints it.
-pub fn iso_ago(seconds_ago: i64) -> String {
-    let now = std::time::SystemTime::now()
+/// The real clock's reading, in Unix seconds.
+pub fn now_unix() -> i64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let t = now - seconds_ago;
-    let days = t.div_euclid(86_400);
-    let rest = t.rem_euclid(86_400);
+        .unwrap_or(0)
+}
+
+/// The civil date and time of a Unix instant, in UTC: year, month, day, hour, minute, second.
+fn civil(unix: i64) -> (i64, i64, i64, i64, i64, i64) {
+    let days = unix.div_euclid(86_400);
+    let rest = unix.rem_euclid(86_400);
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -157,12 +160,87 @@ pub fn iso_ago(seconds_ago: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}+00:00",
-        rest / 3600,
-        rest % 3600 / 60,
-        rest % 60
-    )
+    (y, m, d, rest / 3600, rest % 3600 / 60, rest % 60)
+}
+
+/// An ISO 8601 UTC time at the Unix instant `unix`, with an explicit offset, as EC2 prints it.
+pub fn iso_at(unix: i64) -> String {
+    let (y, m, d, h, mi, s) = civil(unix);
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}+00:00")
+}
+
+/// A time in the lease contract's form, `YYYY-MM-DDTHH:MM:SSZ` (docs/state.md, The lease state file).
+pub fn iso_z(unix: i64) -> String {
+    let (y, m, d, h, mi, s) = civil(unix);
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+/// An ISO 8601 UTC time `seconds_ago` seconds before now, with an explicit offset, as EC2 prints it.
+pub fn iso_ago(seconds_ago: i64) -> String {
+    iso_at(now_unix() - seconds_ago)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The lease state file's records (docs/state.md, The lease state file)
+// ---------------------------------------------------------------------------------------------
+
+/// A lease's ID that no other text in a run holds: `5eedc0de` begins it, so a test can look for it.
+pub fn lease_id(n: u32) -> String {
+    format!("5eedc0de-0000-4000-8000-{n:012x}")
+}
+
+/// The alias a lease's `ssh` names; `feed` begins its last group, so a test can look for it.
+pub fn lease_alias(project: &str, n: u32) -> String {
+    format!("agentspace-{project}-feed{n:04x}")
+}
+
+/// One record of the lease state file, compact, as state.md writes it. `state` is the state as
+/// stored (`pending`, `ready`, `released` or `unsatisfiable`); `expires` and `released` are Unix
+/// seconds, written only where the stored state allows them.
+pub fn lease_rec(
+    n: u32,
+    project: &str,
+    state: &str,
+    expires: Option<i64>,
+    released: Option<i64>,
+) -> String {
+    let mut r = format!(
+        "{{\"id\":\"{}\",\"project\":\"{project}\",\"state\":\"{state}\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\"ttl_seconds\":3600,\"created_at\":\"{}\"",
+        lease_id(n),
+        iso_z(now_unix() - 86_400)
+    );
+    if let Some(t) = expires {
+        r.push_str(&format!(",\"expires_at\":\"{}\"", iso_z(t)));
+    }
+    if let Some(t) = released {
+        r.push_str(&format!(",\"released_at\":\"{}\"", iso_z(t)));
+    }
+    if state == "ready" {
+        r.push_str(&format!(
+            ",\"ssh\":{{\"host_alias\":\"{}\",\"user\":\"ubuntu\"}}",
+            lease_alias(project, n)
+        ));
+    }
+    if state == "unsatisfiable" {
+        r.push_str(",\"reasons\":[{\"code\":\"no_capacity\",\"message\":\"No capacity.\"}]");
+    }
+    r.push_str(",\"driver\":\"ec2\"}");
+    r
+}
+
+/// A live `ready` lease of `project`: it expires in an hour.
+pub fn ready_lease(n: u32, project: &str) -> String {
+    lease_rec(n, project, "ready", Some(now_unix() + 3600), None)
+}
+
+/// A `pending` lease of `project`, which is live.
+pub fn pending_lease(n: u32, project: &str) -> String {
+    lease_rec(n, project, "pending", None, None)
+}
+
+/// The lease state file's document: `{"version":0,"leases":[...]}` and one LF.
+pub fn leases_doc(records: &[String]) -> Vec<u8> {
+    format!("{{\"version\":0,\"leases\":[{}]}}\n", records.join(",")).into_bytes()
 }
 
 /// An old launch time: more than 20 minutes ago, so `up` does not wait.

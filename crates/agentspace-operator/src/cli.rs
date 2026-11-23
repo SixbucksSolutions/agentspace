@@ -22,11 +22,12 @@ pub enum Command {
     Down,
     Status,
     Grow,
+    Guard,
 }
 
 impl Command {
     /// Every command, in operator.md's order.
-    pub const ALL: [Command; 9] = [
+    pub const ALL: [Command; 10] = [
         Command::Deploy,
         Command::Up,
         Command::Sync,
@@ -36,6 +37,7 @@ impl Command {
         Command::Down,
         Command::Status,
         Command::Grow,
+        Command::Guard,
     ];
 
     /// The command's name as operator.md spells it: lowercase.
@@ -50,6 +52,7 @@ impl Command {
             Command::Down => "down",
             Command::Status => "status",
             Command::Grow => "grow",
+            Command::Guard => "guard",
         }
     }
 
@@ -84,6 +87,7 @@ pub fn help(level: HelpLevel) -> &'static str {
         HelpLevel::Command(Command::Down) => help_text::DOWN,
         HelpLevel::Command(Command::Status) => help_text::STATUS,
         HelpLevel::Command(Command::Grow) => help_text::GROW,
+        HelpLevel::Command(Command::Guard) => help_text::GUARD,
     }
 }
 
@@ -91,7 +95,7 @@ pub fn help(level: HelpLevel) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub command: Command,
-    /// `-GiB`, default 2. Only `grow` uses it.
+    /// `-GiB`, default 2. Only `grow` uses it, and for `grow` it is 1 or more.
     pub gib: i32,
     /// `-Alias`, default `agentspace`. Only `up` uses it.
     pub alias: String,
@@ -125,9 +129,8 @@ pub const DEFAULT_GIB: i32 = 2;
 pub const DEFAULT_ALIAS: &str = "agentspace";
 
 const COMMANDS_TEXT: &str =
-    "The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.";
+    "The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.";
 const ALIAS_APPLIES: &str = "agentspace: -Alias applies to up alone.";
-const HOST_WITH_CA: &str = "agentspace: -Host does not apply to ca.";
 const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alone.";
 const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
 const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
@@ -285,6 +288,7 @@ pub fn parse(args: &[String]) -> Parsed {
 
     let mut command: Option<Command> = None;
     let mut gib: Option<i32> = None;
+    let mut gib_text: Option<String> = None;
     let mut alias: Option<String> = None;
     let mut host: Option<String> = None;
     let mut instance_type: Option<String> = None;
@@ -324,7 +328,10 @@ pub fn parse(args: &[String]) -> Parsed {
                 i += 1;
                 match p {
                     Param::Gib => match parse_gib(value) {
-                        Some(n) => gib = Some(n),
+                        Some(n) => {
+                            gib = Some(n);
+                            gib_text = Some(value.clone());
+                        }
                         None => {
                             return Parsed::Failure(format!(
                                 "agentspace: -GiB MUST be a whole number, not '{}'.",
@@ -385,8 +392,11 @@ pub fn parse(args: &[String]) -> Parsed {
     }
 
     // The six host checks, in their order (D49, D55).
-    if host.is_some() && command == Command::Ca {
-        return Parsed::Failure(HOST_WITH_CA.to_string());
+    if host.is_some() && matches!(command, Command::Ca | Command::Guard) {
+        return Parsed::Failure(format!(
+            "agentspace: -Host does not apply to {}.",
+            command.name()
+        ));
     }
     if all && !matches!(command, Command::Status | Command::Down | Command::Sync) {
         return Parsed::Failure(ALL_APPLIES.to_string());
@@ -402,6 +412,19 @@ pub fn parse(args: &[String]) -> Parsed {
     }
     if instance_type.is_some() && host.as_deref().is_none_or(|h| h == BOX_PROJECT) {
         return Parsed::Failure(INSTANCE_TYPE_NEEDS_HOST.to_string());
+    }
+
+    // Then `grow`'s `-GiB` check (D61, #0164; operator.md, Command line): a value of 0 or less is a
+    // usage error, found after the host checks and before anything runs. Every other command
+    // checks the form alone.
+    if command == Command::Grow
+        && let Some((n, text)) = gib.as_ref().zip(gib_text.as_deref())
+        && *n < 1
+    {
+        return Parsed::Failure(format!(
+            "agentspace: -GiB MUST be 1 or more for grow, not '{}'.",
+            shown(text)
+        ));
     }
 
     Parsed::Run(Request {
@@ -437,7 +460,7 @@ mod tests {
         assert!(matches!(p(&["STATUS"]), Parsed::Run(r) if r.command == Command::Status));
         assert_eq!(
             fails(&["st"]),
-            "agentspace: Unknown command 'st'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
+            "agentspace: Unknown command 'st'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard."
         );
     }
 
@@ -445,7 +468,7 @@ mod tests {
     fn usage_errors_have_their_texts() {
         assert_eq!(
             fails(&[]),
-            "agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
+            "agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard."
         );
         assert_eq!(
             fails(&["up", "down"]),
@@ -477,7 +500,7 @@ mod tests {
             ALIAS_INVALID,
             "the value -Fx is the alias, and its leading dash is refused"
         );
-        assert!(matches!(p(&["grow", "-GiB", "-1"]), Parsed::Run(r) if r.gib == -1));
+        assert!(matches!(p(&["status", "-GiB", "-1"]), Parsed::Run(r) if r.gib == -1));
     }
 
     #[test]
@@ -492,7 +515,7 @@ mod tests {
             ("-0000000000000000000000002147483648", i32::MIN),
         ] {
             assert!(
-                matches!(p(&["grow", "-GiB", text]), Parsed::Run(r) if r.gib == n),
+                matches!(p(&["status", "-GiB", text]), Parsed::Run(r) if r.gib == n),
                 "{text}"
             );
         }
@@ -536,7 +559,7 @@ mod tests {
         );
         assert_eq!(
             fails(&["foo", "-GiB", "abc"]),
-            "agentspace: Unknown command 'foo'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
+            "agentspace: Unknown command 'foo'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard."
         );
         assert_eq!(
             fails(&["-GiB", "abc"]),
@@ -856,6 +879,76 @@ mod tests {
         for (block, level) in blocks.iter().zip(levels) {
             assert_eq!(help(level), block, "{level:?}");
         }
+    }
+
+    #[test]
+    fn guard_is_a_command_and_takes_no_host_or_all() {
+        assert_eq!(run(&["GUARD", "-quiet"]).command, Command::Guard);
+        assert!(run(&["guard", "-Quiet"]).quiet);
+        assert_eq!(
+            fails(&["guard", "-Host", "y"]),
+            "agentspace: -Host does not apply to guard."
+        );
+        // Check 1 comes before check 3.
+        assert_eq!(
+            fails(&["guard", "-Host", "x", "-All"]),
+            "agentspace: -Host does not apply to guard."
+        );
+        assert_eq!(
+            fails(&["guard", "-All"]),
+            "agentspace: -All applies to status, down and sync alone."
+        );
+        assert_eq!(
+            fails(&["guard", "-Alias", "x"]),
+            "agentspace: -Alias applies to up alone."
+        );
+        assert_eq!(
+            fails(&["guard", "-InstanceType", "m9g.xlarge"]),
+            "agentspace: -InstanceType applies to deploy alone."
+        );
+        // `guard` ignores the value of -GiB, and checks its form alone.
+        assert_eq!(run(&["guard", "-GiB", "0"]).gib, 0);
+        assert!(fails(&["guard", "-GiB", "abc"]).starts_with("agentspace: -GiB MUST be a whole"));
+        assert_eq!(
+            p(&["guard", "-h"]),
+            Parsed::Help(HelpLevel::Command(Command::Guard))
+        );
+    }
+
+    #[test]
+    fn grow_refuses_a_gib_of_0_or_less_after_the_host_checks() {
+        for text in ["0", "-1", "+0", "-0", "-2147483648", "000"] {
+            assert_eq!(
+                fails(&["grow", "-GiB", text]),
+                format!("agentspace: -GiB MUST be 1 or more for grow, not '{text}'."),
+                "{text}"
+            );
+        }
+        assert_eq!(run(&["grow", "-GiB", "1"]).gib, 1);
+        assert_eq!(run(&["grow", "-GiB", "+7"]).gib, 7);
+        assert_eq!(run(&["grow"]).gib, DEFAULT_GIB);
+        // Every other command ignores the value.
+        assert_eq!(run(&["status", "-GiB", "0"]).gib, 0);
+        assert_eq!(run(&["down", "-GiB", "-3"]).gib, -3);
+        // The form is checked first, and the host checks come before the value check.
+        assert!(fails(&["grow", "-GiB", "abc"]).starts_with("agentspace: -GiB MUST be a whole"));
+        assert_eq!(
+            fails(&["grow", "-All", "-GiB", "0"]),
+            "agentspace: -All applies to status, down and sync alone."
+        );
+        assert_eq!(
+            fails(&["grow", "-Alias", "x", "-GiB", "0"]),
+            "agentspace: -Alias applies to up alone."
+        );
+        assert_eq!(
+            fails(&["grow", "-InstanceType", "m9g.xlarge", "-GiB", "0"]),
+            "agentspace: -InstanceType applies to deploy alone."
+        );
+        // Before the host registry is read, so a host that does not exist is not reached.
+        assert_eq!(
+            fails(&["grow", "-Host", "nobody", "-GiB", "0"]),
+            "agentspace: -GiB MUST be 1 or more for grow, not '0'."
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@
 //! reaches beyond those (the token push, `ca`, a host's key, certificate and alias, `sync`,
 //! `deploy`, `bootstrap` and `provision`) is [`Reach`].
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use agentspace_box::{Clock, InstanceIdCache};
@@ -20,6 +21,7 @@ use agentspace_operator_api::{
 use serde_json::Value;
 
 use crate::cache::{HostCache, read_registry};
+use crate::status::{self, LeaseView};
 use crate::{Command, DEFAULT_ALIAS, Request};
 
 /// Where `status`'s report goes: stderr, whatever `-Quiet` says (operator.md, status). The pinned
@@ -104,6 +106,35 @@ pub trait Reach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure>;
+    /// The state folder whose `leases.json` `status -All` reads: `AGENTSPACE_STATE_DIR` when it is
+    /// set and not empty, made full, else `<home>\.agentspace` (operator.md, Environment
+    /// variables). The default is the home's, for a stand-in that moves nothing.
+    fn lease_state_dir(&self, ctx: &Context) -> PathBuf {
+        ctx.home.join(".agentspace")
+    }
+    /// The text `status -All`'s `Guard` line gives the stop time at the instant `unix`:
+    /// `<h:mm><am|pm>`, rounded up to the next whole minute, in the zone the system is set to when
+    /// the line is printed, with that instant's daylight saving rule applied; `AGENTSPACE_TIMEZONE`
+    /// does not change it (operator.md, status -All). The default is
+    /// [`agentspace_zone::local_clock_time_or_utc`], the one formatter of the guard's stop time
+    /// (D63) with the one fallback: for a system that gives no offset for the instant it is
+    /// `<h:mm><am|pm> UTC`, so it is never read as the laptop's own time. The operator never
+    /// converts a time itself and keeps no fallback of its own, so a test that needs a fixed zone
+    /// overrides this with a stand-in that yields the text.
+    fn clock_time(&self, unix: i64) -> String {
+        agentspace_zone::local_clock_time_or_utc(unix)
+    }
+    /// `guard`'s run (operator.md, guard; D56, D63), which the dispatch calls with the state
+    /// folder [`Reach::lease_state_dir`] gives and the clock's reading to the whole second. The
+    /// default is the real run, [`agentspace_guard::run`]; a test overrides it with a stand-in.
+    fn guard(
+        &self,
+        input: &agentspace_guard::Input,
+        say: &dyn Say,
+        aws: &dyn Aws,
+    ) -> Result<agentspace_guard::Report, Failure> {
+        agentspace_guard::run(input, say, aws)
+    }
 }
 
 /// Everything a command works against.
@@ -184,13 +215,48 @@ fn resolve(hosts: &Hosts, project: Option<&str>) -> Result<HostRef, Failure> {
         })
 }
 
+/// How a command that did not fail with a message ended: the program's exit code, 0 or 1, is
+/// [`Outcome::exit_code`]. A failure with a message is the `Err` of [`dispatch`], which the caller
+/// prints and exits 1 for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// The command succeeded: exit 0.
+    Done,
+    /// The command failed and has already said why, through its own lines, so nothing more is
+    /// printed: exit 1. `guard` ends so when a log line was dropped and no host failed (operator.md,
+    /// guard, Its log).
+    FailedAfterSaying,
+}
+
+impl Outcome {
+    /// The program's exit code: 0 for [`Outcome::Done`], 1 for [`Outcome::FailedAfterSaying`].
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Outcome::Done => 0,
+            Outcome::FailedAfterSaying => 1,
+        }
+    }
+}
+
 /// Runs a parsed command.
+///
+/// `guard` is its own: it acts on every host in one run, reads the registry itself, and may end in
+/// [`Outcome::FailedAfterSaying`] (operator.md, guard). Every other command ends in
+/// [`Outcome::Done`] or a [`Failure`].
+pub fn dispatch(request: &Request, parts: &Parts) -> Result<Outcome, Failure> {
+    if request.command == Command::Guard {
+        return crate::guard::guard(parts);
+    }
+    dispatch_command(request, parts).map(|()| Outcome::Done)
+}
+
+/// Runs a parsed command that is not `guard`.
 ///
 /// `ca`, `provision` and `sync -All` read no record here: `ca` takes no host, `provision` finds its
 /// own (operator.md, provision, step 1), and `sync -All` reads the registry itself. Every other
 /// command finds its host's record, or every record for `-All`, before it starts any program or
 /// makes any AWS call.
-pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
+fn dispatch_command(request: &Request, parts: &Parts) -> Result<(), Failure> {
     match request.command {
         Command::Ca => return parts.reach.ca(parts.ctx, parts.ca_env, parts.say),
         Command::Provision => {
@@ -255,7 +321,7 @@ pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
             parts.aws,
             parts.remote,
         ),
-        Command::Ca | Command::Provision => Ok(()),
+        Command::Ca | Command::Provision | Command::Guard => Ok(()),
     }
 }
 
@@ -270,6 +336,13 @@ pub fn dispatch(request: &Request, parts: &Parts) -> Result<(), Failure> {
 /// command at once, since every later host's AWS call would fail the same way.
 fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure> {
     let mut failed = 0usize;
+    // `status -All` reads the lease state file once, before the first host's part, and takes the
+    // report's time as it reads it (operator.md, status -All). A file it cannot read leaves out
+    // every host's `Leases` and `Guard` lines and is said once, after the last host.
+    let lease_dir = parts.reach.lease_state_dir(parts.ctx);
+    let leases: Option<Result<LeaseView, String>> = matches!(command, Command::Status)
+        .then(|| status::read_leases(&lease_dir, status::unix_seconds(parts.clock.utc_now())));
+    let view = leases.as_ref().and_then(|read| read.as_ref().ok());
     for host in hosts {
         parts.report.report(&format!(
             "Host      {} ({}), {}",
@@ -281,9 +354,12 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
             Command::Status => {
                 if host.instance_id.is_none() && host.state != HostState::Ready {
                     parts.report.report("Instance  none recorded");
+                    if let Some(view) = view {
+                        parts.report.report(&view.leases_line(&host.project));
+                    }
                     Ok(())
                 } else {
-                    report_status(parts, host)
+                    report_status(parts, host, view)
                 }
             }
             // The command line gives `-All` to `status`, `down` and `sync` alone, and `sync -All`
@@ -308,6 +384,13 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
             parts.report.failure(&failure);
             failed += 1;
         }
+    }
+    if let Some(Err(reason)) = &leases {
+        // Part of `status`'s report: on the stream the host lines go to, whatever `-Quiet` says,
+        // and never a host's failure, so neither counted nor a change of the exit code (P25, P27).
+        parts
+            .report
+            .report(&status::unreadable_message(&lease_dir, reason));
     }
     if failed > 0 {
         return Err(Failure {
@@ -424,6 +507,10 @@ const INSTANCE_TYPE: Member = Member {
     pointer: "/Reservations/0/Instances/0/InstanceType",
     path: "Reservations[0].Instances[0].InstanceType",
 };
+const LAUNCH_TIME: Member = Member {
+    pointer: "/Reservations/0/Instances/0/LaunchTime",
+    path: "Reservations[0].Instances[0].LaunchTime",
+};
 const ROOT_DEVICE_NAME: Member = Member {
     pointer: "/Reservations/0/Instances/0/RootDeviceName",
     path: "Reservations[0].Instances[0].RootDeviceName",
@@ -476,6 +563,9 @@ struct Described {
     state: String,
     instance_type: Option<String>,
     volume_id: String,
+    /// The `LaunchTime` text, as the answer holds it: read by `status -All` for a host that gets a
+    /// `Guard` line, and by no other command line (operator.md, status -All).
+    launch_time: Option<String>,
 }
 
 /// One `ec2 describe-instances --instance-ids <id>` (JSON). The state, the root device's name and
@@ -507,10 +597,15 @@ fn describe_instance(aws: &dyn Aws, id: &str, with_type: bool) -> Result<Describ
         .and_then(Value::as_str)
         .ok_or_else(|| unexpected(DESCRIBE_INSTANCES, ROOT_VOLUME_ID))?
         .to_string();
+    let launch_time = answer
+        .pointer(LAUNCH_TIME.pointer)
+        .and_then(Value::as_str)
+        .map(str::to_string);
     Ok(Described {
         state,
         instance_type,
         volume_id,
+        launch_time,
     })
 }
 
@@ -553,13 +648,18 @@ fn ssm_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 /// is not the box it then writes the host's alias and signs a fresh one-hour certificate**, and a
 /// failure there fails `status` after its report.
 pub fn status(parts: &Parts, host: &HostRef) -> Result<(), Failure> {
-    report_status(parts, host)?;
+    // No lease state file is read, and no `LaunchTime`: the five lines alone, as before v0.07.
+    report_status(parts, host, None)?;
     sign(parts, host)
 }
 
-/// The five lines alone, printed only once every call they need has succeeded. `status -All` runs
-/// it for each host, and signs nothing.
-fn report_status(parts: &Parts, host: &HostRef) -> Result<(), Failure> {
+/// The five lines, printed only once every call they need has succeeded, and, for `status -All`
+/// when its lease state file was read (`leases`), the `Leases` line and the `Guard` line after
+/// them (`status::LeaseView::lines`). `status -All` runs it for each host, and signs nothing.
+///
+/// A running host that no live lease explains needs its `LaunchTime`, from the same answer: one
+/// that is missing, or not of its form, fails the host's part before its five lines.
+fn report_status(parts: &Parts, host: &HostRef, leases: Option<&LeaseView>) -> Result<(), Failure> {
     let id = instance_id(parts, host)?;
     let instance = describe_instance(parts.aws, &id, true)?;
     let size = volume_size(parts.aws, &instance.volume_id)?;
@@ -572,6 +672,18 @@ fn report_status(parts: &Parts, host: &HostRef) -> Result<(), Failure> {
     } else {
         "-"
     };
+    // The `LaunchTime` is read only for a host that gets a `Guard` line, and fails its part before
+    // any line prints (operator.md, status -All).
+    let launch_time = match leases {
+        Some(view) if view.needs_launch_time(&host.project, &instance.state) => Some(
+            instance
+                .launch_time
+                .as_deref()
+                .and_then(status::parse_launch_time)
+                .ok_or_else(|| unexpected(DESCRIBE_INSTANCES, LAUNCH_TIME))?,
+        ),
+        _ => None,
+    };
     let instance_type = instance.instance_type.unwrap_or_default();
     // `gp3` is a constant (operator.md, status; Q16).
     for line in [
@@ -582,6 +694,13 @@ fn report_status(parts: &Parts, host: &HostRef) -> Result<(), Failure> {
         format!("SSM       {ssm}"),
     ] {
         parts.report.report(&line);
+    }
+    if let Some(view) = leases {
+        for line in view.lines(&host.project, &instance.state, launch_time, &|unix| {
+            parts.reach.clock_time(unix)
+        }) {
+            parts.report.report(&line);
+        }
     }
     Ok(())
 }

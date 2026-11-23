@@ -686,8 +686,8 @@ try {
         Exit = 0; Stderr = (Join-Lines @((& $growMsg1 -From 31 -To 33), $boot)); Calls = (& $growCalls -To 33) } -Setup { Set-Healthy -State 'stopped' -Size 31 }
       Test-Case "${s}: -GiB +3 is a decimal integer with a plus sign, and adds 3" @('grow', '-GiB', '+3') @{
         Exit = 0; Stderr = (Join-Lines @((& $growMsg1 -To 23), $boot)); Calls = (& $growCalls -To 23) } -Setup { Set-Healthy -State 'stopped' }
-      Test-Case "${s}: -GiB -1 gives -GiB the value -1, and the operator asks EC2 for 19 GiB" @('grow', '-GiB', '-1') @{
-        Exit = 0; Stderr = (Join-Lines @((& $growMsg1 -To 19), $boot)); Calls = (& $growCalls -To 19) } -Setup { Set-Healthy -State 'stopped' }
+      Test-Case "${s}: -GiB -1 gives -GiB the value -1, which grow refuses as less than 1 (D61), with no AWS call" @('grow', '-GiB', '-1') @{
+        Exit = 1; Stderr = "agentspace: -GiB MUST be 1 or more for grow, not '-1'.`n"; Calls = @() }
       Test-Case "${s}: the parameter names are matched without regard to case (-gib, -QUIET)" @('grow', '-gib', '4', '-QUIET') @{
         Exit = 0; Stderr = ''; Calls = (& $growCalls -To 24) } -Setup { Set-Healthy -State 'stopped' }
       Test-Case "${s}: -Quiet prints no progress message on a stopped box, and still changes the volume" @('grow', '-Quiet') @{
@@ -758,11 +758,8 @@ try {
         Set-Healthy
         Set-Answer 'ec2-modify-volume' -Err 'An error occurred (VolumeModificationRateExceeded) when calling the ModifyVolume operation: You''ve reached the maximum modification rate per volume limit.' -Code 254
       }
-      Test-Case "${s}: -GiB 0 is passed on to EC2 as the same size, and the CLI's refusal ends grow with no ssh" @('grow', '-GiB', '0') @{
-        Exit = 1; Stderr = (Join-Lines @((& $growMsg1 -To 20), 'agentspace: An error occurred (InvalidParameterValue) when calling the ModifyVolume operation: New size cannot be smaller than existing size.')); Calls = (& $growCalls -To 20); SshCalls = 0 } -Setup {
-        Set-Healthy
-        Set-Answer 'ec2-modify-volume' -Err 'An error occurred (InvalidParameterValue) when calling the ModifyVolume operation: New size cannot be smaller than existing size.' -Code 254
-      }
+      Test-Case "${s}: -GiB 0 is refused by grow as less than 1 (D61), with no AWS call and no ssh" @('grow', '-GiB', '0') @{
+        Exit = 1; Stderr = "agentspace: -GiB MUST be 1 or more for grow, not '0'.`n"; Calls = @(); SshCalls = 0 }
       Test-Case "${s}: the answer of ec2 modify-volume is not read beyond its exit code" @('grow') @{
         Exit = 0; Stderr = (Join-Lines @((& $growMsg1), $boot)); Calls = (& $growCalls) } -Setup {
         Set-Healthy -State 'stopped'

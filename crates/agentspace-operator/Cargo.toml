@@ -29,6 +29,10 @@ agentspace-values = { path = "../agentspace-values" }
 # reaches a host).
 agentspace-credential = { path = "../agentspace-credential" }
 agentspace-alias = { path = "../agentspace-alias" }
+# The one formatter of the guard's stop time, for status -All's Guard line (operator.md, status; D63; E0.08-T03-S02).
+agentspace-zone = { path = "../agentspace-zone" }
+# The guard's run, which `guard` calls (operator.md, guard; D56, D63; E0.08-T03-S02).
+agentspace-guard = { path = "../agentspace-guard" }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 
 [dev-dependencies]

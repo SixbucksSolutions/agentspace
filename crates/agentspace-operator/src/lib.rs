@@ -7,7 +7,7 @@
 //! - [`parse`] reads a command line into [`Parsed`]: help ([`HelpLevel`]), a [`Request`] to run,
 //!   or the whole `agentspace: ` line of a usage error or an `-Alias` refusal.
 //! - [`help`] gives the help text of a [`HelpLevel`], byte for byte as operator.md gives it.
-//! - [`Command`] names the nine commands; [`Command::name`] is operator.md's spelling.
+//! - [`Command`] names the ten commands; [`Command::name`] is operator.md's spelling.
 //! - [`Printer`] implements the pinned [`Say`] for a person's command and for caller mode, to any
 //!   writer, and prints a [`Failure`] with [`Printer::failure`].
 //! - [`context_from`] builds the pinned [`Context`] from an injectable variable lookup, or fails
@@ -18,7 +18,8 @@
 //!   such a lookup.
 //! - [`run`] is the program: it parses, checks the home and the system folder, prints and
 //!   dispatches, and returns the exit code, 0 or 1.
-//! - [`dispatch`] is where a parsed command runs, over [`Parts`]: the pinned [`Aws`], [`Remote`]
+//! - [`dispatch`] is where a parsed command runs and gives an [`Outcome`] or a [`Failure`], over
+//!   [`Parts`]: the pinned [`Aws`], [`Remote`]
 //!   and [`Say`], a [`Clock`], a [`Report`] for `status`'s lines and a [`Reach`] for the token
 //!   push, `ca`, a host's key, certificate and alias, `sync`, `deploy`, `bootstrap` and
 //!   `provision`. The instance ID is the host registry's ([`HostCache`]). [`up`],
@@ -37,9 +38,11 @@ mod access;
 mod cache;
 mod cli;
 mod commands;
+mod guard;
 mod help_text;
 mod reach;
 mod say;
+mod status;
 #[cfg(test)]
 mod testing;
 
@@ -56,7 +59,8 @@ pub use agentspace_operator_api::{
 pub use agentspace_sync::Target;
 pub use cache::HostCache;
 pub use cli::{Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, Parsed, Request, help, parse};
-pub use commands::{HostRef, Parts, Reach, Report, dispatch, down, grow, status, up};
+pub use commands::{HostRef, Outcome, Parts, Reach, Report, dispatch, down, grow, status, up};
+pub use guard::{GuardRun, GuardSay, guard, guard_with};
 pub use reach::{Env, SystemReach};
 pub use say::{COULD_NOT_REACH, NOT_AVAILABLE, NOT_READY, Printer, caller_warning};
 
@@ -178,7 +182,7 @@ pub fn run(
                 )
             });
             match result {
-                Ok(()) => 0,
+                Ok(outcome) => outcome.exit_code(),
                 Err(failure) => {
                     say.failure(&failure);
                     1

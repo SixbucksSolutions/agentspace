@@ -106,7 +106,9 @@ fn the_check_applies_with_any_parameter_and_any_case() {
     for line in [
         "status -Quiet",
         "grow -GiB 4",
-        "grow -GiB -3",
+        "status -GiB -3",
+        "guard -GiB -3",
+        "guard -Quiet",
         "up -Alias devbox",
         "up -Alias devbox -Quiet",
         "DEPLOY",
@@ -115,6 +117,24 @@ fn the_check_applies_with_any_parameter_and_any_case() {
         assert_failure_run(line, &r, USERPROFILE_UNSET);
         let r = run_without(&words(line), None, Some(Gone::Unset));
         assert_failure_run(line, &r, SYSTEMROOT_UNSET);
+    }
+}
+
+#[test]
+fn grows_gib_refusal_is_a_usage_error_that_needs_neither() {
+    // operator.md, Command line: `grow`'s `-GiB` check comes before the home and the system
+    // folder, as every usage error does, so `grow -GiB 0` gives the refusal when either is lost.
+    for how in BOTH {
+        for (profile, system_root) in losses(how) {
+            for given in ["0", "-1", "+0"] {
+                let r = run_without(&["grow", "-GiB", given], profile, system_root);
+                assert_failure_run(
+                    &format!("grow -GiB {given}, {profile:?} {system_root:?}"),
+                    &r,
+                    &gib_not_positive(given),
+                );
+            }
+        }
     }
 }
 

@@ -171,9 +171,9 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
   Test-Usage "${a}: a bad -Host comes before a later unknown parameter" @('status', '-Host', 'bad!', '-Foo') (& $hostMsg 'bad!')
   Test-Usage "${a}: an unknown parameter before a bad -Host is reported first" @('status', '-Foo', '-Host', 'bad!') "agentspace: Unknown parameter '-Foo'."
   Test-Usage "${a}: a second positional argument is found before the host checks: ca -Host x extra" @('ca', '-Host', 'x', 'extra') "agentspace: Unexpected argument 'extra'."
-  Test-Usage "${a}: a missing command is found only once the whole line is read: -Host x" @('-Host', 'x') 'agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.'
-  Test-Usage "${a}: a missing command is found only once the whole line is read: -All" @('-All') 'agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow.'
-  Test-Usage "${a}: an unknown command is reported, whatever host parameters follow: bogus -Host x -All" @('bogus', '-Host', 'x', '-All') "agentspace: Unknown command 'bogus'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status and grow."
+  Test-Usage "${a}: a missing command is found only once the whole line is read: -Host x" @('-Host', 'x') 'agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.'
+  Test-Usage "${a}: a missing command is found only once the whole line is read: -All" @('-All') 'agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.'
+  Test-Usage "${a}: an unknown command is reported, whatever host parameters follow: bogus -Host x -All" @('bogus', '-Host', 'x', '-All') "agentspace: Unknown command 'bogus'. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard."
   Test-Usage "${a}: -Quiet does not hide a host check's failure: status -Host x -All -Quiet" @('status', '-Host', 'x', '-All', '-Quiet') $m3
 
   # ---- The checks read no file and start nothing: a registry that is not valid, a missing stack

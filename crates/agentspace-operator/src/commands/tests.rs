@@ -125,7 +125,7 @@ impl Rig {
     }
 
     fn run(&self, request: &Request) -> Result<(), Failure> {
-        dispatch(
+        done(dispatch(
             request,
             &Parts {
                 ctx: &self.ctx,
@@ -137,8 +137,14 @@ impl Rig {
                 clock: &self.clock,
                 reach: &self.reach,
             },
-        )
+        ))
     }
+}
+
+/// A command that is not `guard` ends in `Done` or a failure; `guard`'s outcomes are tested in
+/// guard.rs and tests/guard_dispatch.rs.
+fn done(result: Result<Outcome, Failure>) -> Result<(), Failure> {
+    result.map(|outcome| assert_eq!(outcome, Outcome::Done))
 }
 
 fn request(command: Command) -> Request {
@@ -1171,11 +1177,21 @@ fn status_all_reports_every_host_in_the_files_order_and_signs_nothing() {
     );
     assert_eq!(lines[7], format!("Instance  {OTHER_ID}"));
     assert_eq!(
-        lines[12..],
+        lines[12..14],
         [
             "Host      newproject (agentspace-host-newproject), creating",
             "Instance  none recorded"
         ]
+    );
+    // The home holds no lease state file: no host gets a `Leases` line, and the report says so
+    // once, after the last host, whatever `-Quiet` says (operator.md, status -All).
+    let leases_file = home.ctx().home.join(".agentspace").join("leases.json");
+    assert_eq!(
+        lines[14..],
+        [format!(
+            "agentspace: The lease state file {} cannot be read: the file does not exist.",
+            leases_file.display()
+        )]
     );
     assert!(rig.reach.calls().is_empty(), "status -All signs nothing");
     assert_eq!(rig.aws.calls().len(), 4, "No call for the skipped host");
@@ -1287,4 +1303,628 @@ fn sync_all_is_dispatched_before_the_operator_reads_the_registry() {
     let rig = Rig::new(&home, false, false, vec![]);
     rig.run(&all_request(Command::Sync)).unwrap();
     assert_eq!(rig.reach.calls(), vec!["sync-all"]);
+}
+
+// ---- status -All's lease lines, in process, in a zone the test chooses ----
+//
+// `Reach::clock_time` is the seam for the stop time's text (operator.md, status -All: the time is in
+// the laptop's local time, read from the system when the line is printed). A test's `Reach` gives
+// the text in any zone it likes, made by `agentspace_zone::clock_time_at` (the one formatter, which
+// rounds up to the next whole minute), so the cases below fix the zone, and read the real clock
+// only for the times they set relative to it. The cases that read the real system's zone are in
+// `tests/status_leases.rs`.
+
+/// A [`Reach`] that is a [`FakeReach`], but for the stop time's text in the zone it is given.
+struct Zoned {
+    inner: FakeReach,
+    offset: fn(i64) -> i32,
+}
+
+impl Reach for Zoned {
+    fn clock_time(&self, unix: i64) -> String {
+        agentspace_zone::clock_time_at(unix, (self.offset)(unix))
+    }
+    fn push(&self, ctx: &Context, say: &dyn Say, id: &str, alias: &str, host: Option<&str>) {
+        self.inner.push(ctx, say, id, alias, host);
+    }
+    fn ca(&self, ctx: &Context, env: &CaEnv, say: &dyn Say) -> Result<(), Failure> {
+        self.inner.ca(ctx, env, say)
+    }
+    fn access(&self, ctx: &Context, env: &CaEnv, project: &str) -> Result<(), Failure> {
+        self.inner.access(ctx, env, project)
+    }
+    fn sync(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        target: Target<'_>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.inner.sync(ctx, env, target, say, aws, remote)
+    }
+    fn sync_all(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.inner.sync_all(ctx, env, say, aws, remote)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn deploy(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        target: Target<'_>,
+        instance_type: Option<&str>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.inner
+            .deploy(ctx, env, target, instance_type, say, aws, remote)
+    }
+    fn bootstrap(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        target: Target<'_>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.inner.bootstrap(ctx, env, target, say, aws, remote)
+    }
+    fn provision(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        project: &str,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        self.inner.provision(ctx, env, project, say, aws, remote)
+    }
+}
+
+fn zoned(offset: fn(i64) -> i32) -> Zoned {
+    Zoned {
+        inner: FakeReach::default(),
+        offset,
+    }
+}
+
+fn utc(_: i64) -> i32 {
+    0
+}
+fn minus_five_hours(_: i64) -> i32 {
+    -5 * 3600
+}
+fn plus_five_thirty(_: i64) -> i32 {
+    5 * 3600 + 1800
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+/// The civil date and time of a Unix instant in UTC (Howard Hinnant's algorithm), written as EC2
+/// writes a launch time (`+00:00`) or as the lease state file's contract does (`Z`).
+fn civil_time(unix: i64, zulu: bool) -> String {
+    let days = unix.div_euclid(86_400);
+    let rest = unix.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}{}",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60,
+        if zulu { "Z" } else { "+00:00" }
+    )
+}
+
+fn ceil_minute(unix: i64) -> i64 {
+    (unix + 59).div_euclid(60) * 60
+}
+
+fn instance_launched(state: &str, launch: i64) -> Value {
+    let mut v = instance(state);
+    v["Reservations"][0]["Instances"][0]["LaunchTime"] = json!(civil_time(launch, false));
+    v
+}
+
+fn lease(
+    id: u32,
+    project: &str,
+    state: &str,
+    expires: Option<i64>,
+    released: Option<i64>,
+) -> Value {
+    let mut r = json!({
+        "id": format!("5eedc0de-0000-4000-8000-{id:012x}"),
+        "project": project,
+        "state": state,
+        "platform": "linux/arm64",
+        "profile": "agent-linux",
+        "size": "m",
+        "ttl_seconds": 3600,
+        "created_at": civil_time(now_unix() - 86_400, true),
+        "driver": "ec2",
+    });
+    if let Some(t) = expires {
+        r["expires_at"] = json!(civil_time(t, true));
+    }
+    if let Some(t) = released {
+        r["released_at"] = json!(civil_time(t, true));
+    }
+    if state == "ready" {
+        r["ssh"] = json!({
+            "host_alias": format!("agentspace-{project}-feed{id:04x}"),
+            "user": "ubuntu"
+        });
+    }
+    if state == "unsatisfiable" {
+        r["reasons"] = json!([{"code": "no_capacity", "message": "No capacity."}]);
+    }
+    r
+}
+
+fn leases_file(home: &TempHome) -> std::path::PathBuf {
+    home.ctx().home.join(".agentspace").join("leases.json")
+}
+
+fn write_leases(home: &TempHome, records: Vec<Value>) {
+    let path = leases_file(home);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let doc = json!({"version": 0, "leases": records});
+    std::fs::write(path, format!("{doc}\n")).unwrap();
+}
+
+impl Rig {
+    /// `run`, with the `Reach` (and so the zone) a test chooses.
+    fn run_in(&self, request: &Request, reach: &dyn Reach) -> Result<(), Failure> {
+        done(dispatch(
+            request,
+            &Parts {
+                ctx: &self.ctx,
+                ca_env: &self.ca_env,
+                say: &self.say,
+                report: &self.say,
+                aws: &self.aws,
+                remote: &self.remote,
+                clock: &self.clock,
+                reach,
+            },
+        ))
+    }
+}
+
+/// The box (stopped) and `agentspace`'s host (running since `launch`), with `records` in the lease
+/// state file, reported in the zone `offset` gives: the report's `Leases` and `Guard` lines.
+fn lease_lines_of_a_running_host(
+    launch: i64,
+    records: Vec<Value>,
+    offset: fn(i64) -> i32,
+) -> Vec<String> {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    let home = home_with_registry("status-all-guard", &hosts);
+    write_leases(&home, records);
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            ok(instance("stopped")),
+            ok(volume(8)),
+            ok(instance_launched("running", launch)),
+            ok(volume(8)),
+            ok(ping("Online")),
+        ],
+    );
+    rig.run_in(&all_request(Command::Status), &zoned(offset))
+        .unwrap();
+    rig.say
+        .lines()
+        .into_iter()
+        .filter(|l| l.starts_with("Guard") || l.starts_with("Leases"))
+        .collect()
+}
+
+#[test]
+fn status_all_prints_the_leases_line_for_every_host_and_the_guard_line_for_a_running_unexplained_one()
+ {
+    let now = now_unix();
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    hosts
+        .hosts
+        .push(record("example", HostState::Creating, None));
+    let home = home_with_registry("status-all-example", &hosts);
+    write_leases(
+        &home,
+        vec![
+            lease(1, "swimcoach", "ready", Some(now + 3600), None),
+            lease(2, "example", "pending", None, None),
+        ],
+    );
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            ok(instance("running")),
+            ok(volume(8)),
+            ok(ping("Online")),
+            ok(instance_launched("running", now - 300)),
+            ok(volume(8)),
+            ok(ping("Online")),
+        ],
+    );
+    rig.run_in(&all_request(Command::Status), &zoned(minus_five_hours))
+        .unwrap();
+    let stop = agentspace_zone::clock_time_at(now - 300 + 900, -5 * 3600);
+    let lines = rig.say.lines();
+    let at = |prefix: &str| lines.iter().position(|l| l.starts_with(prefix)).unwrap();
+    let (box_at, host_at, making_at) = (
+        at("Host      swimcoach"),
+        at("Host      agentspace"),
+        at("Host      example"),
+    );
+    assert_eq!(lines[box_at + 6], "Leases    1 live");
+    assert_eq!(lines[host_at + 6], "Leases    0 live");
+    assert_eq!(
+        lines[host_at + 7],
+        format!("Guard     unexplained; stops at {stop}")
+    );
+    assert_eq!(lines[making_at + 1], "Instance  none recorded");
+    assert_eq!(lines[making_at + 2], "Leases    1 live");
+    assert_eq!(lines.len(), making_at + 3, "nothing more: {lines:?}");
+    assert_eq!(rig.aws.calls().len(), 6, "no call beyond the report's own");
+}
+
+#[test]
+fn the_guard_line_is_in_the_zone_the_system_gives_by_whatever_offset() {
+    let now = now_unix();
+    for (offset, seconds) in [
+        (utc as fn(i64) -> i32, 0),
+        (minus_five_hours as fn(i64) -> i32, -5 * 3600),
+        (plus_five_thirty as fn(i64) -> i32, 5 * 3600 + 1800),
+    ] {
+        let lines = lease_lines_of_a_running_host(now - 300, vec![], offset);
+        assert_eq!(
+            lines,
+            [
+                "Leases    0 live".to_string(),
+                "Leases    0 live".to_string(),
+                format!(
+                    "Guard     unexplained; stops at {}",
+                    agentspace_zone::clock_time_at(now - 300 + 900, seconds)
+                ),
+            ],
+            "offset {seconds}"
+        );
+    }
+}
+
+#[test]
+fn the_since_is_the_later_of_the_launch_time_and_the_last_lease_end() {
+    let now = now_unix();
+    let want = |since: i64| {
+        vec![
+            "Leases    0 live".to_string(),
+            "Leases    0 live".to_string(),
+            format!(
+                "Guard     unexplained; stops at {}",
+                agentspace_zone::clock_time_at(since + 900, 0)
+            ),
+        ]
+    };
+    // The launch time, for a project with no lease end, and when it is the later.
+    assert_eq!(
+        lease_lines_of_a_running_host(now - 300, vec![], utc),
+        want(now - 300)
+    );
+    assert_eq!(
+        lease_lines_of_a_running_host(
+            now - 120,
+            vec![lease(
+                1,
+                "agentspace",
+                "released",
+                Some(now - 3600),
+                Some(now - 3700)
+            )],
+            utc
+        ),
+        want(now - 120)
+    );
+    // A released lease's `released_at` before its `expires_at`, when it is the later.
+    assert_eq!(
+        lease_lines_of_a_running_host(
+            now - 7200,
+            vec![lease(
+                1,
+                "agentspace",
+                "released",
+                Some(now + 3000),
+                Some(now - 120)
+            )],
+            utc
+        ),
+        want(now - 120)
+    );
+    // A lease released while pending: its `released_at`.
+    assert_eq!(
+        lease_lines_of_a_running_host(
+            now - 7200,
+            vec![lease(1, "agentspace", "released", None, Some(now - 180))],
+            utc
+        ),
+        want(now - 180)
+    );
+    // An expired lease: its `expires_at`.
+    assert_eq!(
+        lease_lines_of_a_running_host(
+            now - 7200,
+            vec![lease(1, "agentspace", "ready", Some(now - 240), None)],
+            utc
+        ),
+        want(now - 240)
+    );
+    // Released after it expired: it ended when it expired (P11).
+    assert_eq!(
+        lease_lines_of_a_running_host(
+            now - 7200,
+            vec![lease(
+                1,
+                "agentspace",
+                "released",
+                Some(now - 200),
+                Some(now - 60)
+            )],
+            utc
+        ),
+        want(now - 200)
+    );
+    // An unsatisfiable lease and another project's lease add no end.
+    assert_eq!(
+        lease_lines_of_a_running_host(
+            now - 300,
+            vec![
+                lease(1, "agentspace", "unsatisfiable", None, None),
+                lease(2, "swimcoach", "released", Some(now - 100), Some(now - 100)),
+                lease(
+                    3,
+                    "agentspace-2",
+                    "released",
+                    Some(now - 100),
+                    Some(now - 100)
+                ),
+            ],
+            utc
+        ),
+        want(now - 300)
+    );
+}
+
+#[test]
+fn seconds_round_up_to_the_next_whole_minute() {
+    let now = now_unix();
+    let aligned = (now - 300).div_euclid(60) * 60;
+    for launch in [aligned, aligned + 1, aligned + 59, aligned - 1] {
+        let lines = lease_lines_of_a_running_host(launch, vec![], utc);
+        assert_eq!(
+            lines[2],
+            format!(
+                "Guard     unexplained; stops at {}",
+                agentspace_zone::clock_time_at(launch + 900, 0)
+            ),
+            "launch {} seconds after a minute",
+            launch - aligned
+        );
+    }
+}
+
+#[test]
+fn a_stop_time_that_has_passed_shows_the_reports_minute_or_the_next() {
+    for launch in [now_unix() - 7200, 1_577_836_800] {
+        let before = now_unix();
+        let lines = lease_lines_of_a_running_host(launch, vec![], utc);
+        let after = now_unix();
+        let mut candidates = Vec::new();
+        let mut minute = ceil_minute(before);
+        while minute <= ceil_minute(after) {
+            candidates.push(format!(
+                "Guard     unexplained; stops at {}",
+                agentspace_zone::clock_time_at(minute, 0)
+            ));
+            minute += 60;
+        }
+        assert!(candidates.contains(&lines[2]), "{:?}", lines[2]);
+    }
+}
+
+#[test]
+fn a_host_a_live_lease_explains_a_stopped_host_and_a_pending_host_get_no_guard_line() {
+    let now = now_unix();
+    let lines = lease_lines_of_a_running_host(
+        now - 300,
+        vec![lease(1, "agentspace", "pending", None, None)],
+        utc,
+    );
+    assert_eq!(lines, ["Leases    0 live", "Leases    1 live"]);
+    for state in [
+        "pending",
+        "stopping",
+        "stopped",
+        "shutting-down",
+        "terminated",
+    ] {
+        let mut hosts = Hosts::seed();
+        hosts.hosts[0].instance_id = Some(ID.to_string());
+        let home = home_with_registry("status-all-states", &hosts);
+        write_leases(&home, vec![]);
+        let rig = Rig::new(
+            &home,
+            false,
+            false,
+            vec![ok(instance(state)), ok(volume(8))],
+        );
+        rig.run_in(&all_request(Command::Status), &zoned(utc))
+            .unwrap();
+        let lines = rig.say.lines();
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("Leases    0 live"),
+            "{state}"
+        );
+        assert!(!lines.iter().any(|l| l.starts_with("Guard")), "{state}");
+    }
+}
+
+#[test]
+fn a_running_unexplained_host_with_no_launch_time_fails_its_part_alone() {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    let home = home_with_registry("status-all-no-launch", &hosts);
+    write_leases(&home, vec![]);
+    let mut running = instance("running");
+    running["Reservations"][0]["Instances"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("LaunchTime");
+    // The box is stopped, so it never needs a launch time; the running host that no lease explains
+    // is the second, and its part fails alone.
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            ok(instance("stopped")),
+            ok(volume(8)),
+            ok(running),
+            ok(volume(8)),
+            ok(ping("Online")),
+        ],
+    );
+    let failure = rig
+        .run_in(&all_request(Command::Status), &zoned(utc))
+        .unwrap_err();
+    assert_eq!(failure.message, "agentspace: 1 of 2 hosts failed.");
+    let lines = rig.say.lines();
+    assert_eq!(lines[0], "Host      swimcoach (agentbox), ready");
+    assert_eq!(
+        lines[6], "Leases    0 live",
+        "the report before it is whole"
+    );
+    assert_eq!(
+        lines[7],
+        format!("Host      agentspace ({HOST_STACK}), ready")
+    );
+    assert_eq!(
+        lines[8],
+        "agentspace: Unexpected answer from ec2 describe-instances: no Reservations[0].Instances[0].LaunchTime.",
+        "before its five lines, and no Leases or Guard line"
+    );
+    assert_eq!(lines.len(), 9, "{lines:?}");
+}
+
+#[test]
+fn an_unreadable_lease_state_file_leaves_out_the_lease_lines_and_says_why_once() {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    for quiet in [false, true] {
+        let home = home_with_registry("status-all-bad-leases", &hosts);
+        let path = leases_file(&home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"not json").unwrap();
+        let rig = Rig::new(
+            &home,
+            quiet,
+            false,
+            vec![ok(instance("running")), ok(volume(8)), ok(ping("Online"))],
+        );
+        rig.run_in(&all_request(Command::Status), &zoned(utc))
+            .unwrap();
+        let lines = rig.say.lines();
+        assert_eq!(lines.len(), 7, "quiet {quiet}: {lines:?}");
+        assert!(lines[6].starts_with(&format!(
+            "agentspace: The lease state file {} cannot be read: ",
+            path.display()
+        )));
+        assert!(lines[6].ends_with('.'), "{}", lines[6]);
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.starts_with("Leases") || l.starts_with("Guard"))
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"not json", "never written");
+    }
+}
+
+#[test]
+fn status_without_all_reads_no_lease_state_file_and_no_launch_time() {
+    // The five lines alone, with a lease state file that is not valid in the home, and with an
+    // answer that has no `LaunchTime`: neither is looked at.
+    let home = home_with_cache("status-no-leases");
+    let path = leases_file(&home);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"not json").unwrap();
+    let mut running = instance("running");
+    running["Reservations"][0]["Instances"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("LaunchTime");
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(running), ok(volume(8)), ok(ping("Online"))],
+    );
+    rig.run_in(&request(Command::Status), &zoned(utc)).unwrap();
+    assert_eq!(rig.say.lines().len(), 5, "{:?}", rig.say.lines());
+    assert_eq!(rig.aws.calls().len(), 3);
+}
+
+#[test]
+fn down_all_never_reads_the_lease_state_file() {
+    let home = three_hosts("down-all-bad-leases");
+    let path = leases_file(&home);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"not json").unwrap();
+    let rig = Rig::new(&home, false, false, vec![ok(json!({})), ok(json!({}))]);
+    rig.run(&all_request(Command::Down)).unwrap();
+    assert!(
+        !rig.say
+            .lines()
+            .iter()
+            .any(|l| l.contains("lease state file"))
+    );
 }

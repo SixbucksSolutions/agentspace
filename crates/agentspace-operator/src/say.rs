@@ -91,8 +91,14 @@ impl Printer {
 
     /// Prints a failure's one line, whatever `-Quiet` says. In caller mode it prints the caller's
     /// line in place of the person's, as operator.md's table gives it. The caller adds detail with
-    /// [`Say::detail`] after it.
+    /// [`Say::detail`] after it. **It prints every failure it is given, so a failure's message is
+    /// never empty**: a command that exits 1 with nothing more to say does it through its
+    /// [`Outcome`](crate::Outcome), never through an empty message.
     pub fn failure(&self, failure: &Failure) {
+        debug_assert!(
+            !failure.message.is_empty(),
+            "A failure always has a message to print"
+        );
         match (self.mode, failure.caller) {
             (Mode::Person, _) | (Mode::Caller, CallerFailure::Same) => {
                 self.write_line(&failure.message)
@@ -239,6 +245,17 @@ mod tests {
             caller: CallerFailure::CouldNotReach,
         });
         assert_eq!(cap.text(), "agentspace: Down.\n");
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "A failure always has a message to print")]
+    fn a_failure_with_an_empty_message_is_a_bug_and_never_a_silent_exit() {
+        let (say, _) = printer(Mode::Person, false, false);
+        say.failure(&Failure {
+            message: String::new(),
+            caller: CallerFailure::Same,
+        });
     }
 
     #[test]
