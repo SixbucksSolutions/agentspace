@@ -160,6 +160,26 @@ names.**
   one, because rulings reached a mid-turn dev lead late: a message to a busy session waits in its
   queue. A dev lead MAY hold a writer until the pins it depends on are ruled, when that is cheaper
   than a second pass.
+- **The inventories' pins go to the architect at once, and the integrators wait for their rulings**
+  (v0.09-T01, 2026-11-23). T01's inventories surfaced most pins within minutes, but drafters and
+  integrators ran ahead of the rulings, and 37 pins arriving in waves cost each spec story a
+  follow-up pass, a fix pass and a re-review. Drafters MAY start at once; an integrator SHOULD
+  start only once the pins its story raised are ruled.
+- **Only the dev lead numbers pins** (v0.09-T01). Subagents that numbered their own choices
+  collided with the dev lead's P-numbers; a subagent labels its open choices `N1`, `N2` and so on,
+  and the dev lead gives each its pin number when it sends it.
+- **A drafter that adds a writer of a shared file walks every reader of that file against every
+  lock before it drafts** (v0.09-T01). Two races (P26, a lease placed `ready` between a run's read
+  and its resize; P34, a person's deploy writing a type back during a run) and one read and write
+  split (P31) were found in review, each costing a pass. The walk would have found them first.
+- **A ruling about which tests a spec change turns red MUST come from reading those tests, and
+  every red list from `cargo test --workspace --locked --no-fail-fast`** (v0.09-T01). The architect
+  ruled from an `include_str!` grep that no lease CLI test reads lease-api.md; `tests/help.rs` reads
+  it at run time, and five tests went red. Plain `cargo test` stops at the first failing binary, so
+  its red list is short.
+- **A doc fix the architect makes on `main` during a spec turn is sent to the dev lead before its
+  next rebase** (v0.09-T01). Two fixes to driver.md, made while S02 was in review, cost S02 a second
+  rebase that one message ahead of the first would have saved.
 - **A spec that links into another story's new sections merges after it**, and the architect
   checks every anchor resolves on `main` before each such merge, and every link between the specs
   once all are in (1,954 in T01).

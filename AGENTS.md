@@ -19,7 +19,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   are settled as D64 to D70 (2026-11-23), D64 ruling that v0.06-T01's whole-turn record meets
   #0049's re-measurement for the host; the three calls that are Terry's are Q11 to Q13 there,
   closed with his yes the same day. **v0.09 is laid out** (Terry, 2026-11-23: "Lay out v0.09"), as
-  D71: twelve stories in five turns, #0197 to #0208, each card carrying its staffing plan. The v0.07 and
+  D71: twelve stories in five turns, #0197 to #0208, each card carrying its staffing plan. **Its
+  live record is [docs/handoff-v0.09.md](docs/handoff-v0.09.md)**, refreshed at each turn's close;
+  T01 closed at 4:30pm Mountain on 2026-11-23. The v0.07 and
   v0.06 handoffs, [docs/handoff-v0.07.md](docs/handoff-v0.07.md) and
   [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stay for their pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
