@@ -3555,7 +3555,9 @@ OBE once T06 is merged.
 2026-11-23, unless it says otherwise. They bind the stories, which carry each one into the spec
 that owns the fact in the same pull request that builds it (D34). v0.09 MUST NOT be broken into
 stories until Terry says so (AGENTS.md, "The board"). Three calls are his, and are put to him the
-same day: Q11 to Q13.
+same day: Q11 to Q13. **Terry said yes to all three the same day** ("Yes, all three"): the four
+sizes at their prices, D70's 4 instance hours, the transcript fetch, and his per-agent rule kept
+through v0.09.
 
 **What none of them changes:** contract v0. Supporting a size that v0 answered `unsatisfiable` is
 not a new version (lease-api.md, Versioning), and `no_capacity` is already one of its reasons. No
@@ -3853,6 +3855,6 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q8** | **Closed by D56 (Terry, 2026-11-21).** ~~How long is the grace after a host's last live lease ends before it is stopped?~~ 15 minutes, so a host stops within 25 minutes of its last lease's end. | Closed, D56 |
 | **Q9** | **Closed by D56 (Terry, 2026-11-21).** ~~Does the guard cover the box too?~~ Yes; direct work on it is done under a lease. | Closed, D56 |
 | **Q10** | **Closed by D60 (Terry, 2026-11-21).** ~~Is an unexplained host pushed to his phone too?~~ No: `guard.log` and `status -All` alone. | Closed, D60 |
-| **Q11** | **Needs Terry, asked 2026-11-23.** Does he accept D65's four sizes at their prices ($0.10, $0.20, $0.39 and $0.78 an hour for `s` to `xl`), and say yes to D70's live checks, up to 4 instance hours at `l` or smaller, about $1.57 at most? | D65, D70 |
-| **Q12** | **Needs Terry, asked 2026-11-23.** May the architect start the box under a swimcoach lease, for about half an hour (about $0.10), to fetch v0.06-T01's transcripts to the laptop, outside the repository, before Claude Code's clean-up can remove them, so the per-agent split is had without a new measured turn (D64)? | D64 |
-| **Q13** | **Needs Terry, asked 2026-11-23.** Does his per-agent rule from D39, a vCPU and 4 GiB for each agent at once, stay the way the architect picks a turn's size through v0.09, though v0.06-T01's 15 agents peaked at a quarter of it? The architect recommends it stays until v0.10 replaces it with measurement (D69). | D69 |
+| **Q11** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~Does he accept D65's four sizes at their prices ($0.10, $0.20, $0.39 and $0.78 an hour for `s` to `xl`), and say yes to D70's live checks, up to 4 instance hours at `l` or smaller, about $1.57 at most?~~ Yes to both. | Closed, D65, D70 |
+| **Q12** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~May the architect start the box under a swimcoach lease, for about half an hour (about $0.10), to fetch v0.06-T01's transcripts to the laptop, outside the repository, before Claude Code's clean-up can remove them, so the per-agent split is had without a new measured turn (D64)?~~ Yes. | Closed, D64 |
+| **Q13** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~Does his per-agent rule from D39, a vCPU and 4 GiB for each agent at once, stay the way the architect picks a turn's size through v0.09, though v0.06-T01's 15 agents peaked at a quarter of it? The architect recommends it stays until v0.10 replaces it with measurement (D69).~~ It stays through v0.09. | Closed, D69 |
