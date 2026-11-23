@@ -316,8 +316,8 @@ to see the message.
     30-minute deadline case; run it with -Case deadline.` or `Not run: the 30-minute provisioning
     deadline case; run it with -Case deadline-provision.` A default run's results and exit code are
     those of the other cases alone.
-  - **The `sync` case checks that the deadline falls from 29 to 32 minutes after the start of the
-    run**: the spec's 30 minutes run from the start of the wait, which begins seconds after the
+  - **Both of the file's on-request cases, `deadline` and `deadline-provision`, check that the deadline falls
+    from 29 to 32 minutes after the start of the run**: the spec's 30 minutes run from the start of the wait, which begins seconds after the
     run's start, and the stand-ins' own time over several hundred checks adds to it. Each of the two
     cases uses a lean `aws` stand-in of its own, so that the stand-in's own time does not grow
     over 30 minutes into delays the timing would include.
@@ -1081,12 +1081,15 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
     - `host-commands-common.ps1`'s `Compare-Text` masks the spec line it quotes in a failure
       reason (architect, 2026-11-22), so `test-unmet-host-commands-all.ps1`'s `$leasesMissing`
       prints no Windows user name.
-  - **Four files that operator.md's table names were not changed by E0.08-T04-S01**, each already
-    at v0.08's text on `main`: `test-unmet-commands.ps1` (above), `test-unmet-host-commands-all.ps1`
-    (`status -All`'s two new lines, E0.08-T03-S02, PR #125), `test-unmet-host-provision.ps1` (the
-    sign-in line of `provision`'s step 10, E0.08-T03-S05, PR #123) and `test-unmet-push.ps1`. The
-    cases of #0167's push are the new file `test-unmet-push-nested.ps1`, which runs the ProxyCommand
-    program nested under a stand-in `ssh`, as the real `ssh` runs its alias's ProxyCommand.
+  - **Four files that operator.md's table names were not changed by E0.08-T04-S01**:
+    `test-unmet-commands.ps1` (above), `test-unmet-host-commands-all.ps1` (`status -All`'s two new
+    lines, E0.08-T03-S02, PR #125) and `test-unmet-host-provision.ps1` (the sign-in line of
+    `provision`'s step 10, E0.08-T03-S05, PR #123), each already at v0.08's text on `main`, and
+    `test-unmet-start-paths.ps1`, which the table names as the model of an on-request deadline case.
+    `test-unmet-push.ps1` and `helpers.ps1` were not changed either, and the table does not name
+    them. The cases of #0167's push are the new file `test-unmet-push-nested.ps1`, which runs the
+    ProxyCommand program nested under a stand-in `ssh`, as the real `ssh` runs its alias's
+    ProxyCommand.
 
 #### `scripts/test-push-localswim.ps1` (about 460 lines): prototype code
 
@@ -1492,11 +1495,19 @@ host, never a program of the laptop that the harness starts, so the harness, the
   beside the test unset.
 - **How it is run:** from the repository's root, in a Linux environment, with
   `python3 -I -m unittest discover -v -s box/tests -p test_agentspace_idle.py`. That is WSL's
-  Ubuntu on the laptop, or a host. **No test and no test run MUST start WSL** (T03's ruling,
+  Ubuntu on the laptop, or a host. **A test and a test run MUST NOT start WSL, except E0.08-T04-S04's crates-and-box runner**
+  (T03's ruling,
   [handoff-v0.08.md, Rulings made during v0.08](handoff-v0.08.md#rulings-made-during-v008), on
-  #0181's card), and **E0.08-T04-S04's (#0185) crates-and-box runner is the only run that starts
-  it for this file**, as its tasking says how; the result is in the run record. A test that needs
+  #0181's card): **that runner (#0185) is the only run that starts it for this file**, as its
+  tasking says how; the result is in the run record. A test that needs
   a bash on the laptop uses Git for Windows' bash.
+- **Four parts of operator.md's idle-check row have no method in the file's 22, and no live check
+  shows them, so they are gaps** (read from the file's methods): a horizon holding a CR; a horizon
+  of 16 digits; D11's rule one second before the horizon plus the grace (the nearest case, a horizon
+  5 minutes past with a grace of 15, is far from the boundary); and `HORIZON_GRACE_MINUTES` not set
+  giving 15 (only an invalid value, and a value of 7, are tested). The settings file the cases
+  build always sets it. **The four are carded as #0192** (Backlog; the architect, 2026-11-22, for
+  v0.08-T04).
 - **What it does not show is live** (D62): that the check on a host with no seam set powers the host
   off past its horizon plus the grace with the laptop away, and the horizon file as a real guard
   run writes it, which are E0.08-T05-S01's ([Coverage of the operator and the
@@ -1605,10 +1616,8 @@ cases.
 | `grow`'s refusal of `-GiB 0` and a negative `<n>` | [operator.md, grow](operator.md#grow), [Exit codes](operator.md#exit-codes); D61 (#0164, pin P7) |
 | `sync`'s patch wait, and `up` not waiting on a failed patch run | [operator.md, sync](operator.md#sync), [The patch wait](operator.md#the-patch-wait), [Starting the box and waiting for it](operator.md#starting-the-box-and-waiting-for-it); D61 (#0163; pins P13, P21, P24) |
 | #0167: no push at a start with a current stamp, one `The host is ready.` from a ProxyCommand connection whose push is due, two under `AGENTSPACE_DIAGNOSTIC`, a push that fails still showing its ssh's error lines | [operator.md, The stamp](operator.md#the-stamp), [What the laptop sends](operator.md#what-the-laptop-sends), [What the laptop checks](operator.md#what-the-laptop-checks), [up](operator.md#up), [What a caller sees](operator.md#what-a-caller-sees-d1-card-0087); D61 (P14) |
-| The keeper's start of the guard (G1 to G16) | [keeper.md, Conformance cases for the guard's start](keeper.md#conformance-cases-for-the-guards-start), [When the keeper starts it](keeper.md#when-the-keeper-starts-it), [How the keeper starts it](keeper.md#how-the-keeper-starts-it), [guard.lock: tried, never held](keeper.md#guardlock-tried-never-held), [What a failed start changes](keeper.md#what-a-failed-start-changes), [The guard's environment](keeper.md#the-guards-environment), [Usage errors](keeper.md#usage-errors), [board-holder-keeper.lock: one keeper at a time](keeper.md#board-holder-keeperlock-one-keeper-at-a-time); D56, D62 |
-| `release` ending the lease's own connections and writing `release.log` (R1 to R15) | [driver.md, Conformance cases for v0.08](driver.md#conformance-cases-for-v008), [Each with its tree](driver.md#each-with-its-tree), [The order of a release](driver.md#the-order-of-a-release), [An ssh client's destination](driver.md#an-ssh-clients-destination), [Which processes are the alias's clients](driver.md#which-processes-are-the-aliass-clients), [The count](driver.md#the-count), [Where the count is logged](driver.md#where-the-count-is-logged); [state.md, The release log](state.md#the-release-log); [lease-api.md, `release`](lease-api.md#agentspace-lease-release); D59 |
-| `release` ending the lease's own ssh clients | [driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections), [The order of a release](driver.md#the-order-of-a-release), [Which processes are the alias's clients](driver.md#which-processes-are-the-aliass-clients), [The count](driver.md#the-count), [Where the count is logged](driver.md#where-the-count-is-logged); [state.md, The release log](state.md#the-release-log); [lease-api.md, `release`](lease-api.md#agentspace-lease-release); D59 |
-| The keeper's start of the guard | [keeper.md, Starting the guard](keeper.md#starting-the-guard), [When the keeper starts it](keeper.md#when-the-keeper-starts-it), [How the keeper starts it](keeper.md#how-the-keeper-starts-it), [The guard's environment](keeper.md#the-guards-environment), [What a failed start changes](keeper.md#what-a-failed-start-changes); [state.md, The guard's lock](state.md#the-guards-lock); D56, D63 |
+| The keeper's start of the guard (G1 to G16) | [keeper.md, Conformance cases for the guard's start](keeper.md#conformance-cases-for-the-guards-start), [Starting the guard](keeper.md#starting-the-guard), [When the keeper starts it](keeper.md#when-the-keeper-starts-it), [How the keeper starts it](keeper.md#how-the-keeper-starts-it), [guard.lock: tried, never held](keeper.md#guardlock-tried-never-held), [What a failed start changes](keeper.md#what-a-failed-start-changes), [The guard's environment](keeper.md#the-guards-environment), [Usage errors](keeper.md#usage-errors), [board-holder-keeper.lock: one keeper at a time](keeper.md#board-holder-keeperlock-one-keeper-at-a-time); [state.md, The guard's lock](state.md#the-guards-lock); D56, D62, D63 |
+| `release` ending the lease's own connections and ssh clients, and writing `release.log` (R1 to R15) | [driver.md, Conformance cases for v0.08](driver.md#conformance-cases-for-v008), [Ending a lease's connections](driver.md#ending-a-leases-connections), [Each with its tree](driver.md#each-with-its-tree), [The order of a release](driver.md#the-order-of-a-release), [An ssh client's destination](driver.md#an-ssh-clients-destination), [Which processes are the alias's clients](driver.md#which-processes-are-the-aliass-clients), [The count](driver.md#the-count), [Where the count is logged](driver.md#where-the-count-is-logged); [state.md, The release log](state.md#the-release-log); [lease-api.md, `release`](lease-api.md#agentspace-lease-release); D59 |
 | The idle check, D11's rule and D57's horizon | [operator.md, The idle check and the lease horizon](operator.md#the-idle-check-and-the-lease-horizon); D11, D57 |
 
 ## The files that are expected to fail
@@ -1760,13 +1769,15 @@ file for a MUST that v0.08 adds, and **the installed v0.07 programs, which are t
 until E0.08-T05-S01 (#0186) installs v0.08, do not meet them**: each story MUST show its files
 failing against them where v0.07 lacks the behavior, in a throwaway home, and passing against the
 build of `main`. **A v0.08 build MUST pass every one**, and a `FAIL` against it is the build's
-failure, as for every file above. Each case's result name says which spec case it is. **The run
-record gives each file's results** ([docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)), and this
+failure, as for every file above. Each case's result name says which spec case it is. **The results of
+T04's new files are in their pull requests** (#126 for E0.08-T04-S01's files, #127 for S02's and #128
+for S03's). **The run record** ([docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)) covers the
+conformance files on `main` at `6e2fcbd`, the deadline case, the crates and the box tests, and this
 page gives no count of v0.08's.
 
 | File | Cases it holds | Spec section | Card |
 |---|---|---|---|
-| `conformance/operator/test-unmet-guard.ps1` | Each outcome of D56 and D57 through the AWS stand-in: an explained host left untouched; an unexplained host that is not yet due logged; a due host stopped, with the exact calls; a host whose `provision.lock` is held left alone; a horizon sent to each running host with its comment, and the fallback to the launch time; a held `guard.lock` giving exit 0, no call and no log line; a failed describe logged and nothing stopped; every `guard.log` line byte for byte. Also the decision over eight hosts with each lease state and end (the box among them), a host that is not running, a running host with no usable `LaunchTime`, an instance missing from the answer, a record with no instance ID read from its stack, the host registry or the lease state file missing or not valid, a failed stop and a failed send (the next run sending again), #0034's sign-in message at each call in turn, `guard.log`'s bytes and a log that cannot be written, `-Quiet`, and what the guard never does | [operator.md, guard](operator.md#guard)(operator.md#guard); [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon), [The guard's log](state.md#the-guards-log), [The guard's lock](state.md#the-guards-lock) | #0182 (E0.08-T04-S01) |
+| `conformance/operator/test-unmet-guard.ps1` | Each outcome of D56 and D57 through the AWS stand-in: an explained host left untouched; an unexplained host that is not yet due logged; a due host stopped, with the exact calls; a host whose `provision.lock` is held left alone; a horizon sent to each running host with its comment, and the fallback to the launch time; a held `guard.lock` giving exit 0, no call and no log line; a failed describe logged and nothing stopped; every `guard.log` line byte for byte. Also the decision over eight hosts with each lease state and end (the box among them), a host that is not running, a running host with no usable `LaunchTime`, an instance missing from the answer, a record with no instance ID read from its stack, the host registry or the lease state file missing or not valid, a failed stop and a failed send (the next run sending again), #0034's sign-in message at each call in turn, `guard.log`'s bytes and a log that cannot be written, `-Quiet`, and what the guard never does | [operator.md, guard](operator.md#guard); [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon), [The guard's log](state.md#the-guards-log), [The guard's lock](state.md#the-guards-lock) | #0182 (E0.08-T04-S01) |
 | `conformance/operator/host-guard-common.ps1` | No case: the helper `test-unmet-guard.ps1` dot-sources | [operator.md, The test seam](operator.md#the-test-seam) | #0182 |
 | `conformance/operator/test-unmet-status-leases.ps1` | `status -All`'s `Leases` and `Guard` lines: the count of live leases per host's project (pending and unexpired ready live; expired, released and unsatisfiable not), the `Guard` line's text, place and time (from the launch time, a lease's end or the report's own minute, rounded up to the next whole minute, in the laptop's zone), no line for a host a live lease explains or that is not running, a lease state file missing, unreadable or not valid, a `LaunchTime` that is missing or malformed, `AGENTSPACE_STATE_DIR`, a held `leases.lock`, `-Quiet`, and `status` and `status -Host` printing their five lines alone | [operator.md, status -All](operator.md#status--all); D60 | #0182 |
 | `conformance/operator/test-unmet-grow-zero.ps1` | `grow -GiB 0`, `-0`, `+0`, `000`, `-1`, `-5`, `-007` and `-2147483648` each exit 1 as a usage error, with no AWS call, no `ec2 modify-volume` among them, nothing written in the home, and with `-Host` no key, certificate or alias; `-GiB 1` asking EC2 for the size plus 1; the refusal's place in the order of checks; `status`, `down` and `sync` not refusing a `-GiB` of 0 or less. It stands beside `test-unmet-commands.ps1`'s `-GiB 0` and `-GiB -1` cases, and shows `-GiB 0` with `USERPROFILE` unset not at all, which is the operator crate's test | [operator.md, grow](operator.md#grow); D61 (#0164) | #0182 |
@@ -1776,7 +1787,7 @@ page gives no count of v0.08's.
 | `conformance/keeper/test-unmet-keeper-guard.ps1` | G1 to G16, each with a result line named `keeper.md#<section> (G<n>): ...`: `AGENTSPACE_GUARD_CMD`'s stand-in started at the first pass with the one argument `guard` (G1, G9, G14); not started again within 300 seconds, and started again after a short `-GuardIntervalSeconds`, also from inside a wait (G2 to G4); never started while `guard.lock` is held (G5); a folder at `guard.lock`'s path logged as a failed start (G6); no `.agentspace` folder, which the keeper does not create (G7); a stand-in that cannot be started logged, with every holder unaffected (G8); the guard's environment by variable name (G10); a stand-in that outlives the keeper (G11); a one-pass run (G12); `board-holder.lock` held (G13); the two usage errors (G15); and a second keeper (G16). The file's "Gaps:" paragraph names what no stand-in shows ([The guard's start: the keeper's v0.08 cases](#the-guards-start-the-keepers-v008-cases)) | [keeper.md, Conformance cases for the guard's start](keeper.md#conformance-cases-for-the-guards-start) (G1 to G16), [Starting the guard](keeper.md#starting-the-guard) | #0184 (E0.08-T04-S03) |
 | `box/tests/test_agentspace_idle.py` | Not a `test-unmet-*` file and not run by the harness: the idle check's own test, D11's rule and D57's horizon, through the idle check's three seams ([The idle check's test](#the-idle-checks-test)) | [operator.md, The idle check and the lease horizon](operator.md#the-idle-check-and-the-lease-horizon) | #0172 (E0.08-T01-S05) |
 | `test-unmet-usage-help.ps1`, `test-unmet-host-commands-line.ps1` and `host-commands-common.ps1`, changed | No case of their own to list here: the first gained `guard`'s help block and `guard` in its command lists; the second `guard`'s refusals of `-Host`, `-All`, `-Alias` and `-InstanceType`, and `-GiB` checked for form and ignored; the third `Compare-Text` masking the spec line it quotes (architect, 2026-11-22) | [operator.md, Command line](operator.md#command-line), [guard](operator.md#guard) | #0182 |
-| `test-unmet-commands.ps1`, `test-unmet-host-commands-all.ps1`, `test-unmet-host-provision.ps1`, `test-unmet-push.ps1` and `helpers.ps1`, not changed by T04 | No case of their own: operator.md's table names them, and each was already at v0.08's text on `main` (E0.08-T03-S02, PR #125, for the first two; E0.08-T03-S05, PR #123, for `test-unmet-host-provision.ps1`), or, for #0167's push, is beside the new `test-unmet-push-nested.ps1` | [operator.md, Which checks show it](operator.md#which-checks-show-it) | #0182 |
+| `test-unmet-commands.ps1`, `test-unmet-host-commands-all.ps1`, `test-unmet-host-provision.ps1`, `test-unmet-start-paths.ps1`, `test-unmet-push.ps1` and `helpers.ps1`, not changed by T04 | No new case: operator.md's table names the first four, and the first three were already at v0.08's text on `main` (E0.08-T03-S02, PR #125, for the first two; E0.08-T03-S05, PR #123, for `test-unmet-host-provision.ps1`); `test-unmet-commands.ps1` holds the `-GiB 0` and `-GiB -1` cases, and `test-unmet-start-paths.ps1` is the model of the on-request deadline cases. The table does not name `test-unmet-push.ps1` or `helpers.ps1`, and #0167's push is shown by the new `test-unmet-push-nested.ps1` | [operator.md, Which checks show it](operator.md#which-checks-show-it) | #0182 |
 
 - **Every keeper file names a stand-in guard** (`AGENTSPACE_GUARD_CMD`), and a case reaches no real
   AWS CLI, `ssh` or `scp` ([The harness](#the-harness), the bullet for v0.08).
@@ -1937,13 +1948,17 @@ check that shows it, never "Later".
 **v0.08's rows: host lifecycle and the cost guard** (E0.08-T04-S04, #0185; D62, D63). **RFC 2119
 keywords again.** Every behavior that v0.08 adds to operator.md, keeper.md, state.md, driver.md and
 `box/system`, or changes on them, is shown by a conformance case of T04, by a test of a crate or of
-`box/tests`, or by a live check; **no v0.08 behavior is left with neither** (D62, and
+`box/tests`, or by a live check; **no v0.08 behavior is left with neither, but for the gaps named in the rows for the idle check
+and for #0166 below** (D62, and
 [architect.md, Breaking an epic into stories](architect.md#breaking-an-epic-into-stories), step 5).
-A "Not shown by a case" cell therefore names the live check that shows it, never "Later". **No
+A "Not shown by a case" cell therefore names the live check that shows it, never "Later", and a
+part that no test and no live check shows is named as a gap, with its reason. **No
 stand-in can show a host stopping, a real Run Command or a real session, and the suite has no fake
 clock**, so the grace's timing is a live check ([operator.md, Which checks show
-it](operator.md#which-checks-show-it)). **The record of this turn's whole-suite run, [docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md),
-gives each file's results**, and the table below gives none.
+it](operator.md#which-checks-show-it)). **The results of T04's new files are in their pull requests** (#126 for E0.08-T04-S01's files, #127
+for S02's and #128 for S03's); **the record of this turn's whole-suite run,
+[docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md), covers the conformance files on `main` at
+`6e2fcbd`, the deadline case, the crates and the box tests**, and the table below gives no result.
 
 **D62's live checks, each with the story that makes it** (D63's turns; each runs on the box and on
 agentspace's host unless it says one):
@@ -1977,8 +1992,8 @@ agentspace's host unless it says one):
 | operator.md: `status -All`'s `Leases` and `Guard` lines (D60) | `conformance/operator/test-unmet-status-leases.ps1`; the 12-hour form at every hour is a crate test (E0.08-T03-S02), since a case cannot choose the hour of its run | `Leases    <n> live` matching the leases held before and after each lifecycle step: E0.08-T06-S01 and E0.08-T06-S02. The `Guard` line for an unexplained host: E0.08-T06-S02 |
 | operator.md: `grow`'s refusal of `-GiB 0` and a negative `<n>` (D61, #0164) | `conformance/operator/test-unmet-grow-zero.ps1`, beside `test-unmet-commands.ps1`'s two cases; the refusal with `USERPROFILE` unset is the operator crate's test, `grows_gib_refusal_is_a_usage_error_that_needs_neither` | Nothing: the refusal reaches no host |
 | operator.md: `sync`'s patch wait, and `up` not waiting on a failed patch run (D61: #0163; P13, P21, P24) | `conformance/operator/test-unmet-sync-patch-wait.ps1`; the patch check's command text by its builder's own test under bash with a stand-in `systemctl` first on `PATH` (E0.08-T03-S05, #0181) | The install starting the run, #0163 with no 15-minute wait, a `failed` unit with a start queued, the install starting nothing when the marker exists, and a patch reboot if the run asks for one: E0.08-T05-S01 |
-| operator.md: #0166, the tool folders on every session's `PATH` | No case: it is `box/system`'s install, with S05's own test of `install.sh` where it has one | `command -v` finding every tool on both hosts: E0.08-T05-S01 |
-| box/system: the idle check, D11's rule and D57's horizon | `box/tests/test_agentspace_idle.py`, through its three seams ([The idle check's test](#the-idle-checks-test)) | The check with no seam set, the laptop away: E0.08-T05-S01 |
+| operator.md: #0166, the tool folders on every session's `PATH` | No case: it is `box/system`'s install. E0.08-T01-S05's test covers the idle check alone, and `box/tests` holds no test of `install.sh`, so the edit's edges, which operator.md leaves to such a test where there is one, are a gap: nothing shows them but the live check | The `/etc/environment` `PATH` lines as operator.md gives them with its other lines kept, the `Installed:` line's `(added)` at the first `sync` and `(already there)` at the second, and `command -v` finding every tool on both hosts: E0.08-T05-S01 |
+| box/system: the idle check, D11's rule and D57's horizon | `box/tests/test_agentspace_idle.py`, through its three seams ([The idle check's test](#the-idle-checks-test)): a horizon that is missing, empty, a folder or not digits, D11's rule alone; the power-off past the horizon plus the grace with its exact line; a session or a patch run holding the host up; the grace read from the settings file, and an invalid one replaced by 15 with a warning; `date` unable to format giving `@<h>`; D11's lines and limits | The check with no seam set, the laptop away: E0.08-T05-S01. **Four parts of operator.md's idle-check row are gaps, each because no method of E0.08-T01-S05's test covers it and no live check does:** a horizon holding a CR; a horizon of 16 digits; D11's rule one second before the horizon plus the grace; and `HORIZON_GRACE_MINUTES` not set giving 15 (#0192) |
 | The alarm's 24 hours (D58) | The template's story, E0.08-T01-S04 (#0171), read live before its merge | Deployed and read back: E0.08-T05-S01 |
 | keeper.md: the keeper's start of the guard | `conformance/keeper/test-unmet-keeper-guard.ps1`, against a stand-in guard; three of the keeper's `<why>` texts are the keeper crate's own tests | The installed keeper starting the real guard: E0.08-T05-S01 |
 | driver.md, lease-api.md, state.md: `release` ending the lease's own connections and `release.log` (D59, #0064) | `conformance/lease-cli/test-unmet-release-ends-connections.ps1` (E0.08-T04-S02, #0183), R1 to R15 with stand-in clients, R15 only for a second client started within the release's run; the second walk and what no stand-in shows are the crates' own tests (E0.08-T03-S04, #0180; `agentspace-connections`) | The desktop app's own connections, and the host's end of an ended connection: E0.08-T06-S02 |
