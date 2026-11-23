@@ -57,6 +57,9 @@ first.**
   restarted at once.
 - **A story added to a turn raises both milestones' `tickets` and `cap_hours`** (v0.06-T05, when
   #0140 was added).
+- **A turn's extension raises its release's cap by the same hours** (Terry, 2026-11-22, when
+  v0.08-T03 went from 3 hours to 4.5 and v0.08 from 18 to 19.5), since the release's cap is the sum
+  of its turns'.
 - **A cap is extended only on Terry's word.** He MAY delegate one ("if there's good progress I'm
   happy to delegate an extension to you", 2026-11-19, for v0.06-T04). A delegation covers that
   milestone only, and the extension is reported to him with the progress that justified it.
