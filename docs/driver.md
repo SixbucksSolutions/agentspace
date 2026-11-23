@@ -1645,8 +1645,10 @@ from its own folder, by a `create` or `get` that names that folder.
   it**, so a failed run still leaves every lease `pending` (D48).
 - **Its result, to the run that called it,** names each lease it placed by ID, each it could
   not by ID with the failure's message, and, from v0.09, each it answered `unsatisfiable` by ID
-  with its reason's message and each it left `pending` for the next run by ID, for the run's log,
-  whose lines are [operator.md, provision](operator.md#provision)'s. Each message meets
+  and each it left `pending` for the next run by ID, for the run's log, whose lines are
+  [operator.md, provision](operator.md#provision)'s. A refused lease's reason and its message are
+  in the lease's record, and its log line carries no reason field (architect, 2026-11-23, for
+  v0.09-T01, pin P37). Each message meets
   [Failure](#failure)'s rules. The call as a whole fails only at step 1, or at the lock or read of
   step 2 or step 3; a lease it placed or answered before such a failure stays as it was written.
 - **A lease it places is like one place made `ready`**: renew, release, the keeper and the
