@@ -51,6 +51,19 @@ sections around them, where D56 to D63 left the point open, were ruled the same 
 and are cited the same way with it. **The release log ([The release log](#the-release-log)),
 which D59 and D63 call for and the dev lead's pin P16 settles, is cited the same way.**
 
+**Size classes (v0.09, D64 to D71).** A lease names a size, a floor of vCPUs and memory (D65),
+and the EC2 driver maps it to one instance type ([driver.md, Sizes and instance
+types](driver.md#sizes-and-instance-types)).
+This page owns one new fact for it: the host registry's record member `instance_type`, the
+instance type its host's stack was last deployed with ([The instance type](#the-instance-type)),
+and with it the rule that `stack-parameters.json`'s `InstanceType` is no longer read
+([Files in the checkout](#files-in-the-checkout)). Every name is D71's. **Where D64 to D71 left a
+point open, the architect ruled it on the dev lead's pins for v0.09's specs, and each ruling is
+cited "architect, 2026-11-23, for v0.09-T01, pin Pn" where it stands.** E0.09-T01-S02 (#0198)
+marked the choices it made that no decision or pin settled "architect's to confirm"; the
+architect ruled every one of them, and each is now cited by its pin, so no fact on this page
+carries that mark.
+
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
 D34), where they touch the files; the rest of #0041, and #0029, are
@@ -90,7 +103,7 @@ the conformance file for each of these points passes against it. The last column
 - [Every file at a glance](#every-file-at-a-glance)
 - [The lease state file](#the-lease-state-file), with
   [live leases and the lease horizon](#live-leases-and-the-lease-horizon)
-- [The host registry](#the-host-registry)
+- [The host registry](#the-host-registry), with [the instance type](#the-instance-type)
 - [The project list](#the-project-list)
 - [A lease's credential](#a-leases-credential), with
   [a lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box) and
@@ -314,11 +327,11 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | Path | What it is | Written by | Read by | Removed |
 |---|---|---|---|---|
 | `%USERPROFILE%\.agentspace\` | The agentspace folder (D21) | The first writer | Everything below | Never |
-| `<state folder>\leases.json` | [The lease state file](#the-lease-state-file) | `create`, `renew`, `release`; a provisioning run, through `place_pending` | Every lease command; the keeper; the ProxyCommand; a provisioning run; the guard and `status -All`, read-only and without the lock (architect, 2026-11-21, for v0.08-T01, pin P18) | Never |
-| `<state folder>\leases.lock` | [The lease state lock](#the-lease-state-lock) | Every lease command that changes leases; a provisioning run, through `place_pending` | None; it is held, not read | Never |
+| `<state folder>\leases.json` | [The lease state file](#the-lease-state-file) | `create`, `renew`, `release`; a provisioning run, through `place_pending`, which from v0.09 also writes a `pending` lease `unsatisfiable` (pin P1) | Every lease command; the keeper; the ProxyCommand; a provisioning run; the guard and `status -All`, read-only and without the lock (architect, 2026-11-21, for v0.08-T01, pin P18); from v0.09 the EC2 driver's place, read-only under its caller's lock, and a provisioning run's deploy step, read-only under the lock, which it takes itself (architect, 2026-11-23, for v0.09-T01, pin P26) | Never |
+| `<state folder>\leases.lock` | [The lease state lock](#the-lease-state-lock) | Every lease command that changes leases; a provisioning run, through `place_pending` and, from v0.09, at its deploy step (pin P26) | None; it is held, not read | Never |
 | `<state folder>\leases.json.<hex>.tmp` | The state file's temporary file | The same | None | At once |
 | `<state folder>\release.log` | [The release log](#the-release-log) (D59, D63; pin P16; architect, 2026-11-21, for v0.08-T01) | The EC2 driver's `release`, which appends to it, and nobody else | People | Never |
-| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`; an operator command that caches a host's instance ID; the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock; the guard, read-only and without its lock (architect, 2026-11-21, for v0.08-T01, pin P18). Never `list`, `renew` or `release` | Never |
+| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`; an operator command that caches a host's instance ID; every `deploy` that names or implies a host, `provision`'s deploy step included, which records `instance_type` (D67, D71); the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock; the guard, read-only and without its lock (architect, 2026-11-21, for v0.08-T01, pin P18). Never `list`, `renew` or `release` | Never |
 | `%USERPROFILE%\.agentspace\hosts.lock` | [The host registry lock](#the-host-registry-lock) | Every writer of `hosts.json` | None; it is held, not read | Never |
 | `%USERPROFILE%\.agentspace\hosts.json.<hex>.tmp` | The host registry's temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\projects.json` | [The project list](#the-project-list) (D54) | A person, or the architect with Terry's yes; never agentspace | The driver and `provision`, for a project with no host | Never |
@@ -330,7 +343,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `...\hosts\<project>\id_ed25519-cert.pub` | [The operator's certificate](#the-operators-key-and-certificate) for that host, key ID `operator-<project>`, one hour | Every operator command that names a host other than the box, `status -Host` included, and every one that connects through the host's operator alias | `ssh` | Never; replaced by the next command's |
 | `...\hosts\<project>\sign-<hex>.pub`, `sign-<hex>-cert.pub` | Signing's temporary files | The same | None | At once |
 | `...\hosts\<project>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, its own lines alone (architect, 2026-11-21, for v0.07-T03); never the driver | People | Never |
-| `...\hosts\<project>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; the driver, which only tries it | None; it is held, not read | Never |
+| `...\hosts\<project>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; from v0.09 a person's `deploy`, for its life (architect, 2026-11-23, for v0.09-T01, pin P34); the driver, which only tries it | None; it is held, not read | Never |
 | `...\hosts\<project>\localswim-pushed.json` | [A host's push stamp](#a-hosts-push-stamp), for every host but the box | `up -Host`, `sync -Host`, `sync -All`, `provision` | `up -Host` | Never |
 | `...\hosts\<project>\localswim-pushed.json.<hex>.tmp` | Its temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\leases\` | The folder of lease folders | The first `create` that issues a credential | `renew`, `release` | Never |
@@ -355,7 +368,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `%USERPROFILE%\.agentspace\localswim-pushed.json.<hex>.tmp` | The push stamp's temporary file | `up`, `sync` | None | At once |
 | `%USERPROFILE%\.agentspace\instance-id.json` | The instance-ID cache, retired by v0.07 into the host registry's `instance_id` (D45; [Files in the checkout](#files-in-the-checkout)) | Nothing, from v0.07 | Nothing, from v0.07 | Never by agentspace; a person MAY delete it |
 | `%USERPROFILE%\.agentspace\instance-id.json.<hex>.tmp` | The retired cache's temporary file, which a killed v0.06 command MAY have left | Nothing, from v0.07 | None | Never by agentspace |
-| `%USERPROFILE%\.agentspace\stack-parameters.json` | [The stack parameters file](#files-in-the-checkout) (D40), which the prototype keeps in the checkout as `infra\local.parameters` | A person | Plain `deploy` of the box; `deploy -Host` and `provision`, only when they create a host's stack, and then only `SubnetId` and `VpcId` | Never |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` | [The stack parameters file](#files-in-the-checkout) (D40), which the prototype keeps in the checkout as `infra\local.parameters` | A person | Plain `deploy` of the box, every parameter but `InstanceType`, which no program reads from v0.09 (D67, D71); `deploy -Host` and `provision`, only when they create a host's stack, and then only `SubnetId` and `VpcId` | Never |
 | `%USERPROFILE%\.agentspace\operator\` | [The operator's folder](#files-in-the-checkout), which holds one folder per running operator command | The first operator command that sends a file | Nothing; each command reads only its own folder in it | Never |
 | `%USERPROFILE%\.agentspace\operator\<hex>\` and what is in it | One operator command's folder: the template, the box's files, the localswim CLI and the bootstrap script, written out for the programs it starts | The one operator command that made it: `deploy`, `sync`, `bootstrap` or `provision` | The AWS CLI, `scp`, as that command starts them | By that command, as it ends; one older than 24 hours, left by a killed command, by the next operator command that finds it |
 | `<state folder>\board-holder.json` | [The holder record](#the-holder-record), the box's | The keeper | The keeper | The keeper |
@@ -492,6 +505,16 @@ point (2026-11-18):
   that is not `pending` when the run re-reads the file for it under the lock is skipped, and never
   changed by the run**, so a lease released meanwhile is never placed. Which leases it places, and in what steps, is
   [driver.md](driver.md#place_pending)'s.
+- **From v0.09 the same `place_pending` also changes a `pending` record to `unsatisfiable`**
+  (D68's change note; architect, 2026-11-23, for v0.09-T01, pin P1 and the cross-spec ruling for
+  this page): a `pending` lease the host the run leaves does not meet, when a live `ready` lease
+  holds the host, is answered `unsatisfiable` with the one reason `no_capacity`. Under the lease
+  state lock, taken and re-read for that lease as for a placement, it sets `state` to
+  `unsatisfiable` and adds `reasons`, in one write, and keeps every other member as it was, `driver`
+  included; it adds no `expires_at` and no `ssh`. A record that is not `pending` at that re-read is
+  skipped, as above. Which leases it answers so, and the reason's message, are
+  [driver.md](driver.md#place_pending)'s; the files it removes for such a lease are its own
+  leftovers, as driver.md says (pin P21).
 - **`created_at` and the certificate's issue time are separate readings of the clock**, each
   truncated to the whole second, and either MAY come first
   ([lease-api.md](lease-api.md#fields)). The prototype reads `created_at` after signing.
@@ -544,6 +567,17 @@ first command that changes leases creates the state folder, if needed, and the f
 **Who reads it:** every lease command; a provisioning run, under the lock; and the keeper and the
 ProxyCommand, which read it without taking the lock and never write it
 ([keeper.md#locks](keeper.md#locks); [operator.md, The ProxyCommand](operator.md#the-proxycommand)).
+**From v0.09 the EC2 driver's place reads it too, read-only, under its caller's lock**: `create`
+holds the lease state lock while it calls the driver, and place reads the project's live `ready`
+and `pending` leases from the file as that caller read it, and never writes it (D66; architect,
+2026-11-23, for v0.09-T01, the cross-spec ruling for this page;
+[driver.md, On a `ready` host](driver.md#on-a-ready-host)). **A provisioning run's deploy step reads
+it once, read-only, under [the lease state lock](#the-lease-state-lock), which it takes itself**,
+to find the type its project's leases need, and releases the lock before any call to AWS
+([The instance type](#the-instance-type); architect, 2026-11-23, for v0.09-T01, pin P26, which
+replaces pin P13's read without the lock). Unlike the guard, it takes a missing file for no
+leases; like the guard, it MUST NOT take a file that is not valid, or that cannot be read, for no
+leases, and fails its step instead.
 **From v0.08 the guard and `status -All` read it too, read-only and without the lock**, as the
 keeper does, to find which leases are live ([Live leases and the lease
 horizon](#live-leases-and-the-lease-horizon); architect, 2026-11-21, for v0.08-T01, pin P18).
@@ -687,8 +721,9 @@ and is `ready`, its `expires_at` is the horizon.
 
 **`%USERPROFILE%\.agentspace\hosts.json` says which host serves which project (D45, D55).** It
 holds one record per host: its project, its stack's name, its state, its instance ID once known,
-and the start time of its last provisioning run. It is laptop state, never output (D1): no lease
-command prints anything from it, nor names it in a message. Its schema is
+the start time of its last provisioning run, and, from v0.09, the instance type its stack was
+last deployed with (D67). It is laptop state, never output (D1): no lease command prints
+anything from it, nor names it in a message. Its schema is
 [`schemas/state/hosts.state.schema.json`](../schemas/state/hosts.state.schema.json), draft 2020-12
 and strict (D20), carried inside every program that reads it, and where this section and the
 schema disagree, both are wrong and MUST be fixed together.
@@ -706,6 +741,7 @@ schema disagree, both are wrong and MUST be fixed together.
 | `stack` | Yes | The host's CloudFormation stack (D44): `agentbox` for the box, `agentspace-host-<project>` for every other host, so at most 48 characters, 16 for the prefix and 32 for the project (D44; architect, 2026-11-20, for v0.07-T01). `^(agentbox\|agentspace-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?)$(?!\n)` |
 | `state` | Yes | `creating`, `ready` or `failed` ([Its states](#its-states)) |
 | `instance_id` | No | The host's EC2 instance ID, cached from its stack's `InstanceId` output: `^i-([0-9a-f]{8}\|[0-9a-f]{17})$(?!\n)`. Absent until a writer has read it ([The instance ID](#the-instance-id)) |
+| `instance_type` | No | The instance type of the host's stack, its `InstanceType` parameter as `cloudformation describe-stacks` read it back after the last `deploy` that recorded it (D67, D71): `^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$(?!\n)`, at most 64 characters, the form operator.md gives `-InstanceType`'s value ([operator.md, Command line](operator.md#command-line); architect, 2026-11-23, for v0.09-T01, pin P14). Absent until a `deploy` of v0.09 or later has recorded it, and while a provisioning run's deploy step, or a `deploy` that changes it, is under way ([The instance type](#the-instance-type)) |
 | `last_attempt_at` | No | The start time of the host's last provisioning run, UTC, in the contract's form `YYYY-MM-DDTHH:MM:SSZ` ([lease-api.md](lease-api.md#times)). Absent while no run has been started |
 
 `(?!\n)` after `$` means the value MUST NOT end in a line feed, which a bare `$` would allow; each
@@ -715,7 +751,10 @@ is a `|` in the pattern.
 - **An optional member is absent or holds a value of its form. `null` is never accepted** for one:
   a record with `"instance_id":null` is not valid, and a writer that has no value for a member
   leaves it out.
-- **A `ready` record need not carry `instance_id`**, and the seed's has none.
+- **A `ready` record need not carry `instance_id` or `instance_type`.** The seed document's has
+  neither, and the record a missing file implies has `instance_type` `m9g.xlarge` only as it is
+  read (the seed, below). A record written before v0.09, or written from the seed document, has no
+  `instance_type`, and is valid (D67).
 - **`last_attempt_at` is kept as the string it is stored as**, as the lease state file's times
   are. **A time that matches the pattern but names no real instant**, such as
   `2026-02-30T00:00:00Z`, **makes the file not valid**, as it makes the lease state file not valid
@@ -747,18 +786,39 @@ still not valid when any of these holds, though the schema cannot refuse it:
 - **Checked against the schema, and against the three rules above, on every read and before every
   write.** A change that would not be valid is not written.
 
-**The seed: a missing file reads as the box's record alone** (D45, D55):
+**The seed: a missing file reads as the box's record alone** (D45, D55). The seed document is:
 
 ```
 {"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"}]}
 ```
 
-- **A reader that finds no file reads that document**, and writes nothing. Reading never creates
-  the file.
-- **The first change writes the seed's record with it** (D45, D55): under
+**From v0.09 the record a missing file implies has `instance_type` `m9g.xlarge` too, and only
+when a missing file is read** (D66's change note; architect, 2026-11-23, for v0.09-T01, pins P2c
+and P31). The two halves, plainly:
+- **The default applies when the file is missing.** A reader that finds no file reads the seed
+  document's one record as if it held `"instance_type":"m9g.xlarge"`, and writes nothing.
+  Reading never creates the file. So a laptop with no registry places a lease of the default
+  size on the box as before v0.09.
+- **A written seed record has no type** (pin P31: pin P2c is read-only). **The first change writes
+  the seed document's record with it, as it is above, with no `instance_type`** (D45, D55): under
   [the host registry lock](#the-host-registry-lock), a writer that finds no file starts from the
-  seed, makes its change, and writes the whole document. So the box's record is first in every
-  file agentspace writes.
+  seed document, makes its change, and writes the whole document. So the box's record is first in
+  every file agentspace writes, and that record is like any record a program before v0.09 wrote:
+  it has no type, and meets no size ([The instance type](#the-instance-type)) until a `deploy` of
+  the box, or the deploy step of one of its provisioning runs, records the type the stack reports
+  (D67). **The bounded cost** (pin P31): on a laptop with no registry, the box's first lease after
+  another project's first write answers `pending` once, and costs one run, which records the type.
+  A writer MUST NOT write the default `m9g.xlarge` into the file: it is no reading of the stack.
+  **A change that removes the type is a change too**: a `deploy -InstanceType` of the box that
+  finds no file writes the seed document's record, with no `instance_type`, before
+  `cloudformation deploy` runs, so the implied `m9g.xlarge` is no longer read while the stack
+  changes the box's type (architect, 2026-11-23, for v0.09-T01, pin P11;
+  [The instance type](#the-instance-type)).
+- **`m9g.xlarge` is D65's `m`**, the template's default and the box's type when v0.09 was laid out
+  (D65). The box's first `deploy`, or the deploy step of its first provisioning run, writes the
+  registry with the type the stack reports (pin P2c). A file that exists keeps its records as they
+  are: a box record written before v0.09, or from the seed document, has no `instance_type`, and
+  gains one by the box's next `deploy` (D67).
 
 **Only a missing file reads as the seed. A file that is not valid is an error, never a missing
 file** (architect, 2026-11-20, for v0.07-T01). It holds state that a rebuild from the seed would
@@ -797,16 +857,35 @@ about, leaving every other record's members and values as it read them. The writ
 - **`provision`**: the run's start, its outcome and the instance ID
   ([operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
 - **Every other operator command that needs a host's instance ID**: that record's `instance_id`
-  alone. **The guard is the exception: it never writes the registry**, though it is an operator
+  alone, but for `deploy`, which writes `instance_type` too (the next item). **The guard is the
+  exception: it never writes the registry**, though it is an operator
   command (D56 has it read the registry and EC2's state; architect, 2026-11-21, for v0.08-T01,
   pin P18; [The guard's files](#the-guards-files)). **No other operator command adds a record** (architect, 2026-11-20, for v0.07-T01): one given `-Host`
   for a project with no record fails, writing nothing, with operator.md's message
   ([Which host a command acts on](operator.md#which-host-a-command-acts-on)).
+- **Every `deploy` that names or implies a host, `provision`'s deploy step included**: that
+  record's `instance_type`, which a provisioning run's deploy step removes before it decides its
+  type, a person's `deploy` that passes `InstanceType` removes before `cloudformation deploy` runs,
+  and every `deploy` writes after `cloudformation deploy` succeeds, as [The instance
+  type](#the-instance-type) says (D67, D71; architect, 2026-11-23, for v0.09-T01, pins P11 and
+  P26), beside the `instance_id` it already writes. It is the only writer that changes
+  `instance_type`.
 - **The ProxyCommand**: a missing `instance_id` alone, into its host's existing record, as
   [The instance ID](#the-instance-id) says. It never writes another member and never adds a
   record.
 
-**Who reads it:** the driver, in `create` and in `get` of a `pending` lease; every operator
+**Every writer but `deploy` keeps a record's `instance_type` exactly as it read it** (D71's pin
+names `deploy` alone as its writer; architect, 2026-11-23, for v0.09-T01, pin P12). The driver,
+`provision` outside its deploy step, an operator command that caches an instance ID, and the
+ProxyCommand never add, change or remove it, in a record they write `creating`, `failed` or
+`ready` alike. A record the driver or `provision` adds has none, and so does the box's record
+that a first change writes from the seed document (pin P31). **A program that cannot keep the member, because it
+does not know it, MUST NOT write the file** (pin P12): a program built before v0.09 refuses a file
+that holds `instance_type` as not valid, by its schema, and so never drops it, and a program built
+against this page MUST read it and write it back unchanged ([The instance type](#the-instance-type)).
+
+**Who reads it:** the driver, in `create` and in `get` of a `pending` lease, its place reading
+`instance_type` from v0.09 ([The instance type](#the-instance-type)); every operator
 command that acts on a host, to find it, and `status -All`, `down -All` and `sync -All` for
 every record; the guard, for every record, read-only and without its lock (architect, 2026-11-21,
 for v0.08-T01, pin P18); and the
@@ -833,7 +912,7 @@ what each writer records.
 |---|---|---|
 | No record | `creating`, without `last_attempt_at` unless a run is started | The driver, in `create` or in `get`'s `check_pending`, for a project with no record that is on [the project list](#the-project-list) (architect, 2026-11-20, for v0.07-T01). When it starts a run in the same call, the record is written with `last_attempt_at` in that same write (the next row). `provision`, run by hand for such a project, adds the same record with `last_attempt_at` |
 | `creating` or `failed` | `creating`, with `last_attempt_at` set to now | The driver, in the same locked write in which it decides to start a run; `provision`, at its start, once it holds [the run's lock](#the-provisioning-runs-lock) (architect, 2026-11-20, for v0.07-T01) |
-| `creating` | `ready`, with `instance_id` | `provision`, when every step has succeeded |
+| `creating` | `ready`, with `instance_id` | `provision`, when every step has succeeded. `instance_type` is as its deploy step recorded it ([The instance type](#the-instance-type)) |
 | `creating` | `failed` | `provision`, when a step has failed. `last_attempt_at` stays the run's start, and an `instance_id` the run learned is kept |
 | `ready` | `ready`, with `last_attempt_at` set to now | The driver, when it starts a run for a host that is `ready` (`check_pending`, for a pending lease of that project; architect, 2026-11-20, for v0.07-T01), and `provision` at its start on such a host. **The run never changes a `ready` record's `state`**: it keeps `ready` on success, writing the `instance_id` if it learned one, and on a failed step logs the failure and leaves `ready` (architect, 2026-11-20, for v0.07-T01; D48) |
 
@@ -843,6 +922,11 @@ what each writer records.
   driver that starts it, write only `last_attempt_at` at its start (architect, 2026-11-20, for
   v0.07-T01; D48). A host that is not `ready` sends its project's ready leases to the box, where
   ssh refuses them ([Which host a connection reaches](#which-host-a-connection-reaches)).
+- **`instance_type` is not a state, and no row of the table writes it.** A `deploy`,
+  `provision`'s deploy step included, writes it whatever the record's state, and every write the
+  table names keeps it as it was ([The instance type](#the-instance-type)). A run on a `ready`
+  host, a resize included (D68, D71), keeps the record `ready` and writes only
+  `last_attempt_at` at its start, as above.
 - **`creating` means a run is under way, or one died with the record still `creating`.**
   Whether a run is under way is told by [the run's lock](#the-provisioning-runs-lock), never by
   the record: a run killed before it recorded its outcome leaves `creating`, and a later `create`
@@ -871,9 +955,192 @@ read from its stack again, as a missing cache was.
   AWS. A write that fails, or a file that has become not valid, does not fail the connection,
   which uses the ID it read (architect, 2026-11-20, for v0.07-T01).
 - **The lease CLI never reads, checks for or needs `instance_id`** (D21): `create` and `get` read
-  a record's `project`, `stack` and `state` alone ([driver.md](driver.md#where-it-places-a-lease)).
+  a record's `project`, `stack` and `state`, and from v0.09 its `instance_type`, and nothing else
+  ([driver.md](driver.md#where-it-places-a-lease); [The instance type](#the-instance-type)).
 - **An `instance_id` that does not match its pattern makes the file not valid**, as above. Unlike
   the retired cache's, it is never read as missing, because the file holds more than the cache did.
+
+### The instance type
+
+**A record's `instance_type` records the instance type of its host's stack, as the last `deploy`
+that recorded it left the stack** (D67; D71's pins). The stack's `InstanceType` parameter is the
+instance's type, and it changes only through the stack (D39, D40, D67). The record is how the EC2
+driver's place learns a host's size with no AWS call (D48). The member's form is in
+[the table above](#the-host-registry); this section says who writes it, when, and what it means.
+
+**Who writes it, and when** (D71's pin; D67's change note; architect, 2026-11-23, for v0.09-T01,
+pins P11, P26 and P30):
+- **Every `deploy` that names or implies a host, `provision`'s deploy step included**:
+  `deploy -Host <project>`, `deploy` of the box with `-Host swimcoach` or with no `-Host`, and the
+  deploy step of every provisioning run, a resize included
+  ([operator.md, deploy](operator.md#deploy); [operator.md, provision](operator.md#provision)).
+  Nothing else changes it (architect, 2026-11-23, for v0.09-T01, pin P12). Below, **a run's
+  deploy step** is a provisioning run's, and **a person's `deploy`** is every other `deploy`, run
+  by hand, with `-InstanceType` or without.
+- **Its value comes only from the stack after `cloudformation deploy` succeeds**: the
+  `InstanceType` parameter of the host's stack as `cloudformation describe-stacks` reads it back,
+  stored exactly as that call returns it, never `-InstanceType`'s value and never an older record.
+- **In these steps, each write under [the host registry lock](#the-host-registry-lock)**, which the
+  writer takes, re-reading the file under it, and releases after the rename, changing that record's
+  `instance_type` and no other member but what operator.md's step writes in the same write:
+  1. **A run's deploy step removes the record's `instance_type` before it decides its type**,
+     whether it will then pass a type or none, holding [the lease state
+     lock](#the-lease-state-lock) as well, as the next list says (pin P26). **A person's `deploy`
+     that passes `InstanceType` removes it first, before `cloudformation deploy` runs** (pin P11),
+     whatever the record held, the type it passes included. **With no file, it writes the file
+     then**: the box's record that a missing file implies reads as holding `m9g.xlarge` (pin P2c),
+     so the removal writes the seed document's record, with no `instance_type`, as any first
+     change writes it (architect, 2026-11-23, for v0.09-T01, pins P2c, P11 and P31; [The
+     seed](#the-host-registry)). **A person's `deploy` that passes no
+     `InstanceType` writes nothing here**, and keeps the type until its own read-back (pin P30).
+  2. **Once `cloudformation deploy` has succeeded, `deploy` removes the record's `instance_id`, and
+     `instance_type` with it in the same write**, as it already removes `instance_id`
+     ([The instance ID](#the-instance-id)), so that only a read-back that fails or is malformed
+     leaves a person's `deploy` that passed no `InstanceType` with no type (architect, 2026-11-23,
+     for v0.09-T01, pin P30). For any other `deploy` the type is already gone, and this removes
+     nothing more.
+  3. **It reads the `InstanceType` parameter with `describe-stacks`**, holding no lock of this
+     page's but the host's [`provision.lock`](#the-provisioning-runs-lock), which a run's deploy
+     step holds through its run and a person's `deploy` holds for its life (pins P11 and P34). One call reads both
+     `InstanceId` and `InstanceType` (architect, 2026-11-23, for v0.09-T01, pin P23).
+  4. **It writes the value it read into the record**, in the same write as the `instance_id`
+     (pin P23).
+
+  So the type comes from the stack as the deploy left it, never from an older record, as the
+  instance ID does ([The instance ID](#the-instance-id)), and the record never holds a type from
+  before a change the deploy asked for.
+- **A run's deploy step that fails, or is killed, anywhere after its step 1 leaves the record with
+  no `instance_type`, by design** (architect, 2026-11-23, for v0.09-T01, pin P30), whether it was
+  to pass a type or none. A failed run leaves none, and its next run records the type.
+- **A person's `deploy` that passed `InstanceType` and fails or is killed anywhere after step 1
+  leaves the record with no `instance_type`** (pin P11). A `cloudformation deploy` whose client is
+  killed goes on running on AWS's side, so a type kept from before could be one the host no longer
+  has, larger than it, and place would answer `ready` on a host smaller than the lease asked for,
+  which D5 forbids. A missing type costs one run, never a stale type (D67's change note).
+- **A person's `deploy` that passed no `InstanceType` and fails, or is killed, before its step 2
+  keeps the record's `instance_type` as it was** (pin P30): it asked for no change of type, and an
+  existing stack keeps its `InstanceType`'s previous value, so the deploy changed nothing the
+  record says. **Only a read-back that fails or is malformed removes it**: once its step 2 has run,
+  a failed `describe-stacks`, or an answer whose value is missing or not of the member's form,
+  leaves no type (pins P11 and P30).
+- **A record left with no type meets no size** (below): the next lease of that project answers
+  `pending`, whatever other leases hold the host, and its run records the type (D66's change note;
+  [driver.md, On a `ready` host](driver.md#on-a-ready-host), row 2). A failed deploy step of a
+  provisioning run is logged in the host's [`provision.log`](#the-provisioning-runs-log), and the
+  project's leases stay `pending` for the next run (D68). What `deploy` prints and logs is
+  operator.md's.
+
+**Which type a deploy passes is operator.md's** ([operator.md, deploy](operator.md#deploy),
+[operator.md, provision](operator.md#provision)); this page says only which files it reads to find
+it:
+- **`deploy -InstanceType <type>` passes that type, for every host, the box included** (D67, D71).
+  A `deploy` without it passes the stack's previous value, or the template's default for a host's
+  stack it creates. Neither reads `stack-parameters.json`'s `InstanceType`
+  ([Files in the checkout](#files-in-the-checkout)).
+- **A provisioning run's command line is unchanged, `provision -Host <project>`, and the run finds
+  its own type at its deploy step, in five steps, holding its
+  [`provision.lock`](#the-provisioning-runs-lock) throughout** (D71, which changes D68; D68's
+  change notes; architect, 2026-11-23, for v0.09-T01, pin P26, which replaces pin P13's read of
+  the lease state file without a lock). It takes the other two locks only in [the order of the
+  locks](#the-order-of-the-locks), the lease state lock, then the host registry lock
+  ([driver.md, A resizing run](driver.md#a-resizing-run); [driver.md, Lock
+  order](driver.md#lock-order)):
+  1. **It takes [the lease state lock](#the-lease-state-lock) of the `<state folder>` it runs
+     with** ([The provisioning run's start](#the-provisioning-runs-start)), **then [the host
+     registry lock](#the-host-registry-lock)**, waiting for each as a lease command that changes
+     leases does.
+  2. **It removes the record's `instance_type` and writes the registry, then releases the host
+     registry lock**, whether it will pass a type or none. From here until step 5 writes the type,
+     place finds the record with no type and answers a new lease `pending` (pin P2).
+  3. **It reads the lease state file, under the lease state lock still held**, read-only, and
+     decides its type by one reading's time, as [Live leases and the lease
+     horizon](#live-leases-and-the-lease-horizon) decides whether a lease is live and `ready`:
+     - **When a live `ready` lease of the project holds the host, it passes no `InstanceType`**
+       (D68's change note; architect, 2026-11-23, for v0.09-T01, pin P2(a)), so the stack's change
+       set holds no resize and the host is not stopped. Its deploy still records the type it reads
+       back, and `place_pending` then places or refuses the project's `pending` leases by that type
+       (pin P1; [driver.md, place_pending](driver.md#place_pending)).
+     - **Otherwise it passes the type the EC2 driver's `resize_target` gives for its project from
+       that file's records, or none when it gives none** (D71's pin; [driver.md, Sizes and instance
+       types](driver.md#sizes-and-instance-types)). `resize_target` counts only the project's
+       `pending` records whose `driver` is the EC2 driver's name and whose size is in `SIZES`, the
+       leases a run would place (pins P18 and P20).
+  4. **It releases the lease state lock, and only then calls AWS**, holding no lock of this page's
+     but its own during the calls.
+  5. **Once the stack's deploy has succeeded, it writes the type `describe-stacks` reads back**,
+     under the host registry lock alone, as every `deploy` does (above; pins P11 and P23).
+
+  The driver starts the run as before, with no new argument, so a run that `get` starts and one
+  that `create` starts agree. **A resize runs provision's steps entire** (D71), each safe to
+  repeat (D48), and **a run never takes a `ready` host out of `ready`** (D48, D68).
+- **Why the order closes the race** (pin P26). `create` holds the lease state lock for its whole
+  place ([driver.md, Ordering and concurrency](driver.md#ordering-and-concurrency)), so a `create`
+  is either wholly before the run's step 1 or wholly after it. **Wholly before**, its `ready` lease
+  is in the file step 3 reads, and the run does not resize the host under it. **Wholly after**, it
+  finds the record with no type and answers `pending` by pin P2, until step 5 writes the type the
+  host then has. **The argument holds for the leases in the run's own state folder**, the one
+  `AGENTSPACE_STATE_DIR` names for it, whose lock it takes: a lease in another state folder is
+  not seen by the run, and neither holds the host nor holds a place in the run's folder
+  `pending`, as [driver.md, On a `ready` host](driver.md#on-a-ready-host) says (architect,
+  2026-11-23, for v0.09-T01, pin P26). A lease created after the run's read is not in the run's
+  type, and is placed or answered by the driver: while the project has a `pending` lease a run
+  would place, place answers every new lease of the project `pending` (D66's change note; pins
+  P2(b) and P20), and the run's
+  `place_pending` places it if the host the run leaves meets it, answers it `unsatisfiable` with
+  `no_capacity` when a live `ready` lease holds the host, and otherwise leaves it `pending` for the
+  next run (pin P1).
+- **A missing lease state file is no leases** (pin P26), as for every reader but the guard and
+  `status -All` ([The lease state file](#the-lease-state-file)): no lease holds the host,
+  `resize_target` gives none, and the deploy step passes no type. **A file that is not valid, or
+  that cannot be read, MUST NOT be taken for no leases** (pin P26): the run's deploy step fails
+  before it calls AWS, as a failed deploy step does, **with the type already removed by its step
+  2**, which costs one run, and the leases stay `pending` ([operator.md,
+  provision](operator.md#provision) gives the log line). Taking it for no leases could resize a host
+  a `ready` lease holds; failing first spends no deploy.
+
+**Who reads it, and what it means:**
+- **The EC2 driver's place reads it from the record**, with the rest of the record, under the host
+  registry lock as `create` already reads it, and makes no AWS call (D48, D66, D67). Whether a host
+  meets a size is the driver's `meets`, by the map in
+  [driver.md, Sizes and instance types](driver.md#sizes-and-instance-types). This page owns the
+  member, never the map from size to type (D67).
+- **A record with no `instance_type` meets no size** (D67, D71). No record written before v0.09
+  has one, nor does one written from the seed document, and each is valid; only the record a
+  missing file implies has `m9g.xlarge`, as it is read (pins P2c and P31, above). **A `ready` record with
+  no `instance_type` answers `pending` and starts a run, whatever other leases hold the host, never
+  `no_capacity`** (D66's change note; architect, 2026-11-23, for v0.09-T01, pin P2): so each
+  project's first lease after v0.09's install answers `pending`, and its run records the type
+  (D67, D70), resizing only when no live `ready` lease holds the host (pin P2(a), above). No
+  file of the user's is edited for it. What place answers is driver.md's
+  ([driver.md, On a `ready` host](driver.md#on-a-ready-host)).
+- **A type that matches the member's form but that the map does not hold**, such as one a person
+  set by hand, is valid in the file, and meets no size (D71's `meets`).
+- **It never says whether the host runs** (D45). A record holds the type of a stopped host as it
+  holds a running one's, and nothing in the registry records whether a host runs.
+- **No lease command prints it** (D1), and nothing in a lease names an instance type.
+
+**Its form, and programs built before v0.09:**
+- **The member is optional, and `null` is never accepted for it**, as for every optional member
+  ([The host registry](#the-host-registry)).
+- **In code it is D71's pinned field, `agentspace_hosts::Host.instance_type: Option<String>`**,
+  which E0.09-T02-S01 adds to `agentspace-hosts`: `None` when the member is absent, and the
+  string as stored when it is present. A program that reads and writes the registry through that
+  crate keeps the member by keeping the field (D71's pins).
+- **It is written after `instance_id` and before `last_attempt_at`**, the order of the member
+  table, which fixes a record's bytes (architect, 2026-11-23, for v0.09-T01, pin P4). A record
+  without it is written as it was before v0.09, since an absent member adds no bytes. A reader
+  MUST NOT depend on member order.
+- **The file's `version` stays `0`** (architect, 2026-11-23, for v0.09-T01, pin P15). An optional
+  member gives an older reader nothing to misread: a program built before v0.09 refuses a file
+  that holds `instance_type` as not valid, by its schema, rather than reading it without the
+  member, and so never writes such a file back without it.
+- **So v0.09's programs MUST be installed together**, since a program of v0.08 left beside them
+  fails on every registry that a `deploy` of v0.09, or a provisioning run of v0.09, has written
+  the member into. The install is operator.md's
+  ([operator.md, The install folder](operator.md#the-install-folder)). **A return to v0.08's
+  programs after v0.09 has written the member needs it removed by hand** from every record that
+  holds it (D67's change note; architect, 2026-11-23, for v0.09-T01, pin P15;
+  [README](../README.md#install-it)).
 
 ### Which host a connection reaches
 
@@ -1694,7 +1961,7 @@ D48, D50, D55)**, where `<project>` is the host's record's `project`:
 | `id_ed25519`, `id_ed25519.pub` | The operator's key for this host | [The operator's key and certificate](#the-operators-key-and-certificate) |
 | `id_ed25519-cert.pub` | The operator's certificate, key ID `operator-<project>`, valid one hour | The same |
 | `provision.log` | The provisioning run's log, which the run opens for append as its first step, creating it if it is missing | [The provisioning run's log](#the-provisioning-runs-log) |
-| `provision.lock` | The provisioning run's lock: held while a run is running | [The provisioning run's lock](#the-provisioning-runs-lock) |
+| `provision.lock` | The provisioning run's lock: held while a run is running, and from v0.09 while a person's `deploy` of the host is (pin P34) | [The provisioning run's lock](#the-provisioning-runs-lock) |
 | `localswim-pushed.json` | The host's push stamp, for every host but the box | [A host's push stamp](#a-hosts-push-stamp) |
 
 - **The folder is created by the first writer of a file in it**, `%USERPROFILE%\.agentspace\hosts\`
@@ -1713,7 +1980,10 @@ D48, D50, D55)**, where `<project>` is the host's record's `project`:
 - **Access rules:** the folder's are inherited from `%USERPROFILE%\.agentspace`, and so are its
   files', but for the private key's ([The operator's key and certificate](#the-operators-key-and-certificate)).
 - **The writer MUST NOT put any other file in it.** A person's file there is left alone.
-- **The box MAY have a folder too, `hosts\swimcoach\`**, when a run is started for it; it then holds the same files under the same rules, but for the push stamp,
+- **The box MAY have a folder too, `hosts\swimcoach\`**, when a run is started for it, or, from
+  v0.09, when a person's `deploy` of the box takes its `provision.lock`, which creates the folder when it is
+  missing (architect, 2026-11-23, for v0.09-T01, pin P34); it then holds the same files under the
+  same rules, but for the push stamp,
   which stays the box's own ([The push stamp](#the-push-stamp)).
 - **Something at `hosts\` or `hosts\<project>\` that is not a folder** fails every command that
   needs a file in it, writing nothing there, as [The home folder](#the-home-folder) says of any
@@ -1879,7 +2149,9 @@ D48's `<state folder>\hosts\<project>.log` is not used.
 ### The provisioning run's lock
 
 **`%USERPROFILE%\.agentspace\hosts\<project>\provision.lock` is held for the whole life of a
-provisioning run, so a held lock means a run is running** (D55).
+provisioning run, and from v0.09 for the whole life of a person's `deploy` of the host, so a held
+lock means a run or such a `deploy` is running** (D55; architect, 2026-11-23, for v0.09-T01, pin
+P34). The box's is `hosts\swimcoach\provision.lock` ([A host's folder](#a-hosts-folder)).
 - **Holding it means having the file open with no sharing**, for reading and writing, creating it
   if it is missing, as [the lease state lock](#the-lease-state-lock) is held; the taker creates the
   host's folder first if it is missing. **The file is never deleted, its content is empty and
@@ -1892,14 +2164,33 @@ provisioning run, so a held lock means a run is running** (D55).
     it has recorded its outcome and called `place_pending`.** A `provision` that finds it held
     writes one line to its log saying that a run is already running, writes no record and nothing
     else, and exits 1 ([operator.md](operator.md#provision); architect, 2026-11-20, for v0.07-T01).
+  - **From v0.09 every `deploy` that is not a provisioning run's own deploy step takes it**, the
+    box's included, with `-InstanceType` or without, after its command line's checks and its
+    host's lookup and before any call to AWS or any file write, **and holds it for its whole life,
+    its `sync` step included** (architect, 2026-11-23, for v0.09-T01, pin P34). A `deploy` that
+    finds it held makes no call to AWS, writes no file and no line to
+    [`provision.log`](#the-provisioning-runs-log), and exits 1 with its own message; one that
+    cannot open it for another reason fails before any call to AWS
+    ([operator.md, deploy](operator.md#deploy)). **A provisioning run's deploy step takes nothing
+    more**: it runs under the lock its run already holds.
   - **The driver tries it, and releases it at once if it got it**, only to learn whether a run is
     running ([driver.md](driver.md#check_pending)).
   - **A failure to open it other than its being held**, such as access denied, or a folder at its
     path, is not a free lock: the taker treats it as a failure of its own and starts or runs
     nothing.
-- **Which other operator commands refuse to run while it is held is operator.md's**
-  ([Which host a command acts on](operator.md#which-host-a-command-acts-on)). A missing file is a
-  lock nobody holds.
+- **Which operator commands refuse to run while it is held is operator.md's**
+  ([operator.md, deploy](operator.md#deploy) for `deploy`'s refusal; [operator.md,
+  provision](operator.md#provision), step 2, for a run's): from v0.09 `deploy` refuses, as above,
+  `provision` fails its step 2, and the guard leaves the host unstopped ([operator.md,
+  guard](operator.md#guard)), whether a run or a person's `deploy` holds it (pin P34). A missing
+  file is a lock nobody holds.
+- **What a held lock is reported as** (architect, 2026-11-23, for v0.09-T01, pin P36): a held lock
+  means a provisioning run or a person's `deploy` is running, and `deploy`'s refusal names both.
+  **Two older texts name a run alone, and stay byte for byte as v0.07 and v0.08 pinned them**:
+  `provision`'s held-lock message,
+  `agentspace: A provisioning run for '<project>' is already running.`, with its log line, and
+  the guard's `provisioning=running` field ([operator.md, guard](operator.md#guard)). Either can
+  report a lock a person's `deploy` holds.
 
 ### The provisioning run's start
 
@@ -2513,7 +2804,7 @@ format. None is committed.
 | Path | The prototype's | Format | Written by | Read by | Removed |
 |---|---|---|---|---|---|
 | `%USERPROFILE%\.agentspace\instance-id.json` | `<checkout>\.instance-id`, the ID alone in ASCII | Retired by v0.07 (D45); v0.06's JSON, below | Nothing, from v0.07 | Nothing, from v0.07; a host's instance ID is its record's `instance_id` ([The instance ID](#the-instance-id)) | Never by agentspace; a person MAY delete it |
-| `%USERPROFILE%\.agentspace\stack-parameters.json` | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | JSON; see below | A person | Plain `deploy` of the box; `deploy -Host` and `provision` when they create a host's stack, for `SubnetId` and `VpcId` alone | Never |
+| `%USERPROFILE%\.agentspace\stack-parameters.json` | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | JSON; see below | A person | Plain `deploy` of the box, for every parameter but `InstanceType`, which no program reads from v0.09 (D67, D71); `deploy -Host` and `provision` when they create a host's stack, for `SubnetId` and `VpcId` alone | Never |
 | `%USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, or `provision`'s deploy step, just before the call that reads it | The AWS CLI's `cloudformation deploy` | With its command's folder |
 | `%USERPROFILE%\.agentspace\operator\<hex>\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, or `provision`'s sync step, just before the copy | `scp`, which copies the folder to the host | With its command's folder |
 | `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box, and so for every host, since each is from the one template | `sync`'s build, or `provision`'s | `scp` | With its command's folder |
@@ -2569,18 +2860,33 @@ format. None is committed.
     `stack-parameters.json` is a one-time step of v0.06's cutover, and no agentspace program
     converts it.
   - **One file serves every host in v0.07, and its form does not change, but a host is never sized
-    by the box's parameters** (architect, 2026-11-20, for v0.07-T01; D55). Whose values the file
-    supplies, and when:
-    - **Plain `deploy` of the box** uses every parameter in it, as today (D39).
+    by the box's parameters** (architect, 2026-11-20, for v0.07-T01; D55), **and from v0.09 no
+    host is sized by the file at all** (D67, D71). Whose values the file supplies, and when:
+    - **Plain `deploy` of the box, and the box's provisioning run's deploy step,** pass
+      `SshPublicKey` and every parameter in it but `InstanceType`, which keeps its previous value
+      unless `-InstanceType` gives one (D67, D71; architect, 2026-11-23, for v0.09-T01, pin P6;
+      [operator.md, deploy](operator.md#deploy)). Before v0.09 they passed every parameter in it
+      (D39).
     - **When `deploy -Host <project>`, or `provision`'s deploy step, creates a host's stack**, the
       file supplies `SubnetId` and `VpcId` alone. Every other parameter in it, `InstanceType`
       among them, is not used for that stack; the others are the template's defaults, or the
       values operator.md gives (`SshPublicKey`, `HostName`, `CaPublicKey`).
     - **For a host's stack that exists**, `deploy -Host <project>` and `provision`'s deploy step
       pass every parameter's previous value, and read nothing from the file.
-    - **A host's size changes only through `deploy -Host <project> -InstanceType <type>`.** The
-      command lines are [operator.md](operator.md#deploy)'s; this page says only whose values the
-      file supplies.
+    - **A host's size changes only through its stack** (D39, D40, D67): through
+      `deploy -InstanceType <type>`, for every host, the box included (`-Host swimcoach`, or no
+      `-Host`), and through a provisioning run's deploy step, which passes the type its project's
+      `pending` leases need ([The instance type](#the-instance-type)). The command lines are
+      [operator.md](operator.md#deploy)'s; this page says only whose values the file supplies.
+  - **The file's `InstanceType` is not passed and not read** (D67, D71; pin P6). No program of
+    agentspace passes it, or uses its value, for any host, so the box's next plain `deploy` cannot
+    put back a size a lease set. A file that holds it is left as it is, the member included:
+    agentspace never writes the file, and the member is ignored. The file is still checked against
+    its schema as a whole before `deploy` calls AWS (above), and the schema's constraints do not
+    change, so the member still MUST be of its form; only the schema's description says it is
+    ignored (architect, 2026-11-23, for v0.09-T01, pin P16). README and
+    [operator.md](operator.md#deploy) say it is ignored. This replaces operator.md's P13 rule (its
+    Q31) that the box is sized through this file (D67).
 
 ## Project tooling
 
@@ -2612,7 +2918,17 @@ folder, the `Include` line and the alias file all happens under it. Each first c
 `place_pending` takes it the same way, once for each lease it places**, waits for it as a lease
 command does, and holds it from before it re-reads the state file for that lease until after it
 has written that lease's record, so no hold spans several placements (architect, 2026-11-20, for v0.07-T01;
-[driver.md](driver.md#place_pending)).
+[driver.md](driver.md#place_pending)). **From v0.09 a provisioning run's deploy step takes it
+too, once**, waiting for it as a lease command does, and holds it from before it removes the
+record's `instance_type` until it has read the state file and decided its type, then releases it
+before any call to AWS; it never writes the state file under it ([The instance
+type](#the-instance-type); architect, 2026-11-23, for v0.09-T01, pin P26;
+[driver.md, A resizing run](driver.md#a-resizing-run)). Every rule below applies to it as to a
+lease command: the 30 seconds, the failure that is not "held" failing at once, and the way the
+lock is held. **Its failures are the deploy step's**: a lock not taken within its 30 seconds, or
+one that cannot be opened, fails the step before any call to AWS and before any write, with the
+messages [operator.md, provision](operator.md#provision) gives in its step 4.1, and the leases
+stay `pending`.
 
 - **Holding the lock means having `leases.lock` open with no sharing**: on Windows, share mode 0
   (`FileShare.None`), for reading and writing, creating the file if it is missing. **Every
@@ -2677,13 +2993,39 @@ lock](#the-lease-state-lock), then [the host registry lock](#the-host-registry-l
 MUST NOT wait for an earlier one, so no two programs wait for each other.
 - **A try without waiting is outside the order**, and cannot deadlock: the driver, holding the
   lease state lock and the host registry lock in `create`, MAY try a host's provisioning run's lock
-  and releases it at once, and `get`'s `check_pending` tries the host registry lock without
-  waiting.
+  and releases it at once, only to decide whether a run is due, and from v0.09 tries no lock to
+  decide a lease on a `ready` host (architect, 2026-11-23, for v0.09-T01, pin P26;
+  [driver.md, Lock order](driver.md#lock-order)); and `get`'s `check_pending` tries the host
+  registry lock without waiting.
 - **A provisioning run ends in this order:** holding its own lock throughout, it takes the host
   registry lock alone to record `ready` and the instance ID, and releases it; then `place_pending`
   takes the lease state lock once for each lease it places, releasing it after each; then the run
   releases its own lock. It never holds the host
   registry lock while it waits for the lease state lock.
+- **A person's `deploy` holds the provisioning run's lock first, then the host registry lock only
+  for its record writes** (D71; [The instance type](#the-instance-type); architect, 2026-11-23,
+  for v0.09-T01, pins P11 and P34). It takes its host's `provision.lock` without waiting, before
+  any call to AWS, and holds it for its whole life, its `sync` step included, as a run holds its
+  own ([The provisioning run's lock](#the-provisioning-runs-lock)). Within it, it records
+  `instance_type` and the instance ID under the host registry lock alone, taking it for each
+  removal and again for the write, and holds it across no call to AWS; its `sync` step takes the
+  host registry lock the same way, for its own writes. It never takes the lease state lock. So
+  it takes its locks in the order, and never waits for `provision.lock`, which it only tries.
+- **From v0.09 a provisioning run's deploy step takes the lease state lock, then the host registry
+  lock, in this order**, holding its own lock throughout (architect, 2026-11-23, for v0.09-T01, pin
+  P26, which replaces pin P13's read of the lease state file without the lock; [driver.md, Lock
+  order](driver.md#lock-order); [driver.md, A resizing run](driver.md#a-resizing-run)). Under both
+  it removes the record's `instance_type` and writes the registry; it releases the host registry
+  lock; it reads the lease state file under the lease state lock still held and decides its type;
+  and it releases the lease state lock before any call to AWS. Its write of the type after the
+  deploy is under the host registry lock alone, as its write of the instance ID is, and it holds
+  no lock of this page's but its own during the calls to AWS. **So a run, from v0.09, takes its
+  locks in this order:** its own for its life; the host registry lock alone to record its start;
+  at its deploy step, the lease state lock, then the host registry lock within it, released before
+  the read, then the lease state lock alone for the read; none during the deploy and its read-back;
+  the host registry lock alone to record the type and the instance ID, and again to record `ready`;
+  then `place_pending`'s, as above. Besides its own, it holds at most two of these locks at a time,
+  and both only at its deploy step's start, taken in the order, so the order is kept.
 - **The keeper's two locks are outside this order**: the keeper takes none of these three, and no
   holder of these three takes the keeper's.
 - **[The guard's lock](#the-guards-lock) is the first lock a guard takes, and nothing waits for
@@ -2713,7 +3055,10 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
 | A provisioning run's `place_pending`, and a `create`, `renew` or `release` | Each waits for the lease state lock, which `place_pending` takes once for each lease it places, re-reading the state file each time, so no hold of it spans several placements. A lease released before `place_pending` re-reads the state file for it is skipped and never placed; one released after it was placed is released as any `ready` lease is |
 | A provisioning run, and `get` or `list` | `get` and `list` see a placed lease `pending` before the run's write and `ready` after it, never part of either |
 | A provisioning run, and the ProxyCommand or the keeper | They read `hosts.json` and the lease state file without their locks, so they see each as it was before one of the run's writes or as it is after it, never part of either. A record the run makes `ready` comes before any lease it places, so neither finds a `ready` lease on a host that is not yet `ready` |
-| A provisioning run, and an operator command on the same host by hand | Their writes to `hosts.json` wait for each other at its lock. Whether the command runs at all while the run's lock is held is operator.md's ([The provisioning run's lock](#the-provisioning-runs-lock)) |
+| A provisioning run, and an operator command on the same host by hand | Their writes to `hosts.json` wait for each other at its lock. Whether the command runs at all while the run's lock is held is operator.md's ([The provisioning run's lock](#the-provisioning-runs-lock)): from v0.09 `deploy` is refused, as the next row says, and every other command runs (pin P34) |
+| A person's `deploy` and a provisioning run for one host (v0.09) | Whichever takes the host's [`provision.lock`](#the-provisioning-runs-lock) first runs, and the second is refused at once, with no wait (architect, 2026-11-23, for v0.09-T01, pin P34). **A `deploy` that finds it held** exits 1 with its message before any call to AWS, changing no file ([operator.md, deploy](operator.md#deploy)). **A run that finds it held**, by hand or started by a driver whose try came before the `deploy` took it, fails its step 2 with its one `run failed` line, as for a run already running ([operator.md, provision](operator.md#provision)); and while a `deploy` holds it, the driver's try finds it held and starts no run ([driver.md, Lock order](driver.md#lock-order)). So a person's read-back never writes a type back after a run's deploy step removed it, and no `create` is placed `ready` on the old size just before the run's resize. The guard leaves the host while either holds it ([operator.md, guard](operator.md#guard)) |
+| A provisioning run's deploy step, and a `create` for the same project (v0.09) | They wait for each other at the lease state lock, which the run takes, with the host registry lock within it, to remove the record's `instance_type` and read the lease state file, and releases before any call to AWS (pin P26). So a `create` is wholly before that hold or wholly after it. **Before**, its `ready` lease is in the file the run reads, and the run passes no type, so the host is not resized under it (pin P2(a)). **After**, it finds the record with no type and answers `pending` (pin P2), until the run writes the type it reads back. A lease that `create` records after the run's read is not in the run's type: while the project has a `pending` lease a run would place, place answers it `pending` (D66's change note; pins P2(b) and P20), and the run's `place_pending` places it if the host the run leaves meets it, answers it `unsatisfiable` with `no_capacity` when a live `ready` lease holds the host, and otherwise leaves it `pending` for the next run (D68's change note; pin P1; [The instance type](#the-instance-type); [driver.md, A resizing run](driver.md#a-resizing-run)) |
+| A person's `deploy`, and a `create` that places a lease of the same host (v0.09) | `create` reads the record under the host registry lock, so it sees `instance_type` as it was before one of `deploy`'s writes or as it is after it. From a removal to the write it sees none, which meets no size, and answers `pending` as place does for such a record (pin P2); a `deploy` that passes `InstanceType` removes it before `cloudformation deploy` runs (pin P11), so no `create` reads a type the deploy is changing ([The instance type](#the-instance-type); [driver.md, On a `ready` host](driver.md#on-a-ready-host)) |
 | Commands with different `AGENTSPACE_STATE_DIR` values, from v0.07 | One host registry, one lock on it, one project list and one folder per host, but separate lease state files. A run places only the pending leases of the state file of the command that started it ([The provisioning run's start](#the-provisioning-runs-start)) |
 | A guard run, and a second guard run | The second finds [the guard's lock](#the-guards-lock) held, exits 0 at once and logs nothing, whether a keeper or a person started either. One guard runs at a time on the machine |
 | A guard run, and `create`, `renew`, `release` or a provisioning run's `place_pending` | The guard reads the lease state file without its lock, so it sees it as it was before a change or as it is after, never part of either ([Replacing a file](#replacing-a-file)), and never makes a change wait. A lease created or released an instant after the guard read the file is seen by the next run, about 5 minutes later, while a keeper runs ([keeper.md, When the keeper starts it](keeper.md#when-the-keeper-starts-it)) |
