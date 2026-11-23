@@ -15,7 +15,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   after v0.08, for the architect who starts v0.09 (#0049). It is final, and v0.08 is closed: Terry
   approved its epic and twenty-one stories into Completed on 2026-11-23. An agent picking
   agentspace up SHOULD read it first. v0.08's design is D56 to D63 in
-  [docs/decisions.md](docs/decisions.md). v0.09 is laid out only on Terry's word. The v0.07 and
+  [docs/decisions.md](docs/decisions.md). v0.09 is laid out only on Terry's word. Its design calls
+  are settled as D64 to D70 (2026-11-23), D64 ruling that v0.06-T01's whole-turn record meets
+  #0049's re-measurement for the host; the three calls that are Terry's are Q11 to Q13 there. The v0.07 and
   v0.06 handoffs, [docs/handoff-v0.07.md](docs/handoff-v0.07.md) and
   [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stay for their pieces and lessons.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept

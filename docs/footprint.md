@@ -19,8 +19,10 @@ partly recorded, was added by card #0102 (E0.05-T02-S04): see
   gap said, and MUST NOT be marked as pending.
 - **This table MUST NOT size a host.** The turn was light, as the section "What the numbers do not
   cover" says, and D33 requires a second measurement on a v0.05 turn first. **That second
-  measurement was taken and is partial** (the section on the second measured turn), so it is still
-  owed in full, and the tables of the first turn, below, still MUST NOT size a host.
+  measurement was taken and is partial** (the section on the second measured turn), and the tables
+  of the first turn, below, still MUST NOT size a host. **The third, v0.06-T01's, covers a whole
+  compiling turn** (the section on the third measured turn), and D64 rules that it meets the
+  re-measurement for the sizes v0.09 sets, with no per-agent figure.
 - Times are 2026-11-18, Pacific Standard Time (-08:00), as in the run record, except the second
   measured turn's, which are 2026-11-19, also -08:00.
 
@@ -345,8 +347,39 @@ the run record marks each one's source.
   before 2:53am: one story's target held 2.7 GB and the reviewers' scratch builds another 2.7 GB.
   So a RAM-backed `/tmp` on a 15.27 GiB box can take half of its memory. The build output counts
   in the host's memory and in no session's PSS, so the sessions' PSS figures cannot show it.
-- **D33's compiling turn is still owed,** and whether a v0.06 turn is measured again is Terry's
-  open call.
+- **D33's compiling turn was owed after this one,** and v0.06-T01 was measured for it (the next
+  section).
+
+## The third measured turn: v0.06-T01, a whole turn that compiles
+
+Measured by card #0125 (story E0.06-T02-S08), under D33 and D27, for v0.09 (#0049). The full
+account is [docs/runs/e0.06-t02-s08.md](runs/e0.06-t02-s08.md); the record is committed beside it
+as `runs/data/e0.06-t02-s08.jsonl.gz`. Every figure below is that record's, by
+`agentspace-footprint`.
+
+- **The project and the turn:** agentspace itself, v0.06-T01 (epic #0055, D42): seven Rust stories
+  in parallel, one crate each, built on a 16-CPU, 61.61 GiB box. D27's count from the plans is 15.
+- **The whole turn, with no gap:** 3,148 samples at 2 seconds, from before the dev lead's session
+  to 30 seconds after the last merge, ending in the sampler's own end line.
+- **There are no per-agent figures and no measured concurrency for this turn.** No transcript was
+  joined to the record. D64 says where they can come from.
+
+| What | Peak | p95 | p50 |
+| --- | --- | --- | --- |
+| Host CPU, cores | 4.10 | 0.68 | 0.01 |
+| Host memory used, GiB | 3.81 | 2.59 | 2.01 |
+| The session's own process, CPU cores | 0.34 | 0.09 | 0.00 |
+| The session's own process, PSS MiB | 640.13 | 563.84 | 394.55 |
+| Its tool calls, CPU cores | 4.02 | 0.63 | 0.00 |
+| Its tool calls, PSS MiB | 1,481.96 | 74.14 | 0.00 |
+
+- **The peaks are what a compiling turn asks of a host, uncut:** 4.10 cores is 26% of the box's 16,
+  where v0.05-T01's 3.83 was 96% of its 4. Tool-call processes peaked at 27 at once.
+- **v0.09 MUST NOT read the p95 and p50 figures as the turn's typical load.** About 54 of the
+  session's 102 minutes held no tool-call CPU at all (the run record's "The quiet stretch").
+- **What v0.09 reads from it** is D65's: the host's peaks, against each size's vCPUs and memory.
+  The tables of the first turn, above, still MUST NOT size a host, and no per-agent figure here
+  MAY be derived from D27's count of 15.
 
 ## What the numbers do not cover
 
@@ -361,8 +394,9 @@ the run record marks each one's source.
   before it sets any size** (D33, #0049). v0.05's `cargo` builds and test suites are the load that
   matters, and the tools are built to be rerun.
   - **The v0.05-T01 measurement does not meet that.** It covers 7 minutes of a 31-minute turn
-    (the section on the second measured turn), so the complete compiling turn D33 asks for is still
-    owed.
+    (the section on the second measured turn).
+  - **v0.06-T01's does, for the host and the session** (D64; the section on the third measured
+    turn). The per-agent figures are still owed, before v0.10 sets its mapping.
 - **A 4-core, 15.27 GiB box caps what a peak can reach.** The lease's box has 4 CPUs, and the
   sampler's start line reports 16,008,512 KiB of memory (15.27 GiB). The instance is sold as 16
   GiB, and the figure the kernel reports is what it can use. The earlier record's "15 GiB" is the

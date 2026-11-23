@@ -76,7 +76,7 @@ line's text after `Status:`, without its full stop.
 - [D36. The operator never reports a false success](#d36-the-operator-never-reports-a-false-success): Decided
 - [D37. The rewrite is seven files in one install folder, and carries what the checkout held](#d37-the-rewrite-is-seven-files-in-one-install-folder-and-carries-what-the-checkout-held): Decided
 - [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
-- [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease
+- [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease, as D65 to D69 design
 - [D40. By v1.0, agentspace's own files are JSON where feasible](#d40-by-v10-agentspaces-own-files-are-json-where-feasible): Direction, Terry, 2026-11-19, to be met by v1.0 (#0053)
 - [D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration](#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration): Decided; step 8 changed by D42
 - [D42. v0.06 builds the operator and the keeper as crates around two pinned boundaries, in six turns](#d42-v006-builds-the-operator-and-the-keeper-as-crates-around-two-pinned-boundaries-in-six-turns): Decided
@@ -101,6 +101,13 @@ line's text after `Status:`, without its full stop.
 - [D61. v0.08 carries #0163, #0164, #0166 and #0167](#d61-v008-carries-0163-0164-0166-and-0167): Decided
 - [D62. v0.08's done-when is shown by live checks on both hosts, with Terry's yes for their instance hours](#d62-v008s-done-when-is-shown-by-live-checks-on-both-hosts-with-terrys-yes-for-their-instance-hours): Decided
 - [D63. v0.08 is twenty-one stories in six turns: specs, foundations, programs, conformance, live](#d63-v008-is-twenty-one-stories-in-six-turns-specs-foundations-programs-conformance-live): Decided
+- [D64. v0.06-T01's whole-turn record meets #0049's re-measurement for the host; the per-agent split is owed to v0.10](#d64-v006-t01s-whole-turn-record-meets-0049s-re-measurement-for-the-host-the-per-agent-split-is-owed-to-v010): Decided
+- [D65. Four sizes, `s` to `xl`, on the `m9g` ladder; `m` stays the default and today's host](#d65-four-sizes-s-to-xl-on-the-m9g-ladder-m-stays-the-default-and-todays-host): Decided
+- [D66. A host is resized only while no ready lease holds it; a lease its host already meets is placed at once](#d66-a-host-is-resized-only-while-no-ready-lease-holds-it-a-lease-its-host-already-meets-is-placed-at-once): Decided
+- [D67. The stack holds a host's instance type, the host registry records it, and the size-to-type map is the EC2 driver's](#d67-the-stack-holds-a-hosts-instance-type-the-host-registry-records-it-and-the-size-to-type-map-is-the-ec2-drivers): Decided
+- [D68. A resize is the provisioning run, given the instance type; the guard and the idle check meet it as they meet a provisioning run](#d68-a-resize-is-the-provisioning-run-given-the-instance-type-the-guard-and-the-idle-check-meet-it-as-they-meet-a-provisioning-run): Decided
+- [D69. D39 ends with v0.09: the architect picks a turn's size by Terry's per-agent rule, and asks for it through the lease](#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease): Decided
+- [D70. v0.09's done-when is shown by live checks on agentspace's host, with Terry's yes for their instance hours](#d70-v009s-done-when-is-shown-by-live-checks-on-agentspaces-host-with-terrys-yes-for-their-instance-hours): Decided
 
 ## The interface
 
@@ -2282,6 +2289,10 @@ D27's per-agent footprint is measured.
     first turn on the box is measured.** It is sized for its peak (D39), its root disk is grown
     ahead of its builds, and its sampler and disk are watched from start to stop (AGENTS.md,
     "Watching a measurement").
+  - **Met for the host and the session by v0.06-T01's whole-turn record** (architect, 2026-11-23,
+    D64; runs/e0.06-t02-s08.md). The per-agent division it lacks is owed before v0.10 sets its
+    mapping, from that turn's transcripts if Terry approves their fetch (Q12), or from a turn of
+    v0.10's own.
 
 **Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
 or counts a shared library four times, sizes every host wrong.
@@ -2596,7 +2607,7 @@ prototype's operator and keeper still run (D37).
 
 ### D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent
 
-**Status: MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease.**
+**Status: MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease, as D65 to D69 design.**
 
 **Decided, Terry, 2026-11-19:** "before launching the EC2, make sure it's an M class instance with
 vCPU count >= max number of parallel agents. I want each agent to have its own vCPU and at least 4
@@ -3441,7 +3452,8 @@ and each of these is about a host's start, size or tools.
   install runs at every `sync`, so the box gets it too.
 
 **Not carried:** #0137 and #0138 are fixed and merged, and wait only on Terry's card moves;
-#0109 and #0082 stay before v0.09's measurement.
+#0109 and #0082 stay before v0.09's measurement. **Changed by D64 (architect, 2026-11-23):**
+v0.09 runs no measured turn, so both wait for the next one.
 
 ### D62. v0.08's done-when is shown by live checks on both hosts, with Terry's yes for their instance hours
 
@@ -3536,6 +3548,234 @@ OBE once T06 is merged.
 - **Instance hours:** about 1.75 in T05 and 3.75 in T06, about 5.5 of the 6 Terry approved (D62).
   A turn that would pass the 6 asks him first.
 
+## v0.09: size classes
+
+**D64 to D70 settle v0.09's (#0049) design calls before its stories are laid out**, as
+[handoff-v0.08.md](handoff-v0.08.md#the-scope-ahead-v009) asks. Each is the architect's,
+2026-11-23, unless it says otherwise. They bind the stories, which carry each one into the spec
+that owns the fact in the same pull request that builds it (D34). v0.09 MUST NOT be broken into
+stories until Terry says so (AGENTS.md, "The board"). Three calls are his, and are put to him the
+same day: Q11 to Q13.
+
+**What none of them changes:** contract v0. Supporting a size that v0 answered `unsatisfiable` is
+not a new version (lease-api.md, Versioning), and `no_capacity` is already one of its reasons. No
+schema, field or code is added, and nothing in a lease names an instance type (D1).
+
+**Not carried:** #0195, a killed client's Session Manager session holding the idle check off. It is
+about the horizon power-off, not about a host's size, and one of its fixes is Terry's account
+setting; it waits for a release of its own. #0109 and #0082 wait for the next measured turn, which
+v0.09 does not run (D64).
+
+### D64. v0.06-T01's whole-turn record meets #0049's re-measurement for the host; the per-agent split is owed to v0.10
+
+**Decided, architect, 2026-11-23.** It settles whether v0.09 measures a turn again before it sets
+a size (D33; #0049's entry requirement, Terry, 2026-11-18).
+- **The requirement is met for what v0.09 sets, and v0.09 runs no measured turn.**
+  [runs/e0.06-t02-s08.md](runs/e0.06-t02-s08.md) is the record of v0.06-T01, which is the turn
+  Terry named on 2026-11-19 in place of a v0.05 turn (D33). It meets every part of the
+  requirement but one:
+  - **A turn that compiles:** seven Rust stories, each building and testing its own crate on the
+    box.
+  - **Two or more stories in parallel:** seven, with the dev lead in all seven worktrees by its
+    seventh minute.
+  - **v0.03's tools, rerun:** `agentspace-sample` at 2 seconds and `agentspace-footprint` over its
+    record.
+  - **The whole turn, with no gap:** 3,148 consecutive samples from 3 minutes before the dev lead's
+    session to 30 seconds after the last merge, ending in the sampler's own end line. v0.05-T01's
+    covered 7 of 31 minutes (#0109).
+  - **Not cut off by the box:** the host peaked at 4.10 of 16 cores and 3.81 of 61.61 GiB, where
+    v0.05-T01's 3.83 cores was 96% of its box.
+  - **Missing: the per-agent division** (D33), which needs the turn's transcripts, and with it the
+    measured count of agents at once.
+- **v0.09 sets size classes, and they need the host's load, not a per-agent figure.** A class is a
+  CPU and memory pair (D65), and the record says what a whole compiling turn of 15 planned agents
+  asked of a host. Multiplying a plan's peak concurrency by a per-agent footprint is how v0.10
+  (#0050) picks a size (D27), and v0.09 picks one by Terry's rule instead (D69). **So the
+  per-agent split is owed before v0.10 sets its mapping, not before v0.09.**
+- **The split can be had without a new turn.** The dev lead was a desktop-app session on the box
+  (`v0.06-T01 dev lead (on the box, measured)`, remote, created at 2:44:31pm Pacific on
+  2026-11-19, the second before the record first sees its session). Its transcript and its
+  subagents' are therefore on the box's disk, under `~/.claude/projects/-home-ubuntu-agentspace/`,
+  unless Claude Code's transcript clean-up has removed them, which by its default keeps 30 days,
+  so to about 2026-12-19. Fetching them and running `agentspace-agents` over the committed record
+  (footprint.md, "Measure a new project", steps 3 to 5) gives D33's figures. **That fetch starts the
+  box, so it needs Terry's yes for its instance hours (Q12).** If he says no, or they are gone,
+  v0.10 measures a turn of its own, and #0109 is met first.
+- **What the record cannot stand for:** one project, agentspace, whose crates are small; another
+  project's builds MAY load a host differently. v0.10's plan sizing is per project (D27), and
+  footprint.md's "Measure a new project" is how a project measures its own.
+- **#0082's tripwire did not trip** on the record (9.6% against its 10% line, on v0.04-T01's
+  baseline), so #0082 is not pulled forward. **#0109 is not needed by v0.09**, since no sampler runs
+  in it; it goes before the next measured turn. This changes D61's "Not carried" line.
+
+### D65. Four sizes, `s` to `xl`, on the `m9g` ladder; `m` stays the default and today's host
+
+**Decided, architect, 2026-11-23**, on the footprint (D64) and Terry's M class (D39). The price of
+each is Terry's to accept (Q11).
+- **A size is a floor of vCPUs and memory**, stated in lease-api.md in those words alone, never
+  as an instance type (D1). **The EC2 driver supports these four for `linux/arm64`**, the one
+  platform v0 supports (D13), and maps each to one instance type, which driver.md's EC2 driver
+  section owns:
+
+  | Size | vCPUs | Memory | EC2 driver's type | On-demand, per hour |
+  |---|---|---|---|---|
+  | `s` | 2 | 8 GiB | `m9g.large` | $0.0978 |
+  | `m` | 4 | 16 GiB | `m9g.xlarge` | $0.1957 |
+  | `l` | 8 | 32 GiB | `m9g.2xlarge` | $0.3914 |
+  | `xl` | 16 | 64 GiB | `m9g.4xlarge` | $0.7827 |
+
+  The vCPUs, memory and offering in the stacks' region were read with `ec2 describe-instance-types`
+  and `describe-instance-type-offerings`, and the prices from AWS's price list (Linux, shared
+  tenancy, on demand), on 2026-11-23. The root volume is unchanged by size, and so is its cost.
+- **`m` stays the default, and stays `m9g.xlarge`**, the type both hosts have today, so every lease
+  made as before v0.09 asks for the host it already has.
+- **Any other well-formed size stays `unsatisfiable` with `unsupported_size`**, its message naming
+  the four (`v0 supports sizes s, m, l and xl`). The reasons' rules are unchanged (D5).
+- **Why these four:** v0.04-T01, a spec-writing turn of 8 agents, peaked at 0.51 cores and 1.09 GiB,
+  inside `s`. v0.06-T01, a compiling turn of 15 planned agents, peaked at 4.10 cores and 3.81 GiB:
+  over `m`'s 4 cores in 3 of its 3,147 intervals, inside `l` with about twice its CPU to spare, and
+  inside `xl` by Terry's per-agent rule (D69). Each step doubles both, as the `m9g` family does, at
+  M class's 4 GiB per vCPU (D39). A size above `xl` is not supported until a measured turn needs
+  one, and a GPU size stays on the roadmap's later list.
+
+### D66. A host is resized only while no ready lease holds it; a lease its host already meets is placed at once
+
+**Decided, architect, 2026-11-23.** It decides what #0049's done-when leaves open: a lease asking
+for a different size while the host runs.
+- **A host meets a lease when its size is at least the size asked for**, in both vCPUs and memory.
+  A lease placed on a larger host is met, not swapped (D5): D5 forbids handing back less than was
+  asked, and the lease's `size` stays the size asked for, so nothing in it shows the difference
+  (D1).
+- **Place decides by the project's live `ready` leases** (D56's words), read from the lease state
+  file as the guard reads them, with no AWS call (D48), and by the host's size as the host registry
+  records it (D67):
+
+  | The project's host | Place answers |
+  |---|---|
+  | `ready`, at exactly the size asked for | `ready`, as today |
+  | `ready`, larger than the size asked for, and another live `ready` lease of the project exists | `ready`, on the larger host |
+  | `ready`, at any other size, and no other live `ready` lease of the project exists | `pending`, and a resizing run is started (D68) |
+  | `ready`, smaller than the size asked for, and another live `ready` lease of the project exists | `unsatisfiable`, with one reason, `no_capacity` |
+  | `creating` or `failed`, or no record | As D48 and D54 say; the provisioning run makes the host at the size of the largest `pending` lease (D68) |
+
+- **A larger host is resized down when nothing holds it** (the third row). A host left at `xl` by
+  one turn would otherwise cost four times `m`'s rate for every lease after it, and the cost is a
+  few minutes `pending` for the lease that finds it.
+- **The `no_capacity` message names the project, the size asked for and what the caller can do**,
+  never the backend, and SHOULD read:
+  `No capacity can be found for project '<project>' at size '<size>': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.`
+  It answers at once and changes nothing. A later `create` is judged afresh, as lease-api.md
+  already says for `no_capacity`.
+- **Why refuse rather than wait or resize now:**
+  - **Resizing a running host stops it** (D39, D40), which ends every session on it: another
+    lease's agents would lose their work in the middle of a turn, with nothing in their lease to
+    say why.
+  - **Waiting** would leave a lease `pending` until every other lease of the project ends, which
+    can be the 24-hour maximum TTL (D24), with nothing to tell the caller it waits on others.
+  - **The other leases are the same project's**, so the caller, or the architect that runs the
+    project's turns, can release them and ask again. The refusal says so at once.
+- **A lease that is only `pending` does not hold a host's size**, since it has no session there; an
+  expired or released lease holds nothing. A host in its grace after its last lease (D56) is
+  resized like a stopped one.
+
+### D67. The stack holds a host's instance type, the host registry records it, and the size-to-type map is the EC2 driver's
+
+**Decided, architect, 2026-11-23.** It settles where a host's size lives.
+- **The stack's `InstanceType` parameter is the instance's type, and it changes only through the
+  stack** (D39, D40), by `deploy -Host <project> -InstanceType <type>`, as every host but the box
+  changes today (operator.md, deploy).
+- **The host registry records each host's type, as `instance_type`**, written by every run or
+  `deploy` that sets it, from the stack's parameter as `describe-stacks` reads it back after the
+  deploy succeeds. Place reads it there, with no AWS call (D48). The registry still never records
+  whether a host runs (D45). state.md owns the member and its schema.
+- **A record with no `instance_type` meets no size.** Both hosts' records predate v0.09, so each
+  project's first lease after the install with no other live `ready` lease answers `pending`, and its
+  run sets the type and records it. It costs each host one run, once, and no file of Terry's is
+  edited for it.
+- **The map from size to type is the EC2 driver's alone** (D65's table), in driver.md. lease-api.md
+  names sizes by vCPUs and memory, and the operator takes an instance type and knows no size.
+- **The box is sized like every other host.** `deploy -Host swimcoach -InstanceType <type>` is
+  allowed, and a plain `deploy` of the box passes `InstanceType` at its previous value.
+  **`stack-parameters.json`'s `InstanceType` is no longer read**, so the box's next plain `deploy`
+  cannot put back a size a lease set; the member is left in Terry's file, untouched, and README and
+  operator.md say it is ignored. This replaces operator.md's P13 rule (Q31 there) that the box is
+  sized through that file.
+- **A person resizing a host by hand MAY still use `deploy -Host <project> -InstanceType <type>`**,
+  under a lease as D56 requires, and the deploy records the type, so the registry and the stack
+  agree after either path.
+
+### D68. A resize is the provisioning run, given the instance type; the guard and the idle check meet it as they meet a provisioning run
+
+**Decided, architect, 2026-11-23.** It settles how a resize runs, and how the guard (D56) and the
+idle check (D57) meet a stop and start that no lease's end explains.
+- **The resizing run is D48's provisioning run**, `agentspace-operator provision -Host <project>`,
+  started detached by place and by `get` under D48's 5-minute rule, **given `-InstanceType <type>`
+  for its deploy step**, where today provision never passes one. Its type is the size of the
+  project's largest `pending` lease, read when the run reaches its deploy step, through D65's map.
+  It then places every `pending` lease the host now meets (D48's `place_pending`).
+- **A `pending` lease the resized host does not meet**, because a larger one arrived after the run
+  read the sizes, is placed by the next run when no live `ready` lease holds the host, and is
+  answered `unsatisfiable` with D66's `no_capacity` when one does. lease-api.md's transition from
+  `pending` to `unsatisfiable` already exists.
+- **A run never takes a `ready` host out of `ready`** (D48): a resize keeps the record `ready`, and a
+  failed deploy leaves the type it had, logged in `provision.log`, with the leases `pending` for the
+  next run.
+- **The guard MUST NOT stop a host while its run holds `provision.lock`** (D56), which covers a
+  resize. Outside the lock, the `pending` lease explains the host: D56's horizon for a project with
+  only `pending` leases is the reading's time, so neither the guard nor the horizon power-off stops
+  a host waiting on its resize.
+- **The stop and start a resize makes is the stack's, not the guard's.** A boot clears
+  `/run/agentspace/lease-horizon` (D57), and the next guard run sends it again; the idle check keeps
+  D11's 60-minute rule until then. A host that the run leaves running and that no lease ends up
+  holding is stopped by the guard a grace later, as any unexplained host is.
+- **Whether a resize on a `ready` host runs provision's later steps** (start, `sync`, `bootstrap`),
+  each safe to repeat (D48), or only its deploy and start, is the spec turn's to rule after a probe
+  of their times on a `ready` host.
+
+### D69. D39 ends with v0.09: the architect picks a turn's size by Terry's per-agent rule, and asks for it through the lease
+
+**Decided, architect, 2026-11-23**, from D39's own status. Q13 asks Terry whether his rule stays.
+- **From v0.09's install on, no host is sized by hand for a turn.** The architect gives the turn's
+  lease `--size`, and the lease resizes the host (D66, D68). D39 becomes Replaced by D65 to D68
+  then, and AGENTS.md's "Sizing the box before it runs agents" is rewritten in the same piece of
+  work as that install.
+- **The size is picked by Terry's rule from D39, unchanged:** the smallest size whose vCPUs are at
+  least the turn's agents at once, counted as D27 counts them, which gives each agent a vCPU and
+  4 GiB. So up to 2 agents is `s`, 4 `m`, 8 `l` and 16 `xl`.
+- **A turn of more than 16 agents at once on a host has no size**, and its plan is split or brought
+  to Terry before it starts. Every turn run on a host so far has fit: v0.06-T01's 15 was the most.
+- **The measured load is well under the rule.** v0.06-T01's 15 planned agents peaked at 4.10
+  cores, a quarter of the 16 vCPUs the rule gave them, and fit `l`. **Loosening the rule is Terry's
+  call (Q13)**, since it is his order and it trades cost against headroom; until he says otherwise
+  it stands. v0.10 replaces the hand pick with D27's product of peak concurrency and footprint.
+
+### D70. v0.09's done-when is shown by live checks on agentspace's host, with Terry's yes for their instance hours
+
+**Decided, architect, 2026-11-23** (D19, as D53 and D62). Terry's yes for the hours is Q11.
+- **No stand-in can show a host's type change, so the stories' done-whens name these live checks,
+  on agentspace's host:**
+  - **Bigger:** with the host stopped and no live lease, `create --size l` answers `pending`, becomes
+    `ready`, and `nproc` over its alias prints 8. The lease document names only the size (D1).
+  - **Met at once:** with that lease live, `create --size m` answers `ready`, on the same host.
+  - **Refused:** with that lease live, `create --size xl` answers `unsatisfiable` with `no_capacity`
+    and D66's message, and the host's type and state are unchanged.
+  - **Smaller:** once every lease is released, `create` with the default size answers `pending`,
+    and the host comes back as `m`, four vCPUs.
+  - **Unsupported:** `create --size xxl` answers `unsatisfiable` with `unsupported_size`, makes no
+    AWS call and starts no run.
+  - **The first lease after the install:** the host's record gains `instance_type` by its run
+    (D67).
+  - **The guard:** `guard.log` and `status -All` show no stop of the host during a resize, and the
+    host is `stopped` within D56's bound after the last release.
+- **The box is not resized live.** Its leases go through the same code; its first lease after the
+  install records its type (D67) at `m`, which changes nothing on it, and that is shown by its
+  registry record and `status -Host swimcoach`.
+- **The hours asked for:** up to 4 instance hours at `l` or smaller, at most about $1.57 at `l`'s
+  rate, most of them graces waited out. A live turn that would pass them asks Terry again first.
+  Every host is confirmed `stopped` at the close.
+- **conformance.md's coverage table is read for every "None" these change** (architect.md,
+  Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -3613,3 +3853,6 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q8** | **Closed by D56 (Terry, 2026-11-21).** ~~How long is the grace after a host's last live lease ends before it is stopped?~~ 15 minutes, so a host stops within 25 minutes of its last lease's end. | Closed, D56 |
 | **Q9** | **Closed by D56 (Terry, 2026-11-21).** ~~Does the guard cover the box too?~~ Yes; direct work on it is done under a lease. | Closed, D56 |
 | **Q10** | **Closed by D60 (Terry, 2026-11-21).** ~~Is an unexplained host pushed to his phone too?~~ No: `guard.log` and `status -All` alone. | Closed, D60 |
+| **Q11** | **Needs Terry, asked 2026-11-23.** Does he accept D65's four sizes at their prices ($0.10, $0.20, $0.39 and $0.78 an hour for `s` to `xl`), and say yes to D70's live checks, up to 4 instance hours at `l` or smaller, about $1.57 at most? | D65, D70 |
+| **Q12** | **Needs Terry, asked 2026-11-23.** May the architect start the box under a swimcoach lease, for about half an hour (about $0.10), to fetch v0.06-T01's transcripts to the laptop, outside the repository, before Claude Code's clean-up can remove them, so the per-agent split is had without a new measured turn (D64)? | D64 |
+| **Q13** | **Needs Terry, asked 2026-11-23.** Does his per-agent rule from D39, a vCPU and 4 GiB for each agent at once, stay the way the architect picks a turn's size through v0.09, though v0.06-T01's 15 agents peaked at a quarter of it? The architect recommends it stays until v0.10 replaces it with measurement (D69). | D69 |
