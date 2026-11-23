@@ -77,7 +77,7 @@ try {
     # create's project, cleanup, gets one. The seed create below is an unsupported request.
     [void](Add-ConformanceReadyHost -ConformanceHome $lab -Project 'cleanup')
     # Something else that exists, which a failed create MUST NOT change: an unsatisfiable lease's record.
-    $seed = Invoke-CcLease $lab @('create', '--project', 'cleanup', '--size', 'l')
+    $seed = Invoke-CcLease $lab @('create', '--project', 'cleanup', '--size', 'xxl')
     $leases = Join-Path $lab.UserProfile '.agentspace\leases'
     New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $leases) | Out-Null
 

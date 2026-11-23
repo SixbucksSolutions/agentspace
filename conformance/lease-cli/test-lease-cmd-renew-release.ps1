@@ -235,7 +235,7 @@ try {
       $true
     }
 
-    $unsat = Invoke-CcLease $lab @('create', '--project', 'gamma', '--size', 'l')
+    $unsat = Invoke-CcLease $lab @('create', '--project', 'gamma', '--size', 'xxl')
     $du = ConvertFrom-CcJson $unsat.Stdout
     $uId = if ($du) { [string]$du['id'] } else { $none }
     $run = Invoke-CcLease $lab @('renew', $uId)
