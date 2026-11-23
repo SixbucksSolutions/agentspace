@@ -343,7 +343,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `...\hosts\<project>\id_ed25519-cert.pub` | [The operator's certificate](#the-operators-key-and-certificate) for that host, key ID `operator-<project>`, one hour | Every operator command that names a host other than the box, `status -Host` included, and every one that connects through the host's operator alias | `ssh` | Never; replaced by the next command's |
 | `...\hosts\<project>\sign-<hex>.pub`, `sign-<hex>-cert.pub` | Signing's temporary files | The same | None | At once |
 | `...\hosts\<project>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, its own lines alone (architect, 2026-11-21, for v0.07-T03); never the driver | People | Never |
-| `...\hosts\<project>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; the driver, which only tries it | None; it is held, not read | Never |
+| `...\hosts\<project>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; from v0.09 a person's `deploy`, for its life (architect, 2026-11-23, for v0.09-T01, pin P34); the driver, which only tries it | None; it is held, not read | Never |
 | `...\hosts\<project>\localswim-pushed.json` | [A host's push stamp](#a-hosts-push-stamp), for every host but the box | `up -Host`, `sync -Host`, `sync -All`, `provision` | `up -Host` | Never |
 | `...\hosts\<project>\localswim-pushed.json.<hex>.tmp` | Its temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\leases\` | The folder of lease folders | The first `create` that issues a credential | `renew`, `release` | Never |
@@ -990,7 +990,8 @@ pins P11, P26 and P30):
      for v0.09-T01, pin P30). For any other `deploy` the type is already gone, and this removes
      nothing more.
   3. **It reads the `InstanceType` parameter with `describe-stacks`**, holding no lock of this
-     page's, but for a provisioning run's own lock in its deploy step (pin P11). One call reads both
+     page's but the host's [`provision.lock`](#the-provisioning-runs-lock), which a run's deploy
+     step holds through its run and a person's `deploy` holds for its life (pins P11 and P34). One call reads both
      `InstanceId` and `InstanceType` (architect, 2026-11-23, for v0.09-T01, pin P23).
   4. **It writes the value it read into the record**, in the same write as the `instance_id`
      (pin P23).
@@ -1940,7 +1941,7 @@ D48, D50, D55)**, where `<project>` is the host's record's `project`:
 | `id_ed25519`, `id_ed25519.pub` | The operator's key for this host | [The operator's key and certificate](#the-operators-key-and-certificate) |
 | `id_ed25519-cert.pub` | The operator's certificate, key ID `operator-<project>`, valid one hour | The same |
 | `provision.log` | The provisioning run's log, which the run opens for append as its first step, creating it if it is missing | [The provisioning run's log](#the-provisioning-runs-log) |
-| `provision.lock` | The provisioning run's lock: held while a run is running | [The provisioning run's lock](#the-provisioning-runs-lock) |
+| `provision.lock` | The provisioning run's lock: held while a run is running, and from v0.09 while a person's `deploy` of the host is (pin P34) | [The provisioning run's lock](#the-provisioning-runs-lock) |
 | `localswim-pushed.json` | The host's push stamp, for every host but the box | [A host's push stamp](#a-hosts-push-stamp) |
 
 - **The folder is created by the first writer of a file in it**, `%USERPROFILE%\.agentspace\hosts\`
@@ -1959,7 +1960,10 @@ D48, D50, D55)**, where `<project>` is the host's record's `project`:
 - **Access rules:** the folder's are inherited from `%USERPROFILE%\.agentspace`, and so are its
   files', but for the private key's ([The operator's key and certificate](#the-operators-key-and-certificate)).
 - **The writer MUST NOT put any other file in it.** A person's file there is left alone.
-- **The box MAY have a folder too, `hosts\swimcoach\`**, when a run is started for it; it then holds the same files under the same rules, but for the push stamp,
+- **The box MAY have a folder too, `hosts\swimcoach\`**, when a run is started for it, or, from
+  v0.09, when a person's `deploy` of the box takes its `provision.lock`, which creates the folder when it is
+  missing (architect, 2026-11-23, for v0.09-T01, pin P34); it then holds the same files under the
+  same rules, but for the push stamp,
   which stays the box's own ([The push stamp](#the-push-stamp)).
 - **Something at `hosts\` or `hosts\<project>\` that is not a folder** fails every command that
   needs a file in it, writing nothing there, as [The home folder](#the-home-folder) says of any
@@ -2125,7 +2129,9 @@ D48's `<state folder>\hosts\<project>.log` is not used.
 ### The provisioning run's lock
 
 **`%USERPROFILE%\.agentspace\hosts\<project>\provision.lock` is held for the whole life of a
-provisioning run, so a held lock means a run is running** (D55).
+provisioning run, and from v0.09 for the whole life of a person's `deploy` of the host, so a held
+lock means a run or such a `deploy` is running** (D55; architect, 2026-11-23, for v0.09-T01, pin
+P34). The box's is `hosts\swimcoach\provision.lock` ([A host's folder](#a-hosts-folder)).
 - **Holding it means having the file open with no sharing**, for reading and writing, creating it
   if it is missing, as [the lease state lock](#the-lease-state-lock) is held; the taker creates the
   host's folder first if it is missing. **The file is never deleted, its content is empty and
@@ -2138,14 +2144,25 @@ provisioning run, so a held lock means a run is running** (D55).
     it has recorded its outcome and called `place_pending`.** A `provision` that finds it held
     writes one line to its log saying that a run is already running, writes no record and nothing
     else, and exits 1 ([operator.md](operator.md#provision); architect, 2026-11-20, for v0.07-T01).
+  - **From v0.09 every `deploy` that is not a provisioning run's own deploy step takes it**, the
+    box's included, with `-InstanceType` or without, after its command line's checks and its
+    host's lookup and before any call to AWS or any file write, **and holds it for its whole life,
+    its `sync` step included** (architect, 2026-11-23, for v0.09-T01, pin P34). A `deploy` that
+    finds it held makes no call to AWS, writes no file and no line to
+    [`provision.log`](#the-provisioning-runs-log), and exits 1 with its own message; one that
+    cannot open it for another reason fails before any call to AWS
+    ([operator.md, deploy](operator.md#deploy)). **A provisioning run's deploy step takes nothing
+    more**: it runs under the lock its run already holds.
   - **The driver tries it, and releases it at once if it got it**, only to learn whether a run is
     running ([driver.md](driver.md#check_pending)).
   - **A failure to open it other than its being held**, such as access denied, or a folder at its
     path, is not a free lock: the taker treats it as a failure of its own and starts or runs
     nothing.
 - **Which other operator commands refuse to run while it is held is operator.md's**
-  ([Which host a command acts on](operator.md#which-host-a-command-acts-on)). A missing file is a
-  lock nobody holds.
+  ([Which host a command acts on](operator.md#which-host-a-command-acts-on)): from v0.09 `deploy`
+  refuses, as above, and the guard leaves the host unstopped ([operator.md,
+  guard](operator.md#guard)), whether a run or a person's `deploy` holds it (pin P34). A missing
+  file is a lock nobody holds.
 
 ### The provisioning run's start
 
@@ -2957,10 +2974,15 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
   takes the lease state lock once for each lease it places, releasing it after each; then the run
   releases its own lock. It never holds the host
   registry lock while it waits for the lease state lock.
-- **A person's `deploy` records `instance_type` under the host registry lock alone** (D71;
-  [The instance type](#the-instance-type); architect, 2026-11-23, for v0.09-T01, pin P11): it takes
-  it for each removal and again for the write, and holds it across no call to AWS. A `deploy` run
-  by hand holds no other lock of this page's.
+- **A person's `deploy` holds the provisioning run's lock first, then the host registry lock only
+  for its record writes** (D71; [The instance type](#the-instance-type); architect, 2026-11-23,
+  for v0.09-T01, pins P11 and P34). It takes its host's `provision.lock` without waiting, before
+  any call to AWS, and holds it for its whole life, its `sync` step included, as a run holds its
+  own ([The provisioning run's lock](#the-provisioning-runs-lock)). Within it, it records
+  `instance_type` and the instance ID under the host registry lock alone, taking it for each
+  removal and again for the write, and holds it across no call to AWS; its `sync` step takes the
+  host registry lock the same way, for its own writes. It never takes the lease state lock. So
+  it takes its locks in the order, and never waits for `provision.lock`, which it only tries.
 - **From v0.09 a provisioning run's deploy step takes the lease state lock, then the host registry
   lock, in this order**, holding its own lock throughout (architect, 2026-11-23, for v0.09-T01, pin
   P26, which replaces pin P13's read of the lease state file without the lock; [driver.md, Lock
@@ -3005,7 +3027,8 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
 | A provisioning run's `place_pending`, and a `create`, `renew` or `release` | Each waits for the lease state lock, which `place_pending` takes once for each lease it places, re-reading the state file each time, so no hold of it spans several placements. A lease released before `place_pending` re-reads the state file for it is skipped and never placed; one released after it was placed is released as any `ready` lease is |
 | A provisioning run, and `get` or `list` | `get` and `list` see a placed lease `pending` before the run's write and `ready` after it, never part of either |
 | A provisioning run, and the ProxyCommand or the keeper | They read `hosts.json` and the lease state file without their locks, so they see each as it was before one of the run's writes or as it is after it, never part of either. A record the run makes `ready` comes before any lease it places, so neither finds a `ready` lease on a host that is not yet `ready` |
-| A provisioning run, and an operator command on the same host by hand | Their writes to `hosts.json` wait for each other at its lock. Whether the command runs at all while the run's lock is held is operator.md's ([The provisioning run's lock](#the-provisioning-runs-lock)) |
+| A provisioning run, and an operator command on the same host by hand | Their writes to `hosts.json` wait for each other at its lock. Whether the command runs at all while the run's lock is held is operator.md's ([The provisioning run's lock](#the-provisioning-runs-lock)): from v0.09 `deploy` is refused, as the next row says, and every other command runs (pin P34) |
+| A person's `deploy` and a provisioning run for one host (v0.09) | Whichever takes the host's [`provision.lock`](#the-provisioning-runs-lock) first runs, and the second is refused at once, with no wait (architect, 2026-11-23, for v0.09-T01, pin P34). **A `deploy` that finds it held** exits 1 with its message before any call to AWS, changing no file ([operator.md, deploy](operator.md#deploy)). **A run that finds it held**, by hand or started by a driver whose try came before the `deploy` took it, fails its step 2 with its one `run failed` line, as for a run already running ([operator.md, provision](operator.md#provision)); and while a `deploy` holds it, the driver's try finds it held and starts no run ([driver.md, Lock order](driver.md#lock-order)). So a person's read-back never writes a type back after a run's deploy step removed it, and no `create` is placed `ready` on the old size just before the run's resize. The guard leaves the host while either holds it ([operator.md, guard](operator.md#guard)) |
 | A provisioning run's deploy step, and a `create` for the same project (v0.09) | They wait for each other at the lease state lock, which the run takes, with the host registry lock within it, to remove the record's `instance_type` and read the lease state file, and releases before any call to AWS (pin P26). So a `create` is wholly before that hold or wholly after it. **Before**, its `ready` lease is in the file the run reads, and the run passes no type, so the host is not resized under it (pin P2(a)). **After**, it finds the record with no type and answers `pending` (pin P2), until the run writes the type it reads back. A lease that `create` records after the run's read is not in the run's type: while the project has a `pending` lease a run would place, place answers it `pending` (D66's change note; pins P2(b) and P20), and the run's `place_pending` places it if the host the run leaves meets it, answers it `unsatisfiable` with `no_capacity` when a live `ready` lease holds the host, and otherwise leaves it `pending` for the next run (D68's change note; pin P1; [The instance type](#the-instance-type); [driver.md, A resizing run](driver.md#a-resizing-run)) |
 | A person's `deploy`, and a `create` that places a lease of the same host (v0.09) | `create` reads the record under the host registry lock, so it sees `instance_type` as it was before one of `deploy`'s writes or as it is after it. From a removal to the write it sees none, which meets no size, and answers `pending` as place does for such a record (pin P2); a `deploy` that passes `InstanceType` removes it before `cloudformation deploy` runs (pin P11), so no `create` reads a type the deploy is changing ([The instance type](#the-instance-type); [driver.md, On a `ready` host](driver.md#on-a-ready-host)) |
 | Commands with different `AGENTSPACE_STATE_DIR` values, from v0.07 | One host registry, one lock on it, one project list and one folder per host, but separate lease state files. A run places only the pending leases of the state file of the command that started it ([The provisioning run's start](#the-provisioning-runs-start)) |
