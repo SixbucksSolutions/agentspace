@@ -2291,8 +2291,8 @@ D27's per-agent footprint is measured.
     "Watching a measurement").
   - **Met for the host and the session by v0.06-T01's whole-turn record** (architect, 2026-11-23,
     D64; runs/e0.06-t02-s08.md). The per-agent division it lacks is owed before v0.10 sets its
-    mapping, from that turn's transcripts if Terry approves their fetch (Q12), or from a turn of
-    v0.10's own.
+    mapping, from that turn's transcripts, which Terry approved (Q12) and which were joined to the record the
+    same day (D64).
 
 **Why:** v0.09 and v0.10 size hosts from these numbers (D27), so a number that hides a short build,
 or counts a shared library four times, sizes every host wrong.
@@ -3603,6 +3603,13 @@ a size (D33; #0049's entry requirement, Terry, 2026-11-18).
   (footprint.md, "Measure a new project", steps 3 to 5) gives D33's figures. **That fetch starts the
   box, so it needs Terry's yes for its instance hours (Q12).** If he says no, or they are gone,
   v0.10 measures a turn of its own, and #0109 is met first.
+- **The split was had the same day** (Terry's yes, Q12): the transcripts were fetched with the
+  box running about two minutes, and `agentspace-agents` joined them to the record (the run
+  record's "Added 2026-11-23"). The measured subagent peak is 14, so 15 working agents, D27's count
+  from the plans exactly. **The turn's CPU peak, 4.02 cores, was the dev lead alone running a
+  `cargo clippy -j 4`**, so a per-agent peak is a build's parallelism and MUST NOT be multiplied by
+  the agents at once; the per-agent p95 is 0.10 cores and 12.50 MiB. v0.10 starts from these, and
+  needs no measured turn of its own for agentspace.
 - **What the record cannot stand for:** one project, agentspace, whose crates are small; another
   project's builds MAY load a host differently. v0.10's plan sizing is per project (D27), and
   footprint.md's "Measure a new project" is how a project measures its own.

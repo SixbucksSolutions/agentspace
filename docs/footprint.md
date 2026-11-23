@@ -361,8 +361,16 @@ as `runs/data/e0.06-t02-s08.jsonl.gz`. Every figure below is that record's, by
   in parallel, one crate each, built on a 16-CPU, 61.61 GiB box. D27's count from the plans is 15.
 - **The whole turn, with no gap:** 3,148 samples at 2 seconds, from before the dev lead's session
   to 30 seconds after the last merge, ending in the sampler's own end line.
-- **There are no per-agent figures and no measured concurrency for this turn.** No transcript was
-  joined to the record. D64 says where they can come from.
+- **Its per-agent figures and measured concurrency were added on 2026-11-23**, by joining the record
+  to the turn's transcripts, fetched from the box on Terry's yes (D64; the run record's "Added
+  2026-11-23"). The subagent peak was 14, so 15 working agents, D27's count from the plans exactly.
+  One working agent's tool calls: 4.02, 0.10 and 0.00 cores, and 755.22, 12.50 and 0.00 MiB of PSS
+  (peak, p95, p50).
+- **The per-agent peak is one build's parallelism, not an agent's share.** It is the dev lead alone,
+  running a `cargo clippy -j 4`, with no subagent running; 4.02 cores is its `-j 4`. A per-agent
+  peak MUST NOT be multiplied by the agents at once (15 times 4.02 is 60 cores, against a measured
+  host peak of 4.10). v0.10's product of concurrency and footprint (D27) MUST say which figure it
+  multiplies.
 
 | What | Peak | p95 | p50 |
 | --- | --- | --- | --- |
