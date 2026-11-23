@@ -3,6 +3,7 @@
 
 use crate::Deps;
 use crate::args::{PROGRAM, USAGE, parse_args};
+use crate::guard::GuardSetup;
 use crate::pass::{PassContext, run_pass};
 use crate::watch::{Keeping, watch};
 use std::ffi::OsString;
@@ -32,7 +33,9 @@ pub struct Env<'a> {
 ///
 /// With `-Watch` the run is a keeper (keeper.md, Watching): it takes the keeper lock once, then
 /// runs passes in a loop until `-MaxPasses` have run, and never exits for an error once the loop
-/// has started.
+/// has started. A keeper also starts the guard through `deps.guard`, at its first iteration and
+/// then once every `-GuardIntervalSeconds` (keeper.md, Starting the guard); a one-pass run never
+/// does.
 pub fn run(
     args: &[String],
     env: &Env,
@@ -84,12 +87,22 @@ pub fn run(
     }
 
     if let Some(watch_options) = options.watch {
+        // The guard's program and environment, resolved once for the keeper's life; the
+        // program's file is looked for at each attempt (keeper.md, How the keeper starts it).
+        let guard = GuardSetup::new(
+            env.var,
+            env.cwd,
+            env.own_exe,
+            &profile,
+            &deps.guard.variable_names(),
+        );
         let keeping = Keeping {
             state_dir: &state_dir,
             profile: &profile,
             ssh_exe: &options.ssh_exe,
             own_exe: env.own_exe,
             options: watch_options,
+            guard,
         };
         return watch(&keeping, deps, stdout);
     }

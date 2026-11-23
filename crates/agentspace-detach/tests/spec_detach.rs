@@ -114,6 +114,16 @@ fn no_detach_always_refuses_with_an_err_and_starts_nothing() {
 }
 
 #[test]
+fn no_detach_start_pid_refuses_too() {
+    let scratch = Scratch::new("nodetach-pid");
+    let r = NoDetach.start_pid(Path::new("nothing"), &[], scratch.path(), &[]);
+    assert!(
+        r.is_err(),
+        "NoDetach refuses start_pid as it refuses start."
+    );
+}
+
+#[test]
 fn no_detach_refuses_with_an_env_too() {
     let scratch = Scratch::new("nodetach-env");
     let r = NoDetach.start(
@@ -137,11 +147,15 @@ mod windows {
     use std::os::windows::io::AsRawHandle;
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WAIT_OBJECT_0};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
     };
 
     /// A job object that ends what is in it when its handle is closed.
@@ -766,5 +780,123 @@ mod windows {
             &[],
             &[("A_NAME", OsStr::new("va\0lue"))],
         );
+    }
+
+    /// A handle the test opened on the process whose ID `start_pid` gave. The handle pins that ID
+    /// while it is open, so the process it names cannot be replaced by another one. Dropping it
+    /// only closes it and ends nothing: the test ends the process by `end`, and only after it has
+    /// checked the image name. The process the test started also ends itself (a short delay in its
+    /// start), so a test that fails first leaves nothing running.
+    struct Started(HANDLE);
+
+    impl Started {
+        /// Opens `pid` with the rights to read its image name, end it and wait for it. `None` when
+        /// no such process can be opened.
+        fn open(pid: u32) -> Option<Started> {
+            // SAFETY: A plain call; a null handle is its failure.
+            let handle = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                    0,
+                    pid,
+                )
+            };
+            if handle.is_null() {
+                None
+            } else {
+                Some(Started(handle))
+            }
+        }
+
+        /// The file name of the process's image.
+        fn image_name(&self) -> String {
+            let mut buffer = [0u16; 1024];
+            let mut size = buffer.len() as u32;
+            // SAFETY: The handle is open, and the buffer and its size are ours.
+            let ok =
+                unsafe { QueryFullProcessImageNameW(self.0, 0, buffer.as_mut_ptr(), &mut size) };
+            assert!(ok != 0, "The process's image name can be read.");
+            let path = String::from_utf16_lossy(&buffer[..size as usize]);
+            Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        }
+
+        fn has_ended(&self) -> bool {
+            // SAFETY: The handle is open, with the right to wait.
+            unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
+        }
+
+        /// Ends the process the handle names, and waits up to 20 seconds for it to be gone. The test
+        /// calls it only after `image_name` matched the helper's.
+        fn end(&self) -> bool {
+            // SAFETY: The handle is open, with the right to end the process it names.
+            unsafe {
+                TerminateProcess(self.0, 1);
+                WaitForSingleObject(self.0, 20_000) == WAIT_OBJECT_0
+            }
+        }
+    }
+
+    impl Drop for Started {
+        fn drop(&mut self) {
+            // SAFETY: The handle is this value's own and is closed once.
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    /// The process ID `start_pid` answers is the created process's (architect, 2026-11-22, for
+    /// v0.08-T03). The helper's `write` sleeps 5 seconds and then ends, so it is alive when it is
+    /// opened by the ID, and it ends on its own if the test fails first. The test opens the ID,
+    /// checks the image name, and only then ends that one process through the handle it opened;
+    /// the handle's wait shows it is gone, and the ID is not opened again afterwards.
+    #[test]
+    fn start_pid_gives_the_id_of_the_process_it_created() {
+        let scratch = Scratch::new("pid");
+        let out = scratch.path().join("out.txt");
+        let file = out.to_string_lossy().to_string();
+        let answer = WmiDetach.start_pid(
+            &helper(),
+            &["write", &file, "AGENTSPACE_DETACH_SPEC_PID", "5000"],
+            scratch.path(),
+            &[],
+        );
+        let pid = answer
+            .expect("The start is accepted.")
+            .expect("WmiDetach gives the process ID.");
+        assert_ne!(pid, 0, "The process ID is a real one.");
+        // The ID names a process the test can open, and it is the helper's. A handle that names
+        // another process is only closed by its drop, and nothing is ended.
+        let process = Started::open(pid).expect("The process with that ID can be opened.");
+        assert_eq!(
+            process.image_name(),
+            Path::new(HELPER)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            "The process the ID names is the helper."
+        );
+        assert!(
+            !process.has_ended(),
+            "It is still running before it is ended."
+        );
+        assert!(process.end(), "The test ended the process it started.");
+        assert!(process.has_ended(), "The process is gone.");
+    }
+
+    /// `start_pid` refuses what `start` refuses, before any call into Windows.
+    #[test]
+    fn start_pid_refuses_what_start_refuses() {
+        let scratch = Scratch::new("pid-refused");
+        let relative = WmiDetach.start_pid(Path::new("run.exe"), &[], scratch.path(), &[]);
+        assert_eq!(
+            relative,
+            Err("The program must be named by its full path.".to_string())
+        );
+        let quote = WmiDetach.start_pid(&helper(), &["a\"b"], scratch.path(), &[]);
+        assert!(quote.is_err_and(|e| e.starts_with("Argument 1 holds a double quote")));
     }
 }

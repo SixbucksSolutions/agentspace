@@ -29,6 +29,12 @@
 
 #![allow(dead_code)]
 
+mod fake_guard;
+mod guard;
+
+pub use fake_guard::*;
+pub use guard::*;
+
 use agentspace_keeper_api::{
     Clock, HolderRecord, Locks, Matcher, ProcessInfo, Processes, Query, StartRequest, Started,
     Starter, Stopped, Taken,
@@ -443,6 +449,8 @@ pub struct Fakes {
     pub locks: FakeLocks,
     pub clock: Rc<FakeClock>,
     pub store: FakeStore,
+    /// The keeper's start of the guard (a keeper's alone), which starts nothing.
+    pub guard: FakeGuard,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -469,6 +477,50 @@ pub struct Ran {
     pub stderr: String,
 }
 
+/// The one place that builds the keeper's `Env` and `Deps` and calls `run`. Every in-process test
+/// of the keeper, in every world of these tests, goes through it, so a field the crate adds to
+/// either is adapted here and nowhere else. The guard's start is the crate's own seam,
+/// `agentspace_keeper::GuardStarter` (`Deps::guard`); every world gives it a `FakeGuard`, which
+/// starts nothing, and the world of a test of the real start is the built program (`Bin`).
+#[allow(clippy::too_many_arguments)]
+pub fn keeper_run(
+    args: &[String],
+    vars: &BTreeMap<String, String>,
+    cwd: &Path,
+    own_exe: &Path,
+    processes: &dyn Processes,
+    matcher: &dyn Matcher,
+    starter: &dyn Starter,
+    locks: &dyn Locks,
+    clock: &dyn Clock,
+    records: &dyn agentspace_keeper::Records,
+    guard: &dyn agentspace_keeper::GuardStarter,
+) -> Ran {
+    let var = |name: &str| -> Option<OsString> { vars.get(name).map(OsString::from) };
+    let env = agentspace_keeper::Env {
+        var: &var,
+        cwd,
+        own_exe,
+    };
+    let deps = agentspace_keeper::Deps {
+        processes,
+        matcher,
+        starter,
+        locks,
+        clock,
+        records,
+        guard,
+    };
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut stderr: Vec<u8> = Vec::new();
+    let exit = agentspace_keeper::run(args, &env, &deps, &mut stdout, &mut stderr);
+    Ran {
+        exit,
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    }
+}
+
 /// Runs the keeper's whole command line in process, against the fakes and a world of the given
 /// variables (nothing is read from the real environment).
 pub fn execute_in_process(
@@ -478,32 +530,23 @@ pub fn execute_in_process(
     own_exe: &Path,
     fakes: &Fakes,
 ) -> Ran {
-    let var = |name: &str| -> Option<OsString> { vars.get(name).map(OsString::from) };
-    let env = agentspace_keeper::Env {
-        var: &var,
-        cwd,
-        own_exe,
-    };
-    let deps = agentspace_keeper::Deps {
-        processes: &fakes.processes,
-        matcher: &fakes.matcher,
-        starter: &fakes.starter,
-        locks: &fakes.locks,
-        clock: &*fakes.clock,
-        records: &fakes.store,
-    };
     let args: Vec<String> = args
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    let mut stdout: Vec<u8> = Vec::new();
-    let mut stderr: Vec<u8> = Vec::new();
-    let exit = agentspace_keeper::run(&args, &env, &deps, &mut stdout, &mut stderr);
-    Ran {
-        exit,
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
-    }
+    keeper_run(
+        &args,
+        vars,
+        cwd,
+        own_exe,
+        &fakes.processes,
+        &fakes.matcher,
+        &fakes.starter,
+        &fakes.locks,
+        &*fakes.clock,
+        &fakes.store,
+        &fakes.guard,
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -528,10 +571,11 @@ impl Harness {
             .prefix("agentspace-keeper-test-")
             .tempdir()
             .expect("A throwaway folder can be made");
-        let root = tmp
-            .path()
-            .canonicalize()
-            .expect("The throwaway folder has a full path");
+        let root = plain(
+            tmp.path()
+                .canonicalize()
+                .expect("The throwaway folder has a full path"),
+        );
         let home = root.join("home");
         let state = root.join("state");
         std::fs::create_dir_all(&home).unwrap();
@@ -581,6 +625,7 @@ impl Harness {
                 writes: RefCell::new(Vec::new()),
                 dirs: RefCell::new(Vec::new()),
             },
+            guard: FakeGuard::new(),
         };
         let mut vars = BTreeMap::new();
         vars.insert(
@@ -597,10 +642,14 @@ impl Harness {
             "AGENTSPACE_STATE_DIR".to_string(),
             state.to_string_lossy().into_owned(),
         );
+        // The real system folder: a `.cmd` stand-in guard is run through its cmd.exe.
         vars.insert(
             "SystemRoot".to_string(),
-            root.join("winroot").to_string_lossy().into_owned(),
+            system_root().to_string_lossy().into_owned(),
         );
+        for (name, path) in guard_vars(&home) {
+            vars.insert(name.to_string(), path.to_string_lossy().into_owned());
+        }
         Harness {
             tmp,
             home,
@@ -804,10 +853,11 @@ impl Bin {
             .prefix("agentspace-keeper-bin-")
             .tempdir()
             .expect("A throwaway folder can be made");
-        let root = tmp
-            .path()
-            .canonicalize()
-            .expect("The throwaway folder has a full path");
+        let root = plain(
+            tmp.path()
+                .canonicalize()
+                .expect("The throwaway folder has a full path"),
+        );
         let home = root.join("home");
         let state = root.join("state");
         std::fs::create_dir_all(&home).unwrap();
@@ -824,7 +874,12 @@ impl Bin {
             b.set(name, &home);
         }
         b.set("AGENTSPACE_STATE_DIR", &state);
-        b.set("SystemRoot", root.join("winroot"));
+        // The real system folder: a `.cmd` stand-in guard is run through its cmd.exe.
+        b.set("SystemRoot", system_root());
+        // Every run of the keeper has a stand-in guard and tripwires (AGENTS.md; guard.rs).
+        for (name, path) in guard_vars(&b.standin_dir()) {
+            b.set(name, path);
+        }
         b
     }
 
@@ -845,7 +900,29 @@ impl Bin {
         join(self.tmp.path(), parts)
     }
 
-    pub fn run(&self, args: &[&str]) -> BinRan {
+    /// The folder of the stand-in guard, the tripwires and their records, beside the home folder,
+    /// never in it: a case that reads the home as untouched stays so.
+    pub fn standin_dir(&self) -> PathBuf {
+        self.home.parent().unwrap().join("standins")
+    }
+
+    /// The stand-in guard of this home.
+    pub fn standin(&self) -> PathBuf {
+        self.standin_dir().join(STANDIN)
+    }
+
+    /// Gives a command a test builds itself the variables of this home that name the stand-in
+    /// guard and the tripwires, and the real system folder.
+    pub fn guard_env(&self, cmd: &mut Command) {
+        for (name, path) in guard_var_paths(&self.standin_dir()) {
+            cmd.env(name, path);
+        }
+        cmd.env("SystemRoot", system_root());
+    }
+
+    /// A run of the binary in this throwaway home, not yet started: its variables, its working
+    /// folder and its piped standard streams.
+    pub fn command(&self, args: &[&str]) -> Command {
         let mut cmd = Command::new(BIN);
         cmd.args(args)
             .current_dir(&self.home)
@@ -864,6 +941,11 @@ impl Bin {
                 }
             }
         }
+        cmd
+    }
+
+    pub fn run(&self, args: &[&str]) -> BinRan {
+        let mut cmd = self.command(args);
         let child = cmd.spawn().expect("The binary starts");
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {

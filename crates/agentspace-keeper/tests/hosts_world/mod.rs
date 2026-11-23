@@ -32,6 +32,11 @@
 
 #![allow(dead_code)]
 
+// The shared harness, for its stand-in guard, its one place that runs the keeper in process, and
+// its helpers (AGENTS.md: every check that runs a keeper names a stand-in guard).
+#[path = "../common/mod.rs"]
+mod common;
+
 use agentspace_keeper::FileRecords;
 use agentspace_keeper_api::{
     Clock, HolderRecord, Locks, Matcher, ProcessInfo, Processes, Query, StartRequest, Started,
@@ -40,7 +45,6 @@ use agentspace_keeper_api::{
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -191,16 +195,13 @@ pub struct SleepRec {
     pub at: Duration,
 }
 
-/// What a run gave back.
-pub struct Ran {
-    pub exit: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
+pub use common::Ran;
 
 pub type Hook = Rc<dyn Fn(&World)>;
 
 pub struct World {
+    /// The keeper's start of the guard: it starts nothing, and records what it was asked.
+    pub guard: common::FakeGuard,
     pub tmp: TempDir,
     /// The throwaway `USERPROFILE`.
     pub home: PathBuf,
@@ -244,10 +245,11 @@ impl World {
             .prefix("agentspace-keeper-hosts-")
             .tempdir()
             .expect("A throwaway folder can be made");
-        let root = tmp
-            .path()
-            .canonicalize()
-            .expect("The throwaway folder has a full path");
+        let root = common::plain(
+            tmp.path()
+                .canonicalize()
+                .expect("The throwaway folder has a full path"),
+        );
         let home = root.join("home");
         let state = root.join("state");
         std::fs::create_dir_all(&home).unwrap();
@@ -263,11 +265,17 @@ impl World {
             "AGENTSPACE_STATE_DIR".to_string(),
             state.to_string_lossy().into_owned(),
         );
+        // The real system folder: a `.cmd` stand-in guard is run through its cmd.exe.
         vars.insert(
             "SystemRoot".to_string(),
-            root.join("winroot").to_string_lossy().into_owned(),
+            common::system_root().to_string_lossy().into_owned(),
         );
+        // Every keeper of these tests has a stand-in guard and tripwires (AGENTS.md).
+        for (name, path) in common::guard_vars(&home) {
+            vars.insert(name.to_string(), path.to_string_lossy().into_owned());
+        }
         Rc::new(World {
+            guard: common::FakeGuard::new(),
             tmp,
             home,
             state,
@@ -432,7 +440,14 @@ impl World {
         self.state.join("board-holder.log")
     }
 
+    /// The log without the keeper's lines for the guard's start: a case that existed before v0.08
+    /// reads a keeper's log line for line and ignores them (keeper.md, Conformance cases for the
+    /// guard's start: H1).
     pub fn log(&self) -> String {
+        common::without_guard_lines(&self.log_raw())
+    }
+
+    pub fn log_raw(&self) -> String {
         std::fs::read(self.log_path())
             .map(|b| String::from_utf8(b).expect("The log is UTF-8"))
             .unwrap_or_default()
@@ -593,35 +608,47 @@ impl World {
         self.run_args(&args)
     }
 
+    /// Runs the keeper's command line. A keeper's (`-Watch`) gets `-GuardIntervalSeconds 86400`
+    /// added, so that the guard's start comes once, at its first iteration, and never again in a
+    /// timeline, and the guard's lines are left out of the stdout it gives back (keeper.md,
+    /// Conformance cases for the guard's start: H1); `log_raw` has them.
     pub fn run_args(self: &Rc<World>, args: &[String]) -> Ran {
-        let var = |name: &str| -> Option<OsString> { self.vars.get(name).map(OsString::from) };
-        let env = agentspace_keeper::Env {
-            var: &var,
-            cwd: self.tmp.path(),
-            own_exe: &self.own_exe,
-        };
+        let mut args = args.to_vec();
+        if args.iter().any(|a| a.eq_ignore_ascii_case("-Watch"))
+            && !args
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case("-GuardIntervalSeconds"))
+        {
+            args.push("-GuardIntervalSeconds".to_string());
+            args.push("86400".to_string());
+        }
         let procs = Procs(self.clone());
         let matcher = Match(self.clone());
         let starter = Start(self.clone());
         let locks = Lock(self.clone());
         let clock = Clk(self.clone());
         let records = FileRecords::new();
-        let deps = agentspace_keeper::Deps {
-            processes: &procs,
-            matcher: &matcher,
-            starter: &starter,
-            locks: &locks,
-            clock: &clock,
-            records: &records,
-        };
-        let mut stdout: Vec<u8> = Vec::new();
-        let mut stderr: Vec<u8> = Vec::new();
-        let exit = agentspace_keeper::run(args, &env, &deps, &mut stdout, &mut stderr);
-        Ran {
-            exit,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-        }
+        self.guard.set_names(self.vars.keys());
+        let root = self
+            .home
+            .parent()
+            .expect("The home is inside the throwaway folder")
+            .to_path_buf();
+        let mut ran = common::keeper_run(
+            &args,
+            &self.vars,
+            &root,
+            &self.own_exe,
+            &procs,
+            &matcher,
+            &starter,
+            &locks,
+            &clock,
+            &records,
+            &self.guard,
+        );
+        ran.stdout = common::without_guard_lines(&ran.stdout);
+        ran
     }
 }
 

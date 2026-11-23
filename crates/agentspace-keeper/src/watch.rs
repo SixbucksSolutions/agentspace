@@ -9,9 +9,16 @@
 //! the host's hold-off (keeper.md, Watching). With only the box there is one host's state, and the
 //! loop is v0.06's step for step.
 //!
-//! **No error ends the loop** (keeper.md, Watching): the look, the pass and the wait each run on
-//! their own, and a panic that escapes one is caught, logged as a keeper's `failed` line with the
-//! matching reason of keeper.md's Reasons, and the loop goes on as for any other error there
+//! **A keeper starts the guard** (keeper.md, Starting the guard; D56, D63): at its first iteration
+//! and then once `-GuardIntervalSeconds` have passed since its last attempt, at the first due point
+//! of the loop: just before a pass, or once in a wait, which then runs on to the end it had. The
+//! time of the last attempt lives in the keeper's process alone. The attempt is never inside a
+//! pass, and changes no host's state.
+//!
+//! **No error ends the loop** (keeper.md, Watching): the look, the guard's start, the pass and the
+//! wait each run on their own, and a panic that escapes one is caught, logged as a keeper's
+//! `failed` line with the matching reason of keeper.md's Reasons, and the loop goes on as for any
+//! other error there
 //! (keeper.md, Fast failures and backoff; architect, 2026-11-19, for E0.06-T02-S05). Catching it
 //! does not stop the process's panic hook from running, and the default hook writes the panic's
 //! message to stderr. A library MUST NOT set the process's hook, so keeping that message off
@@ -19,6 +26,7 @@
 
 use crate::Deps;
 use crate::args::WatchOptions;
+use crate::guard::{self, GuardSetup, Outcome};
 use crate::hosts::HostKey;
 use crate::log::{Logger, pass_line};
 use crate::pass::{Action, PassContext, Tracking, run_pass_hosts};
@@ -37,6 +45,8 @@ pub(crate) struct Keeping<'a> {
     pub ssh_exe: &'a Path,
     pub own_exe: &'a Path,
     pub options: WatchOptions,
+    /// The guard's program and environment (keeper.md, Starting the guard).
+    pub guard: GuardSetup,
 }
 
 /// The holder a keeper tracks on a host between passes: one it started, or one it adopted.
@@ -66,6 +76,10 @@ struct State {
     /// The hosts of the keeper's last pass, or the box alone before its first pass (keeper.md, The
     /// keeper's wait).
     keeper_hosts: Vec<HostKey>,
+    /// The monotonic time at the end of the keeper's last attempt of the guard's start, `None`
+    /// before its first, so a new keeper's first iteration starts the guard (keeper.md, When the
+    /// keeper starts it).
+    guard_last: Option<Duration>,
 }
 
 impl State {
@@ -336,16 +350,21 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
     let mut state = State {
         hosts: BTreeMap::new(),
         keeper_hosts: vec![None],
+        guard_last: None,
     };
     let mut passes: u32 = 0;
     loop {
         // 1. The look, before the pass, at each host the keeper tracks a holder on, and the wait
         // it may earn at once.
         if look(keeping, deps, stdout, &mut state) {
-            wait_after_look(deps, state_dir, stdout, &state);
+            wait_after_look(keeping, deps, stdout, &mut state);
         }
 
-        // 2. The pass, with the pass time taken now. It counts whether or not it ran to the end.
+        // 2. The guard's start, when it is due: just before the pass, after the look and any wait
+        // after it, and before the pass time is taken.
+        guard_before_pass(keeping, deps, stdout, &mut state);
+
+        // 3. The pass, with the pass time taken now. It counts whether or not it ran to the end.
         // The monotonic time is read in the same guard: a holder this pass started or adopted is
         // tracked from the end of the pass.
         let tracked: BTreeMap<HostKey, HolderRecord> = state
@@ -375,7 +394,7 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
         };
         passes = passes.saturating_add(1);
 
-        // 3. What each host's turn did, for tracking there, and the hold-off it calls for. A pass
+        // 4. What each host's turn did, for tracking there, and the hold-off it calls for. A pass
         // that stopped on a panic is a pass that failed before any turn: nothing changes.
         // Architect's to confirm: a panic is caught for the whole pass, as in v0.06, so a panic
         // in one host's turn ends the turns after it in that pass too; the code panics on no
@@ -405,36 +424,37 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
             }
         }
 
-        // 4. `-MaxPasses` passes have run.
+        // 5. `-MaxPasses` passes have run.
         if options.max_passes.is_some_and(|max| passes >= max) {
             return 0;
         }
 
-        // 5. The hold-offs the pass set, in the order of the turns.
+        // 6. The hold-offs the pass set, in the order of the turns.
         for (key, w) in holds {
             hold_off(deps, state_dir, stdout, &mut state, &key, w);
         }
 
-        // 6. The wait. Every iteration waits at least `-IntervalSeconds`, on every path.
-        wait_after_pass(
-            deps,
-            state_dir,
-            stdout,
-            &mut state,
-            options.interval_seconds,
-        );
+        // 7. The wait. Every iteration waits at least `-IntervalSeconds`, on every path.
+        wait_after_pass(keeping, deps, stdout, &mut state, options.interval_seconds);
     }
 }
 
 /// The wait after a look that set a hold-off (keeper.md, The keeper's wait): until the first of
 /// the keeper's hosts is due, which is at once while any of them has no hold-off running. With
 /// only the box, it waits out the box's hold-off, as v0.06's wait after the look did.
-fn wait_after_look(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, state: &State) {
-    let Some(start) = now(deps, state_dir, stdout) else {
+fn wait_after_look(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, state: &mut State) {
+    let Some(start) = now(deps, keeping.state_dir, stdout) else {
         return;
     };
     if let Some(until) = state.all_held_until(start) {
-        sleep(deps, state_dir, stdout, until.saturating_sub(start));
+        wait(
+            keeping,
+            deps,
+            stdout,
+            state,
+            start,
+            until.saturating_sub(start),
+        );
     }
 }
 
@@ -443,12 +463,13 @@ fn wait_after_look(deps: &Deps, state_dir: &Path, stdout: &mut dyn Write, state:
 /// never shorter than `-IntervalSeconds`. With only the box, it is v0.06's: the box's hold-off
 /// when the pass set one, else `-IntervalSeconds`.
 fn wait_after_pass(
+    keeping: &Keeping,
     deps: &Deps,
-    state_dir: &Path,
     stdout: &mut dyn Write,
     state: &mut State,
     interval: u32,
 ) {
+    let state_dir = keeping.state_dir;
     let interval = Duration::from_secs(u64::from(interval));
     let Some(start) = now(deps, state_dir, stdout) else {
         // A clock that cannot be read still gives the floor (D14).
@@ -459,7 +480,115 @@ fn wait_after_pass(
     let d = state
         .all_held_until(start)
         .map_or(interval, |until| until.saturating_sub(start).max(interval));
-    sleep(deps, state_dir, stdout, d);
+    wait(keeping, deps, stdout, state, start, d);
+}
+
+/// A wait of `d` from `start`, in which the guard's start is made once when it falls due before
+/// the wait's end: at that moment, or at the wait's beginning when it is already due (keeper.md,
+/// When the keeper starts it, point 2). The wait then runs on to the end it had, neither sooner
+/// nor later for it; a start that finds `guard.lock` held is not tried again in the same wait.
+fn wait(
+    keeping: &Keeping,
+    deps: &Deps,
+    stdout: &mut dyn Write,
+    state: &mut State,
+    start: Duration,
+    d: Duration,
+) {
+    let state_dir = keeping.state_dir;
+    let end = start.saturating_add(d);
+    let due_at = guard_due_at(keeping, state).max(start);
+    if due_at >= end {
+        sleep(deps, state_dir, stdout, d);
+        return;
+    }
+    if due_at > start {
+        sleep(deps, state_dir, stdout, due_at - start);
+    }
+    guard_attempt(keeping, deps, stdout, state, due_at);
+    // The rest of the wait, to the end it had. A clock that cannot be read here leaves the part of
+    // the wait that was planned after the start, so the wait keeps its floor (D14).
+    let rest = match now(deps, state_dir, stdout) {
+        Some(t) => end.saturating_sub(t),
+        None => end.saturating_sub(due_at),
+    };
+    if !rest.is_zero() {
+        sleep(deps, state_dir, stdout, rest);
+    }
+}
+
+/// When the guard's start is next due, on the keeper's monotonic clock: at once (zero) before the
+/// keeper's first attempt, then `-GuardIntervalSeconds` after the end of its last.
+fn guard_due_at(keeping: &Keeping, state: &State) -> Duration {
+    let interval = Duration::from_secs(u64::from(keeping.options.guard_interval_seconds));
+    state
+        .guard_last
+        .map_or(Duration::ZERO, |last| last.saturating_add(interval))
+}
+
+/// The guard's start just before a pass, when it is due (keeper.md, When the keeper starts it,
+/// point 1).
+fn guard_before_pass(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, state: &mut State) {
+    let due_at = guard_due_at(keeping, state);
+    match guarded(|| deps.clock.monotonic()) {
+        Ok(t) if t >= due_at => guard_attempt(keeping, deps, stdout, state, t),
+        Ok(_) => {}
+        // A clock that cannot be read is an error that escaped the start: logged as the start's,
+        // and it counts as an attempt (keeper.md, The keeper's wait). With no reading to mark its
+        // end, the time it was due stands in for it, so the next one is due `-GuardIntervalSeconds`
+        // after that and a counted attempt always moves `guard_last`.
+        Err(message) => {
+            log_failed(
+                deps,
+                keeping.state_dir,
+                stdout,
+                &guard::failed_reason(&guard::escaped(&message)),
+            );
+            state.guard_last = Some(due_at);
+        }
+    }
+}
+
+/// One attempt of the guard's start, or its try (keeper.md, How the keeper starts it): try
+/// `guard.lock`, find the program, start it detached, and log one line. A lock found held logs
+/// nothing and is not an attempt, so the start stays due. Otherwise the attempt counts, whatever
+/// its line, and the next is due `-GuardIntervalSeconds` after its end, once its line has been
+/// written or dropped. `began` is the monotonic time at its beginning, which stands in for its end
+/// when the clock cannot be read after it. It changes no host's state.
+fn guard_attempt(
+    keeping: &Keeping,
+    deps: &Deps,
+    stdout: &mut dyn Write,
+    state: &mut State,
+    began: Duration,
+) {
+    let state_dir = keeping.state_dir;
+    let outcome = guarded(|| guard::attempt(&keeping.guard, deps.guard))
+        .unwrap_or_else(|message| Outcome::Failed(guard::escaped(&message)));
+    match &outcome {
+        Outcome::Held => return,
+        Outcome::Started(_) => {
+            let text = outcome.text().unwrap_or_default();
+            // A line that cannot be logged is dropped, and the attempt stands; a panic while it is
+            // logged is an error that escaped the start.
+            let logged = guarded(|| {
+                let line = own_line(deps, &text);
+                log_own(deps, state_dir, stdout, &line);
+            });
+            if let Err(message) = logged {
+                log_failed(
+                    deps,
+                    state_dir,
+                    stdout,
+                    &guard::failed_reason(&guard::escaped(&message)),
+                );
+            }
+        }
+        Outcome::Failed(why) => {
+            log_failed(deps, state_dir, stdout, &guard::failed_reason(why));
+        }
+    }
+    state.guard_last = Some(guarded(|| deps.clock.monotonic()).unwrap_or(began));
 }
 
 /// A second keeper's one line, and its exit 0, with no pass and no wait.

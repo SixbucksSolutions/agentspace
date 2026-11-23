@@ -27,6 +27,9 @@ pub struct WatchOptions {
     pub release_grace_seconds: u32,
     /// `-FastFailureSeconds`, hidden, 60 by default.
     pub fast_failure_seconds: u32,
+    /// `-GuardIntervalSeconds`, hidden, 300 by default: the least time between two attempts of the
+    /// guard's start (keeper.md, When the keeper starts it; D63).
+    pub guard_interval_seconds: u32,
 }
 
 impl Default for WatchOptions {
@@ -38,6 +41,7 @@ impl Default for WatchOptions {
             backoff_max_seconds: 300,
             release_grace_seconds: 95,
             fast_failure_seconds: 60,
+            guard_interval_seconds: 300,
         }
     }
 }
@@ -66,9 +70,10 @@ enum Name {
     BackoffMaxSeconds,
     ReleaseGraceSeconds,
     FastFailureSeconds,
+    GuardIntervalSeconds,
 }
 
-const NAMES: [Name; 9] = [
+const NAMES: [Name; 10] = [
     Name::SshExe,
     Name::Now,
     Name::Watch,
@@ -78,6 +83,7 @@ const NAMES: [Name; 9] = [
     Name::BackoffMaxSeconds,
     Name::ReleaseGraceSeconds,
     Name::FastFailureSeconds,
+    Name::GuardIntervalSeconds,
 ];
 
 impl Name {
@@ -93,6 +99,7 @@ impl Name {
             Name::BackoffMaxSeconds => "BackoffMaxSeconds",
             Name::ReleaseGraceSeconds => "ReleaseGraceSeconds",
             Name::FastFailureSeconds => "FastFailureSeconds",
+            Name::GuardIntervalSeconds => "GuardIntervalSeconds",
         }
     }
 
@@ -183,7 +190,7 @@ pub fn parse_args(
     var: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<Options, String> {
     // Check 1: one scan, left to right, ending at the first failure.
-    let mut given: [Option<Option<String>>; 9] = Default::default();
+    let mut given: [Option<Option<String>>; NAMES.len()] = Default::default();
     let mut i = 0;
     while i < args.len() {
         let raw = &args[i];
@@ -208,7 +215,7 @@ pub fn parse_args(
     let watch = given[Name::Watch.index()].is_some();
 
     // Check 2: the numbers, one at a time, in the argument table's order.
-    let mut numbers = [None; 9];
+    let mut numbers = [None; NAMES.len()];
     for name in &NAMES[Name::IntervalSeconds.index()..] {
         let Some(v) = value(*name) else { continue };
         if !watch {
@@ -241,6 +248,7 @@ pub fn parse_args(
         backoff_max_seconds: pick(Name::BackoffMaxSeconds, defaults.backoff_max_seconds),
         release_grace_seconds: pick(Name::ReleaseGraceSeconds, defaults.release_grace_seconds),
         fast_failure_seconds: pick(Name::FastFailureSeconds, defaults.fast_failure_seconds),
+        guard_interval_seconds: pick(Name::GuardIntervalSeconds, defaults.guard_interval_seconds),
     };
     if options.backoff_max_seconds < options.backoff_base_seconds {
         return Err("-BackoffMaxSeconds is less than -BackoffBaseSeconds.".to_string());
@@ -335,6 +343,8 @@ mod tests {
             "5",
             "-FastFailureSeconds",
             "2",
+            "-guardintervalseconds",
+            "3",
         ])
         .unwrap();
         assert_eq!(
@@ -346,6 +356,7 @@ mod tests {
                 backoff_max_seconds: 1,
                 release_grace_seconds: 5,
                 fast_failure_seconds: 2,
+                guard_interval_seconds: 3,
             })
         );
     }
@@ -490,5 +501,35 @@ mod tests {
         );
         assert!(lines[1].starts_with("       agentspace-keeper -Watch [-SshExe <full path>]"));
         assert!(!USAGE.contains("FastFailureSeconds"));
+        assert!(!USAGE.contains("GuardIntervalSeconds"));
+    }
+
+    /// keeper.md, Command line: `-GuardIntervalSeconds` is hidden, 300 by default, for `-Watch`
+    /// only, and checked last of the numbers (G15).
+    #[test]
+    fn the_guard_interval_is_a_hidden_watch_number_checked_last() {
+        assert_eq!(WatchOptions::default().guard_interval_seconds, 300);
+        assert_eq!(
+            err(&["-GuardIntervalSeconds", "5"]),
+            "-GuardIntervalSeconds is for -Watch."
+        );
+        assert_eq!(
+            err(&["-Watch", "-GuardIntervalSeconds", "0"]),
+            "-GuardIntervalSeconds '0' is not a whole number from 1 to 86400."
+        );
+        assert_eq!(
+            err(&[
+                "-Watch",
+                "-GuardIntervalSeconds",
+                "0",
+                "-FastFailureSeconds",
+                "0"
+            ]),
+            "-FastFailureSeconds '0' is not a whole number from 1 to 86400."
+        );
+        assert_eq!(
+            err(&["-GuardIntervalSeconds", "5", "-GuardIntervalSeconds", "6"]),
+            "-GuardIntervalSeconds is given twice."
+        );
     }
 }

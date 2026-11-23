@@ -260,11 +260,26 @@ pub fn create(
     environment: &[OsString],
     create_flags: Option<u32>,
 ) -> Result<u32, String> {
+    send(&request(command_line, directory, environment, create_flags)).map(|(code, _)| code)
+}
+
+/// `create`, and the `ProcessId` the same call's output holds: the `ReturnValue` and, when the
+/// process was created and the output names one, its process ID. It is the one call `create`
+/// makes, with the same inputs and the same bound left to the caller, and it reads one more
+/// property of the output the call already gave. The process ID is the created process's: for a
+/// `.cmd` or `.bat` program run through `cmd.exe`, that of the `cmd.exe`.
+pub fn create_with_pid(
+    command_line: &OsStr,
+    directory: &OsStr,
+    environment: &[OsString],
+    create_flags: Option<u32>,
+) -> Result<(u32, Option<u32>), String> {
     send(&request(command_line, directory, environment, create_flags))
 }
 
-/// Sends one request to `Win32_Process.Create`.
-fn send(request: &Request) -> Result<u32, String> {
+/// Sends one request to `Win32_Process.Create`: its `ReturnValue`, and its `ProcessId` when the
+/// output holds one that is not zero.
+fn send(request: &Request) -> Result<(u32, Option<u32>), String> {
     let _apartment = Apartment::enter()?;
     // SAFETY: COM is initialized on this thread for the life of every interface below.
     let locator: IWbemLocator =
@@ -375,9 +390,21 @@ fn send(request: &Request) -> Result<u32, String> {
     // SAFETY: a valid output instance and a VARIANT of ours, cleared on drop.
     unsafe { output.Get(w!("ReturnValue"), 0, &mut value.0, None, None) }
         .map_err(|e| describe(&e))?;
-    value
+    let code = value
         .code()
-        .ok_or_else(|| "Win32_Process.Create gave no return code.".to_string())
+        .ok_or_else(|| "Win32_Process.Create gave no return code.".to_string())?;
+    // The process ID is read whatever the return value is, and it is used only when the return
+    // value is 0, the call that created the process. A failure to read it is no failure of the
+    // call: the process exists all the same.
+    let mut id = Variant(VARIANT::default());
+    // SAFETY: a valid output instance and a VARIANT of ours, cleared on drop.
+    let read = unsafe { output.Get(w!("ProcessId"), 0, &mut id.0, None, None) };
+    let process_id = if code == 0 && read.is_ok() {
+        id.code().filter(|pid| *pid != 0)
+    } else {
+        None
+    };
+    Ok((code, process_id))
 }
 
 #[cfg(test)]
