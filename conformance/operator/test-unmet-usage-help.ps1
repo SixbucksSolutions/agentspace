@@ -21,7 +21,7 @@
 #   - What is accepted, so that a refusal is not a blanket one: the command and the parameter names
 #     without regard to case, -GiB's boundary values and its sign, and a value that looks like a
 #     parameter.
-#   - Every help block byte for byte (the top level and each of the nine commands), to stdout, with a
+#   - Every help block byte for byte (the top level and each of the ten commands), to stdout, with a
 #     line feed after every line and no carriage return, exit 0, nothing on stderr; and every way the
 #     spec says help is asked for: -h and --help in any case, before the command, after other
 #     parameters, in a parameter's value position, with an unknown command or parameter, and beside
@@ -225,9 +225,24 @@ every 6 hours. Without -Host it grows the box's.
 
 Exit codes: 0 success, 1 failure.
 '@
+  'guard' = @'
+Usage: agentspace-operator guard [-Quiet]
+
+Stops every running host that no live lease explains, once 15 minutes have
+passed since the later of its start and its project's last lease end, and
+sends every running host its lease horizon, the end of its project's leases.
+Leaves a host whose provisioning run is working on it. Acts on every host in
+~/.agentspace/hosts.json, and takes no -Host or -All. Logs each stop, each
+unexplained host and each failure to ~/.agentspace/guard.log.
+
+The keeper runs it every 5 minutes; you can also run it yourself. A guard
+that finds another one running exits at once.
+
+Exit codes: 0 success, or another guard is running; 1 failure.
+'@
 }
 
-$commands = 'deploy', 'up', 'sync', 'bootstrap', 'provision', 'ca', 'down', 'status', 'grow'
+$commands = 'deploy', 'up', 'sync', 'bootstrap', 'provision', 'ca', 'down', 'status', 'grow', 'guard'
 $noCommand = 'agentspace: No command given. The commands are deploy, up, sync, bootstrap, provision, ca, down, status, grow and guard.'
 $tab = [string][char]9
 $lf = [string][char]10
@@ -478,7 +493,7 @@ try {
     Test-Help "${e}: a command's help needs no system folder (grow -h with SystemRoot unset)" @('grow', '-h') 'grow' -Unset @('SystemRoot')
 
     # =============== Help: every block byte for byte ===============
-    $sectionOf = @{ top = 'the-top-level'; deploy = 'deploy'; up = 'up'; sync = 'sync'; bootstrap = 'bootstrap'; provision = 'provision'; ca = 'ca'; down = 'down'; status = 'status'; grow = 'grow' }
+    $sectionOf = @{ top = 'the-top-level'; deploy = 'deploy'; up = 'up'; sync = 'sync'; bootstrap = 'bootstrap'; provision = 'provision'; ca = 'ca'; down = 'down'; status = 'status'; grow = 'grow'; guard = 'guard' }
     foreach ($flag in '-h', '--help', '-H', '--HELP', '--Help') {
       Test-Help "operator.md#the-top-level: the top level's help for $flag, byte for byte, on stdout with exit 0" @($flag) 'top'
     }

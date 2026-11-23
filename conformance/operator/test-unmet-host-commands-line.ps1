@@ -19,6 +19,9 @@
 # and against the usage errors; the checks reading no file and starting nothing; the order of the host
 # lookup after the home and system folder checks; every command but provision refused for a project
 # with no record, with its message, and writing nothing; and -Host and -All accepted before the command.
+# For guard (E0.08-T04-S01): -Host refused by check 1 with guard's own message, -All, -Alias and
+# -InstanceType refused with theirs, and -GiB checked for form and its value ignored, with the same calls
+# and the same stderr as a plain guard.
 #
 # SAFETY. The harness points USERPROFILE, HOME, LOCALAPPDATA and APPDATA into the throwaway home and
 # removes every AWS credential. Before any program that can reach AWS starts, the check confirms under
@@ -158,6 +161,72 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
   Test-Usage "${o}: 6, -Host swimcoach is the box in any case or whitespace" @('deploy', '-Host', ' SwimCoach ', '-InstanceType', 'm9g.xlarge') $m6
   Test-Usage "${o}: 6, -InstanceType before -Host" @('deploy', '-InstanceType', 'm9g.xlarge', '-Host', 'swimcoach') $m6
   Test-Usage "${o}: 6, -Quiet does not hide it" @('deploy', '-Quiet', '-InstanceType', 'm9g.xlarge') $m6
+
+  # ---- guard, which takes no -Host, -All, -Alias or -InstanceType and ignores -GiB's value (E0.08-T04-S01) ----
+  # Check 1's message names the command as the page spells it, so ca's stays byte for byte (the cases above)
+  # and guard's names guard. Each refusal is exit 1, the message alone on stderr, nothing on stdout and no
+  # AWS CLI, ssh or scp call.
+  $gd = 'operator.md#command-line: the host checks, guard'
+  $g1 = 'agentspace: -Host does not apply to guard.'
+  Test-Usage "${gd}: 1, guard -Host x is refused with the guard form of check 1's message" @('guard', '-Host', 'x') $g1
+  Test-Usage "${gd}: 1, guard -Host agentspace names a project the registry holds, and is refused too" @('guard', '-Host', 'agentspace') $g1 -Setup $twoHosts
+  Test-Usage "${gd}: 1, guard -Host swimcoach is refused too" @('guard', '-Host', 'swimcoach') $g1
+  Test-Usage "${gd}: 1, -Host before the command: -Host x guard" @('-Host', 'x', 'guard') $g1
+  Test-Usage "${gd}: 1, the command in capitals: GUARD -Host x names guard as the page spells it" @('GUARD', '-Host', 'x') $g1
+  Test-Usage "${gd}: 1 comes before 3: guard -Host x -All reports the -Host message (the spec's own example)" @('guard', '-Host', 'x', '-All') $g1
+  Test-Usage "${gd}: 1 comes before 3: guard -All -Host x reports the -Host message" @('guard', '-All', '-Host', 'x') $g1
+  Test-Usage "${gd}: 1 comes before 5: guard -Host x -InstanceType m9g.xlarge" @('guard', '-Host', 'x', '-InstanceType', 'm9g.xlarge') $g1
+  Test-Usage "${gd}: the -Host form check comes before check 1: guard -Host bad!" @('guard', '-Host', 'bad!') (& $hostMsg 'bad!')
+  Test-Usage "${gd}: -Quiet does not hide it: guard -Quiet -Host x" @('guard', '-Quiet', '-Host', 'x') $g1
+  Test-Usage "${gd}: 1 reads no file: guard -Host x with a host registry that is not valid reports the usage error" @('guard', '-Host', 'x') $g1 -Setup $invalidRegistry
+  Test-Usage "${gd}: 1 needs no system folder: guard -Host x with SystemRoot unset reports the usage error" @('guard', '-Host', 'x') $g1 -Environment @{ SystemRoot = $null }
+  Test-Usage "${gd}: 2, guard -All is refused with check 2's message" @('guard', '-All') $m2
+  Test-Usage "${gd}: 2, guard -All -Quiet is refused with check 2's message" @('guard', '-All', '-Quiet') $m2
+  Test-Usage "${gd}: 2 comes before 5: guard -All -InstanceType m9g.xlarge" @('guard', '-All', '-InstanceType', 'm9g.xlarge') $m2
+  Test-Usage "${gd}: 2 reads no file: guard -All with a host registry that is not valid reports the usage error" @('guard', '-All') $m2 -Setup $invalidRegistry
+  Test-Usage "${gd}: -Alias, guard -Alias x is refused as applying to up alone" @('guard', '-Alias', 'x') $aliasOnly
+  Test-Usage "${gd}: -Alias comes before the host checks: guard -Alias x -Host y" @('guard', '-Alias', 'x', '-Host', 'y') $aliasOnly
+  Test-Usage "${gd}: -Alias comes before the host checks: guard -Alias x -All" @('guard', '-Alias', 'x', '-All') $aliasOnly
+  Test-Usage "${gd}: 5, guard -InstanceType m9g.xlarge is refused as applying to deploy alone" @('guard', '-InstanceType', 'm9g.xlarge') $m5
+  Test-Usage "${gd}: 5, guard -InstanceType m9g.xlarge -Quiet is refused as applying to deploy alone" @('guard', '-InstanceType', 'm9g.xlarge', '-Quiet') $m5
+  Test-Usage "${gd}: the -InstanceType form check comes before check 5: guard -InstanceType bad" @('guard', '-InstanceType', 'bad') (& $typeMsg 'bad')
+  Test-Usage "${gd}: 5 reads no file: guard -InstanceType m9g.xlarge with a host registry that is not valid reports the usage error" @('guard', '-InstanceType', 'm9g.xlarge') $m5 -Setup $invalidRegistry
+
+  # ---- guard -GiB is checked for form and its value ignored (Command line, -GiB; the parameter table) ----
+  # The home is one in which the guard does one quick and certain thing: the registry holds the box's
+  # record with an instance ID, the lease state file holds no lease, and the stand-in AWS CLI answers
+  # the one `ec2 describe-instances` with that instance stopped. A stopped host is decided as nothing,
+  # so the run makes the one call, prints its closing line and exits 0. A plain guard is the control: the
+  # same calls and the same stderr are wanted of every case below.
+  $gg = 'operator.md#command-line: guard -GiB'
+  $guardClosing = "Hosts: 1; running 0, stopped 0, unexplained 0.`n"
+  $guardCalls = @("ec2 describe-instances --region us-west-2 --output json --filters Name=instance-id,Values=$script:IdBox")
+  $guardSetup = {
+    New-HomeFolder $script:Fx.H.StateDir
+    [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $script:Fx.H -Path (Join-Path $script:Fx.H.StateDir 'leases.json')), [Text.UTF8Encoding]::new($false).GetBytes('{"version":0,"leases":[]}' + "`n"))
+    $doc = ConvertTo-Json -Compress -Depth 8 -InputObject ([ordered]@{ Reservations = @([ordered]@{ Instances = @([ordered]@{
+            InstanceId = $script:IdBox; State = [ordered]@{ Name = 'stopped' }; LaunchTime = '2020-01-01T00:00:00+00:00'; InstanceType = 'm9g.xlarge' }) }) })
+    Set-AwsScenario @{ 'ec2 describe-instances' = @(New-Step $doc) }
+  }
+  Test-HostCase "${gg}: the control, a plain guard, makes the one describe call and ends with its closing line" @('guard') @{
+    Exit = 0; Stderr = $guardClosing; Calls = $guardCalls } -Setup $guardSetup
+  foreach ($case in @(
+      @('guard -GiB 5 is accepted, its value checked for form and ignored: the same calls and the same stderr as a plain guard', @('guard', '-GiB', '5')),
+      @('guard -GiB 0 is accepted: only grow refuses a value of 0 or less', @('guard', '-GiB', '0')),
+      @('guard -GiB -1 is accepted: only grow refuses a value of 0 or less', @('guard', '-GiB', '-1')),
+      @('guard -GiB 2147483647 is accepted: the largest value in range', @('guard', '-GiB', '2147483647')),
+      @('-GiB 5 before the command: -GiB 5 guard', @('-GiB', '5', 'guard')),
+      @('the parameter name in another case: guard -gib 5', @('guard', '-gib', '5'))
+    )) {
+    Test-HostCase "${gg}: $($case[0])" ([string[]]$case[1]) @{ Exit = 0; Stderr = $guardClosing; Calls = $guardCalls } -Setup $guardSetup
+  }
+  Test-HostCase "${gg}: guard -Quiet alone is accepted, and prints nothing, with the same calls" @('guard', '-Quiet') @{
+    Exit = 0; Stderr = ''; Calls = $guardCalls } -Setup $guardSetup
+  Test-HostCase "${gg}: guard -GiB 5 -Quiet is accepted, and prints nothing, with the same calls" @('guard', '-GiB', '5', '-Quiet') @{
+    Exit = 0; Stderr = ''; Calls = $guardCalls } -Setup $guardSetup
+  Test-Usage "${gg}: its form is still checked: guard -GiB abc" @('guard', '-GiB', 'abc') "agentspace: -GiB MUST be a whole number, not 'abc'."
+  Test-Usage "${gg}: its form is still checked: guard -GiB 2147483648 (one past the largest)" @('guard', '-GiB', '2147483648') "agentspace: -GiB MUST be a whole number, not '2147483648'."
+  Test-Usage "${gg}: a missing value is still found: guard -GiB" @('guard', '-GiB') 'agentspace: -GiB needs a value.'
 
   # ---- Against -Alias's checks and the usage errors ----
   $a = 'operator.md#command-line: the order of the checks'

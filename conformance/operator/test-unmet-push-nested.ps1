@@ -95,7 +95,7 @@ $p = [Diagnostics.Process]::Start($psi)
 $p.StandardInput.Close()
 $outTask = $p.StandardOutput.ReadToEndAsync()
 $errTask = $p.StandardError.ReadToEndAsync()
-if (-not $p.WaitForExit(90000)) { try { $p.Kill() } catch { } }
+if (-not $p.WaitForExit(90000)) { try { & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /T /F /PID $p.Id *> $null } catch { }; try { $p.Kill() } catch { } }
 [void]$outTask.Wait(10000)
 [void]$errTask.Wait(10000)
 [IO.File]::AppendAllText((Join-Path $dir 'nested-runs.log'), ('alias=' + $(if ($alias -eq 'agentspace') { 'box' } else { $alias }) + ' nested-env=' + $state + "`n"))
@@ -366,8 +366,8 @@ try {
 
       # ---- 9. The push's ssh carries AGENTSPACE_NESTED, so its nested ProxyCommand never pushes ----
       $p = New-HpProblems
-      $unset = @(Get-NestedRuns | Where-Object { $_ -notmatch ' nested-env=set$' }).Count
-      if ($unset -gt 0) { $p.Add('The push''s ssh did not carry AGENTSPACE_NESTED') }
+      $runs = @(Get-NestedRuns); $unset = @($runs | Where-Object { $_ -notmatch ' nested-env=set$' }).Count
+      if ($runs.Count -eq 0) { $p.Add('No nested run was logged, so the case shows nothing') } elseif ($unset -gt 0) { $p.Add('The push''s ssh did not carry AGENTSPACE_NESTED') }
       Write-HpProblems "operator.md#environment-variables: The ssh the ProxyCommand's push starts carries AGENTSPACE_NESTED, so its nested ProxyCommand never pushes" $p
     }
   }

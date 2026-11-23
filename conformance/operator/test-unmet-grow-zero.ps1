@@ -3,8 +3,10 @@
 #
 # Conformance check of `grow`'s refusal of a -GiB of 0 or less (docs/operator.md, "grow", "Command line",
 # "Exit codes", "Calls by command"; D61, #0164; P7, architect, 2026-11-21, for v0.08-T01). Card #0182
-# (E0.08-T04-S01). It replaces test-unmet-commands.ps1's two cases from before v0.08, `-GiB 0` (which the
-# AWS stand-in's model of EC2's refusal served) and `-GiB -1` (which asked EC2 for the size less 1).
+# (E0.08-T04-S01). It stands beside test-unmet-commands.ps1's two cases from before v0.08, `-GiB 0` (which the
+# AWS stand-in's model of EC2's refusal served) and `-GiB -1` (which asked EC2 for the size less 1), which
+# E0.08-T03-S02 (#125) rewrote to the refusal and which stay beside these cases (operator.md, Which checks
+# show it; the overlap kept by the architect, 2026-11-22).
 #
 # What it does: it runs the operator in a throwaway home with stand-ins for `aws`, `ssh` and `scp` that
 # log every call and answer from files beside them (conformance/operator/host-commands-common.ps1), over a
@@ -22,7 +24,9 @@
 #
 # NOT SHOWN HERE. operator.md's coverage table also names `grow -GiB 0` with USERPROFILE unset. A check
 # MUST NOT run a program with USERPROFILE unset or empty (docs/conformance.md, "The harness"), and the
-# harness refuses that override, so that order is shown by the operator crate's own tests.
+# harness refuses that override, so that order is shown by the operator crate's own tests, as operator.md
+# (27643b2) names: the test `grows_gib_refusal_is_a_usage_error_that_needs_neither`, in tests/home_and_system_root.rs
+# of the operator crate, which shows the refusal needs neither USERPROFILE nor SystemRoot.
 #
 # SAFETY. The harness points USERPROFILE, HOME, LOCALAPPDATA and APPDATA into the throwaway home and
 # removes every AWS credential. Before any program that can reach AWS starts, the check confirms under
@@ -121,7 +125,8 @@ Invoke-HostFile -FileName 'test-unmet-grow-zero.ps1' -Body {
   Test-HostCase "${c}: down -GiB -5 is not refused: the stop is requested, and the exit is 0" @('down', '-GiB', '-5') @{
     Exit = 0; Stderr = (Join-Lines @("Stopping $idBox.")); Calls = @((Get-CallStop $idBox)) } -Setup { Set-TwoHosts }
   # sync's own steps are not this check's: it only has to go past the command line, so the check is that
-  # the refusal's message is nowhere in what it prints, and that the program ended with an exit code.
+  # the refusal's message is nowhere in what it prints, that no usage error was printed, and that the program
+  # reached the AWS stand-in at least once, so that the check is not met by a program that stopped early.
   $syncName = "${c}: sync -GiB 0 is not refused: its stderr never holds the refusal's message (its own steps are another file's)"
   try {
     Reset-HostCase
@@ -130,6 +135,8 @@ Invoke-HostFile -FileName 'test-unmet-grow-zero.ps1' -Body {
     $why = [System.Collections.Generic.List[string]]::new()
     if ($run.TimedOut) { $why.Add('It timed out') }
     if ($run.Stderr -match 'MUST be 1 or more') { $why.Add('Stderr holds the grow refusal') }
+    if ($run.Stderr -cmatch '(?m)^agentspace: (No command given|Unknown command|Unexpected argument|Unknown parameter|-\w+ is given more than once|-\w+ needs a value|-GiB MUST be)') { $why.Add('It was refused as a usage error') }
+    if (@(Get-AwsCalls).Count -eq 0) { $why.Add('It never reached the AWS CLI, so the command line was not accepted') }
     if ($run.Stderr -match 'CategoryInfo|At line:|Exception|panicked') { $why.Add('Stderr shows a runtime error record') }
     if ($why.Count -eq 0) { Write-ConformanceResult -Name $syncName -Status PASS } else { Write-ConformanceResult -Name $syncName -Status FAIL -Reason ($why -join '; ') }
   } catch {

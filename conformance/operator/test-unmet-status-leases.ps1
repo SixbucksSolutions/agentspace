@@ -584,6 +584,9 @@ Invoke-HostFile -FileName 'test-unmet-status-leases.ps1' -Body {
 
     $sp = @((New-HostSpec 'swimcoach' $idBox 'stopped' -NoLaunch), (New-HostSpec 'agentspace' $i1 'running' -NoLaunch), (New-HostSpec 'zeta' $i2 'running' 'ready' '2020-01-01T00:00:00'), (New-HostSpec 'eta' $i3 'running' -NoLaunch), (New-HostSpec 'theta' $i4 'stopped' -NoLaunch))
     $launchMsg = 'agentspace: Unexpected answer from ec2 describe-instances: no Reservations[0].Instances[0].LaunchTime.'
+    # No Calls key below, on purpose: operator.md ("status -All"; "Calls by command") pins that the launch time comes from the
+    # describe answer a host's report already reads, and that status -All makes no call it did not make before v0.08, but not
+    # which later calls (volumes, Session Manager) a host whose part fails before its five lines makes. The report's lines alone are asserted.
     Test-StatusCase "${secS}: LaunchTime is read only for a host that gets a Guard line: a running unexplained host with none, or one with no UTC offset, fails its part alone before its five lines (Host line, then the message), and a stopped host or a running host a live lease explains, with none, is reported as usual: 2 of 5 hosts failed, exit 1" @('status', '-All') @{
       Exit = 1
       Check = { param($run, $started)

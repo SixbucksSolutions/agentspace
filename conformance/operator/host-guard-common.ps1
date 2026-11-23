@@ -59,6 +59,7 @@ function Get-GdUnix([DateTime]$T) { [DateTimeOffset]::new($T.ToUniversalTime()).
 function Get-GdClock([DateTime]$Utc) {
   $t = $Utc.ToUniversalTime()
   if ($t.Second -gt 0 -or $t.Millisecond -gt 0) { $t = $t.AddSeconds(60 - $t.Second).AddMilliseconds(-$t.Millisecond) }
+  [TimeZoneInfo]::ClearCachedData()
   $l = [TimeZoneInfo]::ConvertTimeFromUtc($t, [TimeZoneInfo]::Local)
   $l.ToString('h:mmtt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
 }
@@ -207,8 +208,26 @@ function Get-GdLogPath { Join-Path $script:Fx.Agentspace 'guard.log' }
 function Get-GdLockPath { Join-Path $script:Fx.Agentspace 'guard.lock' }
 function Get-GdProvisionLockPath([string]$Project) { Join-Path $script:Fx.Agentspace "hosts\$Project\provision.lock" }
 
+# Masks a wanted line, or a pattern for one, before a failure quotes it. A wanted line for a lock, the host registry or
+# the lease state file holds the throwaway home's path, which lies under the profile and so holds the Windows user
+# name (AGENTS.md, "A live run on Terry's real setup MUST mask what it reads before it prints it"). The home's root, the
+# temp folder and the profile are replaced literally, in their regex-escaped and their plain forms, and any path that
+# remains is replaced whole.
+function Get-GdMasked([string]$Text) {
+  $t = $Text
+  $roots = [System.Collections.Generic.List[object]]::new()
+  if ($null -ne $script:Fx -and $script:Fx.H.Root) { $roots.Add(@($script:Fx.H.Root, '<home>')) }
+  if ($env:TEMP) { $roots.Add(@($env:TEMP, '<temp>')) }
+  if ($env:USERPROFILE) { $roots.Add(@($env:USERPROFILE, '<profile>')) }
+  foreach ($r in $roots) {
+    $t = $t.Replace([regex]::Escape($r[0]), $r[1]).Replace([string]$r[0], $r[1])
+  }
+  [regex]::Replace($t, '[A-Za-z]:[\\/][^\s''"]*', '<path>')
+}
+
 # Reads the guard's stderr as its non-empty lines, compared with a list of wanted lines, each exact or `re:` and a
-# regular expression, matched case-sensitively. Returns problems; the failure names the wanted line, never the program's.
+# regular expression, matched case-sensitively. Returns problems; the failure names the wanted line, masked, never the
+# program's.
 function Get-GdStderrProblems {
   param([string]$Stderr, [object[]]$Want)
   $p = [System.Collections.Generic.List[string]]::new()
@@ -217,7 +236,7 @@ function Get-GdStderrProblems {
   for ($i = 0; $i -lt [Math]::Min($lines.Count, @($Want).Count); $i++) {
     $w = [string]@($Want)[$i]
     $ok = if ($w.StartsWith('re:')) { $lines[$i] -cmatch $w.Substring(3) } else { $lines[$i] -ceq $w }
-    if (-not $ok) { $p.Add("Stderr line $($i + 1) is not '$($w -replace '\s+', ' ')'"); break }
+    if (-not $ok) { $p.Add("Stderr line $($i + 1) is not '$(Get-GdMasked ($w -replace '\s+', ' '))'"); break }
   }
   $p.ToArray()
 }
@@ -254,7 +273,7 @@ function Get-GdLogProblems {
     if ($t -lt $from -or $t -gt $to) { $p.Add("guard.log line $($i + 1) is timed outside the run") }
     $w = $Body[$i]
     $ok = if ($w.StartsWith('re:')) { $m.Groups[2].Value -cmatch $w.Substring(3) } else { $m.Groups[2].Value -ceq $w }
-    if (-not $ok) { $p.Add("guard.log line $($i + 1) text is not '$($w -replace '\s+', ' ')'"); break }
+    if (-not $ok) { $p.Add("guard.log line $($i + 1) text is not '$(Get-GdMasked ($w -replace '\s+', ' '))'"); break }
   }
   $p.ToArray()
 }

@@ -28,10 +28,15 @@
 # guard never does.
 #
 # CHOICES where operator.md is silent or can be read two ways (each is a question for the dev lead):
-#   1. The closing line's `running <r>` for a running host whose LaunchTime failed its part (step 6 says
-#      such a host is "read as running" in step 7's words): the case that has such hosts accepts any count.
-#   2. The closing line after a failure that ends the run (step 1 to 3, #0034, a failed describe) is not
-#      asserted either way; the last stderr line is asserted for the sign-in message, as `-All`'s case does.
+#   1. The closing line's `running <r>` for a running host whose LaunchTime failed its part: step 8 counts
+#      the hosts step 6 read as `running`, and step 7 sends "each host step 6 read as `running`, but ... a
+#      host whose `LaunchTime` failed its part", so such a host is read as running and the closing line counts
+#      it. The case that has such hosts asserts the exact line, and a question stays for the architect only
+#      if step 6's "running, with its LaunchTime missing" was meant to leave the host out of `<r>`.
+#   2. The closing line after a failure that ends the run (step 1 to 3, a failed describe): operator.md's Exit
+#      codes says a failure ends the command at once and prints one message, so each such case asserts that
+#      message as the only line of stderr, and no closing line. #0034's sign-in message is asserted as the last
+#      line of stderr, with no count after it, and with the progress lines of the stops requested before it.
 #   3. The `<error>` of `Cannot try <path>: <error>.` is asserted as non-empty text only, since the spec
 #      gives the text of guard.lock's error alone; guard.lock's is asserted as `The guard's lock could
 #      not be taken: ` and text.
@@ -39,8 +44,12 @@
 #      between stderr and the log, for every file but a missing one (`the file does not exist`).
 #   5. A "word" of the send's command is a run of digits not touching a letter, digit, `_`, `.`, `-` or `/`.
 #   6. `guard.log` that cannot be written: the order of its message among the progress lines is not
-#      asserted, and whether `agentspace: <n> of <m> hosts failed.` follows is not asserted.
+#      asserted. A dropped line is not a host's part that failed, so step 8's `agentspace: <n> of <m> hosts
+#      failed.` does not follow, and the case asserts that no such line is printed.
 #   7. A `creating` record that holds an instance ID is decided like any host, by its instance's state.
+#   8. The decision case's expired lease ends 20 minutes ago, later than the 30 minutes of the lease released
+#      after it expired, so the project's last lease end is the expired lease's `expires_at` and a build that
+#      gave an expired ready lease no end, or used the later `released_at`, decides that host otherwise.
 #
 # SAFETY. The harness points USERPROFILE, HOME, LOCALAPPDATA and APPDATA into the throwaway home and
 # removes every AWS credential. Before any program that can reach AWS starts, the check confirms under
@@ -124,7 +133,7 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
   # Registry order: box, zeta, delta, agentspace, gamma, theta, epsilon, eta. Every instance's id is in the filter in that order.
   $cD = [ordered]@{
     Box = (Get-GdAgo 180 11); Zeta = (Get-GdAgo 8 21); Delta = (Get-GdAgo 25 43); Gamma = (Get-GdAgo 120 17)
-    EpsExpired = (Get-GdAgo 40 5); EpsReleased = (Get-GdAgo 5 9); EpsEnd = (Get-GdAgo 30 52)
+    EpsExpired = (Get-GdAgo 20 5); EpsReleased = (Get-GdAgo 5 9); EpsEnd = (Get-GdAgo 30 52)
     Eta = (Get-GdAgo 3 29); EtaOld = (Get-GdAgo 120 30); Ag = (Get-GdAhead 60 14)
   }
   $dIds = @($idBox, $i5, $i3, $i1, $i2, $i7, $i4, $i6)
@@ -149,7 +158,7 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
     (Get-GdCallSend $i5), (Get-GdCallSend $i1), (Get-GdCallSend $i6))
   $dLog = @(
     (Get-GdLineStopped 'swimcoach' $cD.Box), (Get-GdLineUnexplained 'zeta' $cD.Zeta), (Get-GdLineStopped 'delta' $cD.Delta),
-    (Get-GdLineStopped 'gamma' $cD.Gamma), (Get-GdLineStopped 'epsilon' $cD.EpsEnd), (Get-GdLineUnexplained 'eta' $cD.Eta))
+    (Get-GdLineStopped 'gamma' $cD.Gamma), (Get-GdLineStopped 'epsilon' $cD.EpsExpired), (Get-GdLineUnexplained 'eta' $cD.Eta))
   $dCheck = { param($run, $started)
     Get-GdLogProblems -Run $run -Started $started -Body $dLog
     Get-GdSendProblems -Expected @{ $i5 = $cD.Zeta; $i1 = $cD.Ag; $i6 = $cD.Eta } -Run $run -Started $started }
@@ -182,7 +191,7 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
     Check = { param($run, $started)
       Get-GdStderrProblems -Stderr $run.Stderr -Want @(
         (Get-GdHostFailure 'alpha' $launchMissing), (Get-GdHostFailure 'bravo' $launchMissing), (Get-GdHostFailure 'charlie' $launchMissing),
-        (Get-GdProgressStopping 'delta' $i4), 're:^Hosts: 6; running \d+, stopped 1, unexplained 0\.$', (Get-GdFailedCount 3 6))
+        (Get-GdProgressStopping 'delta' $i4), (Get-GdClosing 6 5 1 0), (Get-GdFailedCount 3 6))
       Get-GdLogProblems -Run $run -Started $started -Body @(
         (Get-GdLineFailed 'alpha' 'instance' $launchMissing), (Get-GdLineFailed 'bravo' 'instance' $launchMissing),
         (Get-GdLineFailed 'charlie' 'instance' $launchMissing), (Get-GdLineStopped 'delta' $cG.Launch))
@@ -243,7 +252,7 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
     Exit = 1
     Calls = @(, (Get-GdCallDescribe @($idBox, $i1)))
     Check = { param($run, $started)
-      if (@($run.Stderr -split "`n") -cnotcontains "agentspace: $describeDenied") { 'Stderr lacks the failure message as a line of its own' }
+      Get-GdStderrProblems -Stderr $run.Stderr -Want @("agentspace: $describeDenied")
       Get-GdLogProblems -Run $run -Started $started -Body @((Get-GdLineRunFailed 'describe' $describeDenied)) } } -Setup {
     Set-HostsRecords @((New-BoxRecord $idBox), (& $rec 'alpha' $i1))
     Set-GdLeases @()
@@ -253,7 +262,7 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
     Exit = 1
     Calls = @(, (Get-GdCallDescribe @($idBox, $i1)))
     Check = { param($run, $started)
-      if (@($run.Stderr -split "`n") -cnotcontains 'agentspace: Unexpected answer from ec2 describe-instances: not JSON.') { 'Stderr lacks the failure message as a line of its own' }
+      Get-GdStderrProblems -Stderr $run.Stderr -Want @('agentspace: Unexpected answer from ec2 describe-instances: not JSON.')
       Get-GdLogProblems -Run $run -Started $started -Body @((Get-GdLineRunFailed 'describe' 'Unexpected answer from ec2 describe-instances: not JSON.')) } } -Setup {
     Set-HostsRecords @((New-BoxRecord $idBox), (& $rec 'alpha' $i1))
     Set-GdLeases @()
@@ -397,16 +406,23 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
     Set-GdLeases @((New-GdLease alpha released -Released (Get-GdAgo 200)))
     Set-GdAws -Instance @($boxStopped, (New-GdInstance -Id $i1 -Launch $cY.Launch))
   }
+  # The first case adds a host no lease explains, due to be stopped, so that a line is logged and the log's place is shown.
+  $ySetupLog = {
+    Set-HostsRecords @((New-BoxRecord $idBox), (& $rec 'alpha' $i1), (& $rec 'beta' $i2))
+    Set-GdLeases @((New-GdLease alpha ready -Expires $cY.Exp)) -Dir $otherState
+    Set-GdLeases @((New-GdLease alpha released -Released (Get-GdAgo 200)))
+    Set-GdAws -Instance @($boxStopped, (New-GdInstance -Id $i1 -Launch $cY.Launch), (New-GdInstance -Id $i2 -Launch $cY.Launch))
+  }
   Test-GuardCase -Name "${gRace}: AGENTSPACE_STATE_DIR moves the lease state file the guard reads, and nothing else: the host that the other folder's lease explains is not stopped, and guard.log, guard.lock and hosts.json stay under the home's .agentspace" -Environment @{ AGENTSPACE_STATE_DIR = $otherState } -Expect @{
     Exit = 0
-    Stderr = (Join-Lines @((Get-GdClosing 2 1 0 0)))
-    Calls = @((Get-GdCallDescribe @($idBox, $i1)), (Get-GdCallSend $i1))
+    Stderr = (Join-Lines @((Get-GdProgressStopping 'beta' $i2), (Get-GdClosing 3 2 1 0)))
+    Calls = @((Get-GdCallDescribe @($idBox, $i1, $i2)), (Get-CallStop $i2), (Get-GdCallSend $i1))
     Check = { param($run, $started)
-      Get-GdLogProblems -Run $run -Started $started -None
+      Get-GdLogProblems -Run $run -Started $started -Body @((Get-GdLineStopped 'beta' $cY.Launch))
       Get-GdSendProblems -Expected @{ $i1 = $cY.Exp } -Run $run -Started $started
       $extra = @(Get-ChildItem -LiteralPath $otherState -Force | Where-Object { $_.Name -cne 'leases.json' })
       if ($extra.Count -gt 0) { "The state folder holds $($extra.Count) file or folder beside leases.json" }
-      if (-not (Test-Path -LiteralPath (Get-GdLockPath))) { 'guard.lock was not made beside hosts.json' } } } -Setup $ySetup
+      if (-not (Test-Path -LiteralPath (Get-GdLockPath))) { 'guard.lock was not made beside hosts.json' } } } -Setup $ySetupLog
   Test-GuardCase -Name "${gRace}: without AGENTSPACE_STATE_DIR naming it, the lease in another state folder explains no host: the same host is stopped, its stop time counted from the home's own lease state file" -Expect @{
     Exit = 0
     Stderr = (Join-Lines @((Get-GdProgressStopping 'alpha' $i1), (Get-GdClosing 2 1 1 0)))
@@ -511,6 +527,8 @@ Invoke-HostFile -FileName 'test-unmet-guard.ps1' -Body {
       $lines = @($run.Stderr -split "`n" | Where-Object { $_ -ne '' })
       $written = @($lines | Where-Object { $_ -cmatch ('^agentspace: Cannot write the guard''s log ' + [regex]::Escape($logPath) + ': .+\.$') })
       if ($written.Count -ne 1) { "The message about the log was printed $($written.Count) times, not once" }
+      # A dropped line is no host's part that failed (step 8; Exit codes lists a dropped line apart from a host's part).
+      if (@($lines | Where-Object { $_ -cmatch '^agentspace: \d+ of \d+ hosts failed\.$' }).Count -gt 0) { 'A count of hosts that failed was printed, though no host''s part failed' }
       foreach ($want in @((Get-GdProgressStopping 'alpha' $i1), (Get-GdProgressUnexplained 'bravo' $i2 $cW.Recent), (Get-GdClosing 4 3 1 1))) { if ($lines -cnotcontains $want) { 'A progress line, or the closing line, is missing' } }
       if (-not (Test-Path -LiteralPath $logPath -PathType Container)) { 'The folder at the log''s path is gone' }
       elseif (@(Get-ChildItem -LiteralPath $logPath -Force).Count -gt 0) { 'Something was written into the folder at the log''s path' } } } -Setup {

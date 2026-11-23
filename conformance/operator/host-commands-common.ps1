@@ -604,6 +604,17 @@ function Test-HostCase {
   }
 }
 
+# The spec's line as a failure reason quotes it: the temp, profile and other drive paths in it masked,
+# since an expected line built from a throwaway home's path holds the Windows user name (AGENTS.md; the
+# architect, 2026-11-22, for v0.08-T04, fixing T03's $leasesMissing in test-unmet-host-commands-all.ps1).
+function Format-QuotedSpec([string]$Line) {
+  $m = $Line
+  foreach ($pair in @(@($env:TEMP, '<temp>'), @($env:USERPROFILE, '<profile>'))) {
+    if ($pair[0]) { $m = $m -ireplace [regex]::Escape($pair[0]), $pair[1] }
+  }
+  $m -replace '[A-Za-z]:\\[^\s''"]*', '<path>'
+}
+
 # A failure reason names the line that differs and quotes the spec's text, never the program's.
 function Compare-Text([string]$What, [string]$Got, [string]$Want) {
   if ($Got -ceq $Want) { return $null }
@@ -614,8 +625,8 @@ function Compare-Text([string]$What, [string]$Got, [string]$Want) {
     $b = if ($i -lt $w.Count) { $w[$i] } else { $null }
     if ($a -cne $b) {
       if ($null -eq $b) { return "$What has more lines than the spec's $($w.Count - 1)" }
-      if ($null -eq $a) { return "$What stops before line $($i + 1), which is '$b'" }
-      return "$What line $($i + 1) is not '$b'"
+      if ($null -eq $a) { return "$What stops before line $($i + 1), which is '$(Format-QuotedSpec $b)'" }
+      return "$What line $($i + 1) is not '$(Format-QuotedSpec $b)'"
     }
   }
   "$What differs from the spec's text"
