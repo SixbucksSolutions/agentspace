@@ -32,7 +32,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | The hosts | Both `stopped`. The box ran about two minutes on 2026-11-23 to fetch v0.06-T01's transcripts (D64), on Terry's yes (Q12) |
 | Instance hours | Q11's 4 for T05's live checks, none used |
 | Swimcoach | The `v0.09` milestone (12 stories, 14.5 hours). `v0.09-T01` was stopped at 4:31pm. The reporter runs |
-| Sessions | T01's dev lead archived. One empty folder, `.claude/worktrees/e0.09-t01-s03`, was still held at the close and goes once Windows lets it |
+| Sessions | T01's dev lead archived, and every worktree and folder it left removed (`git worktree list` shows `main` alone) |
 | Terry's laptop | Unchanged by v0.09 so far |
 
 ### v0.09 by turn
@@ -90,4 +90,3 @@ in decisions.md; this table only finds them.
 | 26 red tests on `main`: `agentspace-hosts`' `the_embedded_samples_cover_every_hosts_state_file` (#0200); 19 operator help tests, the extractor test among them (#0202, pin P25); 6 lease CLI tests, `tests/help.rs`' five and `isolation_guard`'s (#0202) | T02's stories | Cards #0200, #0202 |
 | #0202 also owns the conformance help copies and the operator's check 6 code and tests | T02 | Card #0202 |
 | T02's brief carries the pinned bytes (P24, P25, P28, P35, P36, P37 and the two reason messages), the Z1 to Z16 and operator.md v0.09 rows that name each behavior's story, and T01's slips | The architect | This file |
-| `.claude/worktrees/e0.09-t01-s03`, an empty folder Windows still held at T01's close | The architect | Removed once released |
