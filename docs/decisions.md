@@ -3773,6 +3773,14 @@ idle check (D57) meet a stop and start that no lease's end explains.
     `pending` lease the host does not meet becomes `unsatisfiable` with D66's `no_capacity` when a
     live `ready` lease holds the host, and stays `pending` for the next run when none does.
     driver.md's rule that `place_pending` never answers `unsatisfiable` gains this one exception.
+  - **Changed again for v0.09-T01 (architect, 2026-11-23, on the dev lead's pin P26):** every run's
+    deploy step, holding its `provision.lock`, takes the lease state lock and then `hosts.lock`
+    (driver.md's lock order), removes the record's `instance_type`, releases `hosts.lock`, reads
+    the lease state file under the lease state lock still held, decides its type, and releases
+    that lock before any AWS call. A `create` is then wholly before the step, and its `ready`
+    lease stops the resize, or wholly after it, and finds no type and answers `pending` (D66's
+    change). A lease released and another placed `ready` at the old type between a lockless read
+    and the type's removal would otherwise be cut by the resize. A failed run leaves no type.
 - **Changed when v0.09 was laid out (architect, 2026-11-23, D71):** `provision`'s command line is
   unchanged, and the run finds its type itself at its deploy step, from the lease state file
   through `resize_target`; and a resize runs provision's steps entire, with no probe first.
