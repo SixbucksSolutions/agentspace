@@ -227,6 +227,24 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **A planted source file is restored with git, or touched after a copy**: `Copy-Item` keeps the
   backup's older time, and cargo then reuses the planted build.
 
+**Learned in v0.09-T04, the conformance turn.**
+- **A merge check runs every suite the merged code feeds, never a selection by touched files.** The
+  architect's T03 merge check ran only the operator files that load the two helpers T03 changed. A
+  third helper's file had been red since T03, because #0204's whole-suite run predated #0203's
+  place, and #0203 ran no operator file. T04's whole-suite run found it (P56).
+- **A runner's tasking makes it wait for its own `.exit` file in a bounded foreground loop, in the
+  same run.** The tool moves a command past about 3 minutes to the background whatever the tasking
+  says, and a runner that ends its run then wakes in the dev lead's current worktree. With that line
+  in each tasking, every runner finished in one run.
+- **A planted copy of a case is named `planted-*`, never `test-*`**, or a whole-suite run picks it up.
+- **Runs whose inputs a later merge cannot change MAY start early on a diff-checked base** (P55): the
+  crates and every conformance file outside the merging story's folder ran on 1a7d33b, saving about
+  45 minutes, and the record shows the diff. A record written in two parts, with placeholders the
+  late runs fill, keeps writing off the critical path.
+- **The operator suite's `test-unmet-host-deploy-size.ps1` takes about 11 minutes a pass.** A story
+  that runs it in its writer, its runner and its reviewer pays it three times, and its turn's cap
+  counts each.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**

@@ -14,30 +14,30 @@ RFC 2119 keywords; the capitals are load-bearing.
   host's instance type, `m9g.large` to `m9g.4xlarge`, and a host is resized only while no ready
   lease holds it. The design is D64 to D70 and the layout D71, twelve stories in five turns, in
   [decisions.md](decisions.md).
-- **T01, T02 and T03 are closed**: the specs and the sweep (#133 to #135), the foundations (#136
-  to #138), and the programs (#139 to #142): placing by size, deploy and provision resizing, and the
-  isolation guard's fix.
-- **`main` is fully green**: the workspace at 5,139 passed, 0 failed, on the merge of T03's last two
-  heads.
-- **#0209 is met**: its cause was MSVC's `vctip.exe`, started by link.exe under the guard's moved
-  home, never agentspace's code, and nothing reached Terry's agentspace state. It waits for Terry's
-  move out of Backlog.
-- **Next is T04, conformance**: #0205, #0206 and #0207, started on Terry's word.
+- **T01 to T04 are closed**: the specs and the sweep (#133 to #135), the foundations (#136 to
+  #138), the programs (#139 to #142), and conformance (#143 to #145), whose record is
+  [runs/e0.09-t04-s03.md](runs/e0.09-t04-s03.md).
+- **`main` is fully green**: T04's record gives 84 conformance file runs, 3,378 passed, 0 failed, 0
+  skipped, the deadline case 5 of 5, and the crates 5,139 passed, 0 failed.
+- **#0209 is met** and in Ready For Review: its cause was MSVC's `vctip.exe`, started by link.exe
+  under the guard's moved home, never agentspace's code.
+- **Next is T05, the install and the live checks** on agentspace's host (#0208), started on Terry's
+  word, within his 4 instance hours (Q11).
 - **Nothing is running**: no host started in T01 or T02, no dev lead is live, and the reporter
   reports the `v0.09` milestone alone.
 
 ## Where things stand
 
-**As of T03's close, 12:13am Mountain, 2026-11-24.**
+**As of T04's close, 3:57am Mountain, 2026-11-24.**
 
 | What | State |
 |---|---|
-| v0.09 (#0049) | In Progress. T01's, T02's and T03's nine stories in Ready For Review; T04's three and T05's one in Ready For Work |
-| `main` | At 039b09c, the architect's workspace run on the same tree (the merge of T03's last two heads): 5,139 passed, 0 failed, 58 ignored; `cargo xtask dist` built. The architect's run of the 52 lease CLI and operator conformance files the turn touched, against that build, was still going at this refresh; its result goes in at the next one |
+| v0.09 (#0049) | In Progress. Twelve of its thirteen stories in Ready For Review or Completed; T05's #0208 in Ready For Work |
+| `main` | Green by T04's record at df5aa9c and 1a7d33b (P55's split, diff-checked): 3,378 conformance cases passed, the deadline case 5 of 5, the crates 5,139 passed, 0 failed. The architect's T03 merge check of 52 touched files gave 1,368 passed, 0 failed; it missed one red file a whole-suite run found (P56) |
 | The hosts | Both `stopped`. The box ran about two minutes on 2026-11-23 to fetch v0.06-T01's transcripts (D64), on Terry's yes (Q12) |
 | Instance hours | Q11's 4 for T05's live checks, none used |
-| Swimcoach | The `v0.09` milestone, 13 stories, cap 16 hours since T03's extension. `v0.09-T01` stopped at 4:31pm, `v0.09-T02` at 6:24pm, `v0.09-T03` at 12:13am. The reporter runs |
-| Sessions | T01's, T02's and T03's dev leads archived. T03's `t03-s01` and `t03-s03` worktrees are unregistered, but their empty folders are held by a `vctip.exe` that no agentspace session started, and go once it exits |
+| Swimcoach | The `v0.09` milestone, 13 stories, cap 16 hours. `v0.09-T01` stopped at 4:31pm, `v0.09-T02` at 6:24pm, `v0.09-T03` at 12:13am, `v0.09-T04` at 3:57am. T04 ran about 40 minutes past its 3-hour cap; the architect's ask to Terry to extend it to 4 hours had no answer, and its cap was not raised. The reporter runs |
+| Sessions | T01's to T04's dev leads archived, and every worktree and folder they left removed (`git worktree list` shows `main` alone) |
 | Terry's laptop | Unchanged by v0.09 so far |
 
 ### v0.09 by turn
@@ -45,6 +45,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | Turn | Stories | Closed | PRs | Length used | What it left |
 |---|---|---|---|---|---|
 | T01, the specs and the sweep | #0197 to #0199 | 4:30pm, 2026-11-23 | #133 to #135 | 2:18 of 3 h (2:12pm to 4:30pm) | lease-api.md's four sizes and reasons; driver.md's map, placing by size and the resizing run; state.md's `instance_type` and its locks; operator.md's deploy and provision by size; the registry's schema and samples; conformance's unsupported size moved to `xxl` |
+| T04, conformance | #0205 to #0207 | 3:56am, 2026-11-24 | #143 to #145 | 3:40 of 3 h (12:16am to 3:56am; an extension was asked and not answered) | `test-unmet-sizes-place.ps1` and `-pending.ps1` (Z1 to Z16, L1, L2); `test-unmet-host-deploy-size.ps1` and `-provision-size.ps1`, and N1's case; conformance.md for v0.09; P56's fix to `host-proxy-common.ps1`; the whole-suite record |
 | T03, the programs | #0203, #0204, #0210 | 12:12am, 2026-11-24 | #139 (the architect's pin), #140 to #142 | 3:34 of 4.5 h (8:38pm to 12:12am; cap extended from 3.5 h on Terry's word) | The EC2 driver's place by D66's rows and `place_pending`'s refusals and leftovers; deploy recording the type, provision resizing under P26's locks, every person's deploy taking `provision.lock`, the box sized like every host; the isolation guard building with the real environment (#0209's fix) |
 | T02, the foundations | #0200 to #0202 | About 6:20pm, 2026-11-23 (milestone stopped 6:24pm) | #136 to #138 | About 1:34 of 2.5 h (4:46pm to about 6:20pm) | `agentspace-driver-ec2`'s `SIZES`, `instance_type_for`, `meets`, `resize_target` and reasons; `agentspace-hosts`' `instance_type`, `read_for_placing`, `set_instance_type` and `set_instance` (pin P38); the operator's `-InstanceType` for every host, and both programs' help texts |
 
@@ -54,7 +55,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 |---|---|---|
 | Yes to Q11 to Q13: the four sizes at their prices, 4 instance hours for T05 at `l` or smaller, the transcript fetch, his per-agent rule kept through v0.09 | 2026-11-23 | decisions.md, Q11 to Q13; D65, D69, D70 |
 | "Lay out v0.09", with a staffing plan and the most subagents per turn reported to him | 2026-11-23 | D71; each story's card |
-| "Start T01", then "Start T02", then "Start T03" | 2026-11-23 | This file |
+| "Start T01", then "Start T02", then "Start T03", then "Start T04" | 2026-11-23 and 24 | This file |
+| #0209 moved to Ready For Review ("move 209 to RFR") | 2026-11-24 | #0209 |
 | #0209 carried into T03 as #0210 ("Whatever you recommend is fine"); T03's cap extended to 4.5 hours ("Extend it") | 2026-11-23 | D71's changes |
 | #0137's last part folded into v0.10; #0138, #0027 and #0194 approved into Completed | 2026-11-23 | D72 |
 | The open defect and hardening cards placed before v1.0, folded into their epics and archived | 2026-11-23 | D72; roadmap.md |
@@ -98,12 +100,15 @@ in decisions.md; this table only finds them.
 | T03: two stories independent by files were dependent by a test | Check the last merges on a local merge of every open head | architect.md, A turn that builds |
 | T03: the operator suite's two runs drove the turn past its cap | Plan it at about 30 minutes in two lanes, with a final run | architect.md, A turn that builds |
 | T03: the architect cited state.md for a rule only the crate's code states (P43) | Read the source before citing it | driver.md (corrected, c9d70ab) |
+| T04: the architect's T03 merge check ran a selection of operator files and missed a red one | A merge check runs every suite the merged code feeds | architect.md, A turn that builds |
+| T04: `run-conformance-files.ps1` exited 0 whatever its files did | Fixed in d1d6a87; read each file's own `exit N` line | `scripts/run-conformance-files.ps1` |
+| T04: runners backgrounded long commands and woke in the dev lead's worktree; a planted copy kept a `test-` name | Wait on the run's `.exit` file in the same run; name plants `planted-*` | architect.md, A turn that builds |
+| T04: the architect told the dev lead a script change lay inside P55's diff when it was an ancestor of the base | Check ancestry with `git merge-base --is-ancestor` before stating a diff | This file |
 
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T04, conformance: #0205, #0206 (with #0204's review's N1 on its card), #0207 | Terry's "Start T04", then the architect | D71; the cards |
-| #0209, met by #0210 | Terry moves it out of Backlog | #0209 |
-| `.claude/worktrees/t03-s01` and `t03-s03`, empty, held by a `vctip.exe` | The architect, once it exits | This file |
+| T05, the install and the live checks: #0208 | Terry's "Start T05", then the architect | D70, D71; the card. Its sweep: the card names README's "Build and Install it", whose heading is "Build"; AWS's sign-in checked first; both hosts confirmed stopped |
+| v0.10's hardening items from v0.09 (P51 to P53; Invoke-HostFile's holders) | v0.10 | #0050 |
 | #0027 (OBE by v0.06) and #0194 (met by the architect's state.md fix), in Backlog | Terry moves each out; Bot cannot | D72 |
