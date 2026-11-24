@@ -371,6 +371,23 @@ as `runs/data/e0.06-t02-s08.jsonl.gz`. Every figure below is that record's, by
   peak MUST NOT be multiplied by the agents at once (15 times 4.02 is 60 cores, against a measured
   host peak of 4.10). v0.10's product of concurrency and footprint (D27) MUST say which figure it
   multiplies.
+- **v0.10's answer: the host's peak per working agent, doubled**
+  ([D73](decisions.md#d73-a-plan-is-sized-at-half-a-vcpu-and-2-gib-for-each-agent-working-at-once)).
+  The host peaked at 4.10 cores and 3.81 GiB with 15 agents working, the turn's measured
+  concurrency above, so 0.27 cores and 0.25 GiB an agent. Twice the CPU is 0.55 cores, taken as
+  half a vCPU. Memory is 2 GiB an agent, M class's 4 GiB a vCPU (D39), which is eight times the
+  measured share and so never binds before CPU does on D65's sizes.
+  - **Not the per-agent peak**, 4.02 cores, which is the dev lead's one `cargo clippy -j 4`: 15
+    times it is 60 cores, against the 4.10 measured.
+  - **Not the per-agent p95**, 0.10 cores, which is spread over the turn's quiet half and hides
+    builds that coincide: 15 times it is 1.5 cores, under what the host measured.
+  - **Doubling the measured peak is the whole margin** (D73). One project's compiling turn was
+    measured, agentspace's, whose crates are small, so a project with heavier builds fills a host
+    sized this way sooner. A project that measures its own turn
+    ([Measure a new project](#measure-a-new-project)) gets its own figure, and a footprint per
+    project is designed in v1.0 (D72).
+  - **The figure is agentspace's, never the lease contract's** (D76): lease-api.md gives it as
+    today's for information, and it MAY change without a new contract version.
 
 | What | Peak | p95 | p50 |
 | --- | --- | --- | --- |
