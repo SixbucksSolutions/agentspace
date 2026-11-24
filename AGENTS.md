@@ -16,7 +16,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   approved its epic and thirteen stories into Completed on 2026-11-24. **An agent picking
   agentspace up SHOULD read it first, and it is the only handoff it needs**: it carries forward
   what the earlier ones hold that is still in use. v0.09's design is D64 to D72 in
-  [docs/decisions.md](docs/decisions.md). v0.10 is laid out only on Terry's word. The handoffs
+  [docs/decisions.md](docs/decisions.md). **v0.10's design prep is D73 to D80 (2026-11-24)**, with
+  Q14 to Q16 put to Terry the same day, and D73's footprint replaces his per-agent rule only on his
+  yes to Q14. v0.10 is laid out only on Terry's word. The handoffs
   before it, from [docs/handoff-mvp.md](docs/handoff-mvp.md) to
   [docs/handoff-v0.08.md](docs/handoff-v0.08.md), stay as the history of their releases.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
