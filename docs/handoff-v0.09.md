@@ -14,37 +14,42 @@ RFC 2119 keywords; the capitals are load-bearing.
   host's instance type, `m9g.large` to `m9g.4xlarge`, and a host is resized only while no ready
   lease holds it. The design is D64 to D70 and the layout D71, twelve stories in five turns, in
   [decisions.md](decisions.md).
-- **T01 to T04 are closed**: the specs and the sweep (#133 to #135), the foundations (#136 to
-  #138), the programs (#139 to #142), and conformance (#143 to #145), whose record is
-  [runs/e0.09-t04-s03.md](runs/e0.09-t04-s03.md).
+- **All five turns are closed**: the specs and the sweep (#133 to #135), the foundations (#136 to
+  #138), the programs (#139 to #142), conformance (#143 to #145), whose record is
+  [runs/e0.09-t04-s03.md](runs/e0.09-t04-s03.md), and the install and live checks (#146), whose
+  record is [runs/e0.09-t05-s01.md](runs/e0.09-t05-s01.md).
 - **`main` is fully green**: T04's record gives 84 conformance file runs, 3,378 passed, 0 failed, 0
   skipped, the deadline case 5 of 5, and the crates 5,139 passed, 0 failed.
 - **#0209 is met** and in Ready For Review: its cause was MSVC's `vctip.exe`, started by link.exe
   under the guard's moved home, never agentspace's code.
-- **Next is T05, the install and the live checks** on agentspace's host (#0208), started on Terry's
-  word, within his 4 instance hours (Q11).
-- **Nothing is running**: no host started in T01 or T02, no dev lead is live, and the reporter
+- **v0.09 is installed on Terry's laptop and shown live** (T05, 2026-11-24): every D70 check passed
+  on agentspace's host with no finding, in 0.534 of Terry's 4 instance hours. A host is now sized by
+  its lease (AGENTS.md, "Sizing a host before it runs agents").
+- **Next is Terry's approval** of #0049 and #0205 to #0208 into Completed; then the release closes
+  (architect.md, "Closing a release").
+- **Nothing is running**: both hosts `stopped`, no lease live, no dev lead live, and the reporter
   reports the `v0.09` milestone alone.
 
 ## Where things stand
 
-**As of T04's close, 3:57am Mountain, 2026-11-24.**
+**As of T05's close, 10:19am Mountain, 2026-11-24.**
 
 | What | State |
 |---|---|
-| v0.09 (#0049) | In Progress. Twelve of its thirteen stories in Ready For Review or Completed; T05's #0208 in Ready For Work |
+| v0.09 (#0049) | In Ready For Review, moved by the architect when #0208 arrived there. Nine stories in Completed; #0205 to #0208 in Ready For Review, waiting on Terry |
 | `main` | Green by T04's record at df5aa9c and 1a7d33b (P55's split, diff-checked): 3,378 conformance cases passed, the deadline case 5 of 5, the crates 5,139 passed, 0 failed. The architect's T03 merge check of 52 touched files gave 1,368 passed, 0 failed; it missed one red file a whole-suite run found (P56) |
-| The hosts | Both `stopped`. The box ran about two minutes on 2026-11-23 to fetch v0.06-T01's transcripts (D64), on Terry's yes (Q12) |
-| Instance hours | Q11's 4 for T05's live checks, none used |
-| Swimcoach | The `v0.09` milestone, 13 stories, cap 16 hours. `v0.09-T01` stopped at 4:31pm, `v0.09-T02` at 6:24pm, `v0.09-T03` at 12:13am, `v0.09-T04` at 3:57am. T04 ran about 40 minutes past its 3-hour cap; the architect's ask to Terry to extend it to 4 hours had no answer, and its cap was not raised. The reporter runs |
-| Sessions | T01's to T04's dev leads archived, and every worktree and folder they left removed (`git worktree list` shows `main` alone) |
-| Terry's laptop | Unchanged by v0.09 so far |
+| The hosts | Both `stopped`, `m9g.xlarge`, `Leases    0 live` (the architect's `status -All`, 10:19am). Both records now carry `instance_type` `m9g.xlarge`. The box ran about two minutes on 2026-11-23 to fetch v0.06-T01's transcripts (D64), on Terry's yes (Q12), and about three in T05 |
+| Instance hours | 0.534 of Q11's 4 used by T05 (agentspace's host 9:20am to 9:49am, the box 9:29am to 9:32am) |
+| Swimcoach | The `v0.09` milestone, 13 stories, cap 16 hours. `v0.09-T01` stopped at 4:31pm, `v0.09-T02` at 6:24pm, `v0.09-T03` at 12:13am, `v0.09-T04` at 3:57am, `v0.09-T05` at 10:19am. T04 ran about 40 minutes past its 3-hour cap; the architect's ask to Terry to extend it to 4 hours had no answer, and its cap was not raised. The reporter runs |
+| Sessions | T01's to T05's dev leads archived, and every worktree and folder they left removed (`git worktree list` shows `main` alone) |
+| Terry's laptop | v0.09's eight programs installed in `%USERPROFILE%\.agentspace\bin` at 9:13am, by README's install; the keeper restarted on the new build; no task, `PATH` or other change |
 
 ### v0.09 by turn
 
 | Turn | Stories | Closed | PRs | Length used | What it left |
 |---|---|---|---|---|---|
 | T01, the specs and the sweep | #0197 to #0199 | 4:30pm, 2026-11-23 | #133 to #135 | 2:18 of 3 h (2:12pm to 4:30pm) | lease-api.md's four sizes and reasons; driver.md's map, placing by size and the resizing run; state.md's `instance_type` and its locks; operator.md's deploy and provision by size; the registry's schema and samples; conformance's unsupported size moved to `xxl` |
+| T05, the install and the live checks | #0208 | 10:18am, 2026-11-24 | #146 | 1:14 of 3 h (9:04am to 10:18am) | v0.09 installed; D70's checks passed on agentspace's host and the box with no finding; the live kit committed under `scripts\live\`; [runs/e0.09-t05-s01.md](runs/e0.09-t05-s01.md) |
 | T04, conformance | #0205 to #0207 | 3:56am, 2026-11-24 | #143 to #145 | 3:40 of 3 h (12:16am to 3:56am; an extension was asked and not answered) | `test-unmet-sizes-place.ps1` and `-pending.ps1` (Z1 to Z16, L1, L2); `test-unmet-host-deploy-size.ps1` and `-provision-size.ps1`, and N1's case; conformance.md for v0.09; P56's fix to `host-proxy-common.ps1`; the whole-suite record |
 | T03, the programs | #0203, #0204, #0210 | 12:12am, 2026-11-24 | #139 (the architect's pin), #140 to #142 | 3:34 of 4.5 h (8:38pm to 12:12am; cap extended from 3.5 h on Terry's word) | The EC2 driver's place by D66's rows and `place_pending`'s refusals and leftovers; deploy recording the type, provision resizing under P26's locks, every person's deploy taking `provision.lock`, the box sized like every host; the isolation guard building with the real environment (#0209's fix) |
 | T02, the foundations | #0200 to #0202 | About 6:20pm, 2026-11-23 (milestone stopped 6:24pm) | #136 to #138 | About 1:34 of 2.5 h (4:46pm to about 6:20pm) | `agentspace-driver-ec2`'s `SIZES`, `instance_type_for`, `meets`, `resize_target` and reasons; `agentspace-hosts`' `instance_type`, `read_for_placing`, `set_instance_type` and `set_instance` (pin P38); the operator's `-InstanceType` for every host, and both programs' help texts |
@@ -55,7 +60,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 |---|---|---|
 | Yes to Q11 to Q13: the four sizes at their prices, 4 instance hours for T05 at `l` or smaller, the transcript fetch, his per-agent rule kept through v0.09 | 2026-11-23 | decisions.md, Q11 to Q13; D65, D69, D70 |
 | "Lay out v0.09", with a staffing plan and the most subagents per turn reported to him | 2026-11-23 | D71; each story's card |
-| "Start T01", then "Start T02", then "Start T03", then "Start T04" | 2026-11-23 and 24 | This file |
+| "Start T01", then "Start T02", then "Start T03", then "Start T04", then "Start T05" | 2026-11-23 and 24 | This file |
+| "Signed in": AWS's sign-in renewed with `aws login --remote` at T05's start | 2026-11-24 | runs/e0.09-t05-s01.md |
 | #0209 moved to Ready For Review ("move 209 to RFR") | 2026-11-24 | #0209 |
 | #0209 carried into T03 as #0210 ("Whatever you recommend is fine"); T03's cap extended to 4.5 hours ("Extend it") | 2026-11-23 | D71's changes |
 | #0137's last part folded into v0.10; #0138, #0027 and #0194 approved into Completed | 2026-11-23 | D72 |
@@ -104,12 +110,18 @@ in decisions.md; this table only finds them.
 | T04: `run-conformance-files.ps1` exited 0 whatever its files did | Fixed in d1d6a87; read each file's own `exit N` line | `scripts/run-conformance-files.ps1` |
 | T04: runners backgrounded long commands and woke in the dev lead's worktree; a planted copy kept a `test-` name | Wait on the run's `.exit` file in the same run; name plants `planted-*` | architect.md, A turn that builds |
 | T04: the architect told the dev lead a script change lay inside P55's diff when it was an ancestor of the base | Check ancestry with `git merge-base --is-ancestor` before stating a diff | This file |
+| T05: the live kit, lost with a worktree in v0.08-T05 and T06, was carried in v0.08's "What is open" and missed by this file until T05's sweep | Carry every open row of the last handoff into the next one at its start | architect.md, Closing a release; `scripts\live\` |
+| T05: AWS's sign-in had expired at the turn's start | Split the runner: an installer that needs no AWS call runs while the sign-in waits on Terry | architect.md, Live checks |
+| T05: a once-a-minute observer cannot see a resize's stop and start, and `StateReason.Code` reads the same for the guard's stop and `down`'s | Show "no stop during a resize" by `guard.log` and `provision.log`; attribute a guard stop by its `stopped` line | architect.md, Live checks |
+| T05: the runner met two pitfalls the v0.08 handoff lists (`lease list`'s `leases` wrapper, `-like` and a backtick) | Quote the pitfall lines in the brief, not a pointer to them | architect.md, Live checks |
+| T05: notes handed to the record writer asserted an overlap no command had checked; the kit's dot-sourced mask set the caller's strict mode | Notes for a writer come from commands; a dot-sourced kit file is proved to leave the caller's state unchanged | architect.md, Live checks |
 
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T05, the install and the live checks: #0208 | Started on Terry's "Start T05", 2026-11-24 | D70, D71; the card. Its sweep: the card's "Build and Install it" is README's "Build" and its "Install it"; the install follows v0.08-T05's (task ended, keeper stopped by checked PID, copy, task started), with no task disabled; AWS's sign-in had expired (exit 255) and was asked of Terry; both hosts confirmed stopped before the first lease |
-| The live kit (mask, proof, wrapper, scan), carried from v0.08's "What is open" and missed by this file until T05's sweep | T05's dev lead rebuilds it from v0.08's records and commits it under `scripts\live\` in #0208's PR; the architect reviews it as a process tool (D28) | `scripts\live\` |
+| v0.09's approval: #0049 and #0205 to #0208 into Completed | Terry | The board; then architect.md, "Closing a release" |
+| The live kit's mask gaps: AWS access key IDs (`AKIA`, `ASIA`), account IDs written with hyphens, and `--token value` with no `=` or `:`. None was seen in T05 | The architect, before the next live turn, with a proof case each | `scripts\live\mask.ps1`, `mask-proof.ps1` |
+| T05's observer script (`observe-once.ps1`: one read a call, edges and hours computed, a stop file) was lost with its worktree | The architect, before the next live turn, from runs/e0.09-t05-s01.md | `scripts\live\` |
+| A lease created within 5 minutes of a run's attempt starts no run until a `get` (D48), which added about 36 seconds to T05's Smaller resize | v0.10 MAY revisit it with D27's measurement; designed today | D48; runs/e0.09-t05-s01.md |
 | v0.10's hardening items from v0.09 (P51 to P53; Invoke-HostFile's holders) | v0.10 | #0050 |
-| #0027 (OBE by v0.06) and #0194 (met by the architect's state.md fix), in Backlog | Terry moves each out; Bot cannot | D72 |

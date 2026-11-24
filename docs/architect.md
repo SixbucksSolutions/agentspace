@@ -268,6 +268,24 @@ reads before it prints it").
   than on the command.
 - **The box ends stopped**, confirmed with `status`, and no lease the check made is left ready.
 
+**Learned in v0.09-T05, the install and the size checks.**
+- **The live kit is `scripts\live\`**: `mask.ps1`, `mask-proof.ps1`, `wrap.ps1` and `scan.ps1`, each
+  run from the checkout, never rebuilt from a record. A change to it MUST keep the proof passing and
+  add a proof case for each new shape.
+- **A gate that waits on Terry splits the runner**: an installer that needs no AWS call runs while
+  the sign-in waits, and the checks runner starts once it is good.
+- **A once-a-minute observer cannot see a resize's stop and start**, and `StateReason.Code` reads
+  `Client.UserInitiatedShutdown` for the guard's stop and `down`'s alike. "No stop during a resize"
+  is shown by `guard.log` and `provision.log`; a guard stop is attributed by its own `stopped` line.
+- **A live brief quotes the pitfall lines it depends on**, not a pointer to them: T05's runner met
+  `lease list`'s `leases` wrapper and `-like` reading a backtick as an escape, both listed in the
+  v0.08 handoff.
+- **Notes handed to a record writer are facts, and come from commands.** A dev lead's note claimed an
+  overlap of two subagents that no command had checked; the reviewer found it against the wrappers'
+  times.
+- **A `guard.log` baseline is a count taken at the turn's start**, never "absent": the laptop's log
+  had 165 lines before T05's install.
+
 ## Reviewing a pull request
 
 **Ready For Review is the architect's claim that the work is fully good and in `main`** (AGENTS.md,
