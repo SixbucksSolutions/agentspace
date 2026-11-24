@@ -260,9 +260,11 @@ function New-HpDescribe([string]$State = 'running', [string]$Launch = '2020-01-0
   New-HpStep (ConvertTo-Json -Compress -Depth 8 -InputObject @{ Reservations = @(@{ Instances = @(@{ State = @{ Name = $State }; LaunchTime = $Launch }) }) })
 }
 # A stack answer: its status and its InstanceId output (none when $Id is empty).
-function New-HpStack([string]$Stack, [string]$Status = 'CREATE_COMPLETE', [string]$Id = '') {
+function New-HpStack([string]$Stack, [string]$Status = 'CREATE_COMPLETE', [string]$Id = '', [string]$InstanceType = 'm9g.xlarge') {
   $st = @{ StackName = $Stack; StackStatus = $Status }
   if ($Id) { $st['Outputs'] = @(@{ OutputKey = 'InstanceId'; OutputValue = $Id }) } else { $st['Outputs'] = @() }
+  # The stack's InstanceType parameter, which every deploy reads back (docs/operator.md, deploy; pin P22).
+  if ($InstanceType) { $st['Parameters'] = @(@{ ParameterKey = 'InstanceType'; ParameterValue = $InstanceType }) }
   New-HpStep (ConvertTo-Json -Compress -Depth 8 -InputObject @{ Stacks = @($st) })
 }
 function New-HpNoStack([string]$Stack) {

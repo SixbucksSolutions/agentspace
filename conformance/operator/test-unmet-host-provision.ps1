@@ -149,7 +149,7 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
   Write-HpProblems "${sec}: the deploy step removes the instance ID and writes the stack's again (so it is missing at the read and present after), and the state stays creating until step 8, with last_attempt_at left as step 3 wrote it (steps 4 and 8; deploy, step 5)" $p
 
   $final = Get-HpRecordFromText ([IO.File]::ReadAllText((Get-HpHostsFile $h))) 'agentspace'
-  $wantBytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-HpHostsText -BoxId $script:HpBoxId -Records @((New-HpRecord 'agentspace' 'ready' $script:HpHostId $la -NoInstanceType))))
+  $wantBytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-HpHostsText -BoxId $script:HpBoxId -Records @((New-HpRecord 'agentspace' 'ready' $script:HpHostId $la))))
   $p = New-HpProblems
   if (-not (Test-HpSameBytes (Get-HpFileBytes (Get-HpHostsFile $h)) $wantBytes)) { $p.Add("hosts.json is not the box's record unchanged and the host's: ready, instance_id the stack's, last_attempt_at the run's start ($(Format-Rec $final)); written compact, UTF-8, one LF") }
   Write-HpProblems "${sec}: step 8 records the host ready with the instance ID the deploy read and last_attempt_at left as step 3 wrote it, and changes no other record (step 8)" $p
@@ -302,11 +302,12 @@ Invoke-HpInHome -Name "${sec}: provision -Host swimcoach" -NeedsLocalswim -Body 
     $ov = @($deploy['a'])
     $i = [Array]::IndexOf($ov, '--parameter-overrides')
     $tail = if ($i -ge 0) { @($ov[($i + 1)..($ov.Count - 1)]) } else { @() }
-    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', 'InstanceType=m9g.4xlarge', 'RootVolumeGiB=64')
-    if ((($tail | Sort-Object) -join '|') -cne (($want | Sort-Object) -join '|')) { $p.Add('The box''s deploy does not pass SshPublicKey and every member of stack-parameters.json, and nothing else') }
+    # The box's deploy never reads or passes the file's InstanceType (D67; docs/operator.md, deploy); no lease here asks for one.
+    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', 'RootVolumeGiB=64')
+    if ((($tail | Sort-Object) -join '|') -cne (($want | Sort-Object) -join '|')) { $p.Add('The box''s deploy does not pass SshPublicKey and every member of stack-parameters.json but InstanceType, and nothing else') }
     if ($ov -match '^(HostName|CaPublicKey)=') { $p.Add('The box''s deploy passes HostName or CaPublicKey') }
   } else { $p.Add('No cloudformation deploy was made') }
-  Write-HpProblems "${sec}: the box's provision passes every member of stack-parameters.json and neither HostName nor CaPublicKey (provision; deploy, step 4)" $p
+  Write-HpProblems "${sec}: the box's provision passes every member of stack-parameters.json but InstanceType and neither HostName nor CaPublicKey (provision; deploy, step 4)" $p
 
   if ($calls.Count -eq 0) { Write-ConformanceResult -Name "${sec}: the box's record, its log and its files" -Status FAIL -Reason 'No stand-in was started, so the run never reached a step'; return }
   $p = New-HpProblems

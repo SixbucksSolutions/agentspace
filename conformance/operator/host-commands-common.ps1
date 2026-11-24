@@ -257,11 +257,11 @@ function Get-Sha256Hex([string]$Text) {
 
 # One record as text, its members in the order of the schema's table.
 function New-HostRecord {
-  param([Parameter(Mandatory)][string]$Project, [string]$State = 'ready', [string]$InstanceId = '', [string]$LastAttempt = '', [string]$Stack = '', [string]$InstanceType = 'm9g.xlarge', [switch]$NoInstanceType)
+  param([Parameter(Mandatory)][string]$Project, [string]$State = 'ready', [string]$InstanceId = '', [string]$LastAttempt = '', [string]$Stack = '', [string]$InstanceType = 'm9g.xlarge', [switch]$NoInstanceType, [switch]$Typed)
   if (-not $Stack) { $Stack = if ($Project -eq 'swimcoach') { 'agentbox' } else { "agentspace-host-$Project" } }
   $t = '{"project":"' + $Project + '","stack":"' + $Stack + '","state":"' + $State + '"'
   if ($InstanceId) { $t += ',"instance_id":"' + $InstanceId + '"' }
-  if ($State -ceq 'ready' -and -not $NoInstanceType) { $t += ',"instance_type":"' + $InstanceType + '"' }
+  if (($State -ceq 'ready' -or $Typed) -and -not $NoInstanceType) { $t += ',"instance_type":"' + $InstanceType + '"' }
   if ($LastAttempt) { $t += ',"last_attempt_at":"' + $LastAttempt + '"' }
   $t + '}'
 }
@@ -365,9 +365,11 @@ function New-VolumesDoc([string]$Id = $script:IdBox, [long]$Size = 20) {
 function New-SsmDoc([string]$Id = $script:IdBox, [string]$Ping = 'Online') {
   ConvertTo-Json -Compress -Depth 10 -InputObject ([ordered]@{ InstanceInformationList = @([ordered]@{ InstanceId = $Id; PingStatus = $Ping }) })
 }
-function New-StackDoc([string]$StackName = 'agentbox', [string]$Id = '', [string]$Status = 'CREATE_COMPLETE') {
+function New-StackDoc([string]$StackName = 'agentbox', [string]$Id = '', [string]$Status = 'CREATE_COMPLETE', [string]$InstanceType = 'm9g.xlarge') {
   $stack = [ordered]@{ StackName = $StackName; StackStatus = $Status }
   if ($Id) { $stack.Outputs = @([ordered]@{ OutputKey = 'InstanceId'; OutputValue = $Id }) } else { $stack.Outputs = @() }
+  # The stack's InstanceType parameter, which every deploy reads back (docs/operator.md, deploy; pin P22).
+  if ($InstanceType) { $stack.Parameters = @([ordered]@{ ParameterKey = 'InstanceType'; ParameterValue = $InstanceType }) }
   ConvertTo-Json -Compress -Depth 10 -InputObject ([ordered]@{ Stacks = @($stack) })
 }
 
@@ -457,10 +459,18 @@ function Get-SignProblems([string]$Project) {
   return $p.ToArray()
 }
 # True when nothing was written for any host's operator access: no hosts folder, no alias, no ssh config.
+# -ProvisionLockOf names the project whose host folder a deploy MAY make: every person's deploy takes its host's
+# provision.lock, creating hosts\<project>\ and the lock file (docs/operator.md, deploy; pin P34), so the hosts
+# folder then holds that one folder with that one file and nothing else.
 function Get-NothingSignedProblems {
+  param([string]$ProvisionLockOf = '')
   $fx = $script:Fx
   $p = [System.Collections.Generic.List[string]]::new()
-  if (Test-Path -LiteralPath $fx.HostsDir) { $p.Add('A hosts folder was made') }
+  if (Test-Path -LiteralPath $fx.HostsDir) {
+    $left = @(Get-ChildItem -LiteralPath $fx.HostsDir -Force -Recurse -Name -ErrorAction SilentlyContinue)
+    $allowed = if ($ProvisionLockOf) { @($ProvisionLockOf, (Join-Path $ProvisionLockOf 'provision.lock')) } else { @() }
+    if (@($left | Where-Object { $allowed -cnotcontains $_ }).Count -gt 0) { $p.Add('A hosts folder was made') }
+  }
   if (Test-Path -LiteralPath $fx.AliasDir) {
     if (@(Get-ChildItem -LiteralPath $fx.AliasDir -Force -ErrorAction SilentlyContinue).Count -gt 0) { $p.Add('An alias file was written') }
   }

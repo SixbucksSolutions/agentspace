@@ -172,7 +172,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands.ps1' -Body {
           Ssh = @(@(Get-SshCalls) | ForEach-Object { & $norm $_.Text })
           Scp = @(@(Get-ScpCalls) | ForEach-Object { & $norm $_.Text })
           Registry = [Convert]::ToBase64String([byte[]](Get-FileBytesOrNull $fx.HostsFile))
-          Unsigned = @(Get-NothingSignedProblems)
+          Unsigned = @(Get-NothingSignedProblems -ProvisionLockOf $(if ($verb -ceq 'deploy') { 'swimcoach' } else { '' }))
         }
       }
       $p = [System.Collections.Generic.List[string]]::new()

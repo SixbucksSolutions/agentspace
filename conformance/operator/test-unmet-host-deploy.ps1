@@ -256,11 +256,12 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy.ps1' -Body {
     $ov = @($a[($i + 1)..($a.Count - 1)])
     if ($ov[0] -cne "SshPublicKey=$($fx.PubKey)") { 'The first override is not SshPublicKey=<the public key>' }
     $rest = @($ov | Select-Object -Skip 1 | Sort-Object)
-    $expect = @("InstanceType=m9g.4xlarge", "RootVolumeGiB=40", "SubnetId=$($fx.SubnetValue)", "VpcId=$($fx.VpcValue)" | Sort-Object)
-    if (($rest -join '|') -cne ($expect -join '|')) { 'The other overrides are not every member of the file, and nothing else (no HostName, no CaPublicKey)' }
+    # The box's deploy never reads or passes the file's InstanceType (D67; docs/operator.md, deploy, and its rows for the box's arguments).
+    $expect = @("RootVolumeGiB=40", "SubnetId=$($fx.SubnetValue)", "VpcId=$($fx.VpcValue)" | Sort-Object)
+    if (($rest -join '|') -cne ($expect -join '|')) { 'The other overrides are not every member of the file but InstanceType, and nothing else (no InstanceType, no HostName, no CaPublicKey)' }
   }
   foreach ($line in @(@('deploy'), @('deploy', '-Host', 'swimcoach'), @('deploy', '-Host', 'SwimCoach'))) {
-    Test-HostCase "${bx}: $($line -join ' ') deploys the agentbox stack with no existence check: SshPublicKey and every member of the file, and neither HostName nor CaPublicKey" ([string[]]$line) @{
+    Test-HostCase "${bx}: $($line -join ' ') deploys the agentbox stack with no existence check: SshPublicKey and every member of the file but InstanceType, and neither HostName nor CaPublicKey" ([string[]]$line) @{
       Exit = 1; Stderr = (Join-Lines @("Deploying stack 'agentbox' in us-west-2...", "agentspace: Stack 'agentbox' has no InstanceId output."))
       Check = $boxExpect } -Setup {
       Set-HostsFile $recBytes
