@@ -1974,7 +1974,8 @@ swimcoach` is the box's.
      `agentspace: Stack '<stack>' has no InstanceType parameter.` (architect, 2026-11-23, for
      v0.09-T01, pin P22, in the form of the `InstanceId` message). The instance ID it read is
      still written, alone; the record is left with no `instance_type`; and `deploy` does not go on
-     to `sync`.
+     to `sync`. **It prints no `Instance: <id>` line**, which a deploy prints only on success
+     (architect, 2026-11-23, for v0.09-T03, pin P45; D36).
    - **A failed `describe-stacks`, or a lock not taken or a write that fails when the ID and type
      are written after the removal, after `cloudformation deploy` succeeded, fails `deploy`,
      exit 1** (D36: the operator never reports a false success), with the AWS CLI's text under
