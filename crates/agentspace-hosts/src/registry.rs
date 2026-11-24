@@ -3,7 +3,7 @@
 
 use crate::error::{Failure, HostsError};
 use crate::folder;
-use crate::model::{Hosts, parse, serialize};
+use crate::model::{Host, Hosts, is_normalized_project, parse, serialize};
 use crate::paths::{agentspace_dir, hosts_lock_path, hosts_path};
 use crate::sys::{self, OpenFailure};
 use std::fs::File;
@@ -80,10 +80,34 @@ fn lock_waiting(home: &Path, wait: Duration) -> Result<HostsLock, HostsError> {
 /// Reads `<home>\.agentspace\hosts.json`, sharing read, write and delete, so that it never blocks a
 /// writer's rename and sees the old file or the new one. It takes no lock and writes nothing.
 ///
-/// A missing file, and a missing `.agentspace`, read as the seed: the box's record alone. Only a
-/// missing file does. Something at the path that is not a file, a file that cannot be opened or
-/// read, and a file that is not valid are each an error, never a missing file (docs/state.md).
+/// A missing file, and a missing `.agentspace`, read as the seed: the box's record alone, **with no
+/// `instance_type`**. Only a missing file does. Something at the path that is not a file, a file
+/// that cannot be opened or read, and a file that is not valid are each an error, never a missing
+/// file (docs/state.md).
+///
+/// **This is the read a change starts from**: a writer that finds no file starts from the seed
+/// document, makes its change and writes the whole document, and the record it writes MUST NOT
+/// hold the `m9g.xlarge` that a missing file implies on a read (docs/state.md, "The seed"; pin
+/// P31). A reader that places a lease by a host's `instance_type` calls `read_for_placing`.
 pub fn read(home: &Path) -> Result<Hosts, HostsError> {
+    Ok(load(home)?.unwrap_or_else(Hosts::seed))
+}
+
+/// Reads the registry as a reader that places a lease reads it (docs/state.md, "The seed"; pin
+/// P2c): as `read` does, but a missing file reads as the seed's one record **holding
+/// `instance_type` `m9g.xlarge`**, D65's `m`. It takes no lock and writes nothing, and reading never
+/// creates the file. A file that exists is read as it is, so a record with no `instance_type`
+/// stays without one. The result MUST NOT be the start of a write, since the implied type is no
+/// reading of the stack and is never written (pin P31): a writer calls `read`, or one of
+/// `set_instance_type` and `set_instance`.
+pub fn read_for_placing(home: &Path) -> Result<Hosts, HostsError> {
+    Ok(load(home)?.unwrap_or_else(Hosts::implied))
+}
+
+/// The registry as the disk holds it: `None` when there is no file, which only a missing file
+/// gives, and no default of any kind. `read` and `read_for_placing` choose what a missing file
+/// reads as, and a writer never gets the implied type from here.
+fn load(home: &Path) -> Result<Option<Hosts>, HostsError> {
     if folder::is_blocked(&agentspace_dir(home)) {
         return Err(HostsError::Unreadable(Failure::FolderIsAFile));
     }
@@ -91,7 +115,7 @@ pub fn read(home: &Path) -> Result<Hosts, HostsError> {
     let unreadable = |why: Failure| HostsError::Unreadable(why);
     let mut file = match sys::open_read(&path) {
         Ok(f) => f,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Hosts::seed()),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(_) if path.is_dir() => return Err(unreadable(Failure::NotAFile)),
         Err(_) => return Err(unreadable(Failure::CannotOpen)),
     };
@@ -102,7 +126,7 @@ pub fn read(home: &Path) -> Result<Hosts, HostsError> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|_| unreadable(Failure::CannotRead))?;
-    parse(&bytes).map_err(HostsError::NotValid)
+    parse(&bytes).map(Some).map_err(HostsError::NotValid)
 }
 
 /// Writes `<home>\.agentspace\hosts.json` atomically, through `hosts.json.<hex>.tmp` in the same
@@ -112,7 +136,7 @@ pub fn read(home: &Path) -> Result<Hosts, HostsError> {
 ///
 /// The writer MUST hold the lock from before it read the file until after this returns, and MUST
 /// change only the record or records its change is about (docs/state.md): a caller that found no
-/// file starts from `Hosts::seed()`, which `read` gives.
+/// file starts from `Hosts::seed()`, which `read` gives, and never from `Hosts::implied()`.
 pub fn write(home: &Path, hosts: &Hosts, _held: &HostsLock) -> Result<(), HostsError> {
     let bytes =
         serialize(hosts).map_err(|why| HostsError::Unwritable(Failure::ChangeNotValid(why)))?;
@@ -125,6 +149,85 @@ pub fn write(home: &Path, hosts: &Hosts, _held: &HostsLock) -> Result<(), HostsE
             Failure::CannotReplace
         })
     })
+}
+
+/// Sets or removes a host's `instance_type`, and nothing else of any record (docs/state.md, "The
+/// instance type"; D67, D71; pins P11, P26 and P30): `Some(type)` sets it and `None` removes it. It
+/// takes the host registry lock, waiting for up to 30 seconds (`Busy` when that runs out),
+/// re-reads the file under it, changes that record's member, writes the whole document as `write`
+/// does and releases the lock after the rename, so it never holds the lock across a call to AWS.
+///
+/// `None` is step 1 of a run's deploy step and of a person's `deploy -InstanceType`: the type is
+/// removed before the stack changes. **With no file it writes the file**: a writer starts from the
+/// seed document, whose record has no `instance_type`, so removing the type that the implied record
+/// holds on a read writes the seed's record, and no `instance_type` is ever written from the
+/// implied default (pins P2c, P11 and P31). With a file whose record already holds the value,
+/// nothing is written. A project with no record fails with `Unwritable(NoSuchRecord)` and nothing
+/// is written, since no operator command adds a record; a `project` that is not normalized is
+/// `BadProject`; and a type that does not match the member's form is refused as every invalid
+/// change is, with nothing written.
+pub fn set_instance_type(
+    home: &Path,
+    project: &str,
+    instance_type: Option<&str>,
+) -> Result<(), HostsError> {
+    change_record(home, project, LOCK_WAIT, |h| {
+        h.instance_type = instance_type.map(str::to_string);
+    })
+}
+
+/// Sets or removes a host's `instance_id` and `instance_type` together, in one write, and nothing
+/// else of any record (docs/state.md, "The instance type", steps 2 and 4; pins P11, P23 and P30),
+/// under the host registry lock as `set_instance_type` is. `None` removes a member and `Some` sets
+/// it:
+/// - `(None, None)` is step 2, once `cloudformation deploy` has succeeded: both removed.
+/// - `(Some(id), Some(type))` is step 4, the read-back: both written in one write.
+/// - `(Some(id), None)` is a read-back whose `InstanceType` is missing or malformed: the ID alone,
+///   and the record left with no type.
+///
+/// The rules for a missing file, a project with no record and an invalid value are
+/// `set_instance_type`'s. **It writes no `instance_type` it was not given**: with no file the
+/// seed's record is written with what the call sets, and the implied `m9g.xlarge` never.
+pub fn set_instance(
+    home: &Path,
+    project: &str,
+    instance_id: Option<&str>,
+    instance_type: Option<&str>,
+) -> Result<(), HostsError> {
+    change_record(home, project, LOCK_WAIT, |h| {
+        h.instance_id = instance_id.map(str::to_string);
+        h.instance_type = instance_type.map(str::to_string);
+    })
+}
+
+/// The change both setters make: take the lock, re-read the file under it, apply `change` to the
+/// one record of `project`, and write. The start is the file, or with no file the seed document and
+/// never the implied record, and a missing file is always written, since the change is then a first
+/// change (docs/state.md, "The seed"). A file that exists and does not change is left alone.
+fn change_record(
+    home: &Path,
+    project: &str,
+    wait: Duration,
+    change: impl FnOnce(&mut Host),
+) -> Result<(), HostsError> {
+    if !is_normalized_project(project) {
+        return Err(HostsError::BadProject);
+    }
+    let held = lock_waiting(home, wait)?;
+    let found = load(home)?;
+    let file_existed = found.is_some();
+    let mut hosts = found.unwrap_or_else(Hosts::seed);
+    let before = hosts.clone();
+    let record = hosts
+        .hosts
+        .iter_mut()
+        .find(|h| h.project == project)
+        .ok_or(HostsError::Unwritable(Failure::NoSuchRecord))?;
+    change(record);
+    if file_existed && hosts == before {
+        return Ok(());
+    }
+    write(home, &hosts, &held)
 }
 
 #[cfg(test)]
@@ -209,6 +312,7 @@ mod tests {
             stack: "agentspace-host-agentspace".to_string(),
             state: HostState::Creating,
             instance_id: None,
+            instance_type: None,
             last_attempt_at: Some("2026-11-20T19:05:42Z".to_string()),
         });
         h
@@ -378,5 +482,359 @@ mod tests {
         let held = lock(t.path()).unwrap();
         write(t.path(), &added(), &held).unwrap();
         assert_eq!(read(t.path()).unwrap(), added());
+    }
+
+    // The default of a missing file (docs/state.md, "The seed"; pins P2c and P31).
+
+    #[test]
+    fn a_missing_file_reads_for_placing_as_the_seed_holding_the_default_type_and_writes_nothing() {
+        let t = home();
+        let hosts = read_for_placing(t.path()).unwrap();
+        assert_eq!(hosts, Hosts::implied());
+        assert_eq!(hosts.hosts.len(), 1);
+        assert_eq!(hosts.hosts[0].project, "swimcoach");
+        assert_eq!(hosts.hosts[0].instance_type.as_deref(), Some("m9g.xlarge"));
+        assert!(
+            !agentspace_dir(t.path()).exists(),
+            "Reading creates nothing"
+        );
+        // A missing `.agentspace` made, and a missing file in it, read the same, and make no file.
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        assert_eq!(read_for_placing(t.path()).unwrap(), Hosts::implied());
+        assert!(leftovers(t.path()).is_empty());
+    }
+
+    #[test]
+    fn the_read_a_change_starts_from_never_holds_the_implied_type() {
+        let t = home();
+        let hosts = read(t.path()).unwrap();
+        assert_eq!(hosts, Hosts::seed());
+        assert_eq!(hosts.hosts[0].instance_type, None);
+        // The one difference between the two reads of a missing file is that member.
+        let mut implied = read_for_placing(t.path()).unwrap();
+        implied.hosts[0].instance_type = None;
+        assert_eq!(implied, hosts);
+    }
+
+    #[test]
+    fn a_file_that_exists_reads_for_placing_as_it_is() {
+        let t = home();
+        let held = lock(t.path()).unwrap();
+        write(t.path(), &Hosts::seed(), &held).unwrap();
+        // The seed's own record has no type, and a file that exists keeps it without one.
+        assert_eq!(read_for_placing(t.path()).unwrap(), Hosts::seed());
+        let mut typed = added();
+        typed.hosts[1].instance_type = Some("m9g.2xlarge".to_string());
+        write(t.path(), &typed, &held).unwrap();
+        assert_eq!(read_for_placing(t.path()).unwrap(), typed);
+        assert_eq!(read(t.path()).unwrap(), typed);
+    }
+
+    #[test]
+    fn read_for_placing_fails_as_read_does() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), b"{\"version\":0,\"hosts\":[]}").unwrap();
+        assert_eq!(
+            read_for_placing(t.path()),
+            Err(HostsError::NotValid(Invalid::BoxRecord))
+        );
+        let t = home();
+        fs::create_dir_all(hosts_path(t.path())).unwrap();
+        assert_eq!(
+            read_for_placing(t.path()),
+            Err(HostsError::Unreadable(Failure::NotAFile))
+        );
+        let t = home();
+        fs::write(agentspace_dir(t.path()), b"x").unwrap();
+        assert_eq!(
+            read_for_placing(t.path()),
+            Err(HostsError::Unreadable(Failure::FolderIsAFile))
+        );
+    }
+
+    // The setters (docs/state.md, "The instance type"; pins P11, P26, P30 and P31).
+
+    const SEED_BYTES: &[u8] =
+        b"{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"}]}\n";
+
+    fn registry_of(t: &tempfile::TempDir, hosts: &Hosts) {
+        let held = lock(t.path()).unwrap();
+        write(t.path(), hosts, &held).unwrap();
+    }
+
+    fn bytes_of(t: &tempfile::TempDir) -> Vec<u8> {
+        fs::read(hosts_path(t.path())).unwrap()
+    }
+
+    #[test]
+    fn removing_the_type_with_no_file_writes_the_seed_document_without_one() {
+        let t = home();
+        set_instance_type(t.path(), "swimcoach", None).unwrap();
+        // The file is made, though the implied record held a type and the seed's holds none.
+        assert_eq!(bytes_of(&t), SEED_BYTES);
+        assert!(
+            !String::from_utf8(bytes_of(&t))
+                .unwrap()
+                .contains("instance_type")
+        );
+        let mut names = leftovers(t.path());
+        names.sort();
+        assert_eq!(names, ["hosts.json", "hosts.lock"]);
+        // The default is read no more from it: the file now says the box has no type.
+        assert_eq!(read_for_placing(t.path()).unwrap(), Hosts::seed());
+    }
+
+    #[test]
+    fn no_setter_writes_the_default_from_a_missing_file() {
+        // The same writers, given a missing file, write the seed's record with what they were
+        // given, and `m9g.xlarge` only when they were given it.
+        let t = home();
+        set_instance(t.path(), "swimcoach", Some("i-0123456789abcdef0"), None).unwrap();
+        let text = String::from_utf8(bytes_of(&t)).unwrap();
+        assert!(text.contains("\"instance_id\":\"i-0123456789abcdef0\""));
+        assert!(!text.contains("instance_type"), "{text}");
+        assert!(!text.contains("m9g.xlarge"), "{text}");
+        let t = home();
+        set_instance(t.path(), "swimcoach", None, None).unwrap();
+        assert_eq!(bytes_of(&t), SEED_BYTES);
+        let t = home();
+        set_instance_type(t.path(), "swimcoach", Some("m9g.2xlarge")).unwrap();
+        let hosts = read(t.path()).unwrap();
+        assert_eq!(hosts.hosts[0].instance_type.as_deref(), Some("m9g.2xlarge"));
+    }
+
+    #[test]
+    fn a_change_to_another_member_with_no_file_starts_from_the_seed_and_never_the_implied_type() {
+        // The setters above overwrite `instance_type` whatever they start from, so they cannot
+        // show where a change starts. A change that leaves the member alone can: it writes the
+        // record as it started, which MUST be the seed's, with no type (pin P31).
+        let t = home();
+        change_record(t.path(), "swimcoach", short(), |h| {
+            h.last_attempt_at = Some("2026-11-20T19:05:42Z".to_string());
+        })
+        .unwrap();
+        let text = String::from_utf8(bytes_of(&t)).unwrap();
+        assert!(text.contains("\"last_attempt_at\":\"2026-11-20T19:05:42Z\""));
+        assert!(!text.contains("instance_type"), "{text}");
+        assert!(!text.contains("m9g.xlarge"), "{text}");
+        assert_eq!(read(t.path()).unwrap().hosts[0].instance_type, None);
+    }
+
+    #[test]
+    fn a_project_with_no_record_fails_and_writes_nothing() {
+        // With no file: the seed holds the box's record alone.
+        let t = home();
+        assert_eq!(
+            set_instance_type(t.path(), "agentspace", Some("m9g.large")),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        assert_eq!(
+            set_instance(t.path(), "agentspace", Some("i-0123456789abcdef0"), None),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        assert!(!hosts_path(t.path()).exists());
+        // With a file: the bytes stay as they were.
+        let t = home();
+        registry_of(&t, &Hosts::seed());
+        let before = bytes_of(&t);
+        assert_eq!(
+            set_instance_type(t.path(), "agentspace", None),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        assert_eq!(bytes_of(&t), before);
+        assert!(
+            Failure::NoSuchRecord
+                .to_string()
+                .starts_with("the registry has no record")
+        );
+    }
+
+    #[test]
+    fn a_project_not_in_its_normalized_form_is_refused_before_the_lock() {
+        let t = home();
+        for bad in ["", "Swim", "a b", "a\n", "../x"] {
+            assert_eq!(
+                set_instance_type(t.path(), bad, None),
+                Err(HostsError::BadProject),
+                "{bad:?}"
+            );
+        }
+        assert!(!agentspace_dir(t.path()).exists());
+    }
+
+    #[test]
+    fn setting_the_type_changes_that_record_alone_and_in_the_tables_order() {
+        let t = home();
+        let mut two = added();
+        two.hosts[1].instance_id = Some("i-0fedcba9876543210".to_string());
+        registry_of(&t, &two);
+        set_instance_type(t.path(), "agentspace", Some("m9g.2xlarge")).unwrap();
+        let mut expected = two.clone();
+        expected.hosts[1].instance_type = Some("m9g.2xlarge".to_string());
+        assert_eq!(read(t.path()).unwrap(), expected);
+        let text = String::from_utf8(bytes_of(&t)).unwrap();
+        assert!(text.contains(
+            "\"instance_id\":\"i-0fedcba9876543210\",\"instance_type\":\"m9g.2xlarge\",\"last_attempt_at\":\"2026-11-20T19:05:42Z\"}"
+        ));
+        // The type removed again gives the file as it was.
+        set_instance_type(t.path(), "agentspace", None).unwrap();
+        assert_eq!(bytes_of(&t), serialize(&two).unwrap());
+        // The box's record, and its place, were never touched.
+        assert_eq!(read(t.path()).unwrap().hosts[0], Hosts::seed().hosts[0]);
+    }
+
+    #[test]
+    fn an_existing_file_that_does_not_change_is_not_rewritten() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        // Hand-formatted, which a rewrite would make compact.
+        let spaced = b"{ \"version\": 0,\n  \"hosts\": [ {\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"} ] }\n";
+        fs::write(hosts_path(t.path()), spaced).unwrap();
+        set_instance_type(t.path(), "swimcoach", None).unwrap();
+        set_instance(t.path(), "swimcoach", None, None).unwrap();
+        assert_eq!(bytes_of(&t), spaced);
+        // A change is written, compactly.
+        set_instance_type(t.path(), "swimcoach", Some("m9g.large")).unwrap();
+        assert_ne!(bytes_of(&t), spaced);
+    }
+
+    #[test]
+    fn the_id_and_the_type_are_removed_and_written_in_one_write_each() {
+        let t = home();
+        let mut full = added();
+        full.hosts[0].instance_id = Some("i-0123456789abcdef0".to_string());
+        full.hosts[0].instance_type = Some("m9g.xlarge".to_string());
+        full.hosts[1].instance_id = Some("i-0fedcba9876543210".to_string());
+        full.hosts[1].instance_type = Some("m9g.large".to_string());
+        registry_of(&t, &full);
+        // Step 2: both removed from one record.
+        set_instance(t.path(), "agentspace", None, None).unwrap();
+        let mut expected = full.clone();
+        expected.hosts[1].instance_id = None;
+        expected.hosts[1].instance_type = None;
+        assert_eq!(read(t.path()).unwrap(), expected);
+        // Step 4: both written.
+        set_instance(
+            t.path(),
+            "agentspace",
+            Some("i-0aaaaaaaaaaaaaaaa"),
+            Some("m9g.2xlarge"),
+        )
+        .unwrap();
+        expected.hosts[1].instance_id = Some("i-0aaaaaaaaaaaaaaaa".to_string());
+        expected.hosts[1].instance_type = Some("m9g.2xlarge".to_string());
+        assert_eq!(read(t.path()).unwrap(), expected);
+        // A read-back with no type: the ID alone, the record left with none.
+        set_instance(t.path(), "agentspace", Some("i-0bbbbbbbbbbbbbbbb"), None).unwrap();
+        expected.hosts[1].instance_id = Some("i-0bbbbbbbbbbbbbbbb".to_string());
+        expected.hosts[1].instance_type = None;
+        assert_eq!(read(t.path()).unwrap(), expected);
+        // The box's record kept its own, throughout.
+        assert_eq!(
+            read(t.path()).unwrap().hosts[0].instance_type.as_deref(),
+            Some("m9g.xlarge")
+        );
+    }
+
+    #[test]
+    fn a_value_that_is_not_of_its_form_is_refused_and_the_file_is_left_as_it_was() {
+        let t = home();
+        registry_of(&t, &added());
+        let before = bytes_of(&t);
+        let too_long = format!("m9g.{}", "a".repeat(61));
+        for bad in [
+            "M9G.XLARGE",
+            "m9g",
+            "m9g.xlarge\n",
+            "m9g.xlarge ",
+            "m9g.x.y",
+            "",
+            too_long.as_str(),
+        ] {
+            assert_eq!(
+                set_instance_type(t.path(), "agentspace", Some(bad)),
+                Err(HostsError::Unwritable(Failure::ChangeNotValid(
+                    Invalid::Schema
+                ))),
+                "{bad:?}"
+            );
+            assert_eq!(bytes_of(&t), before, "{bad:?}");
+        }
+        assert_eq!(
+            set_instance(t.path(), "agentspace", Some("i-0123"), Some("m9g.large")),
+            Err(HostsError::Unwritable(Failure::ChangeNotValid(
+                Invalid::Schema
+            )))
+        );
+        assert_eq!(bytes_of(&t), before);
+        // Sixty-four characters is the longest that is accepted.
+        let longest = format!("m9g.{}", "a".repeat(60));
+        assert_eq!(longest.len(), 64);
+        set_instance_type(t.path(), "agentspace", Some(&longest)).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_is_not_valid_is_never_written_over_by_a_setter() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), b"{\"version\":0,\"hosts\":[]}").unwrap();
+        assert_eq!(
+            set_instance_type(t.path(), "swimcoach", None),
+            Err(HostsError::NotValid(Invalid::BoxRecord))
+        );
+        assert_eq!(bytes_of(&t), b"{\"version\":0,\"hosts\":[]}");
+        let t = home();
+        fs::create_dir_all(hosts_path(t.path())).unwrap();
+        assert_eq!(
+            set_instance_type(t.path(), "swimcoach", None),
+            Err(HostsError::Unreadable(Failure::NotAFile))
+        );
+        assert!(hosts_path(t.path()).is_dir());
+    }
+
+    #[test]
+    fn a_setter_holds_the_lock_while_it_works_and_waits_for_it_no_longer_than_it_is_given() {
+        let t = home();
+        let held = lock(t.path()).unwrap();
+        let began = Instant::now();
+        assert_eq!(
+            change_record(t.path(), "swimcoach", short(), |h| h.instance_type = None),
+            Err(HostsError::Busy)
+        );
+        assert!(began.elapsed() >= Duration::from_millis(250));
+        assert!(!hosts_path(t.path()).exists(), "Nothing was written");
+        // The lock is released after the write, so the next taker gets it.
+        drop(held);
+        set_instance_type(t.path(), "swimcoach", None).unwrap();
+        assert!(try_lock(t.path()).unwrap().is_some());
+        // The change reads the file under the lock: a change made while it waited is kept.
+        let t = home();
+        registry_of(&t, &Hosts::seed());
+        let held = lock(t.path()).unwrap();
+        let path = t.path().to_path_buf();
+        let waiter = std::thread::spawn(move || {
+            change_record(&path, "swimcoach", Duration::from_secs(5), |h| {
+                h.instance_type = Some("m9g.large".to_string());
+            })
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        write(t.path(), &added(), &held).unwrap();
+        drop(held);
+        waiter.join().unwrap().unwrap();
+        let after = read(t.path()).unwrap();
+        assert_eq!(after.hosts.len(), 2, "The other writer's record is kept");
+        assert_eq!(after.hosts[0].instance_type.as_deref(), Some("m9g.large"));
+    }
+
+    #[test]
+    fn a_folder_at_the_lock_fails_a_setter_at_once_and_writes_nothing() {
+        let t = home();
+        fs::create_dir_all(hosts_lock_path(t.path())).unwrap();
+        assert_eq!(
+            set_instance_type(t.path(), "swimcoach", None),
+            Err(HostsError::CannotLock(Failure::CannotOpenLock))
+        );
+        assert!(!hosts_path(t.path()).exists());
     }
 }

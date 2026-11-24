@@ -107,6 +107,8 @@ fn a_missing_file_reads_as_the_boxs_record_alone() {
     assert_eq!(b.state, HostState::Ready);
     assert_eq!(b.instance_id, None);
     assert_eq!(b.last_attempt_at, None);
+    // `read` is the read a change starts from: the seed document's record has no type (pin P31).
+    assert_eq!(b.instance_type, None);
 }
 
 #[test]

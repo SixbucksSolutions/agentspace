@@ -139,6 +139,7 @@ mod tests {
                     stack: (*stack).to_string(),
                     state: *state,
                     instance_id: None,
+                    instance_type: None,
                     last_attempt_at: None,
                 })
                 .collect(),

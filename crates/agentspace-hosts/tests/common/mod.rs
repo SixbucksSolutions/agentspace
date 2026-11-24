@@ -100,6 +100,7 @@ pub fn box_host() -> Host {
         stack: BOX_STACK.to_string(),
         state: HostState::Ready,
         instance_id: None,
+        instance_type: None,
         last_attempt_at: None,
     }
 }
@@ -110,6 +111,7 @@ pub fn host(project: &str, state: HostState) -> Host {
         stack: stack_name(project),
         state,
         instance_id: None,
+        instance_type: None,
         last_attempt_at: None,
     }
 }
@@ -120,16 +122,31 @@ pub fn full_host(project: &str, state: HostState, id: &str, at: &str) -> Host {
         stack: stack_name(project),
         state,
         instance_id: Some(id.to_string()),
+        instance_type: None,
         last_attempt_at: Some(at.to_string()),
     }
 }
+
+/// The type a missing registry implies for the box, as it is read and never as it is written
+/// (docs/state.md, The host registry, "The seed"; pins P2c and P31).
+pub const IMPLIED_BOX_TYPE: &str = "m9g.xlarge";
 
 pub fn hosts(records: Vec<Host>) -> Hosts {
     Hosts { hosts: records }
 }
 
+/// The seed document's records, as it is WRITTEN: the box's record with no `instance_type`.
 pub fn seed() -> Hosts {
     hosts(vec![box_host()])
+}
+
+/// What a reader that PLACES a lease reads of a MISSING file (`read_for_placing`): the seed's
+/// record with `instance_type` `m9g.xlarge` (from v0.09; docs/state.md, "The seed", pins P2c and
+/// P31). A file that exists never reads like this, and a writer never starts from it.
+pub fn seed_as_read_for_placing() -> Hosts {
+    let mut h = seed();
+    h.hosts[0].instance_type = Some(IMPLIED_BOX_TYPE.to_string());
+    h
 }
 
 /// The box and then the given records.

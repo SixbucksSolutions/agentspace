@@ -178,6 +178,7 @@ mod tests {
             stack: "agentspace-host-agentspace".into(),
             state: HostState::Creating,
             instance_id: None,
+            instance_type: None,
             last_attempt_at: None,
         });
         let held = agentspace_hosts::lock(dir).unwrap();

@@ -190,6 +190,7 @@ fn record_start(home: &Path, project: &str, now: &str) -> Result<bool, Failure> 
                 stack: agentspace_hosts::stack_name(project),
                 state: HostState::Creating,
                 instance_id: None,
+                instance_type: None,
                 last_attempt_at: Some(now.to_string()),
             });
             false

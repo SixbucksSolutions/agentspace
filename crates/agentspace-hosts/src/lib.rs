@@ -30,8 +30,8 @@ mod sys;
 pub use error::{Failure, HostsError, Invalid};
 pub use guardlock::{GuardLock, guard_is_running, try_guard_lock};
 pub use model::{
-    BOX_PROJECT, BOX_STACK, Host, HostState, Hosts, Target, host_alias, host_for, is_box,
-    is_normalized_project, stack_name, target_for,
+    BOX_PROJECT, BOX_STACK, DEFAULT_INSTANCE_TYPE, Host, HostState, Hosts, Target, host_alias,
+    host_for, is_box, is_normalized_project, stack_name, target_for,
 };
 pub use paths::{
     agentspace_dir, guard_lock_path, guard_log_path, host_cert_path, host_dir, host_key_path,
@@ -39,5 +39,7 @@ pub use paths::{
     known_hosts_path, projects_path,
 };
 pub use projects::{Project, Projects, is_listed, read_projects};
-pub use registry::{HostsLock, lock, read, try_lock, write};
+pub use registry::{
+    HostsLock, lock, read, read_for_placing, set_instance, set_instance_type, try_lock, write,
+};
 pub use runlock::{RunLock, run_is_running, try_run_lock};

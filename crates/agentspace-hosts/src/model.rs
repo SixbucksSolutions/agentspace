@@ -59,9 +59,18 @@ pub struct Host {
     pub state: HostState,
     /// The host's EC2 instance ID, cached from its stack's `InstanceId` output.
     pub instance_id: Option<String>,
+    /// The instance type of the host's stack, its `InstanceType` parameter as `describe-stacks`
+    /// read it back after the last `deploy` that recorded it (D67, D71): `None` when the member is
+    /// absent, and the string as stored when it is present. A record with none meets no size.
+    pub instance_type: Option<String>,
     /// The start time of the host's last provisioning run, UTC.
     pub last_attempt_at: Option<String>,
 }
+
+/// The instance type the record that a missing file implies holds, only as it is read (docs/state.md,
+/// The host registry, "The seed"; D66, D65's `m`, pins P2c and P31). It MUST NOT be written from a
+/// missing file: no writer starts from `Hosts::implied`.
+pub const DEFAULT_INSTANCE_TYPE: &str = "m9g.xlarge";
 
 /// The host registry: one record per host, in the order they were added. Its `version` is always 0.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +79,9 @@ pub struct Hosts {
 }
 
 impl Hosts {
-    /// The seed: the box's record alone (D45, D55), which a missing file reads as.
+    /// The seed: the box's record alone, with no `instance_type` (D45, D55). It is the document a
+    /// writer that finds no file starts from, and the first change writes it as it is (pin P31):
+    /// it MUST NOT be given the implied type.
     pub fn seed() -> Hosts {
         Hosts {
             hosts: vec![Host {
@@ -78,9 +89,20 @@ impl Hosts {
                 stack: BOX_STACK.to_string(),
                 state: HostState::Ready,
                 instance_id: None,
+                instance_type: None,
                 last_attempt_at: None,
             }],
         }
+    }
+
+    /// The registry a reader that finds no file reads (docs/state.md, "The seed"; pin P2c): the
+    /// seed's one record, as if it held `instance_type` `m9g.xlarge`. It is for reading only, such
+    /// as the EC2 driver's place; a writer MUST start from `Hosts::seed` and never from this, since
+    /// the implied type is no reading of the stack and is never written (pin P31).
+    pub fn implied() -> Hosts {
+        let mut hosts = Hosts::seed();
+        hosts.hosts[0].instance_type = Some(DEFAULT_INSTANCE_TYPE.to_string());
+        hosts
     }
 }
 
@@ -166,6 +188,7 @@ fn record_from(v: &Value) -> Result<Host, Invalid> {
             .and_then(HostState::from_text)
             .ok_or(Invalid::Schema)?,
         instance_id: text(o, "instance_id")?,
+        instance_type: text(o, "instance_type")?,
         last_attempt_at: text(o, "last_attempt_at")?,
     })
 }
@@ -240,6 +263,10 @@ pub fn serialize(hosts: &Hosts) -> Result<Vec<u8>, Invalid> {
             out.push_str(",\"instance_id\":");
             out.push_str(&json::quote(id));
         }
+        if let Some(ty) = &h.instance_type {
+            out.push_str(",\"instance_type\":");
+            out.push_str(&json::quote(ty));
+        }
         if let Some(t) = &h.last_attempt_at {
             out.push_str(",\"last_attempt_at\":");
             out.push_str(&json::quote(t));
@@ -261,6 +288,7 @@ mod tests {
             stack: stack.to_string(),
             state,
             instance_id: None,
+            instance_type: None,
             last_attempt_at: None,
         }
     }
@@ -367,6 +395,102 @@ mod tests {
         }
     }
 
+    fn typed(instance_type: &str) -> String {
+        format!(
+            r#"{{"version":0,"hosts":[{{"project":"swimcoach","stack":"agentbox","state":"ready","instance_type":{instance_type}}}]}}"#
+        )
+    }
+
+    #[test]
+    fn the_instance_type_is_read_as_stored_and_absent_is_none() {
+        let hosts = parse(typed(r#""m9g.2xlarge""#).as_bytes()).unwrap();
+        assert_eq!(hosts.hosts[0].instance_type.as_deref(), Some("m9g.2xlarge"));
+        assert_eq!(
+            parse(doc(&[BOX]).as_bytes()).unwrap().hosts[0].instance_type,
+            None
+        );
+        // The forms of EC2's types that the pattern allows.
+        for ok in [
+            "m9g.xlarge",
+            "m7i-flex.large",
+            "a.b",
+            "0.0",
+            "m7i.metal-24xl",
+        ] {
+            let hosts = parse(typed(&format!("\"{ok}\"")).as_bytes()).unwrap();
+            assert_eq!(hosts.hosts[0].instance_type.as_deref(), Some(ok));
+        }
+    }
+
+    #[test]
+    fn an_instance_type_that_is_not_a_string_of_its_form_makes_the_file_not_valid() {
+        let sixty_five = format!("\"m9g.{}\"", "a".repeat(61));
+        let sixty_four = format!("\"m9g.{}\"", "a".repeat(60));
+        assert!(parse(typed(&sixty_four).as_bytes()).is_ok());
+        for bad in [
+            "null",
+            "4",
+            "true",
+            "[]",
+            r#"{}"#,
+            r#""M9G.XLARGE""#,
+            r#""m9g""#,
+            r#""m9g.""#,
+            r#""-m9g.xlarge""#,
+            r#""m9g.xlarge.x""#,
+            r#""m9g.xlarge ""#,
+            r#""m9g.xlarge\n""#,
+            r#""""#,
+            sixty_five.as_str(),
+        ] {
+            assert_eq!(refused(&typed(bad)), Invalid::Schema, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_instance_type_is_written_after_the_id_and_before_the_time_and_only_when_present() {
+        let mut hosts = two();
+        hosts.hosts[1].instance_type = Some("m9g.2xlarge".to_string());
+        let text = String::from_utf8(serialize(&hosts).unwrap()).unwrap();
+        assert!(text.contains(
+            "\"instance_id\":\"i-1234567890abcdef0\",\"instance_type\":\"m9g.2xlarge\",\"last_attempt_at\":\"2026-11-20T19:05:42Z\"}"
+        ));
+        // Only that record has the member, and a record without one is written as before v0.09.
+        assert_eq!(text.matches("instance_type").count(), 1);
+        assert!(text.starts_with(
+            "{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"},"
+        ));
+        assert_eq!(parse(text.as_bytes()).unwrap(), hosts);
+        // An implied record carries its type in memory, and a document made from it names it.
+        assert!(
+            String::from_utf8(serialize(&Hosts::implied()).unwrap())
+                .unwrap()
+                .contains("\"instance_type\":\"m9g.xlarge\"")
+        );
+    }
+
+    #[test]
+    fn a_change_to_an_instance_type_not_of_its_form_is_not_serialized() {
+        let mut hosts = two();
+        hosts.hosts[1].instance_type = Some("M9G.XLARGE".to_string());
+        assert_eq!(serialize(&hosts).unwrap_err(), Invalid::Schema);
+        hosts.hosts[1].instance_type = Some("m9g.xlarge\n".to_string());
+        assert_eq!(serialize(&hosts).unwrap_err(), Invalid::Schema);
+    }
+
+    #[test]
+    fn the_seed_has_no_type_and_the_implied_registry_differs_from_it_in_that_member_alone() {
+        assert_eq!(DEFAULT_INSTANCE_TYPE, "m9g.xlarge");
+        assert_eq!(Hosts::seed().hosts[0].instance_type, None);
+        let mut implied = Hosts::implied();
+        assert_eq!(
+            implied.hosts[0].instance_type.as_deref(),
+            Some("m9g.xlarge")
+        );
+        implied.hosts[0].instance_type = None;
+        assert_eq!(implied, Hosts::seed());
+    }
+
     #[test]
     fn a_leap_second_is_refused_by_the_schema() {
         let r = r#"{"project":"agentspace","stack":"agentspace-host-agentspace","state":"creating","last_attempt_at":"2026-11-20T23:59:60Z"}"#;
@@ -433,20 +557,26 @@ mod tests {
         };
     }
 
-    const VALID_SAMPLES: [(&str, &str); 3] = [
+    const VALID_SAMPLES: [(&str, &str); 5] = [
         sample!("hosts.state.creating-and-failed.json"),
         sample!("hosts.state.full.json"),
+        sample!("hosts.state.instance-type-on-one.json"),
+        sample!("hosts.state.instance-type.json"),
         sample!("hosts.state.seed.json"),
     ];
 
-    const INVALID_SAMPLES: [(&str, &str); 12] = [
+    const INVALID_SAMPLES: [(&str, &str); 16] = [
         sample!("invalid/hosts.state.bad-instance-id.json"),
         sample!("invalid/hosts.state.bare-array.json"),
         sample!("invalid/hosts.state.extra-member.json"),
         sample!("invalid/hosts.state.extra-top-level-member.json"),
+        sample!("invalid/hosts.state.instance-type-bad-form.json"),
+        sample!("invalid/hosts.state.instance-type-not-string.json"),
+        sample!("invalid/hosts.state.instance-type-too-long.json"),
         sample!("invalid/hosts.state.missing-stack.json"),
         sample!("invalid/hosts.state.missing-state.json"),
         sample!("invalid/hosts.state.null-instance-id.json"),
+        sample!("invalid/hosts.state.null-instance-type.json"),
         sample!("invalid/hosts.state.stack-of-other-name.json"),
         sample!("invalid/hosts.state.time-with-offset.json"),
         sample!("invalid/hosts.state.unknown-state.json"),
