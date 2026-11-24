@@ -117,7 +117,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
   }
   Test-HostCase "${d}: with no host registry at all, the box's deploy writes hosts.json holding the box's record with the new instance ID" @('deploy') @{
     Exit = 0; SshCalls = 'any'; ScpCalls = 'any'
-    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdNew)) 'the box''s record holding the stack''s InstanceId output' } } -Setup {
+    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdNew -NoInstanceType)) 'the box''s record holding the stack''s InstanceId output' } } -Setup {
     Remove-HomePath $fx.HostsFile
     Set-AwsScenario (Merge-Scenario (Get-HealthyAnswers -Id $script:IdNew) @{ 'cloudformation describe-stacks agentbox' = @((New-Step (New-StackDoc -StackName 'agentbox' -Id $script:IdNew))) })
   }

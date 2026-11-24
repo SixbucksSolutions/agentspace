@@ -257,14 +257,15 @@ function Get-Sha256Hex([string]$Text) {
 
 # One record as text, its members in the order of the schema's table.
 function New-HostRecord {
-  param([Parameter(Mandatory)][string]$Project, [string]$State = 'ready', [string]$InstanceId = '', [string]$LastAttempt = '', [string]$Stack = '')
+  param([Parameter(Mandatory)][string]$Project, [string]$State = 'ready', [string]$InstanceId = '', [string]$LastAttempt = '', [string]$Stack = '', [string]$InstanceType = 'm9g.xlarge', [switch]$NoInstanceType)
   if (-not $Stack) { $Stack = if ($Project -eq 'swimcoach') { 'agentbox' } else { "agentspace-host-$Project" } }
   $t = '{"project":"' + $Project + '","stack":"' + $Stack + '","state":"' + $State + '"'
   if ($InstanceId) { $t += ',"instance_id":"' + $InstanceId + '"' }
+  if ($State -ceq 'ready' -and -not $NoInstanceType) { $t += ',"instance_type":"' + $InstanceType + '"' }
   if ($LastAttempt) { $t += ',"last_attempt_at":"' + $LastAttempt + '"' }
   $t + '}'
 }
-function New-BoxRecord([string]$InstanceId = $script:IdBox) { New-HostRecord -Project 'swimcoach' -State 'ready' -InstanceId $InstanceId }
+function New-BoxRecord([string]$InstanceId = $script:IdBox, [switch]$NoInstanceType) { New-HostRecord -Project 'swimcoach' -State 'ready' -InstanceId $InstanceId -NoInstanceType:$NoInstanceType }
 
 # What a valid registry holds and a writer writes: the records in order, compact, UTF-8, one LF.
 function Get-HostsBytes([string[]]$Records) {

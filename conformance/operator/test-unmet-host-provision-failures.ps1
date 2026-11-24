@@ -63,7 +63,7 @@ function Test-FailedStep($C) {
     param($h, $s)
     $ready = $C.Seed -eq 'ready'
     $record = switch ($C.Seed) {
-      'ready' { New-HpRecord 'agentspace' 'ready' $script:HpHostId $oldTime }
+      'ready' { New-HpRecord 'agentspace' 'ready' $script:HpHostId $oldTime -NoInstanceType }
       'creating' { New-HpRecord 'agentspace' 'creating' '' $oldTime }
       default { $null }
     }

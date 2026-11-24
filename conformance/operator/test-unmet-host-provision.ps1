@@ -149,7 +149,7 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
   Write-HpProblems "${sec}: the deploy step removes the instance ID and writes the stack's again (so it is missing at the read and present after), and the state stays creating until step 8, with last_attempt_at left as step 3 wrote it (steps 4 and 8; deploy, step 5)" $p
 
   $final = Get-HpRecordFromText ([IO.File]::ReadAllText((Get-HpHostsFile $h))) 'agentspace'
-  $wantBytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-HpHostsText -BoxId $script:HpBoxId -Records @((New-HpRecord 'agentspace' 'ready' $script:HpHostId $la))))
+  $wantBytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-HpHostsText -BoxId $script:HpBoxId -Records @((New-HpRecord 'agentspace' 'ready' $script:HpHostId $la -NoInstanceType))))
   $p = New-HpProblems
   if (-not (Test-HpSameBytes (Get-HpFileBytes (Get-HpHostsFile $h)) $wantBytes)) { $p.Add("hosts.json is not the box's record unchanged and the host's: ready, instance_id the stack's, last_attempt_at the run's start ($(Format-Rec $final)); written compact, UTF-8, one LF") }
   Write-HpProblems "${sec}: step 8 records the host ready with the instance ID the deploy read and last_attempt_at left as step 3 wrote it, and changes no other record (step 8)" $p
