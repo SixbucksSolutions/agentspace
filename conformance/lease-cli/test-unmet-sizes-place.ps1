@@ -12,7 +12,9 @@
 #   Z2   create --size xxl and --size XXL: unsatisfiable with exactly unsupported_size, its message byte for
 #        byte, with no CA and a registry that does not validate as with a good one; with --platform windows/amd64
 #        the reasons are unsupported_platform then unsupported_size, and with --size l the one is the platform's.
-#   Z3   With a live ready lease and a larger host, create --size m and --size s answer ready, with the size
+#        With a live ready lease on a host smaller than l, no_capacity is never listed beside them (lease-api.md,
+#        "Fields").
+#   Z3  With a live ready lease and a larger host, create --size m and --size s answer ready, with the size
 #        asked for and the project's host's alias; so does a default create on a host at m.
 #   Z4   With a live ready lease and a smaller host, create --size l and --size xl answer unsatisfiable with one
 #        reason, no_capacity, D66's message byte for byte, and change nothing else.
@@ -281,7 +283,9 @@ foreach ($size in 's', 'm', 'l', 'xl') {
 
 # ---- Z2 -----------------------------------------------------------------------------------------------
 # A host registry and a project list that do not validate, and no CA, give the same answers as a good set: an
-# unsupported size is decided before any of them is read.
+# unsupported size is decided before any of them is read. The good set also holds a live ready lease of the
+# project on a host at the type of m, which would refuse a supported request for l with no_capacity: an
+# unsupported request lists its unsupported_* reasons alone, never no_capacity (lease-api.md, "Fields").
 function Test-SpUnsupportedSize {
   param([string]$Label, [bool]$Broken)
   $sub = @{ Label = $Label; Broken = $Broken }
@@ -293,6 +297,7 @@ function Test-SpUnsupportedSize {
       Write-PvText -Lab $lab -Path (Get-PvProjectsPath $lab) -Text "this is not json`n"
     } else {
       [void](Set-SpHosts -Lab $lab -Records @((New-SpHostRecord -InstanceType $script:SpType['m'])))
+      Set-SpLeases -Lab $lab -Records @((New-SpLeaseRecord -State 'ready' -CreatedAgo 60 -ExpiresAt (Get-SpTime 3540)))
     }
     $standIn = New-PvStandIn -Lab $lab -Name 'tripwire'
     $sizeMessage = "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl."
@@ -300,7 +305,7 @@ function Test-SpUnsupportedSize {
       @{ Key = 'create --size xxl answers unsatisfiable with exactly one reason, unsupported_size, its message byte for byte, and writes nothing'; Extra = @('--size', 'xxl'); Codes = @('unsupported_size'); Size = 'xxl' }
       @{ Key = 'create --size XXL answers the same, quoting the size normalized'; Extra = @('--size', 'XXL'); Codes = @('unsupported_size'); Size = 'xxl' }
       @{ Key = 'create --size xxl --platform windows/amd64 lists unsupported_platform then unsupported_size, in the contract''s order'; Extra = @('--size', 'xxl', '--platform', 'windows/amd64'); Codes = @('unsupported_platform', 'unsupported_size'); Size = 'xxl' }
-      @{ Key = 'create --size l --platform windows/amd64 lists unsupported_platform alone (pin P9)'; Extra = @('--size', 'l', '--platform', 'windows/amd64'); Codes = @('unsupported_platform'); Size = 'l' }
+      @{ Key = 'create --size l --platform windows/amd64 lists unsupported_platform alone (pin P9), never no_capacity beside it';Extra = @('--size', 'l', '--platform', 'windows/amd64'); Codes = @('unsupported_platform'); Size = 'l' }
     )
     $results = [ordered]@{}
     foreach ($c in $cases) {
@@ -322,7 +327,7 @@ function Test-SpUnsupportedSize {
     return $results
   }
 }
-Test-SpUnsupportedSize -Label 'With a CA and a host registry that holds the project''s ready record' -Broken $false
+Test-SpUnsupportedSize -Label 'With a CA, a host registry that holds the project''s record ready at the type of m, and a live ready lease of the project' -Broken $false
 Test-SpUnsupportedSize -Label 'With no CA, and a host registry and a project list that do not validate' -Broken $true
 
 # ---- Z3 -----------------------------------------------------------------------------------------------
