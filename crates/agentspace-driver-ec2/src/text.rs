@@ -169,6 +169,18 @@ pub fn no_capacity(project: &str) -> String {
     )
 }
 
+/// D66's `no_capacity` message (driver.md, "On a `ready` host"; lease-api.md, Fields), for a lease
+/// whose project's host is smaller than the size asked for while another live `ready` lease of the
+/// project holds it. **It MUST be emitted byte for byte** (D71; pin P8). `project` and `size` are
+/// the normalized values, quoted as every reason quotes.
+pub fn no_capacity_at_size(project: &str, size: &str) -> String {
+    format!(
+        "No capacity can be found for project '{}' at size '{}': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.",
+        quote(project),
+        quote(size)
+    )
+}
+
 /// driver.md's message for an operator program that is not beside the CLI, with
 /// `AGENTSPACE_PROVISION_CMD` unset or empty (Starting a provisioning run, step 3).
 pub const OPERATOR_NOT_BESIDE: &str = "The lease's host cannot be made: agentspace's operator program is not installed beside this program. Nothing was recorded.";
@@ -248,6 +260,16 @@ mod tests {
         assert_eq!(f.leftovers, ["~/x"]);
         let f = failure("It failed.".to_string(), Vec::new());
         assert_eq!(f.message, "It failed.");
+    }
+
+    #[test]
+    fn the_no_capacity_message_for_a_smaller_host_is_d66s_byte_for_byte() {
+        assert_eq!(
+            no_capacity_at_size("agentspace", "xl"),
+            "No capacity can be found for project 'agentspace' at size 'xl': its host is serving other leases at a smaller size. Release them, or ask for a size they fit."
+        );
+        // v0.07's message for a project with no host is a different one, and stays as it was.
+        assert_ne!(no_capacity_at_size("other", "m"), no_capacity("other"));
     }
 
     #[test]

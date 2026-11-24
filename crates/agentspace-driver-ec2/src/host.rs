@@ -19,6 +19,13 @@
 //!   and MUST end within 20 seconds.**
 //! - **The driver MUST NOT open or make `provision.log` or `provision.lock`**; the host's folder is
 //!   the one thing in it the driver makes.
+//! - **From v0.09, place MUST decide a `ready` record by D66's table** (driver.md, "On a `ready`
+//!   host"): the size asked for, the record's `instance_type` and the project's leases, read from
+//!   the lease state file read-only, under the lease state lock its caller holds, which the driver
+//!   MUST NOT take. Place makes no AWS call.
+//! - **Place MUST decide from `agentspace_hosts::read_for_placing`, and MUST start every write of
+//!   `hosts.json` from a fresh plain `read` under the same `hosts.lock`** (pins P31 and P38), so
+//!   that the `m9g.xlarge` a missing file implies is never written.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -30,13 +37,14 @@ use agentspace_credential::{ca_failure_message, check_ca};
 use agentspace_detach::Detach;
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed, Reason};
 use agentspace_hosts::{self as hosts, Host, HostState, Hosts, HostsError, HostsLock};
-use agentspace_state::{format_time, now, parse_time};
+use agentspace_state::{Record as Lease, format_time, is_live, now, parse_time};
 
 use crate::ops::{self, HostKey};
 use crate::reasons::reasons;
+use crate::sizes::{SIZES, instance_type_for, meets, resize_target};
 use crate::text::{
     OPERATOR_NAMED_MISSING, OPERATOR_NO_INTERPRETER, OPERATOR_NOT_BESIDE, failure,
-    host_lookup_failed, no_capacity,
+    host_lookup_failed, no_capacity, no_capacity_at_size,
 };
 
 /// The detached start the driver holds, shared with the thread that bounds a start.
@@ -96,6 +104,107 @@ fn projects_why(e: HostsError) -> &'static str {
     }
 }
 
+/// What place answers for a supported request whose project's record is `ready` (driver.md, "On a
+/// `ready` host"), before anything is issued or written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnReady {
+    /// Rows 3 and 4: placed on the host at once.
+    Ready,
+    /// Rows 1, 2 and 6: `pending`, and a run started when one is due.
+    Pending,
+    /// Row 5: `unsatisfiable`, with D66's `no_capacity`.
+    Refused,
+}
+
+/// The `<why>` of a lease state file that place cannot read, or that does not validate (pin P19).
+const LEASES_WHY: &str = "agentspace's lease records could not be read";
+
+/// Whether a live `ready` lease of `project` holds its host as of `now` (driver.md, "On a `ready`
+/// host"; state.md, "Live leases and the lease horizon"; D56, D66): a record stored `ready`, of the
+/// project, compared exactly, whose `expires_at` is after `now`. A lease that is only `pending`
+/// holds no host's size, and an expired, `released` or `unsatisfiable` one holds nothing.
+pub(crate) fn holds_host(leases: &[Lease], project: &str, now: i64) -> bool {
+    leases
+        .iter()
+        .any(|l| l.state == "ready" && l.project == project && is_live(l, now))
+}
+
+/// Whether the map holds `instance_type`: a type outside it meets no size (D67; pin P14).
+fn is_mapped(instance_type: &str) -> bool {
+    SIZES
+        .iter()
+        .any(|s| instance_type_for(s) == Some(instance_type))
+}
+
+/// D66's table, as driver.md's "On a `ready` host" gives it: the first row that applies, and
+/// nothing else. `size` is the request's normalized size, one of `SIZES`; `instance_type` is the
+/// record's; `leases` are the records of the lease state file, read at `now`.
+fn on_ready(
+    size: &str,
+    instance_type: Option<&str>,
+    leases: &[Lease],
+    project: &str,
+    now: i64,
+) -> OnReady {
+    // Row 1: a `pending` lease a run would place is `resize_target`'s selection (pins P2, P18 and
+    // P20), so the project's every new lease is `pending` while one exists.
+    if resize_target(leases, project).is_some() {
+        return OnReady::Pending;
+    }
+    // Row 2: no type, or one the map does not hold, whatever other leases hold the host.
+    let Some(have) = instance_type.filter(|t| is_mapped(t)) else {
+        return OnReady::Pending;
+    };
+    // Row 3: exactly, whatever other leases hold the host.
+    if instance_type_for(size) == Some(have) {
+        return OnReady::Ready;
+    }
+    match (meets(have, size), holds_host(leases, project, now)) {
+        // Row 4: larger, and another live `ready` lease holds the host.
+        (true, true) => OnReady::Ready,
+        // Row 5: smaller, and another live `ready` lease holds the host.
+        (false, true) => OnReady::Refused,
+        // Row 6: larger or smaller, and nothing holds the host.
+        (_, false) => OnReady::Pending,
+    }
+}
+
+/// Decides a supported request on a `ready` record: reads the lease state file of the context's
+/// state folder, read-only and taking no lock, since the CLI, place's caller, holds the lease
+/// state lock (driver.md, "On a `ready` host", the last bullet; Lock order). A missing file is no
+/// leases; one that cannot be read or does not validate fails the place with `internal`, before
+/// anything is written or started.
+fn decide_on_ready(ctx: &Context, req: &PlaceRequest, host: &Host) -> Result<OnReady, Failure> {
+    let file = agentspace_state::read(&ctx.state_dir).map_err(|_| lookup(LEASES_WHY))?;
+    Ok(on_ready(
+        req.size,
+        host.instance_type.as_deref(),
+        &file.leases,
+        req.project,
+        now(),
+    ))
+}
+
+/// Row 5's answer: `unsatisfiable`, with one reason, `no_capacity`, and D66's message. It changes
+/// nothing.
+fn refused(req: &PlaceRequest) -> Placed {
+    Placed::Unsatisfiable {
+        reasons: vec![Reason {
+            code: "no_capacity",
+            message: no_capacity_at_size(req.project, req.size),
+        }],
+    }
+}
+
+/// Which host key lines a lease on `host` carries in its alias (D47).
+fn host_key<'a>(host: &Host, project: &'a str) -> HostKey<'a> {
+    if hosts::is_box(host) {
+        HostKey::Box
+    } else {
+        HostKey::Other(project)
+    }
+}
+
 /// Place, by the project's host (driver.md, Where it places a lease).
 pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result<Placed, Failure> {
     let unmet = reasons(req.platform, req.profile, req.size);
@@ -110,25 +219,38 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
     // without taking `hosts.lock`, so a box lease makes no file of the registry's. The missing file
     // reads as the seed, whose box record is `ready`, and a writer that makes the file meanwhile
     // keeps that record first and `ready` (state.md, The seed; nothing moves a record out of
-    // `ready`), so the answer is the one the lock would give.
+    // `ready`), so the answer is the one the lock would give. From v0.09 the record is decided by
+    // D66's table, as `read_for_placing` gives it, and only an answer that writes nothing is given
+    // here: a `pending` one goes on to the locked path, which decides again and records the run.
     if req.project == hosts::BOX_PROJECT && registry_is_missing(&ctx.home) {
-        return ops::issue_ready(ctx, req, HostKey::Box);
+        let placing = hosts::read_for_placing(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
+        if let Some(host) =
+            hosts::host_for(&placing, req.project).filter(|h| h.state == HostState::Ready)
+        {
+            match decide_on_ready(ctx, req, host)? {
+                OnReady::Ready => return ops::issue_ready(ctx, req, host_key(host, req.project)),
+                OnReady::Refused => return Ok(refused(req)),
+                OnReady::Pending => {}
+            }
+        }
     }
 
-    // Step 1: the reads that decide, under `hosts.lock`, waited for up to 30 seconds.
+    // Step 1: the reads that decide, under `hosts.lock`, waited for up to 30 seconds. The decision
+    // reads the registry as a placer does, a missing file implying the box's `m9g.xlarge` (pin
+    // P2c); that value MUST NOT be the start of a write (pin P31).
     let held = hosts::lock(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
-    let mut registry = hosts::read(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
-    let record = match hosts::host_for(&registry, req.project) {
-        Some(host) if host.state == HostState::Ready => {
-            let key = if hosts::is_box(host) {
-                HostKey::Box
-            } else {
-                HostKey::Other(req.project)
-            };
-            // A `ready` answer needs only the record's `state`, and writes nothing to it.
-            drop(held);
-            return ops::issue_ready(ctx, req, key);
-        }
+    let placing = hosts::read_for_placing(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
+    let record = match hosts::host_for(&placing, req.project) {
+        Some(host) if host.state == HostState::Ready => match decide_on_ready(ctx, req, host)? {
+            OnReady::Ready => {
+                // A `ready` answer writes nothing to the registry.
+                let key = host_key(host, req.project);
+                drop(held);
+                return ops::issue_ready(ctx, req, key);
+            }
+            OnReady::Refused => return Ok(refused(req)),
+            OnReady::Pending => Record::Existing,
+        },
         Some(_) => Record::Existing,
         None => {
             let list = hosts::read_projects(&ctx.home).map_err(|e| lookup(projects_why(e)))?;
@@ -147,7 +269,10 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
     // A `pending` answer checks the CA first, and reads only (pin P14.1).
     check_ca(&ctx.home).map_err(|f| failure(ca_failure_message(f).to_string(), Vec::new()))?;
 
-    // Steps 2 to 4, then step 5: the lock is released before any run is started.
+    // Steps 2 to 4, then step 5: the lock is released before any run is started. The write starts
+    // from a fresh plain read under the same hold, so a missing file is written as the seed
+    // document, whose box record has no `instance_type` (pins P31 and P38).
+    let mut registry = hosts::read(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
     let run = record_run(ctx, req.project, &mut registry, record, &held)?;
     drop(held);
     if let Some(run) = run {
@@ -925,5 +1050,347 @@ mod tests {
         assert!(f.check("..").is_err());
         assert!(f.place("..").is_err());
         assert!(f.starts().is_empty());
+    }
+
+    // ---- v0.09: D66's table (driver.md, "On a `ready` host") ----------------------------------
+
+    const NOW: i64 = 1_800_000_000;
+
+    fn lease(state: &str, project: &str, driver: Option<&str>, size: &str) -> Lease {
+        Lease {
+            id: "5f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90".to_string(),
+            project: project.to_string(),
+            state: state.to_string(),
+            platform: "linux/arm64".to_string(),
+            profile: "agent-linux".to_string(),
+            size: size.to_string(),
+            ttl_seconds: 3600,
+            created_at: format_time(NOW - 600),
+            expires_at: (state == "ready").then(|| format_time(NOW + 600)),
+            released_at: None,
+            ssh: (state == "ready").then(|| agentspace_state::Ssh {
+                host_alias: format!("agentspace-{project}-5f2a9c1e"),
+                user: "ubuntu".to_string(),
+            }),
+            reasons: None,
+            driver: driver.map(str::to_string),
+        }
+    }
+
+    /// A live `ready` lease of `project`, which holds its host.
+    fn holding(project: &str) -> Lease {
+        lease("ready", project, Some("ec2"), "m")
+    }
+
+    /// A `pending` lease of `project` that a run would place.
+    fn waiting(project: &str, size: &str) -> Lease {
+        lease("pending", project, Some("ec2"), size)
+    }
+
+    fn decide(size: &str, instance_type: Option<&str>, leases: &[Lease]) -> OnReady {
+        on_ready(size, instance_type, leases, "p", NOW)
+    }
+
+    #[test]
+    fn row_1_a_pending_lease_a_run_would_place_holds_every_new_lease_pending() {
+        // Exactly, larger and smaller all answer `pending` while it exists.
+        for (size, have) in [
+            ("m", "m9g.xlarge"),
+            ("s", "m9g.xlarge"),
+            ("xl", "m9g.xlarge"),
+        ] {
+            let leases = [holding("p"), waiting("p", "l")];
+            assert_eq!(
+                decide(size, Some(have), &leases),
+                OnReady::Pending,
+                "{size}"
+            );
+        }
+        // Only a run's lease counts: another driver's, none, a size outside SIZES, another
+        // project's and a `ready` one do not hold the place `pending`.
+        let not_a_runs = [
+            lease("pending", "p", Some("x"), "l"),
+            lease("pending", "p", None, "l"),
+            lease("pending", "p", Some("ec2"), "xxl"),
+            lease("pending", "q", Some("ec2"), "l"),
+        ];
+        assert_eq!(decide("m", Some("m9g.xlarge"), &not_a_runs), OnReady::Ready);
+    }
+
+    #[test]
+    fn row_2_no_type_or_one_outside_the_map_is_pending_never_no_capacity() {
+        let leases = [holding("p")];
+        assert_eq!(decide("xl", None, &leases), OnReady::Pending);
+        assert_eq!(decide("m", None, &[]), OnReady::Pending);
+        assert_eq!(decide("xl", Some("m9g.8xlarge"), &leases), OnReady::Pending);
+        assert_eq!(decide("s", Some("M9G.large"), &leases), OnReady::Pending);
+    }
+
+    #[test]
+    fn row_3_exactly_is_ready_whatever_holds_the_host() {
+        for size in SIZES {
+            let have = instance_type_for(size);
+            assert_eq!(decide(size, have, &[]), OnReady::Ready, "{size}");
+            assert_eq!(
+                decide(size, have, &[holding("p")]),
+                OnReady::Ready,
+                "{size}"
+            );
+        }
+    }
+
+    #[test]
+    fn rows_4_and_5_a_live_ready_lease_places_on_a_larger_host_and_refuses_a_smaller_one() {
+        let leases = [holding("p")];
+        assert_eq!(decide("m", Some("m9g.2xlarge"), &leases), OnReady::Ready);
+        assert_eq!(decide("s", Some("m9g.4xlarge"), &leases), OnReady::Ready);
+        assert_eq!(decide("l", Some("m9g.xlarge"), &leases), OnReady::Refused);
+        assert_eq!(decide("xl", Some("m9g.large"), &leases), OnReady::Refused);
+    }
+
+    #[test]
+    fn row_6_with_nothing_holding_the_host_a_resize_either_way_is_pending() {
+        assert_eq!(decide("m", Some("m9g.4xlarge"), &[]), OnReady::Pending);
+        assert_eq!(decide("xl", Some("m9g.xlarge"), &[]), OnReady::Pending);
+        // None of these holds the host: expired, released, unsatisfiable, another project's
+        // `ready` lease, and a `pending` lease no run would place.
+        let mut expired = holding("p");
+        expired.expires_at = Some(format_time(NOW));
+        let mut released = lease("released", "p", Some("ec2"), "m");
+        released.released_at = Some(format_time(NOW - 60));
+        let nothing_holds = [
+            expired,
+            released,
+            lease("unsatisfiable", "p", Some("ec2"), "m"),
+            holding("q"),
+            lease("pending", "p", Some("ec2"), "xxl"),
+        ];
+        assert_eq!(
+            decide("xl", Some("m9g.xlarge"), &nothing_holds),
+            OnReady::Pending
+        );
+        assert_eq!(
+            decide("s", Some("m9g.xlarge"), &nothing_holds),
+            OnReady::Pending
+        );
+        // A `ready` lease one second before it expires still holds the host.
+        let mut last_second = holding("p");
+        last_second.expires_at = Some(format_time(NOW + 1));
+        assert_eq!(
+            decide("xl", Some("m9g.xlarge"), &[last_second]),
+            OnReady::Refused
+        );
+    }
+
+    /// Makes the CA in the fixture's throwaway home with the operator's own `ca`, run in process,
+    /// as the integration tests do: the context names the throwaway home and a made-up user and
+    /// computer, and nothing of the real profile.
+    fn make_ca(home: &Path) {
+        struct Quiet;
+        impl agentspace_operator_api::Say for Quiet {
+            fn mode(&self) -> agentspace_operator_api::Mode {
+                agentspace_operator_api::Mode::Person
+            }
+            fn progress(&self, _: &str, _: Option<agentspace_operator_api::CallerLine>) {}
+            fn warning(&self, _: &str) {}
+            fn detail(&self, _: &str) {}
+        }
+        let ctx = agentspace_operator_api::Context {
+            home: home.to_path_buf(),
+            local_app_data: None,
+            system_root: PathBuf::from(
+                std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()),
+            ),
+            nested: false,
+        };
+        let env = agentspace_ca::CaEnv {
+            user_name: Some("someone".to_string()),
+            computer_name: Some("EXAMPLEPC".to_string()),
+            ..agentspace_ca::CaEnv::default()
+        };
+        assert!(
+            agentspace_ca::ca(&ctx, &env, &Quiet).is_ok(),
+            "The throwaway CA could not be made"
+        );
+    }
+
+    fn fx_ca() -> Fx {
+        let f = fx();
+        make_ca(&f.ctx.home);
+        f
+    }
+
+    impl Fx {
+        fn leases(&self, records: &[Lease]) {
+            let file = agentspace_state::StateFile {
+                leases: records.to_vec(),
+            };
+            let bytes = agentspace_state::serialize(&file).unwrap();
+            fs::create_dir_all(&self.ctx.state_dir).unwrap();
+            fs::write(self.ctx.state_dir.join("leases.json"), bytes).unwrap();
+        }
+        fn place_size(&self, project: &str, size: &str) -> Result<Placed, Failure> {
+            let mut r = request(project);
+            r.size = size;
+            place(&self.ctx, &r, &self.detach)
+        }
+    }
+
+    /// A live lease, by the real clock, for a fixture's lease state file.
+    fn live(mut l: Lease) -> Lease {
+        l.created_at = ago(600);
+        if l.state == "ready" {
+            l.expires_at = Some(format_time(now() + 3600));
+        }
+        l
+    }
+
+    const OTHER_READY_XLARGE: &str = r#"{"project":"other","stack":"agentspace-host-other","state":"ready","instance_id":"i-1234567890abcdef0","instance_type":"m9g.xlarge"}"#;
+
+    #[test]
+    fn row_5_through_place_answers_d66s_message_and_writes_and_starts_nothing() {
+        let f = fx();
+        f.seed_with(OTHER_READY_XLARGE);
+        f.leases(&[live(holding("other"))]);
+        let before = f.registry();
+        let Placed::Unsatisfiable { reasons } = f.place_size("other", "l").unwrap() else {
+            panic!("Not unsatisfiable");
+        };
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].code, "no_capacity");
+        assert_eq!(
+            reasons[0].message,
+            "No capacity can be found for project 'other' at size 'l': its host is serving other leases at a smaller size. Release them, or ask for a size they fit."
+        );
+        assert_eq!(f.registry(), before);
+        assert!(f.starts().is_empty());
+        assert!(!f.ctx.home.join(".agentspace").join("leases").exists());
+        assert!(!hosts::host_dir(&f.ctx.home, "other").exists());
+    }
+
+    #[test]
+    fn a_lease_state_file_that_cannot_be_read_fails_a_ready_hosts_place_and_writes_nothing() {
+        let f = fx_ca();
+        f.seed_with(OTHER_READY_XLARGE);
+        f.write("leases.json", "{");
+        let before = f.registry();
+        let e = f.place_size("other", "m").unwrap_err();
+        assert_eq!(
+            e.message,
+            "The lease's host could not be looked up: agentspace's lease records could not be read. Nothing was recorded."
+        );
+        assert_eq!(f.registry(), before);
+        assert!(f.starts().is_empty());
+        assert!(!f.ctx.home.join(".agentspace").join("leases").exists());
+    }
+
+    #[test]
+    fn the_lease_state_file_is_read_only_for_a_ready_record() {
+        // A `creating` record is placed `pending` without reading it.
+        let f = fx_ca();
+        f.seed_with(r#"{"project":"other","stack":"agentspace-host-other","state":"creating"}"#);
+        f.write("leases.json", "{");
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+    }
+
+    /// Ruling on #0203 (pins P31 and P38): the decision reads `read_for_placing`, and the write
+    /// starts from a plain `read`, so the box's seed record goes to the disk with no type.
+    #[test]
+    fn a_create_of_a_listed_project_with_no_registry_writes_the_seed_box_record_with_no_type() {
+        let f = fx_ca();
+        f.list("other");
+        assert_eq!(f.registry(), None);
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        let bytes = String::from_utf8(f.registry().unwrap()).unwrap();
+        assert!(!bytes.contains("instance_type"), "{bytes}");
+        let all = hosts::read(&f.ctx.home).unwrap();
+        assert_eq!(all.hosts[0].stack, "agentbox");
+        assert_eq!(all.hosts[0].instance_type, None);
+        assert_eq!(all.hosts[1].project, "other");
+        assert_eq!(all.hosts[1].state, HostState::Creating);
+        assert_eq!(f.starts().len(), 1);
+    }
+
+    #[test]
+    fn row_1_through_place_is_pending_starts_a_due_run_and_keeps_ready_and_the_type() {
+        let f = fx_ca();
+        f.seed_with(OTHER_READY_XLARGE);
+        f.leases(&[live(waiting("other", "l"))]);
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        let host = f.host("other").unwrap();
+        assert_eq!(host.state, HostState::Ready);
+        assert_eq!(host.instance_type.as_deref(), Some("m9g.xlarge"));
+        assert_eq!(host.instance_id.as_deref(), Some("i-1234567890abcdef0"));
+        assert!(host.last_attempt_at.is_some());
+        let starts = f.starts();
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].args, ["provision", "-Host", "other"]);
+        // Within 5 minutes, no second run and no write.
+        let before = f.registry();
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.registry(), before);
+    }
+
+    #[test]
+    fn row_2_through_place_is_pending_even_while_a_lease_holds_the_host() {
+        let f = fx_ca();
+        f.seed_with(r#"{"project":"other","stack":"agentspace-host-other","state":"ready"}"#);
+        f.leases(&[live(holding("other"))]);
+        assert_eq!(f.place_size("other", "xl").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        let host = f.host("other").unwrap();
+        assert_eq!(host.state, HostState::Ready);
+        assert_eq!(host.instance_type, None);
+    }
+
+    #[test]
+    fn row_6_through_place_starts_a_resizing_run_only_when_one_is_due() {
+        let f = fx_ca();
+        f.seed_with(r#"{"project":"other","stack":"agentspace-host-other","state":"ready","instance_type":"m9g.4xlarge"}"#);
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(
+            f.host("other").unwrap().instance_type.as_deref(),
+            Some("m9g.4xlarge")
+        );
+
+        let f = fx_ca();
+        f.seed_with(&format!(
+            r#"{{"project":"other","stack":"agentspace-host-other","state":"ready","instance_type":"m9g.4xlarge","last_attempt_at":"{}"}}"#,
+            ago(10)
+        ));
+        let before = f.registry();
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        assert!(f.starts().is_empty());
+        assert_eq!(f.registry(), before);
+    }
+
+    #[test]
+    fn a_box_lease_with_no_registry_is_refused_by_the_implied_type_and_makes_no_registry_file() {
+        let f = fx();
+        f.leases(&[live(holding("swimcoach"))]);
+        let Placed::Unsatisfiable { reasons } = f.place_size("swimcoach", "xl").unwrap() else {
+            panic!("Not unsatisfiable");
+        };
+        assert_eq!(reasons[0].message, no_capacity_at_size("swimcoach", "xl"));
+        assert_eq!(f.registry(), None);
+        assert!(!hosts::hosts_lock_path(&f.ctx.home).exists());
+        assert!(f.starts().is_empty());
+    }
+
+    #[test]
+    fn a_box_lease_with_no_registry_held_pending_writes_the_seed_with_no_type() {
+        let f = fx_ca();
+        f.leases(&[live(waiting("swimcoach", "l"))]);
+        assert_eq!(f.place_size("swimcoach", "m").unwrap(), Placed::Pending);
+        let bytes = String::from_utf8(f.registry().unwrap()).unwrap();
+        assert!(!bytes.contains("instance_type"), "{bytes}");
+        let host = f.host("swimcoach").unwrap();
+        assert_eq!(host.state, HostState::Ready);
+        assert!(host.last_attempt_at.is_some());
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.starts()[0].args, ["provision", "-Host", "swimcoach"]);
     }
 }

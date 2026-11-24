@@ -193,17 +193,20 @@ pub struct PendingFailure {
     pub message: String,
 }
 
-/// Places every `pending` lease of `project` that this driver placed, under the lease state lock,
-/// and writes each `ready` (driver.md, place_pending). The provisioning run calls it as its last
-/// step and logs each lease it could not place (operator.md, provision). `Err` is a failure of the
-/// whole call, such as a lease state file that cannot be read; one lease's failure is in
-/// [`PendingPlaced::failed`] and stops no other.
+/// Places every `pending` lease of `project` that this driver placed and whose size the host's
+/// recorded `instance_type` meets, under the lease state lock, and writes each `ready`; then, from
+/// v0.09, answers each `pending` lease the host does not meet: `unsatisfiable`, with `no_capacity`,
+/// while a live `ready` lease of the project holds the host, and left `pending` for the next run
+/// while none does (driver.md, place_pending; D68; pin P1). The provisioning run calls it as its
+/// last step and logs each lease in [`PendingPlaced::unplaced`] (operator.md, provision). `Err` is
+/// a failure of the whole call, such as a lease state file that cannot be read; one lease's
+/// failure is in [`PendingPlaced::unplaced`] and stops no other.
 ///
-/// Each lease is placed under a hold of its own of the lease state lock. A host record that is not
-/// `ready`, or none, places nothing and answers no failure. The call fails as a whole only when the
-/// host record, the lease state lock or the lease state file cannot be had; what it placed before
-/// stays `ready`. A lease that cannot be placed stays `pending`, with every file this call made for
-/// it removed. It starts nothing.
+/// Each lease is placed or answered under a hold of its own of the lease state lock. A host record
+/// that is not `ready`, or none, places nothing and answers no failure. The call fails as a whole
+/// only when the host record, the lease state lock or the lease state file cannot be had; what it
+/// placed or answered before stays as it was written. A lease that cannot be placed stays
+/// `pending`, with every file this call made for it removed. It starts nothing.
 pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Failure> {
     pending::place_pending(ctx, project)
 }
