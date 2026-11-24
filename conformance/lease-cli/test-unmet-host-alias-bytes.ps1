@@ -67,12 +67,14 @@ function Write-PgFile {
 
 # One record of the host registry (state.md, "The host registry"), members in the order the table gives.
 function New-PgHostRecord {
-  param([Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$State, [string]$LastAttemptAt = '')
+  param([Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$State, [string]$LastAttemptAt = '', [switch]$NoInstanceType)
   $r = [ordered]@{
     project = $Project
     stack = $(if ($Project -ceq 'swimcoach') { 'agentbox' } else { "agentspace-host-$Project" })
     state = $State
   }
+  # A ready record carries instance_type m9g.xlarge, between instance_id and last_attempt_at, unless -NoInstanceType.
+  if ($State -ceq 'ready' -and -not $NoInstanceType) { $r['instance_type'] = 'm9g.xlarge' }
   if ($LastAttemptAt) { $r['last_attempt_at'] = $LastAttemptAt }
   return $r
 }

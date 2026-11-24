@@ -374,9 +374,12 @@ function Assert-ConformancePath {
 #   is not valid is never repaired: this throws.
 # - The write is checked at the call (Assert-ConformancePath). The path is %USERPROFILE%\.agentspace\
 #   hosts.json of the HOME, which AGENTSPACE_STATE_DIR does not move.
+# - Each record it adds carries `"instance_type": "m9g.xlarge"` (state.md, "The instance type"), as a v0.09
+#   deploy writes it, between instance_id and last_attempt_at; -NoInstanceType leaves it out, for a case
+#   about a record with no type. The box's record, and a record read back, are kept as they are.
 # Returns the names it added, as an array (empty when none).
 function Add-ConformanceReadyHost {
-  param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][string[]]$Project)
+  param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][string[]]$Project, [switch]$NoInstanceType)
   $dir = Join-Path $ConformanceHome.UserProfile '.agentspace'
   $path = Join-Path $dir 'hosts.json'
   $records = [System.Collections.Generic.List[object]]::new()
@@ -387,7 +390,7 @@ function Add-ConformanceReadyHost {
     # Each record is kept as it was read, its members written in the order of state.md's table.
     foreach ($r in $doc['hosts']) {
       $rec = [ordered]@{}
-      foreach ($m in 'project', 'stack', 'state', 'instance_id', 'last_attempt_at') { if ($r.ContainsKey($m)) { $rec[$m] = $r[$m] } }
+      foreach ($m in 'project', 'stack', 'state', 'instance_id', 'instance_type', 'last_attempt_at') { if ($r.ContainsKey($m)) { $rec[$m] = $r[$m] } }
       $records.Add($rec)
     }
   } else {
@@ -398,7 +401,9 @@ function Add-ConformanceReadyHost {
     $p = $name.Trim().ToLowerInvariant()
     if ($p -cnotmatch '\A[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?\z') { throw "Refusing to seed a host for a project that is not a normalized project name: '$p'." }
     if (@($records | Where-Object { $_['project'] -ceq $p }).Count -gt 0) { continue }
-    $records.Add([ordered]@{ project = $p; stack = "agentspace-host-$p"; state = 'ready' })
+    $rec = [ordered]@{ project = $p; stack = "agentspace-host-$p"; state = 'ready' }
+    if (-not $NoInstanceType) { $rec['instance_type'] = 'm9g.xlarge' }
+    $records.Add($rec)
     $added.Add($p)
   }
   if ($added.Count -eq 0) { return , @() }
