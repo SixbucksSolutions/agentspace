@@ -295,6 +295,11 @@ IDs and project names, because the mask had no rule for a UUID.
 - **A command's error text is masked like its output** (found in v0.07-T05, 2026-11-21). A read of
   a log that failed on a sharing lock printed its unmasked error, which named the profile path and
   so the Windows user name, into a dev lead's transcript.
+- **A command that lists installed tools' paths is masked like any other** (found in v0.10-T01,
+  2026-11-24). A schema writer printed `py -0p`, Python's install paths, which carry the Windows
+  profile path and so the user name, into its subagent transcript; nothing reached a file, sample,
+  doc or commit. `where`, `Get-Command` and a tool's `--version` that prints its location are the
+  same.
 - **A dev lead's brief names every slip of this kind from the release so far** (v0.07). T04 and
   T05 had four between them, a listing of the installed `bin`, a copy of the installed operator, a
   listing of `hosts\agentspace` and the unmasked error above; T06's brief named all four, and T06
