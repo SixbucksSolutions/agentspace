@@ -14,25 +14,27 @@ RFC 2119 keywords; the capitals are load-bearing.
   host's instance type, `m9g.large` to `m9g.4xlarge`, and a host is resized only while no ready
   lease holds it. The design is D64 to D70 and the layout D71, twelve stories in five turns, in
   [decisions.md](decisions.md).
-- **T01 is closed**: the specs and the conformance sweep, three PRs merged (#133, #134, #135).
-- **Next is T02, the foundations**: #0200, #0201 and #0202, started on Terry's word.
-- **`main` has 26 red tests on purpose**, each turned green by a named T02 story
-  ([What is open](#what-is-open)).
-- **Nothing is running**: no host started in T01, no dev lead is live, and the reporter reports the
-  `v0.09` milestone alone.
+- **T01 and T02 are closed**: the specs and the sweep (#133 to #135), then the foundations (#136 to
+  #138), which turned all 26 of T01's by-design red tests green.
+- **Next is T03, the programs**: #0203 and #0204, started on Terry's word.
+- **One new finding, #0209**: on `main` at 7f534f8 the lease CLI's isolation guard saw its moved
+  home created once under load, hidden since T01 behind the guard's by-design failure. It needs
+  Terry's placement ([What is open](#what-is-open)).
+- **Nothing is running**: no host started in T01 or T02, no dev lead is live, and the reporter
+  reports the `v0.09` milestone alone.
 
 ## Where things stand
 
-**As of 4:31pm Mountain, 2026-11-23.**
+**As of T02's close, 6:24pm Mountain, 2026-11-23.**
 
 | What | State |
 |---|---|
-| v0.09 (#0049) | In Progress. T01's three stories in Ready For Review; the other nine in Ready For Work |
-| `main` | 26 distinct tests red by design, listed below; everything else passed in the architect's reviews |
+| v0.09 (#0049) | In Progress. T01's and T02's six stories in Ready For Review; the other six in Ready For Work |
+| `main` | At 7f534f8, 4,981 passed and 1 failed: the isolation guard's #0209, which then passed alone twice. T01's 26 by-design red tests are all green |
 | The hosts | Both `stopped`. The box ran about two minutes on 2026-11-23 to fetch v0.06-T01's transcripts (D64), on Terry's yes (Q12) |
 | Instance hours | Q11's 4 for T05's live checks, none used |
-| Swimcoach | The `v0.09` milestone (12 stories, 14.5 hours). `v0.09-T01` was stopped at 4:31pm. The reporter runs |
-| Sessions | T01's dev lead archived, and every worktree and folder it left removed (`git worktree list` shows `main` alone) |
+| Swimcoach | The `v0.09` milestone (12 stories, 14.5 hours). `v0.09-T01` was stopped at 4:31pm and `v0.09-T02` at 6:24pm. The reporter runs |
+| Sessions | T01's and T02's dev leads archived, and every worktree they left removed (`git worktree list` shows `main` alone) |
 | Terry's laptop | Unchanged by v0.09 so far |
 
 ### v0.09 by turn
@@ -40,6 +42,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | Turn | Stories | Closed | PRs | Length used | What it left |
 |---|---|---|---|---|---|
 | T01, the specs and the sweep | #0197 to #0199 | 4:30pm, 2026-11-23 | #133 to #135 | 2:18 of 3 h (2:12pm to 4:30pm) | lease-api.md's four sizes and reasons; driver.md's map, placing by size and the resizing run; state.md's `instance_type` and its locks; operator.md's deploy and provision by size; the registry's schema and samples; conformance's unsupported size moved to `xxl` |
+| T02, the foundations | #0200 to #0202 | About 6:20pm, 2026-11-23 (milestone stopped 6:24pm) | #136 to #138 | About 1:34 of 2.5 h (4:46pm to about 6:20pm) | `agentspace-driver-ec2`'s `SIZES`, `instance_type_for`, `meets`, `resize_target` and reasons; `agentspace-hosts`' `instance_type`, `read_for_placing`, `set_instance_type` and `set_instance` (pin P38); the operator's `-InstanceType` for every host, and both programs' help texts |
 
 ## Terry's orders from v0.09
 
@@ -48,6 +51,7 @@ RFC 2119 keywords; the capitals are load-bearing.
 | Yes to Q11 to Q13: the four sizes at their prices, 4 instance hours for T05 at `l` or smaller, the transcript fetch, his per-agent rule kept through v0.09 | 2026-11-23 | decisions.md, Q11 to Q13; D65, D69, D70 |
 | "Lay out v0.09", with a staffing plan and the most subagents per turn reported to him | 2026-11-23 | D71; each story's card |
 | "Start T01", then "Start T02" | 2026-11-23 | This file |
+| #0137's last part folded into v0.10; #0138, #0027 and #0194 approved into Completed | 2026-11-23 | D72 |
 | The open defect and hardening cards placed before v1.0, folded into their epics and archived | 2026-11-23 | D72; roadmap.md |
 
 ## Rulings made during v0.09
@@ -82,13 +86,15 @@ in decisions.md; this table only finds them.
 | The architect printed a `%TEMP%` path holding the profile's short name; Python turned `\a` and `\v` in a path into control characters; a PowerShell `$b` overwrote `$B` | Scratch inside the checkout's `target\`; raw strings for paths; distinct variable names | handoff-v0.08.md's rules; every brief |
 | A dev lead gave a commit count and a minute count by hand; a sweeper's `sed` rewrote CRLF working copies | Counts from a command; check line endings after a scripted edit | Every brief |
 | keeper-win's `spec_stop` failed under load twice and passed alone | Rerun it alone before it is a finding | #0189 |
+| T02: two subagents shared a run file; a file was split into code and test lines; a ruling's test count was wrong; a `$` expanded in a commit message | Run-file prefixes; one owner per file; red lists from `--no-fail-fast`; `git commit -F` | architect.md, A turn that builds |
+| T02: a by-design red test hid a second, real failure of the same test through every review | Check each by-design red fails by its stated assertion | architect.md, A turn that builds; #0209 |
+| T02: the driver's create reads the registry once and writes from that value, so a swap to `read_for_placing` alone would write the implied type | Place from `read_for_placing`; start every write from a fresh `read` | Card #0203 |
 
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T02, the foundations: #0200, #0201, #0202 | Running since 4:46pm, 2026-11-23 | D71 |
+| T03, the programs: #0203 and #0204 | Terry's "Start T03", then the architect | D71; the rulings on #0203's and #0204's cards (P3, P29, P38, and the read and write split) |
+| #0209: the isolation guard saw its moved home created once under load; cause unknown | Terry places it; the architect recommends a diagnosis story in T03, since T03's code is what the guard protects | #0209 |
 | #0027 (OBE by v0.06) and #0194 (met by the architect's state.md fix), in Backlog | Terry moves each out; Bot cannot | D72 |
-| 26 red tests on `main`: `agentspace-hosts`' `the_embedded_samples_cover_every_hosts_state_file` (#0200); 19 operator help tests, the extractor test among them (#0202, pin P25); 6 lease CLI tests, `tests/help.rs`' five and `isolation_guard`'s (#0202) | T02's stories | Cards #0200, #0202 |
-| #0202 also owns the conformance help copies and the operator's check 6 code and tests | T02 | Card #0202 |
-| T02's brief carries the pinned bytes (P24, P25, P28, P35, P36, P37 and the two reason messages), the Z1 to Z16 and operator.md v0.09 rows that name each behavior's story, and T01's slips | The architect | This file |
+| `agentspace-sync`'s own check-6 refusal and `tests/host_deploy_sized.rs` | #0204 in T03 | Card #0204; T02's ruling 3 |

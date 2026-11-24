@@ -184,6 +184,28 @@ names.**
   checks every anchor resolves on `main` before each such merge, and every link between the specs
   once all are in (1,954 in T01).
 
+## A turn that builds
+
+**Learned in v0.09-T02, where three stories built libraries in parallel and turned `main`'s 26
+deliberately red tests green.** A dev lead's brief carries these.
+- **Each file has one owner.** A file MUST NOT be split between subagents by its code lines and
+  its test lines; the owner writes both.
+- **Every subagent that shares a worktree prefixes its own run files** (`target\runs\<role>-...`).
+  Two subagents wrote the same `target\runs\start.txt` in T02.
+- **The red tests a turn must turn green are listed by name, from a `--no-fail-fast` run**, never
+  from a count in a ruling: T01's ruling said ten operator help tests in one file, and there were
+  fourteen.
+- **A mutation run counts every crate that reads the mutated file.** Two schema mutations a crate's
+  own tests let through were killed by `agentspace-state`'s schema tests.
+- **A test on a turn's by-design red list MUST be checked to fail for its stated reason, by its
+  failing assertion, in every review**, never by its name alone (v0.09-T02). `isolation_guard` was
+  on the list because its child's help tests failed; a second failure of the same test, a home it
+  found created, sat behind that one through every T02 review and showed only once the help tests
+  were green (#0209).
+- **One workspace run per story's reviewer** kept three parallel stories inside the laptop's limit
+  of three heavy runs, and **a reviewer MAY commit small fixes itself**, which saved a round trip
+  in every story.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
@@ -233,6 +255,11 @@ reads before it prints it").
    until it named the right folder, where it passed 20 of 20.
 5. **After a rebase,** check the new head with `git range-diff` and a diff of the story's own files
    against the head reviewed.
+   - **A PR based before another merge that touched its files is tested merged onto `main`'s tip**,
+     in the review worktree (`git merge --no-edit origin/main`, never pushed), since that is what
+     the squash merge makes (v0.09-T02: #138 and #136 both edited `driver-ec2`'s `host.rs`).
+     `scripts/run-conformance-files.ps1`'s `-Checkout` and `-Out` take absolute paths: a relative
+     `-Out` is read against the checkout and doubles.
 6. **The identifier scan** over the diff, every commit message and the PR body, with each pattern
    first shown to match a planted value: an instance ID, a run of 12 digits with UUIDs masked, the
    private network's addresses and host names, `vpc-`, `subnet-`, `vol-`, `sg-`, `arn:aws`, a token

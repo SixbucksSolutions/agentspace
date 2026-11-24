@@ -96,8 +96,11 @@ when Terry says so (D14).
 - **The open defects and hardening are folded into the epics that carry them, and their cards
   archived** (Terry, 2026-11-23; D72): #0189, #0191, #0196, #0137's last part and #0195's decision into v0.10 (#0050);
   #0192, #0193, and #0195's build if it is code, into v0.12 (#0051); #0190, #0082 and #0109 into
-  v1.0's first turn (#0053), before the real project measures its own turn. #0027 is OBE by v0.06,
-  and #0194 is met; both wait for Terry's move out of Backlog.
+  v1.0's first turn (#0053), before the real project measures its own turn. #0027 (OBE by v0.06)
+  and #0194 (met) are Completed.
+- #0209 (the lease CLI's isolation guard saw its moved home created once under load, found at
+  v0.09-T02's close) waits for Terry's placement; the architect recommends a diagnosis story in
+  v0.09-T03.
 - #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite
   lacks, among them #0029 point 2 and #0083 point 1) rides with v0.06 (#0055), which leans on the
   same harness.
