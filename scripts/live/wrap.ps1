@@ -8,7 +8,8 @@
 #   pwsh -NoProfile -File scripts\live\wrap.ps1 -Out <folder> -Name <nnn-what> -Script <file.ps1>
 #
 # It runs one command in a child pwsh with its streams to files under the numbered prefix, in this
-# order:
+# order. A name that already has any of these files is refused; a run picks the next number, and a
+# letter suffix (221a, 221b) or a counter (401-status-0001) keeps a group's names apart:
 #   <Name>.start   First: the start time, ISO 8601 UTC and the laptop's local time.
 #   <Name>.cmd.ps1 The command as run (-Command only). It MAY hold a lease ID, so it stays raw.
 #   <Name>.out     The command's stdout, raw.
@@ -42,7 +43,7 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $base = Join-Path (Resolve-Path -LiteralPath $Out).Path $Name
 foreach ($suffix in '.start', '.out', '.err', '.masked.txt', '.exit') {
   if (Test-Path -LiteralPath ($base + $suffix)) {
-    throw "Wrapper $Name already has a $suffix file; pick the next number."
+    throw "Wrapper $Name already has a $suffix file; pick another name."
   }
 }
 
