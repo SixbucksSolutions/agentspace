@@ -46,8 +46,8 @@
       "required": ["turns"],
       "properties": {
         "name": {
-          "description": "The plan's name, printed as sized_for.plan. Absent means the plan has none.",
-          "$ref": "#/$defs/plan_name"
+          "description": "The plan's name, printed as sized_for.plan. Null or absent means the plan has none.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/plan_name" }]
         },
         "turns": {
           "description": "The plan's turns in order, 1 to 32.",
@@ -97,11 +97,11 @@
       "required": ["name", "model", "effort"],
       "properties": {
         "name": { "$ref": "#/$defs/plan_name" },
-        "model": { "$ref": "#/$defs/plan_model_or_effort" },
-        "effort": { "$ref": "#/$defs/plan_model_or_effort" },
+        "model": { "$ref": "#/$defs/plan_model" },
+        "effort": { "$ref": "#/$defs/plan_effort" },
         "after": {
-          "description": "The names of the same story's subagents this one starts after, each once, at most 31. Absent or empty means it starts after none.",
-          "type": "array",
+          "description": "The names of the same story's subagents this one starts after, each once, at most 31. Null, absent or empty means it starts after none.",
+          "type": ["array", "null"],
           "maxItems": 31,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/plan_name" }
@@ -113,8 +113,13 @@
       "type": "string",
       "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
     },
-    "plan_model_or_effort": {
-      "description": "A model or an effort, as given: 1 to 32 ASCII letters, digits, '.', '_' and '-', starting with a letter or digit. Never a list of names, so a new model or effort needs no new version.",
+    "plan_model": {
+      "description": "A model, as given, such as Opus or Opus 5.5: 1 to 64 printable ASCII characters, not starting or ending with a space, as a name in a plan is. Never trimmed or case-folded, and never a list of names, so a new model needs no new version.",
+      "type": "string",
+      "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
+    },
+    "plan_effort": {
+      "description": "An effort, as given: 1 to 32 ASCII letters, digits, '.', '_' and '-', starting with a letter or digit. Never a list of names, so a new effort needs no new version.",
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$(?!\\n)"
     },

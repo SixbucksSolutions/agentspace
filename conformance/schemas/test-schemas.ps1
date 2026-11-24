@@ -8,6 +8,9 @@
 #   so the check is proven able to fail. Every output schema MUST have at least one.
 # - The list schema's $defs MUST be identical to the lease schema's, since Test-Json -SchemaFile
 #   does not resolve a $ref to another file and each schema carries its own copy.
+# - Every one of the plan schema's $defs MUST appear word for word, compared parsed, in the create
+#   request schema's $defs, for the same reason. Contract v0 has no plan schema, so this check runs on
+#   schemas/ only.
 # - The TTL grammar MUST accept and refuse the spellings that docs/lease-api.md lists.
 # - A sample lease's host alias MUST be agentspace-<project>-<first 8 hex digits of its ID>.
 # - Contract v1 keeps v0's schemas and samples unchanged under schemas/v0/ (D76). Every check above
@@ -117,6 +120,28 @@ function Test-SchemaTree([string]$Dir, [string]$Version, [string]$Tag) {
     Write-Result (($leaseDefs | ConvertTo-Json -Depth 50 -Compress) -ceq ($listDefs | ConvertTo-Json -Depth 50 -Compress)) $defsName 'The two $defs differ.'
   } else {
     Write-Result $false $defsName 'One of the two schemas is missing.'
+  }
+
+  # The create request carries a copy of the plan schema's $defs; no def of the plan's MAY drift from its copy.
+  if (-not $Tag) {
+    $planFile = Join-Path $Dir 'plan.input.schema.json'
+    $createFile = Join-Path $Dir 'lease-create.input.schema.json'
+    $planDefsName = "lease-api.md#schemas: lease-create.input.schema.json `$defs hold plan.input.schema.json `$defs word for word"
+    if ((Test-Path -LiteralPath $planFile) -and (Test-Path -LiteralPath $createFile)) {
+      $planDefs = (Get-Content -Raw -LiteralPath $planFile | ConvertFrom-Json -AsHashtable)['$defs']
+      $createDefs = (Get-Content -Raw -LiteralPath $createFile | ConvertFrom-Json -AsHashtable)['$defs']
+      $drifted = @(if ($planDefs) {
+        foreach ($k in $planDefs.Keys) {
+          $copy = if ($createDefs -and $createDefs.ContainsKey($k)) { $createDefs[$k] | ConvertTo-Json -Depth 50 -Compress } else { $null }
+          if ($copy -cne ($planDefs[$k] | ConvertTo-Json -Depth 50 -Compress)) { $k }
+        }
+      })
+      $hasDefs = $null -ne $planDefs -and $planDefs.Count -ge 1
+      $why = if (-not $hasDefs) { 'plan.input.schema.json has no $defs.' } else { "These differ or are missing: $($drifted -join ', ')." }
+      Write-Result ($hasDefs -and $drifted.Count -eq 0) $planDefsName $why
+    } else {
+      Write-Result $false $planDefsName 'One of the two schemas is missing.'
+    }
   }
 
   # The TTL grammar, from docs/lease-api.md "TTL". Range (1 minute to 24 hours) is not a schema matter.

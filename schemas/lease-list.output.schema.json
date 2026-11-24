@@ -159,9 +159,9 @@
         "plan": { "$ref": "#/$defs/plan_name" },
         "turn": { "$ref": "#/$defs/plan_name" },
         "agents": {
-          "description": "The busiest turn's agents at once: the sum of its stories' peaks, plus 1 for its dev lead. At most 1025, the most a plan's bounds allow: 32 stories of 32 subagents each, and the dev lead.",
+          "description": "The busiest turn's agents at once: the sum of its stories' peaks, plus 1 for its dev lead. At least 2, a story of one subagent and the dev lead, and at most 1025, the most a plan's bounds allow: 32 stories of 32 subagents each, and the dev lead.",
           "type": "integer",
-          "minimum": 1,
+          "minimum": 2,
           "maximum": 1025
         }
       }

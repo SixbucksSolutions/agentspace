@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/plan.input.schema.json",
   "title": "Plan (input, contract v1)",
-  "description": "A plan: the turns of a piece of work in order, each turn's stories, and each story's subagents, from which agentspace lease create picks a lease's size. On the command line, --plan names a UTF-8 JSON file that holds this document; a create request's plan member holds it as an object, and lease-create.input.schema.json copies these $defs. Unknown members are refused everywhere, and so is null as any member's value: an optional member that is not given is left out. Names are compared exactly, never trimmed or case-folded; model and effort are recorded as given and read by no sizing. Anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET and Python. What this schema cannot check, and the program checks (docs/lease-api.md, Values, Plan): a cycle in after, a subagent after itself included; an after entry that names no subagent of the same story; two turns of one name, two stories of one turn of one name, or two subagents of one story of one name; two members of one name in one object; a file larger than 262144 bytes, a byte order mark counted; a byte order mark anywhere but the file's start; and bytes that are not UTF-8.",
+  "description": "A plan: the turns of a piece of work in order, each turn's stories, and each story's subagents, from which agentspace lease create picks a lease's size. On the command line, --plan names a UTF-8 JSON file that holds this document; a create request's plan member holds it as an object, and lease-create.input.schema.json copies these $defs. Unknown members are refused everywhere. As in every input schema, null for an optional member (the plan's name, a subagent's after) means it is not given, and null for a required member is refused. Names are compared exactly, never trimmed or case-folded; model and effort are recorded as given and read by no sizing. Anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET and Python. What this schema cannot check, and the program checks (docs/lease-api.md, Values, Plan): a cycle in after, a subagent after itself included; an after entry that names no subagent of the same story; two turns of one name, two stories of one turn of one name, or two subagents of one story of one name; two members of one name in one object; a file larger than 262144 bytes, a byte order mark counted; a byte order mark anywhere but the file's start; and bytes that are not UTF-8.",
   "$ref": "#/$defs/plan",
   "$defs": {
     "plan": {
@@ -12,8 +12,8 @@
       "required": ["turns"],
       "properties": {
         "name": {
-          "description": "The plan's name, printed as sized_for.plan. Absent means the plan has none.",
-          "$ref": "#/$defs/plan_name"
+          "description": "The plan's name, printed as sized_for.plan. Null or absent means the plan has none.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/plan_name" }]
         },
         "turns": {
           "description": "The plan's turns in order, 1 to 32.",
@@ -63,11 +63,11 @@
       "required": ["name", "model", "effort"],
       "properties": {
         "name": { "$ref": "#/$defs/plan_name" },
-        "model": { "$ref": "#/$defs/plan_model_or_effort" },
-        "effort": { "$ref": "#/$defs/plan_model_or_effort" },
+        "model": { "$ref": "#/$defs/plan_model" },
+        "effort": { "$ref": "#/$defs/plan_effort" },
         "after": {
-          "description": "The names of the same story's subagents this one starts after, each once, at most 31. Absent or empty means it starts after none.",
-          "type": "array",
+          "description": "The names of the same story's subagents this one starts after, each once, at most 31. Null, absent or empty means it starts after none.",
+          "type": ["array", "null"],
           "maxItems": 31,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/plan_name" }
@@ -79,8 +79,13 @@
       "type": "string",
       "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
     },
-    "plan_model_or_effort": {
-      "description": "A model or an effort, as given: 1 to 32 ASCII letters, digits, '.', '_' and '-', starting with a letter or digit. Never a list of names, so a new model or effort needs no new version.",
+    "plan_model": {
+      "description": "A model, as given, such as Opus or Opus 5.5: 1 to 64 printable ASCII characters, not starting or ending with a space, as a name in a plan is. Never trimmed or case-folded, and never a list of names, so a new model needs no new version.",
+      "type": "string",
+      "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
+    },
+    "plan_effort": {
+      "description": "An effort, as given: 1 to 32 ASCII letters, digits, '.', '_' and '-', starting with a letter or digit. Never a list of names, so a new effort needs no new version.",
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$(?!\\n)"
     }

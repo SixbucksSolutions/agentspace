@@ -1,1 +1,1 @@
-{"code":"invalid_value","message":"Plan 'plans/t03.json' is not a valid plan: the file is not JSON.","field":"--plan"}
+{"code":"invalid_value","message":"Plan 'plans/t03.json' is not a valid plan: the file is not valid JSON.","field":"--plan"}

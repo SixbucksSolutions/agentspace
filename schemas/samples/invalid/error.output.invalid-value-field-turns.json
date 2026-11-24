@@ -1,1 +1,1 @@
-{"code":"invalid_value","message":"Plan 'plans/t03.json' is not a valid plan: it has no turns.","field":"turns"}
+{"code":"invalid_value","message":"Plan 'plans/t03.json' is not a valid plan: the document does not match the plan schema.","field":"turns"}

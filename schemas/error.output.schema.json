@@ -17,7 +17,7 @@
       "pattern": "^[^\\u0000-\\u0020\\u007f][^\\u0000-\\u001f\\u007f]*$(?!\\n)"
     },
     "field": {
-      "description": "The flag or request member at fault, without dashes. plan is the --plan flag or the request's plan member: invalid_value names it for a plan that is not valid, and usage for --plan given with --size, as for any other flag a usage error names.",
+      "description": "The flag or request member at fault, without dashes. plan is the --plan flag or the request's plan member: invalid_value names it for a plan that is not valid, and usage for --plan given with --size, as for any other flag a usage error names. No other code names plan.",
       "type": "string",
       "enum": ["id", "project", "platform", "profile", "size", "ttl", "state", "plan"]
     },
@@ -45,6 +45,10 @@
     {
       "if": { "required": ["code"], "properties": { "code": { "enum": ["invalid_value", "out_of_range"] } } },
       "then": { "required": ["field"], "properties": { "lease_id": false, "state": false } }
+    },
+    {
+      "if": { "required": ["code"], "properties": { "code": { "const": "out_of_range" } } },
+      "then": { "properties": { "field": { "not": { "const": "plan" } } } }
     },
     {
       "if": { "required": ["code"], "properties": { "code": { "const": "not_found" } } },
