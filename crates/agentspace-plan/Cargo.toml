@@ -1,0 +1,18 @@
+[package]
+name = "agentspace-plan"
+version = "0.10.0"
+edition.workspace = true
+publish = false
+
+# Portable: no Windows code and no file access (D81). The plan document is checked here, its peak
+# counted and its size picked; the lease CLI reads the file and frames the messages.
+[dependencies]
+# preserve_order keeps the document's members in the order the plan writes them, for the record
+# (Plan::document). The version agentspace-state already uses.
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+# Only the Visitor and DeserializeSeed traits, for the repeated-member check; the version already in
+# Cargo.lock.
+serde = { version = "=1.0.229", default-features = false }
+# No default features: resolve-http and resolve-file stay off, so the validator never fetches a
+# reference (D38). The version agentspace-state already uses.
+jsonschema = { version = "=0.60.2", default-features = false }
