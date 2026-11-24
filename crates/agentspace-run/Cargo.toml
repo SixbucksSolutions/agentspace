@@ -13,5 +13,9 @@ path = "src/lib.rs"
 agentspace-operator-api = { path = "../agentspace-operator-api" }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 
+# Only src/win.rs uses this: every start runs with the thread's error mode quiet (#0191).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_System_Diagnostics_Debug"] }
+
 [dev-dependencies]
 tempfile = { version = "=3.23.0", default-features = false }

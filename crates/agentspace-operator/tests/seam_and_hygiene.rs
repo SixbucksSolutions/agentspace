@@ -91,6 +91,34 @@ fn an_aws_variable_that_names_nothing_runnable_fails_the_command_and_never_falls
     }
 }
 
+/// #0191: the operator, started with error mode 0 so that no error mode this test process
+/// inherited can help it, answers an AWS variable naming a file Windows takes for a 16-bit program
+/// at once. Without its own guard, the operator's start of that file puts a modal "Unsupported
+/// 16-Bit Application" dialog on the desktop and waits for OK, and the rig stops it at the bound.
+#[test]
+fn an_aws_variable_naming_a_file_that_is_no_program_fails_at_once_with_no_dialog() {
+    let bound = std::time::Duration::from_secs(10);
+    let rig = cached_rig();
+    let value = rig.work.join("not-a-program.exe");
+    std::fs::write(&value, "this is not an executable").unwrap();
+    let out = rig
+        .op(&["status"])
+        .env("AGENTSPACE_AWS_CMD", &value)
+        .default_error_mode()
+        .timeout(bound)
+        .run();
+    assert!(out.elapsed < bound, "The operator took {:?}", out.elapsed);
+    assert_fails_with(
+        &out,
+        &format!(
+            "agentspace: AGENTSPACE_AWS_CMD names {}, which cannot be run.",
+            value.display()
+        ),
+        "status",
+    );
+    assert!(rig.calls().is_empty(), "No stand-in runs in its place");
+}
+
 #[test]
 fn the_ssh_variable_naming_nothing_runnable_fails_grow_and_warns_in_up() {
     let rig = cached_rig();
