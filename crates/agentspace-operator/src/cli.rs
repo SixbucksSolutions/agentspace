@@ -4,9 +4,7 @@
 //!
 //! [`parse`] checks, in this order, and the first failure ends the command: help; the arguments
 //! read from left to right, the first usage error found among them reported (a missing command is
-//! found only once the whole line is read); then the two `-Alias` checks; then the six host checks.
-
-use agentspace_hosts::BOX_PROJECT;
+//! found only once the whole line is read); then the two `-Alias` checks; then the five host checks.
 
 use crate::help_text;
 
@@ -106,7 +104,7 @@ pub struct Request {
     pub host: Option<String>,
     /// `-All`: every host in the host registry.
     pub all: bool,
-    /// `-InstanceType`. Only `deploy -Host` of a host that is not the box takes it.
+    /// `-InstanceType`. Only `deploy` takes it, for every host, the box included.
     pub instance_type: Option<String>,
     pub quiet: bool,
 }
@@ -135,7 +133,6 @@ const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alo
 const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
 const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
 const INSTANCE_TYPE_APPLIES: &str = "agentspace: -InstanceType applies to deploy alone.";
-const INSTANCE_TYPE_NEEDS_HOST: &str = "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.";
 const ALIAS_INVALID: &str = "agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'.";
 
 /// Which parameter an argument names, matched without regard to case.
@@ -391,7 +388,7 @@ pub fn parse(args: &[String]) -> Parsed {
         return Parsed::Failure(ALIAS_INVALID.to_string());
     }
 
-    // The six host checks, in their order (D49, D55).
+    // The five host checks, in their order (D49, D55; v0.09 deleted the sixth, D67, D71).
     if host.is_some() && matches!(command, Command::Ca | Command::Guard) {
         return Parsed::Failure(format!(
             "agentspace: -Host does not apply to {}.",
@@ -409,9 +406,6 @@ pub fn parse(args: &[String]) -> Parsed {
     }
     if instance_type.is_some() && command != Command::Deploy {
         return Parsed::Failure(INSTANCE_TYPE_APPLIES.to_string());
-    }
-    if instance_type.is_some() && host.as_deref().is_none_or(|h| h == BOX_PROJECT) {
-        return Parsed::Failure(INSTANCE_TYPE_NEEDS_HOST.to_string());
     }
 
     // Then `grow`'s `-GiB` check (D61, #0164; operator.md, Command line): a value of 0 or less is a
@@ -807,17 +801,54 @@ mod tests {
             fails(&["provision", "-InstanceType", "m9g.xlarge"]),
             "agentspace: provision needs -Host <project>."
         );
-        let needs = "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.";
-        assert_eq!(fails(&["deploy", "-InstanceType", "m9g.xlarge"]), needs);
+    }
+
+    /// v0.09 deleted the sixth host check (D67, D71): `deploy -InstanceType` is read for every
+    /// host, the box included, with `-Host swimcoach` or with no `-Host`.
+    #[test]
+    fn deploy_instance_type_is_accepted_for_every_host_the_box_included() {
+        let r = run(&["deploy", "-InstanceType", "m9g.xlarge"]);
+        assert_eq!(r.instance_type.as_deref(), Some("m9g.xlarge"));
+        assert_eq!(r.host, None);
+        let r = run(&[
+            "deploy",
+            "-Host",
+            "SwimCoach",
+            "-InstanceType",
+            "m9g.xlarge",
+        ]);
+        assert_eq!(r.instance_type.as_deref(), Some("m9g.xlarge"));
+        assert_eq!(r.host.as_deref(), Some("swimcoach"));
+        let r = run(&["deploy", "-Host", "p", "-InstanceType", "m9g.xlarge"]);
+        assert_eq!(r.instance_type.as_deref(), Some("m9g.xlarge"));
+        assert_eq!(run(&["deploy"]).instance_type, None);
+        // The `-Alias` checks and host check 2 still refuse a `deploy` line that holds
+        // `-InstanceType`, in their order.
+        assert_eq!(
+            fails(&[
+                "deploy",
+                "-Quiet",
+                "-Alias",
+                "x",
+                "-InstanceType",
+                "m9g.xlarge"
+            ]),
+            ALIAS_APPLIES
+        );
+        assert_eq!(
+            fails(&["deploy", "-All", "-InstanceType", "m9g.xlarge"]),
+            ALL_APPLIES
+        );
         assert_eq!(
             fails(&[
                 "deploy",
                 "-Host",
-                "SwimCoach",
+                "y",
+                "-All",
                 "-InstanceType",
                 "m9g.xlarge"
             ]),
-            needs
+            ALL_APPLIES
         );
     }
 

@@ -162,7 +162,7 @@ fn quiet_does_not_hide_the_refusal() {
 #[test]
 fn the_refusal_comes_after_every_other_check_and_before_the_home() {
     // operator.md, Command line: help, then the arguments, then the two `-Alias` checks, then the
-    // six host checks, then `grow`'s `-GiB` check.
+    // five host checks, then `grow`'s `-GiB` check.
     let rig = rig_with_a_box();
     let cases: [(&[&str], &str); 8] = [
         (&["grow", "-Alias", "x", "-GiB", "0"], cli::ALIAS_APPLIES),

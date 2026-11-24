@@ -124,7 +124,7 @@ fn guard_given_all_fails_with_the_all_message() {
 
 #[test]
 fn guard_given_alias_fails_before_every_host_check() {
-    // The two `-Alias` checks run before the six host checks.
+    // The two `-Alias` checks run before the five host checks.
     assert_line_fails("guard -Alias x", ALIAS_APPLIES);
     assert_line_fails("guard -Alias bad!", ALIAS_APPLIES);
     assert_failure(&["guard", "-Alias", ""], ALIAS_APPLIES);

@@ -34,7 +34,7 @@ Parameters:
   -Alias <alias>   For up: the SSH host alias the token push uses
                    (default: the host's own)
   -InstanceType <type>
-                   For deploy -Host: the instance type to give that host
+                   For deploy: the instance type to give the host
   -Quiet           Print no progress or warnings; failures and status
                    still print
   -h, --help       Print this help, or a command's, and exit
@@ -51,17 +51,18 @@ Exit codes:
 pub(crate) const DEPLOY: &str = r##"Usage: agentspace-operator deploy [-Host <project>] [-InstanceType <type>] [-Quiet]
 
 Creates or updates a host's CloudFormation stack in us-west-2 from its
-template, then runs sync. Without -Host it deploys the box's stack,
-'agentbox', with the parameters in ~/.agentspace/stack-parameters.json and
-your ~/.ssh/id_ed25519.pub. With -Host <project> it deploys that project's
-host's stack: when there is none, it creates it with the SubnetId and VpcId
-in that file, your public key and the SSH CA's public key; when there is
-one, it keeps every parameter as it was.
+template, records the host's instance type in ~/.agentspace/hosts.json, then
+runs sync. Without -Host it deploys the box's stack, 'agentbox', with the
+parameters in ~/.agentspace/stack-parameters.json, whose InstanceType is
+ignored, and your ~/.ssh/id_ed25519.pub. With -Host <project> it deploys that
+project's host's stack: when there is none, it creates it with the SubnetId
+and VpcId in that file, your public key and the SSH CA's public key; when
+there is one, it keeps every parameter but -InstanceType's as it was.
 
   -Host <project>       The project whose host to deploy (default: the box).
-  -InstanceType <type>  With -Host, for a host that is not the box: the
-                        instance type to give it, such as m9g.2xlarge. The
-                        box is sized through stack-parameters.json.
+  -InstanceType <type>  The instance type to give the host, the box included,
+                        such as m9g.2xlarge. Without it, a host keeps its
+                        type, and a new host gets m9g.xlarge.
 
 Never change the template's ImageId on a live stack: it replaces the instance
 and its disk.
@@ -117,9 +118,11 @@ pub(crate) const PROVISION: &str = r##"Usage: agentspace-operator provision -Hos
 
 Makes a project's host, or makes it again: deploys its stack, starts it and
 waits, runs sync and bootstrap, records it ready in ~/.agentspace/hosts.json,
-and places the project's pending leases. A project with no host is made only
-if it is listed in ~/.agentspace/projects.json. One run per host at a time;
-each run logs to ~/.agentspace/hosts/<project>/provision.log.
+and places the project's pending leases. Its deploy gives the host the
+instance type the largest of those leases needs, unless a ready lease holds
+the host. A project with no host is made only if it is listed in
+~/.agentspace/projects.json. One run per host at a time; each run logs to
+~/.agentspace/hosts/<project>/provision.log.
 
 Lease commands start a run on their own when a lease needs a host; you can
 also run it yourself.
