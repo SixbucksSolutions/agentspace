@@ -64,8 +64,9 @@ of the change.
 
 ## Changes from v0
 
-**Contract v1 adds to contract v0, and changes nothing a caller sees while it makes no lease with
-`--plan` and reads none** (D76). It comes with agentspace's v0.10 release (#0050). The contract's
+**Contract v1 adds to contract v0, and changes no document or error a caller sees while it makes no
+lease with `--plan` and reads none** (D76). `create`'s help text changes too, which is text, not a
+document ([Versioning](#versioning)). It comes with agentspace's v0.10 release (#0050). The contract's
 version and agentspace's release are two numbers, kept apart (D26). Why each change makes a new
 version, and what v1 keeps of v0, are in [Versioning](#versioning).
 
@@ -74,6 +75,7 @@ version, and what v1 keeps of v0, are in [Versioning](#versioning).
 | `create --plan <file>`: the lease gets the smallest size that holds the plan's busiest turn (D74, D75) | [`create`](#agentspace-lease-create), [Plan](#plan) | No: an input v0 refused |
 | The plan document, and its schema, `plan.input.schema.json` (D74, D76) | [Plan](#plan), [Schemas](#schemas) | No: a new input |
 | `plan`, a new member of the `create` request document, holding the plan document itself (D76; architect, 2026-11-24, for v0.10-T01, pins P8 and P19) | [`create`](#agentspace-lease-create) | No: an input v0 refused |
+| `create`'s help: its usage line, the `--plan` row, and its last two lines (D75, D76) | [`create`](#agentspace-lease-create) | No: help is text, not a document |
 | `sized_for`, a new member of every lease made with `--plan`, in every state (D75) | [Fields](#fields) | Yes |
 | `plan_too_large`, a new reason code, for a plan that no size holds. It is always the lease's only reason, and the lease's `size` is `xl` (D75, D81) | [Fields](#fields), [`create`](#agentspace-lease-create) | Yes |
 | `plan`, a new `field` of `invalid_value` and of `usage`, and a sixth case in which `usage` carries `field`: `--plan` with `--size` (D75, D81; architect, 2026-11-24, for v0.10-T01, pins P6 and P13) | [Exit codes and errors](#exit-codes-and-errors) | Yes |
@@ -911,7 +913,7 @@ the one of the table below that the first check the plan fails gives, word for w
 | 3. UTF-8 | The file is not valid UTF-8 | `the file is not valid UTF-8` |
 | 4. JSON | The file, its leading byte order mark set aside, is not one JSON document: it is empty or only whitespace, has text after the document, holds U+FEFF outside a string, holds a string with an unpaired surrogate, or nests deeper than the parser allows | `the file is not valid JSON` |
 | 5. Members | An object gives one member's name twice | `an object has two members named '<member>'` |
-| 6. Schema | The document is not of the shape above: a value of the wrong type, the document included; a required member missing or `null`; a member that is not in the shape; an empty or too long `turns`, `stories`, `subagents` or `after`; an `after` that names one subagent twice; or a name, model or effort not of its form | `the document does not match the plan schema` |
+| 6. Schema | The document is not of the shape above: a value of the wrong type, the document included; a required member missing or `null`; a member that is not in the shape; an empty or too long `turns`, `stories` or `subagents`, or an `after` of more than 31 names; an `after` that names one subagent twice; or a name, model or effort not of its form | `the document does not match the plan schema` |
 | 7. Turns | Two turns have one name | `turn '<turn>' is named twice` |
 | 8. Stories | Two stories of one turn have one name | `story '<story>' is named twice in turn '<turn>'` |
 | 9. Subagents | Two subagents of one story have one name | `subagent '<name>' is named twice in story '<story>'` |
@@ -1256,8 +1258,13 @@ agents at once are more than the largest size holds, which is 32 at today's foot
 - **What `create` still does for it** (architect, 2026-11-24, for v0.10-T01, pin P26): it still
   needs a driver, so with none it fails with `internal` first, as every `create` does
   ([Messages](#messages), "No driver"), and it still records the lease, so a failure to read,
-  lock or write the lease records is `internal` as for any `create`. It does nothing a driver's
-  placing does: it needs no CA, and makes no key, credential or alias, and no compute is made,
+  lock or write the lease records is `internal` as for any `create`. **It makes every check that
+  `create` makes before a driver is asked to place a lease, in the same order and with the same
+  errors**, among them "`AGENTSPACE_PROXY_COMMAND` not valid text" and "Way to reach the host not
+  found" ([Messages](#messages)), so a `plan_too_large` answer still means the install is sound
+  (architect, 2026-11-24, for v0.10-T01, pin P32). **It MUST NOT ask any driver to place the
+  lease** (pin P26), so it starts no provisioning program ([Environment](#environment)), and does
+  nothing a driver's placing does: it needs no CA, and makes no key, credential or alias, and no compute is made,
   changed or started. The lease is kept as every `unsatisfiable` lease is, needs no `release`, and
   its `create` exits 0 ([States](#states)).
 - **Why it is refused rather than given `xl`:** a request that cannot be met is never quietly
