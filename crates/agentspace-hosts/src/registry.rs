@@ -311,7 +311,9 @@ mod tests {
             .join()
             .unwrap();
         assert_eq!(second, Ok(false));
-        assert!(began.elapsed() < Duration::from_millis(500));
+        // A try that waited would take the whole `LOCK_WAIT`, so half of it tells the two apart
+        // however loaded the machine is (#0189: a 500 ms bound failed beside a parallel build).
+        assert!(began.elapsed() < LOCK_WAIT / 2);
         drop(first);
         assert!(try_lock(t.path()).unwrap().is_some());
     }
@@ -512,12 +514,15 @@ mod tests {
     fn a_folder_at_the_lock_fails_at_once_and_is_not_busy() {
         let t = home();
         fs::create_dir_all(hosts_lock_path(t.path())).unwrap();
+        // Given the whole `LOCK_WAIT`, a failure that was wrongly waited for would take all of it,
+        // so half of it tells the two apart however loaded the machine is (#0189: a 200 ms bound
+        // under a 300 ms wait failed beside a parallel build).
         let began = Instant::now();
         assert_eq!(
-            lock_waiting(t.path(), short()).unwrap_err(),
+            lock_waiting(t.path(), LOCK_WAIT).unwrap_err(),
             HostsError::CannotLock(Failure::CannotOpenLock)
         );
-        assert!(began.elapsed() < Duration::from_millis(200));
+        assert!(began.elapsed() < LOCK_WAIT / 2);
     }
 
     #[test]
@@ -880,5 +885,120 @@ mod tests {
             Err(HostsError::CannotLock(Failure::CannotOpenLock))
         );
         assert!(!hosts_path(t.path()).exists());
+    }
+
+    const WITH_RECORD: &[u8] = b"{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"},{\"project\":\"agentspace\",\"stack\":\"agentspace-host-agentspace\",\"state\":\"ready\",\"instance_id\":\"i-0fedcba9876543210\",\"instance_type\":\"m9g.large\",\"last_attempt_at\":\"2026-11-24T19:05:42Z\"}]}\n";
+
+    #[test]
+    fn the_last_success_is_set_on_one_record_after_the_attempt_and_nothing_else_changes() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), WITH_RECORD).unwrap();
+        set_last_success_at(t.path(), "agentspace", "2026-11-24T19:07:00Z").unwrap();
+        let after = String::from_utf8(bytes_of(&t)).unwrap();
+        assert_eq!(
+            after,
+            String::from_utf8(WITH_RECORD.to_vec())
+                .unwrap()
+                .replace(
+                    "\"last_attempt_at\":\"2026-11-24T19:05:42Z\"",
+                    "\"last_attempt_at\":\"2026-11-24T19:05:42Z\",\"last_success_at\":\"2026-11-24T19:07:00Z\""
+                )
+        );
+        assert_eq!(after.matches("last_success_at").count(), 1);
+        let read_back = read(t.path()).unwrap();
+        assert_eq!(read_back.hosts[0].last_success_at, None);
+        assert_eq!(
+            read_back.hosts[1].last_success_at.as_deref(),
+            Some("2026-11-24T19:07:00Z")
+        );
+        // The lock is released after the write.
+        assert!(try_lock(t.path()).unwrap().is_some());
+        // A second call replaces the value.
+        set_last_success_at(t.path(), "agentspace", "2026-11-24T19:09:00Z").unwrap();
+        assert_eq!(
+            read(t.path()).unwrap().hosts[1].last_success_at.as_deref(),
+            Some("2026-11-24T19:09:00Z")
+        );
+    }
+
+    #[test]
+    fn the_other_setters_keep_a_last_success_exactly_as_they_read_it() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), WITH_RECORD).unwrap();
+        set_last_success_at(t.path(), "agentspace", "2026-11-24T19:07:00Z").unwrap();
+        set_instance_type(t.path(), "agentspace", None).unwrap();
+        set_instance(t.path(), "agentspace", None, Some("m9g.xlarge")).unwrap();
+        let h = read(t.path()).unwrap();
+        assert_eq!(
+            h.hosts[1].last_success_at.as_deref(),
+            Some("2026-11-24T19:07:00Z")
+        );
+        assert_eq!(h.hosts[1].instance_type.as_deref(), Some("m9g.xlarge"));
+    }
+
+    #[test]
+    fn the_last_success_with_no_file_writes_the_seed_document_with_it_and_no_type() {
+        let t = home();
+        set_last_success_at(t.path(), "swimcoach", "2026-11-24T19:07:00Z").unwrap();
+        assert_eq!(
+            bytes_of(&t),
+            b"{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\",\"last_success_at\":\"2026-11-24T19:07:00Z\"}]}\n"
+        );
+    }
+
+    #[test]
+    fn the_last_success_of_a_project_with_no_record_or_a_bad_name_writes_nothing() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), WITH_RECORD).unwrap();
+        assert_eq!(
+            set_last_success_at(t.path(), "nobody", "2026-11-24T19:07:00Z"),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        for bad in ["", "Agentspace", "a/b", "agentspace\n"] {
+            assert_eq!(
+                set_last_success_at(t.path(), bad, "2026-11-24T19:07:00Z"),
+                Err(HostsError::BadProject),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(bytes_of(&t), WITH_RECORD);
+        // With no file, a project with no record writes no file.
+        let t = home();
+        assert_eq!(
+            set_last_success_at(t.path(), "nobody", "2026-11-24T19:07:00Z"),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        assert!(!hosts_path(t.path()).exists());
+    }
+
+    #[test]
+    fn a_last_success_that_is_not_a_time_is_refused_and_nothing_is_written() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), WITH_RECORD).unwrap();
+        for (bad, why) in [
+            ("2026-11-24T19:07:00+00:00", Invalid::Schema),
+            ("2026-11-24T19:07:00Z\n", Invalid::Schema),
+            ("", Invalid::Schema),
+            ("2026-11-24T19:07:60Z", Invalid::Schema),
+            ("2026-02-30T00:00:00Z", Invalid::TimeNamesNoInstant),
+        ] {
+            assert_eq!(
+                set_last_success_at(t.path(), "agentspace", bad),
+                Err(HostsError::Unwritable(Failure::ChangeNotValid(why))),
+                "{bad:?}"
+            );
+            assert_eq!(bytes_of(&t), WITH_RECORD, "{bad:?}");
+        }
+        let mut names = leftovers(t.path());
+        names.sort();
+        assert_eq!(
+            names,
+            ["hosts.json", "hosts.lock"],
+            "No temporary file is left"
+        );
     }
 }

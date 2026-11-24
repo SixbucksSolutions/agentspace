@@ -480,6 +480,61 @@ mod tests {
     }
 
     #[test]
+    fn the_last_success_is_read_as_stored_written_last_and_only_when_present() {
+        let mut hosts = two();
+        hosts.hosts[1].last_success_at = Some("2026-11-20T19:07:00Z".to_string());
+        let text = String::from_utf8(serialize(&hosts).unwrap()).unwrap();
+        assert!(text.contains(
+            "\"last_attempt_at\":\"2026-11-20T19:05:42Z\",\"last_success_at\":\"2026-11-20T19:07:00Z\"}"
+        ));
+        assert_eq!(text.matches("last_success_at").count(), 1);
+        assert_eq!(parse(text.as_bytes()).unwrap(), hosts);
+        // A success older than the attempt is a valid record, and is kept as stored.
+        hosts.hosts[1].last_success_at = Some("2026-11-20T18:00:00Z".to_string());
+        assert_eq!(
+            parse(&serialize(&hosts).unwrap()).unwrap().hosts[1].last_success_at,
+            hosts.hosts[1].last_success_at
+        );
+        assert_eq!(parse(&serialize(&two()).unwrap()).unwrap(), two());
+        assert_eq!(
+            parse(&serialize(&two()).unwrap()).unwrap().hosts[1].last_success_at,
+            None
+        );
+    }
+
+    #[test]
+    fn a_last_success_that_is_not_a_time_makes_the_file_not_valid() {
+        let rec = |v: &str| {
+            format!(
+                r#"{{"project":"agentspace","stack":"agentspace-host-agentspace","state":"ready","last_success_at":{v}}}"#
+            )
+        };
+        for bad in [
+            "null",
+            "4",
+            r#""2026-11-20T19:07:00+00:00""#,
+            r#""2026-11-20T19:07:00Z\n""#,
+            r#""2026-11-20T23:59:60Z""#,
+            r#""""#,
+        ] {
+            assert_eq!(refused(&doc(&[BOX, &rec(bad)])), Invalid::Schema, "{bad}");
+        }
+        assert_eq!(
+            refused(&doc(&[BOX, &rec(r#""2026-02-30T00:00:00Z""#)])),
+            Invalid::TimeNamesNoInstant
+        );
+        let ok = parse(doc(&[BOX, &rec(r#""2026-11-20T19:07:00Z""#)]).as_bytes()).unwrap();
+        assert_eq!(
+            ok.hosts[1].last_success_at.as_deref(),
+            Some("2026-11-20T19:07:00Z")
+        );
+        // A change to one that names no instant is not serialized.
+        let mut hosts = two();
+        hosts.hosts[1].last_success_at = Some("2026-04-31T00:00:00Z".to_string());
+        assert_eq!(serialize(&hosts).unwrap_err(), Invalid::TimeNamesNoInstant);
+    }
+
+    #[test]
     fn a_change_to_an_instance_type_not_of_its_form_is_not_serialized() {
         let mut hosts = two();
         hosts.hosts[1].instance_type = Some("M9G.XLARGE".to_string());

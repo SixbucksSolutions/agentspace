@@ -38,7 +38,9 @@ fn a_second_try_while_it_is_held_finds_it_held_without_waiting() {
     let second = try_run_lock(t.path(), PROJECT).expect("A held lock is not an error");
     assert!(second.is_none(), "The lock was held, so none is given");
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        // One try is one open; no bound on it is tight under load (#0189: 2 s failed beside a
+        // parallel build), and a try that waited would wait the registry lock's 30 seconds.
+        started.elapsed() < Duration::from_secs(15),
         "It is always taken without waiting: one try"
     );
     drop(first);
