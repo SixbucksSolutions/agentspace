@@ -4150,8 +4150,8 @@ step 2.
 ### D78. #0195: the idle check counts a Session Manager session only while it carries a live sshd connection or a shell; built in v0.12
 
 **Decided, architect, 2026-11-24**, choosing among #0195's three fixes (its card text is in
-#0050's description, D72). The one that is an account setting is Terry's, and is put to him as
-Q15.
+#0050's description, D72). The one that is an account setting is Terry's, and he declined it the
+same day (Q15: "No to both").
 - **The idle check on a host counts a Session Manager session only while its worker holds an
   established connection to the host's sshd, or runs a shell of its own**, which is a person's
   Session Manager shell. A worker whose sshd end is gone, as sshd drops a dead client within about
@@ -4189,7 +4189,7 @@ Q15.
 ### D80. v0.10's done-when is shown by conformance and by a live check that starts no instance
 
 **Decided, architect, 2026-11-24** (D19, as D53, D62 and D70). Whether to add a check on a real
-host is Terry's (Q16).
+host was Terry's, and he declined it the same day (Q16: "No to both").
 - **Every part of #0050's done-when is the lease CLI's**, decided before any driver places: the size
   picked, `sized_for`, and `plan_too_large` (D75). The conformance suite shows each against the
   build with a stand-in driver, as it shows every other answer, along with D76's check that a lease
@@ -4290,5 +4290,5 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q12** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~May the architect start the box under a swimcoach lease, for about half an hour (about $0.10), to fetch v0.06-T01's transcripts to the laptop, outside the repository, before Claude Code's clean-up can remove them, so the per-agent split is had without a new measured turn (D64)?~~ Yes. | Closed, D64 |
 | **Q13** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~Does his per-agent rule from D39, a vCPU and 4 GiB for each agent at once, stay the way the architect picks a turn's size through v0.09, though v0.06-T01's 15 agents peaked at a quarter of it? The architect recommends it stays until v0.10 replaces it with measurement (D69).~~ It stays through v0.09. | Closed, D69 |
 | **Q14** | **Closed (Terry, 2026-11-24: "Yes, half a vCPU").** ~~Does v0.10 size a plan at D73's half a vCPU and 2 GiB for each agent at once, about twice v0.06-T01's measured share, in place of his rule of a vCPU and 4 GiB? It halves the size, and the price, at every count: v0.06-T01's 15 agents get `l` at $0.39 an hour rather than `xl` at $0.78, and a turn of up to 32 agents fits. The architect recommends it.~~ Yes, from v0.10's install. | Closed, D73 |
-| **Q15** | **Open, to Terry, 2026-11-24.** Does he want the account's Session Manager idle timeout shortened as well, for #0195? It is account-wide, would cut his other Session Manager sessions too, and D78 fixes the cause in the idle check without it. The architect recommends no. | D78 |
-| **Q16** | **Open, to Terry, 2026-11-24.** Does he want a plan lease shown on agentspace's real host, resized to the plan's size and back, for about 0.5 instance hours at `l` (about $0.20)? D80 shows the done-when without any instance. The architect recommends no. | D80 |
+| **Q15** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want the account's Session Manager idle timeout shortened as well, for #0195? It is account-wide, would cut his other Session Manager sessions too, and D78 fixes the cause in the idle check without it. The architect recommends no.~~ No: the account setting is not changed. | Closed, D78 |
+| **Q16** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want a plan lease shown on agentspace's real host, resized to the plan's size and back, for about 0.5 instance hours at `l` (about $0.20)? D80 shows the done-when without any instance. The architect recommends no.~~ No: v0.10 asks for no instance hours. | Closed, D80 |
