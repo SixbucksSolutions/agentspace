@@ -4152,6 +4152,16 @@ step 2.
   before v0.09 refuses `instance_type` (state.md, The instance type; pin P15). So v0.10's programs
   MUST be installed together, and a return to v0.09's needs the member removed by hand. The same
   holds for whatever D74's record of a plan adds to the lease state file.
+- **Changed for v0.10-T01 (architect, 2026-11-24, on the dev lead's pins P22 and P24):**
+  - **A run has succeeded only when its placing step returned without error and placed or refused
+    every `pending` lease it found**, none failed and none left for a later run. A run whose
+    placing failed for one lease still exits 0, and counting it as a success would make every
+    `get` of that stranded lease start a run at once, the loop D48's spacing exists to prevent.
+    Otherwise the run writes nothing and the 5 minutes hold.
+  - **Every write that sets `last_attempt_at` removes `last_success_at` in the same write**, and a
+    run has succeeded when `last_success_at` is present and at or after `last_attempt_at`. A `get`
+    in a run's last second would otherwise start a second run that reads as succeeded before it
+    takes its lock, since both times can fall in one second.
 
 ### D78. #0195: the idle check counts a Session Manager session only while it carries a live sshd connection or a shell; built in v0.12
 
