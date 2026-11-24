@@ -118,6 +118,7 @@ line's text after `Status:`, without its full stop.
 - [D78. #0195: the idle check counts a Session Manager session only while it carries a live sshd connection or a shell; built in v0.12](#d78-0195-the-idle-check-counts-a-session-manager-session-only-while-it-carries-a-live-sshd-connection-or-a-shell-built-in-v012): Decided
 - [D79. v0.10 carries its folded-in work in a hardening story first and with the driver work](#d79-v010-carries-its-folded-in-work-in-a-hardening-story-first-and-with-the-driver-work): Decided
 - [D80. v0.10's done-when is shown by conformance and by a live check that starts no instance](#d80-v010s-done-when-is-shown-by-conformance-and-by-a-live-check-that-starts-no-instance): Decided
+- [D81. v0.10 is fourteen stories in five turns: specs, foundations and hardening, programs, conformance, install](#d81-v010-is-fourteen-stories-in-five-turns-specs-foundations-and-hardening-programs-conformance-install): Decided
 
 ## The interface
 
@@ -4094,6 +4095,9 @@ cards v0.09 was laid out on.
 - **Why refuse rather than give `xl`:** a request that cannot be met is never quietly given less
   (D5). A plan whose busiest turn is split into turns that fit is met, which is what D69 already
   asks of a turn over 16 agents.
+- **Changed when v0.10 was laid out (architect, 2026-11-24, D81):** a `plan_too_large` lease's `size`
+  is `xl`, not absent, and `plan_too_large` is always the lease's only reason, since it is decided
+  before any driver is asked.
 
 ### D76. Contract v1 adds to v0, and a lease made without a plan prints as it did in v0
 
@@ -4122,6 +4126,8 @@ version numbers, kept apart").
 - **The footprint is not in the contract.** lease-api.md says a plan is sized by agentspace's
   per-agent footprint, which MAY change without a new version, and gives D73's figure as today's,
   for information. A new figure changes which size a plan gets, never what a field means.
+- **Changed when v0.10 was laid out (architect, 2026-11-24, D81):** no lease lacks `size`, so "`size`
+  is absent from one kind of lease" is no longer among what makes v1.
 
 ### D77. A run is due at once after a run that succeeded; D48's 5-minute spacing is for retries
 
@@ -4185,6 +4191,9 @@ same day (Q15: "No to both").
 - **#0195 is decided by D78** and built in v0.12.
 - **The live kit's three mask gaps and its lost observer script** (handoff-v0.09.md, What is open)
   are the architect's, before D80's live check, and are not stories.
+- **Changed when v0.10 was laid out (architect, 2026-11-24, D81):** the hardening is two stories in
+  T02, #0189's timing tests in crates another T02 story owns go to that story, and #0196 is a story
+  of its own in T03.
 
 ### D80. v0.10's done-when is shown by conformance and by a live check that starts no instance
 
@@ -4208,6 +4217,89 @@ host was Terry's, and he declined it the same day (Q16: "No to both").
   `l`, about $0.20 at D65's prices; the architect does not recommend it.
 - **conformance.md's coverage table is read for every "None" these change** (architect.md, Breaking
   an epic into stories, step 5), and each gets a case or one of these checks.
+
+### D81. v0.10 is fourteen stories in five turns: specs, foundations and hardening, programs, conformance, install
+
+**Decided, architect, 2026-11-24, when Terry had v0.10 (#0050) broken into stories:** "Lay out v0.10
+with its staffing plan. Tell me peak subagents per turn and which turns are run on EC2". It lays
+v0.10 out as D71 laid out v0.09, on the designs of D73 to D80, and the stories' cards (#0211 to
+#0224) carry the detail, each with its staffing plan (D31, D63).
+
+**Three changes to D75 and D76, made here, from reading the crates:**
+- **A `plan_too_large` lease's `size` is `xl`, the largest size**, not absent. `agentspace-state`'s
+  `Record.size` is a `String` read on 57 lines of `agentspace-driver-ec2` alone (by grep), and every
+  lease document has carried a size since v0; an absent size would change both for one rare
+  answer. The reason says the plan needs more than `xl` holds, and the lease is `unsatisfiable`, so
+  nothing is issued at the smaller size (D5 is kept). So D76's list of what makes v1 loses "`size`
+  is absent from one kind of lease".
+- **`plan_too_large` is always the lease's only reason.** It is decided by the CLI before any driver
+  is asked (D75), and the driver's `place` is what judges platform and profile; asking it with a
+  size the plan does not fit would place the lease. lease-api.md's "every reason that applies is
+  listed" gains this one exception.
+- **D79's hardening is two stories**, as it allowed: the load failures and hangs (#0189, #0191) in
+  one, and #0137, P51 to P53 and `Invoke-HostFile` in the other. #0189's timing tests in
+  `agentspace-state`, `agentspace-hosts` and `agentspace-driver-ec2` go to the T02 stories that own
+  those crates. **#0196 is a story of its own in T03**, since D77's story in T02 already spans three
+  crates and #0196's cause is unknown; it still changes the driver's release walk.
+
+**The pinned names.** Every story uses these, and the specs written in T01 own their exact forms:
+
+| Name | Pinned as |
+|---|---|
+| The plan crate | `crates/agentspace-plan`, new in T02, portable, no Windows code |
+| Parsing | `pub fn parse(bytes: &[u8]) -> Result<Plan, PlanError>`, with `pub struct PlanError { pub message: String }`, the `invalid_value` message lease-api.md gives for `plan`; the crate reads no file |
+| The plan | `Plan::name(&self) -> Option<&str>`; `Plan::busiest(&self) -> (&str, u32)`, the busiest turn's name and its agents at once with its dev lead, the first on a tie; `Plan::document(&self) -> &serde_json::Value`, the document as parsed, for the record |
+| The footprint | `pub const PER_AGENT_MILLIVCPUS: u32 = 500` and `pub const PER_AGENT_MIB: u32 = 2048`, in `agentspace-plan` alone: D73's one named place |
+| Picking a size | `pub fn size_for(agents: u32) -> Option<&'static str>`, the smallest of `s`, `m`, `l` and `xl` by lease-api.md's floors, or `None`; `pub fn most_agents() -> u32`, 32 at D73's figure |
+| The lease record | `agentspace_state::Record` gains `sized_for: Option<SizedFor>` and `plan: Option<serde_json::Value>`, with `pub struct SizedFor { pub plan: Option<String>, pub turn: String, pub agents: u32 }`; `size` stays a `String` |
+| The host record | `agentspace_hosts::Host` gains `last_success_at: Option<String>`, and `pub fn set_last_success_at(home: &Path, project: &str, at: &str) -> Result<(), HostsError>`, under `hosts.lock` as `set_instance_type` is |
+| The reason | `plan_too_large`, the lease's only reason, after `unsupported_size` and before `no_capacity` in the table |
+| The error field | `plan`, for `invalid_value` and for `usage` (`--plan` with `--size`) |
+| The schemas | `schemas/plan.input.schema.json`; v0's under `schemas/v0/`, samples in `schemas/v0/samples/` |
+| Branches | `v0.10/e0.10-tnn-smm` (D29) |
+
+**Pinned as code before T02, by the architect:** one pull request adds `Record`'s two members and
+`Host`'s `last_success_at`, read and written by nothing, and gives every struct literal of them in
+the workspace `None`. Crates that no T02 story owns build those literals, among them the keeper,
+the operator and the ssh proxy (by grep). So T02's stories share no file, as #139 did for
+v0.09-T03.
+
+**The turns.** Stories in a turn run in parallel, each in its own worktree; a turn starts when
+every pull request of the turn before is merged (D16). **Every turn runs on Terry's laptop, and
+none starts an EC2 instance.** The build and conformance turns test Windows programs on Windows, as
+v0.09's T01 to T04 did, and T05's live check makes only `unsatisfiable` leases (D80; Q16). The peak
+is the turn's subagents at once, its dev lead not counted, as D74 counts it: the sum of its stories'
+peaks.
+
+| Turn | Stories | What | Peak | Budget |
+|---|---|---|---|---|
+| T01 | #0211 to #0213 | **The specs.** lease-api.md as contract v1; schemas/ with v0's kept; state.md, driver.md, operator.md and README | 8 | 3 h |
+| T02 | #0214 to #0218 | **The foundations and the hardening.** `agentspace-plan`; `agentspace-state`'s record and document; D77 across `agentspace-hosts`, the EC2 driver and provision; the load failures and hangs; #0137, P51 to P53 and `Invoke-HostFile` | 13 | 3.5 h |
+| T03 | #0219, #0220 | **The programs.** The lease CLI's `--plan`; #0196's release walk | 5 | 3 h |
+| T04 | #0221 to #0223 | **Conformance.** The lease CLI's cases; the operator's; the whole suite, the crates and the box tests against `main`'s build, with conformance.md | 8 | 4 h |
+| T05 | #0224 | **The install and D80's live check**, which starts no instance | 2 | 2 h |
+
+**The release's budget is 15.5 hours**, the sum of its turns'. **It asks for no instance hours**
+(Q16).
+
+**Why this shape:**
+- **The same order as v0.07's to v0.09's** (D55, D63, D71): specs before code, libraries before
+  programs, the whole suite before the install.
+- **The hardening is in T02, the first build turn** (D79), so T03 and T04, which run the most
+  suites, no longer rerun timing failures and hangs by hand. Its load window takes two of the
+  laptop's three heavy runs, and T02's other stories' 20-run loops MAY run inside it as its load.
+- **T02 is the widest turn, 13 subagents, and the laptop's limit is its heavy runs, not its
+  agents.** Most of T02's subagents write code; its dev lead counts every tasking's heavy runs
+  against three before each launch (architect.md).
+- **T04 gets 4 hours** because v0.09's conformance turn took 3:40 of 3, and the operator suite runs
+  twice in it (S02's lanes and S03's).
+- **If any turn ran on a host, D73 would size it:** T02's 14 agents with its dev lead would get `l`.
+
+**The architect's own work before T05, not stories:** the live kit's three mask gaps (AWS access
+key IDs, account IDs with hyphens, and a `--token value` with no `=` or `:`), each with a proof case,
+and the lost observer script, rebuilt from runs/e0.09-t05-s01.md (handoff-v0.09.md, What is open;
+D79). With v0.10's install, AGENTS.md's "Sizing a host before it runs agents" is rewritten for
+plan-sized leases (D73).
 
 ## Keys
 

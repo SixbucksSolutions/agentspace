@@ -20,7 +20,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   Q14 to Q16 put to Terry the same day. **He said yes to Q14**: D73's half a vCPU and 2 GiB per
   agent replaces his per-agent rule from v0.10's install, and this file's sizing section is
   rewritten then. He said no to Q15 and Q16: no account setting changes for #0195, and v0.10 asks
-  for no instance hours. v0.10 is laid out only on Terry's word. The handoffs
+  for no instance hours. **v0.10 is laid out (D81, 2026-11-24, on Terry's word):** fourteen
+  stories in five turns, #0211 to #0224, every turn on the laptop and none on EC2; each turn
+  starts on Terry's word. The handoffs
   before it, from [docs/handoff-mvp.md](docs/handoff-mvp.md) to
   [docs/handoff-v0.08.md](docs/handoff-v0.08.md), stay as the history of their releases.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
