@@ -206,6 +206,27 @@ deliberately red tests green.** A dev lead's brief carries these.
   of three heavy runs, and **a reviewer MAY commit small fixes itself**, which saved a round trip
   in every story.
 
+**Learned in v0.09-T03, where three stories built the programs and one diagnosed a defect.**
+- **Stories independent by files can be dependent by tests.** #0203's branch alone turned one of
+  #0204's tests red, because only #0204 records the type #0203 reads. A turn's last merges are
+  checked on a local, unpushed merge of every open head, and a PR that needs another names the
+  order.
+- **Who owns another crate's test lines that a story turns red is written in the brief before the
+  turn**, not ruled mid-turn as P39 and P44 were: the story whose change turns a test red owns its
+  fixture lines, with every line listed in its PR.
+- **A brief for a defect's reproduction names the conditions it needs, never "under load" alone.**
+  #0209 looked like a load race and was the opposite: it needed a stale build and no `vctip.exe`
+  running, which load made rarer. Once a cause is known, the done-when is rewritten to reach it, as
+  #0210's was.
+- **A loaded run records its load**, by the sibling run's log times beside it, never by assuming
+  one ran.
+- **Before every launch the dev lead counts the tasking's heavy runs against the laptop's three**,
+  the isolation guard's own child suite included.
+- **The operator conformance suite takes about 30 minutes in two lanes**, and a story that changes
+  it plans a final whole-suite run after its fixes. T03 ran past its cap on it and was extended.
+- **A planted source file is restored with git, or touched after a copy**: `Copy-Item` keeps the
+  backup's older time, and cargo then reuses the planted build.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**

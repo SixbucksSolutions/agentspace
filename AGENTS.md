@@ -260,6 +260,14 @@ watching keeper starts a guard, which can stop hosts; unset, the guard is the bu
 operator, and a throwaway home's empty lease file makes every host look unexplained. conformance.md,
 The harness, gives the rule in full.
 
+**A test that moves `USERPROFILE` or `HOME` MUST NOT run a toolchain program under the moved
+home**: not cargo, rustc, rustdoc or link.exe (found in v0.09-T03, #0209, 2026-11-23). Windows
+resolves a process's known folders from its own `USERPROFILE`, and link.exe starts MSVC's telemetry
+helper, `vctip.exe`, which writes a WinINet cache there. The lease CLI's isolation guard saw its
+moved home created that way, and nothing of agentspace's. It now builds with the real environment
+and runs each test executable under the moved home (#0210). A test that moves the home also keeps
+`TMP` and `TEMP` set, since with them absent the temp folder falls back to `USERPROFILE`.
+
 **A test MUST NOT print, log or format the values of an environment it captured** (found in
 v0.06-T01, 2026-11-19). E0.06-T01-S04's harness recorded the whole environment a fake ssh saw and
 derived `Debug` on it, so one failing assertion printed every variable into a subagent's tool
