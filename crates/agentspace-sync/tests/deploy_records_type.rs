@@ -424,6 +424,13 @@ fn p22_case(answer: String) {
                 && aws_named(&rig.log(), "describe-instances").is_empty(),
             "deploy MUST NOT go on to sync",
         );
+        rig.check(
+            !say
+                .progress_lines()
+                .iter()
+                .any(|l| l.starts_with("Instance: ")),
+            "deploy MUST print no success line, `Instance: <id>`, when the type cannot be read (P45)",
+        );
     });
 }
 
@@ -551,6 +558,13 @@ fn the_boxs_deploy_fails_for_a_stack_with_no_instance_type_parameter() {
         rig.check(
             rig.log().remote_calls().is_empty(),
             "deploy MUST NOT go on to sync",
+        );
+        rig.check(
+            !say
+                .progress_lines()
+                .iter()
+                .any(|l| l.starts_with("Instance: ")),
+            "deploy MUST print no success line, `Instance: <id>`, when the type cannot be read (P45)",
         );
     });
 }
