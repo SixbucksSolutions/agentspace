@@ -1317,7 +1317,9 @@ registry](state.md#the-host-registry)'s.
   `instance_type`, which `deploy` alone writes, `provision`'s deploy step included, and removes
   ([deploy](#deploy), steps 4 and 5; [provision](#provision), step 4.2; D67, D71); and, in `provision`
   alone, a new record and a record's `state`, `last_attempt_at` and `instance_id`, never taking a
-  `ready` record out of `ready` ([provision](#provision); D48). **No other command adds a record
+  `ready` record out of `ready` ([provision](#provision); D48); and, from v0.10, in `provision` alone,
+  a record's `last_success_at`, which its step 3 removes and the end of its step 9 writes
+  ([provision](#provision); D77). **No other command adds a record
   or changes a `state`.** The EC2 driver's writes are [driver.md](driver.md)'s.
 - **A record's `instance_type` is the host's instance type as its stack last reported it after a
   deploy** (D67): the stack's `InstanceType` parameter, read with `cloudformation describe-stacks`
@@ -1660,6 +1662,20 @@ the `deploy -Host` arguments row in "the box's passing every member of the file"
 | The laptop's AWS sign-in needing no new permission for a resize | Live check, E0.09-T05-S01, by its run with today's sign-in |
 | No lease placed `ready` on a host while a run that resizes it is due or under way ([Q36](#open-questions)): a new lease of a project with a `pending` lease a run would place answered `pending` | driver.md's rows for v0.09 (E0.09-T04-S01 and the driver crate's tests), since place is the driver's (D66's change note; pins P2(b) and P20) |
 | No lease placed `ready` at the record's old type after the only `pending` lease was released while a run was at its deploy step: a `create` wholly before the step's hold of the lease state lock read by the run as a live `ready` lease, so no type is passed; one wholly after it answered `pending` by the record's missing type (pin P26; Q36, closed) | The ordering by driver.md's rows for v0.09 (E0.09-T04-S01 and the driver crate's tests); this page's part, the removal before the read under both locks, by the lock row above (E0.09-T04-S02) |
+
+**Every behavior v0.10 adds to this page is shown by a conformance case against stand-ins in
+E0.10-T04-S02** (card #0222; D77, with the pins P22 to P24 of v0.10-T01, architect, 2026-11-24),
+by the same harness as v0.09's rows: a throwaway home, a seeded host registry and a seeded lease
+state file.
+
+| Behavior | Shown by |
+|---|---|
+| `provision`'s step 3 removing `last_success_at`: a record seeded with one, `ready` or not, has none after the run's start, in the same write that sets `last_attempt_at`, and every other member as it was; a new record is added with `last_attempt_at` and no `last_success_at` | Conformance case, E0.10-T04-S02 |
+| `provision` writing `last_success_at` (pins P22 and P23): with the stand-ins succeeding and every `pending` lease placed or answered, the record ends with `last_success_at` at or after its `last_attempt_at`, written after `place done` and before `run done`, and no other member changed by that write | Conformance case, E0.10-T04-S02 |
+| No `last_success_at` when the run did not succeed (pin P22): a run whose placing failed as a whole (`place failed reason=...`), one with a lease that failed (`place failed lease=<id>`), and one with a lease left (`place left lease=<id>`) each end with the record holding none, and exit 0 | Conformance case, E0.10-T04-S02 |
+| No `last_success_at` for a run that failed at step 4, 5, 6 or 7, or at step 8's write | Conformance case, E0.10-T04-S02 |
+| A failed write of `last_success_at` (pin P23), with the registry unwritable at that point: `success failed reason=<why>` in the log between step 9's lines and `run done`, no change to the record, and the exit code of a run that did not fail | Conformance case, E0.10-T04-S02, failing the write as the v0.07 row for `provision`'s step 3 and step 8 fails theirs (`hosts.lock` held past its 30 seconds, or a write that fails) |
+| The lock the write takes (pin P23): `hosts.lock` alone, with `provision.lock` held and the lease state lock free | Conformance case, E0.10-T04-S02, as the v0.09 lock row shows the deploy step's |
 
 ## Commands
 
@@ -2489,12 +2505,15 @@ failure logged in `provision.log` and the leases `pending` for the next run. The
      run's lock](state.md#the-provisioning-runs-lock)'s.
 3. **Records the run's start, under `hosts.lock`**, re-reading the registry, and sets
    `last_attempt_at` to now, the run's start, in UTC in state.md's timestamp form (P2, architect,
-   2026-11-20, for v0.07-T01):
+   2026-11-20, for v0.07-T01). **The same write removes the record's `last_success_at`** when it
+   holds one (D77; architect, 2026-11-24, for v0.10-T01, pin P24), so a run that has begun never
+   reads as one that succeeded, and a success is only ever of the run that wrote it:
    - **No record:** it adds
      `{"project":"<project>","stack":"agentspace-host-<project>","state":"creating"}` (D44, D55),
-     with `last_attempt_at`.
+     with `last_attempt_at` and no `last_success_at`.
    - **A record that is `creating` or `failed`:** it sets `state` to `creating` too.
-   - **A record that is `ready`: `last_attempt_at` is the only member it writes**, and `state`
+   - **A record that is `ready`: `last_attempt_at` is the only member it writes**, and the only
+     one it removes is `last_success_at`, and `state`
      stays `ready`, so the project's ready leases keep reaching the host while the run works on it
      (P3, architect, 2026-11-20, for v0.07-T01).
 
@@ -2605,7 +2624,8 @@ failure logged in `provision.log` and the leases `pending` for the next run. The
    `last_attempt_at` left as step 3 wrote it, and `state` `ready` for a host that was not `ready`;
    a record that was `ready` keeps `ready`, and only its `instance_id` is updated, when the run
    learned one that differs (P3, architect, 2026-11-20, for v0.07-T01). **It never writes
-   `instance_type`**, which step 4's deploy recorded, and leaves it as it finds it (D67). Then it releases
+   `instance_type`**, which step 4's deploy recorded, and leaves it as it finds it (D67). **It
+   never writes `last_success_at` either**, which step 9's end alone writes. Then it releases
    `hosts.lock` (D48; P10, architect, 2026-11-20, for v0.07-T01). It logs `record done` and prints
    `Recorded the host of '<project>' as ready.`
 9. **Places the project's pending leases**, by calling the EC2 driver's `place_pending` for the
@@ -2643,6 +2663,32 @@ failure logged in `provision.log` and the leases `pending` for the next run. The
    period (architect, 2026-11-21, for v0.07-T04), and the run goes on to step 10 and exits 0 (P3;
    the warning and the exit code are confirmed by the architect, 2026-11-20, for v0.07-T01). The
    next run P2's rule allows places them.
+
+   **Then, when the run succeeded, it records the success** (D77; architect, 2026-11-24, for
+   v0.10-T01, pins P22, P23 and P24), after step 9's call has returned and before step 10 and the
+   `run done` line, still holding `provision.lock`:
+   - **A run has succeeded only when the call returned without error and no lease was failed or
+     left** (pin P22): the log has no `place failed` line, whether for the call or for a lease, and
+     no `place left lease=<id>` line. A lease the call placed or answered `unsatisfiable`, `place
+     refused` included, is not a failure. **When it did not succeed, the run writes nothing** and
+     goes on as it did before v0.10, so the 5 minutes hold for the next start
+     ([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run), step 2): a
+     run whose placing failed for one lease still exits 0, and counting it a success would make
+     every `get` of that stranded lease start a run at once. **A residual, accepted** (pin P22): a
+     `pending` lease whose size is not in `SIZES`, which the call neither places nor answers
+     (above), is invisible to it, and still waits 5 minutes for each start.
+   - **The write takes `hosts.lock` alone**, as step 8's does (pin P23): it takes the lock, re-reads
+     the registry, sets this member only, and writes. It holds no lease state lock then, since
+     `place_pending` dropped each of its holds, so the lock order is kept ([driver.md, Lock
+     order](driver.md#lock-order)).
+   - **It sets `last_success_at` to the time the run ended**, now, in UTC in state.md's timestamp
+     form. The next start reads the run as succeeded when that is at or after the `last_attempt_at`
+     step 3 wrote, the two compared as instants (pin P24).
+   - **A write that fails** (the lock not taken, the registry not readable, a write that fails)
+     **is logged and changes nothing else**: one line, `<time> success failed reason=<why>`, with
+     the registry's message as the reason, no warning, no change to the record and no change to the
+     run's exit, which is as it would have been, so the next start waits 5 minutes. A write that
+     succeeds adds no line of its own.
 10. **Prints where the sign-in procedure is** (D52), as the run's last line, **only for a host
     that was not `ready` when the run began, and never for the box**, since a host that was
     already `ready` has had its sign-ins (the condition is confirmed by the architect, 2026-11-20, for v0.07-T01):
@@ -2708,11 +2754,16 @@ never rotated. **A line is** (architect, 2026-11-20, for v0.07-T01):
 
 - **`<time>`** is the time the line is written, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`, the form of the
   keeper's lines.
-- **`<step>`** is one of `run`, `deploy`, `start`, `sync`, `bootstrap`, `record` and `place`.
+- **`<step>`** is one of `run`, `deploy`, `start`, `sync`, `bootstrap`, `record` and `place`, and,
+  from v0.10, `success` (architect, 2026-11-24, for v0.10-T01, pin P23). **`success` has one line,
+  `success failed`**, `<time> success failed reason=<why>`, `<why>` the failure message of the
+  write of `last_success_at`, written after step 9's lines and before `run done` (step 9, above).
+  A write that succeeds has no line, so no log line says that a run recorded its success.
 - **`<outcome>`** is `begun` (for `run` alone), `done`, `failed`, or, from v0.09, `refused` or
   `left` (for `place` alone; architect, 2026-11-23, for v0.09-T01, pin P37). A run's lines are
   `run begun`, then `done` or `failed` for each step it reached, in order, step 9's lines for each
-  lease after its `place done` (below), then `run done` when it succeeded.
+  lease after its `place done` (below), then `success failed` when it could not write its success,
+  then `run done` when it succeeded.
   A run whose step 2 found the lock held, or could not take it, writes one line, `run failed`,
   with no `run begun` before it. **The one line with more after `done`** is step 6's when its
   patch wait ended on `failed`: `<time> sync done; the patch run failed, see the host's journal`,

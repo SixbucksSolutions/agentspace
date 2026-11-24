@@ -778,6 +778,34 @@ program makes it: a person, or an agent at the person's request, does.
    MUST first remove that member by hand from every record that holds it**, since a program before
    v0.09 refuses such a file (D67;
    [state.md, The instance type](docs/state.md#the-instance-type)).
+   - **v0.10's programs MUST be installed together, with no provisioning run running** (D77;
+     architect, 2026-11-24, for v0.10-T01, pin P27). v0.10 adds members to the files the programs
+     share: `sized_for` and `plan` to a lease record in `leases.json`, and `last_success_at` to a
+     host's record in `hosts.json`. **A program before v0.10 refuses a file that holds one of
+     them**: v0.09's lease CLI fails every lease command with "the state file is not valid",
+     v0.09's `create` fails with "host records are not valid", a v0.09 keeper leaves every holder
+     as it is, and a v0.09 guard stops no host. So the install MUST copy every program of the build,
+     as step 2 says, and MUST NOT be made while `provision` is running, so that no program of one
+     version reads or writes a file in the other's form while the install is under way.
+   - **A return to v0.09's programs after v0.10's have written any of those members MUST first
+     remove them by hand** (pin P27). No agentspace command does it. With every agentspace program
+     stopped and no run running, a person edits the two files, each a JSON document, and keeps the
+     rest of each:
+     1. **In `leases.json`**, in the state folder (`%USERPROFILE%\.agentspace`, or the folder
+        `AGENTSPACE_STATE_DIR` names): delete the `"sized_for"` and `"plan"` members from every
+        lease record that has them. `sized_for` is a small object and `plan` a whole document, so
+        the file may be much smaller afterwards.
+     2. **In `leases.json`, for every record whose `reasons` holds `plan_too_large`**: v0.09 has
+        no such reason, so change the `code` of that record's one reason from `plan_too_large` to
+        `no_capacity`, keeping its `message`, or delete the whole record. No agentspace command
+        forgets a lease, so this is done by hand
+        ([state.md, The lease state file](docs/state.md#the-lease-state-file)).
+     3. **In `hosts.json`**, in `%USERPROFILE%\.agentspace`: delete the `"last_success_at"` member
+        from every host record that has it
+        ([state.md, The host registry](docs/state.md#the-host-registry)).
+
+     Each file MUST stay valid JSON, with no trailing comma. v0.09's programs check the files
+     when they read them, and a file that still holds one of the members is refused as above.
 4. **Add the folder to the user's `PATH`, which MUST be done only with Terry's yes**, so that
    `agentspace` and `agentspace-operator` run by name.
 

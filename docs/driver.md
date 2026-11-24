@@ -76,7 +76,8 @@ prototype stay as the record of the change.
   [lock order](#lock-order), [ending a lease's connections](#ending-a-leases-connections),
   [conformance cases for v0.07](#conformance-cases-for-v007),
   [conformance cases for v0.08](#conformance-cases-for-v008),
-  [conformance cases for v0.09](#conformance-cases-for-v009)
+  [conformance cases for v0.09](#conformance-cases-for-v009),
+  [conformance cases for v0.10](#conformance-cases-for-v010)
 - [Writing another driver](#writing-another-driver)
 - [Hardening carried in](#hardening-carried-in)
 - [Open questions](#open-questions)
@@ -347,6 +348,15 @@ credential, makes the lease reachable, and says how.**
 | TTL | A whole number of seconds, from 60 to 86400 | The CLI has refused anything else. A driver MUST NOT clamp it. |
 | OpenSSH client folder | Optional text | The caller's `AGENTSPACE_SSH_DIR` when it is set and not empty, and otherwise absent. The folder whose configuration the alias is added to. For tests and worktrees ([lease-api.md](lease-api.md#environment)). |
 | Transport override | Optional text | The caller's `AGENTSPACE_PROXY_COMMAND` when it is set and not empty, and otherwise absent. Replaces the driver's own way to reach the host ([Reachability](#reachability)). For tests and worktrees. |
+
+**The request carries no plan, and no driver sees one** (D75; architect, 2026-11-24, for v0.10-T01,
+pin P26 as amended). A lease made with `--plan` is asked of a driver as one made with `--size` is,
+with the size the CLI picked from the plan, so the request, its result and every rule below are as
+they were in v0.09. **A lease whose plan no size holds, `plan_too_large`, is answered by `create`
+before any driver's place is called**, so place is never called for it; its record still carries
+the name of the driver the CLI resolved, since `driver`, optional on a record in general, is
+required on every record that holds `sized_for` or `plan`
+([state.md, What a plan lease adds](state.md#what-a-plan-lease-adds)).
 
 **The request carries no state folder.** Where the lease's key and certificate go is
 [state.md](state.md#a-leases-credential)'s, and the CLI's own state folder
@@ -683,7 +693,8 @@ succeeded without it succeeds with it.
   or placing a lease on a host that is already `ready`
   ([Starting a provisioning run](#starting-a-provisioning-run)).
 - **Idempotence:** any number of calls is safe. A driver bounds how often a call starts work; the
-  EC2 driver starts a run at most once every 5 minutes for a host.
+  EC2 driver starts a run at most once every 5 minutes for a host, unless the last run succeeded
+  (D77; [Starting a provisioning run](#starting-a-provisioning-run), step 2).
 
 **When the CLI asks:** once per `get` of a lease whose stored state is `pending`, after it has read
 the records and before it prints. `list` never asks, and neither do `create`, `renew` and
@@ -1105,8 +1116,8 @@ applies, and by nothing else:**
   not cost four times `m`'s rate for every lease after it. **A host in its grace after its last
   lease (D56) is resized like a stopped one**, since no live `ready` lease holds it. Whether a run
   is due, and what is written, are [Starting a provisioning run](#starting-a-provisioning-run)'s
-  steps 2 to 5, for a `ready` record: it writes only `last_attempt_at`, and its `state` stays
-  `ready` (D48). A run that is not due leaves the lease `pending`, and a later `get` starts one
+  steps 2 to 5, for a `ready` record: it writes only `last_attempt_at`, removing `last_success_at`
+  in the same write (D77), and its `state` stays `ready` (D48). A run that is not due leaves the lease `pending`, and a later `get` starts one
   ([`check_pending`](#check_pending)). Rows 1 and 2 start a run the same way.
 - **Row 5: a smaller host, with another live `ready` lease, is refused at once** (D66). Resizing a
   running host stops it (D39, D40), which ends every session on it, and waiting could last the
@@ -1243,8 +1254,12 @@ write leaves the registry as it was.
    too**, with its read of the lease state file; steps 2 to 5 follow only for its rows 1, 2 and 6,
    and every other row writes nothing and starts nothing.
 2. **It decides whether a run is due, by reads alone.** A run is due only when no program holds the
-   project's `provision.lock`, and the record's `last_attempt_at` is absent or at least 5 minutes
-   before now; a record that step 4 is about to add has none. The lock is in the host's folder
+   project's `provision.lock`, and either the record's `last_attempt_at` is absent or at least 5
+   minutes before now, or the run that started at `last_attempt_at` succeeded (D77; architect,
+   2026-11-24, for v0.10-T01, pins P22 and P24). **That run succeeded when the record's
+   `last_success_at` is present and at or after its `last_attempt_at`**, the two compared as
+   instants, so equal seconds read as a success. A record that step 4 is about to add has neither.
+   The lock is in the host's folder
    ([state.md, A host's folder](state.md#a-hosts-folder)); the driver tries to take it once,
    without waiting, as state.md says the lock is held, and releases it at once if it took it. A
    host's folder or lock file that does not exist means that no run holds it, and the try creates
@@ -1274,24 +1289,36 @@ write leaves the registry as it was.
      `m9g.xlarge` of a missing file is implied on a read and never written (architect, 2026-11-23,
      for v0.09-T01, pin P31).
    - **When a run is due:** it sets the record's `last_attempt_at` to now and, only when the record
-     is new or in state `creating` or `failed`, its `state` to `creating`, in the same write.
+     is new or in state `creating` or `failed`, its `state` to `creating`, in the same write. **The
+     same write removes the record's `last_success_at`** when it holds one (architect, 2026-11-24,
+     for v0.10-T01, pin P24), so a start in the same second as the success of the run before it
+     does not read as a run that has succeeded, since both times can fall in one second.
    - **When no run is due:** it writes `last_attempt_at` into no record, so an added record has
      none, and a record that existed is not written at all.
 5. **It releases `hosts.lock`, and only then, when a run is due, starts it, detached** (below).
    When no run is due it starts none, and the lease is `pending` all the same.
 
 - **A record in state `ready` never has its `state` changed by the driver** (architect, 2026-11-20,
-  for v0.07-T01; D48). Starting a run for it writes only its `last_attempt_at`, and a start that
-  fails leaves it `ready`. A host that is not `ready` sends its project's `ready` leases to the box,
+  for v0.07-T01; D48). Starting a run for it writes only its `last_attempt_at`, removing its
+  `last_success_at` in the same write (step 4), and a start that fails leaves it `ready`. A host that is not `ready` sends its project's `ready` leases to the box,
   where ssh's strict key check refuses them ([How it is reached](#how-it-is-reached)), so a `ready`
   host taken out of `ready` would cut every lease of its project. `creating` and `failed` apply
   only to a host that was never `ready`.
-- **So at most one run is started for a host in any 5 minutes**, by any number of `create`s and
-  `get`s: the rule covers a failed run, a run that died with its record still `creating`, and the
-  moment between the start and the run taking its lock.
+- **So a run is started for a host at most once in any 5 minutes, unless the last run succeeded**
+  (D77, changing D48), by any number of `create`s and `get`s: the 5 minutes cover a failed run, a
+  run that died with its record still `creating`, a run whose placing failed or left a lease
+  (below), and the moment between the start and the run taking its lock. In each of these
+  `last_success_at` is absent or before `last_attempt_at`, so the next start waits as before D77.
+  **After a run that succeeded, the next start is due at once**, whatever the time since
+  `last_attempt_at`, and sets `last_attempt_at` again and removes `last_success_at` as step 4 says,
+  so the start after that waits 5 minutes unless that run succeeds in turn.
 - **`last_attempt_at` is the start time of the last run**, UTC, in state.md's timestamp form, and
   "now" is the clock of the caller's machine. A run writes its own when it takes its lock, so a
   run by hand counts too ([operator.md, provision](operator.md#provision)).
+- **`last_success_at` is the time a run that succeeded ended**, UTC, in the same form, written by
+  the run alone, never by the driver, and only as "After the run", below, says. The
+  driver reads it at step 2 and removes it at step 4, and writes it nowhere else
+  ([state.md, The host registry](state.md#the-host-registry), which holds the host's record).
 - **A run that is not due never makes the `create` fail:** the program is looked for only for a
   run that is due (step 3), so a `create` whose run is not due answers `pending` even when the program
   cannot be found.
@@ -1394,7 +1421,8 @@ of life. What the start MUST achieve, from outside:
   next `get` checks again.
 - **A record in state `ready` is treated as `creating` and `failed` are, by steps 2 to 5**, but
   for its `state`, which stays `ready` (pin P3, architect, 2026-11-20, for v0.07-T01): when a run
-  is due, it writes only `last_attempt_at` and starts the run, which places the lease.
+  is due, it writes only `last_attempt_at`, removing `last_success_at` in the same write, and
+  starts the run, which places the lease.
 - **No record, and the project is on the project list:** it adds the record, as place does, and
   goes on by the rule. **No record, and not on the list** (a registry changed by hand since the
   `create`): it does nothing, and the lease stays `pending`. `get` never makes a lease
@@ -1405,19 +1433,42 @@ of life. What the start MUST achieve, from outside:
   a registry or list that cannot be read is a failure the CLI drops. **A pending lease whose
   driver is missing or unknown** starts nothing ([check_pending](#check_pending)).
 
-**After the run.** A run that succeeds records the host `ready`, or keeps it `ready`, and then calls
-[`place_pending`](#place_pending) for the project (pin P3, architect, 2026-11-20, for v0.07-T01). A
-failure of that call is the run's to log, and leaves the host `ready`; the leases it could not
-place stay `pending`, and the next run P2's rule allows, started by a `get` of one of them, places
-them. From v0.09, `place_pending` also answers `unsatisfiable`, with `no_capacity`, a `pending`
-lease that the host does not meet while a live `ready` lease of the project holds it (D68;
-architect, 2026-11-23, for v0.09-T01, pin P1).
+**After the run.** A run whose steps before placing succeed records the host `ready`, or keeps it
+`ready`, and then calls [`place_pending`](#place_pending) for the project (pin P3, architect,
+2026-11-20, for v0.07-T01). A failure of that call is the run's to log, and leaves the host
+`ready`; the leases it could not place stay `pending`, and the next run P2's rule allows, started
+by a `get` of one of them, places them. From v0.09, `place_pending` also answers `unsatisfiable`,
+with `no_capacity`, a `pending` lease that the host does not meet while a live `ready` lease of the
+project holds it (D68; architect, 2026-11-23, for v0.09-T01, pin P1).
 **A failed run leaves the leases `pending`, never `unsatisfiable`** (D48, D5). It records a
 host that was never `ready` as `failed`, and on a host that was `ready` it logs the failed step and
 leaves it `ready`. Once 5 minutes have passed since its last start, the run is started again: for a
 host that is not `ready`, by a later `create` or `get` of the project, and for a `ready` one, by a
 later `get` of a lease that is still `pending`. A caller that gives up releases the lease, and the
 host is kept (D25).
+
+**A run that placed everything records its success, and the next start is then at once** (D77;
+architect, 2026-11-24, for v0.10-T01, pins P22 and P23):
+- **A run has succeeded only when `place_pending` returned without error and placed or answered
+  every `pending` lease it found**: none failed (`place failed lease=<id>`) and none was left for a
+  later run (`place left lease=<id>`) ([operator.md, provision](operator.md#provision), step 9).
+  Only then does the
+  run write the host's `last_success_at`, the time it ended
+  ([operator.md, provision](operator.md#provision), step 9's end), after `place_pending` returns
+  and before the run's last step, with `provision.lock` still held, under `hosts.lock` alone. A
+  run whose placing failed as a whole, or failed or left a lease, writes none and still exits 0,
+  so the 5 minutes hold: counting it as a success would make every `get` of that stranded lease
+  start a run at once, the loop D48's spacing exists to prevent.
+- **A failed write of `last_success_at` changes nothing else**: the run logs it and exits as it
+  would have, so the next start waits 5 minutes, as after a failed run.
+- **A residual, accepted** (pin P22): a `pending` record of a size the driver does not know is
+  invisible to `place_pending`, which neither places nor answers it, so a run that placed
+  everything else still succeeds and that lease still waits 5 minutes for each start.
+- **A lease created after `place_pending`'s last re-read of the lease state file, and before the
+  run exits, finds `provision.lock` held, and waits for a `get`** (architect, 2026-11-24, for
+  v0.10-T01, pin P31), as it did before v0.10. The run that has just succeeded does not place it,
+  and no start is due while the run holds its lock; the `get` that comes after the run exits
+  starts a run at once, since the success is recorded.
 
 ### A resizing run
 
@@ -1706,7 +1757,11 @@ later lock MUST NOT wait for an earlier one, so no two programs ever wait on eac
   [`place_pending`](#place_pending), which takes `hosts.lock` alone for its read of the host
   record, and then the lease state lock once per lease, in its step 2 and, from v0.09, its step 3;
   it holds `provision.lock` throughout. `place_pending` reads the lease state file again in each
-  hold, so a lease released meanwhile is never placed or answered.
+  hold, so a lease released meanwhile is never placed or answered. **From v0.10, once
+  `place_pending` has returned, a run that succeeded writes `last_success_at` under `hosts.lock`
+  alone** ([After the run](#starting-a-provisioning-run), "A run that placed everything records its
+  success"; architect, 2026-11-24, for v0.10-T01, pin P23), still holding `provision.lock` and no
+  lease state lock, and then ends.
 - **From v0.09, a run's deploy step takes the lease state lock, then `hosts.lock`, in this
   order** ([A resizing run](#a-resizing-run), steps 1 to 4; architect, 2026-11-23, for v0.09-T01,
   pin P26, which replaces pin P13's read without a lock). It removes the host's `instance_type`
@@ -1723,7 +1778,7 @@ later lock MUST NOT wait for an earlier one, so no two programs ever wait on eac
   alone for the read of the lease state file; none during the deploy and the read-back;
   `hosts.lock` alone to record the type, and the instance ID, after the deploy; `hosts.lock` alone
   to record `ready`; then `place_pending`'s `hosts.lock` alone and its lease state lock once per
-  lease. Besides `provision.lock`, it holds at most two locks of this page at a time, and both
+  lease; and, from v0.10, `hosts.lock` alone to record the success. Besides `provision.lock`, it holds at most two locks of this page at a time, and both
   only at its deploy step's start. How [operator.md, provision](operator.md#provision) groups its
   own writes of the record under `hosts.lock` is that page's, within this order.
 
@@ -2512,6 +2567,41 @@ build, or depends on a rule that row 1 changes:
     host is `stopped` within D56's bound after the last release.
 - **The box is not resized live** (D70): its first lease after the install records its type at `m`,
   which changes nothing on it, shown by its registry record and `status -Host swimcoach`.
+
+### Conformance cases for v0.10
+
+**Each behavior below can be shown through the lease CLI with stand-ins, and MUST be a conformance
+case of E0.10-T04-S01** (card #0221; D77, with pins P22, P24 and P31, architect, 2026-11-24, for
+v0.10-T01). **They are the cases of the v0.09 section's kind**, with its seeding rules: each runs
+in the harness's throwaway home, writes there the `hosts.json` it needs, a `ready` record with
+`instance_type` `m9g.xlarge` unless the case says otherwise, and `AGENTSPACE_PROVISION_CMD` set to
+v0.07's recording stand-in.
+- **The lease CLI's stand-in provision writes nothing to `hosts.json`**, so it never records a
+  success. **A case that needs one seeds `last_success_at` itself**, in the record it writes, in
+  state.md's timestamp form.
+- **`C8`, `C12`, `Z10` and `Z14` stay as written**: their records carry no `last_success_at`, so
+  they show the 5 minutes unchanged.
+- **`<project>` is a project of the case's own** with a `ready` record at `<t:m>` and no live
+  `ready` lease, and "starts nothing" and "the registry as it was" mean what the v0.09 section says.
+
+| Case | What it shows | Where the rule is |
+|---|---|---|
+| Y1 | A success at or after `last_attempt_at` makes the next start at once: with `last_attempt_at` 1 minute before now and `last_success_at` 30 seconds before now, a `get` of a stored `pending` lease of the project starts the stand-in once, with exactly `provision -Host <project>`, sets `last_attempt_at` to now, and leaves the record with no `last_success_at` and every other member as it was; a `create --size l` on the same seed, in a case of its own, starts it once the same way and answers `pending` | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4 |
+| Y2 | An older or absent success waits 5 minutes: with `last_attempt_at` 1 minute before now, and `last_success_at` 2 minutes before it (in one case) or absent (in another), a `get` of the `pending` lease and a `create --size l` each start nothing and leave the registry as it was; with `last_attempt_at` 5 minutes or more before now, in either case, each starts the stand-in once | [Starting a provisioning run](#starting-a-provisioning-run), step 2 |
+| Y3 | Equal seconds follow pin P24: with `last_success_at` equal to `last_attempt_at`, 1 minute before now, a `get` starts the stand-in once, and removes `last_success_at` in the write that sets `last_attempt_at`; a second `get` straight after it starts nothing and leaves the registry as that write left it | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4 |
+| Y4 | A run whose placing failed or left a lease writes no success (pin P22): a record as such a run leaves it, `last_attempt_at` 1 minute before now and no `last_success_at`, beside a stored `pending` lease of the project, answers a `get` and a `create --size l` as Y2's absent case does, and the next start comes once `last_attempt_at` is 5 minutes old | [Starting a provisioning run](#starting-a-provisioning-run), step 2, and "After the run" there |
+| Y5 | A held lock still stops a start that a success would make due: with `last_success_at` at or after `last_attempt_at` and the project's `provision.lock` held by the check, a `get` and a `create --size l` start nothing and leave the registry as it was | [Starting a provisioning run](#starting-a-provisioning-run), step 2 |
+
+**What no stand-in for the lease CLI shows,** and where each is shown instead:
+- **A run's own writing of `last_success_at`**, after step 9's placing returned without error and no
+  lease was failed or left, and under `hosts.lock` alone with `provision.lock` still held; its
+  failed write logged as `success failed reason=<why>` and changing nothing else; and a run
+  whose placing failed, or failed or left a lease, writing none: the operator's cases through
+  `provision` and its test seam, E0.10-T04-S02 (#0222)
+  ([operator.md, provision](operator.md#provision), step 9's end).
+- **The run's start record removing `last_success_at`** (pin P24): the same cases.
+- **A lease created after placing's last re-read and before the run exits, which waits for a
+  `get`** (pin P31): not shown, since no stand-in can time it; it is the order of the locks.
 
 ## Writing another driver
 

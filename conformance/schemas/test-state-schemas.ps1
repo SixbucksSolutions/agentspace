@@ -1,9 +1,9 @@
 #Requires -Version 7
-# A conformance check under D34 with no program under test: it validates schemas/state/samples against schemas/state/, loads no prototype code and reads only schemas/state/. See docs/conformance.md.
+# A conformance check under D34 with no program under test: it validates schemas/state/samples against schemas/state/, loads no prototype code and reads only schemas/state/ and the plan.input.schema.json beside it. See docs/conformance.md.
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
-# Checks the state schemas (docs/state.md, D45, D55) that have samples, beside conformance/schemas/test-schemas.ps1,
-# which reads the top level of schemas/ only:
+# Checks the state schemas (docs/state.md, D45, D55, D74, D77) against their samples, beside conformance/schemas/test-schemas.ps1,
+# which reads the top level of schemas/ and schemas/v0/, never schemas/state/:
 # - Every sample in schemas/state/samples/ and schemas/state/samples/invalid/ MUST name a state schema, as
 #   <schema name>.<case>.json, so a misnamed sample is never skipped silently.
 # - Every state schema that has a sample MUST declare draft 2020-12, have the $id of the state form
@@ -12,7 +12,14 @@
 # - Every document in schemas/state/samples/invalid/ MUST be rejected by its schema for a schema reason, never because
 #   the schema or the file is broken, so the check is proven able to fail. A state schema that has a valid sample
 #   MUST have at least one invalid one.
-# A state schema with no sample is not checked here; the keeper suite checks the keeper's three against the files a run writes.
+# - Every state schema MUST have at least one sample, valid or invalid, unless $knownWithoutSamples below names it, so a
+#   new state schema, or one whose samples were removed, is never skipped silently. A named schema that has samples
+#   fails too, so the list never outlives its reason.
+# - Every one of the plan schema's $defs MUST appear word for word, compared parsed, in leases.state.schema.json's
+#   $defs, as test-schemas.ps1 checks lease-create.input.schema.json's copy, since Test-Json -SchemaFile does not
+#   resolve a $ref to another file and each schema carries its own copy (state.md, What a plan lease adds). The plan
+#   schema is the plan.input.schema.json in the state folder's parent: the repo's schemas/ for the default folder,
+#   and the planted copy's parent for -StateDir. A missing one MUST fail, never skip.
 #
 # It drives no program, so it names none and reads no variable. It reads files and changes nothing.
 # -StateDir names another copy of schemas/state, which the check's own proof that it can fail uses (a scratch copy with a planted sample).
@@ -30,6 +37,17 @@ $invalidDir = Join-Path $sampleDir 'invalid'
 $script:passes = 0
 $script:failures = 0
 $script:skips = 0
+
+# The state schemas known to have no sample here, each with where its files are checked instead. Only these MAY have
+# none; any other schema with none fails. Listed on 2026-11-24 (E0.10-T01-S03) from a count of each schema's samples.
+$knownWithoutSamples = @(
+  'board-holder-launch-result.state' # The keeper's; conformance/keeper/test-keeper.ps1 checks the files a run writes.
+  'board-holder-launch.state'        # The keeper's; the same.
+  'board-holder.state'               # The keeper's; the same.
+  'instance-id.state'                # The retired instance-ID cache, which nothing writes from v0.07 (state.md).
+  'localswim-pushed.state'           # The push stamps; agentspace-push's tests check the stamp it writes.
+  'stack-parameters.state'           # Written by a person, never by agentspace (state.md, Files in the checkout).
+)
 
 # A check name cites the spec section it enforces.
 function Write-Result([bool]$Ok, [string]$Text, [string]$Why = 'The check did not hold.') {
@@ -57,7 +75,7 @@ function Test-Document([string]$Json, [string]$SchemaPath) {
 
 # The state.md section that owns a state schema; a schema the map does not name is cited by the page.
 function Get-SpecFor([string]$Stem) {
-  switch ($Stem) { 'hosts.state' { 'state.md#the-host-registry' } 'projects.state' { 'state.md#the-project-list' } default { 'state.md' } }
+  switch ($Stem) { 'hosts.state' { 'state.md#the-host-registry' } 'projects.state' { 'state.md#the-project-list' } 'leases.state' { 'state.md#the-lease-state-file' } default { 'state.md' } }
 }
 
 $schemas = @(Get-ChildItem -LiteralPath $schemaDir -Filter '*.schema.json' -File | Sort-Object Name)
@@ -77,7 +95,14 @@ foreach ($schema in $schemas) {
   $stem = $schema.Name -replace '\.schema\.json$', ''
   $good = @(Get-ChildItem -LiteralPath $sampleDir -Filter "$stem.*.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)
   $bad = @(if (Test-Path -LiteralPath $invalidDir) { Get-ChildItem -LiteralPath $invalidDir -Filter "$stem.*.json" -File | Sort-Object Name })
-  if ($good.Count -eq 0 -and $bad.Count -eq 0) { continue }
+  $known = $knownWithoutSamples -ccontains $stem
+  if ($good.Count -eq 0 -and $bad.Count -eq 0) {
+    Write-Result $known "$(Get-SpecFor $stem): $($schema.Name) has a sample, or is known to have none" "It has no sample in $sampleDir or $invalidDir, and is not on the list of state schemas known to have none."
+    continue
+  }
+  if ($known) {
+    Write-Result $false "$(Get-SpecFor $stem): $($schema.Name) has a sample, or is known to have none" "It is on the list of state schemas known to have none, and has $($good.Count + $bad.Count); take it off the list."
+  }
 
   $doc = Get-Content -Raw -LiteralPath $schema.FullName | ConvertFrom-Json -AsHashtable
   Write-Result ($doc['$schema'] -eq 'https://json-schema.org/draft/2020-12/schema') "$(Get-SpecFor $stem): $($schema.Name) declares draft 2020-12"
@@ -95,6 +120,27 @@ foreach ($schema in $schemas) {
     $r = Test-Document (Get-Content -Raw -LiteralPath $s.FullName) $schema.FullName
     Write-Result ($r -eq 'invalid') "$(Get-SpecFor $stem): invalid/$($s.Name) is rejected for a schema reason" "The result was: $r."
   }
+}
+
+# The lease state schema carries a copy of the plan schema's $defs; no def of the plan's MAY drift from its copy.
+$planFile = Join-Path (Split-Path -Parent $schemaDir.TrimEnd('\', '/')) 'plan.input.schema.json'
+$leasesFile = Join-Path $schemaDir 'leases.state.schema.json'
+$planDefsName = "state.md#what-a-plan-lease-adds: leases.state.schema.json `$defs hold plan.input.schema.json `$defs word for word"
+if ((Test-Path -LiteralPath $planFile -PathType Leaf) -and (Test-Path -LiteralPath $leasesFile -PathType Leaf)) {
+  $planDefs = (Get-Content -Raw -LiteralPath $planFile | ConvertFrom-Json -AsHashtable)['$defs']
+  $leasesDefs = (Get-Content -Raw -LiteralPath $leasesFile | ConvertFrom-Json -AsHashtable)['$defs']
+  $drifted = @(if ($planDefs) {
+    foreach ($k in $planDefs.Keys) {
+      $copy = if ($leasesDefs -and $leasesDefs.ContainsKey($k)) { $leasesDefs[$k] | ConvertTo-Json -Depth 50 -Compress } else { $null }
+      if ($copy -cne ($planDefs[$k] | ConvertTo-Json -Depth 50 -Compress)) { $k }
+    }
+  })
+  $hasDefs = $null -ne $planDefs -and $planDefs.Count -ge 1
+  $why = if (-not $hasDefs) { 'plan.input.schema.json has no $defs.' } else { "These differ or are missing: $($drifted -join ', ')." }
+  Write-Result ($hasDefs -and $drifted.Count -eq 0) $planDefsName $why
+} else {
+  $missing = @(foreach ($p in $planFile, $leasesFile) { if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { Split-Path -Leaf $p } })
+  Write-Result $false $planDefsName "Missing: $($missing -join ', ')."
 }
 
 Exit-Run

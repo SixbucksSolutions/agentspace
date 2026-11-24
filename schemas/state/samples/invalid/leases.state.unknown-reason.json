@@ -1,0 +1,1 @@
+{"version":0,"leases":[{"id":"3f1c2a7e-5b4d-4e8f-9a6b-0c1d2e3f4a5b","project":"agentspace","state":"unsatisfiable","platform":"linux/arm64","profile":"agent-linux","size":"s","ttl_seconds":3600,"created_at":"2026-11-24T18:04:05Z","reasons":[{"code":"plan_too_small","message":"No."}],"driver":"ec2"}]}
