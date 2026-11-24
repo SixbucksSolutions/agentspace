@@ -1,6 +1,7 @@
 //! `deploy -Host <project> -InstanceType <type>`, through the hidden twin of the public
-//! `deploy_with_instance_type` (docs/operator.md, deploy, step 4; Command line, the host checks 5
-//! and 6; architect, 2026-11-21, for v0.07-T03, confirming it as public API).
+//! `deploy_with_instance_type` (docs/operator.md, deploy, step 4; Command line, host check 5;
+//! architect, 2026-11-21, for v0.07-T03, confirming it as public API; v0.07's host check 6, which
+//! refused it for the box, was deleted by v0.09, pin P5).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. Each test runs the crate's hidden
 //! `deploy_target_sized_using` in a child of the test binary, under a throwaway home, with
@@ -10,8 +11,10 @@
 //!   its previous value.
 //! - **A stack it creates gets `InstanceType=<type>` with the creation parameters**, and never the
 //!   box's `InstanceType` from the parameters file.
-//! - **The box is sized through `stack-parameters.json` alone**: `-InstanceType` without `-Host`, or
-//!   with `-Host swimcoach`, is refused before anything starts.
+//! - **The box is sized like every host** (D67, D71; architect, 2026-11-23, for v0.09-T01, pin P5):
+//!   `-InstanceType` without `-Host`, or with `-Host swimcoach`, is accepted and passed as
+//!   `InstanceType=<type>`, last, and the parameters file's own `InstanceType` is passed to no
+//!   stack.
 #![cfg(windows)]
 
 mod common;
@@ -114,44 +117,64 @@ fn a_new_hosts_stack_gets_the_instance_type_with_the_creation_parameters() {
     });
 }
 
-/// `-InstanceType` for `target`, which is the box: refused with the host check's message before
-/// any program starts or any file is read.
-fn refused_for_the_box(target: Target<'static>) {
+/// `-InstanceType` for `target`, which is the box, is accepted as for any host (operator.md,
+/// deploy: "`-InstanceType` is `deploy`'s alone, for every host, the box included"; D67, D71;
+/// v0.07's sixth host check, which refused it for the box, was deleted by v0.09, pin P5; T02's
+/// ruling 3). The box's `cloudformation deploy` passes `InstanceType=<type>` last, after every
+/// member of the parameters file but the file's own `InstanceType`, which is never passed.
+fn accepted_for_the_box(target: Target<'static>) {
     let rig = Rig::new(false);
+    rig.make_ca();
+    rig.with_deploy_inputs();
+    rig.write_home(
+        ".agentspace/stack-parameters.json",
+        br#"{"version":0,"parameters":{"SubnetId":"SUBNET_VALUE","VpcId":"VPC_VALUE","InstanceType":"m9g.8xlarge","RootVolumeGiB":"40"}}"#,
+    );
     rig.run(move |rig| {
         let say = rig.say();
-        let f = rig.failure(
+        rig.succeeded(
             rig.do_deploy_sized(&say, target, Some(TYPE)),
             "deploy -InstanceType for the box",
         );
-        rig.same(
-            "The refusal",
-            &f.message,
-            "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.",
+        let log = rig.log();
+        let aws = log.calls("aws");
+        let template = template_arg(&aws[0].args);
+        rig.same_list(
+            "The box's cloudformation deploy call",
+            &aws[0].args,
+            &deploy_call_args(
+                "agentbox",
+                &template,
+                &[
+                    format!("SshPublicKey={KEY_LINE}"),
+                    "SubnetId=SUBNET_VALUE".to_string(),
+                    "VpcId=VPC_VALUE".to_string(),
+                    "RootVolumeGiB=40".to_string(),
+                    format!("InstanceType={TYPE}"),
+                ],
+            ),
         );
         rig.check(
-            rig.log().all_calls().is_empty(),
-            "Nothing MUST be started before the host checks",
+            log.all_calls()
+                .iter()
+                .all(|c| c.args.iter().all(|a| !a.contains("m9g.8xlarge"))),
+            "The parameters file's InstanceType MUST reach no call",
         );
         rig.check(
-            say.events.borrow().is_empty(),
-            "Nothing MUST be printed before the refusal",
-        );
-        rig.check(
-            rig.command_folders().is_empty(),
-            "No folder of the command's own is left",
+            !log.calls("ssh").is_empty(),
+            "deploy MUST go on to its sync step",
         );
     });
 }
 
 #[test]
-fn the_instance_type_without_a_host_is_refused_for_the_box() {
-    refused_for_the_box(Target::Box);
+fn the_instance_type_without_a_host_is_accepted_for_the_box() {
+    accepted_for_the_box(Target::Box);
 }
 
 #[test]
-fn the_instance_type_with_the_boxs_own_project_is_refused_as_for_the_box() {
-    refused_for_the_box(Target::Host("swimcoach"));
+fn the_instance_type_with_the_boxs_own_project_is_accepted_as_for_the_box() {
+    accepted_for_the_box(Target::Host("swimcoach"));
 }
 
 #[test]

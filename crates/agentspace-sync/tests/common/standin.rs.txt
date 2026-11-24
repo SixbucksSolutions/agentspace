@@ -58,8 +58,11 @@ fn main() {
     let mut watches: Vec<String> = Vec::new();
     let mut probes: Vec<String> = Vec::new();
     let mut readonly: Vec<Vec<String>> = Vec::new();
+    let mut overwrites: Vec<Vec<String>> = Vec::new();
     for line in cfg.lines() {
-        if let Some(v) = line.strip_prefix("readonly=") {
+        if let Some(v) = line.strip_prefix("overwrite=") {
+            overwrites.push(v.split(US).map(|s| s.to_string()).collect());
+        } else if let Some(v) = line.strip_prefix("readonly=") {
             readonly.push(v.split(US).map(|s| s.to_string()).collect());
         } else if let Some(v) = line.strip_prefix("log=") {
             log = v.to_string();
@@ -189,6 +192,17 @@ fn main() {
                 perms.set_readonly(true);
                 let _ = fs::set_permissions(&r[2], perms);
             }
+        }
+    }
+    // `overwrite=<n>US<contains>US<path>US<text>`: the `n`th call (0 for any) whose arguments
+    // contain `contains` replaces the file at `path` with `text` (`\n` is a line feed).
+    for o in &overwrites {
+        if o.len() < 4 {
+            continue;
+        }
+        let on: u32 = o[0].parse().unwrap_or(0);
+        if (on == 0 || on == n) && (o[1].is_empty() || joined.contains(&o[1])) {
+            let _ = fs::write(&o[2], o[3].replace("\\n", "\n"));
         }
     }
     let mut stdin_bytes = Vec::new();
