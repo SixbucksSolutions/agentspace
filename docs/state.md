@@ -64,6 +64,14 @@ marked the choices it made that no decision or pin settled "architect's to confi
 architect ruled every one of them, and each is now cited by its pin, so no fact on this page
 carries that mark.
 
+**Plan-sized leases and a run's success (v0.10, D73 to D81).** A lease created with a plan (D74,
+D75) keeps two more members in its record, `sized_for` and the plan itself
+([What a plan lease adds](#what-a-plan-lease-adds)). The host registry's record gains
+`last_success_at`, which tells a run that succeeded from one that did not, so that the next run is
+due at once after a success (D77; [The last success](#the-last-success)). Every name is D81's.
+**Where D73 to D81 left a point open, the architect ruled it on the dev lead's pins for v0.10's
+specs, and each ruling is cited "architect, 2026-11-24, for v0.10-T01, pin Pn" where it stands.**
+
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
 D34), where they touch the files; the rest of #0041, and #0029, are
@@ -102,8 +110,10 @@ the conformance file for each of these points passes against it. The last column
   [replacing a file](#replacing-a-file)
 - [Every file at a glance](#every-file-at-a-glance)
 - [The lease state file](#the-lease-state-file), with
+  [what a plan lease adds](#what-a-plan-lease-adds), and
   [live leases and the lease horizon](#live-leases-and-the-lease-horizon)
-- [The host registry](#the-host-registry), with [the instance type](#the-instance-type)
+- [The host registry](#the-host-registry), with [the instance type](#the-instance-type) and
+  [the last success](#the-last-success)
 - [The project list](#the-project-list)
 - [A lease's credential](#a-leases-credential), with
   [a lease alias for a host that is not the box](#a-lease-alias-for-a-host-that-is-not-the-box) and
@@ -331,7 +341,7 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `<state folder>\leases.lock` | [The lease state lock](#the-lease-state-lock) | Every lease command that changes leases; a provisioning run, through `place_pending` and, from v0.09, at its deploy step (pin P26) | None; it is held, not read | Never |
 | `<state folder>\leases.json.<hex>.tmp` | The state file's temporary file | The same | None | At once |
 | `<state folder>\release.log` | [The release log](#the-release-log) (D59, D63; pin P16; architect, 2026-11-21, for v0.08-T01) | The EC2 driver's `release`, which appends to it, and nobody else | People | Never |
-| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`; an operator command that caches a host's instance ID; every `deploy` that names or implies a host, `provision`'s deploy step included, which records `instance_type` (D67, D71); the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock; the guard, read-only and without its lock (architect, 2026-11-21, for v0.08-T01, pin P18). Never `list`, `renew` or `release` | Never |
+| `%USERPROFILE%\.agentspace\hosts.json` | [The host registry](#the-host-registry) (D45) | The driver, in `create` and in `get` through `check_pending`; `provision`, which from v0.10 also records `last_success_at` at the end of a run that succeeded (D77; architect, 2026-11-24, for v0.10-T01, pin P23); an operator command that caches a host's instance ID; every `deploy` that names or implies a host, `provision`'s deploy step included, which records `instance_type` (D67, D71); the ProxyCommand, only a missing `instance_id` | The driver; the operator's commands; the ProxyCommand, without its lock but for that write; the keeper, read-only and without its lock; the guard, read-only and without its lock (architect, 2026-11-21, for v0.08-T01, pin P18). Never `list`, `renew` or `release` | Never |
 | `%USERPROFILE%\.agentspace\hosts.lock` | [The host registry lock](#the-host-registry-lock) | Every writer of `hosts.json` | None; it is held, not read | Never |
 | `%USERPROFILE%\.agentspace\hosts.json.<hex>.tmp` | The host registry's temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\projects.json` | [The project list](#the-project-list) (D54) | A person, or the architect with Terry's yes; never agentspace | The driver and `provision`, for a project with no host | Never |
@@ -427,6 +437,13 @@ differences:
   string with no control character. It MUST NOT reach any output (D1). In v0 there is one driver,
   and its name is `ec2`; what a driver is, and its name, are
   [driver.md](driver.md#the-drivers-name)'s.
+- **`sized_for`**, from v0.10, is the lease document's member of that name
+  ([lease-api.md](lease-api.md#fields)), on the record of every lease created with a plan, in every
+  state, and on no other (D75; architect, 2026-11-24, for v0.10-T01, pin P10). Its form is in
+  [What a plan lease adds](#what-a-plan-lease-adds).
+- **`plan`**, from v0.10, is one more member, as `driver` is: the plan document the lease was
+  created with, whole, on the same records as `sized_for`. It MUST NOT reach any output
+  (architect, 2026-11-24, for v0.10-T01, pin P25; [What a plan lease adds](#what-a-plan-lease-adds)).
 - **`ssh.user` in a record MUST match the state schema's pattern**, a lowercase letter or `_`, then
   up to 31 lowercase letters, digits, `_` or `-`. That is narrower than lease-api.md's `ssh.user`
   ([lease-api.md](lease-api.md#fields)), and the record's pattern is the one that binds, because
@@ -457,7 +474,10 @@ differences:
 
 The common fields are `id`, `project`, `state`, `platform`, `profile`, `size`, `ttl_seconds` and
 `created_at`. A `released` record keeps `expires_at` when the lease was ever `ready`, and has none
-when it was released from `pending`.
+when it was released from `pending`. **`sized_for` and `plan` are neither required nor forbidden
+by a state**: a plan lease's record carries both in every state, and every other record carries
+neither. **An `unsatisfiable` record whose `reasons` hold `plan_too_large` has rules of its own**
+([What a plan lease adds](#what-a-plan-lease-adds)).
 
 **The driver is kept for as long as the lease is (#0041, point 2).** `renew` and `release` hand it
 back to the driver that placed the lease ([lease-api.md](lease-api.md#agentspace-lease-renew),
@@ -484,9 +504,13 @@ point (2026-11-18):
 
 **How each command changes it:**
 - **`create`** appends one record. It writes `id`, `project`, `state`, `platform`, `profile`,
-  `size`, `ttl_seconds` and `created_at`, then `expires_at` and `ssh` for a `ready` lease or
-  `reasons` for an `unsatisfiable` one, then `driver`. **An `unsatisfiable` lease's record is all
+  `size`, then, from v0.10, `sized_for` for a lease created with a plan, then `ttl_seconds` and
+  `created_at`, then `expires_at` and `ssh` for a `ready` lease or `reasons` for an `unsatisfiable`
+  one, then `driver`, then, from v0.10, `plan` for a lease created with a plan
+  ([What a plan lease adds](#what-a-plan-lease-adds)). **An `unsatisfiable` lease's record is all
   `create` writes**: it carries `driver`, no file is made for it, and no CA check is run. **From
+  v0.10 a `plan_too_large` lease's record is written the same way**, and `create` asks no driver
+  to place it (architect, 2026-11-24, for v0.10-T01, pin P26 as amended). **From
   v0.07 a `pending` lease's record is all `create` writes too** (D48): the common fields and
   `driver`, and no file. **`create` checks the CA before it answers `pending`**, by the five checks
   of [Its checks](#its-checks), as before it issues, and a CA that fails them fails `create` as for
@@ -501,7 +525,8 @@ point (2026-11-18):
   alias as [Creation, in order](#creation-in-order) says, and then, in one write, sets `state` to
   `ready` and adds `expires_at` and `ssh`, before it releases the lock and takes it again for the
   next lease. So no hold spans several placements. It keeps every other member as it was: `id`,
-  `project`, `platform`, `profile`, `size`, `ttl_seconds`, `created_at` and `driver`. **A record
+  `project`, `platform`, `profile`, `size`, `ttl_seconds`, `created_at` and `driver`, and, from
+  v0.10, `sized_for` and `plan` (architect, 2026-11-24, for v0.10-T01, pin P17). **A record
   that is not `pending` when the run re-reads the file for it under the lock is skipped, and never
   changed by the run**, so a lease released meanwhile is never placed. Which leases it places, and in what steps, is
   [driver.md](driver.md#place_pending)'s.
@@ -511,7 +536,7 @@ point (2026-11-18):
   holds the host, is answered `unsatisfiable` with the one reason `no_capacity`. Under the lease
   state lock, taken and re-read for that lease as for a placement, it sets `state` to
   `unsatisfiable` and adds `reasons`, in one write, and keeps every other member as it was, `driver`
-  included; it adds no `expires_at` and no `ssh`. A record that is not `pending` at that re-read is
+  included, and from v0.10 `sized_for` and `plan` (pin P17); it adds no `expires_at` and no `ssh`. A record that is not `pending` at that re-read is
   skipped, as above. Which leases it answers so, and the reason's message, are
   [driver.md](driver.md#place_pending)'s; the files it removes for such a lease are its own
   leftovers, as driver.md says (pin P21).
@@ -519,13 +544,14 @@ point (2026-11-18):
   truncated to the whole second, and either MAY come first
   ([lease-api.md](lease-api.md#fields)). The prototype reads `created_at` after signing.
 - **`renew`** sets `expires_at` to the new certificate's valid-before time and `ttl_seconds` to the
-  TTL used, and changes nothing else.
+  TTL used, and changes nothing else, `sized_for` and `plan` included (pin P17).
 - **`release` of a stored `ready` or `pending` record** sets `state` to `released`, adds
   `released_at`, and removes `ssh`, keeping `expires_at`. **`release` of a `released` record**
   changes nothing in it, keeping its first `released_at`, though it removes the files a failed
   release left, which the prototype does not
   ([Release, and what it leaves](#release-and-what-it-leaves)). **`release` of an
-  `unsatisfiable` record** changes nothing.
+  `unsatisfiable` record** changes nothing. **Every `release` keeps `sized_for` and `plan` as they
+  were** (pin P17).
 - **`get` and `list` MUST NOT write it, and the keeper, the ProxyCommand and the guard MUST NOT
   write it either** (the guard's: D56). `get`'s `check_pending` MAY start a provisioning run, which writes it later in a
   process of its own ([driver.md](driver.md#check_pending)); `get` itself never does (card #0143,
@@ -588,6 +614,99 @@ The ProxyCommand reads it only to find the record whose `ssh.host_alias` is its 
 the host that lease is on ([Which host a connection reaches](#which-host-a-connection-reaches)).
 **A reader that finds the file missing, or not valid, reads no lease from it**; what the
 ProxyCommand then does is operator.md's.
+
+### What a plan lease adds
+
+**From v0.10 the record of a lease created with `--plan` keeps what the lease was sized for, and
+the plan it was sized from** (D74, D75; D81's pinned `Record`; architect, 2026-11-24, for
+v0.10-T01, pins P10, P17, P25 and P29, and pin P26 as amended). A lease created without a plan has
+neither member, and its record is what v0.09 wrote for it, byte for byte.
+
+**`sized_for`** has the lease document's form ([lease-api.md](lease-api.md#fields)), and the state
+schema checks it as the output schema does (pin P10). It is an object with these members, and no
+others:
+
+| Member | Required | Value |
+|---|---|---|
+| `plan` | No | The plan's `name`, in the form of a name in a plan: 1 to 64 printable ASCII characters with no space at either end, `^[!-~]([ -~]{0,62}[!-~])?$(?!\n)` (pin P2). Omitted when the plan's `name` is absent or `null` (pin P21), and never `null` itself |
+| `turn` | Yes | The `name` of the plan's busiest turn, in the same form, the first such turn on a tie (D74) |
+| `agents` | Yes | That turn's agents at once, its dev lead counted (D74): an integer from 2 to 1025 |
+
+**`plan`** is the plan document, whole, a JSON object, as `create` parsed it from the `--plan` file
+(pins P17 and P25):
+- **It is stored compactly, as `serde_json` re-serializes the parsed document with
+  `preserve_order`, the workspace's feature**: in the file's member order, with the file's
+  whitespace and any byte order mark gone, and its strings re-escaped. **So the stored bytes MAY
+  differ from the file's**, and a reader MUST NOT depend on their matching. Every string a plan's schema
+  allows is printable ASCII, which the re-escaping never lengthens, so the stored plan is never
+  longer than the file it was read from.
+- **A `null` the plan held for its `name`, or for a subagent's `after`, is kept as parsed**, and
+  means absent there, as it does in the plan (pin P21).
+- **Its form is the plan document's**, `schemas/plan.input.schema.json`, whose `$defs` the state
+  schema copies, as every schema copies the parts it shares (D76). **What no schema can check**, a
+  cycle in `after`, an `after` that names no subagent of its story, a name given twice and the
+  file's size ([lease-api.md](lease-api.md)), **was checked by `create` before it wrote the
+  record, and is not checked again when the file is read**: a record whose plan breaks one of
+  them, which only a person's edit can make, leaves the file valid.
+- **It is kept in the record only, and MUST NOT reach any output** (pin P25): no lease command
+  prints it, and no program prints or logs it, or a `model` or `effort` in it (D74). In code it is
+  D81's `Record.plan`, which `record_value` writes into the stored record and `base_members`, which
+  feeds the lease document, never holds; `sized_for` is in both (pin P25).
+- **No sizing reads it** (D27, D73, D74): it is kept for D27's later use of each subagent's model
+  and effort.
+
+**The two come together, with `driver`** (architect, 2026-11-24, for v0.10-T01, pin P26 as
+amended). **`driver` is optional on a record in general** (#0041, point 2;
+[The lease state file](#the-lease-state-file)), **and required on every record that holds
+`sized_for` or `plan`**, and so on every `plan_too_large` record. A record holds `sized_for` if and
+only if it holds `plan`, and one that holds them holds `driver` too, since every record `create`
+writes carries it and only `create` of v0.10 or later writes these two. The schema refuses
+`sized_for` without `plan`, `plan` without `sized_for`, and either without `driver`.
+
+**A `plan_too_large` record** (D75, as D81 changed it; pin P10; architect, 2026-11-24, for
+v0.10-T01, pin P26 as amended):
+- **Its `state` is `unsatisfiable`, and its `reasons` hold `plan_too_large` alone**, never beside
+  another reason and never twice. The reason's message is [lease-api.md](lease-api.md#fields)'s.
+- **Its `size` is `xl`**, the largest size, and it keeps `sized_for` and `plan`, as every plan
+  lease's record does.
+- **It carries `driver`, which is optional on a record in general and required on every record
+  that holds `sized_for` or `plan`, and so on this one** (architect, 2026-11-24, for v0.10-T01, pin
+  P26 as amended): `create` resolves the
+  driver, failing first, as it does for any lease, when there is none, records its name, and never
+  calls its place. No driver is asked about such a lease afterwards, since none is asked about an
+  `unsatisfiable` one ([driver.md](driver.md#release-a-lease)).
+- **The schema refuses `plan_too_large` beside another reason, twice, in a record that is not
+  `unsatisfiable`, with a `size` other than `xl`, or without `sized_for`.**
+
+**Only `create` writes them, once, in the record it appends** (pin P17). `renew`, `release`, and a
+provisioning run's `place_pending`, placing a lease or answering it `unsatisfiable`, keep both
+exactly as they read them ([The lease state file](#the-lease-state-file)). **No writer adds them to
+a record, changes them or removes them, and a record is never rewritten to drop them.**
+
+**The file grows with every plan lease** (pin P29). Each lease created with a plan adds up to one
+plan to the lease state file, at most 262144 bytes, the plan file's largest size (pin P1), and no
+command forgets a lease ([The lease state file](#the-lease-state-file)), so the file keeps that
+growth for as long as it exists. **The growth is accepted in v0.10**: every lease command reads the
+whole file and checks it against its schema, and every changing command writes it whole, as
+before.
+
+**Its form, and programs built before v0.10** (D77's last bullet; architect, 2026-11-24, for
+v0.10-T01, pin P27):
+- **Both members are optional, and `null` is never accepted for either**, nor for `sized_for`'s
+  `plan`.
+- **The file's `version` stays `0`** (pins P17 and P25). A program built before v0.10 refuses a
+  lease state file that holds `sized_for`, `plan` or the reason `plan_too_large` as not valid, by
+  its schema, rather than reading it without them, and so never writes such a file back without
+  them: each of its lease commands fails with `internal`, "could not be read", and changes nothing,
+  as for any file that is not valid ([The lease state file](#the-lease-state-file)); its keeper
+  logs that it cannot read the file and keeps every holder as it is; and its guard stops no host
+  ([Live leases and the lease horizon](#live-leases-and-the-lease-horizon)).
+- **So v0.10's programs MUST be installed together**, as the host registry's
+  [`last_success_at`](#the-last-success) requires too. The install is the README's
+  ([README](../README.md#install-it)). **A return to v0.09's programs after a plan lease was
+  created needs `sized_for` and `plan` removed by hand from every record that holds them, and
+  every record whose `reasons` hold `plan_too_large` changed or removed by hand** (pin P27): v0.09's
+  schema knows no such reason, and no command forgets a lease.
 
 ## Live leases and the lease horizon
 
@@ -721,8 +840,9 @@ and is `ready`, its `expires_at` is the horizon.
 
 **`%USERPROFILE%\.agentspace\hosts.json` says which host serves which project (D45, D55).** It
 holds one record per host: its project, its stack's name, its state, its instance ID once known,
-the start time of its last provisioning run, and, from v0.09, the instance type its stack was
-last deployed with (D67). It is laptop state, never output (D1): no lease command prints
+the start time of its last provisioning run, from v0.09 the instance type its stack was last
+deployed with (D67), and from v0.10 the time its last provisioning run that succeeded ended (D77).
+It is laptop state, never output (D1): no lease command prints
 anything from it, nor names it in a message. Its schema is
 [`schemas/state/hosts.state.schema.json`](../schemas/state/hosts.state.schema.json), draft 2020-12
 and strict (D20), carried inside every program that reads it, and where this section and the
@@ -743,6 +863,7 @@ schema disagree, both are wrong and MUST be fixed together.
 | `instance_id` | No | The host's EC2 instance ID, cached from its stack's `InstanceId` output: `^i-([0-9a-f]{8}\|[0-9a-f]{17})$(?!\n)`. Absent until a writer has read it ([The instance ID](#the-instance-id)) |
 | `instance_type` | No | The instance type of the host's stack, its `InstanceType` parameter as `cloudformation describe-stacks` read it back after the last `deploy` that recorded it (D67, D71): `^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$(?!\n)`, at most 64 characters, the form operator.md gives `-InstanceType`'s value ([operator.md, Command line](operator.md#command-line); architect, 2026-11-23, for v0.09-T01, pin P14). Absent until a `deploy` of v0.09 or later has recorded it, and while a provisioning run's deploy step, or a `deploy` that changes it, is under way ([The instance type](#the-instance-type)) |
 | `last_attempt_at` | No | The start time of the host's last provisioning run, UTC, in the contract's form `YYYY-MM-DDTHH:MM:SSZ` ([lease-api.md](lease-api.md#times)). Absent while no run has been started |
+| `last_success_at` | No | From v0.10: the time the host's last provisioning run that succeeded ended, UTC, in the same form as `last_attempt_at` (D77). Written only by that run, at its end, and removed by every write that sets `last_attempt_at` (architect, 2026-11-24, for v0.10-T01, pins P22 to P24). Absent while no run has succeeded since the last start ([The last success](#the-last-success)) |
 
 `(?!\n)` after `$` means the value MUST NOT end in a line feed, which a bare `$` would allow; each
 pattern in the schema ends that way, as the contract's output schemas' do. The `\|` in the table
@@ -755,8 +876,8 @@ is a `|` in the pattern.
   neither, and the record a missing file implies has `instance_type` `m9g.xlarge` only as it is
   read (the seed, below). A record written before v0.09, or written from the seed document, has no
   `instance_type`, and is valid (D67).
-- **`last_attempt_at` is kept as the string it is stored as**, as the lease state file's times
-  are. **A time that matches the pattern but names no real instant**, such as
+- **`last_attempt_at` and `last_success_at` are each kept as the string they are stored as**, as
+  the lease state file's times are. **A time that matches the pattern but names no real instant**, such as
   `2026-02-30T00:00:00Z`, **makes the file not valid**, as it makes the lease state file not valid
   ([The lease state file](#the-lease-state-file)); so does a leap second, `:60`.
 
@@ -852,10 +973,13 @@ about, leaving every other record's members and values as it read them. The writ
 **Who writes it**, each under its lock and each only as [Its states](#its-states) and
 [The instance ID](#the-instance-id) say:
 - **The driver**, in `create` and in `get`'s `check_pending`: it adds a listed project's record and
-  records the start of a run ([driver.md](driver.md#where-it-places-a-lease)). `get` writes nothing
+  records the start of a run, removing `last_success_at` in the same write (architect, 2026-11-24,
+  for v0.10-T01, pin P24; [driver.md](driver.md#where-it-places-a-lease)). `get` writes nothing
   else, and never the lease state file.
-- **`provision`**: the run's start, its outcome and the instance ID
-  ([operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
+- **`provision`**: the run's start, which removes `last_success_at` in the same write (pin P24),
+  its outcome, the instance ID, and from v0.10 `last_success_at`, at the end of a run that
+  succeeded ([The last success](#the-last-success); pins P22 and P23;
+  [operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
 - **Every other operator command that needs a host's instance ID**: that record's `instance_id`
   alone, but for `deploy`, which writes `instance_type` too (the next item). **The guard is the
   exception: it never writes the registry**, though it is an operator
@@ -884,8 +1008,22 @@ does not know it, MUST NOT write the file** (pin P12): a program built before v0
 that holds `instance_type` as not valid, by its schema, and so never drops it, and a program built
 against this page MUST read it and write it back unchanged ([The instance type](#the-instance-type)).
 
+**Every writer keeps a record's `last_success_at` exactly as it read it, but for two kinds of
+write** (D77; architect, 2026-11-24, for v0.10-T01, pins P23 and P24): the run's write of it at its
+end, and every write that sets `last_attempt_at`, the driver's start of a run and the run's record
+of its own start, which removes it ([The last success](#the-last-success)). `deploy`, every other
+write of `provision`, its deploy step's and its record of `ready` or `failed` among them, an
+operator command that caches an instance ID, and the ProxyCommand never add, change or remove it. A record the driver or
+`provision` adds has none. **A program that cannot keep the member, because it does not know it,
+MUST NOT write the file** (D77's last bullet; architect, 2026-11-24, for v0.10-T01, pin P27): a
+program built before v0.10 refuses a file that holds `last_success_at` as not valid, by its schema,
+and so never drops it, and a program built against this page MUST read it and write it back
+unchanged.
+
 **Who reads it:** the driver, in `create` and in `get` of a `pending` lease, its place reading
-`instance_type` from v0.09 ([The instance type](#the-instance-type)); every operator
+`instance_type` from v0.09 ([The instance type](#the-instance-type)), and its decision whether a run
+is due reading `last_attempt_at` and, from v0.10, `last_success_at`
+([The last success](#the-last-success)); every operator
 command that acts on a host, to find it, and `status -All`, `down -All` and `sync -All` for
 every record; the guard, for every record, read-only and without its lock (architect, 2026-11-21,
 for v0.08-T01, pin P18); and the
@@ -904,33 +1042,41 @@ output (D1).
 ### Its states
 
 **A record's `state` says whether the host can take leases**, and is written only as this table
-says. When a run is started, and the 5-minute rule between runs, are
+says. When a run is started, and the 5-minute rule between runs, which from v0.10 does not apply
+after a run that succeeded (D77; [The last success](#the-last-success)), are
 [driver.md](driver.md#check_pending)'s and [operator.md](operator.md#provision)'s; this table is
 what each writer records.
 
 | From | To | Written by, and when |
 |---|---|---|
 | No record | `creating`, without `last_attempt_at` unless a run is started | The driver, in `create` or in `get`'s `check_pending`, for a project with no record that is on [the project list](#the-project-list) (architect, 2026-11-20, for v0.07-T01). When it starts a run in the same call, the record is written with `last_attempt_at` in that same write (the next row). `provision`, run by hand for such a project, adds the same record with `last_attempt_at` |
-| `creating` or `failed` | `creating`, with `last_attempt_at` set to now | The driver, in the same locked write in which it decides to start a run; `provision`, at its start, once it holds [the run's lock](#the-provisioning-runs-lock) (architect, 2026-11-20, for v0.07-T01) |
+| `creating` or `failed` | `creating`, with `last_attempt_at` set to now and `last_success_at` removed (pin P24) | The driver, in the same locked write in which it decides to start a run; `provision`, at its start, once it holds [the run's lock](#the-provisioning-runs-lock) (architect, 2026-11-20, for v0.07-T01) |
 | `creating` | `ready`, with `instance_id` | `provision`, when every step has succeeded. `instance_type` is as its deploy step recorded it ([The instance type](#the-instance-type)) |
 | `creating` | `failed` | `provision`, when a step has failed. `last_attempt_at` stays the run's start, and an `instance_id` the run learned is kept |
-| `ready` | `ready`, with `last_attempt_at` set to now | The driver, when it starts a run for a host that is `ready` (`check_pending`, for a pending lease of that project; architect, 2026-11-20, for v0.07-T01), and `provision` at its start on such a host. **The run never changes a `ready` record's `state`**: it keeps `ready` on success, writing the `instance_id` if it learned one, and on a failed step logs the failure and leaves `ready` (architect, 2026-11-20, for v0.07-T01; D48) |
+| `ready` | `ready`, with `last_attempt_at` set to now and `last_success_at` removed (pin P24) | The driver, when it starts a run for a host that is `ready` (`check_pending`, for a pending lease of that project; architect, 2026-11-20, for v0.07-T01), and `provision` at its start on such a host. **The run never changes a `ready` record's `state`**: it keeps `ready` on success, writing the `instance_id` if it learned one, and on a failed step logs the failure and leaves `ready` (architect, 2026-11-20, for v0.07-T01; D48) |
 
 - **No writer changes a record to a state the table does not name.** In particular nothing in
   agentspace moves a record out of `ready`, and nothing removes a record. **`creating` and
   `failed` apply only to a host that was never `ready`**, and a run on a `ready` host, and the
-  driver that starts it, write only `last_attempt_at` at its start (architect, 2026-11-20, for
-  v0.07-T01; D48). A host that is not `ready` sends its project's ready leases to the box, where
+  driver that starts it, write only `last_attempt_at` at its start, removing `last_success_at` in
+  the same write (architect, 2026-11-20, for v0.07-T01; D48; architect, 2026-11-24, for v0.10-T01,
+  pin P24). A host that is not `ready` sends its project's ready leases to the box, where
   ssh refuses them ([Which host a connection reaches](#which-host-a-connection-reaches)).
 - **`instance_type` is not a state, and no row of the table writes it.** A `deploy`,
   `provision`'s deploy step included, writes it whatever the record's state, and every write the
   table names keeps it as it was ([The instance type](#the-instance-type)). A run on a `ready`
   host, a resize included (D68, D71), keeps the record `ready` and writes only
-  `last_attempt_at` at its start, as above.
+  `last_attempt_at` at its start, as above, and from v0.10 `last_success_at` at its end when it
+  succeeded.
+- **`last_success_at` is not a state either, and no row of the table writes it** (D77; architect,
+  2026-11-24, for v0.10-T01, pins P22 to P24). The run writes it at its end, after the row that
+  records its outcome, and only when it succeeded; the rows that set `last_attempt_at` remove it;
+  and every other write the table names keeps it as it was ([The last success](#the-last-success)).
 - **`creating` means a run is under way, or one died with the record still `creating`.**
   Whether a run is under way is told by [the run's lock](#the-provisioning-runs-lock), never by
   the record: a run killed before it recorded its outcome leaves `creating`, and a later `create`
-  or `get` starts the next run once `last_attempt_at` is 5 minutes old (D48).
+  or `get` starts the next run once `last_attempt_at` is 5 minutes old (D48), since a run killed
+  before its end writes no `last_success_at` (D77).
 - **`failed` is never a reason to answer `unsatisfiable`** (D48): a lease of that project stays
   `pending`, and the next run MAY succeed.
 - **The only record with the stack `agentbox` that agentspace ever adds is the seed's.** Every
@@ -955,8 +1101,10 @@ read from its stack again, as a missing cache was.
   AWS. A write that fails, or a file that has become not valid, does not fail the connection,
   which uses the ID it read (architect, 2026-11-20, for v0.07-T01).
 - **The lease CLI never reads, checks for or needs `instance_id`** (D21): `create` and `get` read
-  a record's `project`, `stack` and `state`, and from v0.09 its `instance_type`, and nothing else
-  ([driver.md](driver.md#where-it-places-a-lease); [The instance type](#the-instance-type)).
+  a record's `project`, `stack`, `state` and `last_attempt_at`, from v0.09 its `instance_type`, and
+  from v0.10 its `last_success_at`, and nothing else
+  ([driver.md](driver.md#where-it-places-a-lease); [The instance type](#the-instance-type);
+  [The last success](#the-last-success)).
 - **An `instance_id` that does not match its pattern makes the file not valid**, as above. Unlike
   the retired cache's, it is never read as missing, because the file holds more than the cache did.
 
@@ -1141,6 +1289,90 @@ it:
   programs after v0.09 has written the member needs it removed by hand** from every record that
   holds it (D67's change note; architect, 2026-11-23, for v0.09-T01, pin P15;
   [README](../README.md#install-it)).
+
+### The last success
+
+**A record's `last_success_at` says that the host's last provisioning run succeeded, and when it
+ended** (D77; architect, 2026-11-24, for v0.10-T01, pins P22 to P24). The driver reads it to decide
+whether a run is due at once after the last one
+([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)). This page owns
+the member; when a run is started is driver.md's, and the run's steps and log lines are
+[operator.md, provision](operator.md#provision)'s. Its form is in
+[the table above](#the-host-registry).
+
+**When a run has succeeded** (pin P22): **only when its placing step, step 9 of
+[operator.md, provision](operator.md#provision), returned without error, and placed every `pending`
+lease of the project it found or answered it `unsatisfiable`**, so that no lease failed to be placed
+and none was left for a later run. A run that failed at any step before step 9 never reaches it. A
+run whose placing failed as a whole, failed for one lease, or left one `pending` still exits 0, as
+operator.md says, and has not succeeded: counting it a success would have every `get` of the lease
+it stranded start a run at once, the loop D48's spacing exists to prevent (D77's change note). **A
+run that has not succeeded writes nothing here, and the 5 minutes of D48 hold** before the next
+start. A `pending` record that placing does not see, such as one whose size the driver does not
+know, does not count against the run, a residual pin P22 accepts.
+
+**Who writes it, and when** (architect, 2026-11-24, for v0.10-T01, pin P23):
+1. **Only the run that succeeded, once, at its end**: after its step 9 returns and before its step
+   10 and its `run done` line, still holding its own
+   [`provision.lock`](#the-provisioning-runs-lock).
+2. **Under [the host registry lock](#the-host-registry-lock) alone**, holding no lease state lock,
+   which its placing released after each lease: it takes the lock, re-reads the file, sets that
+   record's `last_success_at` and no other member of any record, writes the file, and releases the
+   lock.
+3. **Its value is the run's clock when it writes**, UTC, in the contract's form, as `last_attempt_at`
+   is: the time the run ended (D77).
+4. **A write that fails changes nothing else**: the run logs `success failed reason=<why>` in its
+   [log](#the-provisioning-runs-log), as operator.md gives the line, and ends as it would have
+   otherwise (pin P23). A file that has become not valid, or a record no longer there, is such a
+   failure. The record then has no `last_success_at`, so the next start waits the 5 minutes, as
+   after a run that failed.
+
+**Who removes it** (architect, 2026-11-24, for v0.10-T01, pin P24): **every write that sets
+`last_attempt_at` removes `last_success_at` in the same write**: the driver's, when it starts a run
+([driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run), step 4), and the
+run's own record of its start ([operator.md, provision](operator.md#provision), step 3). Without
+it, a start in the same second as the end of the run before it would read as a run that had
+succeeded before it took its lock, since both times can fall in one second (D77's change note).
+Every other writer keeps it exactly as it read it ([The host registry](#the-host-registry)).
+
+**What it tells a reader** (D77; pin P24):
+- **The run that started at `last_attempt_at` succeeded when `last_success_at` is present and at or
+  after `last_attempt_at`**, the two compared as instants, to the second, from the strings stored,
+  so equal seconds read as a success. Absent, or before `last_attempt_at`, which only a person's
+  edit or a clock set back during the run can make, it says no run has succeeded since the last
+  start.
+- **A run is due when no program holds the project's `provision.lock`, and `last_attempt_at` is
+  absent or at least 5 minutes old, or the run that started at `last_attempt_at` succeeded** (D77).
+  The driver applies the rule ([driver.md, Starting a provisioning
+  run](driver.md#starting-a-provisioning-run), step 2); a record with no `last_attempt_at` is due
+  by that alone, whatever `last_success_at` holds.
+- **Until the run exits, its `provision.lock` is held**, so a lease created after the run's placing
+  last read the lease state file, and before the run exits, starts no run and waits for a later
+  `create` or `get`, a residual the architect accepted (architect, 2026-11-24, for v0.10-T01, pin
+  P31; [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)).
+
+**Its form, and programs built before v0.10** (D77's last bullet; architect, 2026-11-24, for
+v0.10-T01, pin P27):
+- **The member is optional, and `null` is never accepted for it**, as for every optional member
+  ([The host registry](#the-host-registry)).
+- **In code it is D81's pinned field, `agentspace_hosts::Host.last_success_at: Option<String>`**,
+  written by D81's `set_last_success_at`, under the host registry lock as `set_instance_type` is.
+  A program that reads and writes the registry through that crate keeps the member by keeping the
+  field.
+- **It is written after `last_attempt_at`**, the last member, in the order of the member table,
+  which fixes a record's bytes. A record without it is written as it was before v0.10. A reader
+  MUST NOT depend on member order.
+- **The file's `version` stays `0`.** A program built before v0.10 refuses a file that holds
+  `last_success_at` as not valid, by its schema, rather than reading it without the member, and so
+  never writes such a file back without it. It then behaves as for any file that is not valid
+  ([The host registry](#the-host-registry)): its `create` fails with `internal`, its `get` of a
+  `pending` lease starts no run, its operator commands and ProxyCommand fail, its keeper keeps
+  every holder as it is, and its guard stops no host.
+- **So v0.10's programs MUST be installed together, with no provisioning run running**, as the
+  lease state file's [`sized_for` and `plan`](#what-a-plan-lease-adds) require too (pin P27). The
+  install is the README's ([README](../README.md#install-it)). **A return to v0.09's programs after
+  a run of v0.10 has written the member needs it removed by hand** from every record that holds it
+  (D77's last bullet; pin P27).
 
 ### Which host a connection reaches
 
@@ -2161,7 +2393,9 @@ P34). The box's is `hosts\swimcoach\provision.lock` ([A host's folder](#a-hosts-
   P2): one try, which either has it or finds it held.
   - **`provision` takes it right after its first step, opening
     [its log](#the-provisioning-runs-log), and before it writes anything else, and holds it until
-    it has recorded its outcome and called `place_pending`.** A `provision` that finds it held
+    it has recorded its outcome, called `place_pending` and, from v0.10, recorded its success when
+    it succeeded** ([The last success](#the-last-success); architect, 2026-11-24, for v0.10-T01,
+    pin P23). A `provision` that finds it held
     writes one line to its log saying that a run is already running, writes no record and nothing
     else, and exits 1 ([operator.md](operator.md#provision); architect, 2026-11-20, for v0.07-T01).
   - **From v0.09 every `deploy` that is not a provisioning run's own deploy step takes it**, the
@@ -2999,9 +3233,13 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
   registry lock without waiting.
 - **A provisioning run ends in this order:** holding its own lock throughout, it takes the host
   registry lock alone to record `ready` and the instance ID, and releases it; then `place_pending`
-  takes the lease state lock once for each lease it places, releasing it after each; then the run
-  releases its own lock. It never holds the host
-  registry lock while it waits for the lease state lock.
+  takes the host registry lock alone for one read of the project's record, and releases it before
+  it takes any other lock ([driver.md, place_pending](driver.md#place_pending); architect,
+  2026-11-24, for v0.10-T01, pin P23), then takes the lease state lock once for each lease it
+  places or answers, releasing it after each; then, from v0.10, a run that succeeded takes the host
+  registry lock alone to record `last_success_at`, and releases it
+  ([The last success](#the-last-success); pin P23); then the run releases its own lock. It never
+  holds the host registry lock while it waits for the lease state lock.
 - **A person's `deploy` holds the provisioning run's lock first, then the host registry lock only
   for its record writes** (D71; [The instance type](#the-instance-type); architect, 2026-11-23,
   for v0.09-T01, pins P11 and P34). It takes its host's `provision.lock` without waiting, before
@@ -3024,7 +3262,8 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
   at its deploy step, the lease state lock, then the host registry lock within it, released before
   the read, then the lease state lock alone for the read; none during the deploy and its read-back;
   the host registry lock alone to record the type and the instance ID, and again to record `ready`;
-  then `place_pending`'s, as above. Besides its own, it holds at most two of these locks at a time,
+  then `place_pending`'s, as above; and from v0.10 the host registry lock alone once more, to record
+  its success when it succeeded (pin P23). Besides its own, it holds at most two of these locks at a time,
   and both only at its deploy step's start, taken in the order, so the order is kept.
 - **The keeper's two locks are outside this order**: the keeper takes none of these three, and no
   holder of these three takes the keeper's.
@@ -3051,7 +3290,8 @@ MUST NOT wait for an earlier one, so no two programs wait for each other.
 | `renew` | `ssh` reads the old certificate or the new one, never a part of either, since the new one arrives by one rename |
 | `release` | `ssh` finds the alias file gone before the key, never the reverse. A session already open through the alias is ended by `release`'s step 3 ([Release, and what it leaves](#release-and-what-it-leaves)). `get` sees the lease `released` before its files are gone, in the order this page asks of the rewrite, and after, in the prototype's ([Release, and what it leaves](#release-and-what-it-leaves)) |
 | Commands with different `AGENTSPACE_STATE_DIR` values | Two separate state files with separate locks, but one set of lease folders and, with one `<ssh folder>`, one `agentspace.d`. They do not exclude each other. IDs are random, so their folders never collide, but their aliases can; the second `create` then fails on the first's alias file ([The alias file](#the-alias-file)) |
-| Two `create`s, or a `create` and a `get`, for one project with no `ready` host | A second `create` waits for the host registry lock; a `get` tries it without waiting, and starts nothing when it is held. Either, once it has the lock, finds the record the first added or changed, and starts no second run: the first run holds its lock, or `last_attempt_at` is less than 5 minutes old ([Its states](#its-states)). Both leases are `pending`, and one run places both |
+| Two `create`s, or a `create` and a `get`, for one project with no `ready` host | A second `create` waits for the host registry lock; a `get` tries it without waiting, and starts nothing when it is held. Either, once it has the lock, finds the record the first added or changed, and starts no second run: the first run holds its lock, or `last_attempt_at` is less than 5 minutes old and, from v0.10, the record has no `last_success_at`, which the first's write removed ([Its states](#its-states); architect, 2026-11-24, for v0.10-T01, pin P24). Both leases are `pending`, and one run places both |
+| A provisioning run's end, and a `create` or `get` of the same project (v0.10) | The run records `last_success_at` under the host registry lock while it still holds its `provision.lock` (pin P23). A `create` or `get` before the run exits, whether it reads the record before that write or after it, finds `provision.lock` held and starts no run, so a lease created after the run's placing last read the lease state file waits for a later `create` or `get` (architect, 2026-11-24, for v0.10-T01, pin P31; [driver.md, Starting a provisioning run](driver.md#starting-a-provisioning-run)). Once the run has exited, the next start is due at once, whatever the time since `last_attempt_at` (D77; [The last success](#the-last-success)) |
 | A provisioning run's `place_pending`, and a `create`, `renew` or `release` | Each waits for the lease state lock, which `place_pending` takes once for each lease it places, re-reading the state file each time, so no hold of it spans several placements. A lease released before `place_pending` re-reads the state file for it is skipped and never placed; one released after it was placed is released as any `ready` lease is |
 | A provisioning run, and `get` or `list` | `get` and `list` see a placed lease `pending` before the run's write and `ready` after it, never part of either |
 | A provisioning run, and the ProxyCommand or the keeper | They read `hosts.json` and the lease state file without their locks, so they see each as it was before one of the run's writes or as it is after it, never part of either. A record the run makes `ready` comes before any lease it places, so neither finds a `ready` lease on a host that is not yet `ready` |
