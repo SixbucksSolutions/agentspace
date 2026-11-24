@@ -22,6 +22,8 @@
 #
 #   - Each of steps 4 to 7 failing: deploy, start, sync, bootstrap, for a host that was never ready,
 #     and the deploy and the bootstrap for a ready one; an expired sign-in with #0034's message.
+#   - A failed deploy for a ready host whose record held an instance_type: step 4.2 removed it before the first
+#     call to AWS, and the failed deploy leaves the record without one (provision, step 4.2; pin P26).
 #   - The existence check's StackStatus for provision: ROLLBACK_COMPLETE, a status ending
 #     _IN_PROGRESS and any other status, each failing with operator.md's message before any
 #     `cloudformation deploy`, recording `failed` for a host that was never ready and leaving a ready
