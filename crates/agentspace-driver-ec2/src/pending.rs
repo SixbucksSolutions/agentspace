@@ -12,18 +12,32 @@
 //!   a removal that fails is a failure of that lease alone.
 //! - **One lease's failure MUST NOT stop the others**, and leaves that lease `pending` with every
 //!   file this call made for it removed.
-//! - **It MUST NOT change any member of a record but `state`, `expires_at` and `ssh`**, nor any
+//! - **It MUST NOT change any member of a record but `state`, `expires_at` and `ssh`** when it
+//!   places a lease, **and `state` and `reasons`** when it answers one `unsatisfiable`, nor any
 //!   other record, nor the host registry; it starts nothing and makes no call to AWS.
+//! - **From v0.09 it MUST place only the leases the host meets**, by the record's `instance_type`
+//!   read in step 1, and kept for the whole call (D68; pin P1).
+//! - **A `pending` lease the host does not meet MUST become `unsatisfiable`, with D66's
+//!   `no_capacity`, only when a live `ready` lease of the project holds the host**, judged in a
+//!   hold of its own of the lease state lock after every lease the host meets has been placed, and
+//!   MUST stay `pending` when none does. A lease whose size is not in `SIZES` is neither placed nor
+//!   answered (pin P20).
+//! - **A record with no `instance_type`, or with one the map does not hold, MUST leave every lease
+//!   it does not meet `pending`, written nothing, whatever leases hold the host**, since it is not
+//!   known to be smaller than any lease (architect, 2026-11-23, for v0.09-T03, pin P40).
+//! - **Its result MUST name every lease it did not place `ready` in one list, in the order the call
+//!   tried them** (D71's pin, PR #139).
 
 use std::collections::HashSet;
 
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed};
 use agentspace_hosts::{self as hosts, HostState, HostsError};
-use agentspace_state::{Record, Ssh, StoreError, format_time};
+use agentspace_state::{Reason, Record, Ssh, StoreError, format_time, now};
 
-use crate::host::registry_why;
+use crate::host::{holds_host, is_mapped, registry_why};
 use crate::ops::{self, HostKey};
-use crate::text::{failure, with_leftovers};
+use crate::sizes::{SIZES, meets};
+use crate::text::{failure, no_capacity_at_size, with_leftovers};
 use crate::{NAME, PendingFailure, PendingPlaced, Unplaced};
 
 /// What follows a failure of the whole call: what it placed before stays `ready`.
@@ -120,17 +134,19 @@ fn lease_failure(lease_id: String, f: Failure) -> PendingFailure {
     PendingFailure { lease_id, message }
 }
 
-/// driver.md's place_pending, steps 1 and 2. The call as a whole fails only at step 1, or at a
-/// hold's lock or read; a lease that cannot be placed stays `pending`, is named in `failed`, and
-/// the others go on.
+/// driver.md's place_pending, steps 1 to 3. The call as a whole fails only at step 1, or at a
+/// hold's lock or read; a lease that cannot be placed or answered stays `pending`, is named in
+/// `unplaced`, and the others go on.
 pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Failure> {
     if !hosts::is_normalized_project(project) {
         return Err(host_failure(HostsError::BadProject));
     }
-    // Step 1: the record, read holding `hosts.lock` for that read alone.
+    // Step 1: the record, read holding `hosts.lock` for that read alone. It is read as a placer
+    // reads it, so a missing file is the box's record at the `m9g.xlarge` it implies (pin P2c); the
+    // call never writes the registry.
     let record = {
         let held = hosts::lock(&ctx.home).map_err(host_failure)?;
-        let registry = hosts::read(&ctx.home).map_err(host_failure)?;
+        let registry = hosts::read_for_placing(&ctx.home).map_err(host_failure)?;
         drop(held);
         hosts::host_for(&registry, project).cloned()
     };
@@ -142,8 +158,15 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
     } else {
         HostKey::Other(project)
     };
+    // The type step 1 read, kept for the whole call. A record with none meets nothing.
+    let instance_type = record.instance_type;
+    let met = |r: &Record| instance_type.as_deref().is_some_and(|t| meets(t, &r.size));
+    // Only a type the map holds is known to be smaller than a lease it does not meet; with none,
+    // or one the map does not hold, step 3 answers nothing (architect, 2026-11-23, for v0.09-T03,
+    // pin P40).
+    let typed = instance_type.as_deref().is_some_and(is_mapped);
 
-    // Step 2: one lease per hold of the lease state lock.
+    // Step 2: the leases the host meets, one per hold of the lease state lock.
     let mut tried = HashSet::new();
     let mut result = PendingPlaced::default();
     loop {
@@ -152,7 +175,7 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
         let Some(index) = file
             .leases
             .iter()
-            .position(|r| is_ours(r, project) && !tried.contains(&r.id))
+            .position(|r| is_ours(r, project) && met(r) && !tried.contains(&r.id))
         else {
             break;
         };
@@ -185,7 +208,64 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
         }
         drop(guard);
     }
+
+    // Step 3: the leases whose size is in `SIZES` and that the host does not meet, one per hold of
+    // the lease state lock, each judged by the file read in its own hold (pin P1).
+    let mut judged = HashSet::new();
+    loop {
+        let guard = agentspace_state::lock(&ctx.state_dir).map_err(store_failure)?;
+        let mut file = agentspace_state::read(&ctx.state_dir).map_err(store_failure)?;
+        let at = now();
+        let Some(index) = file.leases.iter().position(|r| {
+            is_ours(r, project)
+                && SIZES.contains(&r.size.as_str())
+                && !met(r)
+                && !judged.contains(&r.id)
+        }) else {
+            break;
+        };
+        let id = file.leases[index].id.clone();
+        judged.insert(id.clone());
+        if !typed || !holds_host(&file.leases, project, at) {
+            // A host of no known type, or one nothing holds: the next run records the type, or
+            // resizes the host to the largest `pending` lease, and decides the lease then.
+            result.unplaced.push(Unplaced::Left { lease_id: id });
+            drop(guard);
+            continue;
+        }
+        result
+            .unplaced
+            .push(refuse(ctx, project, &mut file, index, &guard));
+        drop(guard);
+    }
     Ok(result)
+}
+
+/// Step 3.4's refusal of one lease, under the hold `guard` proves: its leftover files removed as
+/// release removes them (pin P21), then its record written `unsatisfiable`, with exactly one
+/// reason, `no_capacity`, and D66's message for its project and its size. Only `state` and
+/// `reasons` change. A removal or a write that fails leaves it `pending`, named as a failure.
+fn refuse(
+    ctx: &Context,
+    project: &str,
+    file: &mut agentspace_state::StateFile,
+    index: usize,
+    guard: &agentspace_state::LockGuard,
+) -> Unplaced {
+    let id = file.leases[index].id.clone();
+    if let Err(f) = ops::remove_files(ctx, &LeaseRef { id: &id, project }) {
+        return Unplaced::Failed(lease_failure(id, f));
+    }
+    let lease = &mut file.leases[index];
+    lease.state = "unsatisfiable".to_string();
+    lease.reasons = Some(vec![Reason {
+        code: "no_capacity".to_string(),
+        message: no_capacity_at_size(&lease.project, &lease.size),
+    }]);
+    match agentspace_state::write(&ctx.state_dir, file, guard) {
+        Ok(()) => Unplaced::Refused { lease_id: id },
+        Err(e) => Unplaced::Failed(write_failure(id, &e, &[])),
+    }
 }
 
 /// What a lease whose `ready` record could not be written reports: the records' why, then what
@@ -233,12 +313,233 @@ mod tests {
     }
 
     fn pending(id: &str, project: &str, driver: Option<&str>) -> String {
+        pending_sized(id, project, driver, "m")
+    }
+
+    fn pending_sized(id: &str, project: &str, driver: Option<&str>, size: &str) -> String {
         let driver = driver
             .map(|d| format!(r#","driver":"{d}""#))
             .unwrap_or_default();
         format!(
-            r#"{{"id":"{id}","project":"{project}","state":"pending","platform":"linux/arm64","profile":"agent-linux","size":"m","ttl_seconds":3600,"created_at":"2026-11-20T00:00:00Z"{driver}}}"#
+            r#"{{"id":"{id}","project":"{project}","state":"pending","platform":"linux/arm64","profile":"agent-linux","size":"{size}","ttl_seconds":3600,"created_at":"2026-11-20T00:00:00Z"{driver}}}"#
         )
+    }
+
+    /// A `ready` lease of `project` whose `expires_at` is `expires_at` seconds from now.
+    fn ready(id: &str, project: &str, expires_in: i64) -> String {
+        format!(
+            r#"{{"id":"{id}","project":"{project}","state":"ready","platform":"linux/arm64","profile":"agent-linux","size":"m","ttl_seconds":3600,"created_at":"2026-11-20T00:00:00Z","expires_at":"{}","ssh":{{"host_alias":"agentspace-{project}-{}","user":"ubuntu"}},"driver":"ec2"}}"#,
+            format_time(now() + expires_in),
+            &id[..8]
+        )
+    }
+
+    const C: &str = "6f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90";
+    const HELD: &str = "8f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90";
+
+    /// The registry with `other`'s host `ready`, with `instance_type` when one is given.
+    fn other_ready(c: &Context, instance_type: Option<&str>) {
+        let member = instance_type
+            .map(|t| format!(r#","instance_type":"{t}""#))
+            .unwrap_or_default();
+        fs::create_dir_all(c.home.join(".agentspace")).unwrap();
+        fs::write(
+            c.home.join(".agentspace").join("hosts.json"),
+            format!(
+                r#"{{"version":0,"hosts":[{{"project":"swimcoach","stack":"agentbox","state":"ready"}},{{"project":"other","stack":"agentspace-host-other","state":"ready"{member}}}]}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn records(path: &Path) -> Vec<Record> {
+        agentspace_state::parse(&fs::read(path).unwrap())
+            .unwrap()
+            .leases
+    }
+
+    fn kinds(done: &PendingPlaced) -> Vec<(&str, &str)> {
+        done.unplaced
+            .iter()
+            .map(|u| {
+                let kind = match u {
+                    Unplaced::Failed(_) => "failed",
+                    Unplaced::Refused { .. } => "refused",
+                    Unplaced::Left { .. } => "left",
+                };
+                (kind, u.lease_id())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_lease_the_host_does_not_meet_is_refused_while_a_live_ready_lease_holds_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        other_ready(&c, Some("m9g.xlarge"));
+        let path = write_state(
+            &c,
+            &[
+                pending_sized(A, "other", Some("ec2"), "l"),
+                ready(HELD, "other", 3600),
+            ],
+        );
+        let before = records(&path);
+        let done = place_pending(&c, "other").unwrap();
+        assert_eq!(done.placed, 0);
+        assert_eq!(kinds(&done), [("refused", A)]);
+        let after = records(&path);
+        // Only `state` and `reasons` change, and the other record not at all.
+        let mut expected = before[0].clone();
+        expected.state = "unsatisfiable".to_string();
+        expected.reasons = Some(vec![Reason {
+            code: "no_capacity".to_string(),
+            message: "No capacity can be found for project 'other' at size 'l': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.".to_string(),
+        }]);
+        assert_eq!(after[0], expected);
+        assert_eq!(after[1], before[1]);
+    }
+
+    #[test]
+    fn a_lease_the_host_does_not_meet_is_left_pending_while_nothing_holds_the_host() {
+        // An expired `ready` lease, another project's and a released one hold nothing.
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        other_ready(&c, Some("m9g.xlarge"));
+        let path = write_state(
+            &c,
+            &[
+                pending_sized(A, "other", Some("ec2"), "xl"),
+                ready(HELD, "other", -1),
+                ready(C, "swimcoach", 3600),
+            ],
+        );
+        let before = fs::read(&path).unwrap();
+        let done = place_pending(&c, "other").unwrap();
+        assert_eq!(kinds(&done), [("left", A)]);
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_size_outside_sizes_is_neither_placed_nor_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        other_ready(&c, Some("m9g.4xlarge"));
+        let path = write_state(
+            &c,
+            &[
+                pending_sized(A, "other", Some("ec2"), "xxl"),
+                ready(HELD, "other", 3600),
+            ],
+        );
+        let before = fs::read(&path).unwrap();
+        assert_eq!(place_pending(&c, "other"), Ok(PendingPlaced::default()));
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn the_leases_the_host_meets_are_tried_first_and_the_result_keeps_that_order() {
+        // C comes first in the file but the host does not meet it, so step 2 tries A (which
+        // fails here for want of a CA) before step 3 answers C. Another driver's lease is neither.
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        other_ready(&c, Some("m9g.xlarge"));
+        let path = write_state(
+            &c,
+            &[
+                pending_sized(C, "other", Some("ec2"), "l"),
+                pending_sized(B, "other", Some("x"), "l"),
+                pending_sized(A, "other", Some("ec2"), "s"),
+                ready(HELD, "other", 3600),
+            ],
+        );
+        let done = place_pending(&c, "other").unwrap();
+        assert_eq!(kinds(&done), [("failed", A), ("refused", C)]);
+        let after = records(&path);
+        assert_eq!(after[0].state, "unsatisfiable");
+        assert_eq!(after[1].state, "pending");
+        assert_eq!(after[2].state, "pending");
+    }
+
+    #[test]
+    fn a_record_with_no_type_or_one_the_map_does_not_hold_leaves_every_lease_whatever_holds_it() {
+        // Pin P40 (architect, 2026-11-23, for v0.09-T03): such a record meets nothing, so nothing
+        // is tried, and it is not known to be smaller than any lease, so nothing is answered, even
+        // while a live `ready` lease of the project holds the host.
+        for instance_type in [None, Some("m9g.8xlarge"), Some("c7g.large")] {
+            for held in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let c = ctx(dir.path());
+                other_ready(&c, instance_type);
+                let mut leases = vec![pending_sized(A, "other", Some("ec2"), "s")];
+                if held {
+                    leases.push(ready(HELD, "other", 3600));
+                }
+                let path = write_state(&c, &leases);
+                let before = fs::read(&path).unwrap();
+                let done = place_pending(&c, "other").unwrap();
+                // Tried, it would have failed for want of a CA; it is left for the next run instead.
+                assert_eq!(
+                    kinds(&done),
+                    [("left", A)],
+                    "type {instance_type:?}, held {held}"
+                );
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "type {instance_type:?}, held {held}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_refusal_removes_a_killed_placements_leftovers_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        other_ready(&c, Some("m9g.large"));
+        write_state(
+            &c,
+            &[
+                pending_sized(A, "other", Some("ec2"), "m"),
+                ready(HELD, "other", 3600),
+            ],
+        );
+        let folder = c.home.join(".agentspace").join("leases").join(A);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("id_ed25519"), b"k").unwrap();
+        let aliases = c.ssh_dir.join("agentspace.d");
+        fs::create_dir_all(&aliases).unwrap();
+        let alias = aliases.join("agentspace-other-3f2a9c1e");
+        fs::write(&alias, format!("# agentspace lease {A}; x\nHost y\n")).unwrap();
+        let done = place_pending(&c, "other").unwrap();
+        assert_eq!(kinds(&done), [("refused", A)]);
+        assert!(!folder.exists());
+        assert!(!alias.exists());
+    }
+
+    #[test]
+    fn a_refusal_whose_leftovers_cannot_go_leaves_the_lease_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        other_ready(&c, Some("m9g.large"));
+        let path = write_state(
+            &c,
+            &[
+                pending_sized(A, "other", Some("ec2"), "m"),
+                ready(HELD, "other", 3600),
+            ],
+        );
+        let before = fs::read(&path).unwrap();
+        let aliases = c.ssh_dir.join("agentspace.d");
+        fs::create_dir_all(&aliases).unwrap();
+        let alias = aliases.join("agentspace-other-3f2a9c1e");
+        fs::write(&alias, b"# a person's file\n").unwrap();
+        let done = place_pending(&c, "other").unwrap();
+        assert_eq!(kinds(&done), [("failed", A)]);
+        assert_eq!(done.unplaced[0].message(), Some(crate::text::FOREIGN_ALIAS));
+        assert!(alias.exists());
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 
     fn write_state(c: &Context, records: &[String]) -> PathBuf {
@@ -348,8 +649,9 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let done = place_pending(&c, "swimcoach").unwrap();
         assert_eq!(done.placed, 0);
-        let ids: Vec<&str> = done.unplaced.iter().map(Unplaced::lease_id).collect();
-        assert_eq!(ids, [A, B]);
+        // With no registry, the box's record is read with the `m9g.xlarge` a missing file implies,
+        // which meets `m`: both are tried, and fail.
+        assert_eq!(kinds(&done), [("failed", A), ("failed", B)]);
         assert_eq!(fs::read(&path).unwrap(), before);
     }
 

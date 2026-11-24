@@ -314,6 +314,21 @@ impl Fx {
         driver.place(&self.ctx, &self.req(project, id, 3600))
     }
 
+    /// Places a supported lease for `project` of this size, with a TTL of an hour.
+    pub fn place_sized(
+        &self,
+        driver: &Ec2Driver,
+        project: &str,
+        id: &str,
+        size: &str,
+    ) -> Result<Placed, Failure> {
+        use agentspace_driver_api::Driver;
+        driver.place(
+            &self.ctx,
+            &self.request_for(project, id, "linux/arm64", "agent-linux", size, 3600),
+        )
+    }
+
     /// The same, for the ID `ID`.
     pub fn place_for(&self, driver: &Ec2Driver, project: &str) -> Result<Placed, Failure> {
         self.place_project(driver, project, ID)
@@ -337,6 +352,18 @@ impl Fx {
         fs::write(
             agentspace_hosts::hosts_path(&self.home),
             hosts_text(extra).as_bytes(),
+        )
+        .unwrap();
+    }
+
+    /// Writes `hosts.json` with the box's record holding this `instance_type` (or none), then
+    /// these.
+    pub fn write_hosts_with(&self, box_type: Option<&str>, extra: &[H]) {
+        let dir = agentspace_hosts::agentspace_dir(&self.home);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            agentspace_hosts::hosts_path(&self.home),
+            hosts_text_with(box_type, extra).as_bytes(),
         )
         .unwrap();
     }
@@ -422,6 +449,11 @@ impl Fx {
     }
 }
 
+/// A well-formed lease ID, version 4, whose first 8 hex digits are `n` (so each is its own alias).
+pub fn id_n(n: u32) -> String {
+    format!("{n:08x}-1111-4111-8111-111111111111")
+}
+
 /// The alias of a lease: `agentspace-<project>-<first 8 hex digits of the id>`.
 pub fn alias_for(project: &str, id: &str) -> String {
     format!("agentspace-{project}-{}", &id[..8])
@@ -435,8 +467,16 @@ pub struct H {
     pub project: String,
     pub state: &'static str,
     pub instance_id: Option<String>,
+    /// The record's `instance_type` (D67). A `ready` record from `H::ready` holds the default
+    /// size's type, `m9g.xlarge`, as a host does that was deployed or run once since v0.09, so a
+    /// test that seeds one and expects `ready` keeps its meaning (the P3 ruling).
+    /// `H::ready_untyped` is a record that predates v0.09, which meets no size.
+    pub instance_type: Option<String>,
     pub attempt: Option<i64>,
 }
+
+/// D65's `m`, the default size's type, and the type the registry's implied box record holds.
+pub const DEFAULT_TYPE: &str = "m9g.xlarge";
 
 impl H {
     fn of(project: &str, state: &'static str) -> H {
@@ -444,11 +484,22 @@ impl H {
             project: project.to_string(),
             state,
             instance_id: None,
+            instance_type: None,
             attempt: None,
         }
     }
+    /// A `ready` record at the default size's type, `m9g.xlarge` (D65's `m`).
     pub fn ready(project: &str) -> H {
+        H::of(project, "ready").typed(DEFAULT_TYPE)
+    }
+    /// A `ready` record with no `instance_type`, as a program before v0.09 wrote it.
+    pub fn ready_untyped(project: &str) -> H {
         H::of(project, "ready")
+    }
+    /// With this `instance_type`.
+    pub fn typed(mut self, instance_type: &str) -> H {
+        self.instance_type = Some(instance_type.to_string());
+        self
     }
     pub fn creating(project: &str) -> H {
         H::of(project, "creating")
@@ -475,11 +526,21 @@ impl H {
 /// An instance ID that is made up, and matches no real one.
 pub const INSTANCE: &str = "i-1234567890abcdef0";
 
-/// The registry's bytes as state.md writes them: the box's record first, then these.
+/// The registry's bytes as state.md writes them: the box's record first, with no `instance_type`
+/// (the seed, which a write from a missing file puts on disk, pin P31), then these.
 pub fn hosts_text(extra: &[H]) -> String {
+    hosts_text_with(None, extra)
+}
+
+/// The same, with the box's record holding this `instance_type`, or none.
+pub fn hosts_text_with(box_type: Option<&str>, extra: &[H]) -> String {
     let mut out = String::from(
-        "{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"}",
+        "{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"",
     );
+    if let Some(t) = box_type {
+        out.push_str(&format!(",\"instance_type\":\"{t}\""));
+    }
+    out.push('}');
     for h in extra {
         out.push_str(&format!(
             ",{{\"project\":\"{p}\",\"stack\":\"agentspace-host-{p}\",\"state\":\"{s}\"",
@@ -488,6 +549,9 @@ pub fn hosts_text(extra: &[H]) -> String {
         ));
         if let Some(id) = &h.instance_id {
             out.push_str(&format!(",\"instance_id\":\"{id}\""));
+        }
+        if let Some(t) = &h.instance_type {
+            out.push_str(&format!(",\"instance_type\":\"{t}\""));
         }
         if let Some(at) = h.attempt {
             out.push_str(&format!(",\"last_attempt_at\":\"{}\"", iso(at)));
@@ -509,6 +573,18 @@ pub struct L {
     pub ttl: u32,
     pub created_at: i64,
     pub driver: Option<String>,
+    /// The size asked for, as stored. `m` unless a test says otherwise.
+    pub size: String,
+    /// `expires_at`, as Unix seconds: a `ready` record's, or a `released` one's that was ready.
+    pub expires: Option<i64>,
+}
+
+/// The message of D66's `no_capacity` for a project and a size, byte for byte as lease-api.md and
+/// driver.md give it.
+pub fn no_capacity_at_size(project: &str, size: &str) -> String {
+    format!(
+        "No capacity can be found for project '{project}' at size '{size}': its host is serving other leases at a smaller size. Release them, or ask for a size they fit."
+    )
 }
 
 impl L {
@@ -520,7 +596,36 @@ impl L {
             ttl: 3600,
             created_at: now() - 7200,
             driver: Some("ec2".to_string()),
+            size: "m".to_string(),
+            expires: None,
         }
+    }
+    /// A `ready` lease, live for another hour, placed by the `ec2` driver.
+    pub fn ready(id: &str, project: &str) -> L {
+        let mut l = L::of(id, project, "ready");
+        l.expires = Some(now() + 3600);
+        l
+    }
+    /// A lease stored `ready` whose `expires_at` has passed: `expired` when it is read.
+    pub fn expired(id: &str, project: &str) -> L {
+        let mut l = L::of(id, project, "ready");
+        l.expires = Some(now() - 60);
+        l
+    }
+    /// A lease released after it was `ready`, with an `expires_at` still in the future.
+    pub fn released_after_ready(id: &str, project: &str) -> L {
+        let mut l = L::of(id, project, "released");
+        l.expires = Some(now() + 3600);
+        l
+    }
+    /// An `unsatisfiable` lease with the one reason `no_capacity`.
+    pub fn unsatisfiable(id: &str, project: &str) -> L {
+        L::of(id, project, "unsatisfiable")
+    }
+    /// The size asked for.
+    pub fn size(mut self, size: &str) -> L {
+        self.size = size.to_string();
+        self
     }
     /// A `pending` lease placed by the `ec2` driver, created two hours ago.
     pub fn pending(id: &str, project: &str) -> L {
@@ -540,13 +645,29 @@ impl L {
     }
     pub fn json(&self) -> String {
         let mut out = format!(
-            "{{\"id\":\"{}\",\"project\":\"{}\",\"state\":\"{}\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"m\",\"ttl_seconds\":{},\"created_at\":\"{}\"",
+            "{{\"id\":\"{}\",\"project\":\"{}\",\"state\":\"{}\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"{}\",\"ttl_seconds\":{},\"created_at\":\"{}\"",
             self.id,
             self.project,
             self.state,
+            self.size,
             self.ttl,
             iso(self.created_at)
         );
+        if let Some(at) = self.expires {
+            out.push_str(&format!(",\"expires_at\":\"{}\"", iso(at)));
+        }
+        if self.state == "ready" {
+            out.push_str(&format!(
+                ",\"ssh\":{{\"host_alias\":\"{}\",\"user\":\"ubuntu\"}}",
+                alias_for(&self.project, &self.id)
+            ));
+        }
+        if self.state == "unsatisfiable" {
+            out.push_str(&format!(
+                ",\"reasons\":[{{\"code\":\"no_capacity\",\"message\":\"{}\"}}]",
+                no_capacity_at_size(&self.project, &self.size)
+            ));
+        }
         if self.state == "released" {
             out.push_str(&format!(
                 ",\"released_at\":\"{}\"",

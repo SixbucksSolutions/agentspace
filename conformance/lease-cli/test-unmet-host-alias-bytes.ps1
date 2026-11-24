@@ -24,8 +24,9 @@
 #        carries no instance_id, which `create` MUST NOT need (D21). A second case writes the project
 #        with capitals, which is normalized before the lookup, and a hyphen.
 # - C20  A `create` for a ready host's project, while another lease of the project is pending, answers
-#        ready and starts nothing, whatever the record's last_attempt_at, and changes neither the
-#        registry nor the pending lease.
+#        pending (v0.09, "On a ready host", row 1; Z14's form), starts the run once when one is due
+#        (last_attempt_at absent or 5 minutes or more old) and nothing when it is not, and leaves the
+#        pending lease as it was.
 #
 # - Each case writes its own hosts.json and, where it needs one, its own pending record in the lease
 #   state file, in the throwaway home, in the forms of docs/state.md, and each of those writes calls
@@ -67,12 +68,14 @@ function Write-PgFile {
 
 # One record of the host registry (state.md, "The host registry"), members in the order the table gives.
 function New-PgHostRecord {
-  param([Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$State, [string]$LastAttemptAt = '')
+  param([Parameter(Mandatory)][string]$Project, [Parameter(Mandatory)][string]$State, [string]$LastAttemptAt = '', [switch]$NoInstanceType)
   $r = [ordered]@{
     project = $Project
     stack = $(if ($Project -ceq 'swimcoach') { 'agentbox' } else { "agentspace-host-$Project" })
     state = $State
   }
+  # A ready record carries instance_type m9g.xlarge, between instance_id and last_attempt_at, unless -NoInstanceType.
+  if ($State -ceq 'ready' -and -not $NoInstanceType) { $r['instance_type'] = 'm9g.xlarge' }
   if ($LastAttemptAt) { $r['last_attempt_at'] = $LastAttemptAt }
   return $r
 }
@@ -330,11 +333,13 @@ try {
       $true
     }
 
-    # ---- C20: a ready host, another lease of the project pending ---------------------------------------------
+    # ---- C20: a ready host, another lease of the project pending (v0.09: row 1, Z14's form) ---------------
+    # driver.md, "On a ready host", row 1: while the project has a pending lease of this driver at a size in
+    # SIZES, every new lease of it is pending, and a run is started only when one is due (pin P27).
     foreach ($v in @(
-        @{ Name = 'with no last_attempt_at'; Minutes = $null },
-        @{ Name = 'with a last_attempt_at 10 minutes old'; Minutes = -10 },
-        @{ Name = 'with a last_attempt_at 1 minute old'; Minutes = -1 })) {
+        @{ Name = 'with no last_attempt_at'; Minutes = $null; Due = $true },
+        @{ Name = 'with a last_attempt_at 10 minutes old'; Minutes = -10; Due = $true },
+        @{ Name = 'with a last_attempt_at 1 minute old'; Minutes = -1; Due = $false })) {
       Reset-PgCase $lab
       $at = if ($null -eq $v.Minutes) { '' } else { ConvertTo-CcTime (Get-CcNowSecond).AddMinutes($v.Minutes) }
       Write-PgHosts $lab @((New-PgHostRecord 'swimcoach' 'ready'), (New-PgHostRecord 'agentspace' 'ready' $at))
@@ -343,16 +348,25 @@ try {
       $hostsBefore = Get-PgHostsHash $lab
       $pendingBefore = ConvertTo-CcCanonical (Get-CcRecord $lab $pending['id'])
       $si = New-PgStandIn $lab
-      $r = New-CcReadyLease -Lab $lab -Project 'agentspace' -NoHost -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
-      $starts = Wait-PgNoStart $si
-      Test-Cc "C20 ($wherePlaces): A create for a ready host's project, while another lease of it is pending, answers ready and starts nothing, $($v.Name), and changes neither the registry nor the pending lease" {
-        if (-not $r.Ok) { return "The create gave $(Format-CcRun $r.Run)" }
-        if ($starts.Count -ne 0) { return "The stand-in was started $($starts.Count) time(s) within $($script:PgNegWaitMs) ms." }
-        if ((Get-PgHostsHash $lab) -cne $hostsBefore) { return 'hosts.json changed.' }
+      $run = Invoke-CcLease -Lab $lab -Arguments @('create', '--project', 'agentspace') -EnvVars @{ AGENTSPACE_PROVISION_CMD = $si.Cmd }
+      $doc = ConvertFrom-CcJson $run.Stdout
+      $starts = if ($v.Due) { Wait-PgStart $si } else { Wait-PgNoStart $si }
+      $dueText = if ($v.Due) { 'starts the run once' } else { 'starts nothing' }
+      Test-Cc "C20 ($wherePlaces): A create for a ready host's project, while another lease of it is pending, answers pending and $dueText, $($v.Name), and leaves the pending lease as it was" {
+        if (-not (Test-CcSuccess $run)) { return "The create gave $(Format-CcRun $run)" }
+        if (-not $doc -or $doc['state'] -cne 'pending') { return 'The create did not answer pending.' }
+        if ($doc.ContainsKey('expires_at') -or $doc.ContainsKey('ssh') -or $doc.ContainsKey('reasons')) { return 'The pending document holds expires_at, ssh or reasons.' }
+        if ($v.Due) {
+          if ($starts.Count -ne 1) { return "The stand-in was started $($starts.Count) time(s), not once, within $($script:PgPosWaitMs) ms." }
+          if (([string]$starts[0]).Trim() -cne 'provision -Host agentspace') { return 'The stand-in was not given exactly provision -Host agentspace.' }
+        } else {
+          if ($starts.Count -ne 0) { return "The stand-in was started $($starts.Count) time(s) within $($script:PgNegWaitMs) ms." }
+          if ((Get-PgHostsHash $lab) -cne $hostsBefore) { return 'hosts.json changed.' }
+        }
         $now = Get-CcRecord $lab $pending['id']
         if ($null -eq $now) { return 'The pending lease''s record is gone.' }
         if ((ConvertTo-CcCanonical $now) -cne $pendingBefore) { return 'The pending lease''s record changed.' }
-        if ($r.Doc['id'] -ceq $pending['id']) { return 'The create answered with the pending lease.' }
+        if ($doc['id'] -ceq $pending['id']) { return 'The create answered with the pending lease.' }
         $true
       }
     }
