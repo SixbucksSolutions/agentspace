@@ -181,6 +181,26 @@ names.**
 - **A doc fix the architect makes on `main` during a spec turn is sent to the dev lead before its
   next rebase** (v0.09-T01). Two fixes to driver.md, made while S02 was in review, cost S02 a second
   rebase that one message ahead of the first would have saved.
+- **The dev lead SHOULD propose the layout's open shared facts as pins in its first minutes**,
+  before any inventory reports (v0.10-T01, 2026-11-24). T01's dev lead sent P1 to P9 at launch, so
+  the schema story finalized early and the page's integrator started with every pin ruled.
+- **A ruling that changes a pin after launch costs a fix pass in each story it touches**, since a
+  running subagent is never messaged (AGENTS.md). A spec turn's layout SHOULD plan one fix pass
+  per story, not count it as rework (v0.10-T01: P3 and P21 each cost one).
+- **A brief that restates a ruled order states it as an ordered list of its own**, never as the
+  order of a list of messages (v0.10-T01): a reviewer read P12's messages, listed in message
+  order, as the order of the checks, and raised a false blocking finding.
+- **The layout names the merge order of a spec turn whose stories link to or copy each other's
+  files**, and each later story rebases on the merge before it (v0.10-T01: the schemas, then
+  lease-api.md, which links the plan schema, then state.md, whose schema copies its `$defs`).
+- **Every copy of shared schema `$defs` has a check that it equals the original**, proven on a
+  planted difference (v0.10-T01): a "MUST re-sync" with no check is broken by the next change.
+- **Sample IDs are patterned so they read as fake at a glance** (`0a1b2c3d-...`,
+  `i-0123456789abcdef0`), or made by a committed script (v0.10-T01). The identifier scan counts a
+  sample UUID as a hit and cannot tell a placeholder from a real value; two hand-typed IDs that
+  looked random were replaced, and the branch squashed before its first push.
+- **A reviewer starts its workspace run first and reads the diff while it runs** (v0.10-T01): three
+  workspace runs at once took 23 to 60 minutes each and were the turn's long pole.
 - **A spec that links into another story's new sections merges after it**, and the architect
   checks every anchor resolves on `main` before each such merge, and every link between the specs
   once all are in (1,954 in T01).

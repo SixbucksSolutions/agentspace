@@ -11,7 +11,10 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where it stands:** [docs/handoff-v0.09.md](docs/handoff-v0.09.md), the architect's handoff
+- **Where v0.10 stands:** [docs/handoff-v0.10.md](docs/handoff-v0.10.md), v0.10's live record,
+  started at T01's close (2026-11-24) and refreshed at each turn's close. An architect picking up
+  v0.10 mid-release reads it first, then handoff-v0.09.md for the tools and rules it cites.
+- **Where it stood at v0.09's close:** [docs/handoff-v0.09.md](docs/handoff-v0.09.md), the architect's handoff
   after v0.09, for the architect who starts v0.10 (#0050). It is final, and v0.09 is closed: Terry
   approved its epic and thirteen stories into Completed on 2026-11-24. **An agent picking
   agentspace up SHOULD read it first, and it is the only handoff it needs**: it carries forward
@@ -300,6 +303,9 @@ IDs and project names, because the mask had no rule for a UUID.
   profile path and so the user name, into its subagent transcript; nothing reached a file, sample,
   doc or commit. `where`, `Get-Command` and a tool's `--version` that prints its location are the
   same.
+- **A long listing prints each file's owner, which is the Windows user name** (v0.10-T01): a dev
+  lead's `ls -la` of a run folder put it in its transcript. Listings are bare (`ls`, `dir /b`,
+  `Get-ChildItem -Name`).
 - **A dev lead's brief names every slip of this kind from the release so far** (v0.07). T04 and
   T05 had four between them, a listing of the installed `bin`, a copy of the installed operator, a
   listing of `hosts\agentspace` and the unmasked error above; T06's brief named all four, and T06
