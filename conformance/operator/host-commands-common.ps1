@@ -33,7 +33,8 @@ function Get-VolumeOf([string]$InstanceId) { 'vol-' + $InstanceId.Substring(2) }
 
 # The aws stand-in. Each call is logged as one JSON line: its start time, its arguments, and what
 # existed when it arrived (the alias files in agentspace.d, the hosts that hold a certificate, the
-# host registry's text, the folders in the operator's folder, and for `cloudformation deploy` the
+# host registry's text, the folders in the operator's folder, the projects whose provision.lock is held
+# (`plHeld`, which the ssh and scp stand-ins log too), and for `cloudformation deploy` the
 # template's path and the folder it is in). It answers from aws-scenario.json beside it: a key is
 # "<service> <operation>", optionally followed by one argument's value (a stack name, an instance ID,
 # a volume ID), and its value is a list of steps {out, err, code}; each call takes the next step of
@@ -48,6 +49,11 @@ $entry = [ordered]@{ t = [string][DateTime]::UtcNow.Ticks; a = $a }
 $ad = Join-Path $env:AGENTSPACE_SSH_DIR 'agentspace.d'
 $entry.aliases = @(if (Test-Path -LiteralPath $ad) { Get-ChildItem -LiteralPath $ad -File | ForEach-Object { $_.Name } })
 $entry.certs = @(Get-ChildItem -Path (Join-Path $up '.agentspace\hosts\*\id_ed25519-cert.pub') -ErrorAction SilentlyContinue | ForEach-Object { $_.Directory.Name })
+$entry.plHeld = @(Get-ChildItem -Path (Join-Path $up '.agentspace\hosts\*\provision.lock') -File -ErrorAction SilentlyContinue | ForEach-Object {
+    $held = $false
+    try { [IO.FileStream]::new($_.FullName, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Dispose() } catch [IO.IOException] { $held = $true } catch { }
+    if ($held) { $_.Directory.Name }
+  })
 $hf = Join-Path $up '.agentspace\hosts.json'
 $entry.hosts = if (Test-Path -LiteralPath $hf -PathType Leaf) { [IO.File]::ReadAllText($hf) } else { $null }
 $opd = Join-Path $up '.agentspace\operator'
@@ -122,6 +128,11 @@ $entry = [ordered]@{ t = [string][DateTime]::UtcNow.Ticks; a = $a; n = $n }
 $ad = Join-Path $env:AGENTSPACE_SSH_DIR 'agentspace.d'
 $entry.aliases = @(if (Test-Path -LiteralPath $ad) { Get-ChildItem -LiteralPath $ad -File | ForEach-Object { $_.Name } })
 $entry.certs = @(Get-ChildItem -Path (Join-Path $up '.agentspace\hosts\*\id_ed25519-cert.pub') -ErrorAction SilentlyContinue | ForEach-Object { $_.Directory.Name })
+$entry.plHeld = @(Get-ChildItem -Path (Join-Path $up '.agentspace\hosts\*\provision.lock') -File -ErrorAction SilentlyContinue | ForEach-Object {
+    $held = $false
+    try { [IO.FileStream]::new($_.FullName, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Dispose() } catch [IO.IOException] { $held = $true } catch { }
+    if ($held) { $_.Directory.Name }
+  })
 $entry.nested = [string]$env:AGENTSPACE_NESTED
 [IO.File]::AppendAllText((Join-Path $dir 'ssh-args.log'), ((ConvertTo-Json -Compress -Depth 6 -InputObject $entry) + "`n"))
 if ($a -contains 'BatchMode=yes') {
@@ -157,6 +168,11 @@ $entry = [ordered]@{ t = [string][DateTime]::UtcNow.Ticks; a = $a }
 $ad = Join-Path $env:AGENTSPACE_SSH_DIR 'agentspace.d'
 $entry.aliases = @(if (Test-Path -LiteralPath $ad) { Get-ChildItem -LiteralPath $ad -File | ForEach-Object { $_.Name } })
 $entry.certs = @(Get-ChildItem -Path (Join-Path $up '.agentspace\hosts\*\id_ed25519-cert.pub') -ErrorAction SilentlyContinue | ForEach-Object { $_.Directory.Name })
+$entry.plHeld = @(Get-ChildItem -Path (Join-Path $up '.agentspace\hosts\*\provision.lock') -File -ErrorAction SilentlyContinue | ForEach-Object {
+    $held = $false
+    try { [IO.FileStream]::new($_.FullName, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Dispose() } catch [IO.IOException] { $held = $true } catch { }
+    if ($held) { $_.Directory.Name }
+  })
 $locals = @()
 foreach ($x in $a) {
   if ($x -match '^[A-Za-z]:\\') {
@@ -305,6 +321,7 @@ function New-HomeFolder([string]$Path) {
 # is kept: it belongs to the home.
 function Reset-HostCase {
   Close-HostsLock
+  Stop-CaseHolders
   Restore-Ca
   $fx = $script:Fx
   foreach ($f in Get-ChildItem -LiteralPath $fx.Standins -File -ErrorAction SilentlyContinue) {
@@ -524,6 +541,122 @@ function Hold-HostsLock {
 }
 function Close-HostsLock {
   if ($null -ne $script:LockStream) { $script:LockStream.Dispose(); $script:LockStream = $null }
+}
+
+# ---- Locks and watchers a case holds beyond hosts.lock (E0.09-T04-S02, card #0206) ----
+# Every function here writes only inside the throwaway home, each write checked at the call by
+# Assert-ConformancePath, and every one is undone by Stop-CaseHolders, which Reset-HostCase calls.
+
+# A host's provision.lock, in the host's folder under the home.
+function Get-ProvisionLockPath([string]$Project) { Join-Path $script:Fx.HostsDir "$Project\provision.lock" }
+# Holds a host's provision.lock the way a run holds it, open with no sharing, until Close-ProvisionLock,
+# making the host's folder and the file when they are missing.
+function Hold-ProvisionLock([string]$Project) {
+  $fx = $script:Fx
+  $path = Get-ProvisionLockPath $Project
+  New-HomeFolder (Split-Path -Parent $path)
+  $script:ProvisionLockStream = [IO.FileStream]::new((Assert-ConformancePath -ConformanceHome $fx.H -Path $path), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+}
+function Close-ProvisionLock {
+  if ($null -ne $script:ProvisionLockStream) { $script:ProvisionLockStream.Dispose(); $script:ProvisionLockStream = $null }
+}
+# True when nobody holds the file (or it is missing): a read and write open with no sharing fails while a
+# program holds it. It opens and closes the file and writes nothing.
+function Test-LockFree([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $true }
+  try { [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None).Dispose(); return $true } catch { return $false }
+}
+
+# Holds hosts.lock from the moment the stand-in aws's log holds -AfterCalls entries (the stand-in logs a
+# call as it starts, so the entry for a call is there while the operator waits for its answer) until
+# Stop-LockHolder or -HoldSeconds. It takes the lock the way Hold-HostsLock does, with no sharing, and
+# retries until it has it, so a lock the operator holds at that moment is taken as it is released. A case
+# uses it to hold the lock at a step after the operator has made an earlier write.
+function Start-LockHolder {
+  param([Parameter(Mandatory)][int]$AfterCalls, [int]$HoldSeconds = 50)
+  Stop-LockHolder | Out-Null
+  $fx = $script:Fx
+  $lock = Assert-ConformancePath -ConformanceHome $fx.H -Path $fx.HostsLock
+  $log = Join-Path $fx.Standins 'aws-args.log'
+  $stop = [Threading.ManualResetEventSlim]::new($false)
+  $ps = [powershell]::Create()
+  [void]$ps.AddScript({
+      param($lock, $log, $after, $holdMs, $stop)
+      $res = @{ Acquired = $false; Seen = 0 }
+      $deadline = [DateTime]::UtcNow.AddSeconds(300)
+      while (-not $stop.IsSet -and [DateTime]::UtcNow -lt $deadline) {
+        $n = 0
+        try {
+          $s = [IO.FileStream]::new($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+          try { $b = [byte[]]::new($s.Length); [void]$s.Read($b, 0, $b.Length); foreach ($x in $b) { if ($x -eq 10) { $n++ } } } finally { $s.Dispose() }
+        } catch { }
+        $res.Seen = $n
+        if ($n -ge $after) { break }
+        [Threading.Thread]::Sleep(2)
+      }
+      $fs = $null
+      while (-not $stop.IsSet -and $null -eq $fs -and [DateTime]::UtcNow -lt $deadline) {
+        try { $fs = [IO.FileStream]::new($lock, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) } catch { [Threading.Thread]::Sleep(2) }
+      }
+      if ($null -ne $fs) { $res.Acquired = $true; [void]$stop.Wait($holdMs); $fs.Dispose() }
+      $res
+    }).AddArgument($lock).AddArgument($log).AddArgument($AfterCalls).AddArgument($HoldSeconds * 1000).AddArgument($stop)
+  $script:LockHolder = [pscustomobject]@{ Ps = $ps; Async = $ps.BeginInvoke(); Stop = $stop }
+}
+# Releases the lock Start-LockHolder holds and returns what it did: Acquired, and Seen, the log entries it saw.
+function Stop-LockHolder {
+  $h = $script:LockHolder
+  if ($null -eq $h) { return $null }
+  $script:LockHolder = $null
+  $h.Stop.Set()
+  $r = $null
+  try { $r = $h.Ps.EndInvoke($h.Async) } catch { }
+  $h.Ps.Dispose()
+  if ($null -ne $r -and @($r).Count -gt 0) { return @($r)[0] }
+  $null
+}
+
+# Records every distinct text hosts.json holds while the operator runs (it is replaced atomically, so
+# a read sees one whole file), polling every millisecond, until Stop-HostsWatcher returns them in order.
+function Start-HostsWatcher {
+  Stop-HostsWatcher | Out-Null
+  $fx = $script:Fx
+  $path = Assert-ConformancePath -ConformanceHome $fx.H -Path $fx.HostsFile
+  $stop = [Threading.ManualResetEventSlim]::new($false)
+  $ps = [powershell]::Create()
+  [void]$ps.AddScript({
+      param($path, $stop)
+      $seen = [System.Collections.Generic.List[string]]::new()
+      $deadline = [DateTime]::UtcNow.AddSeconds(300)
+      while (-not $stop.IsSet -and [DateTime]::UtcNow -lt $deadline) {
+        try {
+          $s = [IO.FileStream]::new($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+          try { $b = [byte[]]::new($s.Length); [void]$s.Read($b, 0, $b.Length) } finally { $s.Dispose() }
+          $t = [Text.Encoding]::UTF8.GetString($b)
+          if ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -cne $t) { $seen.Add($t) }
+        } catch { }
+        [Threading.Thread]::Sleep(1)
+      }
+      , $seen.ToArray()
+    }).AddArgument($path).AddArgument($stop)
+  $script:HostsWatcher = [pscustomobject]@{ Ps = $ps; Async = $ps.BeginInvoke(); Stop = $stop }
+}
+function Stop-HostsWatcher {
+  $h = $script:HostsWatcher
+  if ($null -eq $h) { return @() }
+  $script:HostsWatcher = $null
+  $h.Stop.Set()
+  $r = $null
+  try { $r = $h.Ps.EndInvoke($h.Async) } catch { }
+  $h.Ps.Dispose()
+  # The runspace returns one list; it is given back as the texts themselves, which a caller collects with @().
+  if ($null -ne $r -and $r.Count -gt 0) { foreach ($x in $r[0]) { [string]$x } }
+}
+# Lets go of everything above that a case still holds.
+function Stop-CaseHolders {
+  Stop-LockHolder | Out-Null
+  Stop-HostsWatcher | Out-Null
+  Close-ProvisionLock
 }
 
 # The AWS calls of Calls by command, as one string each (their arguments separated by one space).

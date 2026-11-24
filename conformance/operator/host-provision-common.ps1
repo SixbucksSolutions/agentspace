@@ -11,7 +11,8 @@
 #   - One stand-in program for the AWS CLI, `ssh`, `scp` and `go` (a PowerShell 7 script that a .cmd
 #     starts). It logs every call as one JSON line (arguments, the time, the class of an ssh, what
 #     each local path argument held at the moment of the call, the operator's folders, whether
-#     provision.lock was held), snapshots hosts.json at each call, records an ssh's standard input, and
+#     provision.lock was held, and whether each lock a scenario's `locks` names was held), snapshots
+#     hosts.json at each call, records an ssh's standard input, and
 #     answers from scenario.json: the AWS CLI by `<service> <operation>`, one answer per call with the
 #     last one repeating, and ssh, scp and go by rules. A rule MAY make the stand-in stop at a named
 #     hook until the check releases it, so that a check can change the throwaway home at a given point
@@ -106,6 +107,19 @@ $lockHeld = $null
 if ($cfg.ContainsKey('provisionLock') -and $cfg['provisionLock'] -and (Test-Path -LiteralPath $cfg['provisionLock'] -PathType Leaf)) {
   try { $fs = [IO.File]::Open($cfg['provisionLock'], 'Open', 'Read', 'None'); $fs.Dispose(); $lockHeld = $false } catch { $lockHeld = $true }
 }
+# Whether each other lock a scenario names (`locks`: a name to a path) is held right now, tried the same way: true
+# when held, false when the file exists and is free, and null when there is no such file. A scenario with no
+# `locks` key logs an empty table, so a file that names none sees no change.
+$lockStates = @{}
+if ($cfg.ContainsKey('locks') -and $cfg['locks']) {
+  foreach ($lk in @($cfg['locks'].Keys)) {
+    $lp = [string]$cfg['locks'][$lk]
+    $lockStates[$lk] = $null
+    if (Test-Path -LiteralPath $lp -PathType Leaf) {
+      try { $fs = [IO.File]::Open($lp, 'Open', 'Read', 'None'); $fs.Dispose(); $lockStates[$lk] = $false } catch { $lockStates[$lk] = $true }
+    }
+  }
+}
 $envNames = @()
 $goEnv = @{}
 if ($kind -eq 'go') {
@@ -119,7 +133,7 @@ try { if (Test-Path -LiteralPath $hostsFile -PathType Leaf) { [IO.File]::WriteAl
 $prev = @()
 $callsFile = Join-Path $dir 'calls.jsonl'
 if (Test-Path -LiteralPath $callsFile) { $prev = @(Get-Content -LiteralPath $callsFile | Where-Object { $_.Trim() -ne '' } | ForEach-Object { ConvertFrom-Json -InputObject $_ -AsHashtable }) }
-$entry = [ordered]@{ n = $n; kind = $kind; t = [string][DateTime]::UtcNow.Ticks; a = $a; alias = $alias; class = $class; paths = $paths; opdirs = $opDirs; lockHeld = $lockHeld; cwd = (Get-Location).Path; goenv = $goEnv }
+$entry = [ordered]@{ n = $n; kind = $kind; t = [string][DateTime]::UtcNow.Ticks; a = $a; alias = $alias; class = $class; paths = $paths; opdirs = $opDirs; lockHeld = $lockHeld; locks = $lockStates; cwd = (Get-Location).Path; goenv = $goEnv }
 [IO.File]::AppendAllText($callsFile, ((ConvertTo-Json -InputObject $entry -Compress -Depth 8) + "`n"))
 
 # Which answer: aws by <service> <operation>; the others by rules.

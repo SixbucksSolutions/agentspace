@@ -61,9 +61,10 @@ $syncCalls = @('ssh:sync', 'scp', 'scp', 'ssh:sync') + $script:HpPatchWaitSequen
 function Test-FailedStep($C) {
   Invoke-HpInHome -Name "${sec}: $($C.N)" -Body {
     param($h, $s)
-    $ready = $C.Seed -eq 'ready'
+    $ready = $C.Seed -in 'ready', 'ready-typed'
     $record = switch ($C.Seed) {
       'ready' { New-HpRecord 'agentspace' 'ready' $script:HpHostId $oldTime -NoInstanceType }
+      'ready-typed' { New-HpRecord 'agentspace' 'ready' $script:HpHostId $oldTime }
       'creating' { New-HpRecord 'agentspace' 'creating' '' $oldTime }
       default { $null }
     }
@@ -181,6 +182,20 @@ Test-FailedStep @{
   Aws = @{ 'cloudformation deploy' = @((New-HpStep '' '' 255)) }
   Rules = @(); Seq = @('aws cloudformation describe-stacks', 'aws cloudformation deploy'); Shape = 'run begun,deploy failed'
   Msg = $deployFailed; Id = $script:HpHostId
+}
+# A ready record that holds an instance_type: step 4.2 removes it before any call to AWS, and a deploy that then
+# fails leaves the record without one (operator.md, provision, step 4.2 and When step 4, 5, 6 or 7 fails; pin P26).
+Test-FailedStep @{
+  N = 'a failed deploy, for a ready host whose record held an instance_type, which step 4.2 removed'; Seed = 'ready-typed'
+  Aws = @{ 'cloudformation deploy' = @((New-HpStep '' '' 255)) }
+  Rules = @(); Seq = @('aws cloudformation describe-stacks', 'aws cloudformation deploy'); Shape = 'run begun,deploy failed'
+  Msg = $deployFailed; Id = $script:HpHostId
+  Extra = {
+    param($calls, $h, $p)
+    $at = if ($calls.Count -gt 0) { Get-HpRecordFromText (Get-HpSnapshotText $s $calls[0]['n']) 'agentspace' } else { $null }
+    if ($null -eq $at) { $p.Add('No record at the first call'); return }
+    if ($at.ContainsKey('instance_type')) { $p.Add('The record still held its instance_type at the first call to AWS: step 4.2 removes it before any') }
+  }
 }
 Test-FailedStep @{
   N = 'a failed bootstrap, for a ready host'; Seed = 'ready'
