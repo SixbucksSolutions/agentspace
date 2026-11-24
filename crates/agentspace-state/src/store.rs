@@ -326,6 +326,8 @@ mod tests {
 
     fn record(id: &str) -> Record {
         Record {
+            sized_for: None,
+            plan: None,
             id: id.to_string(),
             project: "demo".to_string(),
             state: "pending".to_string(),

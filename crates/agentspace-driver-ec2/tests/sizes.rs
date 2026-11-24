@@ -19,6 +19,8 @@ const TYPES: [&str; 4] = ["m9g.large", "m9g.xlarge", "m9g.2xlarge", "m9g.4xlarge
 
 fn record(state: &str, project: &str, driver: Option<&str>, size: &str) -> Record {
     Record {
+        sized_for: None,
+        plan: None,
         id: "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90".to_string(),
         project: project.to_string(),
         state: state.to_string(),

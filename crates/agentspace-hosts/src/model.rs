@@ -65,6 +65,10 @@ pub struct Host {
     pub instance_type: Option<String>,
     /// The start time of the host's last provisioning run, UTC.
     pub last_attempt_at: Option<String>,
+    /// The time the host's last provisioning run that succeeded ended, UTC (docs/state.md, The
+    /// last success; D77, D81). Pinned as code before v0.10-T02, read and written by nothing until
+    /// #0216.
+    pub last_success_at: Option<String>,
 }
 
 /// The instance type the record that a missing file implies holds, only as it is read (docs/state.md,
@@ -85,6 +89,7 @@ impl Hosts {
     pub fn seed() -> Hosts {
         Hosts {
             hosts: vec![Host {
+                last_success_at: None,
                 project: BOX_PROJECT.to_string(),
                 stack: BOX_STACK.to_string(),
                 state: HostState::Ready,
@@ -181,6 +186,7 @@ fn text(o: &Map<String, Value>, key: &str) -> Result<Option<String>, Invalid> {
 fn record_from(v: &Value) -> Result<Host, Invalid> {
     let o = v.as_object().ok_or(Invalid::Schema)?;
     Ok(Host {
+        last_success_at: None,
         project: text(o, "project")?.ok_or(Invalid::Schema)?,
         stack: text(o, "stack")?.ok_or(Invalid::Schema)?,
         state: text(o, "state")?
@@ -284,6 +290,7 @@ mod tests {
 
     fn host(project: &str, stack: &str, state: HostState) -> Host {
         Host {
+            last_success_at: None,
             project: project.to_string(),
             stack: stack.to_string(),
             state,

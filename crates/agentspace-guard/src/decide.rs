@@ -243,6 +243,8 @@ mod tests {
     /// A lease of `project`, its times as offsets from `NOW`.
     fn lease(project: &str, state: &str, expires: Option<i64>, released: Option<i64>) -> Record {
         Record {
+            sized_for: None,
+            plan: None,
             id: "00000000-0000-4000-8000-000000000000".into(),
             project: project.into(),
             state: state.into(),

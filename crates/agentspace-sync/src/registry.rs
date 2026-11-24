@@ -210,6 +210,7 @@ mod tests {
     fn seeded(dir: &Path) -> Hosts {
         let mut hosts = Hosts::seed();
         hosts.hosts.push(Host {
+            last_success_at: None,
             project: "agentspace".into(),
             stack: "agentspace-host-agentspace".into(),
             state: HostState::Creating,

@@ -102,6 +102,8 @@ fn draw_id(world: &World<'_>, file: &StateFile, project: &str) -> Result<String,
 /// The record of a placed lease, with the driver's name (docs/state.md, The lease state file).
 fn record_of(req: &Request, id: &str, now: i64, placed: Placed, driver: &str) -> Record {
     let mut record = Record {
+        sized_for: None,
+        plan: None,
         id: id.to_owned(),
         project: req.project.clone(),
         state: String::new(),

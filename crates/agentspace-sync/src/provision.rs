@@ -325,6 +325,7 @@ fn record_start(home: &Path, project: &str, now: &str) -> Result<bool, Failure> 
     let was_ready = match hosts.hosts.iter_mut().find(|h| h.project == project) {
         None => {
             hosts.hosts.push(Host {
+                last_success_at: None,
                 project: project.to_string(),
                 stack: agentspace_hosts::stack_name(project),
                 state: HostState::Creating,
