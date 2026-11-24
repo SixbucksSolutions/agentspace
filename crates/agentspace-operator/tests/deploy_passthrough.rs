@@ -16,8 +16,9 @@ use rig::*;
 use std::fs;
 use std::time::Duration;
 
-/// Well past what a run takes (under 2 seconds here), and well short of a hang worth waiting on.
-const DEADLINE: Duration = Duration::from_secs(30);
+/// Well past what a run takes (under 2 seconds here) even beside a parallel workspace build, and
+/// the rig's own limit for a run: #0139's hang never ends, so any limit shows it (#0189).
+const DEADLINE: Duration = Duration::from_secs(90);
 
 const DEPLOYING: &str = "Deploying stack 'agentbox' in us-west-2...";
 

@@ -887,6 +887,11 @@ pub struct Out {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub elapsed: Duration,
+    /// When the run was seen to end, in milliseconds since the Unix epoch: the clock a stand-in's
+    /// [`Call::time_ms`] is read from, so the time from a call's start to the run's end can be
+    /// bounded without counting the operator's start and its earlier calls, which a loaded
+    /// machine slows most (#0189).
+    pub ended_ms: u128,
 }
 
 impl Out {
@@ -1029,12 +1034,18 @@ impl Op<'_> {
                 Err(e) => panic!("waiting for the operator failed: {e}"),
             }
         };
+        let elapsed = started.elapsed();
+        let ended_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
         drop(stdin.take());
         Out {
             code,
             stdout: t_out.join().unwrap_or_default(),
             stderr: t_err.join().unwrap_or_default(),
-            elapsed: started.elapsed(),
+            elapsed,
+            ended_ms,
         }
     }
 }

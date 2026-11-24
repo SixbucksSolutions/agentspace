@@ -685,15 +685,12 @@ fn no_program_up_starts_gets_the_operators_stdin_but_the_push_gets_its_own() {
 #[test]
 fn up_does_not_wait_for_its_stdin() {
     // The stdin is open and empty for the whole run; a run that read it, or let a program read
-    // it, would wait until the rig's time limit and fail there.
+    // it, would wait until the rig's time limit (90 seconds, which holds beside a parallel build;
+    // #0189) and fail there.
     let rig = pushing_rig();
     rig.instance("stopped");
     box_confirms(&rig, Some(ZONE));
-    let out = rig
-        .op(&["up"])
-        .hold_stdin()
-        .timeout(std::time::Duration::from_secs(60))
-        .run();
+    let out = rig.op(&["up"]).hold_stdin().run();
     assert_eq!(out.code, Some(0), "{:?}", out.err());
     assert_eq!(rig.calls_of("ssh").len(), 1);
 }

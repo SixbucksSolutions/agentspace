@@ -276,11 +276,9 @@ fn no_command_waits_for_its_stdin() {
     for command in [vec!["up"], vec!["down"], vec!["status"], vec!["grow"]] {
         let rig = cached_rig();
         rig.instance("stopped");
-        let out = rig
-            .op(&command)
-            .hold_stdin()
-            .timeout(std::time::Duration::from_secs(60))
-            .run();
+        // A run that read its held stdin would never end; the rig's 90-second limit shows it, and
+        // holds beside a parallel build (#0189).
+        let out = rig.op(&command).hold_stdin().run();
         assert_eq!(out.code, Some(0), "{command:?}: {:?}", out.err());
     }
 }
