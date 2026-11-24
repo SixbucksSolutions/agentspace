@@ -567,7 +567,7 @@ mod tests {
         f.write("hosts.json", "not json");
         let mut r = request("other");
         r.platform = "windows/amd64";
-        r.size = "xl";
+        r.size = "xxl";
         let Placed::Unsatisfiable { reasons } = place(&f.ctx, &r, &f.detach).unwrap() else {
             panic!("Not unsatisfiable");
         };

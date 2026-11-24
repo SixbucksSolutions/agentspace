@@ -24,6 +24,7 @@ mod pending;
 mod reasons;
 #[cfg(test)]
 mod release_tests;
+mod sizes;
 mod text;
 mod walk;
 
@@ -33,6 +34,8 @@ use agentspace_detach::Detach;
 use agentspace_driver_api::{Context, Driver, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
 
 use crate::walk::Walker;
+
+pub use crate::sizes::{SIZES, instance_type_for, meets, resize_target};
 
 /// The driver's name, which the CLI stores with every lease it places (driver.md, The driver's
 /// name). `place_pending` places only the records that carry it.

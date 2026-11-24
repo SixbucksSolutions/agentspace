@@ -230,7 +230,7 @@ fn create_records_an_unsatisfiable_lease_with_exit_0() {
         ),
         reason(
             "unsupported_size",
-            "Size 'xl' is not supported; v0 supports size m only.",
+            "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl.",
         ),
     ];
     h.script_place(Ok(Placed::Unsatisfiable { reasons }));
@@ -242,15 +242,15 @@ fn create_records_an_unsatisfiable_lease_with_exit_0() {
         "--platform",
         "Windows/AMD64",
         "--size",
-        "xl",
+        "xxl",
     ]);
     let doc = ran.lease_doc();
     let want = json!({
         "id": ID1, "project": "swim", "state": "unsatisfiable", "platform": "windows/amd64",
-        "profile": "agent-linux", "size": "xl", "ttl_seconds": 28800, "created_at": fmt_time(NOW),
+        "profile": "agent-linux", "size": "xxl", "ttl_seconds": 28800, "created_at": fmt_time(NOW),
         "reasons": [
             {"code": "unsupported_platform", "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."},
-            {"code": "unsupported_size", "message": "Size 'xl' is not supported; v0 supports size m only."},
+            {"code": "unsupported_size", "message": "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl."},
         ],
     });
     assert_eq!(doc, want);
