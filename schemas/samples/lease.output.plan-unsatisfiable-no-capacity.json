@@ -1,0 +1,21 @@
+{
+  "id": "18dafc02-9c1e-4b3d-bf57-8eac2b4d6f98",
+  "project": "newproject",
+  "state": "unsatisfiable",
+  "platform": "linux/arm64",
+  "profile": "agent-linux",
+  "size": "l",
+  "ttl_seconds": 28800,
+  "created_at": "2026-11-24T14:12:00Z",
+  "reasons": [
+    {
+      "code": "no_capacity",
+      "message": "No capacity can be found for project 'newproject': it has no host and is not on agentspace's project list."
+    }
+  ],
+  "sized_for": {
+    "plan": "v0.09",
+    "turn": "T02",
+    "agents": 9
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "pxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ",
+  "turns": [
+    {
+      "name": "txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ",
+      "stories": [
+        {
+          "name": "sxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ",
+          "subagents": [
+            {
+              "name": "ixxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ",
+              "model": "MxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ",
+              "effort": "ExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ"
+            },
+            {
+              "name": "rxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ",
+              "model": "Opus",
+              "effort": "high",
+              "after": [
+                "ixxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxZ"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

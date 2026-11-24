@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/error.output.schema.json",
-  "title": "Error (output, contract v0)",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/error.output.schema.json",
+  "title": "Error (output, contract v1)",
   "description": "The one document an agentspace lease command writes to stderr when it fails. Its code fixes the exit code: internal 1; usage, invalid_value and out_of_range 2; not_found 3; invalid_state 4. Strict: anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET. Each code requires and forbids its own fields. See docs/lease-api.md.",
   "type": "object",
   "additionalProperties": false,
@@ -17,9 +17,9 @@
       "pattern": "^[^\\u0000-\\u0020\\u007f][^\\u0000-\\u001f\\u007f]*$(?!\\n)"
     },
     "field": {
-      "description": "The flag or request member at fault, without dashes.",
+      "description": "The flag or request member at fault, without dashes. plan is the --plan flag or the request's plan member: invalid_value names it for a plan that is not valid, and usage for --plan given with --size, as for any other flag a usage error names.",
       "type": "string",
-      "enum": ["id", "project", "platform", "profile", "size", "ttl", "state"]
+      "enum": ["id", "project", "platform", "profile", "size", "ttl", "state", "plan"]
     },
     "lease_id": {
       "description": "The normalized lease ID asked for: a UUIDv4 in lowercase.",
