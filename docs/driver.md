@@ -1038,8 +1038,9 @@ things** (D66, D67, and D71's pins):
   below. "Live" is
   [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)'s
   word (D56): **a live `ready` lease is a record stored `ready` whose `expires_at` is after the
-  reading's time**, so an expired lease is not one. It is of any driver, and one whose
-  `expires_at` cannot be read counts as live, as state.md's live-lease rule reads it (architect,
+  reading's time**, so an expired lease is not one. It is of any driver, and a stored `ready`
+  record with no `expires_at`, or one that does not parse, which only a hand edit makes past the
+  schema, counts as live, as `agentspace_state::is_live` reads it for the guard too (architect,
   2026-11-23, for v0.09-T03, pin P43). A `pending` lease is live, but **a lease that is
   only `pending` does not hold a host's size**, since it has no session there; an expired, a
   `released` and an `unsatisfiable` lease hold nothing (D66). "Of the project" is state.md's: the
