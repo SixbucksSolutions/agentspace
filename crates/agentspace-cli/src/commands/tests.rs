@@ -239,6 +239,8 @@ impl Env {
 
 fn record(id: &str, state: &str, driver: Option<&str>) -> Record {
     let mut r = Record {
+        sized_for: None,
+        plan: None,
         id: id.to_owned(),
         project: "demo".to_owned(),
         state: state.to_owned(),

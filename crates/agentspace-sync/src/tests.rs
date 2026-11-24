@@ -416,6 +416,7 @@ impl World {
         hosts.hosts[0].instance_id = box_id.map(str::to_string);
         for (project, state) in others {
             hosts.hosts.push(agentspace_hosts::Host {
+                last_success_at: None,
                 project: project.to_string(),
                 stack: agentspace_hosts::stack_name(project),
                 state: *state,
@@ -2629,6 +2630,8 @@ mod host_deploy_and_provision {
         ) -> agentspace_state::Record {
             let ready = state == "ready";
             agentspace_state::Record {
+                sized_for: None,
+                plan: None,
                 id: format!("8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f90{n:02x}"),
                 project: project.to_string(),
                 state: state.to_string(),

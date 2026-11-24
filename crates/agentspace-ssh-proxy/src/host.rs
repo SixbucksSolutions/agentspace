@@ -262,6 +262,7 @@ mod tests {
 
     fn host(project: &str, state: HostState) -> Host {
         Host {
+            last_success_at: None,
             project: project.to_string(),
             stack: agentspace_hosts::stack_name(project),
             state,
@@ -279,6 +280,8 @@ mod tests {
 
     fn lease(project: &str, alias: &str) -> Record {
         Record {
+            sized_for: None,
+            plan: None,
             id: format!("00000000-0000-4000-8000-{:012x}", alias.len()),
             project: project.to_string(),
             state: "ready".to_string(),

@@ -28,6 +28,8 @@ const OLD_LAUNCH: i64 = NOW - 100_000;
 /// `released_at` in Unix seconds.
 fn lease(project: &str, state: &str, expires: Option<i64>, released: Option<i64>) -> Record {
     Record {
+        sized_for: None,
+        plan: None,
         id: "00000000-0000-4000-8000-000000000000".to_string(),
         project: project.to_string(),
         state: state.to_string(),

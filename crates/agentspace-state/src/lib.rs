@@ -61,6 +61,21 @@ pub struct Record {
     pub ssh: Option<Ssh>,
     pub reasons: Option<Vec<Reason>>,
     pub driver: Option<String>,
+    /// What a lease created with `--plan` was sized for (docs/state.md, What a plan lease adds;
+    /// D75, D81). Pinned as code before v0.10-T02, read and written by nothing until #0215.
+    pub sized_for: Option<SizedFor>,
+    /// The plan document a lease was created with, as parsed (docs/state.md, What a plan lease
+    /// adds; D74, D81). Pinned as code before v0.10-T02, read and written by nothing until #0215.
+    pub plan: Option<serde_json::Value>,
+}
+
+/// A lease record's `sized_for`: the plan's name when it has one, its busiest turn, and that
+/// turn's agents at once, its dev lead counted (docs/lease-api.md, Fields; D75, D81).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SizedFor {
+    pub plan: Option<String>,
+    pub turn: String,
+    pub agents: u32,
 }
 
 /// The lease state file. Its `version` is always 0.
@@ -137,6 +152,8 @@ fn record_from(v: &Value) -> Option<Record> {
         Some(v) => v.as_str().map(|s| Some(s.to_string())),
     };
     Some(Record {
+        sized_for: None,
+        plan: None,
         id: text(o, "id")?,
         project: text(o, "project")?,
         state: text(o, "state")?,

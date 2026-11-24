@@ -135,6 +135,7 @@ mod tests {
             hosts: records
                 .iter()
                 .map(|(project, stack, state)| Host {
+                    last_success_at: None,
                     project: (*project).to_string(),
                     stack: (*stack).to_string(),
                     state: *state,

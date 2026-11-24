@@ -152,6 +152,7 @@ mod tests {
     fn two() -> Hosts {
         let mut hosts = Hosts::seed();
         hosts.hosts.push(Host {
+            last_success_at: None,
             project: "agentspace".to_string(),
             stack: "agentspace-host-agentspace".to_string(),
             state: HostState::Ready,
