@@ -53,10 +53,14 @@ fn outcome(fx: &Fx, got: Result<PendingPlaced, Failure>) -> (usize, Vec<String>)
         Ok(got) => got,
         Err(f) => panic!("The call failed as a whole: {}", f.message),
     };
-    for f in &got.failed {
-        fx.assert_plain(&f.message);
+    for message in got.unplaced.iter().filter_map(|u| u.message()) {
+        fx.assert_plain(message);
     }
-    let failed = got.failed.iter().map(|f| f.lease_id.clone()).collect();
+    let failed = got
+        .unplaced
+        .iter()
+        .map(|u| u.lease_id().to_string())
+        .collect();
     (got.placed, failed)
 }
 

@@ -24,7 +24,7 @@ use agentspace_state::{Record, Ssh, StoreError, format_time};
 use crate::host::registry_why;
 use crate::ops::{self, HostKey};
 use crate::text::{failure, with_leftovers};
-use crate::{NAME, PendingFailure, PendingPlaced};
+use crate::{NAME, PendingFailure, PendingPlaced, Unplaced};
 
 /// What follows a failure of the whole call: what it placed before stays `ready`.
 const REST_STAY: &str = "The leases not yet placed stay pending.";
@@ -160,7 +160,7 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
         tried.insert(id.clone());
         // A lease that fails here has had every file this call made for it removed already.
         match place_one(ctx, &file.leases[index], host) {
-            Err(f) => result.failed.push(lease_failure(id, f)),
+            Err(f) => result.unplaced.push(Unplaced::Failed(lease_failure(id, f))),
             Ok((host_alias, user, expires_at)) => {
                 let lease = &mut file.leases[index];
                 lease.state = "ready".to_string();
@@ -176,7 +176,9 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
                             .err()
                             .map(|f| f.leftovers)
                             .unwrap_or_default();
-                        result.failed.push(write_failure(id, &e, &left));
+                        result
+                            .unplaced
+                            .push(Unplaced::Failed(write_failure(id, &e, &left)));
                     }
                 }
             }
@@ -346,7 +348,7 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let done = place_pending(&c, "swimcoach").unwrap();
         assert_eq!(done.placed, 0);
-        let ids: Vec<&str> = done.failed.iter().map(|f| f.lease_id.as_str()).collect();
+        let ids: Vec<&str> = done.unplaced.iter().map(Unplaced::lease_id).collect();
         assert_eq!(ids, [A, B]);
         assert_eq!(fs::read(&path).unwrap(), before);
     }
@@ -366,8 +368,8 @@ mod tests {
         fs::write(&alias, format!("# agentspace lease {A}; x\nHost y\n")).unwrap();
         let done = place_pending(&c, "swimcoach").unwrap();
         assert_eq!(done.placed, 0);
-        assert_eq!(done.failed.len(), 1);
-        assert_eq!(done.failed[0].lease_id, A);
+        assert_eq!(done.unplaced.len(), 1);
+        assert_eq!(done.unplaced[0].lease_id(), A);
         assert!(!folder.exists());
         assert!(!alias.exists());
     }
@@ -383,9 +385,9 @@ mod tests {
         fs::write(&alias, b"# a person's file\n").unwrap();
         let done = place_pending(&c, "swimcoach").unwrap();
         assert_eq!(done.placed, 0);
-        assert_eq!(done.failed.len(), 1);
-        assert_eq!(done.failed[0].lease_id, A);
-        assert_eq!(done.failed[0].message, crate::text::FOREIGN_ALIAS);
+        assert_eq!(done.unplaced.len(), 1);
+        assert_eq!(done.unplaced[0].lease_id(), A);
+        assert_eq!(done.unplaced[0].message(), Some(crate::text::FOREIGN_ALIAS));
         assert!(alias.exists());
     }
 }
