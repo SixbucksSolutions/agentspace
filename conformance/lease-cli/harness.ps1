@@ -394,7 +394,10 @@ function Add-ConformanceReadyHost {
       $records.Add($rec)
     }
   } else {
-    $records.Add([ordered]@{ project = 'swimcoach'; stack = 'agentbox'; state = 'ready' })
+    # The box's record gets the type too (pin P3): a typeless ready record answers pending (driver.md, row 2).
+    $box = [ordered]@{ project = 'swimcoach'; stack = 'agentbox'; state = 'ready' }
+    if (-not $NoInstanceType) { $box['instance_type'] = 'm9g.xlarge' }
+    $records.Add($box)
   }
   $added = [System.Collections.Generic.List[string]]::new()
   foreach ($name in $Project) {
