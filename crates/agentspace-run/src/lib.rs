@@ -21,6 +21,10 @@
 //!   path `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` or `AGENTSPACE_SCP_CMD` names, read each
 //!   time a program is about to start. A value that names nothing runnable fails and MUST NOT
 //!   fall back to the default.
+//! - **Nothing Windows cannot start is handed to it** (#0191): on Windows a file is started only
+//!   when it is a `.cmd` or `.bat` file or holds a PE image. Any other file is answered as one that
+//!   cannot be run, with the seam's line or "Could not run", before any start, since Windows
+//!   would take it for a 16-bit program and show a modal dialog.
 //! - **The environment at start** (operator.md, Environment variables): every program gets its
 //!   environment with every variable whose name ends `_POSIX_FD_STATE` removed (#0026) and
 //!   `AGENTSPACE_NESTED` set to `1`.
@@ -139,14 +143,18 @@ impl Runner {
     }
 
     fn run_remote(&self, program: &Program, args: &[&OsStr]) -> Result<i32, Failure> {
+        let cannot_start = || Failure {
+            message: program.cannot_start.clone(),
+            caller: CallerFailure::CouldNotReach,
+        };
+        if !startable(&program.path) {
+            return Err(cannot_start());
+        }
         let mut cmd = command(&program.path);
         cmd.args(args).stdin(Stdio::null());
         match cmd.status() {
             Ok(status) => Ok(exit_code(status)),
-            Err(_) => Err(Failure {
-                message: program.cannot_start.clone(),
-                caller: CallerFailure::CouldNotReach,
-            }),
+            Err(_) => Err(cannot_start()),
         }
     }
 }
@@ -265,11 +273,51 @@ fn is_runnable_file(path: &Path) -> bool {
 fn runnable(var: &str, value: &OsStr) -> Result<PathBuf, String> {
     let fail = || seam_message(var, value);
     let path = std::path::absolute(Path::new(value)).map_err(|_| fail())?;
-    if is_runnable_file(&path) {
+    if is_runnable_file(&path) && startable(&path) {
         Ok(path)
     } else {
         Err(fail())
     }
+}
+
+/// Whether the system can start `path` as a program without asking a person anything.
+///
+/// On Windows that is a `.cmd` or `.bat` file, which `Command` starts through `cmd.exe`, or a file
+/// that holds a PE image. Any other file handed to `CreateProcessW` is taken for an MS-DOS or 16-bit
+/// program, which 64-bit Windows cannot run: Windows puts a modal "Unsupported 16-Bit Application"
+/// dialog on the desktop, and the start can wait on a person's click (#0191, found in
+/// E0.10-T02-S04). Such a file is one that cannot be run, so it MUST be
+/// answered as one without being started. Elsewhere, starting the file is the test.
+#[cfg(windows)]
+fn startable(path: &Path) -> bool {
+    let script = path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+    });
+    script || holds_pe_image(path)
+}
+
+#[cfg(not(windows))]
+fn startable(_path: &Path) -> bool {
+    true
+}
+
+/// Whether `path` begins with an `MZ` header whose `e_lfanew` (the 32-bit offset at 0x3C) names
+/// a `PE\0\0` signature: a 32-bit or 64-bit Windows image, never an MS-DOS or 16-bit one.
+#[cfg(windows)]
+fn holds_pe_image(path: &Path) -> bool {
+    use std::io::{Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut header = [0u8; 64];
+    if file.read_exact(&mut header).is_err() || header[..2] != *b"MZ" {
+        return false;
+    }
+    let e_lfanew = u32::from_le_bytes([header[60], header[61], header[62], header[63]]);
+    let mut signature = [0u8; 4];
+    file.seek(SeekFrom::Start(u64::from(e_lfanew))).is_ok()
+        && file.read_exact(&mut signature).is_ok()
+        && signature == *b"PE\0\0"
 }
 
 /// The seam's line for a value that names nothing runnable (operator.md, The test seam).
@@ -398,6 +446,9 @@ impl Aws for Runner {
     fn call(&self, call: &Call) -> Result<Value, AwsError> {
         let program = self.aws_program()?;
         let cannot_run = || AwsError::CannotRun(program.cannot_start.clone());
+        if !startable(&program.path) {
+            return Err(cannot_run());
+        }
         let mut cmd = command(&program.path);
         cmd.args(aws_args(call)).stdin(Stdio::null());
         match call.output {
@@ -781,5 +832,83 @@ mod tests {
         assert!(!envs.contains_key(OsStr::new("PATH")));
         assert!(!envs.contains_key(OsStr::new("X_POSIX_FD_STATEX")));
         assert_eq!(envs[OsStr::new("AGENTSPACE_NESTED")], Some(OsStr::new("1")));
+    }
+}
+
+/// #0191: what Windows is never asked to start. None of these tests starts a program; each reads
+/// files in a throwaway folder, so a check that wrongly passed a file shows here as a failure and
+/// never as a dialog on the desktop.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    fn temp_dir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("agentspace-run-unit-")
+            .tempdir()
+            .unwrap()
+    }
+
+    fn file(dir: &tempfile::TempDir, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    /// An `MZ` header of 64 bytes whose `e_lfanew` is `at`, followed by `rest`.
+    fn mz(at: u32, rest: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0u8; 64];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[60..64].copy_from_slice(&at.to_le_bytes());
+        bytes.extend_from_slice(rest);
+        bytes
+    }
+
+    #[test]
+    fn a_pe_image_is_startable() {
+        // This test's own executable is a PE image, as is any program cargo builds.
+        assert!(startable(&std::env::current_exe().unwrap()));
+        let dir = temp_dir();
+        assert!(startable(&file(&dir, "made.exe", &mz(64, b"PE\0\0"))));
+    }
+
+    #[test]
+    fn a_cmd_or_bat_file_is_startable_whatever_its_case() {
+        let dir = temp_dir();
+        for name in ["a.cmd", "b.bat", "C.CMD", "D.Bat"] {
+            assert!(startable(&file(&dir, name, b"@exit /b 0\r\n")), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_file_that_is_no_pe_image_is_not_startable_whatever_its_name() {
+        let dir = temp_dir();
+        let cases: [(&str, Vec<u8>); 8] = [
+            ("text.exe", b"this is not an executable".to_vec()),
+            ("script-named.exe", b"@echo off\r\nexit /b 0\r\n".to_vec()),
+            ("empty.exe", Vec::new()),
+            ("short.exe", b"MZ".to_vec()),
+            ("dos.exe", mz(0, b"")),
+            ("ne.exe", mz(64, b"NE\0\0")),
+            ("beyond.exe", mz(4096, b"PE\0\0")),
+            ("plain.txt", b"just text\n".to_vec()),
+        ];
+        for (name, bytes) in cases {
+            assert!(!startable(&file(&dir, name, &bytes)), "{name}");
+        }
+        assert!(!startable(&dir.path().join("missing.exe")));
+        assert!(!startable(dir.path()));
+    }
+
+    #[test]
+    fn a_seam_value_naming_a_file_that_is_no_pe_image_names_nothing_runnable() {
+        let dir = temp_dir();
+        let text = file(&dir, "not-a-program.exe", b"this is not an executable");
+        assert_eq!(
+            runnable(AWS_VAR, text.as_os_str()),
+            Err(seam_message(AWS_VAR, text.as_os_str()))
+        );
+        let script = file(&dir, "aws.cmd", b"@exit /b 0\r\n");
+        assert_eq!(runnable(AWS_VAR, script.as_os_str()), Ok(script));
     }
 }
