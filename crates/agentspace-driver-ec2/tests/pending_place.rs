@@ -105,7 +105,13 @@ fn a_box_lease_with_a_transport_override_keeps_the_box_form() {
 #[test]
 fn a_box_lease_is_placed_the_same_beside_other_hosts_records_and_leaves_them_alone() {
     let (fx, detach) = world("swimcoach");
-    fx.write_hosts(&[H::creating(PROJECT).attempted_ago(30)]);
+    // The box's record holds the default size's type, as one does that a deploy or a run has
+    // recorded since v0.09: a record with no type meets no size, and place would answer pending
+    // (D67; the P3 ruling keeps this test's meaning).
+    fx.write_hosts_with(
+        Some(DEFAULT_TYPE),
+        &[H::creating(PROJECT).attempted_ago(30)],
+    );
     let before = fx.hosts_bytes();
     let d = fx.driver_with(&detach);
     assert!(matches!(

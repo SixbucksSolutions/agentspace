@@ -317,13 +317,41 @@ impl Fx {
                     out.insert(rel, None);
                     walk(base, &p, out);
                 } else {
-                    out.insert(rel, Some(fs::read(&p).unwrap()));
+                    // A lock file that a test holds open for exclusive use cannot be read: it is
+                    // recorded by name, with a marker no real file holds.
+                    let bytes = fs::read(&p).unwrap_or_else(|_| b"<held open>".to_vec());
+                    out.insert(rel, Some(bytes));
                 }
             }
         }
         let mut out = Snapshot::new();
         walk(&self.root, &self.root, &mut out);
         out
+    }
+
+    /// Checks the throwaway root is as `before` found it, and names each file that was added,
+    /// removed or changed, never its bytes. A lock file is left out of the comparison on both
+    /// sides: a lock is a file that is made when it is first taken and never deleted
+    /// (state.md, Concurrency), so reading the registry under `hosts.lock` makes one without
+    /// writing anything.
+    #[track_caller]
+    pub fn assert_unchanged(&self, before: &Snapshot, why: &str) {
+        let after = self.snapshot();
+        let is_lock = |name: &str| name.ends_with(".lock");
+        let mut diffs: Vec<String> = Vec::new();
+        for (name, bytes) in after.iter().filter(|(n, _)| !is_lock(n)) {
+            match before.get(name) {
+                None => diffs.push(format!("added {name}")),
+                Some(old) if old != bytes => diffs.push(format!("changed {name}")),
+                Some(_) => {}
+            }
+        }
+        for name in before.keys().filter(|n| !is_lock(n)) {
+            if !after.contains_key(name) {
+                diffs.push(format!("removed {name}"));
+            }
+        }
+        assert!(diffs.is_empty(), "{why}: {diffs:?}");
     }
 
     /// Checks a message is agentspace's own words: no path, no folder name, no backend name.
