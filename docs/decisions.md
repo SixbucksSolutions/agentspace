@@ -4278,6 +4278,21 @@ v0.10 out as D71 laid out v0.09, on the designs of D73 to D80, and the stories' 
   CLI writes the `<why>` of a file it cannot read or that is too large, since the crate reads no
   file. No `<why>` carries an operating system's error text or a path other than the argument.
 
+**Changed during v0.10-T02 (architect, 2026-11-24, on Terry's "Let's pull risk in as much as
+possible"):** defect #0225, found by #0217 the same day, is carried into T03 rather than left for a
+later epic. CreateProcess on a file named `.exe` that is not a program raises a modal "Unsupported
+16-Bit Application" dialog and waits for a person when the calling process's error mode is 0, and
+no agentspace program set one: that was #0191's hang, since the T02 dev lead's run wrapper, started
+by `Start-Process -WindowStyle Hidden`, gave every run error mode 0.
+- **#0217 fixes the two central start points** (`SetThreadErrorMode` around CreateProcess in
+  `agentspace-launch` and `agentspace-run`) and adds the shared helper
+  `agentspace_launch::quiet_hard_errors()`, which sets the process error mode to
+  `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX` on Windows and does nothing elsewhere.
+- **T03 gains a third story, #0226 (`E0.10-T03-S03`)**: the operator's, the ssh proxy's and the
+  three keeper programs' mains call it first. **#0219 calls it from the CLI's main**, since it owns
+  that crate. T03's peak becomes 7 and its budget stays 3 hours, the story being 1.5 hours beside
+  the others; the release's budget stays 15.5 hours.
+
 **Pinned as code before T02, by the architect:** one pull request adds `Record`'s two members and
 `Host`'s `last_success_at`, read and written by nothing, and gives every struct literal of them in
 the workspace `None`. Crates that no T02 story owns build those literals, among them the keeper,
