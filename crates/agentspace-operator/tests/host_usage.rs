@@ -1,5 +1,5 @@
 //! The command line's v0.07 additions: `-Host`, `-All` and `-InstanceType`, their usage errors in
-//! the order operator.md gives them, and the six host checks that run after the `-Alias` checks
+//! the order operator.md gives them, and the five host checks that run after the `-Alias` checks
 //! (docs/operator.md, Command line). Every one of these fails before the home and the system folder
 //! are read, starts no program and writes nothing, which `assert_failure` shows by running the
 //! program in a throwaway home whose seam variables name nothing.
@@ -273,7 +273,7 @@ fn the_command_list_in_the_missing_and_unknown_command_messages_names_all_ten() 
     );
 }
 
-// ---- The six host checks, in their order ----
+// ---- The five host checks, in their order ----
 
 #[test]
 fn check_1_host_given_with_ca() {
@@ -372,23 +372,41 @@ fn check_5_instance_type_given_with_a_command_but_deploy() {
     );
 }
 
+/// Whether a line gets past the command line: with `USERPROFILE` unset it meets the home, the
+/// first thing after the usage errors and the alias and host checks, and no program is started.
+fn assert_line_passes_the_command_line(args: &[&str]) {
+    let r = run_with_env(args, |c| {
+        c.env_remove("USERPROFILE");
+    });
+    assert_failure_run(&format!("{args:?}"), &r, USERPROFILE_UNSET);
+}
+
 #[test]
-fn check_6_instance_type_for_deploy_needs_a_host_that_is_not_the_box() {
-    assert_line_fails("deploy -InstanceType m9g.xlarge", INSTANCE_TYPE_NEEDS_HOST);
-    assert_line_fails(
-        "deploy -Host swimcoach -InstanceType m9g.xlarge",
-        INSTANCE_TYPE_NEEDS_HOST,
-    );
-    // The box's project is compared as normalized.
+fn v0_09_deleted_the_sixth_host_check_deploy_takes_instance_type_for_every_host() {
+    // D67, D71: `deploy -InstanceType <type>` is allowed for every host, the box included. The
+    // box with no `-Host`, and `-Host swimcoach` in every spelling of the box's project, pass the
+    // command line, and the next thing that speaks is the home.
+    assert_line_passes_the_command_line(&["deploy", "-InstanceType", "m9g.xlarge"]);
+    assert_line_passes_the_command_line(&[
+        "deploy",
+        "-Host",
+        "swimcoach",
+        "-InstanceType",
+        "m9g.xlarge",
+    ]);
     for host in ["SwimCoach", " swimcoach", "SWIMCOACH "] {
-        assert_failure(
-            &["deploy", "-Host", host, "-InstanceType", "m9g.xlarge"],
-            INSTANCE_TYPE_NEEDS_HOST,
-        );
+        assert_line_passes_the_command_line(&[
+            "deploy",
+            "-Host",
+            host,
+            "-InstanceType",
+            "m9g.xlarge",
+        ]);
     }
-    // The message writes `<project>` as those nine characters.
-    assert!(INSTANCE_TYPE_NEEDS_HOST.contains("-Host <project>"));
-    // A host that is not the box passes: the lookup then speaks.
+    // In any order, in any case, and with `-Quiet`.
+    assert_line_passes_the_command_line(&["-InstanceType", "m7i.metal-24xl", "deploy"]);
+    assert_line_passes_the_command_line(&["-quiet", "DEPLOY", "-instancetype", "m9g.2xlarge"]);
+    // A host that is not the box passes as before: the lookup then speaks.
     assert_failure(
         &[
             "deploy",
@@ -412,13 +430,17 @@ fn the_checks_run_in_their_order_and_the_first_failure_ends_the_command() {
     assert_line_fails("provision -All -Host y", ALL_APPLIES);
     // 2 before 4.
     assert_line_fails("provision -All", ALL_APPLIES);
-    // 3 before 5 and 6.
+    // 3 before 5.
     assert_line_fails("status -Host y -All -InstanceType m9g.xlarge", HOST_AND_ALL);
+    // 2 before 5, for deploy too: `-All` is not `deploy`'s.
+    assert_line_fails("deploy -All -InstanceType m9g.xlarge", ALL_APPLIES);
+    assert_line_fails("deploy -Host y -All -InstanceType m9g.xlarge", ALL_APPLIES);
     // 4 before 5: provision's -InstanceType is refused only once -Host is there.
     assert_line_fails("provision -InstanceType m9g.xlarge", PROVISION_NEEDS_HOST);
     // 1 before 5.
     assert_line_fails("ca -Host y -InstanceType m9g.xlarge", HOST_NOT_FOR_CA);
-    // 5 before 6: grow without -Host is refused as another command's, not for needing a host.
+    // 5 is the last host check: a command but deploy is refused as another command's, with or
+    // without -Host.
     assert_line_fails("grow -InstanceType m9g.xlarge", INSTANCE_TYPE_APPLIES);
     assert_line_fails("ca -InstanceType m9g.xlarge", INSTANCE_TYPE_APPLIES);
     assert_line_fails(
@@ -453,7 +475,7 @@ fn every_host_check_failure_is_one_agentspace_line_and_writes_nothing() {
         "status -Host y -All",
         "provision",
         "grow -InstanceType m9g.xlarge",
-        "deploy -InstanceType m9g.xlarge",
+        "status -All -InstanceType m9g.xlarge",
         "status -Host bad!",
         "deploy -Host y -InstanceType bad",
     ] {

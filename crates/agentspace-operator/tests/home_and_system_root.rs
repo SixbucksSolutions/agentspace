@@ -210,11 +210,6 @@ fn the_host_checks_need_neither_and_run_before_the_home() {
         ("status -Host y -All", HOST_AND_ALL),
         ("provision", PROVISION_NEEDS_HOST),
         ("grow -InstanceType m9g.xlarge", INSTANCE_TYPE_APPLIES),
-        ("deploy -InstanceType m9g.xlarge", INSTANCE_TYPE_NEEDS_HOST),
-        (
-            "deploy -Host swimcoach -InstanceType m9g.xlarge",
-            INSTANCE_TYPE_NEEDS_HOST,
-        ),
     ];
     for (line, message) in cases {
         for how in BOTH {
@@ -226,6 +221,25 @@ fn the_host_checks_need_neither_and_run_before_the_home() {
                     message,
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn deploy_instance_type_for_the_box_passes_the_command_line_and_needs_the_home() {
+    // v0.09 deleted the sixth host check (D67, D71): the box's `deploy -InstanceType` is no usage
+    // error, so with the home or the system folder lost the home speaks, as for any `deploy`.
+    for line in [
+        "deploy -InstanceType m9g.xlarge",
+        "deploy -Host swimcoach -InstanceType m9g.xlarge",
+        "deploy -Host SwimCoach -InstanceType m9g.2xlarge -Quiet",
+        "deploy -Host y -InstanceType m9g.xlarge",
+    ] {
+        for how in BOTH {
+            let r = run_without(&words(line), Some(how), None);
+            assert_failure_run(line, &r, USERPROFILE_UNSET);
+            let r = run_without(&words(line), None, Some(how));
+            assert_failure_run(line, &r, SYSTEMROOT_UNSET);
         }
     }
 }

@@ -34,7 +34,13 @@ fn the_extractor_finds_every_level_in_the_doc() {
     assert!(help_text("top").contains("-InstanceType <type>"));
     assert!(help_text("bootstrap").starts_with("Usage: agentspace-operator bootstrap "));
     assert!(help_text("provision").starts_with("Usage: agentspace-operator provision -Host "));
-    assert!(help_text("deploy").contains("-InstanceType <type>  With -Host"));
+    // v0.09's deploy and top-level help: `-InstanceType` is for every host, the box included.
+    assert!(
+        help_text("deploy").contains(
+            "-InstanceType <type>  The instance type to give the host, the box included,"
+        )
+    );
+    assert!(help_text("top").contains("For deploy: the instance type to give the host\n"));
 }
 
 #[test]

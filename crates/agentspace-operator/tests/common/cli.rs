@@ -38,7 +38,6 @@ pub const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync
 pub const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
 pub const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
 pub const INSTANCE_TYPE_APPLIES: &str = "agentspace: -InstanceType applies to deploy alone.";
-pub const INSTANCE_TYPE_NEEDS_HOST: &str = "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.";
 
 /// A command line that names `command` and holds nothing else that its checks need: `provision`
 /// requires `-Host`, so it gets one (operator.md, the host checks, check 4).

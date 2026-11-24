@@ -2,7 +2,7 @@
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # Conformance check of the operator's command line for a host: -Host's and -All's forms, every usage
-# error they add and the six host checks in their order, the home and system folder checks before the
+# error they add and the five host checks in their order, the home and system folder checks before the
 # host is looked up, and a project with no record refused by every command but provision (docs/operator.md,
 # "Command line", the host checks; "Which host a command acts on", "From the command line"; D49, D55).
 # Card #0156 (E0.07-T04-S02), against the rows of operator.md's "Which checks show it".
@@ -15,7 +15,7 @@
 #
 # Cases: -Host's value (its form, its normalization, whitespace, a control character, as the last
 # argument, given twice, whatever it looks like); -InstanceType's form and its absence of a value;
-# the host checks one to six, each alone and in order against the others, against -Alias's two checks
+# the host checks one to five, each alone and in order against the others, against -Alias's two checks
 # and against the usage errors; the checks reading no file and starting nothing; the order of the host
 # lookup after the home and system folder checks; every command but provision refused for a project
 # with no record, with its message, and writing nothing; and -Host and -All accepted before the command.
@@ -46,7 +46,6 @@ $m2 = 'agentspace: -All applies to status, down and sync alone.'
 $m3 = 'agentspace: -Host and -All cannot be given together.'
 $m4 = 'agentspace: provision needs -Host <project>.'
 $m5 = 'agentspace: -InstanceType applies to deploy alone.'
-$m6 = 'agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.'
 $aliasOnly = 'agentspace: -Alias applies to up alone.'
 $aliasForm = "agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'."
 
@@ -128,7 +127,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
   }
   Test-Usage "${t}: the form check comes before the host checks: ca -Host x -InstanceType bad" @('ca', '-Host', 'x', '-InstanceType', 'bad') (& $typeMsg 'bad')
 
-  # ============ The six host checks, in their order ============
+  # ============ The five host checks, in their order ============
   $o = 'operator.md#command-line: the host checks'
   Test-Usage "${o}: 1, -Host with ca" @('ca', '-Host', 'agentspace') $m1
   Test-Usage "${o}: 1 comes before 2 and 3: ca -Host x -All" @('ca', '-Host', 'x', '-All') $m1
@@ -156,11 +155,6 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
   }
   Test-Usage "${o}: 5 applies to a host that exists too: up -Host agentspace -InstanceType m9g.xlarge" @('up', '-Host', 'agentspace', '-InstanceType', 'm9g.xlarge') $m5 -Setup $twoHosts
   Test-Usage "${o}: 5 for sync -All -InstanceType (2 and 3 pass first)" @('sync', '-All', '-InstanceType', 'm9g.xlarge') $m5 -Setup $twoHosts
-  Test-Usage "${o}: 6, deploy -InstanceType with no -Host" @('deploy', '-InstanceType', 'm9g.xlarge') $m6
-  Test-Usage "${o}: 6, deploy -Host swimcoach -InstanceType" @('deploy', '-Host', 'swimcoach', '-InstanceType', 'm9g.xlarge') $m6
-  Test-Usage "${o}: 6, -Host swimcoach is the box in any case or whitespace" @('deploy', '-Host', ' SwimCoach ', '-InstanceType', 'm9g.xlarge') $m6
-  Test-Usage "${o}: 6, -InstanceType before -Host" @('deploy', '-InstanceType', 'm9g.xlarge', '-Host', 'swimcoach') $m6
-  Test-Usage "${o}: 6, -Quiet does not hide it" @('deploy', '-Quiet', '-InstanceType', 'm9g.xlarge') $m6
 
   # ---- guard, which takes no -Host, -All, -Alias or -InstanceType and ignores -GiB's value (E0.08-T04-S01) ----
   # Check 1's message names the command as the page spells it, so ca's stays byte for byte (the cases above)
@@ -253,7 +247,6 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
       @('status -Host x -All', @('status', '-Host', 'x', '-All'), $m3),
       @('provision with no -Host', @('provision'), $m4),
       @('grow -All', @('grow', '-All'), $m2),
-      @('deploy -InstanceType m9g.xlarge', @('deploy', '-InstanceType', 'm9g.xlarge'), $m6),
       @('status -InstanceType m9g.xlarge', @('status', '-InstanceType', 'm9g.xlarge'), $m5)
     )) {
     Test-Usage "${nf}: $($case[0]) with a host registry that is not valid reports the usage error, not the registry" $case[1] $case[2] -Setup $invalidRegistry

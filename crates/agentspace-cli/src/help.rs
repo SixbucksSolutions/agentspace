@@ -59,13 +59,14 @@ Options:
   --project <name>      Required. Letters, digits and '-', up to 32; lowercased.
   --platform <os/arch>  Default linux/arm64. Also accepts aarch64 for arm64.
   --profile <name>      Default agent-linux. Accepts name or name@version.
-  --size <size>         Default m.
+  --size <size>         Default m. One of s, m, l or xl: at least 2, 4, 8 or 16 vCPUs,
+                        with 4 GiB of memory for each.
   --ttl <duration>      Default 8h. From 1m to 24h, never clamped.
                         Examples: 8h, 90m, 1h30m, '2 hours', PT8H.
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v0 only linux/arm64, agent-linux and size m can be met.
+In v0 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
 "##;
 
