@@ -17,6 +17,7 @@ use crate::text::quote;
 const PLATFORM: &str = "linux/arm64";
 /// The one profile it supports, with no version.
 const PROFILE: &str = "agent-linux";
+
 /// The reasons a request cannot be met, in lease-api.md's order: empty when the request is
 /// supported. The driver never answers `no_capacity`.
 pub fn reasons(platform: &str, profile: &str, size: &str) -> Vec<Reason> {
