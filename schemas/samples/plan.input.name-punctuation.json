@@ -1,0 +1,39 @@
+{
+  "name": "plan #1 & co.",
+  "turns": [
+    {
+      "name": "turn: 1 (first) / \"A\"",
+      "stories": [
+        {
+          "name": "E0.09-T01-S01 [draft]",
+          "subagents": [
+            {
+              "name": "!bang",
+              "model": "Opus",
+              "effort": "high"
+            },
+            {
+              "name": "tilde~",
+              "model": "Sonnet",
+              "effort": "high"
+            },
+            {
+              "name": "two  spaces inside",
+              "model": "Sonnet",
+              "effort": "high"
+            },
+            {
+              "name": "say \"hi\" \\ bye",
+              "model": "Opus",
+              "effort": "high",
+              "after": [
+                "!bang",
+                "tilde~"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

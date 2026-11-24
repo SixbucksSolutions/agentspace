@@ -1,0 +1,1 @@
+{"turns":[{"name":"T01","stories":[{"name":"S01","subagents":[{"name":"Build","model":"Sonnet","effort":"high"},{"name":"build","model":"Sonnet","effort":"high"},{"name":"Test","model":"Opus","effort":"high","after":["Build","build"]}]}]}]}

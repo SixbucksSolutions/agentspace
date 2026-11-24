@@ -1,11 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-create.input.schema.json",
-  "title": "Create request (input, contract v0)",
-  "description": "A request to agentspace lease create. The v0 CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning (unknown members and ambiguous values are refused). The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. See docs/lease-api.md.",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/lease-create.input.schema.json",
+  "title": "Create request (input, contract v1)",
+  "description": "A request to agentspace lease create. The CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning (unknown members and ambiguous values are refused). The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. A plan and a size are never both given, since the plan picks the size. The plan's $defs are copied word for word from plan.input.schema.json, because Test-Json -SchemaFile does not resolve a $ref to another file, and what that schema cannot check is checked after parsing. See docs/lease-api.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["project"],
+  "if": { "required": ["plan"], "properties": { "plan": { "not": { "type": "null" } } } },
+  "then": { "properties": { "size": { "type": "null" } } },
   "properties": {
     "project": {
       "description": "Letters, digits and '-', 1 to 32, starting and ending with a letter or digit, in any case.",
@@ -23,16 +25,104 @@
       "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(@0*[1-9][0-9]*)?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
     },
     "size": {
-      "description": "1 to 8 letters and digits in any case. Null or absent means m.",
+      "description": "1 to 8 letters and digits in any case. Null or absent means m, or, with a plan, the size the plan picks. Refused with a plan that is not null.",
       "type": ["string", "null"],
       "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]{1,8}[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
     },
     "ttl": {
       "$ref": "#/$defs/ttl",
       "description": "A duration with units. Null or absent means 8 hours."
+    },
+    "plan": {
+      "description": "The plan document, as plan.input.schema.json defines it, from which the size is picked. On the command line, --plan names a file that holds it. Null or absent means no plan.",
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/plan" }]
     }
   },
   "$defs": {
+    "plan": {
+      "description": "A plan document: an optional name, such as its epic's, and its turns in order.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turns"],
+      "properties": {
+        "name": {
+          "description": "The plan's name, printed as sized_for.plan. Null or absent means the plan has none.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/plan_name" }]
+        },
+        "turns": {
+          "description": "The plan's turns in order, 1 to 32.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/plan_turn" }
+        }
+      }
+    },
+    "plan_turn": {
+      "description": "A turn: its name, unique in the plan, and its stories, which run at once.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "stories"],
+      "properties": {
+        "name": { "$ref": "#/$defs/plan_name" },
+        "stories": {
+          "description": "The turn's stories, 1 to 32.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/plan_story" }
+        }
+      }
+    },
+    "plan_story": {
+      "description": "A story: its name, unique in its turn, and its subagents. Its peak is counted from the subagents' after lists, never stated.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "subagents"],
+      "properties": {
+        "name": { "$ref": "#/$defs/plan_name" },
+        "subagents": {
+          "description": "The story's subagents, 1 to 32.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/plan_subagent" }
+        }
+      }
+    },
+    "plan_subagent": {
+      "description": "A subagent: its name, unique in its story, its model and effort, and the subagents of the same story it starts after.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "model", "effort"],
+      "properties": {
+        "name": { "$ref": "#/$defs/plan_name" },
+        "model": { "$ref": "#/$defs/plan_model" },
+        "effort": { "$ref": "#/$defs/plan_effort" },
+        "after": {
+          "description": "The names of the same story's subagents this one starts after, each once, at most 31. Null, absent or empty means it starts after none.",
+          "type": ["array", "null"],
+          "maxItems": 31,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/plan_name" }
+        }
+      }
+    },
+    "plan_name": {
+      "description": "A name in a plan, as given: 1 to 64 printable ASCII characters, not starting or ending with a space. Never trimmed or case-folded.",
+      "type": "string",
+      "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
+    },
+    "plan_model": {
+      "description": "A model, as given, such as Opus or Opus 5.5: 1 to 64 printable ASCII characters, not starting or ending with a space, as a name in a plan is. Never trimmed or case-folded, and never a list of names, so a new model needs no new version.",
+      "type": "string",
+      "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
+    },
+    "plan_effort": {
+      "description": "An effort, as given: 1 to 32 ASCII letters, digits, '.', '_' and '-', starting with a letter or digit. Never a list of names, so a new effort needs no new version.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$(?!\\n)"
+    },
     "ttl": {
       "description": "Short form (8h, 90m, 1h30m, '2 hours'; units d, h and s in any case and m in lowercase only, or their words in any case, largest first, each once, with optional whitespace between and around them) or ISO 8601 P[nD][T[nH][nM][nS]] in any case. A bare number, an uppercase M in the short form, weeks, months, years and fractions are refused.",
       "type": ["string", "null"],

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-create.input.schema.json",
+  "title": "Create request (input, contract v0)",
+  "description": "A request to agentspace lease create. The v0 CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning (unknown members and ambiguous values are refused). The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. See docs/lease-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project"],
+  "properties": {
+    "project": {
+      "description": "Letters, digits and '-', 1 to 32, starting and ending with a letter or digit, in any case.",
+      "type": "string",
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]([A-Za-z0-9-]{0,30}[A-Za-z0-9])?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "platform": {
+      "description": "os/arch or os/arch/variant in any case; the arch MAY be aarch64, x86_64 or x86-64. Null or absent means linux/arm64.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]+/([A-Za-z0-9]+|[xX]86[_-]64)(/[A-Za-z0-9]+)?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "profile": {
+      "description": "name or name@version in any case; the version is 1 or more, leading zeros allowed. Null or absent means agent-linux.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(@0*[1-9][0-9]*)?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "size": {
+      "description": "1 to 8 letters and digits in any case. Null or absent means m.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]{1,8}[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "ttl": {
+      "$ref": "#/$defs/ttl",
+      "description": "A duration with units. Null or absent means 8 hours."
+    }
+  },
+  "$defs": {
+    "ttl": {
+      "description": "Short form (8h, 90m, 1h30m, '2 hours'; units d, h and s in any case and m in lowercase only, or their words in any case, largest first, each once, with optional whitespace between and around them) or ISO 8601 P[nD][T[nH][nM][nS]] in any case. A bare number, an uppercase M in the short form, weeks, months, years and fractions are refused.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:(?=[0-9])(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[dD](?:[aA][yY][sS]?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[hH](?:[oO][uU][rR][sS]?|[rR][sS]?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:m|[mM][iI][nN](?:[sS]|[uU][tT][eE][sS]?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[sS](?:[eE][cC](?:[sS]|[oO][nN][dD][sS]?)?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?|[pP](?=[0-9tT])(?:[0-9]+[dD])?(?:[tT](?=[0-9])(?:[0-9]+[hH])?(?:[0-9]+[mM])?(?:[0-9]+[sS])?)?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)$"
+    }
+  }
+}

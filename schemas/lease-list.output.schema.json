@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-list.output.schema.json",
-  "title": "Lease list (output, contract v0)",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/lease-list.output.schema.json",
+  "title": "Lease list (output, contract v1)",
   "description": "The leases that agentspace lease list prints, oldest first. Each item is a lease exactly as in lease.output.schema.json, whose $defs this file copies word for word, because Test-Json -SchemaFile does not resolve a $ref to another file. Strict: anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET. See docs/lease-api.md.",
   "type": "object",
   "additionalProperties": false,
@@ -30,7 +30,7 @@
         "released_at": { "$ref": "#/$defs/time" },
         "ssh": { "$ref": "#/$defs/ssh" },
         "reasons": {
-          "description": "Every reason that applies, each code at most once, in the order unsupported_platform, unsupported_profile, unsupported_size, no_capacity. The order is not checked here.",
+          "description": "Every reason that applies, each code at most once, in the order unsupported_platform, unsupported_profile, unsupported_size, plan_too_large, no_capacity. plan_too_large is always the only reason. The order is not checked here.",
           "type": "array",
           "minItems": 1,
           "maxItems": 4,
@@ -39,11 +39,17 @@
             { "contains": { "properties": { "code": { "const": "unsupported_platform" } } }, "minContains": 0, "maxContains": 1 },
             { "contains": { "properties": { "code": { "const": "unsupported_profile" } } }, "minContains": 0, "maxContains": 1 },
             { "contains": { "properties": { "code": { "const": "unsupported_size" } } }, "minContains": 0, "maxContains": 1 },
+            { "contains": { "properties": { "code": { "const": "plan_too_large" } } }, "minContains": 0, "maxContains": 1 },
             { "contains": { "properties": { "code": { "const": "no_capacity" } } }, "minContains": 0, "maxContains": 1 }
           ]
-        }
+        },
+        "sized_for": { "$ref": "#/$defs/sized_for" }
       },
       "allOf": [
+        {
+          "if": { "required": ["reasons"], "properties": { "reasons": { "contains": { "required": ["code"], "properties": { "code": { "const": "plan_too_large" } } } } } },
+          "then": { "required": ["state", "size", "sized_for"], "properties": { "state": { "const": "unsatisfiable" }, "size": { "const": "xl" }, "reasons": { "maxItems": 1 } } }
+        },
         {
           "if": { "required": ["state"], "properties": { "state": { "const": "pending" } } },
           "then": { "properties": { "expires_at": false, "released_at": false, "ssh": false, "reasons": false } }
@@ -135,7 +141,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "enum": ["unsupported_platform", "unsupported_profile", "unsupported_size", "no_capacity"]
+          "enum": ["unsupported_platform", "unsupported_profile", "unsupported_size", "plan_too_large", "no_capacity"]
         },
         "message": {
           "description": "One sentence for a person, with no control characters, not starting with a space.",
@@ -143,6 +149,27 @@
           "pattern": "^[^\\u0000-\\u0020\\u007f][^\\u0000-\\u001f\\u007f]*$(?!\\n)"
         }
       }
+    },
+    "sized_for": {
+      "description": "What a lease created with a plan was sized for: the plan's name when it has one, its busiest turn's name, and that turn's agents at once, its dev lead counted. Present on every lease created with a plan, in every state, and on no other lease.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turn", "agents"],
+      "properties": {
+        "plan": { "$ref": "#/$defs/plan_name" },
+        "turn": { "$ref": "#/$defs/plan_name" },
+        "agents": {
+          "description": "The busiest turn's agents at once: the sum of its stories' peaks, plus 1 for its dev lead. At least 2, a story of one subagent and the dev lead, and at most 1025, the most a plan's bounds allow: 32 stories of 32 subagents each, and the dev lead.",
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1025
+        }
+      }
+    },
+    "plan_name": {
+      "description": "A name in a plan, as given: 1 to 64 printable ASCII characters, not starting or ending with a space. Never trimmed or case-folded.",
+      "type": "string",
+      "pattern": "^[!-~]([ -~]{0,62}[!-~])?$(?!\\n)"
     }
   }
 }

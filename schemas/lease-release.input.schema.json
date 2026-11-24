@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-release.input.schema.json",
-  "title": "Release request (input, contract v0)",
-  "description": "A request to agentspace lease release. The v0 CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. The ID is accepted in any case with surrounding whitespace, and lowercased before use. See docs/lease-api.md.",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/lease-release.input.schema.json",
+  "title": "Release request (input, contract v1)",
+  "description": "A request to agentspace lease release. The CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. The ID is accepted in any case with surrounding whitespace, and lowercased before use. See docs/lease-api.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id"],

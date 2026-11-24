@@ -1,0 +1,131 @@
+{
+  "name": "v0.11",
+  "turns": [
+    {
+      "name": "T01",
+      "stories": [
+        {
+          "name": "E0.11-T01-S01",
+          "subagents": [
+            {
+              "name": "drafter",
+              "model": "Opus",
+              "effort": "high"
+            },
+            {
+              "name": "checker",
+              "model": "Sonnet",
+              "effort": "high",
+              "after": [
+                "drafter"
+              ]
+            },
+            {
+              "name": "fixer",
+              "model": "Sonnet",
+              "effort": "medium",
+              "after": [
+                "checker"
+              ]
+            },
+            {
+              "name": "reviewer",
+              "model": "Opus",
+              "effort": "high",
+              "after": [
+                "fixer"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "E0.11-T01-S02",
+          "subagents": [
+            {
+              "name": "a",
+              "model": "Opus",
+              "effort": "high"
+            },
+            {
+              "name": "b",
+              "model": "Sonnet",
+              "effort": "high"
+            },
+            {
+              "name": "c",
+              "model": "Sonnet",
+              "effort": "high",
+              "after": [
+                "a"
+              ]
+            },
+            {
+              "name": "d",
+              "model": "Sonnet",
+              "effort": "high",
+              "after": [
+                "a",
+                "b"
+              ]
+            },
+            {
+              "name": "e",
+              "model": "Opus",
+              "effort": "high",
+              "after": [
+                "c",
+                "d"
+              ]
+            },
+            {
+              "name": "f",
+              "model": "Sonnet",
+              "effort": "low",
+              "after": [
+                "e"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "T02",
+      "stories": [
+        {
+          "name": "E0.11-T02-S01",
+          "subagents": [
+            {
+              "name": "implementer",
+              "model": "Opus",
+              "effort": "high"
+            },
+            {
+              "name": "runner",
+              "model": "Sonnet",
+              "effort": "medium",
+              "after": [
+                "implementer"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "T03",
+      "stories": [
+        {
+          "name": "E0.11-T03-S01",
+          "subagents": [
+            {
+              "name": "installer",
+              "model": "Sonnet",
+              "effort": "medium"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

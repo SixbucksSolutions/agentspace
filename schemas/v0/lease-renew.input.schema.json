@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v0/lease-renew.input.schema.json",
+  "title": "Renew request (input, contract v0)",
+  "description": "A request to agentspace lease renew. The v0 CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning. The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. See docs/lease-api.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id"],
+  "properties": {
+    "id": {
+      "description": "The lease ID: a UUIDv4 in any case.",
+      "type": "string",
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "ttl": {
+      "$ref": "#/$defs/ttl",
+      "description": "A duration with units. Null or absent means the lease's current ttl_seconds."
+    }
+  },
+  "$defs": {
+    "ttl": {
+      "description": "Short form (8h, 90m, 1h30m, '2 hours'; units d, h and s in any case and m in lowercase only, or their words in any case, largest first, each once, with optional whitespace between and around them) or ISO 8601 P[nD][T[nH][nM][nS]] in any case. A bare number, an uppercase M in the short form, weeks, months, years and fractions are refused.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:(?=[0-9])(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[dD](?:[aA][yY][sS]?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[hH](?:[oO][uU][rR][sS]?|[rR][sS]?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:m|[mM][iI][nN](?:[sS]|[uU][tT][eE][sS]?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?(?:[0-9]+[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[sS](?:[eE][cC](?:[sS]|[oO][nN][dD][sS]?)?)?)[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?|[pP](?=[0-9tT])(?:[0-9]+[dD])?(?:[tT](?=[0-9])(?:[0-9]+[hH])?(?:[0-9]+[mM])?(?:[0-9]+[sS])?)?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)$"
+    }
+  }
+}

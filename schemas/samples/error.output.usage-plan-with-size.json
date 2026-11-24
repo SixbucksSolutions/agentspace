@@ -1,0 +1,1 @@
+{"code":"usage","message":"Options --plan and --size cannot be given together; the plan picks the size. Run 'agentspace lease create --help'.","field":"plan"}
