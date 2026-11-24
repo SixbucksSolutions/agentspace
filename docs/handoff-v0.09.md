@@ -47,7 +47,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 |---|---|---|
 | Yes to Q11 to Q13: the four sizes at their prices, 4 instance hours for T05 at `l` or smaller, the transcript fetch, his per-agent rule kept through v0.09 | 2026-11-23 | decisions.md, Q11 to Q13; D65, D69, D70 |
 | "Lay out v0.09", with a staffing plan and the most subagents per turn reported to him | 2026-11-23 | D71; each story's card |
-| "Start T01" | 2026-11-23 | This file |
+| "Start T01", then "Start T02" | 2026-11-23 | This file |
+| The open defect and hardening cards placed before v1.0, folded into their epics and archived | 2026-11-23 | D72; roadmap.md |
 
 ## Rulings made during v0.09
 
@@ -86,7 +87,8 @@ in decisions.md; this table only finds them.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T02, the foundations: #0200, #0201, #0202 | Terry's "Start T02", then the architect | D71 |
+| T02, the foundations: #0200, #0201, #0202 | Running since 4:46pm, 2026-11-23 | D71 |
+| #0027 (OBE by v0.06) and #0194 (met by the architect's state.md fix), in Backlog | Terry moves each out; Bot cannot | D72 |
 | 26 red tests on `main`: `agentspace-hosts`' `the_embedded_samples_cover_every_hosts_state_file` (#0200); 19 operator help tests, the extractor test among them (#0202, pin P25); 6 lease CLI tests, `tests/help.rs`' five and `isolation_guard`'s (#0202) | T02's stories | Cards #0200, #0202 |
 | #0202 also owns the conformance help copies and the operator's check 6 code and tests | T02 | Card #0202 |
 | T02's brief carries the pinned bytes (P24, P25, P28, P35, P36, P37 and the two reason messages), the Z1 to Z16 and operator.md v0.09 rows that name each behavior's story, and T01's slips | The architect | This file |

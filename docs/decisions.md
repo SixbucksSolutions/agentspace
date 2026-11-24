@@ -109,6 +109,7 @@ line's text after `Status:`, without its full stop.
 - [D69. D39 ends with v0.09: the architect picks a turn's size by Terry's per-agent rule, and asks for it through the lease](#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease): Decided
 - [D70. v0.09's done-when is shown by live checks on agentspace's host, with Terry's yes for their instance hours](#d70-v009s-done-when-is-shown-by-live-checks-on-agentspaces-host-with-terrys-yes-for-their-instance-hours): Decided
 - [D71. v0.09 is twelve stories in five turns: specs, foundations, programs, conformance, live](#d71-v009-is-twelve-stories-in-five-turns-specs-foundations-programs-conformance-live): Decided
+- [D72. The open defect and hardening cards land before v1.0, folded into the epics that carry them](#d72-the-open-defect-and-hardening-cards-land-before-v10-folded-into-the-epics-that-carry-them): Decided
 
 ## The interface
 
@@ -3901,6 +3902,32 @@ alone, up to the 4 Terry said yes to (Q11).**
   other, and T03's two need only T02's merged code.
 - **One live turn, on one host.** D70's checks are sequential on agentspace's host, and the box is
   not resized live.
+
+## Before v1.0: the open defects and hardening
+
+### D72. The open defect and hardening cards land before v1.0, folded into the epics that carry them
+
+**Decided, Terry, 2026-11-23**, on the architect's draft: "Apply it", then "archive cards that are
+captured in epic cards". Until then, nine Backlog cards had only conditional homes ("a hardening
+pass", "the next release that touches `box/`", "before the next measured turn"), no release held
+them, and the roadmap named only #0109 of them, against AGENTS.md's rule that the Backlog matches
+the roadmap.
+- **Each is folded whole into its epic's description and archived**, as v0.08's epic folded #0006.
+  The epic's text is the card's home from then; an archived card stays readable in the board's
+  archive, and the story that meets it cites its number.
+
+  | Card | Epic | Where in it |
+  |---|---|---|
+  | #0189, #0191: workspace tests that fail or hang under load | v0.10 (#0050) | One hardening story in its first turn, since every build turn pays for them |
+  | #0196: a proxy that outlived its lease's release | v0.10 (#0050) | With v0.10's driver work |
+  | #0195: a killed client's Session Manager session holds the idle check off | v0.10 (#0050) | Decided in v0.10's design prep; one option, a shorter Session Manager idle timeout, is Terry's account setting. A fix in the idle check's code is built in v0.12 (#0051) |
+  | #0192, #0193: the idle check's and `install.sh`'s missing box tests | v0.12 (#0051) | Its shared first turn, which extends `box/system` for a second platform |
+  | #0190: the keeper conformance helpers read every process | v1.0 (#0053) | A first turn of hardening before the real project starts |
+  | #0082, #0109: the sampler misses orphaned work and dies when its disk fills | v1.0 (#0053) | The same turn: the real project measures its own turn to size its plan (D27), so the sampler is made sound first |
+- **Not folded:** #0027 is OBE, met by v0.06's Rust operator, as its own text says; #0194 is met by
+  the architect's two-line fix to state.md the same day. Both wait in Backlog for Terry to move,
+  since Bot cannot move a card out of it.
+- **The ten cards after 1.0 stay in Backlog**, as roadmap.md's "After 1.0" lists them.
 
 ## Keys
 
