@@ -35,6 +35,10 @@
 //!   (`host.rs`), and reach the box over `agentspace`, as in v0.06. **`sync_all`** is `sync -All`
 //!   (`syncing.rs`). Each command writes what it sends into a folder of its own under the
 //!   operator's, removed as the command ends (`folder.rs`).
+//! - **Every `deploy` that is not a provisioning run's own deploy step MUST take its host's
+//!   `provision.lock` without waiting and hold it for its whole life, `sync` included, and MUST
+//!   refuse before any AWS call while another holds it** (D67's change note; pin P34). It is the
+//!   box's `hosts\swimcoach\provision.lock` for the box. A run's deploy step takes nothing more.
 //! - **The library reads no environment variable but `PATH`, only to find `go`,
 //!   `AGENTSPACE_SSH_DIR`, only to find the ssh folder, and, in [`provision`] alone,
 //!   `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` for its last
@@ -261,10 +265,12 @@ pub fn deploy(
 }
 
 /// `operator deploy [-Host <project>] [-InstanceType <type>]` (docs/operator.md, deploy):
-/// [`deploy`], with `instance_type` the value of `-InstanceType`, which only a host that is not the
-/// box takes. The operator's command line refuses it for the box before this is called; given here
-/// for the box, it fails with that refusal's message. Public API confirmed by the architect,
-/// 2026-11-21, for v0.07-T03, since the pinned [`deploy`] has no way to pass `-InstanceType`.
+/// [`deploy`], with `instance_type` the value of `-InstanceType`, which every host takes, the box
+/// included (D67, D71; architect, 2026-11-23, for v0.09-T01, pin P5, which deleted v0.07's refusal
+/// for the box). Every `deploy` takes its host's `provision.lock` without waiting and holds it for
+/// its life, and refuses before any AWS call while another holds it (pin P34). Public API
+/// confirmed by the architect, 2026-11-21, for v0.07-T03, since the pinned [`deploy`] has no way to
+/// pass `-InstanceType`.
 pub fn deploy_with_instance_type(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -306,22 +312,25 @@ pub fn deploy_target_sized_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    let project = match target {
-        Target::Host(project) if project != agentspace_hosts::BOX_PROJECT => project,
-        // `-Host swimcoach` is the box in every respect (operator.md, From the command line).
-        _ => {
-            if instance_type.is_some() {
-                return Err(Failure {
-                    message: "agentspace: -InstanceType needs -Host <project> of a host that is not the box; the box is sized through stack-parameters.json.".to_string(),
-                    caller: CallerFailure::Same,
-                });
-            }
-            return deploy_using(ctx, ca_env, say, aws, remote, seams);
-        }
-    };
-    deploy::host_stack(ctx, ca_env, project, instance_type, say, aws, seams)?;
-    // Step 6: sync with deploy's own -Host and -Quiet; its failure is deploy's.
-    sync_target_using(ctx, ca_env, target, say, aws, remote, seams)
+    // The host is looked up first (a registry that is not valid, or a project with no record, is
+    // refused before anything), then its `provision.lock` is tried without waiting and held for the
+    // whole life of this `deploy`, its `sync` step included (operator.md, deploy; D67's change
+    // note; pin P34). `-Host swimcoach` is the box in every respect (operator.md, From the command
+    // line), so the box's lock is `hosts\swimcoach\provision.lock` either way.
+    let home = deploy::full_home(ctx);
+    let hosts = deploy::read_hosts(&home)?;
+    let record = registry::find(&hosts, target)?;
+    let is_box = registry::is_box_record(&record);
+    let _held = provision::take_person_lock(&home, &record.project)?;
+    if is_box {
+        // Steps 1 to 5, then step 6: sync, as if run with deploy's own -Quiet; its failure is
+        // deploy's.
+        deploy::box_stack(ctx, instance_type, say, aws, seams)?;
+        sync_target_using(ctx, ca_env, Target::Box, say, aws, remote, seams)
+    } else {
+        deploy::host_stack(ctx, ca_env, &record.project, instance_type, say, aws, seams)?;
+        sync_target_using(ctx, ca_env, target, say, aws, remote, seams)
+    }
 }
 
 /// `operator bootstrap` (docs/operator.md, bootstrap): runs the embedded toolchain bootstrap on
@@ -473,7 +482,8 @@ fn read_public_key(places: &Places) -> Result<String, Failure> {
 }
 
 /// [`deploy`] over [`Seams`], for the box: its steps 1 to 5 as before v0.07, but for the template's
-/// folder and the instance ID kept in the box's record (operator.md, deploy), then `sync`.
+/// folder and the instance ID and type kept in the box's record (operator.md, deploy), then
+/// `sync`, all under the box's `provision.lock` (pin P34).
 #[doc(hidden)]
 pub fn deploy_using(
     ctx: &Context,
@@ -483,7 +493,5 @@ pub fn deploy_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    deploy::box_stack(ctx, say, aws, seams)?;
-    // Step 6: sync, as if run with deploy's own -Quiet; its failure is deploy's.
-    sync_using(ctx, ca_env, say, aws, remote, seams)
+    deploy_target_sized_using(ctx, ca_env, Target::Box, None, say, aws, remote, seams)
 }

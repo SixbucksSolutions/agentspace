@@ -5,16 +5,24 @@
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
 //! - **The box's stack MUST be deployed with `SshPublicKey` and every member of
-//!   `stack-parameters.json`, and never `HostName` or `CaPublicKey`**, so its change set stays
-//!   empty (D44; P5).
+//!   `stack-parameters.json` but `InstanceType`, and never `HostName` or `CaPublicKey`**, so its
+//!   change set stays empty (D44; P5). **No host is sized by that file** (D67, D71; pin P6): the
+//!   file's `InstanceType` is never read, and `InstanceType=<type>` is passed, last, only when
+//!   `-InstanceType` or a provisioning run's deploy step gives one (pin P32).
 //! - **A host is never sized by the box's parameters** (P13; D55): a stack `deploy` creates takes
 //!   only `SubnetId` and `VpcId` from the file, and a stack it updates is passed no parameter at
-//!   all, so every one keeps its previous value, but `InstanceType` when `-InstanceType` gives one.
+//!   all, so every one keeps its previous value, but `InstanceType` when a type is given.
 //! - **`CaPublicKey` MUST carry the CA's public key without its comment** (P8): the comment holds
 //!   the computer's name, and a stack parameter is kept and shown by CloudFormation.
 //! - **The existence check's failures come before any call that changes anything.**
-//! - **The instance ID is removed from the host's record before the deploy's output is read, then
-//!   written again** (step 5), each under `hosts.lock`; `deploy` never sets a `state`.
+//! - **A deploy that passes `InstanceType` MUST remove the record's `instance_type` under
+//!   `hosts.lock` before `cloudformation deploy` runs** (step 4; P11), so a killed or failed
+//!   deploy leaves no type that the host might not have.
+//! - **The instance ID and the instance type are removed from the host's record in one write
+//!   before the deploy's output is read, then written again in one write from that one answer**
+//!   (step 5; P11, P23, P30), each under `hosts.lock`. A read-back that fails or is malformed
+//!   leaves no type; a stack with no usable `InstanceType` parameter fails the deploy (P22).
+//!   `deploy` never sets a `state`.
 
 use std::path::{Path, PathBuf};
 
@@ -83,22 +91,28 @@ pub(crate) fn change_record(
 }
 
 /// The box's steps 1 to 5 (operator.md, deploy): the public key, every member of the stack
-/// parameters file, the deploy of `agentbox`, and the instance ID written into the box's record.
-/// Returns the instance ID.
+/// parameters file but `InstanceType`, the removal of the record's type when `instance_type` is
+/// given, the deploy of `agentbox` with `InstanceType=<type>` last, and the instance ID and type
+/// written into the box's record. `instance_type` is `-InstanceType`'s value, or a provisioning
+/// run's (D67, D71; pins P6 and P32). Returns the instance ID.
 pub(crate) fn box_stack(
     ctx: &Context,
+    instance_type: Option<&str>,
     say: &dyn Say,
     aws: &dyn Aws,
     seams: &Seams,
 ) -> Result<String, Failure> {
     let places = Places::new(ctx);
+    let home = full_home(ctx);
 
-    // Steps 1 and 2: the public key and the stack parameters, both before any AWS call.
+    // Steps 1 and 2: the public key and the stack parameters, both before any AWS call. The
+    // parameters come without the file's `InstanceType`, which no program reads (D67).
     let key = read_public_key(&places)?;
     let parameters = params::read(&places.stack_parameters())?;
 
-    // Steps 3 and 4.
+    // Step 4's removal, then steps 3 and 4.
     let stack = agentspace_hosts::BOX_STACK;
+    remove_type_before_deploy(&home, agentspace_hosts::BOX_PROJECT, instance_type)?;
     say.progress(&format!("Deploying stack '{stack}' in {REGION}..."), None);
     let mut overrides = vec![format!("SshPublicKey={key}")];
     overrides.extend(
@@ -106,14 +120,37 @@ pub(crate) fn box_stack(
             .iter()
             .map(|(name, value)| format!("{name}={value}")),
     );
+    // The override's place is last (pin P32).
+    if let Some(t) = instance_type {
+        overrides.push(format!("InstanceType={t}"));
+    }
     run_deploy(&places, stack, Some(&overrides), aws, seams)?;
 
     // Step 5.
-    refresh_instance_id(ctx, agentspace_hosts::BOX_PROJECT, stack, say, aws)
+    refresh_instance(ctx, agentspace_hosts::BOX_PROJECT, stack, say, aws)
+}
+
+/// Step 4's first act: with an `InstanceType` to pass, the record's `instance_type` is removed
+/// under `hosts.lock`, whatever it held, before `cloudformation deploy` and before any AWS call
+/// that changes anything (D67's change note; pin P11). A record that holds none is left as it is,
+/// and a missing registry is written as the seed document. **Without a type nothing is written**,
+/// so a person's `deploy` that asks for no change keeps the type until its own read-back (pin
+/// P30). A lock not taken, or a write that fails, fails the step with the registry's message,
+/// before `cloudformation deploy`.
+fn remove_type_before_deploy(
+    home: &Path,
+    project: &str,
+    instance_type: Option<&str>,
+) -> Result<(), Failure> {
+    if instance_type.is_some() {
+        registry::set_instance_type(home, project, None)?;
+    }
+    Ok(())
 }
 
 /// A host's existence check and steps 1 to 5 (operator.md, deploy), for a host that is not the
-/// box. `instance_type` is `-InstanceType`'s value. Returns the instance ID.
+/// box. `instance_type` is `-InstanceType`'s value, or a provisioning run's. Returns the instance
+/// ID.
 pub(crate) fn host_stack(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -165,12 +202,13 @@ pub(crate) fn host_stack(
         Existence::Update => instance_type.map(|t| vec![format!("InstanceType={t}")]),
     };
 
-    // Step 4.
+    // Step 4: the type's removal, then the deploy.
+    remove_type_before_deploy(&home, project, instance_type)?;
     say.progress(&format!("Deploying stack '{stack}' in {REGION}..."), None);
     run_deploy(&places, &stack, overrides.as_deref(), aws, seams)?;
 
     // Step 5.
-    refresh_instance_id(ctx, project, &stack, say, aws)
+    refresh_instance(ctx, project, &stack, say, aws)
 }
 
 /// The existence check: `cloudformation describe-stacks --stack-name <stack>`, read for
@@ -294,10 +332,18 @@ fn run_deploy(
     })
 }
 
-/// Step 5: the instance ID removed from the record, read from the stack's output, and written into
-/// the record again, each under `hosts.lock`; then `Instance: <id>`. A failed read leaves no
-/// instance ID in the record.
-fn refresh_instance_id(
+/// Step 5 (operator.md, deploy; docs/state.md, The instance type; pins P11, P22, P23 and P30): the
+/// instance ID **and the instance type** removed from the record in one write, then one
+/// `describe-stacks` read for both, then both written in one write, each under `hosts.lock`; then
+/// `Instance: <id>`.
+///
+/// - **`InstanceId` is checked first**: a stack with no usable `InstanceId` output fails with its
+///   message and writes nothing, so the record holds neither.
+/// - **A missing, repeated, non-string or malformed `InstanceType` parameter** fails the deploy
+///   with `agentspace: Stack '<stack>' has no InstanceType parameter.` after the instance ID is
+///   written alone, so the record is left with no type.
+/// - A failed call, lock or write leaves no instance ID and no type in the record.
+fn refresh_instance(
     ctx: &Context,
     project: &str,
     stack: &str,
@@ -305,11 +351,69 @@ fn refresh_instance_id(
     aws: &dyn Aws,
 ) -> Result<String, Failure> {
     let home = full_home(ctx);
-    registry::set_instance_id(&home, project, None)?;
-    let instance_id = agentspace_box::instance_id_from_stack(aws, stack)?;
-    registry::set_instance_id(&home, project, Some(&instance_id))?;
+    registry::set_instance(&home, project, None, None)?;
+    let answer = aws
+        .call(&Call {
+            service: "cloudformation",
+            operation: "describe-stacks",
+            args: &["--stack-name", stack],
+            output: Output::Json,
+        })
+        .map_err(Failure::from)?;
+    // The one answer is read for both, through the same reading of `InstanceId` as every command's.
+    let instance_id = agentspace_box::instance_id_from_stack(&Answer(&answer), stack)?;
+    let Some(instance_type) = instance_type_parameter(&answer) else {
+        registry::set_instance(&home, project, Some(&instance_id), None)?;
+        return Err(step_failed(&format!(
+            "agentspace: Stack '{stack}' has no InstanceType parameter."
+        )));
+    };
+    registry::set_instance(&home, project, Some(&instance_id), Some(&instance_type))?;
     say.progress(&format!("Instance: {instance_id}"), None);
     Ok(instance_id)
+}
+
+/// An [`Aws`] that answers every call with one answer already read, so the instance ID is read from
+/// the answer `deploy` also reads the type from, with no second call.
+struct Answer<'a>(&'a Value);
+
+impl Aws for Answer<'_> {
+    fn call(&self, _: &Call) -> Result<Value, AwsError> {
+        Ok(self.0.clone())
+    }
+}
+
+/// The value of `Stacks[0].Parameters`' one element whose `ParameterKey` is `InstanceType`, when
+/// there is exactly one, its `ParameterValue` is a string, and the string is of the form the host
+/// registry gives `instance_type` (pin P22); `None` otherwise.
+fn instance_type_parameter(answer: &Value) -> Option<String> {
+    let parameters = answer.pointer("/Stacks/0/Parameters")?.as_array()?;
+    let mut named = parameters
+        .iter()
+        .filter(|p| p.get("ParameterKey").and_then(Value::as_str) == Some("InstanceType"));
+    let (first, second) = (named.next()?, named.next());
+    if second.is_some() {
+        return None;
+    }
+    let value = first.get("ParameterValue")?.as_str()?;
+    is_instance_type(value).then(|| value.to_string())
+}
+
+/// Whether `text` is of the host registry's `instance_type` form (docs/state.md, The host
+/// registry): `^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$`, at most 64 characters, with no line
+/// break after it.
+pub(crate) fn is_instance_type(text: &str) -> bool {
+    let part = |s: &str| {
+        let mut bytes = s.bytes();
+        bytes
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    text.len() <= 64
+        && text
+            .split_once('.')
+            .is_some_and(|(family, size)| part(family) && part(size))
 }
 
 #[cfg(test)]

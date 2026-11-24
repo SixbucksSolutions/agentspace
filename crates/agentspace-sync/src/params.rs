@@ -8,6 +8,9 @@
 //! before it calls AWS, with one reason that names the first problem found and holds no line
 //! break. Nothing is skipped silently.
 //!
+//! **The file's `InstanceType` is checked with the rest and then dropped by [`read`]** (operator.md,
+//! deploy, step 2; D67, D71): no program passes it to a stack or reads it for any use.
+//!
 //! **A file that names `SshPublicKey`, or names any member twice, MUST NOT be taken as valid**
 //! (operator.md, deploy, step 2; architect, 2026-11-19, for E0.06-T03-S02): `deploy` sets
 //! `SshPublicKey` itself from the user's public key, and a file that could override it would put
@@ -36,8 +39,13 @@ const DEPLOYS_OWN_PARAMETER: &str = "SshPublicKey";
 /// boot, whose change set MUST stay empty (operator.md, deploy, step 2; D44).
 const DEPLOYS_OWN_FOR_A_HOST: [&str; 2] = ["HostName", "CaPublicKey"];
 
+/// The member no program reads (operator.md, deploy, step 2; D67, D71): the file is still checked
+/// as a whole, but its `InstanceType` is not passed to any stack and not read for any use, so a
+/// size a lease set is never put back by the box's next plain `deploy`.
+pub(crate) const UNREAD: &str = "InstanceType";
+
 /// Reads and checks the file at `path`, returning its parameters as `(name, value)` in the file's
-/// order.
+/// order, **without `InstanceType`**, which the file may name and which no program reads (D67).
 pub(crate) fn read(path: &Path) -> Result<Vec<(String, String)>, Failure> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -49,7 +57,9 @@ pub(crate) fn read(path: &Path) -> Result<Vec<(String, String)>, Failure> {
         }
         Err(_) => return Err(not_valid(path, "it cannot be opened")),
     };
-    parse(&bytes).map_err(|reason| not_valid(path, &reason))
+    let mut parameters = parse(&bytes).map_err(|reason| not_valid(path, &reason))?;
+    parameters.retain(|(name, _)| name != UNREAD);
+    Ok(parameters)
 }
 
 fn fail(message: String) -> Failure {
