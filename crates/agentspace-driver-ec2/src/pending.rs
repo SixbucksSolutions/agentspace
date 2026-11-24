@@ -22,6 +22,9 @@
 //!   hold of its own of the lease state lock after every lease the host meets has been placed, and
 //!   MUST stay `pending` when none does. A lease whose size is not in `SIZES` is neither placed nor
 //!   answered (pin P20).
+//! - **A record with no `instance_type`, or with one the map does not hold, MUST leave every lease
+//!   it does not meet `pending`, written nothing, whatever leases hold the host**, since it is not
+//!   known to be smaller than any lease (architect, 2026-11-23, for v0.09-T03, pin P40).
 //! - **Its result MUST name every lease it did not place `ready` in one list, in the order the call
 //!   tried them** (D71's pin, PR #139).
 
@@ -31,7 +34,7 @@ use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed};
 use agentspace_hosts::{self as hosts, HostState, HostsError};
 use agentspace_state::{Reason, Record, Ssh, StoreError, format_time, now};
 
-use crate::host::{holds_host, registry_why};
+use crate::host::{holds_host, is_mapped, registry_why};
 use crate::ops::{self, HostKey};
 use crate::sizes::{SIZES, meets};
 use crate::text::{failure, no_capacity_at_size, with_leftovers};
@@ -158,6 +161,10 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
     // The type step 1 read, kept for the whole call. A record with none meets nothing.
     let instance_type = record.instance_type;
     let met = |r: &Record| instance_type.as_deref().is_some_and(|t| meets(t, &r.size));
+    // Only a type the map holds is known to be smaller than a lease it does not meet; with none,
+    // or one the map does not hold, step 3 answers nothing (architect, 2026-11-23, for v0.09-T03,
+    // pin P40).
+    let typed = instance_type.as_deref().is_some_and(is_mapped);
 
     // Step 2: the leases the host meets, one per hold of the lease state lock.
     let mut tried = HashSet::new();
@@ -219,8 +226,9 @@ pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Fail
         };
         let id = file.leases[index].id.clone();
         judged.insert(id.clone());
-        if !holds_host(&file.leases, project, at) {
-            // Nothing holds the host: the next run resizes it to the largest `pending` lease.
+        if !typed || !holds_host(&file.leases, project, at) {
+            // A host of no known type, or one nothing holds: the next run records the type, or
+            // resizes the host to the largest `pending` lease, and decides the lease then.
             result.unplaced.push(Unplaced::Left { lease_id: id });
             drop(guard);
             continue;
@@ -454,16 +462,35 @@ mod tests {
     }
 
     #[test]
-    fn a_record_with_no_type_meets_nothing_so_nothing_is_tried() {
-        let dir = tempfile::tempdir().unwrap();
-        let c = ctx(dir.path());
-        other_ready(&c, None);
-        let path = write_state(&c, &[pending_sized(A, "other", Some("ec2"), "s")]);
-        let before = fs::read(&path).unwrap();
-        let done = place_pending(&c, "other").unwrap();
-        // Tried, it would have failed for want of a CA; it is left for the next run instead.
-        assert_eq!(kinds(&done), [("left", A)]);
-        assert_eq!(fs::read(&path).unwrap(), before);
+    fn a_record_with_no_type_or_one_the_map_does_not_hold_leaves_every_lease_whatever_holds_it() {
+        // Pin P40 (architect, 2026-11-23, for v0.09-T03): such a record meets nothing, so nothing
+        // is tried, and it is not known to be smaller than any lease, so nothing is answered, even
+        // while a live `ready` lease of the project holds the host.
+        for instance_type in [None, Some("m9g.8xlarge"), Some("c7g.large")] {
+            for held in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let c = ctx(dir.path());
+                other_ready(&c, instance_type);
+                let mut leases = vec![pending_sized(A, "other", Some("ec2"), "s")];
+                if held {
+                    leases.push(ready(HELD, "other", 3600));
+                }
+                let path = write_state(&c, &leases);
+                let before = fs::read(&path).unwrap();
+                let done = place_pending(&c, "other").unwrap();
+                // Tried, it would have failed for want of a CA; it is left for the next run instead.
+                assert_eq!(
+                    kinds(&done),
+                    [("left", A)],
+                    "type {instance_type:?}, held {held}"
+                );
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "type {instance_type:?}, held {held}"
+                );
+            }
+        }
     }
 
     #[test]

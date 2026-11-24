@@ -130,7 +130,7 @@ pub(crate) fn holds_host(leases: &[Lease], project: &str, now: i64) -> bool {
 }
 
 /// Whether the map holds `instance_type`: a type outside it meets no size (D67; pin P14).
-fn is_mapped(instance_type: &str) -> bool {
+pub(crate) fn is_mapped(instance_type: &str) -> bool {
     SIZES
         .iter()
         .any(|s| instance_type_for(s) == Some(instance_type))
@@ -215,13 +215,15 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
         return Err(lookup(registry_why(HostsError::BadProject)));
     }
 
-    // Architect's to confirm: with no `hosts.json`, swimcoach's lease goes to the box as in v0.06,
-    // without taking `hosts.lock`, so a box lease makes no file of the registry's. The missing file
-    // reads as the seed, whose box record is `ready`, and a writer that makes the file meanwhile
-    // keeps that record first and `ready` (state.md, The seed; nothing moves a record out of
-    // `ready`), so the answer is the one the lock would give. From v0.09 the record is decided by
-    // D66's table, as `read_for_placing` gives it, and only an answer that writes nothing is given
-    // here: a `pending` one goes on to the locked path, which decides again and records the run.
+    // With no `hosts.json`, an answer that writes nothing to the registry, `ready` or row 5's
+    // refusal by the box's implied record, MAY be made without `hosts.lock`, as before v0.09, so a
+    // box lease makes no file of the registry's; every answer that writes the registry, a `pending`
+    // one included, takes it, and writes the seed with no `instance_type` (architect, 2026-11-23,
+    // for v0.09-T03, pin P42; pins P2c and P31). The missing file reads as the seed, whose box
+    // record is `ready`, and a writer that makes the file meanwhile keeps that record first and
+    // `ready` (state.md, The seed; nothing moves a record out of `ready`), so the answer is the one
+    // the lock would give. A `pending` answer goes on to the locked path, which decides again and
+    // records the run.
     if req.project == hosts::BOX_PROJECT && registry_is_missing(&ctx.home) {
         let placing = hosts::read_for_placing(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
         if let Some(host) =

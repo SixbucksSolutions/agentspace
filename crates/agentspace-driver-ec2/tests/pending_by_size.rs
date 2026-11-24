@@ -387,6 +387,9 @@ fn only_a_live_ready_lease_of_the_project_holds_the_host_when_leases_are_answere
 
 #[test]
 fn a_record_with_no_type_or_a_type_the_map_does_not_hold_meets_no_size() {
+    // Such a record meets no size, so nothing is placed, and it is not known to be smaller than any
+    // lease, so every lease is left pending, written nothing, whatever leases hold the host
+    // (architect, 2026-11-23, for v0.09-T03, pin P40).
     for ty in [None, Some("m9g.8xlarge"), Some("c7g.large")] {
         for held in [false, true] {
             let fx = world(ty);
@@ -398,19 +401,20 @@ fn a_record_with_no_type_or_a_type_the_map_does_not_hold_meets_no_size() {
             }
             fx.write_leases(&leases);
             let hosts_before = fx.hosts_bytes();
-            let kind = if held { "refused" } else { "left" };
+            let leases_before = fx.leases_bytes();
             assert_eq!(
                 call(&fx),
-                (0, want(&[(kind, A), (kind, B)])),
-                "type {ty:?}, held {held}: nothing is placed"
+                (0, want(&[("left", A), ("left", B)])),
+                "type {ty:?}, held {held}: nothing is placed, and nothing is answered"
             );
             for l in [&a, &b] {
-                if held {
-                    assert_refused(&fx, l);
-                } else {
-                    assert_left(&fx, l);
-                }
+                assert_left(&fx, l);
             }
+            assert_eq!(
+                fx.leases_bytes(),
+                leases_before,
+                "type {ty:?}, held {held}: the lease state file is not written"
+            );
             assert_eq!(fx.hosts_bytes(), hosts_before, "type {ty:?}");
         }
     }
@@ -485,13 +489,15 @@ fn a_lease_the_host_meets_is_placed_whether_or_not_a_live_ready_lease_holds_it()
     let fx = world(Some("m9g.4xlarge"));
     let a = L::pending(A, PROJECT).size("xl");
     let b = L::pending(B, PROJECT).size("s");
-    fx.write_leases(&[holder(), a.clone(), b.clone()]);
+    // The holder is built once: its times are taken from the clock when it is built.
+    let r = holder();
+    fx.write_leases(&[r.clone(), a.clone(), b.clone()]);
     let t0 = now();
     assert_eq!(call(&fx), (2, Vec::new()));
     let t1 = now();
     assert_placed(&fx, &a, t0, t1);
     assert_placed(&fx, &b, t0, t1);
-    assert_eq!(fx.lease_value(R), as_written(&holder()));
+    assert_eq!(fx.lease_value(R), as_written(&r));
 }
 
 #[test]
