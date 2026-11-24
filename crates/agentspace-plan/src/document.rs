@@ -46,7 +46,8 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Value, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| WHY_NOT_UTF8.to_string())?;
     // 4. JSON, the leading byte order mark set aside. Any other U+FEFF outside a string is not JSON
     // whitespace, so the parser refuses it. serde_json refuses a string with an unpaired surrogate,
-    // and nesting past its limit of 128 levels, which is above the 64 lease-api.md requires.
+    // and nesting of 128 levels or more (its recursion limit; 127 levels are read), which is above
+    // the 64 lease-api.md requires.
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let document: Value = serde_json::from_str(text).map_err(|_| WHY_NOT_JSON.to_string())?;
     // 5. Members: the parser above keeps one of two values silently, so a second pass finds the
@@ -185,7 +186,7 @@ mod tests {
         );
         // Two names the same once escapes are read.
         assert_eq!(
-            first_repeated_member(r#"{"turns":1,"turns":2}"#).as_deref(),
+            first_repeated_member(r#"{"turns":1,"\u0074urns":2}"#).as_deref(),
             Some("turns")
         );
         // Siblings in different objects never repeat each other.

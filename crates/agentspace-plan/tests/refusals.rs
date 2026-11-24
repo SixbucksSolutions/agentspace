@@ -74,10 +74,10 @@ fn a_turn_name_is_quoted_raw() {
 
 #[test]
 fn two_names_equal_once_their_escapes_are_read_are_the_same_name() {
-    // "T0" is T0.
+    // "\u0054\u0030" is T0.
     let bytes = br#"{"turns":[
         {"name":"T0","stories":[{"name":"S","subagents":[{"name":"a","model":"m","effort":"e"}]}]},
-        {"name":"T0","stories":[{"name":"S","subagents":[{"name":"a","model":"m","effort":"e"}]}]}]}"#;
+        {"name":"\u0054\u0030","stories":[{"name":"S","subagents":[{"name":"a","model":"m","effort":"e"}]}]}]}"#;
     assert_eq!(parse_err(bytes), "turn 'T0' is named twice");
 }
 
@@ -507,9 +507,9 @@ fn the_same_value_given_twice_is_still_a_member_given_twice() {
 
 #[test]
 fn names_equal_once_their_escapes_are_read_are_one_member() {
-    // "turns" is "turns".
+    // "\u0074urns" is "turns".
     let text = br#"{"turns":[{"name":"T","stories":[{"name":"S","subagents":[
-        {"name":"a","model":"m","effort":"e"}]}]}],"turns":[]}"#;
+        {"name":"a","model":"m","effort":"e"}]}]}],"\u0074urns":[]}"#;
     assert_eq!(parse_err(text), named_twice("turns"));
 }
 

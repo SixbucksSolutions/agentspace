@@ -252,6 +252,22 @@ fn an_unpaired_surrogate_in_a_member_name_is_not_json_either() {
 }
 
 #[test]
+fn a_number_past_the_parsers_range_is_not_json() {
+    // The implementer's N1, pin P5 with the architect: the parser refuses a number it cannot hold
+    // as a double, so 1e400 fails check 4, not check 6, wherever it is written.
+    let plan_with = |value: &str| {
+        format!(
+            r#"{{"name":{value},"turns":[{{"name":"T","stories":[{{"name":"S","subagents":[{{"name":"a","model":"m","effort":"e"}}]}}]}}]}}"#
+        )
+    };
+    assert_eq!(parse_err(plan_with("1e400").as_bytes()), NOT_JSON);
+    assert_eq!(parse_err(plan_with("-1e400").as_bytes()), NOT_JSON);
+    assert_eq!(parse_err(b"1e400"), NOT_JSON);
+    // A large number the parser holds is a document, refused for its shape.
+    assert_eq!(parse_err(plan_with("1e300").as_bytes()), SCHEMA);
+}
+
+#[test]
 fn json_is_checked_before_a_repeated_member() {
     assert_eq!(parse_err(br#"{"a":1,"a":2,"turns":[],}"#), NOT_JSON);
 }
