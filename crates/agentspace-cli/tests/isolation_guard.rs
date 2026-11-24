@@ -53,8 +53,9 @@
 //!   otherwise passed: something outside the suite can hold a file in it open.
 //!
 //! The children build into their own target folder, so the build never waits on the outer run's,
-//! and the guard's own executable skips this test in the child so that it does not recurse. The
-//! listing's own test is cheap, starts nothing, and so runs in the child too.
+//! and the guard's own executable skips this test in the child so that it does not recurse. Its
+//! other tests, of the listing, the JSON reading, the count check and the note, are cheap, start
+//! nothing, and so run in the child too.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
