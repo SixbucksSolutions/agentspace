@@ -136,10 +136,10 @@ impl Rec {
 
     pub fn unsatisfiable(id: &str, project: &str) -> Rec {
         let mut r = Rec::base(id, project, "unsatisfiable");
-        r.size = "xl".to_string();
+        r.size = "xxl".to_string();
         r.reasons = vec![(
             "unsupported_size".to_string(),
-            "Size 'xl' is not supported; v0 supports size m only.".to_string(),
+            "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl.".to_string(),
         )];
         r
     }

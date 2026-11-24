@@ -170,10 +170,10 @@ fn reasons_for(platform: &str, profile: &str, size: &str) -> Vec<(String, String
             ),
         ));
     }
-    if size != "m" {
+    if !["s", "m", "l", "xl"].contains(&size) {
         v.push((
             "unsupported_size".to_string(),
-            format!("Size '{size}' is not supported; v0 supports size m only."),
+            format!("Size '{size}' is not supported; v0 supports sizes s, m, l and xl."),
         ));
     }
     v
@@ -184,7 +184,7 @@ fn run_combinations(fx: &Fx) {
     let mut checked = 0;
     for platform in ["linux/arm64", "windows/amd64", "linux/amd64"] {
         for profile in ["agent-linux", "agent-linux@1", "agent-linux@12", "other"] {
-            for size in ["m", "l", "xl"] {
+            for size in ["s", "m", "l", "xl", "xxl"] {
                 let want = reasons_for(platform, profile, size);
                 if want.is_empty() {
                     continue;
@@ -208,7 +208,7 @@ fn run_combinations(fx: &Fx) {
             }
         }
     }
-    assert_eq!(checked, 3 * 4 * 3 - 1);
+    assert_eq!(checked, 3 * 4 * 5 - 4);
     assert_eq!(fx.snapshot(), before, "An unsupported place left a file");
 }
 

@@ -268,7 +268,8 @@ fn record(id: &str, state: &str, driver: Option<&str>) -> Record {
         "unsatisfiable" => {
             r.reasons = Some(vec![agentspace_state::Reason {
                 code: "unsupported_size".to_owned(),
-                message: "Size 'xl' is not supported; v0 supports size m only.".to_owned(),
+                message: "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl."
+                    .to_owned(),
             }]);
         }
         _ => {}
@@ -509,18 +510,18 @@ fn create_records_an_unsatisfiable_lease_with_its_reasons() {
     fake.placed = Placed::Unsatisfiable {
         reasons: vec![Reason {
             code: "unsupported_size",
-            message: "Size 'xl' is not supported; v0 supports size m only.".to_owned(),
+            message: "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl.".to_owned(),
         }],
     };
     let drivers: Vec<Box<dyn Driver>> = vec![Box::new(fake)];
     let out = env.run(
-        &["lease", "create", "--project", "demo", "--size", "XL"],
+        &["lease", "create", "--project", "demo", "--size", "XXL"],
         &drivers,
         &[ID_A],
     );
     let d = doc(&out);
     assert_eq!(d["state"], "unsatisfiable");
-    assert_eq!(d["size"], "xl");
+    assert_eq!(d["size"], "xxl");
     assert_eq!(env.records()[0].driver.as_deref(), Some("fake"));
 }
 

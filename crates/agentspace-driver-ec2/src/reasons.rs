@@ -10,14 +10,13 @@
 
 use agentspace_driver_api::Reason;
 
+use crate::sizes::SIZES;
 use crate::text::quote;
 
 /// The one platform the driver supports.
 const PLATFORM: &str = "linux/arm64";
 /// The one profile it supports, with no version.
 const PROFILE: &str = "agent-linux";
-/// The one size it supports.
-const SIZE: &str = "m";
 
 /// The reasons a request cannot be met, in lease-api.md's order: empty when the request is
 /// supported. The driver never answers `no_capacity`.
@@ -41,11 +40,11 @@ pub fn reasons(platform: &str, profile: &str, size: &str) -> Vec<Reason> {
             ),
         });
     }
-    if size != SIZE {
+    if !SIZES.contains(&size) {
         out.push(Reason {
             code: "unsupported_size",
             message: format!(
-                "Size '{}' is not supported; v0 supports size m only.",
+                "Size '{}' is not supported; v0 supports sizes s, m, l and xl.",
                 quote(size)
             ),
         });
@@ -63,7 +62,12 @@ mod tests {
 
     #[test]
     fn the_supported_request_has_no_reason() {
-        assert!(reasons("linux/arm64", "agent-linux", "m").is_empty());
+        for size in ["s", "m", "l", "xl"] {
+            assert!(
+                reasons("linux/arm64", "agent-linux", size).is_empty(),
+                "{size}"
+            );
+        }
     }
 
     #[test]
@@ -77,7 +81,7 @@ mod tests {
             ["unsupported_profile"]
         );
         assert_eq!(
-            codes(&reasons("linux/arm64", "agent-linux", "xl")),
+            codes(&reasons("linux/arm64", "agent-linux", "xxl")),
             ["unsupported_size"]
         );
     }
@@ -104,7 +108,7 @@ mod tests {
                 "linux/arm64"
             };
             let profile = if mask & 2 != 0 { "x@2" } else { "agent-linux" };
-            let size = if mask & 4 != 0 { "xl" } else { "m" };
+            let size = if mask & 4 != 0 { "xxl" } else { "m" };
             let got = codes(&reasons(platform, profile, size));
             let want: Vec<&str> = order
                 .iter()
@@ -118,7 +122,7 @@ mod tests {
 
     #[test]
     fn messages_quote_the_value_and_follow_lease_api_wording() {
-        let r = reasons("windows/amd64", "agent-linux@1", "xl");
+        let r = reasons("windows/amd64", "agent-linux@1", "xxl");
         assert_eq!(
             r[0].message,
             "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."
@@ -129,7 +133,7 @@ mod tests {
         );
         assert_eq!(
             r[2].message,
-            "Size 'xl' is not supported; v0 supports size m only."
+            "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl."
         );
     }
 
@@ -138,7 +142,7 @@ mod tests {
         let r = reasons("linux/arm64", "agent-linux", "a\nb");
         assert_eq!(
             r[0].message,
-            "Size 'a\\u000ab' is not supported; v0 supports size m only."
+            "Size 'a\\u000ab' is not supported; v0 supports sizes s, m, l and xl."
         );
     }
 }
