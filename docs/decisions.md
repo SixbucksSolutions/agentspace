@@ -3900,6 +3900,12 @@ suite. The story makes the guard report what it finds, finds the cause and fixes
 #0203's or #0204's files is routed to that story. T03's peak becomes 8 and its budget 3.5 hours,
 and the release's budget 15 hours (architect.md, Running a turn, step 11).
 
+**Pinned as code before T03 (architect, 2026-11-23, PR #139):** `place_pending`'s result,
+`PendingPlaced`, carries `unplaced: Vec<Unplaced>`, one list in the order the call tried the leases,
+`Unplaced` being `Failed`, `Refused` or `Left`, and the provisioning run's `log_placed` logs pin
+P37's three lines from it. So #0203, which produces `Refused` and `Left`, and #0204, whose run logs
+them, share no file and wait on neither.
+
 **Why this shape:**
 - **The same order as v0.07's and v0.08's** (D55, D63): specs before code, libraries before
   programs, the whole suite before any instance starts.
