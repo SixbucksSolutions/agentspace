@@ -989,7 +989,11 @@ nothing (D54).
   taken as state.md says, for as long as the decision and any write of it take, and released before
   any run is started. It follows the lease state lock's rules, a lock held for longer being waited
   for up to 30 seconds, and place takes it while it holds the lease state lock, as the lock order
-  allows ([Lock order](#lock-order)). An answer for a `ready` record needs only the record's
+  allows ([Lock order](#lock-order)). **When `hosts.json` is missing, an answer that writes
+  nothing to the registry, `ready` or row 5's refusal by the box's implied record, MAY be made
+  without `hosts.lock`**, as before v0.09; every answer that writes the registry, a `pending` one
+  included, takes it, and writes the seed record with no `instance_type` (architect, 2026-11-23,
+  for v0.09-T03, pin P42; pins P2c and P31). An answer for a `ready` record needs only the record's
   `state` and, from v0.09, its `instance_type`: place MUST NOT read, check for or depend on the
   record's `instance_id` ([How it is reached](#how-it-is-reached)).
 - **The project list is read only for a project that has no record in the host registry** (pin P14.3, architect, 2026-11-20,
@@ -1034,7 +1038,9 @@ things** (D66, D67, and D71's pins):
   below. "Live" is
   [state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)'s
   word (D56): **a live `ready` lease is a record stored `ready` whose `expires_at` is after the
-  reading's time**, so an expired lease is not one. A `pending` lease is live, but **a lease that is
+  reading's time**, so an expired lease is not one. It is of any driver, and one whose
+  `expires_at` cannot be read counts as live, as state.md's live-lease rule reads it (architect,
+  2026-11-23, for v0.09-T03, pin P43). A `pending` lease is live, but **a lease that is
   only `pending` does not hold a host's size**, since it has no session there; an expired, a
   `released` and an `unsatisfiable` lease hold nothing (D66). "Of the project" is state.md's: the
   record's `project` equals the request's project, compared exactly. Every such lease in the file
@@ -1618,7 +1624,8 @@ from its own folder, by a `create` or `get` that names that folder.
       row 1).
    4. **Decides by the file it has just read, at a reading's time taken in this hold:**
       - **When a live `ready` lease of the project exists**, by the words of
-        [On a `ready` host](#on-a-ready-host), the lease is answered: it removes the lease's
+        [On a `ready` host](#on-a-ready-host), **and the record step 1 read holds a type the map
+        holds**, the lease is answered: it removes the lease's
         leftover credential files first, as step 2.4 does, ending nothing and logging nothing
         (architect, 2026-11-23, for v0.09-T01, pin P21), and then writes the record
         `unsatisfiable`, with `reasons` holding exactly one reason, code `no_capacity`, with the
@@ -1631,6 +1638,14 @@ from its own folder, by a `create` or `get` that names that folder.
       - **Otherwise** the lease is left `pending`, written nothing, and named in the call's result
         as left for the next run, which, with no live `ready` lease holding the host, resizes it to
         the largest `pending` lease ([A resizing run](#a-resizing-run)).
+      - **A record with no `instance_type`, or with one the map does not hold, is not known to be
+        smaller than any lease, so its unmet leases are left, never answered**, whatever leases
+        hold the host (architect, 2026-11-23, for v0.09-T03, pin P40; D66's change: no lease is
+        refused only because its host's type was not recorded). It arises when a run's read-back
+        failed, and the next run, which records the type, decides them.
+      - **A lease step 2 has just placed `ready` holds the host for this step** (pin P41): it is a
+        live `ready` lease of the project in the file this step reads, so an unmet lease is
+        answered beside it.
    5. **Releases the lease state lock**, and goes on to the next lease.
 
 - **A lease's TTL starts when it becomes `ready`** (D48): its `expires_at` is its certificate's
@@ -1638,7 +1653,8 @@ from its own folder, by a `create` or `get` that names that folder.
 - **Every other record is left as it was**: a lease released while it was `pending`, another
   project's, and another driver's.
 - **It answers `unsatisfiable` only at step 3, only with `no_capacity`, and only for a lease its
-  host does not meet while a live `ready` lease of the project holds the host** (D68; architect,
+  host, at a type the map holds, does not meet while a live `ready` lease of the project holds the
+  host** (D68; pin P40; architect,
   2026-11-23, for v0.09-T01, pin P1). This is the one exception to v0.07's rule that it never
   answers `unsatisfiable`. It starts nothing, makes no call to AWS, and never writes the host
   registry. **A failed run never calls
