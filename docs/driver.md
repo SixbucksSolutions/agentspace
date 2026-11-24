@@ -2400,7 +2400,7 @@ connections** are shown only live, in E0.08-T06-S02 (D62).
 ### Conformance cases for v0.09
 
 **Each behavior below can be shown through the lease CLI with stand-ins, and MUST be a conformance
-case of E0.09-T04-S01** (card #0197; D70, D71). Each runs in the harness's throwaway home
+case of E0.09-T04-S01** (card #0205; written by #0197; D70, D71). Each runs in the harness's throwaway home
 ([conformance.md](conformance.md)), and writes there itself the `hosts.json` it needs, each `ready`
 record with the `instance_type` the case names or with none, the `projects.json` it needs, a held
 `provision.lock` where it needs one, and any lease record it needs a lease of the project to be
