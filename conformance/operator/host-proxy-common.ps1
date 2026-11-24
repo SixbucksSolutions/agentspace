@@ -59,10 +59,14 @@ function Get-HpLeasesPath($H) { Join-Path $H.StateDir 'leases.json' }
 function Get-HpHostDir($H, [string]$Project) { Join-Path $H.UserProfile ".agentspace\hosts\$Project" }
 
 # ---- Records ----
-function New-HpHostRecord([string]$Project, [string]$State = 'ready', [string]$InstanceId = '', [string]$LastAttempt = '') {
+# A ready record holds instance_type m9g.xlarge, D65's m, unless -NoInstanceType is given, so that a
+# lease CLI create placed on it answers ready as before v0.09 (D67; architect, 2026-11-24, for
+# v0.09-T04, pin P56, as pin P3 gave the other helpers).
+function New-HpHostRecord([string]$Project, [string]$State = 'ready', [string]$InstanceId = '', [string]$LastAttempt = '', [switch]$NoInstanceType) {
   $stack = if ($Project -eq 'swimcoach') { 'agentbox' } else { "agentspace-host-$Project" }
   $t = '{"project":"' + $Project + '","stack":"' + $stack + '","state":"' + $State + '"'
   if ($InstanceId) { $t += ',"instance_id":"' + $InstanceId + '"' }
+  if ($State -ceq 'ready' -and -not $NoInstanceType) { $t += ',"instance_type":"m9g.xlarge"' }
   if ($LastAttempt) { $t += ',"last_attempt_at":"' + $LastAttempt + '"' }
   $t + '}'
 }
