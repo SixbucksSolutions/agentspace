@@ -372,7 +372,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-size.ps1' -Body {
   Test-HostCase "${r4}: the box's deploy -InstanceType $type2 records the type the stack reports, $type2" @('deploy', '-InstanceType', $type2) @{
     Exit = 0; Calls = 'any'; SshCalls = 'any'; ScpCalls = 'any'
     Check = { param($run, $started)
-      & $registryIs (Get-Want 'box' $idNew $type2) 'the box''s record holding the new instance ID and $type2, every other record as it was'
+      & $registryIs (Get-Want 'box' $idNew $type2) "the box's record holding the new instance ID and $type2, every other record as it was"
       Get-RegistryProblems } } -Setup { Set-Target $initial (Get-SuccessScn 'box' $type2) }
   Test-HostCase "${r4}: the type is the stack's, never -InstanceType's: deploy -InstanceType $type2 with a stack that reports $type4 records $type4" @('deploy', '-InstanceType', $type2) @{
     Exit = 0; Calls = 'any'; SshCalls = 'any'; ScpCalls = 'any'
@@ -400,7 +400,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-size.ps1' -Body {
   Test-HostCase "${r4}: another host's deploy -InstanceType $type2 of a stack it updates records the stack's type $type2" @('deploy', '-Host', 'agentspace', '-InstanceType', $type2) @{
     Exit = 0; Calls = 'any'; SshCalls = 'any'; ScpCalls = 'any'
     Check = { param($run, $started)
-      & $registryIs (Get-Want 'host' $idNew $type2) 'the host''s record holding the new instance ID and $type2'
+      & $registryIs (Get-Want 'host' $idNew $type2) "the host's record holding the new instance ID and $type2"
       Get-RegistryProblems } } -Setup { Set-Target $initial (Get-SuccessScn 'host' $type2) }
   Test-HostCase "${r4}: another host's deploy -InstanceType $type2 of a stack it creates records the stack's type in a record that stays creating, with its last_attempt_at and no other change" @('deploy', '-Host', 'agentspace', '-InstanceType', $type2) @{
     Exit = 0; Calls = 'any'; SshCalls = 'any'; ScpCalls = 'any'
@@ -421,27 +421,27 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-size.ps1' -Body {
   Test-HostCase "${r4}: a type the stand-in changes between two deploys is recorded anew by the second" @('deploy', '-InstanceType', $type2) @{
     Exit = 0; Calls = 'any'; SshCalls = 'any'; ScpCalls = 'any'
     Check = { param($run, $started)
-      & $registryIs (Get-Want 'box' $idNew $type2) 'the box''s record holding $type2 after the first deploy'
+      & $registryIs (Get-Want 'box' $idNew $type2) "the box's record holding $type2 after the first deploy"
       Get-RegistryProblems
       Clear-StandinLogs
       Set-AwsScenario (Get-SuccessScn 'box' $type4)
       $r2 = Invoke-HostRun -Arguments @('deploy')
       if ($r2.ExitCode -ne 0) { 'The second deploy did not succeed' }
-      & $registryIs (Get-Want 'box' $idNew $type4) 'the box''s record holding $type4 after the second deploy'
+      & $registryIs (Get-Want 'box' $idNew $type4) "the box's record holding $type4 after the second deploy"
       Get-RegistryProblems } } -Setup { Set-Target $initial (Get-SuccessScn 'box' $type2) }
   Test-HostCase "${r4}: the second deploy of a host, after a first that recorded $type2, records the type the stack now reports, $typeL" @('deploy', '-Host', 'agentspace') @{
     Exit = 0; Calls = 'any'; SshCalls = 'any'; ScpCalls = 'any'
     Check = { param($run, $started)
-      & $registryIs (Get-Want 'host' $idNew $type2) 'the host''s record holding $type2 after the first deploy'
+      & $registryIs (Get-Want 'host' $idNew $type2) "the host's record holding $type2 after the first deploy"
       Clear-StandinLogs
       Set-AwsScenario (Get-SuccessScn 'host' $typeL)
       $r2 = Invoke-HostRun -Arguments @('deploy', '-Host', 'agentspace')
       if ($r2.ExitCode -ne 0) { 'The second deploy did not succeed' }
-      & $registryIs (Get-Want 'host' $idNew $typeL) 'the host''s record holding $typeL after the second deploy'
+      & $registryIs (Get-Want 'host' $idNew $typeL) "the host's record holding $typeL after the second deploy"
       Get-RegistryProblems } } -Setup { Set-Target $initial (Get-SuccessScn 'host' $type2) }
   # In one write: the watcher polls hosts.json while the deploy runs and sees every text it holds. Neither
   # an instance_id without an instance_type nor the reverse is ever there for the target. (Polling can miss
-  # a state that lasts a millisecond; the three states that last seconds, before, between and after, must
+  # a state that lasts a millisecond; the three states that last seconds, before, between and after, MUST
   # be seen, so the watcher is shown to see.)
   foreach ($target in 'box', 'host') {
     $tg = $target
@@ -451,7 +451,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-size.ps1' -Body {
         $seen = @(Stop-HostsWatcher)
         $proj = Get-ProjectOf $tg
         $states = @($seen | ForEach-Object { $id = Get-RecordMember $_ $proj 'instance_id'; $ty = Get-RecordMember $_ $proj 'instance_type'; "$([bool]$id)/$([bool]$ty)" })
-        # A record never holds a type without an instance_id. Step 4 may leave an instance_id without a type (with
+        # A record never holds a type without an instance_id. Step 4 leaves an instance_id without a type (with
         # -InstanceType); after the removal of step 5 leaves neither, the next text holds both, never one alone.
         if ($states -ccontains 'False/True') { "hosts.json held the record of '$proj' with an instance_type and no instance_id" }
         $k = [array]::IndexOf($states, 'False/False')

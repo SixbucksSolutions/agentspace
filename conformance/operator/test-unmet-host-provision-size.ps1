@@ -437,7 +437,7 @@ foreach ($fc in @(@{ N = 'with a type found'; Want = 'm9g.2xlarge'; Leases = { @
 # their placement fails), ReadBack (the type the stand-in's describe-stacks answers), Want (the type the run passes,
 # or empty), Expect (the place lines in order: `done:<placed>`, then `failed:<n>`, `refused:<n>` or `left:<n>`),
 # Placed (the leases placed), Refused (answered unsatisfiable with no_capacity), Same (left as seeded, including the
-# leases named by no line) and Silent (the leases no line may name). A `Full` case adds the results of a run that
+# leases named by no line) and Silent (the leases that MUST NOT be named by any line). A `Full` case adds the results of a run that
 # ran every step.
 function Test-SzPlace($C) {
   Invoke-HpInHome -Name "place: $($C.N)" -Body {
@@ -472,7 +472,7 @@ function Test-SzPlace($C) {
         if ($kind -eq 'failed') { if ($got.Rest -cnotmatch "^ lease=$id reason=\S.*`$") { $p.Add("Line $($i + 1) of step 9 is not place failed lease=<id> reason=<message> for lease $n") } }
         elseif ($got.Rest -cne " lease=$id") { $p.Add("Line $($i + 1) of step 9 is not place $kind lease=<id>, with no other field, for lease $n") }
       }
-      foreach ($n in @($C.Silent)) { if (@($log.Lines | Where-Object { $_.Raw -like "*$(Get-SzId $n)*" }).Count -gt 0) { $p.Add("Lease $n is named by a log line, though no line may name it") } }
+      foreach ($n in @($C.Silent)) { if (@($log.Lines | Where-Object { $_.Raw -like "*$(Get-SzId $n)*" }).Count -gt 0) { $p.Add("Lease $n is named by a log line, though it MUST NOT be named by any line") } }
       $deployRest = if ($C.Want) { " type=$($C.Want)" } else { '' }
       if ($log.Lines[1].Rest -cne $deployRest) { $p.Add('The deploy line does not carry the type the run passed, or carries one it did not') }
     }
