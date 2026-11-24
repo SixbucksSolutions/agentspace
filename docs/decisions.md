@@ -3928,6 +3928,10 @@ the roadmap.
   the architect's two-line fix to state.md the same day. Both wait in Backlog for Terry to move,
   since Bot cannot move a card out of it.
 - **The ten cards after 1.0 stay in Backlog**, as roadmap.md's "After 1.0" lists them.
+- **Changed the same day (Terry: "Yes, both"):** #0137 is folded into v0.10 (#0050) too, and
+  archived. Its one unmet part is `agentspace-push`'s source-scan test against `set_var` and
+  `remove_var` in its tests; the rest is met on `main`. It rides with the hardening story that holds
+  #0189 and #0191. #0138, met by E0.07-T04-S03 (PR #105), went to Ready For Review on his word.
 
 ## Keys
 

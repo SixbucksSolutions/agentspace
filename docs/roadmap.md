@@ -94,7 +94,7 @@ when Terry says so (D14).
 - #0043 (the CloudWatch backstop) is OBE by v0.08: the backstop stays, lengthened from 3 hours to 24 (D58), behind the guard's lease-based stop.
 - #0064 (a release leaves the lease's open connections up, found in E0.02-T03-S01) is met by v0.08, shown live with Terry's desktop-app session in E0.08-T06-S02; a proxy that outlived the release by seconds is #0196.
 - **The open defects and hardening are folded into the epics that carry them, and their cards
-  archived** (Terry, 2026-11-23; D72): #0189, #0191, #0196 and #0195's decision into v0.10 (#0050);
+  archived** (Terry, 2026-11-23; D72): #0189, #0191, #0196, #0137's last part and #0195's decision into v0.10 (#0050);
   #0192, #0193, and #0195's build if it is code, into v0.12 (#0051); #0190, #0082 and #0109 into
   v1.0's first turn (#0053), before the real project measures its own turn. #0027 is OBE by v0.06,
   and #0194 is met; both wait for Terry's move out of Backlog.

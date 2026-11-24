@@ -431,7 +431,7 @@ to P27; each is cited in the spec it ruled, as "architect, 2026-11-21, for v0.08
 | #0189 and #0191: workspace tests that fail on timing, or hang, under load | A hardening pass; until then each is rerun alone before it is a finding | Each card |
 | #0190: the keeper conformance helpers read every process's command line, and `Stop-OwnTree` does not check its root's start time | The next release that touches `conformance/keeper/`, or a hardening pass | #0190 |
 | #0192 and #0193: box test gaps (the idle check's four parts; `install.sh`'s `/etc/environment` edit) | The next release that touches `box/` | Each card |
-| #0137 and #0138: fixed and merged, in Ready For Work by Terry's move; Bot cannot move them to Ready For Review | Terry moves each out; the architect moves it on, on his word | Each card |
+| #0137 and #0138: fixed and merged, in Ready For Work by Terry's move; Bot cannot move them to Ready For Review. **Corrected 2026-11-23 (D72's change):** #0138 was met and went to Ready For Review; #0137 lacked `agentspace-push`'s source-scan test, and was folded into v0.10 (#0050) | Terry moves each out; the architect moves it on, on his word | Each card |
 | The live kit (mask, proof, wrapper) is not in the repository | The architect, before the next live turn | `scripts\`, as process tools (D28) |
 | A spec for what "time to a prompt" measures when the keeper starts a lease's holder first | The next release that specifies the lifecycle | This file's live-check lessons |
 | #0194: "Docs: localswim's launcher replaced its Launch and provisioning blocks", made on 2026-11-23 by someone other than this architect | Read it before acting; not part of any v0.08 turn | #0194 |
