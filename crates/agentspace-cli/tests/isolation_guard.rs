@@ -31,13 +31,26 @@
 //!   messages, and runs each one directly, from the crate's folder, as `cargo test` would. It
 //!   MUST fail when the build fails or finds no test executable, and every executable MUST exit
 //!   with success and report `test result: ok`.
+//! - **Every test that the crate's `cargo test` runs MUST be run, and counted** (P48,
+//!   E0.09-T03-S03), so that a skipped executable or test cannot pass silently. The executables
+//!   run and counted MUST be exactly the build's list, the test executables in cargo's JSON. Each
+//!   executable is first run with `--list`, in the same moved environment as its run, so the
+//!   count is of the same program in the same environment; a listing runs no test, and anything
+//!   it created would be caught like the run's. Its run MUST then report `passed` plus `ignored`
+//!   equal to the tests the listing names. A failed count is reported by the executable's file
+//!   name only.
+//! - **The guard does not run doctests**, which `cargo test` runs for the library through
+//!   rustdoc. The library holds none (2026-11-23), so `cargo test` runs none for it.
 //! - **`TMP` and `TEMP` MUST be set on each run to the guard's own values.** With neither set,
 //!   Windows falls back to `USERPROFILE` for the temp folder, which is the moved home.
 //! - **A test MUST NOT read a variable that only `cargo test` sets through `std::env` at run
-//!   time**, since the executables are not run by cargo here. A compile-time `env!` is unaffected.
+//!   time**, since the executables are not run by cargo here. Each one inherits the guard's own
+//!   environment, which holds cargo's run-time variables for the guard's target, not its own. No
+//!   test reads one (2026-11-23). A compile-time `env!` is unaffected.
 //! - **The throwaway folder is closed at the end.** A failure to delete it is added to the message
-//!   of any assert that fails, and SHOULD NOT fail a run that otherwise passed: something outside
-//!   the suite can hold a file in it open.
+//!   of any assert that fails, naming the folder by its own name in the temp folder (P49), with
+//!   the error's kind and never its text, which holds the full path. It SHOULD NOT fail a run that
+//!   otherwise passed: something outside the suite can hold a file in it open.
 //!
 //! The children build into their own target folder, so the build never waits on the outer run's,
 //! and the guard's own executable skips this test in the child so that it does not recurse. The
@@ -173,6 +186,61 @@ fn short_name(p: &Path) -> String {
         .unwrap_or_else(|| String::from("?"))
 }
 
+/// The number of tests a test executable's `--list` output names: each line ending in `: test`.
+fn listed_tests(listing: &str) -> usize {
+    listing.lines().filter(|l| l.ends_with(": test")).count()
+}
+
+/// The passed and ignored counts of a run's last `test result: ok.` line, or `None` when its last
+/// `test result:` line is not `ok` or does not carry both counts.
+fn result_counts(stdout: &str) -> Option<(usize, usize)> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("test result:"))?;
+    if !line.starts_with("test result: ok.") {
+        return None;
+    }
+    let (mut passed, mut ignored) = (None, None);
+    for part in line.split(';') {
+        let words: Vec<&str> = part.split_whitespace().collect();
+        if let [.., n, kind] = words.as_slice() {
+            match *kind {
+                "passed" => passed = n.parse().ok(),
+                "ignored" => ignored = n.parse().ok(),
+                _ => {}
+            }
+        }
+    }
+    Some((passed?, ignored?))
+}
+
+/// The count check (P48): the run of the executable `name` MUST report passed plus ignored equal
+/// to the tests its listing names. The message names the executable by its file name only.
+fn count_check(name: &str, listing: &str, stdout: &str) -> Result<(), String> {
+    let listed = listed_tests(listing);
+    match result_counts(stdout) {
+        Some((passed, ignored)) if passed + ignored == listed => Ok(()),
+        Some((passed, ignored)) => Err(format!(
+            "{name}: its listing names {listed} tests, and its run reports {passed} passed and \
+             {ignored} ignored"
+        )),
+        None => Err(format!(
+            "{name}: its listing names {listed} tests, and its run reports no `test result: ok.` \
+             line with passed and ignored counts"
+        )),
+    }
+}
+
+/// The note for a throwaway folder that could not be deleted (P49): its own name in the temp
+/// folder and the error's kind, never the error's text, which holds the full path.
+fn undeleted_note(name: &str, kind: std::io::ErrorKind) -> String {
+    format!(
+        "\nThe throwaway folder {name}, in the temp folder, could not be deleted afterwards \
+         ({kind:?})."
+    )
+}
+
 #[test]
 fn the_failure_message_names_what_was_created_under_the_moved_home_relative_to_it() {
     let scratch = tempfile::Builder::new()
@@ -268,6 +336,82 @@ fn the_test_executables_are_read_from_cargos_json_messages() {
 }
 
 #[test]
+fn the_count_check_fails_when_a_run_reports_fewer_tests_than_its_listing_names() {
+    let listing = "a::one: test\na::two: test\nb::three: test\n\n3 tests, 0 benchmarks\n";
+    let run = |summary: &str| format!("\nrunning 3 tests\n...\n\n{summary}\n\n");
+
+    let two = run(
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
+         finished in 0.01s",
+    );
+    let err = count_check("lib-1.exe", listing, &two)
+        .expect_err("A listing of 3 tests against a run of 2 passed MUST fail");
+    assert!(
+        err.contains("lib-1.exe") && err.contains("names 3 tests") && err.contains("2 passed"),
+        "The failure MUST name the executable and both counts\n{err}"
+    );
+
+    let filtered = run(
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; \
+         1 filtered out; finished in 0.01s",
+    );
+    assert!(
+        count_check("lib-1.exe", listing, &filtered).is_err(),
+        "A run that filtered a test out MUST fail"
+    );
+    assert!(
+        count_check("lib-1.exe", listing, "running 3 tests\n").is_err(),
+        "A run with no summary MUST fail"
+    );
+    let not_ok = run(
+        "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; \
+         0 filtered out; finished in 0.01s",
+    );
+    assert!(
+        count_check("lib-1.exe", listing, &not_ok).is_err(),
+        "A run whose summary is not ok MUST fail"
+    );
+
+    let all = run(
+        "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; \
+         finished in 0.01s",
+    );
+    assert_eq!(
+        count_check("lib-1.exe", listing, &all),
+        Ok(()),
+        "Passed plus ignored equal to the listing MUST pass"
+    );
+    assert_eq!(
+        count_check(
+            "empty-1.exe",
+            "\n0 tests, 0 benchmarks\n",
+            &run(
+                "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
+                 finished in 0.00s"
+            )
+        ),
+        Ok(()),
+        "An executable with no tests MUST pass with a run of none"
+    );
+}
+
+#[test]
+fn the_undeleted_folder_is_named_by_its_own_name_and_the_errors_kind() {
+    let note = undeleted_note(
+        "agentspace-isolation-guard-AbC123",
+        std::io::ErrorKind::PermissionDenied,
+    );
+    assert!(
+        note.contains("agentspace-isolation-guard-AbC123") && note.contains("PermissionDenied"),
+        "The note MUST name the folder and the error's kind\n{note}"
+    );
+    assert!(
+        !note.contains(std::env::temp_dir().to_string_lossy().as_ref()),
+        "The note MUST NOT name the temp folder's own path"
+    );
+}
+
+#[test]
 fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
     if std::env::var_os(CHILD).is_some() {
         return;
@@ -314,12 +458,13 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
             .unwrap_or_else(|| OsString::from(std::env::temp_dir()))
     };
     let (tmp, temp) = (temp_of("TMP"), temp_of("TEMP"));
-    let mut failed = Vec::new();
-    let mut unreported = Vec::new();
-    for exe in &exes {
-        let name = short_name(exe);
-        let out = Command::new(exe)
-            .current_dir(crate_dir())
+    // The listing and the run of one executable, both in the moved environment.
+    let child = |exe: &Path, list: bool| {
+        let mut c = Command::new(exe);
+        if list {
+            c.arg("--list");
+        }
+        c.current_dir(crate_dir())
             .env(CHILD, "1")
             .env("USERPROFILE", &home)
             .env("HOME", &home)
@@ -329,11 +474,33 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
             .env_remove("AGENTSPACE_SSH_DIR")
             .env_remove("AGENTSPACE_PROXY_COMMAND")
             .stdin(Stdio::null())
-            .output();
-        match out {
+            .output()
+    };
+    let mut failed = Vec::new();
+    let mut miscounted = Vec::new();
+    let mut counted = Vec::new();
+    for exe in &exes {
+        let name = short_name(exe);
+        let listing = match child(exe, true) {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+            Ok(out) => {
+                failed.push(format!(
+                    "{name} --list:\n{}\n{}",
+                    tail(&out.stdout),
+                    tail(&out.stderr)
+                ));
+                continue;
+            }
+            Err(e) => {
+                failed.push(format!("{name}: could not be started ({:?})", e.kind()));
+                continue;
+            }
+        };
+        match child(exe, false) {
             Ok(out) if out.status.success() => {
-                if !String::from_utf8_lossy(&out.stdout).contains("test result: ok") {
-                    unreported.push(format!("{name}:\n{}", tail(&out.stdout)));
+                match count_check(&name, &listing, &String::from_utf8_lossy(&out.stdout)) {
+                    Ok(()) => counted.push(exe.clone()),
+                    Err(m) => miscounted.push(m),
                 }
             }
             Ok(out) => failed.push(format!(
@@ -344,17 +511,19 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
             Err(e) => failed.push(format!("{name}: could not be started ({:?})", e.kind())),
         }
     }
+    let uncounted: Vec<String> = exes
+        .iter()
+        .filter(|e| !counted.contains(e))
+        .map(|e| short_name(e))
+        .collect();
 
     // The listing is taken before the throwaway folder is closed, since closing removes it.
     let home_created = home.exists();
     let created = created_under(&home);
+    let scratch_name = short_name(scratch.path());
     let note = match scratch.close() {
         Ok(()) => String::new(),
-        // The kind only: the error's own text names the folder.
-        Err(e) => format!(
-            "\nThe throwaway folder could not be deleted afterwards ({:?}).",
-            e.kind()
-        ),
+        Err(e) => undeleted_note(&scratch_name, e.kind()),
     };
 
     assert!(
@@ -374,9 +543,16 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
         failed.join("\n\n")
     );
     assert!(
-        unreported.is_empty(),
-        "Each child MUST have run its tests.\n{}{note}",
-        unreported.join("\n\n")
+        miscounted.is_empty(),
+        "Each executable MUST run every test its listing names.\n{}{note}",
+        miscounted.join("\n")
+    );
+    assert!(
+        counted.len() == exes.len() && uncounted.is_empty(),
+        "Every executable of the build's list MUST be run and counted ({} of {}); not: {}.{note}",
+        counted.len(),
+        exes.len(),
+        uncounted.join(", ")
     );
     assert!(!home_created, "{}{note}", created_message(&created));
 }
