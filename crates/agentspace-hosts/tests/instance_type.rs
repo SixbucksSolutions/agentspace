@@ -3,12 +3,11 @@
 //! E0.09-T02-S01, card #0200): it sets or removes one record's `instance_type` under `hosts.lock`,
 //! re-reading the file under the lock, and changes nothing else.
 //!
-//! PLACEHOLDER NAME. The setter's exact name and signature are the implementer's. Every call of it
-//! in this file goes through `set_type` below, the only place that names it, so one edit follows a
-//! name that differs. Assumed: `agentspace_hosts::set_instance_type(home: &Path, project: &str,
+//! The setter is pin P38's `agentspace_hosts::set_instance_type(home: &Path, project: &str,
 //! instance_type: Option<&str>) -> Result<(), HostsError>`, which takes and releases the host
 //! registry lock itself (state.md: "which the writer takes, re-reading the file under it, and
-//! releases after the rename"), `Some(type)` setting the member and `None` removing it.
+//! releases after the rename"), `Some(type)` setting the member and `None` removing it. Every call
+//! of it in this file goes through `set_type` below.
 
 mod common;
 
@@ -18,7 +17,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// THE ONE PLACEHOLDER CALL (rename here when the setter's name differs).
+/// The one call of the setter.
 fn set_type(home: &Path, project: &str, instance_type: Option<&str>) -> Result<(), HostsError> {
     agentspace_hosts::set_instance_type(home, project, instance_type)
 }
@@ -223,7 +222,7 @@ fn it_refuses_a_project_with_no_record_and_writes_nothing() {
     // from the setter's step list (983-985: "changing that record's instance_type and no other
     // member") and from "Its states" (line 936: the only record agentspace adds with the stack
     // agentbox is the seed's, and every record it adds comes from the driver or `provision`).
-    // N2 in the report: the spec does not say it of the setter alone.
+    // Pin P38 names it of both setters: `Unwritable(NoSuchRecord)`, nothing written.
     let t = put_file();
     for ty in [Some("m9g.large"), None] {
         let e = set_type(t.path(), "no-such-project", ty)
@@ -567,9 +566,8 @@ fn a_reader_is_never_blocked_by_a_setter_and_sees_the_old_file_or_the_new_one() 
 //
 // state.md, "The instance type", steps 2 and 4: `deploy` removes the record's `instance_id`, and
 // `instance_type` with it in the same write; and it writes the type it read "in the same write as
-// the `instance_id`" (pin P23). PLACEHOLDER NAME as well: the implementer's `set_instance(home,
-// project, instance_id, instance_type)`, each `None` removing its member. `set_both` is its one
-// call.
+// the `instance_id`" (pin P23). The setter is pin P38's `set_instance(home, project, instance_id,
+// instance_type)`, each `None` removing its member. `set_both` is its one call.
 
 fn set_both(
     home: &Path,

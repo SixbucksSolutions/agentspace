@@ -255,6 +255,26 @@ mod tests {
         assert!(body.contains(&needle), "`lock` MUST wait through LOCK_WAIT");
     }
 
+    /// Both setters wait for the lock as `lock` does, for up to 30 seconds and no longer
+    /// (docs/state.md, The host registry lock). A test of the full wait would take 30 seconds, so
+    /// their source is checked to pass `LOCK_WAIT` and no other value, as `lock`'s is above.
+    #[test]
+    fn the_setters_wait_through_the_thirty_second_ceiling() {
+        let source = include_str!("registry.rs");
+        let needle = format!("change_record(home, project, {}, ", "LOCK_WAIT");
+        for setter in ["pub fn set_instance_type(", "pub fn set_instance("] {
+            let body = source
+                .split(setter)
+                .nth(1)
+                .and_then(|rest| rest.split("\n}\n").next())
+                .unwrap();
+            assert!(
+                body.contains(&needle),
+                "{setter} MUST wait through LOCK_WAIT"
+            );
+        }
+    }
+
     #[test]
     fn try_lock_gives_some_when_free_and_none_at_once_when_held() {
         let t = home();

@@ -491,6 +491,39 @@ mod tests {
         assert_eq!(implied, Hosts::seed());
     }
 
+    /// state.md, The host registry: "each pattern in the schema ends that way", `$(?!\n)`. The
+    /// validator's `$` is the end of the text, so a bare `$` refuses a trailing line feed here too
+    /// and no document can tell the two apart; the rule is for every other engine, such as one
+    /// whose `$` matches before a final line feed, and only the schema's text shows it is kept.
+    #[test]
+    fn every_pattern_in_the_schema_ends_in_a_dollar_that_refuses_a_line_feed() {
+        fn patterns<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+            match v {
+                Value::Object(o) => {
+                    for (k, v) in o {
+                        match (k.as_str(), v) {
+                            ("pattern", Value::String(p)) => out.push(p),
+                            _ => patterns(v, out),
+                        }
+                    }
+                }
+                Value::Array(a) => a.iter().for_each(|v| patterns(v, out)),
+                _ => {}
+            }
+        }
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../schemas/state/hosts.state.schema.json"
+        ))
+        .unwrap();
+        let mut found = Vec::new();
+        patterns(&schema, &mut found);
+        // project, stack, instance_id, instance_type and the time.
+        assert_eq!(found.len(), 5, "{found:?}");
+        for p in found {
+            assert!(p.ends_with("$(?!\\n)"), "{p}");
+        }
+    }
+
     #[test]
     fn a_leap_second_is_refused_by_the_schema() {
         let r = r#"{"project":"agentspace","stack":"agentspace-host-agentspace","state":"creating","last_attempt_at":"2026-11-20T23:59:60Z"}"#;

@@ -2,9 +2,6 @@
 //! bullets under it; "The seed"; "The instance type", "Its form, and programs built before
 //! v0.09"; E0.09-T02-S01, card #0200): reading it, writing it back byte for byte, the values that
 //! make a file not valid, and the default only a missing file reads as.
-//!
-//! This file needs nothing of the crate beyond the `Host.instance_type` field, so it builds even
-//! when the setter of `tests/instance_type.rs` has not landed.
 
 mod common;
 
@@ -207,13 +204,11 @@ fn a_type_the_driver_does_not_know_is_still_valid_in_the_file() {
 
 // --- The default only a missing file has, and only a reader that places reads ----------------
 //
-// N1: the dev lead's tasking says "a read that finds no file sees `Some(m9g.xlarge)`"; the
-// crate as the implementer left it splits that into `read`, the read a change starts from, whose
+// Pin P38 splits the read of a missing file in two: `read`, the read a change starts from, whose
 // missing file is the seed document with no type, and `read_for_placing`, whose missing file is the
-// implied record. state.md ("The seed") names no function: it says a reader that finds no file reads
-// the record as if it held the type, and a writer that finds no file starts from the seed document
-// with no type. Both halves are tested through the two functions; if the dev lead pins one `read`
-// instead, `placing_read` below and the tests of `read`'s missing file change together.
+// implied record. state.md ("The seed") says a reader that finds no file reads the record as if it
+// held the type, and a writer that finds no file starts from the seed document with no type. Both
+// halves are tested through the two functions.
 
 /// The read of a reader that places a lease (the one place the crate's name for it is spelled).
 fn placing_read(home: &std::path::Path) -> Result<Hosts, HostsError> {
