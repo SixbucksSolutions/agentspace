@@ -360,7 +360,8 @@ function Assert-ConformancePath {
 # answers `unsatisfiable` with `no_capacity` for a supported create of any project but swimcoach, whose
 # host is the box (a missing hosts.json reads as the box's record alone), so a case that expects
 # `ready` for project P needs a host record for P in state `ready`. Place reads a ready record's
-# `project`, `stack` and `state` alone and makes no AWS call, so the record carries no instance_id.
+# `project`, `stack`, `state` and, from v0.09, `instance_type`, and makes no AWS call, so the record
+# carries no instance_id.
 # It never touches projects.json: a seeded record is not a project list entry.
 #
 # - Each name is normalized as the contract normalizes a project (trimmed, lower case) and MUST match
@@ -376,7 +377,8 @@ function Assert-ConformancePath {
 #   hosts.json of the HOME, which AGENTSPACE_STATE_DIR does not move.
 # - Each record it adds carries `"instance_type": "m9g.xlarge"` (state.md, "The instance type"), as a v0.09
 #   deploy writes it, between instance_id and last_attempt_at; -NoInstanceType leaves it out, for a case
-#   about a record with no type. The box's record, and a record read back, are kept as they are.
+#   about a record with no type. A box record this makes, when hosts.json is missing, carries it too, and
+#   -NoInstanceType leaves it out of that one as well; a record read back is kept as it is.
 # Returns the names it added, as an array (empty when none).
 function Add-ConformanceReadyHost {
   param([Parameter(Mandatory)]$ConformanceHome, [Parameter(Mandatory)][string[]]$Project, [switch]$NoInstanceType)
