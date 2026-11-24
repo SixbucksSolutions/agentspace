@@ -1,1 +1,19 @@
-{"id":"c3e5a7b9-4d6f-4c8e-a02b-3f5d7c9e1a43","project":"localswim","state":"ready","platform":"linux/arm64","profile":"agent-linux","size":"s","ttl_seconds":3600,"created_at":"2026-11-24T09:00:00Z","expires_at":"2026-11-24T10:00:00Z","ssh":{"host_alias":"agentspace-localswim-c3e5a7b9","user":"ubuntu"},"sized_for":{"turn":"T1","agents":2}}
+{
+  "id": "c3e5a7b9-4d6f-4c8e-a02b-3f5d7c9e1a43",
+  "project": "localswim",
+  "state": "ready",
+  "platform": "linux/arm64",
+  "profile": "agent-linux",
+  "size": "s",
+  "sized_for": {
+    "turn": "T1",
+    "agents": 2
+  },
+  "ttl_seconds": 3600,
+  "created_at": "2026-11-24T09:00:00Z",
+  "expires_at": "2026-11-24T10:00:00Z",
+  "ssh": {
+    "host_alias": "agentspace-localswim-c3e5a7b9",
+    "user": "ubuntu"
+  }
+}

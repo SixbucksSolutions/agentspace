@@ -5,6 +5,11 @@
   "platform": "windows/amd64",
   "profile": "agent-linux",
   "size": "m",
+  "sized_for": {
+    "plan": "v0.09",
+    "turn": "T03",
+    "agents": 5
+  },
   "ttl_seconds": 28800,
   "created_at": "2026-11-24T14:10:00Z",
   "reasons": [
@@ -12,10 +17,5 @@
       "code": "unsupported_platform",
       "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."
     }
-  ],
-  "sized_for": {
-    "plan": "v0.09",
-    "turn": "T03",
-    "agents": 5
-  }
+  ]
 }
