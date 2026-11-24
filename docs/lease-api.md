@@ -1,12 +1,13 @@
-# agentspace lease API, contract v0
+# agentspace lease API, contract v1
 
 RFC 2119 keywords; the capitals are load-bearing.
 
 **The reference for `agentspace lease`, written so that it can be built and used without reading any
 of agentspace's code (decision D20).** It names every command, flag, output field, state, error and
 exit code, and gives the `--help` text at every level word for word. The JSON schemas under
-[`schemas/`](../schemas) are part of this contract, and where this page and a schema disagree, both
-are wrong and MUST be fixed together.
+[`schemas/`](../schemas) are part of this contract, except those under `schemas/v0/`, which are
+contract v0's ([Schemas](#schemas)). Where this page and a schema disagree, both are wrong and MUST
+be fixed together. What contract v1 changes from v0 is in [Changes from v0](#changes-from-v0).
 
 **What it is for:** a project asks for a lease, which is compute for one agent for a bounded time,
 and gets back an SSH host alias, the user to log in as, and an expiry (D2). The reasoning behind
@@ -40,13 +41,15 @@ of the change.
 
 ## Contents
 
+- [Changes from v0](#changes-from-v0)
 - [Conventions](#conventions): [the program](#the-program), [output](#output),
   [times](#times), [input tolerance](#input-tolerance), [command lines](#command-lines),
   [concurrency and atomicity](#concurrency-and-atomicity)
 - [The lease](#the-lease): [fields](#fields), [states](#states),
   [a host's life follows its leases](#a-hosts-life-follows-its-leases),
   [the credential](#the-credential)
-- [Values](#values)
+- [Values](#values): [lease ID](#lease-id), [project](#project), [platform](#platform),
+  [profile](#profile), [plan](#plan), [size](#size), [TTL](#ttl), [state filter](#state-filter)
 - [Profiles](#profiles)
 - [Commands](#commands): [`agentspace`](#agentspace), [`agentspace lease`](#agentspace-lease),
   [`create`](#agentspace-lease-create), [`get`](#agentspace-lease-get),
@@ -59,6 +62,33 @@ of the change.
 - [Hardening carried in](#hardening-carried-in)
 - [Open questions](#open-questions)
 
+## Changes from v0
+
+**Contract v1 adds to contract v0, and changes no document or error a caller sees while it makes no
+lease with `--plan` and reads none** (D76). `create`'s help text changes too, which is text, not a
+document ([Versioning](#versioning)). It comes with agentspace's v0.10 release (#0050). The contract's
+version and agentspace's release are two numbers, kept apart (D26). Why each change makes a new
+version, and what v1 keeps of v0, are in [Versioning](#versioning).
+
+| Change | Where | Could fail a v0 schema |
+|---|---|---|
+| `create --plan <file>`: the lease gets the smallest size that holds the plan's busiest turn (D74, D75) | [`create`](#agentspace-lease-create), [Plan](#plan) | No: an input v0 refused |
+| The plan document, and its schema, `plan.input.schema.json` (D74, D76) | [Plan](#plan), [Schemas](#schemas) | No: a new input |
+| `plan`, a new member of the `create` request document, holding the plan document itself (D76; architect, 2026-11-24, for v0.10-T01, pins P8 and P19) | [`create`](#agentspace-lease-create) | No: an input v0 refused |
+| `create`'s help: its usage line, the `--plan` row, and its last two lines (D75, D76) | [`create`](#agentspace-lease-create) | No: help is text, not a document |
+| `sized_for`, a new member of every lease made with `--plan`, in every state (D75) | [Fields](#fields) | Yes |
+| `plan_too_large`, a new reason code, for a plan that no size holds. It is always the lease's only reason, and the lease's `size` is `xl` (D75, D81) | [Fields](#fields), [`create`](#agentspace-lease-create) | Yes |
+| `plan`, a new `field` of `invalid_value` and of `usage`, and a sixth case in which `usage` carries `field`: `--plan` with `--size` (D75, D81; architect, 2026-11-24, for v0.10-T01, pins P6 and P13) | [Exit codes and errors](#exit-codes-and-errors) | Yes |
+| Every schema's `$id` carries `v1`, and every schema's title says contract v1 (D76; architect, 2026-11-24, for v0.10-T01, pin P9) | [Schemas](#schemas) | No: no document carries an `$id` |
+| v0's schemas and samples are kept unchanged, under `schemas/v0/` and `schemas/v0/samples/` (D76; architect, 2026-11-24, for v0.10-T01, pin P9) | [Schemas](#schemas) | No |
+
+- **No lease lacks `size`.** A `plan_too_large` lease's is `xl`, the largest size (D81), so `size`
+  is in every lease, as in v0.
+- **Nothing else changes.** No command, state, exit code or error code is added or removed, and no
+  member of v0's documents changes its meaning for a lease made without `--plan`.
+- **agentspace's per-agent footprint is not part of the contract** (D76). Today's figure is given
+  in [Plan](#plan), for information.
+
 ## Conventions
 
 ### The program
@@ -70,9 +100,9 @@ of the change.
   - Note on where this came from: the prototype is `scripts/lease-cli.ps1`, started by
     `bin/agentspace.cmd` from cmd and PowerShell, and by `bin/agentspace` from Git Bash and other
     POSIX shells.
-- **Contract v0's caller runs on Windows (D8)**, and runs `agentspace` from cmd, PowerShell or Git
-  Bash. A caller on Linux or macOS is later, and not blocking: it comes with the hosted control
-  plane (#0011).
+- **Contract v1's caller runs on Windows (D8)**, as v0's did, and runs `agentspace` from cmd,
+  PowerShell or Git Bash. A caller on Linux or macOS is later, and not blocking: it comes with the
+  hosted control plane (#0011).
 - **The program MUST receive its arguments exactly as the caller's shell passed them.** An
   argument MUST NOT be split, joined, dropped, or converted as a path before the rules in
   [Command lines](#command-lines) see it. An empty argument is an argument.
@@ -91,7 +121,8 @@ of the change.
   [the table](#exit-codes-and-errors)**, whatever stage it failed at. The prototype's runtime
   version check is such a stage: a runtime too old for it exits 1 with no error document (#0083).
 - **No command reads standard input, and no command prompts.** Every command MUST run unattended,
-  with no terminal.
+  with no terminal. The one file a command reads that the caller names is the plan of
+  `create --plan` ([Plan](#plan)), and `--plan -` names a file called `-`, never standard input.
 
 ### Output
 
@@ -110,7 +141,7 @@ of the change.
   - **On a system other than Windows, a stdout the caller closed MAY read as one that discards
     its output** (architect, 2026-11-19, from E0.05-T01-S01's review): Rust's runtime, for one,
     opens a closed standard stream on `/dev/null` before the program starts, so the program cannot
-    tell the two apart in safe code. Contract v0's caller is Windows (D8), and a full or broken
+    tell the two apart in safe code. Contract v1's caller is Windows (D8), and a full or broken
     stdout still fails there.
   - **A change the command already recorded stays recorded.** A `create`, `renew` or `release`
     whose record was written before its document failed to reach stdout has made its change, and
@@ -133,7 +164,7 @@ of the change.
   example `2026-11-17T18:04:05Z`. No other form is emitted: no fraction, no offset, no lowercase
   `t` or `z`. The caller's time zone MUST NOT change any time in output.
 - **A time is truncated to the whole second, never rounded.**
-- **"Now" is the clock of the machine that answers the command.** In v0 that is the caller's
+- **"Now" is the clock of the machine that answers the command.** In v1 that is the caller's
   machine.
 - **A lease's certificate is issued at a whole second, its issue time, during the command that
   issues it** (`create` or `renew`), **or by agentspace when it places a lease that `create`
@@ -163,7 +194,9 @@ covers form only:
   U+3000, and no others.
 - **U+FEFF, the byte order mark, is not whitespace, and is never trimmed.** A value that holds one
   is refused with `invalid_value`, wherever it is, and the input schemas refuse it too
-  ([Schemas](#schemas)).
+  ([Schemas](#schemas)). **The one exception is a plan file's leading UTF-8 byte order mark**,
+  which is the file's and in no value: it is accepted and ignored, and U+FEFF anywhere else in
+  the file is refused ([Plan](#plan); architect, 2026-11-24, for v0.10-T01, pins P4 and P18).
 - **Every check MUST match the whole value (#0029).** A check that lets a trailing line feed through
   after trimming, as a regular expression's `$` does in several engines, is a defect. Letters and
   digits in a value are ASCII letters and digits only, and "any case" means ASCII case.
@@ -223,6 +256,10 @@ covers form only:
   `list --state` is the one flag that MAY be repeated. A repeated flag whose later occurrence has
   no value or an empty value is reported as that, "needs a value" or "has an empty value", not as
   given twice.
+- **`--plan` with `--size`**, to `create`, in either order, because the plan picks the size (D75).
+  It is reported where the later of the two flags stands, and a later one with no value or an
+  empty value is reported as that instead. Its `field` is `plan` (architect, 2026-11-24, for
+  v0.10-T01, pins P6 and P13).
 - **An unexpected positional argument:** a second ID, or any positional argument to `create` or
   `list`.
 - **`agentspace` with no command, and `agentspace lease` with no subcommand**, so that a script
@@ -241,7 +278,8 @@ covers form only:
    unknown option comes before it on the line: `agentspace --project x lease create` reports the
    unknown command `x`, not the unknown option `--project`.
 3. **Otherwise, the first of the other usage errors in line order is reported**: an unknown option,
-   a flag with no value or an empty value, a flag given twice, or an unexpected argument.
+   a flag with no value or an empty value, a flag given twice, `--plan` with `--size`, or an
+   unexpected argument.
 4. **Otherwise, a missing command, subcommand, lease ID or `--project` is reported.**
 5. **Only when the line has no usage error are the values checked**, in the order of
    [Exit codes and errors](#exit-codes-and-errors).
@@ -257,6 +295,10 @@ covers form only:
   wait longer. One that cannot start within 30 seconds MUST fail with `internal`, change nothing,
   and say to try again** (architect ruling, 2026-11-18). `release` of a lease that needs no change
   MAY wait too.
+- **`create` reads and parses the plan of `--plan` before it starts to wait**, as it checks every
+  value before then, so a plan that is not well formed, or is large, never lengthens how long
+  `create` holds the others back, and is refused with `invalid_value` without waiting for them
+  (architect, 2026-11-24, for v0.10-T01, pin P28; [Plan](#plan)).
 - **A command that fails MUST leave every lease as it was before the command**, except as the
   bullets below allow.
   - **A failed `create` MUST remove every file and folder it made for the lease** (its key, its
@@ -302,7 +344,11 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 | `state` | String, [state](#states) | Always | Where the lease is in its life, as of now. |
 | `platform` | String, [platform](#platform) | Always | The platform asked for, normalized. |
 | `profile` | String, [profile](#profile) | Always | The software profile asked for, normalized. |
-| `size` | String, [size](#size) | Always | The size asked for, normalized, even when larger compute serves the lease (D66). |
+| `size` | String, [size](#size) | Always | The size asked for, normalized, or, for a lease created with `--plan`, the size picked for the plan ([Plan](#plan)), which is `xl` for a lease whose reason is `plan_too_large` (D75, D81). It stays that size even when larger compute serves the lease (D66). |
+| `sized_for` | Object | Every lease created with `--plan`, in every state | What the lease was sized for; see below. |
+| `sized_for.plan` | String, [name](#plan) | Inside `sized_for`, when the plan's `name` is given and not `null` | The plan's `name`, as written in the plan. |
+| `sized_for.turn` | String, [name](#plan) | Inside `sized_for` | The name of the plan's busiest turn, as written in the plan. |
+| `sized_for.agents` | Integer, 2 to 1025 | Inside `sized_for` | That turn's agents at once, its dev lead included. |
 | `ttl_seconds` | Integer, 60 to 86400 | Always | The TTL of the current certificate, or of the one asked for if none was issued. |
 | `created_at` | String, [time](#times) | Always | When `create` recorded the lease: a whole second during the `create` command. |
 | `expires_at` | String, [time](#times) | `ready` and `expired`; `released` if it was ever ready | When the current certificate stops being accepted for new connections: its issue time plus `ttl_seconds`. An older certificate MAY outlive it; see "What expiry and release do not do" under [States](#states). |
@@ -331,11 +377,29 @@ then fail with `internal` when none is free; a project would need billions of ke
 to happen. Only kept leases count: an alias file that no record names makes `create` fail, and is
 never a reason to draw again ([docs/state.md](state.md#the-alias-file)).
 
-**`ssh.user` is the user the lease logs in as.** In v0 every project's leases log in as `ubuntu`
-(D3). A caller MUST read it from the lease and MUST NOT assume it, because later hosts MAY change
-it. A caller MUST accept any user that the table's rule for `ssh.user` allows. In v0 a lease's user also matches the
+**`ssh.user` is the user the lease logs in as.** In v1 every project's leases log in as `ubuntu`
+(D3), as in v0. A caller MUST read it from the lease and MUST NOT assume it, because later hosts MAY change
+it. A caller MUST accept any user that the table's rule for `ssh.user` allows. In v1 a lease's user also matches the
 narrower pattern of the lease state file, which is what binds a driver
 ([docs/state.md](state.md#the-lease-state-file)).
+
+**`sized_for` says what a lease created with `--plan` was sized for (D75).** `create` sets it, and
+nothing changes it afterwards: `get`, `renew`, `release` and `list` print it as `create` did, in
+every state (architect, 2026-11-24, for v0.10-T01, pin P10).
+- **`plan` is the plan's `name`, and is left out when the plan's `name` is absent or `null`**,
+  never written as `null`. **`turn` is the plan's busiest turn**, the first such turn in the
+  plan's order on a tie, **and `agents` is that turn's agents at once**, the sum of its stories'
+  peaks plus 1 for its dev lead ([Plan](#plan); D74). Both names are printed exactly as the plan
+  writes them, and each matches the pattern of a [name](#plan). `sized_for` has no other member.
+- **The lease's `size` is the size picked for those agents**, the smallest that holds them at
+  agentspace's per-agent footprint ([Plan](#plan)). **When no size holds them, the lease is
+  `unsatisfiable` with the one reason `plan_too_large`, and its `size` is `xl`**, the largest
+  (D81): `sized_for` says which turn needed more, and nothing is issued at any size (D5).
+- **A lease created without `--plan` has no `sized_for`**, since a field that does not apply is
+  left out ([Output](#output)), and prints as it did in contract v0 (D76).
+- **`sized_for.plan` is there so that a plan read from elsewhere changes no output**, as one read
+  from an epic will be in agentspace's v0.11 release (#0052; D75).
+- **The plan itself, and each subagent's model and effort, are in no output (D74).**
 
 **Reason codes:**
 
@@ -344,15 +408,33 @@ narrower pattern of the lease state file, which is what binds a driver
 | `unsupported_platform` | No backend can provide the platform asked for. |
 | `unsupported_profile` | No backend can provide the profile asked for. |
 | `unsupported_size` | No backend can provide the size asked for. |
-| `no_capacity` | The request is supported, but no capacity can be found for it: in v0, its project has no host and cannot have one made (D54), or its project's host is serving other leases at a smaller size (D66, D68). |
+| `plan_too_large` | The plan given with `--plan` has more agents at once than the largest size holds at agentspace's per-agent footprint ([Plan](#plan)). It is always the lease's only reason, and the lease's `size` is `xl` (D75, D81). |
+| `no_capacity` | The request is supported, but no capacity can be found for it: in v1, its project has no host and cannot have one made (D54), or its project's host is serving other leases at a smaller size (D66, D68). |
 
 **Every reason that applies MUST be listed, each code once,** in the order of the table, so a
-request with an unsupported platform and an unsupported size gets two reasons. In v0 only
-`linux/arm64` and `agent-linux` are supported, and the sizes `s`, `m`, `l` and `xl`
+request with an unsupported platform and an unsupported size gets two reasons, **with one
+exception: `plan_too_large` MUST be the lease's only reason** (D81; architect, 2026-11-24, for
+v0.10-T01, pins P15 and P16).
+- **It is decided by agentspace's lease CLI from the plan, before any driver is asked to place the
+  lease (D75, D81).** Platform and profile are judged by a driver, as it places a lease, and asking
+  one with a size the plan does not fit would place the lease. So a lease answered
+  `plan_too_large` lists it alone, whatever its platform and profile: a too-large plan with
+  `--platform windows/amd64` gives the one reason `plan_too_large`. It is never beside
+  `unsupported_size`, which needs a size asked for, nor beside `no_capacity`, which is for a
+  supported request.
+- **Like every `unsatisfiable` answer, it needs no CA, and nothing is issued:** no compute is made,
+  changed or started, and the lease needs no `release` (architect, 2026-11-24, for v0.10-T01,
+  pin P26). [`create`](#agentspace-lease-create) says what `create` still checks for it.
+- **A plan that a size holds is judged by the driver as a `--size` lease is**, and gets the
+  reasons a `--size` lease of the size picked would get when its platform or profile cannot be met
+  (architect, 2026-11-24, for v0.10-T01, pin P16). Its size is always one of the four sizes, so
+  `unsupported_size` comes only from a driver that lacks that size.
+
+In v1 only `linux/arm64` and `agent-linux` are supported, and the sizes `s`, `m`, `l` and `xl`
 ([Size](#size); D5, D65). Until agentspace's v0.09 release (#0049), size `m` alone was.
 `no_capacity` is in the contract for backends that can run out. Until agentspace's v0.07 release
-(#0047) it was never reported. v0's driver reports it for a supported request only, in these
-cases:
+(#0047) it was never reported. agentspace's driver reports it for a supported request only, in
+these cases:
 - **From v0.07, for a project that has no host and is not on the list of projects that may have
   one made** (D54; [docs/driver.md](driver.md#where-it-places-a-lease)).
 - **From v0.09 (#0049), for a project whose host is serving another of the project's `ready`
@@ -380,16 +462,23 @@ supported request. No schema, code or field changes for it, so the contract does
   approved the project, or once the project's other leases are released, or when the size asked
   for is one the host already meets.
 
-**Each reason's message quotes the normalized value**, and SHOULD read as v0's do, below. **A
-client MUST NOT parse a message: it reads the reason codes** ([Messages](#messages)). v0's driver
-emits the `unsupported_size` message and the `no_capacity` message for a host serving smaller
-leases byte for byte as below, which is its own rule, not the contract's (D71;
+**Each reason's message quotes the normalized value**, and SHOULD read as below. **A client MUST
+NOT parse a message: it reads the reason codes** ([Messages](#messages)). The messages of the
+reasons v0 had keep v0's wording, `v0 supports` included, so that a command line with no `--plan`
+prints what it printed under v0 (D76). agentspace's driver emits the `unsupported_size` message
+and the `no_capacity` message for a host serving smaller leases byte for byte as below, which is its own rule, not the contract's (D71;
 [docs/driver.md, What it supports](driver.md#what-it-supports); architect, 2026-11-23, for
 v0.09-T01, pin P8):
 - `Platform '<platform>' is not supported; v0 supports linux/arm64 only.`
 - `Profile '<profile>' is not supported; v0 supports agent-linux with no version only.`
 - `Size '<size>' is not supported; v0 supports sizes s, m, l and xl.`
   (D65, D71; from v0.09, #0049, in place of v0.08's `Size '<size>' is not supported; v0 supports size m only.`)
+- `Plan's busiest turn '<turn>' has <n> agents at once; the largest size, xl, holds <m>.`
+  (D75; from v0.10, #0050), where `<turn>` is `sized_for.turn`, written as the plan writes it,
+  `<n>` is `sized_for.agents`, and `<m>` is the most agents at once that `xl` holds at
+  agentspace's per-agent footprint, 32 today ([Plan](#plan)). It quotes a name from the plan, not
+  a normalized value, since the plan is the value that cannot be met. **agentspace's lease CLI
+  MUST emit it byte for byte** (architect, 2026-11-24, for v0.10-T01, pin P5).
 - `No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.`
   ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's, 2026-11-20, for v0.07-T01)
 - `No capacity can be found for project '<project>' at size '<size>': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.`
@@ -465,9 +554,9 @@ one call and `expired` in the next with nothing in between. An `expired` lease h
 
 **How long a lease is kept:** a `released`, `expired` or `unsatisfiable` lease MUST stay readable
 by `get` and `list` for at least 24 hours after it reached that state. After that it MAY be
-forgotten, and `get` then answers `not_found`. In v0 no lease is forgotten.
+forgotten, and `get` then answers `not_found`. In v1 no lease is forgotten.
 
-**Where leases are kept:** in v0, on the caller's machine, so `get` and `list` see the leases
+**Where leases are kept:** in v1, on the caller's machine, so `get` and `list` see the leases
 created there and no others. The files are [docs/state.md](state.md)'s, and
 [`AGENTSPACE_STATE_DIR`](#environment) moves them.
 
@@ -556,8 +645,9 @@ how they are made and removed, are [docs/state.md](state.md)'s.
 - **It permits a terminal (PTY) and port forwarding, and nothing else:** no agent forwarding, no
   X11 forwarding and no user rc file (D7). Port forwarding MUST stay permitted, because agentspace's
   board reaches a lease host through it (D12, D30).
-- **Its serial is not part of this contract,** and a caller MUST NOT rely on it. v0 issues serial 0
-  on every certificate; whether serials are needed is decided with revocation, card #0010 (#0029).
+- **Its serial is not part of this contract,** and a caller MUST NOT rely on it. v1 issues serial 0
+  on every certificate, as v0 did; whether serials are needed is decided with revocation, card
+  #0010 (#0029).
 
 **The certificate authority:**
 - **`create` and `renew` MUST NOT create agentspace's CA (#0029).** A CA made by issuing would be
@@ -588,7 +678,7 @@ how they are made and removed, are [docs/state.md](state.md)'s.
   behavior to copy.
 - **A connection through the alias reaches the lease's host as `ssh.user`**, and how it gets there
   is the driver's ([docs/driver.md](driver.md), D9).
-- **In v0 the alias also forwards the agentspace board's ports to the lease host** (D12, D30), so
+- **In v1 the alias also forwards the agentspace board's ports to the lease host** (D12, D30), so
   a second session through any alias on the same host warns that its remote port forwarding
   failed, and still logs in. A caller MUST NOT rely on these forwards.
 
@@ -639,7 +729,7 @@ libc a host has; the [profile](#profiles) does.
   `linux/aarch64/v8` becomes `linux/arm64`. Every other variant is kept: `linux/arm64/v9` and
   `linux/amd64/v3` stay as they are.
 - **Default:** `linux/arm64` (D13).
-- **Supported in v0:** `linux/arm64` only. Any other well-formed platform is accepted, and the
+- **Supported in v1:** `linux/arm64` only. Any other well-formed platform is accepted, and the
   lease is `unsatisfiable` with `unsupported_platform` (D5). That includes `windows/amd64`: Windows
   hosts are in scope (D4), and unsatisfiable until a driver supports them.
 
@@ -654,15 +744,220 @@ each supported profile promises is in [Profiles](#profiles).
   (`Agent-Linux@03` becomes `agent-linux@3`). A profile with no version stays without one, and
   means the profile's current version.
 - **Default:** `agent-linux`.
-- **Supported in v0:** `agent-linux` with no version. Any other well-formed profile, including
+- **Supported in v1:** `agent-linux` with no version. Any other well-formed profile, including
   `agent-linux@1`, is accepted and the lease is `unsatisfiable` with `unsupported_profile`, because
-  v0 has no versioned profiles.
+  v1 has no versioned profiles.
+
+### Plan
+
+**A plan is a JSON document, read from a file, that says which agents a project's work starts and
+in what order; `create --plan <file>` picks the lease's size from it (D74, D75).** It is the one
+value that names a file rather than holding the value itself. A caller that knows the size it
+wants gives `--size` instead, and the two MUST NOT be given together
+([`create`](#agentspace-lease-create)).
+
+**The argument is a path to the file, and is used as given** (architect, 2026-11-24, for
+v0.10-T01, pin P14):
+- **Accepted:** a path, absolute or relative to the working folder of the command. It is not
+  trimmed, since a path with its whitespace trimmed can name another file, and is never normalized,
+  stored or printed, except as the message of a refusal quotes it ([Messages](#messages)). A value
+  of only whitespace is a path like any other.
+- **`-` is a file called `-` in the working folder**, never standard input: no command reads
+  standard input ([The program](#the-program)).
+- **An empty value is the `usage` error that any flag's empty value is**
+  ([Command lines](#command-lines)).
+- **An argument that is not valid Unicode, or that holds U+FEFF, is refused with `invalid_value`
+  for `plan`**, as such a value of any flag is ([Input tolerance](#input-tolerance)), and no file
+  is opened for it.
+- **The file MUST be a regular file.** A folder, or a device such as `CON` or `NUL` on Windows, or a
+  pipe, is refused as a file that could not be read (architect, 2026-11-24, for v0.10-T01, pin P7),
+  and `create` MUST NOT wait on it as it would on a console or another program.
+
+**The document's shape (D74):** a JSON object.
+- **`turns`**, required: an array of turns, in the order they run. A plan has 1 to 32 turns.
+- **`name`**, optional: the plan's name, such as its epic's. It is printed as `sized_for.plan`
+  ([Fields](#fields)), and a plan without one gives a lease whose `sized_for` has no `plan`.
+- **A turn** is an object with a `name`, required, and `stories`, required: an array of 1 to 32
+  stories.
+- **A story** is an object with a `name`, required, and `subagents`, required: an array of 1 to 32
+  subagents.
+- **A subagent** is an object with a `name`, a `model` and an `effort`, all required, and MAY have
+  `after`: an array of 0 to 31 names of the same story's subagents that it starts after, no name
+  twice. **An empty `after` is valid, and means the same as none** (architect, 2026-11-24, for
+  v0.10-T01, pin P20).
+- **No other member is allowed, at any level** (architect, 2026-11-24, for v0.10-T01, pin P4). A
+  plan has no member for a story's peak: the peak is always counted, never stated (below).
+
+**#0203's staffing plan, as a plan (D74):**
+
+```json
+{"name":"v0.09","turns":[{"name":"T03","stories":[{"name":"E0.09-T03-S01","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author","runner"]}]}]}]}
+```
+
+Its one story's peak is 3: the implementer, the test author and the runner start after none of
+the others, and the reviewer starts after all three. Its one turn, `T03`, has 4 agents at once,
+the story's 3 and 1 for its dev lead. So its busiest turn is `T03`, with 4, and at today's
+footprint the lease's size is `s` and its `sized_for` is `{"plan":"v0.09","turn":"T03","agents":4}`.
+
+**Names** (architect, 2026-11-24, for v0.10-T01, pin P2): the plan's, each turn's, each story's
+and each subagent's `name`, and each entry of `after`.
+- **1 to 64 printable ASCII characters, U+0020 to U+007E, with no space at either end:**
+  `^[!-~]([ -~]{0,62}[!-~])?$`. A name MAY hold spaces inside it, as `test author` does.
+- **Compared exactly**, character by character: never trimmed, and never folded to one case, so
+  `T03` and `t03` are two names.
+- **Unique among their siblings:** no two turns of the plan, no two stories of one turn, and no two
+  subagents of one story have the same name. Two stories of different turns MAY share a name, and
+  so MAY two subagents of different stories.
+- **An `after` entry MUST name a subagent of its own story**, and the starts it gives MUST NOT form
+  a cycle: no subagent starts after itself, directly or through others.
+
+**Model and effort are recorded, not judged** (D27, D74, and D81 as changed for v0.10-T01;
+architect, 2026-11-24, for v0.10-T01, pin P3).
+- **`model` takes a name's form, above:** 1 to 64 printable ASCII characters with no space at
+  either end. A model named with its version has a space, as `Opus 5.5` does, and a time-bound pin
+  of one carries `+` and an expiry.
+- **`effort` is 1 to 32 characters, ASCII letters, digits, `.`, `_` and `-`, starting with a
+  letter or digit:** `^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`.
+- **Each is kept as given, never normalized, and neither is a list of names**, so a new model or
+  effort needs no new release. **Neither changes the size**: no sizing reads them (D73).
+- **The plan is kept with the lease's record ([docs/state.md](state.md#the-lease-state-file)), for
+  D27's later use, and no output prints the plan, a model or an effort**, an error's message
+  included.
+
+**The file** (architect, 2026-11-24, for v0.10-T01, pins P1, P4, P18 and P21):
+- **At most 262144 bytes (256 KiB), a byte order mark counted.** Its size is checked before it is
+  read whole, and a build MUST NOT read more than 262145 bytes of it, so a file that grows past the
+  bound as it is read is refused as larger too.
+- **UTF-8.** A UTF-8 byte order mark at its start is accepted and ignored, the one exception to
+  [Input tolerance](#input-tolerance)'s rule for U+FEFF. U+FEFF anywhere else in the file is
+  refused. A file that is not valid UTF-8 is refused, among them one in UTF-16 with or without its
+  byte order mark.
+- **One JSON document, whose members' names are unique in each object.** JSON allows an object to
+  give a name twice, and parsers then keep one value or the other; a plan MUST NOT, so that what
+  agentspace reads is what its writer meant. Two names are the same when they are the same once
+  their escapes are read. A string that holds an unpaired surrogate, as `"\ud800"` does, is not
+  valid JSON.
+- **A build's parser MAY limit how deeply the document nests, and MUST allow at least 64 levels**,
+  counting the document as level 1. A plan's deepest value, an `after` entry, is at level 9, so a
+  document nested past 9 levels is never a plan.
+- **`null` for an optional member, the plan's `name` or a subagent's `after`, means that it is not
+  given**, as in every input document ([Schemas](#schemas)). `null` for a required member is
+  refused.
+- **Unlike an argument, nothing in the document is trimmed or normalized.** A value the rules above
+  refuse is refused, never corrected.
+
+**The bounds, and why they are these** (architect, 2026-11-24, for v0.10-T01, pin P1): at most 32
+turns, 32 stories in a turn, 32 subagents in a story, and 31 names in an `after`, in a file of at
+most 262144 bytes. They hold every plan agentspace has laid out, of which v0.06's, twenty-six
+stories in six turns, is the largest (D74). A turn within them can have up to 1025 agents at once,
+and any turn of more than the largest size holds is answered `plan_too_large` (below).
+
+**A story's peak is counted from its starts, never stated (D74):** the most of its subagents in a
+set of which none starts after another, directly or through others. A subagent starts after
+another directly when that one is in its `after`, and through others when it starts after one
+that starts after that one, at any depth. The peak is the most subagents that can run at once,
+however long each takes: the width of the story's `after` graph. A story whose subagents each
+start after the one before has a peak of 1, and one with no `after` at all has a peak of its
+number of subagents. A peak stated anywhere else, such as on a story's card (D31), is not read.
+
+**A turn's agents at once are the sum of its stories' peaks, plus 1 for its dev lead (D27,
+D74).** **The plan's agents at once are its busiest turn's**: the turn with the most, and the
+first such turn in the plan's order on a tie. Every plan that is well formed has at least 2.
+
+**A lease is sized for the whole plan it is given (D74).** No flag picks a turn. A caller that
+wants one turn's size gives a plan that holds that turn alone.
+
+**The size picked is the smallest of the [sizes](#size) whose vCPUs and memory are both at least
+the plan's agents at once times agentspace's per-agent footprint (D75).** The size goes on as a
+`--size` does: the driver judges it as it judges any size, and the lease's platform, profile and
+TTL are given and judged as they are without a plan ([`create`](#agentspace-lease-create)).
+- **The footprint is agentspace's, not this contract's**, and MAY change without a new contract
+  version (D76; [Versioning](#versioning)). A new footprint changes which size a plan gets, never
+  what a field means.
+- **Today's footprint, for information:** half a vCPU and 2 GiB of memory for each agent at once
+  (D73). At it, each size holds this many agents at once (architect, 2026-11-24, for v0.10-T01,
+  pin P11):
+
+  | Agents at once | Size picked |
+  |---|---|
+  | 2 to 4 | `s` |
+  | 5 to 8 | `m` |
+  | 9 to 16 | `l` |
+  | 17 to 32 | `xl` |
+  | More than 32 | None: `plan_too_large`, below |
+
+- **A caller MUST read the size from the lease, and MUST NOT work it out from the plan**, since
+  the footprint can change.
+- **A plan of more agents at once than the largest size holds is never given less (D5, D75):** its
+  lease is `unsatisfiable` with the one reason `plan_too_large`, its `size` is `xl`, the largest,
+  and its `sized_for` says which turn needed more ([Fields](#fields); D81). Such a plan is met by
+  splitting its busiest turn into turns that fit.
+
+**A plan that is not well formed is refused with `invalid_value` for `plan`** (exit 2, D74), and
+its message is `Plan '<value>' is not a valid plan: <why>.` (D81, as changed for v0.10-T01;
+architect, 2026-11-24, for v0.10-T01, pins P7 and P12). `<value>` is the `--plan` argument as
+given, quoted by [Messages](#messages)' rules, never a path agentspace made from it, and `<why>` is
+the one of the table below that the first check the plan fails gives, word for word.
+- **Every refusal of a plan is `invalid_value`**, a bound exceeded included. `out_of_range` stays
+  the TTL's alone.
+- **A refused plan records no lease**, and creates nothing.
+
+| Check, in order | The plan fails it when | `<why>` |
+|---|---|---|
+| 1. Size | A regular file at that path holds more than 262144 bytes, by its size found before it is read, or grows past that as it is read | `the file is larger than 262144 bytes` |
+| 2. Read | The file's size cannot be found, or it cannot be opened or read, for any reason: no file has that path, a folder, a device or a pipe has it, access is denied, or the argument is not valid Unicode or holds U+FEFF | `the file could not be read` |
+| 3. UTF-8 | The file is not valid UTF-8 | `the file is not valid UTF-8` |
+| 4. JSON | The file, its leading byte order mark set aside, is not one JSON document: it is empty or only whitespace, has text after the document, holds U+FEFF outside a string, holds a string with an unpaired surrogate, or nests deeper than the parser allows | `the file is not valid JSON` |
+| 5. Members | An object gives one member's name twice | `an object has two members named '<member>'` |
+| 6. Schema | The document is not of the shape above: a value of the wrong type, the document included; a required member missing or `null`; a member that is not in the shape; an empty or too long `turns`, `stories` or `subagents`, or an `after` of more than 31 names; an `after` that names one subagent twice; or a name, model or effort not of its form | `the document does not match the plan schema` |
+| 7. Turns | Two turns have one name | `turn '<turn>' is named twice` |
+| 8. Stories | Two stories of one turn have one name | `story '<story>' is named twice in turn '<turn>'` |
+| 9. Subagents | Two subagents of one story have one name | `subagent '<name>' is named twice in story '<story>'` |
+| 10. After | An `after` entry names no subagent of its story | `subagent '<name>' in story '<story>' starts after '<after>', which is no subagent of that story` |
+| 11. Cycle | A story's subagents start after one another in a cycle, a subagent that starts after itself included | `the subagents of story '<story>' start after each other in a cycle` |
+
+**Which fault is reported** (architect, 2026-11-24, for v0.10-T01, pins P7 and P12):
+- **Only the first check that fails, in the table's order, is reported**, and only one fault of
+  it: the first in document order. For check 5, that is the first member whose name an earlier
+  member of the same object has; for checks 7 to 9, the first name that repeats an earlier
+  sibling's; for check 10, the first subagent with such an entry, and its first such entry; and
+  for check 11, the first story with a cycle.
+- **`<turn>`, `<story>`, `<name>` and `<after>` are names from the plan, quoted raw, as the plan
+  writes them.** They have passed the schema, so each is printable ASCII. `<turn>` is the turn
+  that holds the story, and `<story>` the story that holds the subagent.
+- **`<member>` and `<value>` are quoted by [Messages](#messages)' rules:** each control character
+  written as `\u` and four lowercase hex digits, and each unpaired surrogate in the argument as
+  [Input tolerance](#input-tolerance) says.
+- **No `<why>` carries an operating system's error text, or any path other than the argument**
+  (D81, as changed for v0.10-T01), and none quotes a model, an effort or any other value of the
+  document.
+
+**Which checks the plan schema can make.**
+[`plan.input.schema.json`](../schemas/plan.input.schema.json) holds check 6: the shape, every
+member required or allowed, the bounds on each array, `after`'s names unique, and the forms of
+names, models and efforts. **No JSON Schema can make the others, and `create` MUST:** checks 1 to
+5, which are about the file before it is a document (a schema sees a document already parsed, with
+a member given twice already lost), and checks 7 to 11, which compare names with one another. A
+document the schema accepts is therefore not always a plan, and passing the schema never makes a
+plan acceptable, as for every input schema ([Schemas](#schemas)).
+
+**In a request document, `plan` is the plan document itself**, an object, never a file name, and
+`null` or absent means no plan. A request whose `plan` and `size` are both present and not `null`
+is refused by its schema. The plan in it is validated as `plan.input.schema.json` validates a
+plan, through that schema's copy in `lease-create.input.schema.json`'s `$defs`, and checks 7 to 11
+apply to it as to a file's. No request member carries a path (architect, 2026-11-24, for
+v0.10-T01, pins P8 and P19).
 
 ### Size
 
 - **Accepted:** 1 to 8 letters and digits, in any case, with surrounding whitespace.
 - **Normalized to:** lowercase, whitespace trimmed.
-- **Default:** `m`.
+- **Default:** `m`, for a `create` with no `--plan`. With `--plan`, the plan picks the size, and
+  `--size` MUST NOT be given ([Plan](#plan); D75).
 - **A size is a floor of vCPUs and memory** (D65): the compute that serves a lease of that size
   has at least that many vCPUs and at least that much memory. A size names nothing else, and never
   a machine type (D1).
@@ -674,8 +969,8 @@ each supported profile promises is in [Profiles](#profiles).
   | `l` | 8 | 32 GiB |
   | `xl` | 16 | 64 GiB |
 
-- **Supported in v0:** `s`, `m`, `l` and `xl`, from agentspace's v0.09 release (#0049; D65), for
-  `linux/arm64`, the one platform v0 supports (D13). Before v0.09, `m` alone was. Any other
+- **Supported in v1:** `s`, `m`, `l` and `xl`, as from agentspace's v0.09 release (#0049; D65), for
+  `linux/arm64`, the one platform v1 supports (D13). Before v0.09, `m` alone was. Any other
   well-formed size, such as `xxl`, is accepted, and the lease is `unsatisfiable` with
   `unsupported_size`.
 - **A size is judged on its own, whatever the platform asked for** (architect, 2026-11-23, for
@@ -756,11 +1051,11 @@ beyond that, its libc first.
 - **The platform alone never says the libc.** An agent that ships a Rust `-gnu` binary, Node's
   `linux-arm64` build or a `manylinux` wheel learns from the profile whether it will run.
 - **A musl host, such as Alpine, or a `none` host would be a profile of its own**, unsatisfiable
-  until a driver supports it (D5). No v0 profile has either.
+  until a driver supports it (D5). No v1 profile has either.
 
 ### agent-linux
 
-**The one profile v0 supports, with no version.** Every host that serves a lease with profile
+**The one profile v1 supports, with no version.** Every host that serves a lease with profile
 `agent-linux` MUST meet this promise:
 
 | Promise | `agent-linux` |
@@ -808,7 +1103,7 @@ agentspace [--help]
 agentspace <command> ...
 ```
 
-**The top level.** In v0, `lease` is the only command, and any other is `usage`. A later version
+**The top level.** In v1, `lease` is the only command, and any other is `usage`. A later version
 MAY add operator commands, which are outside this contract.
 
 | Flag | Meaning |
@@ -883,7 +1178,7 @@ Exit codes:
 
 ```
 agentspace lease create --project <name> [--platform <os/arch>] [--profile <name>]
-                        [--size <size>] [--ttl <duration>]
+                        [--size <size> | --plan <file>] [--ttl <duration>]
 ```
 
 **Requests a lease for one agent of a project, and prints it.** The lease's state is `ready`,
@@ -904,20 +1199,87 @@ be checked.
 **A platform, profile or size that cannot be met is never swapped for another (D5).** If any one of
 them cannot be met, the lease is `unsatisfiable`, whatever the others are. Whether a request can be
 met is decided before anything is issued. A lease that larger compute serves is met, not swapped,
-and its `size` stays the size asked for ([Size](#size), D66).
+and its `size` stays the size asked for ([Size](#size), D66). **A plan that no size holds is never
+given the largest size instead:** its lease is `unsatisfiable` with `plan_too_large`, as below
+(D75).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--project <name>` | [Project](#project) | None; required | The project the agent works on. |
-| `--platform <os/arch>` | [Platform](#platform) | `linux/arm64` | Only `linux/arm64` is supported in v0. |
-| `--profile <name>` | [Profile](#profile) | `agent-linux` | Only `agent-linux` is supported in v0. |
-| `--size <size>` | [Size](#size) | `m` | `s`, `m`, `l` and `xl` are supported in v0, from v0.09 (#0049). |
+| `--platform <os/arch>` | [Platform](#platform) | `linux/arm64` | Only `linux/arm64` is supported in v1. |
+| `--profile <name>` | [Profile](#profile) | `agent-linux` | Only `agent-linux` is supported in v1. |
+| `--plan <file>` | [Plan](#plan) | None | A file holding a plan; the lease gets the size the plan needs, as below. Not with `--size`. From v0.10 (#0050; D75). |
+| `--size <size>` | [Size](#size) | `m`, without `--plan` | `s`, `m`, `l` and `xl` are supported in v1, as from v0.09 (#0049). Not with `--plan`. |
 | `--ttl <duration>` | [TTL](#ttl) | `8h` | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+**`--plan` stands before `--size` in this table**, so the values are checked in the order project,
+platform, profile, plan, size and TTL; the two are never both given (architect, 2026-11-24, for
+v0.10-T01, pin P13).
+
+**`--plan <file>` sizes the lease for a plan** (D74, D75):
+- **The file is read as one UTF-8 JSON document**, a plan as [Plan](#plan) defines it, which also
+  gives the path's rules, the file's bounds and its byte order mark. It is read and parsed when
+  the values are checked ([Command lines](#command-lines), "Which error is reported", rule 5),
+  before `create` waits for any other command
+  ([Concurrency and atomicity](#concurrency-and-atomicity); architect, 2026-11-24, for v0.10-T01,
+  pin P28), and is never written.
+- **Standard input is still never read** ([The program](#the-program)): `--plan -` names a file
+  called `-`.
+- **`--plan` with `--size` is a `usage` error, with `field` `plan`, in either order**, since the
+  plan picks the size (D75; architect, 2026-11-24, for v0.10-T01, pin P6).
+  [Command lines](#command-lines) says where it ranks among usage errors.
+- **`--platform`, `--profile` and `--ttl` apply as they do without it**, with the same defaults
+  (D75).
+- **A file that cannot be read, or that does not hold a plan as [Plan](#plan) defines it, is
+  refused with `invalid_value` for `plan`** ([Plan](#plan) gives each message), and no lease is
+  recorded.
+
+**The size it picks is the smallest of [Size](#size)'s sizes that holds the plan's agents at once
+at agentspace's per-agent footprint** (D73, D75), as [Plan](#plan) says, with today's figure, for
+information.
+- **From there the lease is placed exactly as a `create` with `--size` set to the size picked, and
+  the same other flags, would be** (D75): the same states and reasons, `unsupported_size` among
+  them for a platform that lacks the size picked, and the same placing on the project's compute
+  ([A host's life follows its leases](#a-hosts-life-follows-its-leases)). No driver is given the
+  plan ([docs/driver.md](driver.md)). A plan that fits but asks for a platform or profile that
+  cannot be met gets `sized_for`, the size picked, and the reasons a `--size` lease would get
+  (architect, 2026-11-24, for v0.10-T01, pin P16).
+- **The lease's `size` is the size picked, and its `sized_for` says what it was sized for**, in
+  every state ([Fields](#fields); D75). A lease made without `--plan` has no `sized_for`.
+
+**A plan that no size holds is `unsatisfiable`, with `plan_too_large`** (D75, D81): a plan whose
+agents at once are more than the largest size holds, which is 32 at today's footprint.
+- **`plan_too_large` is the lease's only reason**, whatever its platform and profile (D81;
+  architect, 2026-11-24, for v0.10-T01, pin P16). `create` decides it before any driver is asked
+  to place the lease, and that asking is what judges the platform and the profile.
+- **Its `size` is `xl`, the largest size, and it keeps `sized_for`**, which says why (D81). Since
+  it is `unsatisfiable`, nothing is issued for it at that size or any other (D5).
+- **What `create` still does for it** (architect, 2026-11-24, for v0.10-T01, pin P26): it still
+  needs a driver, so with none it fails with `internal` first, as every `create` does
+  ([Messages](#messages), "No driver"), and it still records the lease, so a failure to read,
+  lock or write the lease records is `internal` as for any `create`. **It makes every check that
+  `create` makes before a driver is asked to place a lease, in the same order and with the same
+  errors**, among them "`AGENTSPACE_PROXY_COMMAND` not valid text" and "Way to reach the host not
+  found" ([Messages](#messages)), so a `plan_too_large` answer still means the install is sound
+  (architect, 2026-11-24, for v0.10-T01, pin P32). **It MUST NOT ask any driver to place the
+  lease** (pin P26), so it starts no provisioning program ([Environment](#environment)), and does
+  nothing a driver's placing does: it needs no CA, and makes no key, credential or alias, and no compute is made,
+  changed or started. The lease is kept as every `unsatisfiable` lease is, needs no `release`, and
+  its `create` exits 0 ([States](#states)).
+- **Why it is refused rather than given `xl`:** a request that cannot be met is never quietly
+  given less (D5). A plan whose busiest turn is split into turns that fit is met.
+
+**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
 [`lease-create.input.schema.json`](../schemas/lease-create.input.schema.json), with members
-`project`, `platform`, `profile`, `size` and `ttl`.
+`project`, `platform`, `profile`, `plan`, `size` and `ttl`.
+- **`plan` is the plan document itself**, as
+  [`plan.input.schema.json`](../schemas/plan.input.schema.json) defines it, never a file name: an
+  object, or `null` or absent for no plan ([Plan](#plan); architect, 2026-11-24, for v0.10-T01,
+  pins P8 and P19).
+- **A request whose `plan` and `size` are both present and not `null` is refused by the schema**,
+  as the command line refuses `--plan` with `--size` (architect, 2026-11-24, for v0.10-T01, pin
+  P8).
 
 **Output:** the lease document. **Exit codes:** 0, 1 and 2.
 
@@ -927,16 +1289,19 @@ and its `size` stays the size asked for ([Size](#size), D66).
 |---|---|---|
 | `usage` | `project` | No `--project`, or `--project` with no value, an empty value, or given twice. |
 | `usage` | The flag | Any other flag with no value, an empty value, or given twice. |
+| `usage` | `plan` | `--plan` with `--size`, in either order (architect, 2026-11-24, for v0.10-T01, pins P6 and P13). |
 | `usage` | None | An unknown option, or any positional argument. |
-| `invalid_value` | `project`, `platform`, `profile`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. |
+| `invalid_value` | `project`, `platform`, `profile`, `plan`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. For `plan`, a file that cannot be read, or that does not hold a plan as [Plan](#plan) defines it. |
 | `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
 | `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, the lease's host could not be looked up or its making could not be started (from v0.07, [docs/driver.md](driver.md#where-it-places-a-lease)), or the lease records could not be read, written or locked. No lease was recorded. What a failed `create` removes, what it MAY keep in the OpenSSH configuration, and what its message MUST name when a removal fails are in [Concurrency and atomicity](#concurrency-and-atomicity). |
+
+A plan that no size holds is not an error: its lease is `unsatisfiable`, and `create` exits 0.
 
 **Help:**
 
 ```
 Usage: agentspace lease create --project <name> [--platform <os/arch>] [--profile <name>]
-                               [--size <size>] [--ttl <duration>]
+                               [--size <size> | --plan <file>] [--ttl <duration>]
 
 Requests a lease for one agent of a project, and prints it as JSON.
 Check the lease's state before connecting: ready, pending or unsatisfiable.
@@ -950,19 +1315,28 @@ Options:
   --profile <name>      Default agent-linux. Accepts name or name@version.
   --size <size>         Default m. One of s, m, l or xl: at least 2, 4, 8 or 16 vCPUs,
                         with 4 GiB of memory for each.
+  --plan <file>         Size the lease for a plan: a JSON file of turns, stories and
+                        subagents. Picks the smallest size that holds its busiest turn.
+                        Not with --size.
   --ttl <duration>      Default 8h. From 1m to 24h, never clamped.
                         Examples: 8h, 90m, 1h30m, '2 hours', PT8H.
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v0 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
+In v1 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
+So does a plan whose busiest turn no size holds.
 ```
 
 **Two parts of this help changed in v0.09** (#0049; architect, 2026-11-23, for v0.09-T01, pin
 P28): the `--size` row, which read `Default m.` alone, and the line that begins `In v0 only`,
 which read `In v0 only linux/arm64, agent-linux and size m can be met.` Every other byte of this
-help is as before v0.09.
+help was as before v0.09.
+
+**Four parts of this help changed in v0.10** (#0050; D75, D76): the usage line's second line,
+which read `[--size <size>] [--ttl <duration>]`; the `--plan` row, which is new; the line that
+begins `In v1 only`, which began `In v0 only` and is otherwise as in v0.09; and the last line,
+which is new. Every other byte of this help is as in v0.09.
 
 ### agentspace lease get
 
@@ -985,7 +1359,7 @@ passed is printed as `expired`.
 | `<id>` | [Lease ID](#lease-id) | Required. |
 | `-h`, `--help` | | Print the help below and exit 0. |
 
-**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
 [`lease-get.input.schema.json`](../schemas/lease-get.input.schema.json), with the member `id`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2 and 3.
@@ -1055,7 +1429,7 @@ with the lease from the moment it becomes `ready`; how is [docs/state.md](state.
 | `--ttl <duration>` | [TTL](#ttl) | The lease's `ttl_seconds` | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
 [`lease-renew.input.schema.json`](../schemas/lease-renew.input.schema.json), with members `id` and
 `ttl`.
 
@@ -1169,10 +1543,11 @@ sees:
   A connection made with a certificate is ended by `release` only when it is one of the lease's
   connections on the caller's machine, as above.
 - **Release needs no CA,** and works on a machine whose CA is missing.
-- **Contract v0's release document, its schemas and its reason codes are unchanged.** `release`
-  prints the same lease document as before, with the same fields, exit codes and errors, whether
-  it ended no connection or many. Its new effect is on the connections on the caller's machine
-  alone, and is [not a new contract version](#versioning).
+- **Ending connections changed none of contract v0's release document, schemas or reason codes**
+  (v0.08), and v1 changes none of them for it. `release` prints the same lease document as
+  before, with the same fields, exit codes and errors, whether it ended no connection or many. Its
+  effect is on the connections on the caller's machine alone, and was
+  [not a new contract version](#versioning).
 - **An ID that names no lease is `not_found` (exit 3)**, not a success: there is no lease document
   to print, and success would hide a mistyped ID.
 - **A caller retrying `release` MAY treat exit 3 as nothing left to release.** A lease is kept for at
@@ -1185,7 +1560,7 @@ sees:
 | `<id>` | [Lease ID](#lease-id) | Required. |
 | `-h`, `--help` | | Print the help below and exit 0. |
 
-**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
 [`lease-release.input.schema.json`](../schemas/lease-release.input.schema.json), with the member
 `id`.
 
@@ -1272,7 +1647,7 @@ agentspace lease list [--project <name>] [--state <state>[,<state>...]]...
 | `--state <state>` | [State filter](#state-filter) | Every state | MAY be repeated, and MAY be a comma-separated list. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document** (never read by the v0 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
 [`lease-list.input.schema.json`](../schemas/lease-list.input.schema.json), with members `project`
 and `state`.
 
@@ -1314,11 +1689,11 @@ Options:
 |---|---|---|
 | 0 | None | The command did what was asked, or printed help. Stdout holds its document or help. |
 | 1 | `internal` | Anything that is not the caller's fault, such as a credential that could not be issued or lease records that could not be read. |
-| 2 | `usage` | An unknown or missing command, subcommand, flag or argument, a flag given twice, or a flag with no value or an empty value ([Command lines](#command-lines)). |
-| 2 | `invalid_value` | A value outside its [accepted forms](#values). |
-| 2 | `out_of_range` | A well-formed value outside its allowed range; in v0, only the TTL. |
+| 2 | `usage` | An unknown or missing command, subcommand, flag or argument, a flag given twice, a flag with no value or an empty value, or `--plan` with `--size` ([Command lines](#command-lines)). |
+| 2 | `invalid_value` | A value outside its [accepted forms](#values), a plan that is not well formed among them ([Plan](#plan)). |
+| 2 | `out_of_range` | A well-formed value outside its allowed range; in v1, only the TTL. |
 | 3 | `not_found` | No kept lease has the ID given. |
-| 4 | `invalid_state` | The lease's state does not allow the subcommand; in v0, only `renew`. |
+| 4 | `invalid_state` | The lease's state does not allow the subcommand; in v1, only `renew`. |
 
 **An exit code not in the table MUST NOT be used.** Each non-zero exit code MUST come with one of
 the error codes beside it, and every failure that fits none of the others is `internal`.
@@ -1350,13 +1725,15 @@ So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2),
 |---|---|---|---|
 | `code` | String | Always | One of the error codes above. |
 | `message` | String | Always | One or more sentences for a person: what was wrong, and what to do. Never empty. |
-| `field` | String | `invalid_value` and `out_of_range`; `usage` in the five cases below | The flag or request member at fault, without dashes: `id`, `project`, `platform`, `profile`, `size`, `ttl` or `state`. |
+| `field` | String | `invalid_value` and `out_of_range`; `usage` in the six cases below | The flag or request member at fault, without dashes: `id`, `project`, `platform`, `profile`, `plan`, `size`, `ttl` or `state`. `plan` is new in v1 ([Changes from v0](#changes-from-v0)). |
 | `lease_id` | String, lowercase UUIDv4 | `not_found` and `invalid_state` | The normalized ID asked for. |
 | `state` | String, [state](#states) | `invalid_state` | The state the lease is in. |
 
-**A `usage` error MUST carry `field` in exactly these five cases, and MUST NOT otherwise:** a flag
+**A `usage` error MUST carry `field` in exactly these six cases, and MUST NOT otherwise:** a flag
 with no value, a flag with an empty value, a flag given twice (each naming that flag), a missing
-lease ID (`id`) and a missing `--project` (`project`).
+lease ID (`id`), a missing `--project` (`project`), and `--plan` with `--size` (`plan`, in either
+order; architect, 2026-11-24, for v0.10-T01, pins P6 and P13). The error schema checks none of the
+six, so conformance does ([Schemas](#schemas)).
 
 **A message MUST NOT echo a secret, and MUST NOT name a backend, a location or a machine (D1).** A
 message SHOULD quote the value that was refused, and SHOULD say how to fix it, as in `TTL '8' has
@@ -1376,11 +1753,11 @@ carry:
   check.
 - **A backend, a location or a machine (D1).**
 
-**The original error is not kept in contract v0.** A build MAY drop it, as the prototype does, and
-MUST NOT put it in the error document, on stdout, or in any file [docs/state.md](state.md) lists. A
-place to keep it for diagnosis, such as a log, is later and not blocking. A message such as
-`agentspace lease create failed: The lease's credential could not be issued. Nothing was
-recorded; try again.` is the shape meant.
+**The original error is not kept in contract v1, as in v0.** A build MAY drop it, as the
+prototype does, and MUST NOT put it in the error document, on stdout, or in any file
+[docs/state.md](state.md) lists. A place to keep it for diagnosis, such as a log, is later and not
+blocking. A message such as `agentspace lease create failed: The lease's credential could not be
+issued. Nothing was recorded; try again.` is the shape meant.
 
 ### Messages
 
@@ -1421,6 +1798,7 @@ them differently where this page does not say MUST.
 | `usage` | No value | `Option --<flag> needs a value. Run 'agentspace lease <sub> --help'.` |
 | `usage` | Empty value | `Option --<flag> has an empty value. Run 'agentspace lease <sub> --help'.` |
 | `usage` | Given twice | `Option --<flag> is given twice. Give it once.` |
+| `usage` | `--plan` with `--size` (`create`), in either order | `Options --plan and --size cannot be given together; the plan picks the size. Run 'agentspace lease create --help'.` (architect, 2026-11-24, for v0.10-T01, pin P6) |
 | `usage` | Unexpected argument | `Unexpected argument '<value>' for agentspace lease <sub>. Run 'agentspace lease <sub> --help'.` |
 | `usage` | No lease ID | `No lease ID given. Run 'agentspace lease <sub> --help'.` |
 | `usage` | No `--project` | `Option --project is required. Run 'agentspace lease create --help'.` |
@@ -1428,6 +1806,7 @@ them differently where this page does not say MUST.
 | `invalid_value` | `project` | `Project '<value>' is not a project name. Use 1 to 32 letters, digits and '-', starting and ending with a letter or digit.` |
 | `invalid_value` | `platform` | `Platform '<value>' is not an os/arch pair. Give one as in 'linux/arm64'.` |
 | `invalid_value` | `profile` | `Profile '<value>' is not a profile name. Give name or name@version, as in 'agent-linux'; a version is 1 or more.` |
+| `invalid_value` | `plan` | `Plan '<value>' is not a valid plan: <why>.`, where `<value>` is the `--plan` argument as given, never made a full path, and `<why>` is one of those [Plan](#plan) lists, word for word (architect, 2026-11-24, for v0.10-T01, pins P7 and P12) |
 | `invalid_value` | `size` | `Size '<value>' is not a size. Use 1 to 8 letters and digits, as in 'm'.` |
 | `invalid_value` | `ttl`, all digits once trimmed | `TTL '<value>' has no unit. Give one, as in '8h'.` |
 | `invalid_value` | `ttl`, anywhere in the trimmed value, a digit, optional whitespace, then an uppercase `M` that ends the trimmed value or is followed by a character that is not a letter, so `1M30s` and `P1M` take it and `8Mx` does not (architect, 2026-11-19) | `TTL '<value>' uses 'M', which could mean months or minutes. Write minutes as 'm' or 'min'.` |
@@ -1503,6 +1882,7 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 | `lease-renew.input.schema.json` | A `renew` request | The argument and flag of `renew` |
 | `lease-release.input.schema.json` | A `release` request | The argument of `release` |
 | `lease-list.input.schema.json` | A `list` request | The flags of `list` |
+| `plan.input.schema.json` | A plan | The file `--plan` names, and the `plan` of a `create` request ([Plan](#plan)) |
 
 - **Output schemas are strict:** `additionalProperties` is false everywhere, every field that is
   always present is required, each state and each error code requires and forbids its own fields,
@@ -1510,10 +1890,14 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
   validators need not enforce it.
   - **A message, in an error or in a reason, MUST NOT be empty or start with a space**, and holds
     no control character.
-  - **A lease's `reasons` holds each code at most once**, and so at most four. Their order is in
+  - **A lease's `reasons` holds 1 to 4 items, each code at most once.** Their order is in
     [Fields](#fields); a schema cannot check it.
+  - **The lease and list schemas MUST refuse a `plan_too_large` reason that is not alone**, and a
+    lease that has one without `sized_for` or with a `size` other than `xl` (D81; architect,
+    2026-11-24, for v0.10-T01, pin P15). Conformance MUST check the same rule against what the
+    CLI prints.
   - **The error schema does not check which `usage` errors carry `field`.** It allows `field` on
-    any `usage` error and requires it on none, because the five cases that MUST carry it
+    any `usage` error and requires it on none, because the six cases that MUST carry it
     ([Exit codes and errors](#exit-codes-and-errors)) differ from the others only in what went
     wrong, which the document does not say in any member a schema can test. A conformance check
     MUST test that rule itself.
@@ -1527,6 +1911,15 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
   be dropped. A range (the TTL limits) cannot be checked by a pattern, so passing the schema does
   not make a TTL acceptable. The contract sets no length limit on a TTL; a hosted API MAY limit a
   request's size.
+- **The plan's schema, `plan.input.schema.json`, is strict in form as well as in meaning:** a
+  plan's names, models and efforts are matched as written, and nothing in a plan is trimmed or
+  case-folded ([Plan](#plan); architect, 2026-11-24, for v0.10-T01, pins P2 and P3). Like every
+  input schema, it allows `null` for an optional member to mean "not given" (architect,
+  2026-11-24, for v0.10-T01, pin P21). Passing it never makes a plan acceptable: what a schema
+  cannot see, such as a cycle in `after`, an `after` naming no subagent of its story, two names
+  alike where [Plan](#plan) forbids it, and a member name given twice, is found once the plan is
+  parsed, and refused with `invalid_value` for `plan`. A file's leading byte order mark is the file's, and is
+  not in the document the schema sees.
 - **Input patterns accept whitespace as one character class that lists the `White_Space`
   characters of [Input tolerance](#input-tolerance) and no others**, written out as
   `[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]`, never as `\s`. `\s`
@@ -1538,49 +1931,105 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 - **An input schema MAY accept more than [Values](#values) does, and MUST NOT accept less.**
   Passing an input schema never makes a value acceptable: a TTL's range, for one, is checked
   after it is parsed, and [Values](#values) decides.
-- **The v0 CLI takes flags and arguments only, and never reads a JSON request.** An input
-  document defines a request: its members are the flags and arguments of the same names, it is
-  what a request is validated against, and a hosted API (card #0011) MUST accept it as JSON. In
+- **The v1 CLI takes flags and arguments only, and never reads a JSON request.** The one JSON it
+  reads is the plan file that `create --plan` names, which is a plan, not a request
+  ([Plan](#plan)). An input document defines a request: its members are the flags and arguments of
+  the same names, except that a request's `plan` holds the plan itself where `--plan` names a
+  file, and no request member carries a path (architect, 2026-11-24, for v0.10-T01, pin P19). It
+  is what a request is validated against, and a hosted API (card #0011) MUST accept it as JSON. In
   JSON, insignificant whitespace is allowed anywhere.
 - **Each schema is self-contained**, with shared parts copied into its own `$defs`, because
   PowerShell's `Test-Json -SchemaFile` does not resolve a `$ref` to another file. The lease
-  definition in the list schema's `$defs` MUST stay identical to the lease schema's.
+  definition in the list schema's `$defs` MUST stay identical to the lease schema's. **The plan in
+  `lease-create.input.schema.json`'s `$defs` is a copy of `plan.input.schema.json`'s definition of
+  a plan, and MUST stay identical to it**, so the two accept exactly the same plans (D76;
+  architect, 2026-11-24, for v0.10-T01, pins P8 and P19).
 - **Each schema has samples in [`schemas/samples/`](../schemas/samples)**, named
-  `<schema name>.<case>.json`, which MUST validate. Documents that MUST NOT validate are in
-  `schemas/samples/invalid/` under the same naming, at least one per output schema. A check MUST
-  validate both with a real draft 2020-12 validator and fail on any mismatch.
+  `<schema name>.<case>.json`, which MUST validate, `plan.input.schema.json` among them. Documents
+  that MUST NOT validate are in `schemas/samples/invalid/` under the same naming, at least one per
+  output schema. A check MUST validate both with a real draft 2020-12 validator and fail on any
+  mismatch.
   - Note on where this came from: the prototype's check is `scripts/test-schemas.ps1`, which uses
     PowerShell's `Test-Json`; on 2026-11-18 the samples were also checked with Python's
     `jsonschema` 4.19.
-- **A schema's `$id` names it and is not a download address.** Each `$id` carries the contract
-  version, `v0`.
+- **A schema's `$id` names it and is not a download address.** Each top-level schema's `$id`
+  carries the contract version, `v1`:
+  `https://github.com/SixbucksSolutions/agentspace/schemas/v1/<file name>`, and its title says
+  contract v1 (architect, 2026-11-24, for v0.10-T01, pin P9).
+- **Contract v0's schemas and samples are kept under `schemas/v0/`** (D76; architect, 2026-11-24,
+  for v0.10-T01, pin P9): its eight schemas, and their samples under `schemas/v0/samples/`, the
+  invalid ones under `schemas/v0/samples/invalid/`, each byte for byte as in v0, `$id`s and titles
+  unchanged. They are not v1's schemas, and MUST NOT change.
+  - **They show what v1 keeps of v0** ([Versioning](#versioning)): every document that a command
+    line with no `--plan` prints, error documents included, MUST validate against its v0 schema as
+    well as its v1 one, and v1's conformance MUST check it (D76, D80).
+  - **A check of `schemas/` reads `schemas/v0/` as its own set**, each schema against its own
+    samples, and never mixes the two versions' schemas and samples.
 - **The lease state file's schema, `schemas/state/leases.state.schema.json`, is not part of this
   contract.** It is [docs/state.md](state.md)'s.
 
 ## Versioning
 
-**This is contract v0, the MVP's.**
-- **Any change after which an output could fail to validate against its v0 schema is a new
-  contract version**, and so is a change to an output's meaning. Because output schemas forbid
-  unknown fields, a new output field is a new version.
-- **Accepting an input that v0 refused is not a new version.** Refusing one that v0 accepted is.
-- **Supporting a platform, profile or size that v0 answered `unsatisfiable` is not a new version.**
-  The fields have been in the contract from v0 so that it is not (D5).
-- **Supporting the sizes `s`, `l` and `xl` is not a new version** (v0.09, #0049; D64 to D70,
-  "What none of them changes"). v0 answered each `unsatisfiable`, as the bullet above allows, and
-  `no_capacity` was already one of v0's reasons, so its new use and its new message change no
-  document, schema, field, state, exit code, error or reason code. A lease served by larger
-  compute than its size prints the size it asked for (D66), and nothing in a lease names a
-  machine type (D1).
-- **`release` ending the lease's connections on the caller's machine is not a new version**
-  (v0.08, D59; architect, 2026-11-21, for v0.08-T01): no document, schema, field, state, exit
-  code, error or reason code changes, and a caller never parsed what `release` left running.
+**This is contract v1, which agentspace's v0.10 release (#0050) brings (D76).** Contract v0 was the
+MVP's, and stood until v0.10, the first release that changes an output. The contract's version and
+agentspace's release are two numbers, kept apart (D26). Every change v1 makes is listed in
+[Changes from v0](#changes-from-v0).
+
+**What makes a new version:**
+- **Any change after which an output could fail to validate against the schema of the version
+  before it is a new contract version**, and so is a change to an output's meaning. Because output
+  schemas forbid unknown fields, a new output field is a new version.
+- **Accepting an input that the version before refused is not a new version.** Refusing one that it
+  accepted is.
+- **Supporting a platform, profile or size that the contract answered `unsatisfiable` is not a new
+  version.** The fields have been in the contract from v0 so that it is not (D5).
 - **Changing a message's wording is not a new version**, since no caller parses one.
 - **Changing help text is not a new version either.** Help is for people, and a caller MUST NOT
   parse it. This page and the CLI still change together ([Commands](#commands)).
 - **A profile with no version names its current promise ([Profiles](#profiles)), which MAY move to
   a newer distro release without a new contract version.** Its libc family MUST NOT change, and
   its libc minimum version MUST NOT go down.
+- **agentspace's per-agent footprint is not part of the contract** (D73, D76). A new figure
+  changes which size a plan gets ([Plan](#plan)), never what a field means, and is not a new
+  version. So a plan answered `plan_too_large` today MAY get a size later, with no new version.
+
+**What made v1** (D76, as D81 changed it):
+- **`sized_for`, a new output member**, on every lease made with `--plan` ([Fields](#fields)).
+- **`plan_too_large`, a new reason code** ([Fields](#fields)).
+- **`plan`, a new `field` in error documents**, of `invalid_value` and of `usage`
+  ([Exit codes and errors](#exit-codes-and-errors)).
+
+Each could fail a v0 schema. **No lease lacks `size`**, since a `plan_too_large` lease's is `xl`
+(D81), so that is not among them. `--plan`, the plan document and the request document's `plan`
+are inputs that v0 refused, which alone would not make a new version.
+
+**What v1 keeps of v0** (D76):
+- **A command line with no `--plan`, in any case and in either form, whose output holds no lease
+  made with `--plan`, MUST print the JSON document v0 printed for it, and MUST fail with the
+  errors v0 failed with:** the same members, meaning the same, and the same exit code, error code
+  and `field`. v1 changes no message that such a command prints. Its help is text, not a
+  document, and `create`'s help changed in v1 ([`create`](#agentspace-lease-create)).
+  - **So every document such a command prints validates against v0's schema in `schemas/v0/` as
+    well as against v1's**, and v1's conformance MUST show it ([Schemas](#schemas); D76, D80).
+- **A v0 client that reads a lease made with `--plan` can fail its v0 schema** (D76): `get`,
+  `renew`, `release` and `list` print such a lease with `sized_for`, and one that no size holds with
+  `plan_too_large`. **A client that reads such leases MUST validate against v1's schemas.** When v1
+  was made, every caller was agentspace's own: its conformance suite, its architect's live checks,
+  and a person at the command line. No other project's repository ran `agentspace lease`, so no
+  caller outside agentspace's repository had to move with v1 (D76).
+- **Output schemas stay strict** (D76). No rule tells a client to ignore an unknown member, so a
+  later new output member is a new version again, as v1's are.
+
+**v0's history, kept as v0's:**
+- **Supporting the sizes `s`, `l` and `xl` was not a new version** (v0.09, #0049; D64 to D70,
+  "What none of them changes"). v0 answered each `unsatisfiable`, as the rule above allows, and
+  `no_capacity` was already one of v0's reasons, so its new use and its new message changed no
+  document, schema, field, state, exit code, error or reason code. A lease served by larger
+  compute than its size prints the size it asked for (D66), and nothing in a lease names a machine
+  type (D1).
+- **`release` ending the lease's connections on the caller's machine was not a new version**
+  (v0.08, D59; architect, 2026-11-21, for v0.08-T01): no document, schema, field, state, exit
+  code, error or reason code changed, and a caller never parsed what `release` left running.
 
 ## Hardening carried in
 
@@ -1625,7 +2074,8 @@ Terry's call, and nothing here closes one.
 
 **What reading the prototype and its docs could not settle.** After the clean-room review
 (E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and
-none blocks building a drop-in of contract v0.
+none blocks building a drop-in of contract v0. v1's changes ([Changes from v0](#changes-from-v0))
+add no question here, so none blocks a drop-in of contract v1 either.
 
 1. **Closed by D8 (architect, 2026-11-18): contract v0's caller runs on Windows**, from cmd,
    PowerShell and Git Bash ([The program](#the-program)); the program's file name is outside the
@@ -1659,15 +2109,16 @@ none blocks building a drop-in of contract v0.
    shell**, as in `ssh <host_alias> node --version`. Today Node and Codex are put on the `PATH` by
    lines at the end of `ubuntu`'s `~/.bashrc`, after Ubuntu's early return for non-interactive
    shells. Only a run through an alias settles what such a command finds.
-7. **Later, not blocking:** v0's alias carries the forwards as
+7. **Later, not blocking:** v1's alias, as v0's did, carries the forwards as
    [docs/state.md](state.md#the-alias-file) gives them, and a caller MUST NOT rely on them
    ([The credential](#the-credential)), so moving them to the keeper (#0008) changes nothing a
    caller sees.
    **Whether the board's forwards belong in the lease's alias at all** (D12, D30, card #0008), or
    should move to the keeper's own connection. Today a caller's second session on a host warns
    that its remote port forwarding failed.
-8. **Later, not blocking:** every v0 lease logs in as `ubuntu` (D3), which the pattern accepts,
-   and a user it would refuse comes only with a later driver's host (v0.12, #0051).
+8. **Later, not blocking:** every lease in v1, as in v0, logs in as `ubuntu` (D3), which the
+   pattern accepts, and a user it would refuse comes only with a later driver's host (v0.12,
+   #0051).
    **Whether `ssh.user`'s pattern fits every host a later driver serves** (D4, v0.12, #0051). It
    accepts 1 to 64 letters, digits, `.`, `_` and `-`, not starting with `.` or `-`, which covers
    Unix and Windows local user names. A Windows domain user (`DOMAIN\user` or `user@domain`), or a
