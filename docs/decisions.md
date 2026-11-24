@@ -76,7 +76,7 @@ line's text after `Status:`, without its full stop.
 - [D36. The operator never reports a false success](#d36-the-operator-never-reports-a-false-success): Decided
 - [D37. The rewrite is seven files in one install folder, and carries what the checkout held](#d37-the-rewrite-is-seven-files-in-one-install-folder-and-carries-what-the-checkout-held): Decided
 - [D38. v0.05 builds the lease CLI as a Cargo workspace of one crate per area, and cuts over by install](#d38-v005-builds-the-lease-cli-as-a-cargo-workspace-of-one-crate-per-area-and-cuts-over-by-install): Decided
-- [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease, as D65 to D69 design
+- [D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent](#d39-until-v009-the-box-is-sized-by-hand-for-each-use-m-class-a-vcpu-per-agent): Replaced by D65 to D69, on v0.09's install, 2026-11-24
 - [D40. By v1.0, agentspace's own files are JSON where feasible](#d40-by-v10-agentspaces-own-files-are-json-where-feasible): Direction, Terry, 2026-11-19, to be met by v1.0 (#0053)
 - [D41. v0.06 cuts over on the laptop with no lease ready, and Terry's yes for each change to his configuration](#d41-v006-cuts-over-on-the-laptop-with-no-lease-ready-and-terrys-yes-for-each-change-to-his-configuration): Decided; step 8 changed by D42
 - [D42. v0.06 builds the operator and the keeper as crates around two pinned boundaries, in six turns](#d42-v006-builds-the-operator-and-the-keeper-as-crates-around-two-pinned-boundaries-in-six-turns): Decided
@@ -2609,7 +2609,7 @@ prototype's operator and keeper still run (D37).
 
 ### D39. Until v0.09, the box is sized by hand for each use: M class, a vCPU per agent
 
-**Status: MVP only; replaced by v0.09 (#0049), whose size classes size a host from a lease, as D65 to D69 design.**
+**Status: Replaced by D65 to D69 (v0.09, #0049), on v0.09's install, 2026-11-24 (E0.09-T05-S01): a host is sized by its lease, and Terry's rule picks the size (D69).**
 
 **Decided, Terry, 2026-11-19:** "before launching the EC2, make sure it's an M class instance with
 vCPU count >= max number of parallel agents. I want each agent to have its own vCPU and at least 4

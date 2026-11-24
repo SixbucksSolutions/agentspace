@@ -103,9 +103,10 @@ first.**
      or a grep hit** (v0.07-T01). The sweep ruled that `test-schemas.ps1` would check the new state
      schemas' samples; it reads only the top-level `schemas/`, and the dev lead found it by
      planting a sample. The ruling was corrected on the card.
-3. **If the turn uses the box:** size it for the turn's peak while it is stopped (AGENTS.md,
-   "Sizing the box before it runs agents"), and plan its size-down at the turn's close. v0.06-T01's
-   `m9g.4xlarge` stayed until T05 resized it, because only a deploy changes the size.
+3. **If the turn uses a host:** give the turn's lease the `--size` its peak needs (AGENTS.md,
+   "Sizing a host before it runs agents"; D69), and plan the size-down at the turn's close: the
+   next lease at the default brings it back. Before v0.09 a host kept its size until a deploy
+   changed it, so v0.06-T01's `m9g.4xlarge` stayed until T05.
 4. **If the turn is measured:** start the sampler before the dev lead, confirm it records the dev
    lead's session before giving the go, and arm the liveness watch at once.
 5. **If the turn changes Terry's laptop** (his ssh config, his task, his `PATH`): ask him once,

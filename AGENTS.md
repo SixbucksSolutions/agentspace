@@ -196,35 +196,41 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
   5.3G used), then grew 11 to 20 GiB at 2:39pm Pacific: 19G, 5.3G used (29%). **A grow below the
   floor needs Terry's word each time**, and a cleaning pass comes first.
 
-## Sizing the box before it runs agents
+## Sizing a host before it runs agents
 
 **Terry, 2026-11-19, standing order: "before launching the EC2, make sure it's an M class instance
 with vCPU count >= max number of parallel agents. I want each agent to have its own vCPU and at
-least 4 GB of RAM."** D39 records it.
-- **Before the box is started for agent work, it MUST be an M-class instance whose vCPU count is
-  at least the most agents that will work on it at once**, counted as D27 counts them: the sum of
-  the turn's stories' staffing-plan peaks, plus 1 for its dev lead. An M class instance has 4 GiB
-  per vCPU, so the memory rule follows from the vCPU rule.
-- **The smallest such size is used**, on the box's own family (`m9g`: `xlarge` 4 vCPUs, `2xlarge`
-  8, `4xlarge` 16, `8xlarge` 32, `12xlarge` 48, `16xlarge` 64). v0.05-T01's 10 subagents and its
-  dev lead, 11 agents, would have needed an `m9g.4xlarge`; it ran on an `m9g.xlarge`.
-- **The size is set through the stack, never by hand in EC2**: `InstanceType` set to the type in
-  `%USERPROFILE%\.agentspace\stack-parameters.json` (D40; `infra\stack-parameters.example.json`
-  shows its form), then `agentspace-operator deploy`, while the box is stopped. CloudFormation
-  stops and starts the instance to change it, and keeps the disk (operator.md, the template's
-  parameters). Until E0.06-T06-S01 (2026-11-20) this rule named `infra\local.parameters` and the
-  prototype's `deploy`, which are gone.
-- **Each use is sized for its own peak**, so the box goes back down when the next use needs fewer
-  agents. A lease whose sessions run no agents on the box, such as a live check from the laptop,
-  needs no change.
-- **Until v1.0, the box MUST be stopped as soon as a turn that used it is done** (Terry,
+least 4 GB of RAM."** D39 recorded it while hosts were sized by hand. **From v0.09's install
+(2026-11-24, E0.09-T05-S01) a host is sized by its lease**, and the rule is applied as D69 says.
+Terry kept the rule through v0.09 (Q13); it stands until he says otherwise, and v0.10 replaces the
+hand pick with D27's measured product.
+- **A turn's lease MUST ask for the smallest size whose vCPUs are at least the most agents that will
+  work on the host at once**, counted as D27 counts them: the sum of the turn's stories'
+  staffing-plan peaks, plus 1 for its dev lead. The sizes are `s` (`m9g.large`, 2 vCPUs), `m`
+  (`m9g.xlarge`, 4, the default), `l` (`m9g.2xlarge`, 8) and `xl` (`m9g.4xlarge`, 16) (D65). An M
+  class instance has 4 GiB per vCPU, so the memory rule follows from the vCPU rule.
+- **The size is asked through the lease, `agentspace lease create --size <size>`, never set by hand
+  for a turn** (D69). The lease resizes the host when no ready lease holds it (D66, D68), which
+  stops and starts the instance and keeps the disk. A host serving other leases at a smaller size
+  answers `no_capacity`, so those leases are released first. An agent MUST NOT edit
+  `stack-parameters.json` or run `deploy -InstanceType` to size a host for a turn; a resize by hand
+  stays a person's (D67).
+- **A turn of more than 16 agents at once on one host has no size**, and its plan MUST be split or
+  brought to Terry before it starts (D69).
+- **Each use is sized for its own peak**: the next lease at a smaller size brings the host back down
+  once the larger lease is released. A lease whose sessions run no agents on the host, such as a
+  live check from the laptop, asks for the default.
+- **Shown live in v0.09-T05** ([docs/runs/e0.09-t05-s01.md](docs/runs/e0.09-t05-s01.md)): `l`
+  resized agentspace's host to `m9g.2xlarge` in about 3 minutes, and the default brought it back to
+  `m9g.xlarge` in about 4. Until E0.09-T05-S01 this rule set `InstanceType` in
+  `stack-parameters.json` and ran `deploy` while the box was stopped (D39, D40).
+- **Until v1.0, a host MUST be stopped as soon as a turn that used it is done** (Terry,
   2026-11-19: "make sure we don't leave it burning money when done with its work for a dev
   turn"): every PR of the turn merged to `main` and its cards in Ready For Review. The architect
-  fetches anything the turn left on the box (a sampler's record), releases the turn's lease, and
-  runs `agentspace-operator down` at once, then confirms with `agentspace-operator status` that it
-  is `stopped`. It MUST
-  NOT wait for the idle stop (D11), which takes up to an hour. v0.05-T01's box was stopped at its
-  close, 3:00am Pacific.
+  fetches anything the turn left on the host (a sampler's record), releases the turn's lease, and
+  runs `agentspace-operator down -Host <project>` at once, then confirms with
+  `agentspace-operator status -All` that it is `stopped`. It MUST NOT wait for the idle stop (D11)
+  or the guard (D56). v0.05-T01's box was stopped at its close, 3:00am Pacific.
 
 ## Terry's real files in a review
 
