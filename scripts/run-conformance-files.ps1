@@ -15,7 +15,8 @@
 #
 # It sets the four AGENTSPACE_*_CMD variables to the build's programs, and stops before any file runs
 # unless each names a file that exists. It prints one line per file (its exit code, its seconds and its
-# summary line), then the files that exited non-zero. A run beside other suites MAY fail on timing: a
+# summary line), then the files that exited non-zero, and itself exits 1 when any did and 0 when none
+# did (v0.09-T04: it exited 0 whatever the files did). A run beside other suites MAY fail on timing: a
 # timing failure is run once more alone before it is called a finding, and both runs are reported.
 param(
   [Parameter(Mandatory)][string]$Checkout,
@@ -48,4 +49,9 @@ foreach ($f in $Files) {
   "$f exit $code in $([int]((Get-Date) - $start).TotalSeconds)s: $summary"
   if ($code -ne 0) { $failed += $f }
 }
-"Failed: $($failed -join ', ')"
+if ($failed.Count -gt 0) {
+  "Failed: $($failed -join ', ')"
+  exit 1
+}
+'Failed: none'
+exit 0
