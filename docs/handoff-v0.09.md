@@ -109,6 +109,7 @@ in decisions.md; this table only finds them.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T05, the install and the live checks: #0208 | Terry's "Start T05", then the architect | D70, D71; the card. Its sweep: the card names README's "Build and Install it", whose heading is "Build"; AWS's sign-in checked first; both hosts confirmed stopped |
+| T05, the install and the live checks: #0208 | Started on Terry's "Start T05", 2026-11-24 | D70, D71; the card. Its sweep: the card's "Build and Install it" is README's "Build" and its "Install it"; the install follows v0.08-T05's (task ended, keeper stopped by checked PID, copy, task started), with no task disabled; AWS's sign-in had expired (exit 255) and was asked of Terry; both hosts confirmed stopped before the first lease |
+| The live kit (mask, proof, wrapper, scan), carried from v0.08's "What is open" and missed by this file until T05's sweep | T05's dev lead rebuilds it from v0.08's records and commits it under `scripts\live\` in #0208's PR; the architect reviews it as a process tool (D28) | `scripts\live\` |
 | v0.10's hardening items from v0.09 (P51 to P53; Invoke-HostFile's holders) | v0.10 | #0050 |
 | #0027 (OBE by v0.06) and #0194 (met by the architect's state.md fix), in Backlog | Terry moves each out; Bot cannot | D72 |
