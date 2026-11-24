@@ -3138,6 +3138,31 @@ mod host_deploy_and_provision {
             );
             let f = crate::registry::set_instance_type(&home(&w), "nothing", None).unwrap_err();
             assert!(f.message.contains("has no host"));
+            let f =
+                crate::registry::set_last_success_at(&home(&w), "nothing", "2026-11-24T10:00:00Z")
+                    .unwrap_err();
+            assert!(f.message.contains("has no host"));
+        }
+
+        // ---- v0.10: a run's success (D77; pins P22, P23 and P24) ----
+        //
+        // A whole run cannot succeed in process here: step 7's ssh is a real program found as
+        // agentspace-run finds it. Step 9 and its end are tested in provision.rs's own tests, and a
+        // whole run by the operator's integration and conformance tests.
+
+        fn seed_success(w: &World, project: &str, at: &str) {
+            agentspace_hosts::set_last_success_at(&home(w), project, at).unwrap();
+        }
+
+        #[test]
+        fn a_run_that_failed_at_a_step_records_no_success_and_its_start_removed_the_old_one() {
+            let (w, aws) = ready_host("run-step-failed");
+            seed_success(&w, PROJECT, "2026-01-01T00:00:00Z");
+            run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            let r = record(&w, PROJECT);
+            assert!(r.last_attempt_at.is_some());
+            assert_eq!(r.last_success_at, None);
+            assert_eq!(r.state, HostState::Ready);
         }
     }
 }

@@ -8,8 +8,14 @@
 //!   start recorded, then deploy, start and wait, `sync`, `bootstrap`, the record made `ready`,
 //!   `place_pending`, and the sign-in line. The first failure among steps 4 to 7 ends the run.
 //! - **A run MUST NOT take a `ready` record out of `ready`** (D48; P3): on such a record step 3
-//!   writes `last_attempt_at` alone, a failure writes nothing, and step 8 writes only an
-//!   `instance_id` that differs. `creating` and `failed` are for a host that was never `ready`.
+//!   writes `last_attempt_at` alone, removing `last_success_at`, a failure writes nothing, and step
+//!   8 writes only an `instance_id` that differs. `creating` and `failed` are for a host that was
+//!   never `ready`.
+//! - **Step 3's write MUST remove the record's `last_success_at`** (D77; pin P24), and **the run
+//!   MUST write `last_success_at` only at step 9's end, only when it succeeded**: `place_pending`
+//!   returned without error and failed or left no lease (pin P22). It is the time the run ended,
+//!   written under `hosts.lock` alone; a write that fails is logged `success failed` and changes
+//!   nothing else (pin P23).
 //! - **The deploy step MUST find its type in step 4's order** (D68, D71; pin P26): the lease state
 //!   lock, then `hosts.lock` for the removal of the record's `instance_type` (whether a type is
 //!   then passed or none), `hosts.lock` released, the lease state file read under the lease state
@@ -337,6 +343,9 @@ fn record_start(home: &Path, project: &str, now: &str) -> Result<bool, Failure> 
         }
         Some(record) => {
             record.last_attempt_at = Some(now.to_string());
+            // The same write removes `last_success_at`, so a run that has begun never reads as
+            // one that succeeded (D77; pin P24).
+            record.last_success_at = None;
             if record.state == HostState::Ready {
                 true
             } else {
@@ -474,6 +483,56 @@ fn log_placed(log: &Log, placed: &PendingPlaced) {
     }
 }
 
+/// Step 9 and its end, called by the run with `provision.lock` held: places the project's pending
+/// leases and logs the result; a failure of the call as a whole leaves the host ready and the
+/// leases pending, warns, and the run still exits 0. Then, when the run succeeded, it records the
+/// success (D77; pins P22, P23 and P24), and otherwise writes nothing.
+fn place_and_record(
+    ctx: &Context,
+    env: Env<'_>,
+    home: &Path,
+    project: &str,
+    say: &dyn Say,
+    log: &Log,
+) {
+    let placed = driver_context(ctx, env).and_then(|d| place_pending(&d, project));
+    match &placed {
+        Ok(placed) => log_placed(log, placed),
+        Err(f) => {
+            log.failed("place", f);
+            say.warning(&format!(
+                "agentspace: The pending leases of '{project}' could not be placed: {}; the next run places them.",
+                log_reason(&f.message).trim_end_matches('.')
+            ));
+        }
+    }
+    if succeeded(&placed) {
+        record_success(home, project, log);
+    }
+}
+
+/// Whether the run succeeded, by step 9's result (D77's change note, pin P22): the call returned
+/// without error and no lease was failed or left. A lease the call placed or answered
+/// `unsatisfiable` (`place refused`) is not a failure.
+fn succeeded(placed: &Result<PendingPlaced, Failure>) -> bool {
+    placed.as_ref().is_ok_and(|p| {
+        p.unplaced
+            .iter()
+            .all(|u| matches!(u, Unplaced::Refused { .. }))
+    })
+}
+
+/// Step 9's end for a run that succeeded (D77; pins P23 and P24): `last_success_at` set to the
+/// time the run ended, in UTC in state.md's timestamp form, under `hosts.lock` alone, and nothing
+/// else. A write that fails is logged as `success failed` with the registry's message, and changes
+/// nothing else: no warning, no change to the run's exit.
+fn record_success(home: &Path, project: &str, log: &Log) {
+    let ended = agentspace_state::format_time(agentspace_state::now());
+    if let Err(f) = crate::registry::set_last_success_at(home, project, &ended) {
+        log.failed("success", &f);
+    }
+}
+
 /// Step 6's line for a `sync` that succeeded: `sync done`, or, when its patch wait ended on
 /// `failed`, `sync done; the patch run failed, see the host's journal`, exactly, with no other
 /// field (operator.md, provision, Its log; pin P27).
@@ -597,17 +656,8 @@ pub(crate) fn run(
     log.line("record", "done", None);
     say.progress(&format!("Recorded the host of '{project}' as ready."), None);
 
-    // Step 9: a failure leaves the host ready and the leases pending, and the run exits 0.
-    match driver_context(ctx, env).and_then(|d| place_pending(&d, project)) {
-        Ok(placed) => log_placed(&log, &placed),
-        Err(f) => {
-            log.failed("place", &f);
-            say.warning(&format!(
-                "agentspace: The pending leases of '{project}' could not be placed: {}; the next run places them.",
-                log_reason(&f.message).trim_end_matches('.')
-            ));
-        }
-    }
+    // Step 9, and the run's success when it succeeded.
+    place_and_record(ctx, env, &home, project, say, &log);
 
     // Step 10: the sign-in line, only for a host that was not ready, and never for the box. From
     // v0.08 a host runs only while its project holds a live lease (D56), so the sign-ins are made
@@ -862,6 +912,265 @@ mod tests {
         assert_eq!(r.last_attempt_at.as_deref(), Some("2026-11-21T11:00:00Z"));
         // The box's record stays ready throughout.
         assert!(record_start(&home, "swimcoach", "2026-11-21T12:00:00Z").unwrap());
+    }
+
+    #[test]
+    fn a_run_has_succeeded_only_when_no_lease_was_failed_or_left() {
+        let id = "8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01".to_string();
+        let with = |unplaced: Vec<Unplaced>| -> Result<PendingPlaced, Failure> {
+            Ok(PendingPlaced {
+                placed: 1,
+                unplaced,
+            })
+        };
+        assert!(succeeded(&Ok(PendingPlaced::default())));
+        assert!(succeeded(&with(vec![])));
+        // A lease answered `unsatisfiable` is not a failure.
+        assert!(succeeded(&with(vec![Unplaced::Refused {
+            lease_id: id.clone()
+        }])));
+        assert!(!succeeded(&with(vec![Unplaced::Left {
+            lease_id: id.clone()
+        }])));
+        assert!(!succeeded(&with(vec![
+            Unplaced::Refused {
+                lease_id: id.clone()
+            },
+            Unplaced::Failed(agentspace_driver_ec2::PendingFailure {
+                lease_id: id.clone(),
+                message: "The alias file is not agentspace's.".to_string(),
+            }),
+        ])));
+        assert!(!succeeded(&Err(step_failed(
+            "agentspace: The lease records could not be read."
+        ))));
+    }
+
+    #[test]
+    fn every_start_removes_the_success_and_nothing_else_writes_one() {
+        let dir = Scratch::new("provision-success-removed");
+        let home = dir.path().to_path_buf();
+        for (project, ready) in [("swimcoach", true), ("example", false)] {
+            if project == "example" {
+                assert!(!record_start(&home, project, "2026-11-24T09:00:00Z").unwrap());
+            }
+            agentspace_hosts::set_last_success_at(&home, project, "2026-11-24T09:30:00Z").unwrap();
+            assert_eq!(
+                record_start(&home, project, "2026-11-24T10:00:00Z").unwrap(),
+                ready
+            );
+            let hosts = read_hosts(&home).unwrap();
+            let r = agentspace_hosts::host_for(&hosts, project).unwrap();
+            assert_eq!(r.last_success_at, None, "{project}");
+            assert_eq!(r.last_attempt_at.as_deref(), Some("2026-11-24T10:00:00Z"));
+            // Neither a failure nor step 8 writes a success.
+            let log = open_log(&home.join("log")).unwrap();
+            record_failure(&home, project, ready, &log);
+            record_ready(&home, project, "i-1234567890abcdef0").unwrap();
+            let hosts = read_hosts(&home).unwrap();
+            let r = agentspace_hosts::host_for(&hosts, project).unwrap();
+            assert_eq!(r.last_success_at, None, "{project}");
+        }
+    }
+
+    #[test]
+    fn a_success_is_written_alone_and_a_write_that_fails_is_one_log_line() {
+        let dir = Scratch::new("provision-success-write");
+        let home = dir.path().to_path_buf();
+        assert!(!record_start(&home, "example", "2026-11-24T10:00:00Z").unwrap());
+        let before = read_hosts(&home).unwrap();
+        let path = home.join("log");
+        let log = open_log(&path).unwrap();
+        let t0 = agentspace_state::now();
+        record_success(&home, "example", &log);
+        let t1 = agentspace_state::now();
+        let after = read_hosts(&home).unwrap();
+        let r = agentspace_hosts::host_for(&after, "example").unwrap();
+        let at = agentspace_state::parse_time(r.last_success_at.as_deref().unwrap()).unwrap();
+        assert!(t0 <= at && at <= t1);
+        // Nothing else of any record changed.
+        let mut expected = before.clone();
+        expected.hosts[1].last_success_at = r.last_success_at.clone();
+        assert_eq!(after, expected);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+
+        // A registry that cannot be read: one line, the registry's message as its reason, and the
+        // file as it was.
+        std::fs::write(agentspace_hosts::hosts_path(&home), "not json").unwrap();
+        record_success(&home, "example", &log);
+        drop(log);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let (time, rest) = lines[0].split_once(' ').unwrap();
+        assert!(agentspace_state::parse_time(time).is_some());
+        assert!(
+            rest.starts_with(&format!(
+                "success failed reason=The host registry {} cannot be read: ",
+                shown(&agentspace_hosts::hosts_path(&home))
+            )),
+            "{rest}"
+        );
+        assert_eq!(
+            std::fs::read(agentspace_hosts::hosts_path(&home)).unwrap(),
+            b"not json"
+        );
+    }
+
+    /// Records the warnings step 9 gives; nothing else of its words matters here.
+    #[derive(Default)]
+    struct Warnings(std::cell::RefCell<Vec<String>>);
+
+    impl Say for Warnings {
+        fn mode(&self) -> agentspace_operator_api::Mode {
+            agentspace_operator_api::Mode::Person
+        }
+        fn progress(&self, _: &str, _: Option<agentspace_operator_api::CallerLine>) {}
+        fn warning(&self, person: &str) {
+            self.0.borrow_mut().push(person.to_string());
+        }
+        fn detail(&self, _: &str) {}
+    }
+
+    fn no_env(_: &str) -> Option<OsString> {
+        None
+    }
+
+    /// A `swimcoach` lease for step 9's lease state file, in the throwaway home's state folder.
+    fn box_lease(n: u32, state: &str, size: &str) -> agentspace_state::Record {
+        let ready = state == "ready";
+        agentspace_state::Record {
+            sized_for: None,
+            plan: None,
+            id: format!("8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f90{n:02x}"),
+            project: BOX_PROJECT.to_string(),
+            state: state.to_string(),
+            platform: "linux/arm64".to_string(),
+            profile: "agent-linux".to_string(),
+            size: size.to_string(),
+            ttl_seconds: 3600,
+            created_at: "2026-11-24T10:00:00Z".to_string(),
+            expires_at: ready.then(|| "2099-01-01T00:00:00Z".to_string()),
+            released_at: None,
+            ssh: ready.then(|| agentspace_state::Ssh {
+                host_alias: "agentspace-swimcoach-8d41b6a2".to_string(),
+                user: "ubuntu".to_string(),
+            }),
+            reasons: None,
+            driver: Some("ec2".to_string()),
+        }
+    }
+
+    /// Step 9 and its end, run over the box's record in a throwaway home after a run's start, with
+    /// `leases` in its lease state file and `instance_type` as the type step 4 recorded. Returns
+    /// the record's `last_success_at`, step 9's log lines without their times, and the warnings.
+    fn step_9(
+        name: &str,
+        instance_type: Option<&str>,
+        leases: Vec<agentspace_state::Record>,
+    ) -> (Option<String>, Vec<String>, Vec<String>) {
+        let dir = Scratch::new(name);
+        let ctx = crate::tests::ctx_in(dir.path());
+        let home = full_home(&ctx);
+        agentspace_hosts::set_last_success_at(&home, BOX_PROJECT, "2026-01-01T00:00:00Z").unwrap();
+        assert!(
+            record_start(
+                &home,
+                BOX_PROJECT,
+                &agentspace_state::format_time(agentspace_state::now())
+            )
+            .unwrap()
+        );
+        agentspace_hosts::set_instance_type(&home, BOX_PROJECT, instance_type).unwrap();
+        let state = home.join(".agentspace");
+        let bytes = agentspace_state::serialize(&agentspace_state::StateFile { leases }).unwrap();
+        std::fs::write(state.join("leases.json"), bytes).unwrap();
+        let path = dir.path().join("provision.log");
+        let log = open_log(&path).unwrap();
+        let say = Warnings::default();
+        place_and_record(&ctx, &no_env, &home, BOX_PROJECT, &say, &log);
+        drop(log);
+        let hosts = read_hosts(&home).unwrap();
+        let record = agentspace_hosts::host_for(&hosts, BOX_PROJECT)
+            .unwrap()
+            .clone();
+        if let Some(success) = &record.last_success_at {
+            let success = agentspace_state::parse_time(success).unwrap();
+            let attempt =
+                agentspace_state::parse_time(record.last_attempt_at.as_deref().unwrap()).unwrap();
+            assert!(success >= attempt, "A success is at or after its attempt");
+        }
+        let lines = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|l| l.split_once(' ').unwrap().1.to_string())
+            .collect();
+        (record.last_success_at, lines, say.0.into_inner())
+    }
+
+    #[test]
+    fn step_9_records_a_success_when_every_pending_lease_was_placed_or_answered() {
+        // Nothing to place.
+        let (success, lines, warnings) = step_9("success-none", Some("m9g.xlarge"), vec![]);
+        assert!(success.is_some(), "{lines:?}");
+        assert_eq!(lines, ["place done placed=0"], "A success adds no line");
+        assert!(warnings.is_empty());
+        // A lease answered `unsatisfiable`, since a live `ready` lease holds the smaller host.
+        let (success, lines, _) = step_9(
+            "success-refused",
+            Some("m9g.xlarge"),
+            vec![box_lease(1, "ready", "m"), box_lease(2, "pending", "l")],
+        );
+        assert!(success.is_some(), "{lines:?}");
+        assert!(lines[1].starts_with("place refused lease="), "{lines:?}");
+    }
+
+    #[test]
+    fn step_9_records_no_success_when_a_lease_failed_or_was_left() {
+        // A lease the host meets, with no CA to issue it: `place failed lease=<id>`.
+        let (success, lines, _) = step_9(
+            "failed-lease",
+            Some("m9g.xlarge"),
+            vec![box_lease(1, "pending", "m")],
+        );
+        assert!(
+            lines.iter().any(|l| l.starts_with("place failed lease=")),
+            "{lines:?}"
+        );
+        assert_eq!(success, None, "{lines:?}");
+        // A host of no known type: the lease is left for the next run.
+        let (success, lines, _) = step_9("left-lease", None, vec![box_lease(1, "pending", "m")]);
+        assert!(
+            lines.iter().any(|l| l.starts_with("place left lease=")),
+            "{lines:?}"
+        );
+        assert_eq!(success, None, "{lines:?}");
+    }
+
+    #[test]
+    fn step_9_records_no_success_when_the_call_failed_as_a_whole() {
+        // A lease state file that is not valid fails the call itself: `place failed reason=...`,
+        // one warning, and still no success.
+        let dir = Scratch::new("failed-call");
+        let ctx = crate::tests::ctx_in(dir.path());
+        let home = full_home(&ctx);
+        assert!(record_start(&home, BOX_PROJECT, "2026-11-24T10:00:00Z").unwrap());
+        std::fs::write(home.join(".agentspace").join("leases.json"), "{").unwrap();
+        let path = dir.path().join("provision.log");
+        let log = open_log(&path).unwrap();
+        let say = Warnings::default();
+        place_and_record(&ctx, &no_env, &home, BOX_PROJECT, &say, &log);
+        drop(log);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(" place failed reason="), "{text}");
+        assert_eq!(say.0.borrow().len(), 1);
+        let hosts = read_hosts(&home).unwrap();
+        assert_eq!(
+            agentspace_hosts::host_for(&hosts, BOX_PROJECT)
+                .unwrap()
+                .last_success_at,
+            None
+        );
     }
 
     #[test]
