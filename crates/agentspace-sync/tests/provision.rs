@@ -404,11 +404,21 @@ const LEASE_OTHER: &str = "c0ffee00-1234-4abc-8def-0123456789ab";
 #[test]
 fn a_failed_place_pending_is_logged_with_its_reason_warned_and_the_run_still_succeeds() {
     // A lease state file that is not valid fails the whole call (driver.md, place_pending, step
-    // 2.2).
-    let rig = prov_rig(Kind::NoRecord);
+    // 2.2). From v0.09 the run's deploy step reads the file first, and a file that cannot be read
+    // fails that step (operator.md, provision, step 4.3), so the file is valid until the run's
+    // last program, the bootstrap's ssh, changes it, and it is not valid when step 9 reads it.
+    let rig = prov_rig_with(Kind::NoRecord, |rig| {
+        rig.overwrite_at(
+            "ssh",
+            3,
+            "",
+            &rig.home_path(".agentspace/leases.json"),
+            "this is not a lease state file\\n",
+        );
+    });
     rig.write_home(
         ".agentspace/leases.json",
-        b"this is not a lease state file\n",
+        b"{\"version\":0,\"leases\":[]}\n",
     );
     rig.run(|rig| {
         let say = rig.say();

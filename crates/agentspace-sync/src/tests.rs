@@ -20,6 +20,8 @@ use crate::{Seams, deploy_using, sync_using};
 
 /// A made-up instance ID, outside the identifier scan's pattern.
 pub(crate) const ID: &str = "i-1234567890abcdef0";
+/// The `InstanceType` parameter the fake stack reports, as `describe-stacks` reads it back.
+pub(crate) const STACK_TYPE: &str = "m9g.xlarge";
 const FP: &str = "SHA256:fakefingerprint";
 
 /// A throwaway folder under the temp folder, removed when it drops.
@@ -134,10 +136,16 @@ impl Default for FakeAws {
         FakeAws {
             calls: RefCell::default(),
             deploy: RefCell::new(Ok(Value::Null)),
-            stack: RefCell::new(json!({"Stacks": [{"Outputs": [
-                {"OutputKey": "Other", "OutputValue": "x"},
-                {"OutputKey": "InstanceId", "OutputValue": ID}
-            ]}]})),
+            stack: RefCell::new(json!({"Stacks": [{
+                "Outputs": [
+                    {"OutputKey": "Other", "OutputValue": "x"},
+                    {"OutputKey": "InstanceId", "OutputValue": ID}
+                ],
+                "Parameters": [
+                    {"ParameterKey": "RootVolumeGiB", "ParameterValue": "8"},
+                    {"ParameterKey": "InstanceType", "ParameterValue": STACK_TYPE}
+                ]
+            }]})),
             describe: RefCell::new(Ok(json!({"Reservations": [{"Instances": [{
                 "State": {"Name": "running"},
                 "LaunchTime": "2020-01-01T00:00:00+00:00"
@@ -1623,7 +1631,10 @@ mod host_deploy_and_provision {
     }
 
     fn outputs() -> Result<Value, AwsError> {
-        Ok(json!({"Stacks": [{"Outputs": [{"OutputKey": "InstanceId", "OutputValue": ID}]}]}))
+        Ok(json!({"Stacks": [{
+            "Outputs": [{"OutputKey": "InstanceId", "OutputValue": ID}],
+            "Parameters": [{"ParameterKey": "InstanceType", "ParameterValue": STACK_TYPE}]
+        }]}))
     }
 
     fn home(w: &World) -> PathBuf {
@@ -1772,31 +1783,6 @@ mod host_deploy_and_provision {
             "agentspace: Project 'example' has no host; provision -Host example makes one."
         );
         assert!(aws.calls().is_empty());
-    }
-
-    #[test]
-    fn instance_type_for_the_box_is_refused_before_anything_runs() {
-        let w = World::new("box-sized").with_deploy_files();
-        let aws = FakeAws::default();
-        let f = w
-            .run(|seams| {
-                crate::deploy_target_sized_using(
-                    &w.ctx,
-                    &CaEnv::default(),
-                    crate::Target::Host("swimcoach"),
-                    Some("m9g.2xlarge"),
-                    &FakeSay::default(),
-                    &aws,
-                    &FakeRemote::default(),
-                    seams,
-                )
-            })
-            .unwrap_err();
-        assert!(
-            f.message
-                .starts_with("agentspace: -InstanceType needs -Host <project>")
-        );
-        assert!(aws.calls.borrow().is_empty());
     }
 
     fn provision(w: &World, aws: &dyn Aws, say: &FakeSay) -> Result<(), Failure> {
@@ -2005,5 +1991,1150 @@ mod host_deploy_and_provision {
             before
         );
         assert!(aws.calls().is_empty());
+    }
+
+    /// The tests of v0.09-T03-S02: the type a deploy records and the one a provisioning run finds,
+    /// the box's sizing, and `deploy`'s lock (operator.md, deploy and provision step 4; D67, D68,
+    /// D71; pins P5, P11, P22, P23, P24, P26, P30, P32, P34, P35 and P36).
+    mod sized {
+        use super::*;
+        use std::ffi::OsString;
+
+        /// What one AWS call found when it was made: the registry's text, and whether each lock
+        /// was free to take.
+        struct Seen {
+            call: String,
+            hosts: Option<String>,
+            run_lock_free: bool,
+            hosts_lock_free: bool,
+            leases_lock_free: bool,
+        }
+
+        /// Records, at each AWS call, the registry's text and the state of the three locks, then
+        /// answers as [`ScriptedAws`] does.
+        struct Probe {
+            inner: ScriptedAws,
+            home: PathBuf,
+            project: String,
+            state_dir: PathBuf,
+            seen: RefCell<Vec<Seen>>,
+        }
+
+        impl Probe {
+            fn new(w: &World, project: &str, stacks: Vec<Result<Value, AwsError>>) -> Probe {
+                Probe {
+                    inner: ScriptedAws::new(stacks),
+                    home: home(w),
+                    project: project.to_string(),
+                    state_dir: home(w).join(".agentspace"),
+                    seen: RefCell::default(),
+                }
+            }
+
+            fn calls(&self) -> Vec<String> {
+                self.inner.calls()
+            }
+
+            /// What the first call to `service operation` found.
+            fn at(&self, call: &str) -> Seen {
+                let mut seen = self.seen.borrow_mut();
+                let i = seen
+                    .iter()
+                    .position(|s| s.call == call)
+                    .unwrap_or_else(|| panic!("No call {call}"));
+                seen.remove(i)
+            }
+        }
+
+        impl Aws for Probe {
+            fn call(&self, call: &Call) -> Result<Value, AwsError> {
+                let hosts = std::fs::read_to_string(agentspace_hosts::hosts_path(&self.home)).ok();
+                let run_lock_free = agentspace_hosts::try_run_lock(&self.home, &self.project)
+                    .is_ok_and(|l| l.is_some());
+                let hosts_lock_free =
+                    agentspace_hosts::try_lock(&self.home).is_ok_and(|l| l.is_some());
+                let leases_lock_free = agentspace_state::lock(&self.state_dir).is_ok();
+                self.seen.borrow_mut().push(Seen {
+                    call: format!("{} {}", call.service, call.operation),
+                    hosts,
+                    run_lock_free,
+                    hosts_lock_free,
+                    leases_lock_free,
+                });
+                self.inner.call(call)
+            }
+        }
+
+        /// A remote that notes whether the host's `provision.lock` was held at each call.
+        struct HeldRemote {
+            inner: FakeRemote,
+            home: PathBuf,
+            project: String,
+            calls: Cell<usize>,
+            held: Cell<usize>,
+        }
+
+        impl Remote for HeldRemote {
+            fn ssh(&self, o: &[&str], c: Option<&str>) -> Result<i32, Failure> {
+                self.note();
+                self.inner.ssh(o, c)
+            }
+            fn scp(&self, a: &[&str]) -> Result<i32, Failure> {
+                self.note();
+                self.inner.scp(a)
+            }
+        }
+
+        impl HeldRemote {
+            fn note(&self) {
+                self.calls.set(self.calls.get() + 1);
+                let free = agentspace_hosts::try_run_lock(&self.home, &self.project)
+                    .is_ok_and(|l| l.is_some());
+                if !free {
+                    self.held.set(self.held.get() + 1);
+                }
+            }
+        }
+
+        fn typed(t: &str) -> Value {
+            json!([{"ParameterKey": "InstanceType", "ParameterValue": t}])
+        }
+
+        fn answer_with(parameters: Value) -> Result<Value, AwsError> {
+            Ok(json!({"Stacks": [{
+                "Outputs": [{"OutputKey": "InstanceId", "OutputValue": ID}],
+                "Parameters": parameters
+            }]}))
+        }
+
+        fn set_type(w: &World, project: &str, t: Option<&str>) {
+            agentspace_hosts::set_instance_type(&home(w), project, t).unwrap();
+        }
+
+        fn registry_text(w: &World) -> Option<String> {
+            std::fs::read_to_string(agentspace_hosts::hosts_path(&home(w))).ok()
+        }
+
+        /// The `deploy` entry, with the pinned seams.
+        fn person(
+            w: &World,
+            aws: &dyn Aws,
+            remote: &dyn Remote,
+            target: crate::Target<'_>,
+            instance_type: Option<&str>,
+        ) -> Result<(), Failure> {
+            w.run(|seams| {
+                crate::deploy_target_sized_using(
+                    &w.ctx,
+                    &CaEnv::default(),
+                    target,
+                    instance_type,
+                    &FakeSay::default(),
+                    aws,
+                    remote,
+                    seams,
+                )
+            })
+        }
+
+        fn deploy_call(calls: &[String]) -> String {
+            calls
+                .iter()
+                .find(|c| c.starts_with("cloudformation deploy"))
+                .cloned()
+                .expect("A cloudformation deploy call")
+        }
+
+        // ---- A person's deploy of the box: the file's InstanceType, and -InstanceType ----
+
+        #[test]
+        fn the_boxs_plain_deploy_passes_no_instance_type_whatever_the_file_names() {
+            let w = World::new("sized-box-plain").with_deploy_files();
+            std::fs::write(
+                w.home().join(".agentspace").join("stack-parameters.json"),
+                r#"{"version":0,"parameters":{"VpcId":"VPC_X","InstanceType":"m9g.4xlarge","SubnetId":"SUBNET_Y"}}"#,
+            )
+            .unwrap();
+            let before =
+                std::fs::read(w.home().join(".agentspace").join("stack-parameters.json")).unwrap();
+            let aws = ScriptedAws::new(vec![]);
+            person(&w, &aws, &FakeRemote::default(), crate::Target::Box, None).unwrap();
+            let call = deploy_call(&aws.calls());
+            assert!(call.ends_with("VpcId=VPC_X | SubnetId=SUBNET_Y"), "{call}");
+            assert!(!call.contains("InstanceType"), "{call}");
+            // The file is left byte for byte as it was.
+            assert_eq!(
+                std::fs::read(w.home().join(".agentspace").join("stack-parameters.json")).unwrap(),
+                before
+            );
+        }
+
+        #[test]
+        fn the_boxs_deploy_with_a_type_passes_it_last_for_both_names_of_the_box() {
+            for target in [crate::Target::Box, crate::Target::Host("swimcoach")] {
+                let w = World::new("sized-box-typed").with_deploy_files();
+                std::fs::write(
+                    w.home().join(".agentspace").join("stack-parameters.json"),
+                    r#"{"version":0,"parameters":{"VpcId":"VPC_X","InstanceType":"m9g.4xlarge","SubnetId":"SUBNET_Y"}}"#,
+                )
+                .unwrap();
+                let aws = ScriptedAws::new(vec![]);
+                person(
+                    &w,
+                    &aws,
+                    &FakeRemote::default(),
+                    target,
+                    Some("m9g.2xlarge"),
+                )
+                .unwrap();
+                let call = deploy_call(&aws.calls());
+                // The override is last (pin P32), and the file's own value is never among them.
+                assert!(
+                    call.ends_with("VpcId=VPC_X | SubnetId=SUBNET_Y | InstanceType=m9g.2xlarge"),
+                    "{call}"
+                );
+                assert!(!call.contains("m9g.4xlarge"), "{call}");
+            }
+        }
+
+        // ---- Step 4: the removal before the deploy ----
+
+        #[test]
+        fn a_deploy_with_a_type_removes_the_record_type_before_the_stack_changes() {
+            let w = with_ca(World::new("sized-remove").with_deploy_files());
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            // The stack reports a type other than the one asked for: the record takes the stack's.
+            let aws = Probe::new(
+                &w,
+                PROJECT,
+                vec![status("UPDATE_COMPLETE"), answer_with(typed("m9g.xlarge"))],
+            );
+            w.run(|seams| {
+                crate::deploy::host_stack(
+                    &w.ctx,
+                    &CaEnv::default(),
+                    PROJECT,
+                    Some("m9g.2xlarge"),
+                    &FakeSay::default(),
+                    &aws,
+                    seams,
+                )
+            })
+            .unwrap();
+            let at_deploy = aws.at("cloudformation deploy");
+            let text = at_deploy.hosts.unwrap();
+            assert!(!text.contains("instance_type"), "{text}");
+            assert!(
+                aws.calls()
+                    .last()
+                    .unwrap()
+                    .starts_with("cloudformation describe-stacks")
+            );
+            let r = record(&w, PROJECT);
+            assert_eq!(r.instance_type.as_deref(), Some("m9g.xlarge"));
+            assert_eq!(r.instance_id.as_deref(), Some(ID));
+            assert_eq!(r.state, HostState::Ready);
+        }
+
+        #[test]
+        fn a_deploy_with_the_type_the_record_already_holds_removes_it_all_the_same() {
+            let w = World::new("sized-same");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.2xlarge"));
+            let aws = Probe::new(
+                &w,
+                PROJECT,
+                vec![status("UPDATE_COMPLETE"), answer_with(typed("m9g.2xlarge"))],
+            );
+            host_stack_with(&w, &aws, Some("m9g.2xlarge")).unwrap();
+            assert!(
+                !aws.at("cloudformation deploy")
+                    .hosts
+                    .unwrap()
+                    .contains("instance_type")
+            );
+        }
+
+        fn host_stack_with(
+            w: &World,
+            aws: &dyn Aws,
+            instance_type: Option<&str>,
+        ) -> Result<String, Failure> {
+            w.run(|seams| {
+                crate::deploy::host_stack(
+                    &w.ctx,
+                    &CaEnv::default(),
+                    PROJECT,
+                    instance_type,
+                    &FakeSay::default(),
+                    aws,
+                    seams,
+                )
+            })
+        }
+
+        #[test]
+        fn a_deploy_without_a_type_writes_nothing_before_the_stack_and_keeps_the_type_if_it_fails()
+        {
+            let w = World::new("sized-keep");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let before = registry_text(&w).unwrap();
+            let mut aws = Probe::new(&w, PROJECT, vec![status("UPDATE_COMPLETE")]);
+            aws.inner.deploy = Err(AwsError::Failed("failed".into()));
+            let f = host_stack_with(&w, &aws, None).unwrap_err();
+            assert_eq!(
+                f.message,
+                "agentspace: Stack deploy failed; see the stack events in the console."
+            );
+            assert_eq!(aws.at("cloudformation deploy").hosts.unwrap(), before);
+            // A failed deploy that asked for no change kept the type (pin P30).
+            assert_eq!(
+                record(&w, PROJECT).instance_type.as_deref(),
+                Some("m9g.large")
+            );
+            assert_eq!(registry_text(&w).unwrap(), before);
+        }
+
+        #[test]
+        fn a_deploy_with_a_type_that_fails_leaves_the_record_with_none() {
+            let w = World::new("sized-fail");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let mut aws = Probe::new(&w, PROJECT, vec![status("UPDATE_COMPLETE")]);
+            aws.inner.deploy = Err(AwsError::Failed("failed".into()));
+            host_stack_with(&w, &aws, Some("m9g.2xlarge")).unwrap_err();
+            assert_eq!(record(&w, PROJECT).instance_type, None);
+        }
+
+        #[test]
+        fn a_missing_registry_is_written_as_the_seed_for_a_type_and_not_for_a_plain_deploy() {
+            // With -InstanceType: the box's seed record, with no type, is on disk when the stack
+            // changes (pins P2c, P11 and P31).
+            let w = World::new("sized-seed").with_deploy_files();
+            let aws = Probe::new(&w, agentspace_hosts::BOX_PROJECT, vec![]);
+            person(
+                &w,
+                &aws,
+                &FakeRemote::default(),
+                crate::Target::Box,
+                Some("m9g.2xlarge"),
+            )
+            .unwrap();
+            let text = aws.at("cloudformation deploy").hosts.unwrap();
+            assert!(text.contains("\"project\":\"swimcoach\""), "{text}");
+            assert!(!text.contains("instance_type"), "{text}");
+            // Without it: no registry is written before the stack's deploy.
+            let w = World::new("sized-seed-plain").with_deploy_files();
+            let aws = Probe::new(&w, agentspace_hosts::BOX_PROJECT, vec![]);
+            person(&w, &aws, &FakeRemote::default(), crate::Target::Box, None).unwrap();
+            assert_eq!(aws.at("cloudformation deploy").hosts, None);
+            // After a successful deploy the record holds what the stack reports, with the ID.
+            let r = record(&w, agentspace_hosts::BOX_PROJECT);
+            assert_eq!(r.instance_type.as_deref(), Some(STACK_TYPE));
+            assert_eq!(r.instance_id.as_deref(), Some(ID));
+        }
+
+        // ---- Step 5: the one read ----
+
+        #[test]
+        fn a_deploy_records_the_type_and_the_id_from_one_describe_stacks_answer() {
+            let w = World::new("sized-one-read");
+            w.seed_registry(None, &[(PROJECT, HostState::Creating)]);
+            let aws = ScriptedAws::new(vec![
+                status("CREATE_COMPLETE"),
+                answer_with(json!([
+                    {"ParameterKey": "RootVolumeGiB", "ParameterValue": "8"},
+                    {"ParameterKey": "InstanceType", "ParameterValue": "m9g.4xlarge"}
+                ])),
+            ]);
+            host_stack_with(&w, &aws, None).unwrap();
+            let describes = aws
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("cloudformation describe-stacks"))
+                .count();
+            // One for the existence check, one for the read-back that gives both values.
+            assert_eq!(describes, 2);
+            let r = record(&w, PROJECT);
+            assert_eq!(r.instance_type.as_deref(), Some("m9g.4xlarge"));
+            assert_eq!(r.instance_id.as_deref(), Some(ID));
+            assert_eq!(r.state, HostState::Creating, "Deploy never sets a state");
+        }
+
+        #[test]
+        fn a_stack_without_a_usable_instance_type_fails_the_deploy_and_leaves_none() {
+            let bad = [
+                json!([]),
+                json!([{"ParameterKey": "RootVolumeGiB", "ParameterValue": "8"}]),
+                json!([{"ParameterKey": "InstanceType"}]),
+                json!([{"ParameterKey": "InstanceType", "ParameterValue": 4}]),
+                json!([{"ParameterKey": "InstanceType", "ParameterValue": "M9G.xlarge"}]),
+                json!([{"ParameterKey": "InstanceType", "ParameterValue": "m9g.xlarge\n"}]),
+                json!([{"ParameterKey": "InstanceType", "ParameterValue": "m9g"}]),
+                json!([
+                    {"ParameterKey": "InstanceType", "ParameterValue": "m9g.xlarge"},
+                    {"ParameterKey": "InstanceType", "ParameterValue": "m9g.xlarge"}
+                ]),
+            ];
+            for parameters in bad {
+                let w = World::new("sized-bad-type");
+                w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+                set_type(&w, PROJECT, Some("m9g.large"));
+                let aws =
+                    ScriptedAws::new(vec![status("UPDATE_COMPLETE"), answer_with(parameters)]);
+                let f = host_stack_with(&w, &aws, None).unwrap_err();
+                assert_eq!(
+                    f.message,
+                    format!("agentspace: Stack '{STACK}' has no InstanceType parameter.")
+                );
+                // The instance ID it read is written alone; the type is gone.
+                let r = record(&w, PROJECT);
+                assert_eq!(r.instance_id.as_deref(), Some(ID));
+                assert_eq!(r.instance_type, None);
+            }
+            // The answer holds no Parameters at all.
+            let w = World::new("sized-no-parameters");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let aws = ScriptedAws::new(vec![status("UPDATE_COMPLETE"), outputs_alone()]);
+            host_stack_with(&w, &aws, None).unwrap_err();
+            assert_eq!(record(&w, PROJECT).instance_type, None);
+        }
+
+        fn outputs_alone() -> Result<Value, AwsError> {
+            Ok(json!({"Stacks": [{"Outputs": [{"OutputKey": "InstanceId", "OutputValue": ID}]}]}))
+        }
+
+        #[test]
+        fn a_deploy_that_cannot_read_the_type_does_not_go_on_to_sync() {
+            let w = World::new("sized-no-sync").with_deploy_files();
+            let aws = ScriptedAws::new(vec![]);
+            *aws.inner.stack.borrow_mut() =
+                json!({"Stacks": [{"Outputs": [{"OutputKey": "InstanceId", "OutputValue": ID}]}]});
+            let remote = FakeRemote::default();
+            let f = person(&w, &aws, &remote, crate::Target::Box, None).unwrap_err();
+            assert_eq!(
+                f.message,
+                "agentspace: Stack 'agentbox' has no InstanceType parameter."
+            );
+            assert!(remote.lines().is_empty());
+            assert!(w.pushed.borrow().is_empty());
+            let r = record(&w, agentspace_hosts::BOX_PROJECT);
+            assert_eq!(
+                (r.instance_id.as_deref(), r.instance_type),
+                (Some(ID), None)
+            );
+        }
+
+        #[test]
+        fn a_describe_stacks_that_fails_after_the_deploy_leaves_neither_value() {
+            let w = World::new("sized-describe-fails");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let aws = ScriptedAws::new(vec![status("UPDATE_COMPLETE"), Err(AwsError::SignIn)]);
+            assert_eq!(
+                host_stack_with(&w, &aws, None).unwrap_err().message,
+                SIGN_IN_MESSAGE
+            );
+            let r = record(&w, PROJECT);
+            assert_eq!((r.instance_id, r.instance_type), (None, None));
+        }
+
+        #[test]
+        fn a_stack_with_no_instance_id_output_writes_neither_value() {
+            let w = World::new("sized-no-id");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let aws = ScriptedAws::new(vec![
+                status("UPDATE_COMPLETE"),
+                Ok(json!({"Stacks": [{"Outputs": [], "Parameters": typed("m9g.xlarge")}]})),
+            ]);
+            assert_eq!(
+                host_stack_with(&w, &aws, None).unwrap_err().message,
+                format!("agentspace: Stack '{STACK}' has no InstanceId output.")
+            );
+            let r = record(&w, PROJECT);
+            assert_eq!((r.instance_id, r.instance_type), (None, None));
+        }
+
+        #[test]
+        fn the_instance_type_form_is_the_registrys() {
+            for ok in ["m9g.xlarge", "m9g.2xlarge", "c7g.metal-48xl", "0a.0b"] {
+                assert!(crate::deploy::is_instance_type(ok), "{ok}");
+            }
+            let long = format!("a.{}", "b".repeat(63));
+            for bad in [
+                "",
+                "m9g",
+                ".xlarge",
+                "m9g.",
+                "M9g.xlarge",
+                "m9g.xlarge\n",
+                "m9g..xlarge",
+                "m9g.x.large",
+                "-m9g.xlarge",
+                "m9g.-xlarge",
+                "m9g xlarge",
+                "m9g_x.large",
+                long.as_str(),
+            ] {
+                assert!(!crate::deploy::is_instance_type(bad), "{bad:?}");
+            }
+            assert!(crate::deploy::is_instance_type(&format!(
+                "a.{}",
+                "b".repeat(62)
+            )));
+        }
+
+        // ---- A person's deploy: the lock ----
+
+        #[test]
+        fn a_held_lock_refuses_every_deploy_before_anything_is_done() {
+            let cases: [(crate::Target<'_>, &str); 3] = [
+                (crate::Target::Box, "swimcoach"),
+                (crate::Target::Host("swimcoach"), "swimcoach"),
+                (crate::Target::Host(PROJECT), PROJECT),
+            ];
+            for (target, project) in cases {
+                for instance_type in [None, Some("m9g.2xlarge")] {
+                    let w = World::new("sized-refused").with_deploy_files();
+                    w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+                    set_type(&w, project, Some("m9g.large"));
+                    let before = registry_text(&w).unwrap();
+                    let held = agentspace_hosts::try_run_lock(&home(&w), project)
+                        .unwrap()
+                        .unwrap();
+                    let aws = ScriptedAws::new(vec![]);
+                    let remote = FakeRemote::default();
+                    let f = person(&w, &aws, &remote, target, instance_type).unwrap_err();
+                    assert_eq!(
+                        f.message,
+                        format!(
+                            "agentspace: A provisioning run or deploy for '{project}' is already running; the deploy did not run."
+                        )
+                    );
+                    assert!(aws.calls().is_empty() && remote.lines().is_empty());
+                    assert_eq!(registry_text(&w).unwrap(), before);
+                    assert!(!w.operator_root().exists(), "No operator folder is made");
+                    assert!(
+                        !agentspace_hosts::host_log_path(&home(&w), project).exists(),
+                        "The log is the run's alone"
+                    );
+                    drop(held);
+                }
+            }
+        }
+
+        #[test]
+        fn the_lock_comes_before_the_public_key_and_after_the_hosts_lookup() {
+            // No id_ed25519.pub in this home: a held lock is reported before the missing key.
+            let w = World::new("sized-lock-order");
+            let held = agentspace_hosts::try_run_lock(&home(&w), "swimcoach")
+                .unwrap()
+                .unwrap();
+            let aws = ScriptedAws::new(vec![]);
+            let f = person(&w, &aws, &FakeRemote::default(), crate::Target::Box, None).unwrap_err();
+            assert!(
+                f.message
+                    .contains("is already running; the deploy did not run.")
+            );
+            drop(held);
+            // A project with no record is reported first, and makes no lock.
+            let f = person(
+                &w,
+                &aws,
+                &FakeRemote::default(),
+                crate::Target::Host("nothing"),
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(
+                f.message,
+                "agentspace: Project 'nothing' has no host; provision -Host nothing makes one."
+            );
+            assert!(!agentspace_hosts::host_run_lock_path(&home(&w), "nothing").exists());
+            // A registry that is not valid is reported before the lock too.
+            std::fs::write(agentspace_hosts::hosts_path(&home(&w)), "not json").unwrap();
+            let f = person(&w, &aws, &FakeRemote::default(), crate::Target::Box, None).unwrap_err();
+            assert!(f.message.starts_with("agentspace: The host registry "));
+            assert!(aws.calls().is_empty());
+        }
+
+        #[test]
+        fn a_lock_that_cannot_be_opened_is_not_a_free_lock() {
+            let w = World::new("sized-lock-folder").with_deploy_files();
+            let path = agentspace_hosts::host_run_lock_path(&home(&w), "swimcoach");
+            std::fs::create_dir_all(&path).unwrap();
+            let aws = ScriptedAws::new(vec![]);
+            let f = person(&w, &aws, &FakeRemote::default(), crate::Target::Box, None).unwrap_err();
+            assert!(
+                f.message
+                    .starts_with(&format!("agentspace: Cannot take {}: ", path.display()))
+                    && f.message.ends_with('.')
+                    && !f.message.contains("os error"),
+                "{}",
+                f.message
+            );
+            assert!(aws.calls().is_empty());
+        }
+
+        #[test]
+        fn a_deploy_holds_its_lock_through_every_call_and_its_sync_and_frees_it_at_the_end() {
+            let w = World::new("sized-lock-life").with_deploy_files();
+            let aws = Probe::new(&w, "swimcoach", vec![]);
+            let remote = HeldRemote {
+                inner: FakeRemote::default(),
+                home: home(&w),
+                project: "swimcoach".into(),
+                calls: Cell::new(0),
+                held: Cell::new(0),
+            };
+            person(&w, &aws, &remote, crate::Target::Box, Some("m9g.2xlarge")).unwrap();
+            assert!(remote.calls.get() > 0);
+            assert_eq!(
+                remote.held.get(),
+                remote.calls.get(),
+                "Held at every ssh and scp"
+            );
+            assert!(!aws.seen.borrow().is_empty());
+            assert!(
+                aws.seen.borrow().iter().all(|s| !s.run_lock_free),
+                "Held at every AWS call"
+            );
+            // The registry's lock is never held across an AWS call.
+            assert!(aws.seen.borrow().iter().all(|s| s.hosts_lock_free));
+            // Free once the deploy has ended.
+            assert!(
+                agentspace_hosts::try_run_lock(&home(&w), "swimcoach")
+                    .unwrap()
+                    .is_some()
+            );
+        }
+
+        // ---- A provisioning run: the type it finds ----
+
+        const EC2: &str = "ec2";
+        const LIVE: &str = "2099-01-01T00:00:00Z";
+        const EXPIRED: &str = "2000-01-01T00:00:00Z";
+
+        fn lease(
+            n: u32,
+            project: &str,
+            state: &str,
+            size: &str,
+            driver: Option<&str>,
+            expires_at: Option<&str>,
+        ) -> agentspace_state::Record {
+            let ready = state == "ready";
+            agentspace_state::Record {
+                id: format!("8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f90{n:02x}"),
+                project: project.to_string(),
+                state: state.to_string(),
+                platform: "linux/arm64".to_string(),
+                profile: "agent-linux".to_string(),
+                size: size.to_string(),
+                ttl_seconds: 3600,
+                created_at: "2026-11-23T10:00:00Z".to_string(),
+                expires_at: expires_at.map(str::to_string),
+                released_at: (state == "released").then(|| "2026-11-23T11:00:00Z".to_string()),
+                ssh: ready.then(|| agentspace_state::Ssh {
+                    host_alias: "agentspace-example-0a1b2c3d".to_string(),
+                    user: "agent".to_string(),
+                }),
+                reasons: (state == "unsatisfiable").then(|| {
+                    vec![agentspace_state::Reason {
+                        code: "no_capacity".to_string(),
+                        message: "No capacity.".to_string(),
+                    }]
+                }),
+                driver: driver.map(str::to_string),
+            }
+        }
+
+        fn pending(n: u32, project: &str, size: &str) -> agentspace_state::Record {
+            lease(n, project, "pending", size, Some(EC2), None)
+        }
+
+        fn write_leases(dir: &Path, leases: Vec<agentspace_state::Record>) {
+            std::fs::create_dir_all(dir).unwrap();
+            let bytes = agentspace_state::serialize(&agentspace_state::StateFile { leases })
+                .expect("Valid leases");
+            std::fs::write(dir.join("leases.json"), bytes).unwrap();
+        }
+
+        fn no_env(_: &str) -> Option<OsString> {
+            None
+        }
+
+        /// A run that stops at its start step, after its deploy step.
+        fn run_to_start(
+            w: &World,
+            project: &str,
+            aws: &dyn Aws,
+            env: &dyn Fn(&str) -> Option<OsString>,
+        ) -> Result<(), Failure> {
+            w.run(|seams| {
+                crate::provision::run(
+                    &w.ctx,
+                    &CaEnv::default(),
+                    project,
+                    &FakeSay::default(),
+                    aws,
+                    &FakeRemote::default(),
+                    seams,
+                    env,
+                )
+            })
+        }
+
+        /// A `ready` host of `example` that holds `m9g.large`, whose stack exists, and whose AWS
+        /// stops the run at its start step.
+        fn ready_host(name: &str) -> (World, ScriptedAws) {
+            let w = World::new(name);
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let aws = ScriptedAws::new(vec![status("UPDATE_COMPLETE"), outputs()]);
+            *aws.inner.describe.borrow_mut() = Err(AwsError::Failed("stop here".into()));
+            (w, aws)
+        }
+
+        fn deploy_log(w: &World) -> String {
+            log_lines(w)
+                .into_iter()
+                .find(|l| l.starts_with("deploy "))
+                .expect("A deploy line")
+        }
+
+        #[test]
+        fn a_run_gives_its_deploy_the_type_of_the_largest_pending_size() {
+            let cases: Vec<(Vec<agentspace_state::Record>, Option<&str>)> = vec![
+                (
+                    vec![pending(1, PROJECT, "s"), pending(2, PROJECT, "l")],
+                    Some("m9g.2xlarge"),
+                ),
+                (vec![pending(1, PROJECT, "m")], Some("m9g.xlarge")),
+                (vec![pending(1, PROJECT, "xxl")], None),
+                (
+                    vec![
+                        lease(1, PROJECT, "pending", "l", Some("other"), None),
+                        lease(2, PROJECT, "pending", "l", None, None),
+                    ],
+                    None,
+                ),
+                (vec![pending(1, "elsewhere", "xl")], None),
+                (
+                    vec![
+                        lease(1, PROJECT, "released", "xl", Some(EC2), None),
+                        lease(2, PROJECT, "unsatisfiable", "xl", Some(EC2), None),
+                    ],
+                    None,
+                ),
+                // An expired `ready` record holds nothing (pin P2(a)), so the type is given.
+                (
+                    vec![
+                        lease(1, PROJECT, "ready", "m", Some(EC2), Some(EXPIRED)),
+                        pending(2, PROJECT, "l"),
+                    ],
+                    Some("m9g.2xlarge"),
+                ),
+                (vec![], None),
+            ];
+            for (leases, want) in cases {
+                let (w, aws) = ready_host("run-type");
+                write_leases(&home(&w).join(".agentspace"), leases);
+                run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+                let call = deploy_call(&aws.calls());
+                match want {
+                    Some(t) => {
+                        assert!(
+                            call.ends_with(&format!(
+                                "--tags | project={STACK} | --parameter-overrides | InstanceType={t}"
+                            )),
+                            "{call}"
+                        );
+                        assert_eq!(deploy_log(&w), format!("deploy done type={t}"));
+                    }
+                    None => {
+                        assert!(
+                            call.ends_with(&format!("--tags | project={STACK}")),
+                            "{call}"
+                        );
+                        assert_eq!(deploy_log(&w), "deploy done");
+                    }
+                }
+                // The deploy's step 5 recorded the type the stack reports, whatever was passed.
+                assert_eq!(
+                    record(&w, PROJECT).instance_type.as_deref(),
+                    Some(STACK_TYPE)
+                );
+            }
+        }
+
+        #[test]
+        fn a_run_with_no_lease_state_file_passes_no_type_and_goes_on() {
+            let (w, aws) = ready_host("run-no-file");
+            assert!(!home(&w).join(".agentspace").join("leases.json").exists());
+            let f = run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            assert_eq!(f.message, "agentspace: stop here");
+            assert!(!deploy_call(&aws.calls()).contains("InstanceType"));
+            assert_eq!(deploy_log(&w), "deploy done");
+        }
+
+        #[test]
+        fn a_live_ready_lease_holds_the_size_and_the_deploy_still_records_the_type() {
+            let (w, aws) = ready_host("run-held");
+            write_leases(
+                &home(&w).join(".agentspace"),
+                vec![
+                    lease(1, PROJECT, "ready", "m", Some(EC2), Some(LIVE)),
+                    pending(2, PROJECT, "l"),
+                ],
+            );
+            run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            let call = deploy_call(&aws.calls());
+            assert!(!call.contains("InstanceType"), "{call}");
+            assert_eq!(deploy_log(&w), "deploy done");
+            assert_eq!(
+                record(&w, PROJECT).instance_type.as_deref(),
+                Some(STACK_TYPE)
+            );
+            // Another project's live lease holds nothing of this host.
+            let (w, aws) = ready_host("run-held-elsewhere");
+            write_leases(
+                &home(&w).join(".agentspace"),
+                vec![
+                    lease(1, "elsewhere", "ready", "m", Some(EC2), Some(LIVE)),
+                    pending(2, PROJECT, "l"),
+                ],
+            );
+            run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            assert!(deploy_call(&aws.calls()).ends_with("InstanceType=m9g.2xlarge"));
+        }
+
+        #[test]
+        fn a_run_removes_the_type_and_frees_its_locks_before_its_first_aws_call() {
+            for leases in [vec![pending(1, PROJECT, "l")], vec![]] {
+                let w = World::new("run-order");
+                w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+                set_type(&w, PROJECT, Some("m9g.large"));
+                write_leases(&home(&w).join(".agentspace"), leases);
+                let aws = Probe::new(&w, PROJECT, vec![status("UPDATE_COMPLETE"), outputs()]);
+                *aws.inner.inner.describe.borrow_mut() = Err(AwsError::Failed("stop".into()));
+                run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+                let seen = aws.seen.borrow();
+                let first = &seen[0];
+                assert!(first.call.starts_with("cloudformation describe-stacks"));
+                let text = first.hosts.as_deref().unwrap();
+                assert!(!text.contains("instance_type"), "{text}");
+                assert!(first.hosts_lock_free && first.leases_lock_free);
+                assert!(
+                    !first.run_lock_free,
+                    "The run's own lock is held throughout"
+                );
+                assert!(
+                    seen.iter()
+                        .all(|s| s.hosts_lock_free && s.leases_lock_free && !s.run_lock_free)
+                );
+            }
+        }
+
+        #[test]
+        fn a_run_reads_the_state_folder_its_environment_names_and_locks_there() {
+            let (w, aws) = ready_host("run-state-dir");
+            let state = w.dir.path().join("elsewhere").join("state");
+            write_leases(&state, vec![pending(1, PROJECT, "xl")]);
+            // The home's own folder holds a different answer, which must not be read.
+            write_leases(
+                &home(&w).join(".agentspace"),
+                vec![pending(1, PROJECT, "s")],
+            );
+            let value = state.clone().into_os_string();
+            let env = move |name: &str| (name == "AGENTSPACE_STATE_DIR").then(|| value.clone());
+            run_to_start(&w, PROJECT, &aws, &env).unwrap_err();
+            assert!(deploy_call(&aws.calls()).ends_with("InstanceType=m9g.4xlarge"));
+            assert!(state.join("leases.lock").is_file());
+        }
+
+        #[test]
+        fn a_run_on_the_box_finds_swimcoachs_leases_and_ignores_the_files_type() {
+            let w = World::new("run-box").with_deploy_files();
+            std::fs::write(
+                w.home().join(".agentspace").join("stack-parameters.json"),
+                r#"{"version":0,"parameters":{"VpcId":"VPC_X","InstanceType":"m9g.4xlarge","SubnetId":"SUBNET_Y"}}"#,
+            )
+            .unwrap();
+            write_leases(
+                &home(&w).join(".agentspace"),
+                vec![pending(1, "swimcoach", "l"), pending(2, PROJECT, "xl")],
+            );
+            let aws = ScriptedAws::new(vec![]);
+            *aws.inner.describe.borrow_mut() = Err(AwsError::Failed("stop here".into()));
+            run_to_start(&w, agentspace_hosts::BOX_PROJECT, &aws, &no_env).unwrap_err();
+            let call = deploy_call(&aws.calls());
+            assert!(
+                call.ends_with("VpcId=VPC_X | SubnetId=SUBNET_Y | InstanceType=m9g.2xlarge"),
+                "{call}"
+            );
+            assert!(!call.contains("m9g.4xlarge"));
+            let path = agentspace_hosts::host_log_path(&home(&w), agentspace_hosts::BOX_PROJECT);
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(text.contains(" deploy done type=m9g.2xlarge\n"), "{text}");
+        }
+
+        #[test]
+        fn a_failed_deploy_step_logs_what_it_was_asked_for_and_leaves_no_type() {
+            for (leases, field) in [
+                (vec![pending(1, PROJECT, "l")], " type=m9g.2xlarge"),
+                (vec![], ""),
+            ] {
+                let w = World::new("run-failed");
+                w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+                set_type(&w, PROJECT, Some("m9g.large"));
+                write_leases(&home(&w).join(".agentspace"), leases);
+                let mut aws = ScriptedAws::new(vec![status("UPDATE_COMPLETE")]);
+                aws.deploy = Err(AwsError::Failed("failed".into()));
+                let f = run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+                let message = "Stack deploy failed; see the stack events in the console.";
+                assert_eq!(f.message, format!("agentspace: {message}"));
+                assert_eq!(
+                    deploy_log(&w),
+                    format!("deploy failed{field} reason={message}")
+                );
+                // A `ready` host stays `ready`, and the record is left with no type (pin P30).
+                let r = record(&w, PROJECT);
+                assert_eq!((r.state, r.instance_type), (HostState::Ready, None));
+            }
+        }
+
+        #[test]
+        fn a_lease_state_file_that_is_not_valid_fails_the_deploy_step_before_any_aws_call() {
+            for (state, want) in [
+                (HostState::Ready, HostState::Ready),
+                (HostState::Creating, HostState::Failed),
+            ] {
+                let w = World::new("run-bad-leases");
+                w.seed_registry(None, &[(PROJECT, state)]);
+                set_type(&w, PROJECT, Some("m9g.large"));
+                let dir = home(&w).join(".agentspace");
+                std::fs::write(dir.join("leases.json"), "not json").unwrap();
+                let aws = ScriptedAws::new(vec![]);
+                let f = run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+                let prefix = format!(
+                    "agentspace: The lease state file {} cannot be read: ",
+                    dir.join("leases.json").display()
+                );
+                assert!(
+                    f.message.starts_with(&prefix) && f.message.ends_with('.'),
+                    "{}",
+                    f.message
+                );
+                assert!(aws.calls().is_empty());
+                // The type was removed before the file was read, and no `type` field is logged.
+                let r = record(&w, PROJECT);
+                assert_eq!((r.state, r.instance_type), (want, None));
+                assert_eq!(
+                    deploy_log(&w),
+                    format!(
+                        "deploy failed reason={}",
+                        f.message.strip_prefix("agentspace: ").unwrap()
+                    )
+                );
+            }
+        }
+
+        #[test]
+        fn a_lease_state_file_with_two_records_of_one_id_fails_the_deploy_step() {
+            let (w, aws) = ready_host("run-repeat-id");
+            let dir = home(&w).join(".agentspace");
+            write_leases(&dir, vec![pending(1, PROJECT, "l")]);
+            let text = std::fs::read_to_string(dir.join("leases.json")).unwrap();
+            let record = text
+                .trim_end()
+                .strip_prefix("{\"version\":0,\"leases\":[")
+                .and_then(|t| t.strip_suffix("]}"))
+                .unwrap()
+                .to_string();
+            std::fs::write(
+                dir.join("leases.json"),
+                format!("{{\"version\":0,\"leases\":[{record},{record}]}}"),
+            )
+            .unwrap();
+            let f = run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            assert!(
+                f.message.starts_with("agentspace: The lease state file ")
+                    && f.message.contains(" cannot be read: ")
+            );
+            assert!(aws.calls().is_empty());
+        }
+
+        #[test]
+        fn a_lease_state_lock_that_cannot_be_opened_fails_the_step_and_keeps_the_type() {
+            let (w, aws) = ready_host("run-lease-lock-folder");
+            let dir = home(&w).join(".agentspace");
+            std::fs::create_dir_all(dir.join("leases.lock")).unwrap();
+            let f = run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            let prefix = format!(
+                "agentspace: Cannot take {}: ",
+                dir.join("leases.lock").display()
+            );
+            assert!(
+                f.message.starts_with(&prefix) && f.message.ends_with('.'),
+                "{}",
+                f.message
+            );
+            assert!(aws.calls().is_empty());
+            // Nothing was written: the record keeps its type, and the host stays `ready`.
+            let r = record(&w, PROJECT);
+            assert_eq!(
+                (r.state, r.instance_type.as_deref()),
+                (HostState::Ready, Some("m9g.large"))
+            );
+            assert_eq!(
+                deploy_log(&w),
+                format!(
+                    "deploy failed reason={}",
+                    f.message.strip_prefix("agentspace: ").unwrap()
+                )
+            );
+        }
+
+        /// A lock held for the whole 30 seconds: this test takes that long.
+        #[test]
+        fn a_lease_state_lock_held_past_its_wait_fails_the_step_and_keeps_the_type() {
+            let w = World::new("run-lease-lock-busy");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let dir = home(&w).join(".agentspace");
+            let held = agentspace_state::lock(&dir).unwrap();
+            let f = crate::provision::find_type(&w.ctx, &no_env, &home(&w), PROJECT).unwrap_err();
+            drop(held);
+            assert_eq!(
+                f.message,
+                format!(
+                    "agentspace: The lease state lock {} is held by another program; try again.",
+                    dir.join("leases.lock").display()
+                )
+            );
+            assert_eq!(
+                record(&w, PROJECT).instance_type.as_deref(),
+                Some("m9g.large")
+            );
+        }
+
+        /// A lock held for the whole 30 seconds: this test takes that long.
+        #[test]
+        fn a_registry_lock_held_past_its_wait_fails_the_step_before_any_removal() {
+            let w = World::new("run-hosts-lock-busy");
+            w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+            set_type(&w, PROJECT, Some("m9g.large"));
+            let before = registry_text(&w).unwrap();
+            let held = agentspace_hosts::lock(&home(&w)).unwrap();
+            let f = crate::provision::find_type(&w.ctx, &no_env, &home(&w), PROJECT).unwrap_err();
+            drop(held);
+            assert_eq!(
+                f.message,
+                format!(
+                    "agentspace: The host registry's lock {} is held by another program; try again.",
+                    agentspace_hosts::hosts_lock_path(&home(&w)).display()
+                )
+            );
+            assert_eq!(registry_text(&w).unwrap(), before);
+            // The lease state lock was let go with the step's failure.
+            assert!(agentspace_state::lock(&home(&w).join(".agentspace")).is_ok());
+        }
+
+        #[test]
+        fn a_run_never_takes_the_provision_lock_a_second_time() {
+            // The run holds its own lock; its deploy step runs under it and does not try it.
+            let (w, aws) = ready_host("run-own-lock");
+            run_to_start(&w, PROJECT, &aws, &no_env).unwrap_err();
+            let text = log_lines(&w);
+            assert!(
+                text.iter().any(|l| l.starts_with("deploy done")),
+                "{text:?}"
+            );
+        }
+
+        // ---- The decision itself ----
+
+        #[test]
+        fn a_live_ready_lease_of_the_project_decides_no_type_whatever_it_is() {
+            let now = agentspace_state::parse_time("2026-11-23T12:00:00Z").unwrap();
+            let live = lease(1, PROJECT, "ready", "m", Some(EC2), Some(LIVE));
+            let pending_l = pending(2, PROJECT, "l");
+            let decide = |leases: &[agentspace_state::Record]| {
+                crate::provision::decide_type(leases, PROJECT, now)
+            };
+            assert_eq!(
+                decide(std::slice::from_ref(&pending_l)),
+                Some("m9g.2xlarge")
+            );
+            assert_eq!(decide(&[live.clone(), pending_l.clone()]), None);
+            // Another driver's `ready` record still holds the project's host: it is the project's.
+            let other = lease(3, PROJECT, "ready", "m", Some("other"), Some(LIVE));
+            assert_eq!(decide(&[other, pending_l.clone()]), None);
+            // A `ready` record at or after its expiry holds nothing, to the second.
+            let expiring = lease(
+                4,
+                PROJECT,
+                "ready",
+                "m",
+                Some(EC2),
+                Some("2026-11-23T12:00:00Z"),
+            );
+            assert_eq!(decide(&[expiring, pending_l.clone()]), Some("m9g.2xlarge"));
+            let later = lease(
+                5,
+                PROJECT,
+                "ready",
+                "m",
+                Some(EC2),
+                Some("2026-11-23T12:00:01Z"),
+            );
+            assert_eq!(decide(&[later, pending_l]), None);
+        }
+
+        // ---- Smaller pieces ----
+
+        #[test]
+        fn the_stack_parameters_file_names_instance_type_and_it_is_dropped_after_its_check() {
+            let w = World::new("params-unread").with_deploy_files();
+            let path = w.home().join(".agentspace").join("stack-parameters.json");
+            std::fs::write(
+                &path,
+                r#"{"version":0,"parameters":{"VpcId":"VPC_X","InstanceType":"m9g.4xlarge"}}"#,
+            )
+            .unwrap();
+            assert_eq!(
+                crate::params::read(&path).unwrap(),
+                vec![("VpcId".to_string(), "VPC_X".to_string())]
+            );
+            // The file is still checked whole: a bad value is refused, never skipped.
+            std::fs::write(
+                &path,
+                r#"{"version":0,"parameters":{"VpcId":"VPC_X","InstanceType":""}}"#,
+            )
+            .unwrap();
+            assert!(
+                crate::params::read(&path)
+                    .unwrap_err()
+                    .message
+                    .contains("the parameter InstanceType is empty")
+            );
+        }
+
+        #[test]
+        fn a_change_to_a_project_with_no_record_is_the_has_no_host_message() {
+            let w = World::new("registry-no-record");
+            let f = crate::registry::set_instance(&home(&w), "nothing", None, None).unwrap_err();
+            assert_eq!(
+                f.message,
+                "agentspace: Project 'nothing' has no host; provision -Host nothing makes one."
+            );
+            let f = crate::registry::set_instance_type(&home(&w), "nothing", None).unwrap_err();
+            assert!(f.message.contains("has no host"));
+        }
     }
 }

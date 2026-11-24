@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use agentspace_hosts::{Host, Hosts};
 
 use super::times::now_secs;
-use super::{ID2, Log, Rig};
+use super::{ID2, Log, Rig, STACK_TYPE, json_params_with_type, json_stack_with};
 
 /// The project of the host most tests make: a made-up name, a valid normalized project.
 pub const PROJECT: &str = "demo";
@@ -47,6 +47,8 @@ pub struct Seed<'a> {
     /// `creating`, `ready` or `failed`.
     pub state: &'a str,
     pub instance_id: Option<&'a str>,
+    /// The record's `instance_type` (state.md, The instance type).
+    pub instance_type: Option<&'a str>,
     pub last_attempt_at: Option<&'a str>,
 }
 
@@ -57,8 +59,15 @@ impl<'a> Seed<'a> {
             project,
             state,
             instance_id: None,
+            instance_type: None,
             last_attempt_at: None,
         }
+    }
+
+    /// The record holds `instance_type`.
+    pub fn itype(mut self, instance_type: &'a str) -> Seed<'a> {
+        self.instance_type = Some(instance_type);
+        self
     }
 
     pub fn id(mut self, id: &'a str) -> Seed<'a> {
@@ -82,6 +91,9 @@ impl<'a> Seed<'a> {
         if let Some(id) = self.instance_id {
             s.push_str(&format!(",\"instance_id\":\"{id}\""));
         }
+        if let Some(t) = self.instance_type {
+            s.push_str(&format!(",\"instance_type\":\"{t}\""));
+        }
         if let Some(at) = self.last_attempt_at {
             s.push_str(&format!(",\"last_attempt_at\":\"{at}\""));
         }
@@ -90,16 +102,20 @@ impl<'a> Seed<'a> {
     }
 }
 
-/// A stack's `describe-stacks` answer, with the status the existence check reads and an
-/// `InstanceId` output.
+/// A stack's `describe-stacks` answer, with the status the existence check reads, an `InstanceId`
+/// output (for `Some`) and an `InstanceType` parameter of [`STACK_TYPE`], which a deploy reads back
+/// and records (operator.md, deploy, step 5).
 pub fn json_stack_status(status: &str, id: Option<&str>) -> String {
-    let outputs = match id {
-        Some(id) => {
-            format!(",\"Outputs\":[{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{id}\"}}]")
-        }
-        None => String::new(),
-    };
-    format!("{{\"Stacks\":[{{\"StackStatus\":\"{status}\"{outputs}}}]}}")
+    json_stack_typed(status, id, STACK_TYPE)
+}
+
+/// [`json_stack_status`] for a stack whose `InstanceType` parameter is `instance_type`.
+pub fn json_stack_typed(status: &str, id: Option<&str>, instance_type: &str) -> String {
+    json_stack_with(
+        Some(status),
+        id,
+        Some(&json_params_with_type(instance_type)),
+    )
 }
 
 /// Whether `name` is 32 lowercase hexadecimal digits.
@@ -119,9 +135,16 @@ impl Rig {
 
     /// Writes `hosts.json` holding the box's record, then `extra`.
     pub fn seed_hosts(&self, extra: &[Seed]) {
-        let mut records = vec![
-            "{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"}".to_string(),
-        ];
+        self.seed_hosts_box(Seed::new("swimcoach", "ready"), extra);
+    }
+
+    /// Writes `hosts.json` holding `boxed`, which MUST be the box's record (its project is
+    /// `swimcoach`; its stack is written as the box's, `agentbox`), then `extra`.
+    pub fn seed_hosts_box(&self, boxed: Seed, extra: &[Seed]) {
+        let b = boxed
+            .json()
+            .replace("agentspace-host-swimcoach", "agentbox");
+        let mut records = vec![b];
         records.extend(extra.iter().map(Seed::json));
         let text = format!("{{\"version\":0,\"hosts\":[{}]}}\n", records.join(","));
         self.write_home(".agentspace/hosts.json", text.as_bytes());
@@ -309,16 +332,72 @@ impl Rig {
         self.stack_status("CREATE_COMPLETE");
     }
 
-    /// Every `describe-stacks` answers with `status` and an `InstanceId` output, `ID2`.
+    /// Every `describe-stacks` answers with `status`, an `InstanceId` output, `ID2`, and an
+    /// `InstanceType` parameter of [`STACK_TYPE`].
     pub fn stack_status(&self, status: &str) {
+        self.stack_status_typed(status, STACK_TYPE);
+    }
+
+    /// Every `describe-stacks` answers with `status`, an `InstanceId` output, `ID2`, and an
+    /// `InstanceType` parameter of `instance_type`.
+    pub fn stack_status_typed(&self, status: &str, instance_type: &str) {
         self.rule(
             "aws",
             0,
             "describe-stacks",
             0,
-            &json_stack_status(status, Some(ID2)),
+            &json_stack_typed(status, Some(ID2), instance_type),
             "",
         );
+    }
+
+    /// [`Rig::stack_missing`] for a stack that holds `instance_type` once made.
+    pub fn stack_missing_typed(&self, stack: &str, instance_type: &str) {
+        self.stack_missing_with(stack);
+        self.stack_status_typed("CREATE_COMPLETE", instance_type);
+    }
+
+    /// The existence check, the first `describe-stacks`, fails as for a stack that does not exist.
+    /// No rule answers the later calls: a test adds them.
+    pub fn stack_missing_with(&self, stack: &str) {
+        self.rule(
+            "aws",
+            1,
+            "describe-stacks",
+            255,
+            "",
+            &format!(
+                "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id {stack} does not exist\\n"
+            ),
+        );
+    }
+
+    /// The first `describe-stacks`, the existence check, answers `CREATE_COMPLETE`, and every later
+    /// one answers `answer`, a whole document: the read-back after the deploy.
+    pub fn read_back_answers(&self, answer: &str) {
+        self.rule(
+            "aws",
+            1,
+            "describe-stacks",
+            0,
+            &json_stack_status("CREATE_COMPLETE", Some(ID2)),
+            "",
+        );
+        self.rule("aws", 0, "describe-stacks", 0, answer, "");
+    }
+
+    /// The first `describe-stacks` answers `CREATE_COMPLETE`, and every later one fails with `err`
+    /// (`\n` in it is a line feed): a read-back that fails.
+    pub fn read_back_fails(&self, err: &str) {
+        self.rule(
+            "aws",
+            1,
+            "describe-stacks",
+            0,
+            &json_stack_status("CREATE_COMPLETE", Some(ID2)),
+            "",
+        );
+        self.rule("aws", 0, "describe-stacks", 255, "", err);
     }
 
     /// The first AWS call, the existence check, answers `status`, and every later `describe-stacks`

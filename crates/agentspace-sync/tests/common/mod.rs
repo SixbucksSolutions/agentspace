@@ -53,6 +53,7 @@ use tempfile::TempDir;
 pub mod certs;
 pub mod expect;
 pub mod hosts;
+pub mod leases;
 pub mod provlog;
 pub mod times;
 
@@ -342,6 +343,8 @@ pub struct Rig {
     probed: RefCell<Vec<PathBuf>>,
     /// The stand-ins' read-only actions, as `readonly=` lines (parent only).
     readonly: RefCell<Vec<(String, String)>>,
+    /// The stand-ins' file overwrites, as `overwrite=` lines (parent only).
+    overwrites: RefCell<Vec<(String, String)>>,
     /// Whether the ssh stand-in keeps each call's whole standard input (parent only).
     capture_stdin: Cell<bool>,
     /// The copy of the test binary the child runs from, beside which a file for the operator's
@@ -430,6 +433,7 @@ impl Rig {
             watched: RefCell::new(Vec::new()),
             probed: RefCell::new(Vec::new()),
             readonly: RefCell::new(Vec::new()),
+            overwrites: RefCell::new(Vec::new()),
             capture_stdin: Cell::new(false),
             operator_exe: RefCell::new(None),
             _tmp: tmp,
@@ -561,6 +565,19 @@ impl Rig {
         ));
     }
 
+    /// Makes the `n`th call of `prog` (0 for any) whose arguments contain `contains` replace the
+    /// file at `path` with `text` before it answers (`\n` in `text` is a line feed), as a program
+    /// that changes a file while a run is under way. `text` MUST NOT hold a unit separator.
+    pub fn overwrite_at(&self, prog: &str, n: u32, contains: &str, path: &Path, text: &str) {
+        self.overwrites.borrow_mut().push((
+            prog.to_string(),
+            format!(
+                "overwrite={n}{US}{contains}{US}{}{US}{text}",
+                path.display()
+            ),
+        ));
+    }
+
     /// Makes the CA in the throwaway home, as `ca` does.
     pub fn make_ca(&self) {
         if self.child {
@@ -676,6 +693,12 @@ impl Rig {
                 }
             }
             for (p, line) in self.readonly.borrow().iter() {
+                if p == prog {
+                    text.push_str(line);
+                    text.push('\n');
+                }
+            }
+            for (p, line) in self.overwrites.borrow().iter() {
                 if p == prog {
                     text.push_str(line);
                     text.push('\n');
@@ -1006,10 +1029,54 @@ pub fn json_instance(state: &str) -> String {
     )
 }
 
+/// The instance type the stand-in `aws`'s stacks hold unless a test says another: `m9g.xlarge`, the
+/// template's default (operator.md, deploy, step 4) and D65's `m`. A deploy reads it back from
+/// `describe-stacks` and records it (operator.md, deploy, step 5; D67, D71).
+pub const STACK_TYPE: &str = "m9g.xlarge";
+
+/// A `Stacks[0].Parameters` array of `(key, value)` pairs, as `describe-stacks` writes it. A value
+/// is written as given, so a test can hold a JSON escape in it (`\u000a`, never `\n`, which the
+/// stand-in's own handling of `\n` would turn into a line feed).
+pub fn json_params(pairs: &[(&str, &str)]) -> String {
+    let items: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{{\"ParameterKey\":\"{k}\",\"ParameterValue\":\"{v}\"}}"))
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// The parameters a real stack of agentspace's template reports: an `InstanceType` among others,
+/// so a reader that takes the first element, rather than the one keyed `InstanceType`, is caught.
+pub fn json_params_with_type(instance_type: &str) -> String {
+    json_params(&[
+        ("RootVolumeGiB", "8"),
+        ("InstanceType", instance_type),
+        ("SubnetId", "SUBNET_VALUE"),
+    ])
+}
+
+/// A `describe-stacks` answer, whatever it holds: `status` (`StackStatus`), `id` (the
+/// `InstanceId` output) and `parameters` (the raw `Parameters` array) are each left out for `None`.
+pub fn json_stack_with(status: Option<&str>, id: Option<&str>, parameters: Option<&str>) -> String {
+    let mut members: Vec<String> = Vec::new();
+    if let Some(s) = status {
+        members.push(format!("\"StackStatus\":\"{s}\""));
+    }
+    if let Some(id) = id {
+        members.push(format!(
+            "\"Outputs\":[{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{id}\"}}]"
+        ));
+    }
+    if let Some(p) = parameters {
+        members.push(format!("\"Parameters\":{p}"));
+    }
+    format!("{{\"Stacks\":[{{{}}}]}}", members.join(","))
+}
+
+/// The stand-in `aws`'s default answer for a stack: an `InstanceId` output and an `InstanceType`
+/// parameter of [`STACK_TYPE`].
 pub fn json_stack(id: &str) -> String {
-    format!(
-        "{{\"Stacks\":[{{\"Outputs\":[{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{id}\"}}]}}]}}"
-    )
+    json_stack_with(None, Some(id), Some(&json_params_with_type(STACK_TYPE)))
 }
 
 /// `ssm describe-instance-information`'s answer for a host whose Session Manager agent is online.

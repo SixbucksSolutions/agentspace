@@ -172,7 +172,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands.ps1' -Body {
           Ssh = @(@(Get-SshCalls) | ForEach-Object { & $norm $_.Text })
           Scp = @(@(Get-ScpCalls) | ForEach-Object { & $norm $_.Text })
           Registry = [Convert]::ToBase64String([byte[]](Get-FileBytesOrNull $fx.HostsFile))
-          Unsigned = @(Get-NothingSignedProblems)
+          Unsigned = @(Get-NothingSignedProblems -ProvisionLockOf $(if ($verb -ceq 'deploy') { 'swimcoach' } else { '' }))
         }
       }
       $p = [System.Collections.Generic.List[string]]::new()
@@ -290,13 +290,13 @@ Invoke-HostFile -FileName 'test-unmet-host-commands.ps1' -Body {
   }
   Test-HostCase "${hr}: a missing registry reads as the box's record alone: down -Host swimcoach reads the box's stack, writes hosts.json holding the box's record with its instance ID, then stops it" @('down', '-Host', 'swimcoach') @{
     Exit = 0; Stderr = "Stopping $idNew.`n"; Calls = @((Get-CallStack 'agentbox'), (Get-CallStop $idNew))
-    Check = { param($run, $started) if (-not (Test-SameBytes (Get-FileBytesOrNull $fx.HostsFile) (Get-HostsBytes @((New-BoxRecord $script:IdNew))))) { 'hosts.json is not the box''s record holding the stack''s InstanceId output, compact, with one LF' } } } -Setup {
+    Check = { param($run, $started) if (-not (Test-SameBytes (Get-FileBytesOrNull $fx.HostsFile) (Get-HostsBytes @((New-BoxRecord $script:IdNew -NoInstanceType))))) { 'hosts.json is not the box''s record holding the stack''s InstanceId output, compact, with one LF' } } } -Setup {
     Remove-HomePath $fx.HostsFile
     Set-AwsScenario @{ 'cloudformation describe-stacks agentbox' = @(New-Step (New-StackDoc -StackName 'agentbox' -Id $script:IdNew)) }
   }
   Test-HostCase "${hr}: a missing registry: status -Host swimcoach reads the stack, writes the box's record, then reports" @('status', '-Host', 'swimcoach') @{
     Exit = 0; Stderr = (Get-StatusLines $idNew); Calls = @((Get-CallStack 'agentbox'), (Get-CallDescribe $idNew), (Get-CallVolumes $idNew), (Get-CallSsm $idNew))
-    Check = { param($run, $started) if (-not (Test-SameBytes (Get-FileBytesOrNull $fx.HostsFile) (Get-HostsBytes @((New-BoxRecord $script:IdNew))))) { 'hosts.json is not the box''s record holding the instance ID' } } } -Setup {
+    Check = { param($run, $started) if (-not (Test-SameBytes (Get-FileBytesOrNull $fx.HostsFile) (Get-HostsBytes @((New-BoxRecord $script:IdNew -NoInstanceType))))) { 'hosts.json is not the box''s record holding the instance ID' } } } -Setup {
     Remove-HomePath $fx.HostsFile
     Set-AwsScenario ((Get-HealthyAnswers -Id $script:IdNew) + @{ 'cloudformation describe-stacks agentbox' = @(New-Step (New-StackDoc -StackName 'agentbox' -Id $script:IdNew)) })
   }

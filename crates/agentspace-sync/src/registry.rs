@@ -117,6 +117,42 @@ pub(crate) fn set_instance_id(home: &Path, project: &str, id: Option<&str>) -> R
     agentspace_hosts::write(home, &hosts, &held).map_err(|e| change_failure(home, &e))
 }
 
+/// Removes `project`'s record's `instance_type`, or sets it, under `hosts.lock`, changing nothing
+/// else in the record (docs/state.md, The instance type; pins P11, P26 and P30). A missing file
+/// starts from the seed document and is written, never from the implied record (pin P31).
+pub(crate) fn set_instance_type(
+    home: &Path,
+    project: &str,
+    instance_type: Option<&str>,
+) -> Result<(), Failure> {
+    agentspace_hosts::set_instance_type(home, project, instance_type)
+        .map_err(|e| record_failure(home, project, &e))
+}
+
+/// Sets or removes `project`'s record's `instance_id` and `instance_type` together, in one write,
+/// under `hosts.lock`, and nothing else of any record (docs/state.md, The instance type, steps 2
+/// and 4; pins P11, P23 and P30).
+pub(crate) fn set_instance(
+    home: &Path,
+    project: &str,
+    instance_id: Option<&str>,
+    instance_type: Option<&str>,
+) -> Result<(), Failure> {
+    agentspace_hosts::set_instance(home, project, instance_id, instance_type)
+        .map_err(|e| record_failure(home, project, &e))
+}
+
+/// The failure of a change to one project's record: a project with no record is the "has no host"
+/// message, any other error is the registry's.
+fn record_failure(home: &Path, project: &str, error: &HostsError) -> Failure {
+    match error {
+        HostsError::Unwritable(agentspace_hosts::Failure::NoSuchRecord) => failure(format!(
+            "agentspace: Project '{project}' has no host; provision -Host {project} makes one."
+        )),
+        _ => change_failure(home, error),
+    }
+}
+
 /// The instance-ID cache over a host's record, which `agentspace-box` reads and writes through
 /// (operator.md, The host registry, as the operator uses it).
 ///

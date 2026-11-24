@@ -63,7 +63,7 @@ function Test-FailedStep($C) {
     param($h, $s)
     $ready = $C.Seed -eq 'ready'
     $record = switch ($C.Seed) {
-      'ready' { New-HpRecord 'agentspace' 'ready' $script:HpHostId $oldTime }
+      'ready' { New-HpRecord 'agentspace' 'ready' $script:HpHostId $oldTime -NoInstanceType }
       'creating' { New-HpRecord 'agentspace' 'creating' '' $oldTime }
       default { $null }
     }
@@ -98,7 +98,10 @@ function Test-FailedStep($C) {
     if ((Get-HpLogShape $log) -cne $C.Shape) { $p.Add("The log's lines are not: $($C.Shape)") }
     else {
       $lastLine = $log.Lines[$log.Lines.Count - 1]
-      $wantReason = ' reason=' + (($C.Msg -replace '[\x00-\x1f\x7f]', '?'))
+      # Step 4's line alone carries type=<type>, the value the run passed as -InstanceType: the lease is a pending m, so
+      # m9g.xlarge (operator.md, The provisioning run's log, `type`; provision step 4.3; pin P24).
+      $wantType = if ($lastLine.Step -ceq 'deploy') { ' type=m9g.xlarge' } else { '' }
+      $wantReason = $wantType + ' reason=' + (($C.Msg -replace '[\x00-\x1f\x7f]', '?'))
       if ($lastLine.Rest -cne $wantReason) { $p.Add('The failed line''s reason is not the failure message without its agentspace: prefix, in full') }
       if (-not (Test-HpTimeBetween $lastLine.Time $t0 $t1)) { $p.Add('The failed line''s time is not the time it was written') }
     }
@@ -116,7 +119,11 @@ function Test-FailedStep($C) {
       elseif ($fin.ContainsKey('instance_id')) { $p.Add('The record holds an instance ID the run never learned') }
       if ($fin['last_attempt_at'] -cne $first['last_attempt_at']) { $p.Add('last_attempt_at is not the run''s start, as step 3 wrote it') }
       if (-not (Test-HpTimeBetween $fin['last_attempt_at'] $t0 $t1)) { $p.Add('last_attempt_at is not the time of this run''s start') }
-      if (@($fin.Keys | Where-Object { $_ -notin 'project', 'stack', 'state', 'instance_id', 'last_attempt_at' }).Count -gt 0) { $p.Add('The record holds another member') }
+      # A deploy that succeeded recorded the type it read back (deploy step 5); one that failed left none (step 4.2).
+      $wantType = $C.Shape -like '*deploy done*'
+      if ($wantType -and $fin['instance_type'] -cne 'm9g.xlarge') { $p.Add('The record does not hold the instance_type the deploy read back') }
+      if (-not $wantType -and $fin.ContainsKey('instance_type')) { $p.Add('The record holds an instance_type after a deploy that failed') }
+      if (@($fin.Keys | Where-Object { $_ -notin 'project', 'stack', 'state', 'instance_id', 'instance_type', 'last_attempt_at' }).Count -gt 0) { $p.Add('The record holds another member') }
     }
     $box = Get-HpRecord $h 'swimcoach'
     if ($null -eq $box -or $box['instance_id'] -cne $script:HpBoxId -or $box['state'] -cne 'ready') { $p.Add('The box''s record changed') }
@@ -231,9 +238,9 @@ Test-FailedStep @{
     if ($i -lt 0) { $p.Add('The deploy of a stack in REVIEW_IN_PROGRESS passed no --parameter-overrides: it MUST take the creation parameters'); return }
     $caPub = [IO.File]::ReadAllText((Join-Path $h.UserProfile '.agentspace\ca\agentspace_ca.pub')).Trim()
     $caKey = ($caPub -split '\s+')[0..1] -join ' '
-    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', "HostName=$stack", "CaPublicKey=$caKey")
+    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', "HostName=$stack", "CaPublicKey=$caKey", 'InstanceType=m9g.xlarge')
     $got = @($a | Select-Object -Skip ($i + 1))
-    if (($got -join [char]0) -cne ($want -join [char]0)) { $p.Add('The overrides are not the creation parameters: SshPublicKey, SubnetId, VpcId, HostName and CaPublicKey, in that order, one argument each') }
+    if (($got -join [char]0) -cne ($want -join [char]0)) { $p.Add('The overrides are not the creation parameters: SshPublicKey, SubnetId, VpcId, HostName and CaPublicKey, then InstanceType=<type>, in that order, one argument each') }
   }
 }
 

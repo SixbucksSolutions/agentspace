@@ -46,7 +46,8 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
   $attempt = '2026-01-01T00:00:00Z'
   $recNone = @((New-BoxRecord), (New-HostRecord -Project 'agentspace' -State 'creating' -LastAttempt $attempt))
   $recOld = @((New-BoxRecord), (New-HostRecord -Project 'agentspace' -State 'creating' -InstanceId $idA -LastAttempt $attempt))
-  $recNew = @((New-BoxRecord), (New-HostRecord -Project 'agentspace' -State 'creating' -InstanceId $idNew -LastAttempt $attempt))
+  # A deploy that succeeds records the stack's InstanceType parameter, read back, in any state (operator.md, deploy step 5; pin P11).
+  $recNew = @((New-BoxRecord), (New-HostRecord -Project 'agentspace' -State 'creating' -InstanceId $idNew -LastAttempt $attempt -Typed))
   $doesNotExist = New-Step '' "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id $stack does not exist" 254
   $stackDone = New-Step (New-StackDoc -StackName $stack -Id $idNew -Status 'CREATE_COMPLETE')
   $deploying = "Deploying stack '$stack' in us-west-2..."
@@ -117,7 +118,7 @@ Invoke-HostFile -FileName 'test-unmet-host-deploy-registry.ps1' -Body {
   }
   Test-HostCase "${d}: with no host registry at all, the box's deploy writes hosts.json holding the box's record with the new instance ID" @('deploy') @{
     Exit = 0; SshCalls = 'any'; ScpCalls = 'any'
-    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdNew)) 'the box''s record holding the stack''s InstanceId output' } } -Setup {
+    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdNew)) 'the box''s record holding the stack''s InstanceId output and its InstanceType' } } -Setup {
     Remove-HomePath $fx.HostsFile
     Set-AwsScenario (Merge-Scenario (Get-HealthyAnswers -Id $script:IdNew) @{ 'cloudformation describe-stacks agentbox' = @((New-Step (New-StackDoc -StackName 'agentbox' -Id $script:IdNew))) })
   }

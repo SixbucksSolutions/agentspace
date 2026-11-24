@@ -260,9 +260,11 @@ function New-HpDescribe([string]$State = 'running', [string]$Launch = '2020-01-0
   New-HpStep (ConvertTo-Json -Compress -Depth 8 -InputObject @{ Reservations = @(@{ Instances = @(@{ State = @{ Name = $State }; LaunchTime = $Launch }) }) })
 }
 # A stack answer: its status and its InstanceId output (none when $Id is empty).
-function New-HpStack([string]$Stack, [string]$Status = 'CREATE_COMPLETE', [string]$Id = '') {
+function New-HpStack([string]$Stack, [string]$Status = 'CREATE_COMPLETE', [string]$Id = '', [string]$InstanceType = 'm9g.xlarge') {
   $st = @{ StackName = $Stack; StackStatus = $Status }
   if ($Id) { $st['Outputs'] = @(@{ OutputKey = 'InstanceId'; OutputValue = $Id }) } else { $st['Outputs'] = @() }
+  # The stack's InstanceType parameter, which every deploy reads back (docs/operator.md, deploy; pin P22).
+  if ($InstanceType) { $st['Parameters'] = @(@{ ParameterKey = 'InstanceType'; ParameterValue = $InstanceType }) }
   New-HpStep (ConvertTo-Json -Compress -Depth 8 -InputObject @{ Stacks = @($st) })
 }
 function New-HpNoStack([string]$Stack) {
@@ -273,12 +275,12 @@ function New-HpNoStack([string]$Stack) {
 # The host registry as a writer writes it (docs/state.md, The host registry): the box's record first,
 # each record's members in the table's order, compact, UTF-8 without a byte order mark, one LF.
 function Get-HpHostsText {
-  param([string]$BoxId = '', [string[]]$Records = @(), [string]$BoxLastAttempt = '')
-  $box = '{"project":"swimcoach","stack":"agentbox","state":"ready"' + $(if ($BoxId) { ',"instance_id":"' + $BoxId + '"' } else { '' }) + $(if ($BoxLastAttempt) { ',"last_attempt_at":"' + $BoxLastAttempt + '"' } else { '' }) + '}'
+  param([string]$BoxId = '', [string[]]$Records = @(), [string]$BoxLastAttempt = '', [switch]$NoInstanceType)
+  $box = '{"project":"swimcoach","stack":"agentbox","state":"ready"' + $(if ($BoxId) { ',"instance_id":"' + $BoxId + '"' } else { '' }) + $(if (-not $NoInstanceType) { ',"instance_type":"m9g.xlarge"' } else { '' }) + $(if ($BoxLastAttempt) { ',"last_attempt_at":"' + $BoxLastAttempt + '"' } else { '' }) + '}'
   '{"version":0,"hosts":[' + ((@($box) + $Records) -join ',') + ']}' + "`n"
 }
-function New-HpRecord([string]$Project, [string]$State, [string]$Id = '', [string]$LastAttempt = '') {
-  '{"project":"' + $Project + '","stack":"agentspace-host-' + $Project + '","state":"' + $State + '"' + $(if ($Id) { ',"instance_id":"' + $Id + '"' } else { '' }) + $(if ($LastAttempt) { ',"last_attempt_at":"' + $LastAttempt + '"' } else { '' }) + '}'
+function New-HpRecord([string]$Project, [string]$State, [string]$Id = '', [string]$LastAttempt = '', [switch]$NoInstanceType) {
+  '{"project":"' + $Project + '","stack":"agentspace-host-' + $Project + '","state":"' + $State + '"' + $(if ($Id) { ',"instance_id":"' + $Id + '"' } else { '' }) + $(if ($State -ceq 'ready' -and -not $NoInstanceType) { ',"instance_type":"m9g.xlarge"' } else { '' }) + $(if ($LastAttempt) { ',"last_attempt_at":"' + $LastAttempt + '"' } else { '' }) + '}'
 }
 function Set-HpHosts($H, [string]$Text) { Write-HpFile -H $H -Path (Get-HpHostsFile $H) -Text $Text }
 # The registry as parsed JSON: the records in order, or $null when there is no valid file.

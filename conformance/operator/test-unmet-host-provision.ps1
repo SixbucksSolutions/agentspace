@@ -302,11 +302,12 @@ Invoke-HpInHome -Name "${sec}: provision -Host swimcoach" -NeedsLocalswim -Body 
     $ov = @($deploy['a'])
     $i = [Array]::IndexOf($ov, '--parameter-overrides')
     $tail = if ($i -ge 0) { @($ov[($i + 1)..($ov.Count - 1)]) } else { @() }
-    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', 'InstanceType=m9g.4xlarge', 'RootVolumeGiB=64')
-    if ((($tail | Sort-Object) -join '|') -cne (($want | Sort-Object) -join '|')) { $p.Add('The box''s deploy does not pass SshPublicKey and every member of stack-parameters.json, and nothing else') }
+    # The box's deploy never reads or passes the file's InstanceType (D67; docs/operator.md, deploy); no lease here asks for one.
+    $want = @("SshPublicKey=$($script:HpKeyLine)", 'SubnetId=SUBNET_VALUE', 'VpcId=VPC_VALUE', 'RootVolumeGiB=64')
+    if ((($tail | Sort-Object) -join '|') -cne (($want | Sort-Object) -join '|')) { $p.Add('The box''s deploy does not pass SshPublicKey and every member of stack-parameters.json but InstanceType, and nothing else') }
     if ($ov -match '^(HostName|CaPublicKey)=') { $p.Add('The box''s deploy passes HostName or CaPublicKey') }
   } else { $p.Add('No cloudformation deploy was made') }
-  Write-HpProblems "${sec}: the box's provision passes every member of stack-parameters.json and neither HostName nor CaPublicKey (provision; deploy, step 4)" $p
+  Write-HpProblems "${sec}: the box's provision passes every member of stack-parameters.json but InstanceType and neither HostName nor CaPublicKey (provision; deploy, step 4)" $p
 
   if ($calls.Count -eq 0) { Write-ConformanceResult -Name "${sec}: the box's record, its log and its files" -Status FAIL -Reason 'No stand-in was started, so the run never reached a step'; return }
   $p = New-HpProblems

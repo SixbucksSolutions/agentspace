@@ -96,6 +96,64 @@ pub struct Run {
     pub stderr: Vec<u8>,
     /// What the throwaway home held after the run, beyond what the harness made.
     pub leftovers: Vec<String>,
+    /// The command line the run was given, as the program's own arguments.
+    pub args: Vec<String>,
+    /// Every file and folder the throwaway home held after the run, beyond the harness's five
+    /// folders, each as a `/`-separated path from the home's root.
+    pub written: Vec<String>,
+}
+
+/// What a `deploy` command line MAY leave in the throwaway home, and nothing else (architect,
+/// 2026-11-23, for v0.09-T03, pin P44): the host's `provision.lock` that `deploy` takes before its
+/// steps 1 to 3 (operator.md, deploy; P34), and the folders it is made in. The host is the one
+/// `-Host` names, lower-cased, and `swimcoach`, the box, when `-Host` is not given. No other
+/// command may leave any of them.
+pub fn deploy_lock_paths(args: &[String]) -> Vec<String> {
+    let mut command: Option<&str> = None;
+    let mut host: Option<String> = None;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        let valued = ["-GiB", "-Alias", "-Host", "-InstanceType"]
+            .iter()
+            .any(|p| word.eq_ignore_ascii_case(p));
+        if valued {
+            let value = words.next();
+            if word.eq_ignore_ascii_case("-Host") {
+                host = value.map(|v| v.trim().to_lowercase());
+            }
+        } else if !word.starts_with('-') && command.is_none() {
+            command = Some(word);
+        }
+    }
+    if !command.is_some_and(|c| c.eq_ignore_ascii_case("deploy")) {
+        return Vec::new();
+    }
+    let project = host.unwrap_or_else(|| "swimcoach".to_string());
+    let hosts = "profile/.agentspace/hosts";
+    vec![
+        "profile/.agentspace".to_string(),
+        hosts.to_string(),
+        format!("{hosts}/{project}"),
+        format!("{hosts}/{project}/provision.lock"),
+    ]
+}
+
+/// Every path under `dir`, as `/`-separated paths from `root`, folders before what they hold.
+fn walk(root: &Path, dir: &Path, into: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).expect("a folder lists") {
+        let path = entry.expect("an entry").path();
+        let relative = path.strip_prefix(root).expect("under the root");
+        into.push(
+            relative
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/"),
+        );
+        if path.is_dir() {
+            walk(root, &path, into);
+        }
+    }
 }
 
 impl Run {
@@ -172,6 +230,25 @@ impl Home {
         c
     }
 
+    fn written(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(self.dir.path()).expect("the home lists") {
+            let path = entry.expect("an entry").path();
+            let name = path
+                .file_name()
+                .expect("a name")
+                .to_string_lossy()
+                .into_owned();
+            if HARNESS_FOLDERS.contains(&name.as_str()) {
+                walk(self.dir.path(), &path, &mut found);
+            } else {
+                found.push(name);
+            }
+        }
+        found.sort();
+        found
+    }
+
     fn leftovers(&self) -> Vec<String> {
         let mut found = Vec::new();
         for entry in std::fs::read_dir(self.dir.path()).expect("the home lists") {
@@ -203,6 +280,11 @@ impl Home {
             stdout: out.stdout,
             stderr: out.stderr,
             leftovers: self.leftovers(),
+            args: command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect(),
+            written: self.written(),
         }
     }
 }
@@ -241,10 +323,12 @@ pub fn assert_failure_run(shown: &str, r: &Run, message: &str) {
     );
     assert_eq!(r.out(), "", "{shown}: stdout MUST be empty on a failure");
     assert_eq!(r.err(), format!("{message}\n"), "{shown}: stderr");
+    // A `deploy` line MAY leave its host's provision.lock and the folders it is in (P44).
+    let allowed = deploy_lock_paths(&r.args);
+    let beyond: Vec<&String> = r.written.iter().filter(|p| !allowed.contains(p)).collect();
     assert!(
-        r.leftovers.is_empty(),
-        "{shown}: wrote into the throwaway home: {:?}",
-        r.leftovers
+        beyond.is_empty(),
+        "{shown}: wrote into the throwaway home: {beyond:?}"
     );
 }
 

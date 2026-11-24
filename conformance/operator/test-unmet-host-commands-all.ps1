@@ -100,7 +100,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
   Test-HostCase "${s}: status -All of a missing registry reports the box's record alone, reading its instance ID from the agentbox stack" @('status', '-All') @{
     Exit = 0; Stderr = (Join-Lines @((Get-HostLine 'swimcoach' 'ready'), (Get-StatusLines $idBox).TrimEnd("`n"), $leasesMissing))
     Calls = @((Get-CallStack 'agentbox'), (Get-CallDescribe $idBox), (Get-CallVolumes $idBox), (Get-CallSsm $idBox))
-    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdBox)) 'the box''s record holding the instance ID' } } -Setup {
+    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdBox -NoInstanceType)) 'the box''s record holding the instance ID' } } -Setup {
     Remove-HomePath $fx.HostsFile
     Set-AwsScenario (Merge-Scenario (Get-HealthyAnswers -Id $script:IdBox) @{ 'cloudformation describe-stacks agentbox' = @(New-Step (New-StackDoc -StackName 'agentbox' -Id $script:IdBox)) })
   }
@@ -180,7 +180,7 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-all.ps1' -Body {
   Test-HostCase "${s}: down -All of a missing registry stops the box alone, reading its instance ID from the agentbox stack and writing the box's record" @('down', '-All') @{
     Exit = 0; Stderr = (Join-Lines @((Get-HostLine 'swimcoach' 'ready'), "Stopping $idBox."))
     Calls = @((Get-CallStack 'agentbox'), (Get-CallStop $idBox))
-    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdBox)) 'the box''s record holding the instance ID' } } -Setup {
+    Check = { param($run, $started) & $registryIs @((New-BoxRecord $script:IdBox -NoInstanceType)) 'the box''s record holding the instance ID' } } -Setup {
     Remove-HomePath $fx.HostsFile
     Set-AwsScenario @{ 'cloudformation describe-stacks agentbox' = @(New-Step (New-StackDoc -StackName 'agentbox' -Id $script:IdBox)) }
   }

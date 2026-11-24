@@ -303,7 +303,7 @@ fn deploy_with_an_instance_type_passes_it_to_the_hosts_existing_stack_and_then_s
         rig.ok(
             "cloudformation-describe-stacks",
             &format!(
-                "{{\"Stacks\":[{{\"StackName\":\"agentspace-host-agentspace\",\"StackStatus\":\"UPDATE_COMPLETE\",\"Outputs\":[{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{OTHER_ID}\"}}]}}]}}"
+                "{{\"Stacks\":[{{\"StackName\":\"agentspace-host-agentspace\",\"StackStatus\":\"UPDATE_COMPLETE\",\"Parameters\":[{{\"ParameterKey\":\"InstanceType\",\"ParameterValue\":\"{itype}\"}}],\"Outputs\":[{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{OTHER_ID}\"}}]}}]}}"
             ),
         );
         rig.ok("cloudformation-deploy", "");

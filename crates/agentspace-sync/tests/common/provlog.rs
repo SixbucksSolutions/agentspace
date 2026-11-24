@@ -1,8 +1,10 @@
 //! A provisioning run's log, read by a test (E0.07-T03-S03; operator.md, provision, Its log).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing. A line is
-//! `<time> <step> <outcome>[ reason=<reason>]`. The log holds the run's own lines alone: the
-//! programs' output goes to the run's streams, not the log (architect, 2026-11-21, for v0.07-T03).
+//! `<time> <step> <outcome>[ type=<type>][ placed=<n>][ lease=<id>][ reason=<reason>]`, `type` on
+//! step 4's `deploy` line alone, from v0.09 (pin P24), and `refused` and `left` outcomes on `place`
+//! lines alone (pin P37). The log holds the run's own lines alone: the programs' output goes to
+//! the run's streams, not the log (architect, 2026-11-21, for v0.07-T03).
 #![allow(dead_code)]
 
 use std::fs;
@@ -31,6 +33,11 @@ impl LogLine {
     /// The step and outcome, `run begun` or `sync failed`.
     pub fn name(&self) -> String {
         format!("{} {}", self.step, self.outcome)
+    }
+
+    /// The `type=<type>` field of a `deploy` line, the type without its name.
+    pub fn type_field(&self) -> Option<&str> {
+        self.field.as_deref().and_then(|f| f.strip_prefix("type="))
     }
 }
 
@@ -73,17 +80,28 @@ pub fn parse_log_line(line: &str) -> Option<LogLine> {
         Some((o, f)) => (o, Some(f.to_string())),
         None => (outcome, None),
     };
-    if !["begun", "done", "failed"].contains(&outcome) {
+    if !["begun", "done", "failed", "refused", "left"].contains(&outcome) {
+        return None;
+    }
+    // `refused` and `left` are `place`'s alone, from v0.09 (operator.md, provision, Its log; pin
+    // P37).
+    if ["refused", "left"].contains(&outcome) && step != "place" {
         return None;
     }
     if let Some(f) = &field {
+        let lease = |f: &str| {
+            f.strip_prefix("lease=")
+                .is_some_and(|id| !id.is_empty() && !id.contains(' '))
+        };
         let fits = match (step, outcome) {
             ("place", "done") => f
                 .strip_prefix("placed=")
                 .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
-            ("place", "failed") => f
-                .strip_prefix("lease=")
-                .is_some_and(|id| !id.is_empty() && !id.contains(' ')),
+            ("place", "failed" | "refused" | "left") => lease(f),
+            // From v0.09, step 4's line carries `type=<type>` when step 4.3 found one (pin P24).
+            ("deploy", "done" | "failed") => f
+                .strip_prefix("type=")
+                .is_some_and(|t| t.contains('.') && !t.contains(' ')),
             _ => false,
         };
         if !fits {

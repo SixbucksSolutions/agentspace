@@ -10,6 +10,12 @@
 //! - **A run MUST NOT take a `ready` record out of `ready`** (D48; P3): on such a record step 3
 //!   writes `last_attempt_at` alone, a failure writes nothing, and step 8 writes only an
 //!   `instance_id` that differs. `creating` and `failed` are for a host that was never `ready`.
+//! - **The deploy step MUST find its type in step 4's order** (D68, D71; pin P26): the lease state
+//!   lock, then `hosts.lock` for the removal of the record's `instance_type` (whether a type is
+//!   then passed or none), `hosts.lock` released, the lease state file read under the lease state
+//!   lock still held, the type decided, and that lock released before any AWS call. **It passes
+//!   no type while a live `ready` lease of the project holds the host**, and never maps a size to
+//!   a type itself: the EC2 driver's `resize_target` does (D67).
 //! - **Every change to the registry is made under `hosts.lock`**, never held across an AWS call
 //!   or an ssh.
 //! - **Nothing is written for a project that has no record and is not listed**: no log, no host's
@@ -22,7 +28,7 @@
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agentspace_ca::CaEnv;
@@ -132,7 +138,7 @@ fn open_log(path: &Path) -> Result<Log, Failure> {
 /// The system's error text, with no final period and no line break. Rust's trailing
 /// ` (os error <n>)` MUST be dropped: a message carries the system's own words alone (operator.md,
 /// Exit codes).
-fn error_text(e: &dyn std::fmt::Display) -> String {
+pub(crate) fn error_text(e: &dyn std::fmt::Display) -> String {
     let text = e.to_string();
     let text: String = text
         .chars()
@@ -176,6 +182,139 @@ fn take_run_lock(home: &Path, project: &str, log: &Log) -> Result<RunLock, Failu
     };
     log.failed("run", &failure);
     Err(failure)
+}
+
+/// A person's `deploy` takes its host's `provision.lock` the way the run's step 2 does, without
+/// waiting, and holds it for its whole life (operator.md, deploy; D67's change note; pins P34 and
+/// P36). A lock another program holds refuses the `deploy` with
+/// `agentspace: A provisioning run or deploy for '<project>' is already running; the deploy did not run.`;
+/// one that cannot be taken for any other reason fails it with `agentspace: Cannot take <path>:
+/// <error>.`. Neither writes a line to `provision.log`, which is the run's alone.
+pub(crate) fn take_person_lock(home: &Path, project: &str) -> Result<RunLock, Failure> {
+    match agentspace_hosts::try_run_lock(home, project) {
+        Ok(Some(lock)) => Ok(lock),
+        Ok(None) => Err(step_failed(&format!(
+            "agentspace: A provisioning run or deploy for '{project}' is already running; the deploy did not run."
+        ))),
+        Err(e) => Err(step_failed(&format!(
+            "agentspace: Cannot take {}: {}.",
+            agentspace_hosts::host_run_lock_path(home, project).display(),
+            error_text(&e)
+        ))),
+    }
+}
+
+/// The state folder the run's leases are in: `AGENTSPACE_STATE_DIR` when the run has it set and
+/// not empty, made full, else `%USERPROFILE%\.agentspace` (operator.md, Environment variables),
+/// the folder whose leases step 9 places.
+fn state_dir_for(ctx: &Context, env: Env<'_>) -> Result<PathBuf, Failure> {
+    let home = full_home(ctx);
+    let home_value = home.clone().into_os_string();
+    let var = |name: &str| -> Option<OsString> {
+        match name {
+            "USERPROFILE" => Some(home_value.clone()),
+            "AGENTSPACE_STATE_DIR" => env(name),
+            _ => None,
+        }
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let paths = agentspace_state::resolve_paths(&var, &cwd)
+        .map_err(|_| step_failed("agentspace: The state and ssh folders cannot be found."))?;
+    Ok(paths.state_dir.unwrap_or_else(|| home.join(".agentspace")))
+}
+
+/// What a text of a lock's or a file's failure shows: no line break, no final period.
+fn why_text(why: &str) -> String {
+    error_text(&why)
+}
+
+/// Step 4.1: the lease state lock, waited for up to its 30 seconds as a lease command that changes
+/// leases waits (state.md, The lease state lock). A lock not taken is
+/// `agentspace: The lease state lock <path> is held by another program; try again.`, and one that
+/// cannot be opened for any other reason `agentspace: Cannot take <path>: <error>.` (pin P35).
+fn take_lease_lock(state_dir: &Path) -> Result<agentspace_state::LockGuard, Failure> {
+    let path = state_dir.join("leases.lock");
+    agentspace_state::lock(state_dir).map_err(|e| match e {
+        agentspace_state::StoreError::Busy => step_failed(&format!(
+            "agentspace: The lease state lock {} is held by another program; try again.",
+            path.display()
+        )),
+        agentspace_state::StoreError::CannotLock(why)
+        | agentspace_state::StoreError::Unreadable(why)
+        | agentspace_state::StoreError::NotValid(why)
+        | agentspace_state::StoreError::Unwritable(why) => step_failed(&format!(
+            "agentspace: Cannot take {}: {}.",
+            path.display(),
+            why_text(&why)
+        )),
+    })
+}
+
+/// Step 4.3's reading: the lease state file, whole and read-only, under the lease state lock the
+/// caller holds. A missing file holds no leases. A file that cannot be read or is not valid fails
+/// with `agentspace: The lease state file <path> cannot be read: <reason>.`, as the guard writes it
+/// (pin P26).
+fn read_leases(state_dir: &Path) -> Result<Vec<agentspace_state::Record>, Failure> {
+    agentspace_state::read(state_dir)
+        .map(|file| file.leases)
+        .map_err(|e| {
+            let why = match &e {
+                agentspace_state::StoreError::Unreadable(why)
+                | agentspace_state::StoreError::NotValid(why)
+                | agentspace_state::StoreError::CannotLock(why)
+                | agentspace_state::StoreError::Unwritable(why) => why.replace(['\r', '\n'], " "),
+                agentspace_state::StoreError::Busy => "the file is in use".to_string(),
+            };
+            step_failed(&format!(
+                "agentspace: The lease state file {} cannot be read: {why}.",
+                state_dir.join("leases.json").display()
+            ))
+        })
+}
+
+/// What the run's deploy step decides from the leases at one reading's time (step 4.3): **no type**
+/// when the project holds a live `ready` lease, an unexpired stored `ready` record of the project,
+/// so the host keeps its size while a lease holds it (D66, D68's change note; pin P2(a)); otherwise
+/// the EC2 driver's `resize_target`, which the run never restates (D67).
+pub(crate) fn decide_type(
+    leases: &[agentspace_state::Record],
+    project: &str,
+    now: i64,
+) -> Option<&'static str> {
+    let held = leases
+        .iter()
+        .any(|l| l.project == project && l.state == "ready" && agentspace_state::is_live(l, now));
+    if held {
+        None
+    } else {
+        agentspace_driver_ec2::resize_target(leases, project)
+    }
+}
+
+/// Step 4's first three steps, in the order of the locks (docs/state.md, The order of the locks;
+/// operator.md, provision, step 4; pin P26): takes the lease state lock, then `hosts.lock` for the
+/// removal of the record's `instance_type`, releases `hosts.lock`, reads the lease state file under
+/// the lease state lock still held, decides the type, and releases that lock before any call to
+/// AWS. **The type is removed whether a type is then passed or none**, so a run whose deploy step
+/// fails or is killed leaves none (pin P30). Each failure comes before any call to AWS; the type
+/// found, or none, is `Ok`'s.
+pub(crate) fn find_type(
+    ctx: &Context,
+    env: Env<'_>,
+    home: &Path,
+    project: &str,
+) -> Result<Option<&'static str>, Failure> {
+    let state_dir = state_dir_for(ctx, env)?;
+    // 4.1: the lease state lock, then (inside the removal) hosts.lock.
+    let lease_lock = take_lease_lock(&state_dir)?;
+    // 4.2: removes the type and writes the registry, then releases hosts.lock.
+    crate::registry::set_instance_type(home, project, None)?;
+    // 4.3: the leases, one reading's time.
+    let leases = read_leases(&state_dir)?;
+    let found = decide_type(&leases, project, agentspace_state::now());
+    // 4.4: released before any call to AWS.
+    drop(lease_lock);
+    Ok(found)
 }
 
 /// Step 3: the run's start, under `hosts.lock`, re-reading the registry. Returns whether the
@@ -412,14 +551,21 @@ pub(crate) fn run(
         f
     };
 
-    // Step 4: deploy's existence check and steps 1 to 5, never with -InstanceType or sync.
+    // Step 4: its type found in steps 4.1 to 4.4, then deploy's existence check and steps 1 to 5
+    // (never its `sync`) with `-InstanceType` when a type was found, and none otherwise (D68, D71;
+    // pin P26). A step 4 that failed before it found a type logs no `type` field (pin P24).
+    let found = find_type(ctx, env, &home, project).map_err(|f| fail("deploy", f))?;
+    let type_field = found.map(|t| format!("type={}", log_field(t)));
     let deployed = if is_box {
-        deploy::box_stack(ctx, say, aws, seams)
+        deploy::box_stack(ctx, found, say, aws, seams)
     } else {
-        deploy::host_stack(ctx, ca_env, project, None, say, aws, seams)
+        deploy::host_stack(ctx, ca_env, project, found, say, aws, seams)
     };
-    let instance_id = deployed.map_err(|f| fail("deploy", f))?;
-    log.line("deploy", "done", None);
+    let instance_id = deployed.inspect_err(|f| {
+        log.line_with("deploy", "failed", type_field.as_deref(), Some(&f.message));
+        record_failure(&home, project, was_ready, &log);
+    })?;
+    log.line_with("deploy", "done", type_field.as_deref(), None);
 
     // Step 5: start and wait, with no push. A host's deadline hint names its own alias, never the
     // box's (operator.md, From the command line, "What a command takes from its host").
