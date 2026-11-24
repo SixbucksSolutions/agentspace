@@ -100,6 +100,11 @@ $cases = @(
   @('json token member', ('"to' + 'ken": "' + 'plantedvalue77' + '"'), '"token": "<secret>"', 'plantedvalue77', '<secret>'),
   @('secret assignment', ('client_' + 'secret = ' + 'plantedsecret99'), 'client_secret = <secret>', 'plantedsecret99', '<secret>'),
   @('bare long token', $tokenValue, '<token>', $tokenValue, '<token>'),
+  @('token flag, value after a space', ('aws sso --to' + 'ken ' + 'plantedflagvalue1'), 'aws sso --token <secret>', 'plantedflagvalue1', '<secret>'),
+  @('secret flag, quoted value after a space', ('-client-sec' + 'ret "' + 'plantedquoted2' + '"'), '-client-secret "<secret>"', 'plantedquoted2', '<secret>'),
+  @('account id, hyphenated', ('Account ' + '1234-' + '5678-' + '9012'), 'Account <account-id>', ('5678-' + '9012'), '<account-id>'),
+  @('access key id', ('AKIA' + 'PLANTED0123456789'.Substring(0, 16)), '<access-key-id>', 'PLANTED01234567', '<access-key-id>'),
+  @('temporary access key id', ('ASIA' + 'ZZPLANTED9876543'), '<access-key-id>', 'ZZPLANTED9876543', '<access-key-id>'),
   @('email', ('planted.person' + '@' + 'example.com'), '<email>', 'planted.person', '<email>'),
   @('computer name, upper', $fakePc, '<literal>', $fakePc, '<literal>'),
   @('computer name, lower', $fakePc.ToLowerInvariant(), '<literal>', $fakePc.ToLowerInvariant(), '<literal>'),
@@ -156,7 +161,11 @@ $nearMisses = @(
   "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl.",
   'unsatisfiable no_capacity unsupported_size',
   'The token rule counts clients, and the password prompt is Terry''s.',
-  'Plain words, and a reader named agentspace-v0.09-t05.'
+  'Plain words, and a reader named agentspace-v0.09-t05.',
+  'agentspace lease create --project v010-plancheck --plan target\plans\plan-b.json',
+  'Ended 2026-11-24 at 3:19pm; build 26300.1234; rustc 1.99.0',
+  'AKIA alone, and a word like AKIAPLAN that is too short',
+  'The --plan and --size flags, given together, and --ttl 8h'
 )
 foreach ($n in $nearMisses) {
   Assert-ProofCase "near miss unchanged (made-up names): $n" ((Get-ProofMasked $n) -ceq $n)

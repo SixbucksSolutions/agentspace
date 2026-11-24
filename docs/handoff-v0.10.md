@@ -86,7 +86,9 @@ alone. #0217's card carries it.
 | T02 to T05 | Terry's word for each turn, then a dev lead | D81; #0214 to #0224 |
 | #0191's targets failing alone | #0217 | Its card |
 | `docs/conformance.md`'s stale state-schema passages | #0223 | Its card |
-| The live kit's three mask gaps and the lost observer script (from handoff-v0.09.md) | The architect, before T05 | D81 |
+| The live kit's three mask gaps (from handoff-v0.09.md) | **Done during T02**, 2026-11-24: `scripts\live\mask.ps1` rules 9a (a token flag's value after a space), 11a (an account ID in groups of four) and 16a (AWS access key IDs), with five proof cases and four near misses; `mask-proof.ps1` 285 passed | `scripts\live\` |
+| The lost observer script (from handoff-v0.09.md) | Not needed in v0.10, since no turn starts an instance (D80, D81); carried to the next release that runs a host live | `scripts\live\` |
+| #0225, no program sets its error mode, so a non-PE start from a mode-0 parent raises a modal dialog | #0217 (the two start points and `quiet_hard_errors()`), then #0226 and #0219 in T03, on Terry's word | D81's change during T02 |
 | AGENTS.md's sizing section rewritten for plan-sized leases | The architect, at v0.10's install | D73 |
 | The "time to a prompt" spec (from handoff-v0.09.md) | Not placed | v0.08's live records |
 | The rest of handoff-v0.09.md's open rows: #0192, #0193 and #0195's build in v0.12; #0190, #0082 and #0109 in v1.0 | Their epics | D72, D78 |

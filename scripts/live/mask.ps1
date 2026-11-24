@@ -9,7 +9,9 @@
 #   Get-Content -Raw <file> | ConvertTo-LiveMasked
 #
 # It is v0.08-T05's mask (docs/runs/e0.08-t05-s01.md, "The mask, and its proof"): the same 18 rules in
-# the same order, with v0.08-T06's 8.3 short form of the profile path and folder added to rules 1 and 2.
+# the same order, with v0.08-T06's 8.3 short form of the profile path and folder added to rules 1 and 2,
+# and v0.10's three (9a, a token flag's value after a space; 11a, an account ID in groups of four;
+# 16a, AWS access key IDs), each closing a gap handoff-v0.09.md listed, each with a proof case.
 # A live run on Terry's real setup MUST pass every byte it prints or writes through it (AGENTS.md), and
 # MUST run scripts\live\mask-proof.ps1 first.
 #
@@ -52,7 +54,7 @@ function Get-LiveMaskPathPattern([string]$FullPath) {
 $LiveMaskProfile = [string]$env:USERPROFILE
 $LiveMaskProfileShort = if ($LiveMaskProfile) { Get-LiveMaskShortPath $LiveMaskProfile } else { '' }
 
-# ConvertTo-LiveMasked: the 18 rules, in order. -Profiles and -Literals default to the real
+# ConvertTo-LiveMasked: the 18 rules and v0.10's three, in order. -Profiles and -Literals default to the real
 # environment; mask-proof.ps1 passes made-up ones to prove rules 1 and 2 on planted values.
 function ConvertTo-LiveMasked {
   [CmdletBinding()]
@@ -101,10 +103,14 @@ function ConvertTo-LiveMasked {
     $t = [regex]::Replace($t, 'SHA256:[A-Za-z0-9+/=]{20,}', '<fingerprint>')
     # 9. Token, secret and password assignments.
     $t = [regex]::Replace($t, '(?i)(\b[A-Za-z0-9_-]*(?:token|secret|password|passwd|api_?key)[A-Za-z0-9_-]*"?\s*[:=]\s*"?)[^\s"'',}]+', '$1<secret>')
+    # 9a (v0.10). A flag of that kind given its value after a space, with no '=' or ':'.
+    $t = [regex]::Replace($t, '(?i)((?<![\w-])--?[A-Za-z0-9_-]*(?:token|secret|password|passwd|api-?key)[A-Za-z0-9_-]*[ \t]+"?)(?!<secret>)[^\s"'',}]+', '$1<secret>')
     # 10. Email addresses.
     $t = [regex]::Replace($t, '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}', '<email>')
     # 11. UUIDs.
     $t = [regex]::Replace($t, '\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b', '<uuid>')
+    # 11a (v0.10). An account ID written in three groups of four digits, as AWS's console shows it.
+    $t = [regex]::Replace($t, '(?<![\w-])\d{4}-\d{4}-\d{4}(?![\w-])', '<account-id>')
     # 12. Lease aliases.
     $t = [regex]::Replace($t, '\bagentspace-[a-z0-9][a-z0-9-]*-[0-9a-f]{8}\b', '<lease-alias>')
     # 13. Public EC2 host names, then 14. private ones.
@@ -124,6 +130,8 @@ function ConvertTo-LiveMasked {
     # 16. Instance IDs, and the other EC2 resource IDs.
     $t = [regex]::Replace($t, '\b' + 'i' + '-(?:[0-9a-f]{17}|[0-9a-f]{8})\b', '<instance-id>')
     $t = [regex]::Replace($t, '\b(vpc|subnet|vol|sg|ami|eni|igw|rtb|snap|r)' + '-(?:[0-9a-f]{17}|[0-9a-f]{8})\b', '<$1-id>')
+    # 16a (v0.10). AWS access key IDs and other IAM unique IDs: a four-letter prefix and 16 more.
+    $t = [regex]::Replace($t, '\b(?:AKIA|ASIA|AIDA|AROA|AGPA|ANPA|ANVA|AIPA|APKA)[A-Z0-9]{16}\b', '<access-key-id>')
     # 17. Runs of 32 or more token characters holding a digit, an uppercase and a lowercase letter.
     $t = [regex]::Replace($t, '[A-Za-z0-9_+/=-]{32,}', {
         param($m)
