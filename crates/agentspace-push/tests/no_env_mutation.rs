@@ -6,17 +6,22 @@
 //! tests on several threads, and a concurrent read of the environment is undefined behaviour once
 //! another thread writes it. A test passes the throwaway home to the code under test as a value, or
 //! to a child process it starts through `Command::env`. The scan reads every file under `tests` and
-//! under `src`, whatever its extension, and fails on a line that names either function, in any
-//! spelling: a call, a path, a `use`. It builds its own needles so that it does not find itself.
+//! under `src`, whatever its extension, and fails on a line that names any function that changes
+//! the environment, in any spelling: a call, a path, a `use`. The names are Rust's two, Windows'
+//! call that sets a variable (in either of its `A` and `W` forms) and the C runtime's call
+//! of the same kind (with its underscored forms), as agentspace-launch's scan has them. It builds its own needles
+//! so that it does not find itself.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The two functions' names, joined here so that this file holds neither.
-fn needles() -> [String; 2] {
+/// The four names, joined here so that this file holds none of them whole.
+fn needles() -> [String; 4] {
     [
         concat!("set", "_var").to_string(),
         concat!("remove", "_var").to_string(),
+        concat!("SetEnvironment", "Variable").to_string(),
+        concat!("put", "env").to_string(),
     ]
 }
 
@@ -85,7 +90,7 @@ fn no_file_of_the_crate_changes_the_process_environment() {
 
 #[test]
 fn the_scan_finds_every_spelling_in_a_planted_file_and_nothing_in_a_clean_one() {
-    let [set, remove] = needles();
+    let [set, remove, windows, crt] = needles();
     let dir = tempfile::tempdir().expect("A throwaway folder");
     let nested = dir.path().join("nested");
     fs::create_dir_all(&nested).expect("A throwaway subfolder");
@@ -95,7 +100,9 @@ fn the_scan_finds_every_spelling_in_a_planted_file_and_nothing_in_a_clean_one() 
             "fn a() {{ unsafe {{ std::env::{set}(\"X\", \"1\") }} }}\n\
              fn b() {{ unsafe {{ env::{remove}(\"X\") }} }}\n\
              use std::env::{{{set} as renamed}};\n\
-             fn c() {{}}\n"
+             fn c() {{}}\n\
+             fn d() {{ unsafe {{ {windows}W(n.as_ptr(), v.as_ptr()) }}; }}\n\
+             fn e() {{ unsafe {{ _{crt}_s(a.as_ptr(), b.as_ptr()) }}; }}\n"
         ),
     )
     .expect("The planted file");
@@ -121,6 +128,8 @@ fn the_scan_finds_every_spelling_in_a_planted_file_and_nothing_in_a_clean_one() 
             ("planted.rs".to_string(), 1),
             ("planted.rs".to_string(), 2),
             ("planted.rs".to_string(), 3),
+            ("planted.rs".to_string(), 5),
+            ("planted.rs".to_string(), 6),
             ("planted.txt".to_string(), 2),
         ]
     );
