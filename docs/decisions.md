@@ -3906,6 +3906,10 @@ and the release's budget 15 hours (architect.md, Running a turn, step 11).
 P37's three lines from it. So #0203, which produces `Refused` and `Left`, and #0204, whose run logs
 them, share no file and wait on neither.
 
+**T03's cap extended from 3.5 to 4.5 hours on Terry's word, 2026-11-23 ("Extend it")**, and the
+release's from 15 to 16, since #0204's branch runs the whole operator conformance suite twice
+(architect.md, Milestones on Terry's phone).
+
 **Why this shape:**
 - **The same order as v0.07's and v0.08's** (D55, D63): specs before code, libraries before
   programs, the whole suite before any instance starts.
