@@ -61,9 +61,13 @@ fn check_dir(dir: &Path, expect_valid: bool) -> Vec<String> {
     used
 }
 
+/// Contract v1 has nine schemas: v0's eight and `plan.input` (D76). v0's eight, kept under
+/// `schemas/v0/`, are not among them, since only files directly in `schemas/` are read.
 #[test]
-fn there_are_eight_contract_schemas() {
-    assert_eq!(contract_schemas().len(), 8);
+fn there_are_nine_contract_schemas() {
+    let schemas = contract_schemas();
+    assert_eq!(schemas.len(), 9, "{schemas:?}");
+    assert!(schemas.iter().any(|s| s == "plan.input"), "{schemas:?}");
 }
 
 #[test]
