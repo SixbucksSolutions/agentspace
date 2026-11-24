@@ -822,7 +822,8 @@ mod tests {
         let r = run(&["deploy", "-Host", "p", "-InstanceType", "m9g.xlarge"]);
         assert_eq!(r.instance_type.as_deref(), Some("m9g.xlarge"));
         assert_eq!(run(&["deploy"]).instance_type, None);
-        // Check 5 stays, and a usage error in an argument still comes before the host checks.
+        // The `-Alias` checks and host check 2 still refuse a `deploy` line that holds
+        // `-InstanceType`, in their order.
         assert_eq!(
             fails(&[
                 "deploy",
