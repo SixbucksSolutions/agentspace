@@ -4258,6 +4258,16 @@ v0.10 out as D71 laid out v0.09, on the designs of D73 to D80, and the stories' 
 | The schemas | `schemas/plan.input.schema.json`; v0's under `schemas/v0/`, samples in `schemas/v0/samples/` |
 | Branches | `v0.10/e0.10-tnn-smm` (D29) |
 
+**Changed for v0.10-T01 (architect, 2026-11-24, on the dev lead's pins P3 and P7):**
+- **A subagent's `model` takes the names' pattern, 1 to 64 printable ASCII characters with no space
+  at either end**, not the narrower pattern proposed for `effort`: a model named with its version
+  has a space (`Opus 5.5`), and a time-bound pin carries `+` and an expiry (Terry's naming rule).
+  `effort` keeps `^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`.
+- **`PlanError.message` is the reason alone, the `<why>`**, and the CLI frames it as
+  `Plan '<value>' is not a valid plan: <why>.`, `<value>` being the `--plan` argument as given. The
+  CLI writes the `<why>` of a file it cannot read or that is too large, since the crate reads no
+  file. No `<why>` carries an operating system's error text or a path other than the argument.
+
 **Pinned as code before T02, by the architect:** one pull request adds `Record`'s two members and
 `Host`'s `last_success_at`, read and written by nothing, and gives every struct literal of them in
 the workspace `None`. Crates that no T02 story owns build those literals, among them the keeper,
