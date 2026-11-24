@@ -15,13 +15,13 @@
 #
 # Dot-sourcing defines functions and the variables named LiveMask*, and nothing else: it MUST NOT set
 # a common name such as $Path in the caller's scope (v0.08-T06: a scan's $Path was reset that way, and
-# the scan passed every file). Every regex that names an AWS identifier's prefix is assembled from
-# pieces, so this file passes scripts\scan-identifiers.ps1.
-
-Set-StrictMode -Version Latest
+# the scan passed every file), nor the caller's strict mode, so each function sets its own. Every
+# regex that names an AWS identifier's prefix is assembled from pieces, so this file passes
+# scripts\scan-identifiers.ps1.
 
 # The 8.3 short form of a folder, or the folder itself when the volume keeps no short names.
 function Get-LiveMaskShortPath([string]$LongPath) {
+  Set-StrictMode -Version Latest
   try {
     $fso = New-Object -ComObject Scripting.FileSystemObject
     return [string]$fso.GetFolder($LongPath).ShortPath
@@ -34,6 +34,7 @@ function Get-LiveMaskShortPath([string]$LongPath) {
 # A path's prefix, matched in either slash direction, with doubled backslashes, and in Git Bash's
 # /c/... form.
 function Get-LiveMaskPathPattern([string]$FullPath) {
+  Set-StrictMode -Version Latest
   $parts = @($FullPath -split '[\\/]+' | Where-Object { $_ -ne '' })
   if ($parts.Count -eq 0) { return $null }
   $sep = '(?:\\\\|\\|/)'
@@ -60,6 +61,7 @@ function ConvertTo-LiveMasked {
     [string[]]$Profiles,
     [string[]]$Literals
   )
+  begin { Set-StrictMode -Version Latest }
   process {
     if ($null -eq $Text) { return '' }
     $t = $Text
@@ -137,6 +139,7 @@ function ConvertTo-LiveMasked {
 
 # A file's text, masked. A missing file gives one masked line saying so.
 function Get-LiveMaskedFile([string]$LiteralFile) {
+  Set-StrictMode -Version Latest
   if (-not (Test-Path -LiteralPath $LiteralFile)) {
     return (ConvertTo-LiveMasked -Text "Missing: $LiteralFile")
   }
