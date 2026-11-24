@@ -459,11 +459,24 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
             .unwrap_or_else(|| OsString::from(std::env::temp_dir()))
     };
     let (tmp, temp) = (temp_of("TMP"), temp_of("TEMP"));
+    // Every `AGENTSPACE_*` variable of the guard's own environment, by name only, to be removed
+    // from each run; Windows matches a variable's name without regard to case.
+    let agentspace_vars: Vec<OsString> = std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            name.to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("AGENTSPACE_")
+        })
+        .collect();
     // The listing and the run of one executable, both in the moved environment.
     let child = |exe: &Path, list: bool| {
         let mut c = Command::new(exe);
         if list {
             c.arg("--list");
+        }
+        for name in &agentspace_vars {
+            c.env_remove(name);
         }
         c.current_dir(crate_dir())
             .env(CHILD, "1")
@@ -471,9 +484,6 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
             .env("HOME", &home)
             .env("TMP", &tmp)
             .env("TEMP", &temp)
-            .env_remove("AGENTSPACE_STATE_DIR")
-            .env_remove("AGENTSPACE_SSH_DIR")
-            .env_remove("AGENTSPACE_PROXY_COMMAND")
             .stdin(Stdio::null())
             .output()
     };
