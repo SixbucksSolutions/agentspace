@@ -49,7 +49,7 @@
 #
 # Run: pwsh -NoProfile -File conformance/lease-cli/test-unmet-sizes-place.ps1
 # Exit: 0 when every check passed, 1 when any failed, 2 when none failed and any was skipped.
-# Time: about 5 minutes (Z7 waits for a one-minute lease to expire, and a stand-in that MUST NOT start is
+# Time: about 2 minutes (Z7 waits for a one-minute lease to expire, and a stand-in that MUST NOT start is
 # watched for 3 seconds).
 
 $ErrorActionPreference = 'Stop'

@@ -51,7 +51,7 @@
 #
 # Run: pwsh -NoProfile -File conformance/lease-cli/test-unmet-sizes-pending.ps1
 # Exit: 0 when every check passed, 1 when any failed, 2 when none failed and any was skipped.
-# Time: about 6 minutes.
+# Time: about 2 minutes.
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'harness.ps1')
@@ -567,20 +567,20 @@ Use-PvLab -Name "Z16 ($where, pin P31; $starting, step 4): With no hosts.json an
   $run = Invoke-SqCreate -Lab $lab -Project $script:SqProject -StandIn $first
   $after = Get-CcNowSecond
   $p = Get-SqPendingDocProblems -Run $run -Project $script:SqProject -Size 'm'
-  foreach ($x in (Get-PvStartedOnceProblems -StandIn $first -Project $script:SqProject)) { $p.Add("first create: $x") }
-  foreach ($x in (Get-PvHostsFileProblems -Lab $lab)) { $p.Add("first create: $x") }
+  foreach ($x in (Get-PvStartedOnceProblems -StandIn $first -Project $script:SqProject)) { $p.Add("First create:$x") }
+  foreach ($x in (Get-PvHostsFileProblems -Lab $lab)) { $p.Add("First create:$x") }
   $rec = Get-PvHostRecord $lab $script:SqProject
   $t1 = ''
-  if ($null -eq $rec) { $p.Add('first create: hosts.json holds no record for the project') }
+  if ($null -eq $rec) { $p.Add('First create:hosts.json holds no record for the project') }
   else {
     $t1 = [string]$rec['last_attempt_at']
-    if (-not (Test-PvTimeBetween -Time $t1 -Before $before -After $after)) { $p.Add('first create: last_attempt_at is not within the command''s run') }
+    if (-not (Test-PvTimeBetween -Time $t1 -Before $before -After $after)) { $p.Add('First create:last_attempt_at is not within the command''s run') }
     $want = New-PvHostsText -Records @((New-PvHostRecord -Project $script:SqProject -State 'creating' -LastAttemptAt $t1))
-    foreach ($x in (Get-PvHostsTextProblems -Lab $lab -Expected $want)) { $p.Add("first create: $x") }
+    foreach ($x in (Get-PvHostsTextProblems -Lab $lab -Expected $want)) { $p.Add("First create:$x") }
   }
   $box = Get-PvHostRecord $lab 'swimcoach'
-  if ($null -eq $box) { $p.Add('first create: hosts.json holds no record for the box') }
-  elseif ($box['stack'] -cne 'agentbox' -or $box['state'] -cne 'ready' -or $box.ContainsKey('instance_type')) { $p.Add('first create: the box''s record is not the seed''s, with no instance_type') }
+  if ($null -eq $box) { $p.Add('First create:hosts.json holds no record for the box') }
+  elseif ($box['stack'] -cne 'agentbox' -or $box['state'] -cne 'ready' -or $box.ContainsKey('instance_type')) { $p.Add('First create:the box''s record is not the seed''s, with no instance_type') }
   $before = Get-CcNowSecond
   $swim = Invoke-SqCreate -Lab $lab -Project 'swimcoach' -StandIn $second
   $after = Get-CcNowSecond
