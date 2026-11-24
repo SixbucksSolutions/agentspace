@@ -16,10 +16,10 @@ RFC 2119 keywords; the capitals are load-bearing.
   [decisions.md](decisions.md).
 - **T01 and T02 are closed**: the specs and the sweep (#133 to #135), then the foundations (#136 to
   #138), which turned all 26 of T01's by-design red tests green.
-- **Next is T03, the programs**: #0203 and #0204, started on Terry's word.
+- **Next is T03, the programs**: #0203, #0204 and #0210, started on Terry's word.
 - **One new finding, #0209**: on `main` at 7f534f8 the lease CLI's isolation guard saw its moved
-  home created once under load, hidden since T01 behind the guard's by-design failure. It needs
-  Terry's placement ([What is open](#what-is-open)).
+  home created once under load, hidden since T01 behind the guard's by-design failure. It is
+  carried into T03 as #0210 ([What is open](#what-is-open)).
 - **Nothing is running**: no host started in T01 or T02, no dev lead is live, and the reporter
   reports the `v0.09` milestone alone.
 
@@ -94,7 +94,6 @@ in decisions.md; this table only finds them.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T03, the programs: #0203 and #0204 | Terry's "Start T03", then the architect | D71; the rulings on #0203's and #0204's cards (P3, P29, P38, and the read and write split) |
-| #0209: the isolation guard saw its moved home created once under load; cause unknown | Terry places it; the architect recommends a diagnosis story in T03, since T03's code is what the guard protects | #0209 |
+| T03, the programs: #0203, #0204 and #0210, which carries #0209 (the isolation guard saw its moved home created once under load; cause unknown) | Terry's "Start T03", then the architect | D71 and its change; the rulings on #0203's and #0204's cards (P3, P29, P38, and the read and write split) |
 | #0027 (OBE by v0.06) and #0194 (met by the architect's state.md fix), in Backlog | Terry moves each out; Bot cannot | D72 |
 | `agentspace-sync`'s own check-6 refusal and `tests/host_deploy_sized.rs` | #0204 in T03 | Card #0204; T02's ruling 3 |

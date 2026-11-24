@@ -99,8 +99,7 @@ when Terry says so (D14).
   v1.0's first turn (#0053), before the real project measures its own turn. #0027 (OBE by v0.06)
   and #0194 (met) are Completed.
 - #0209 (the lease CLI's isolation guard saw its moved home created once under load, found at
-  v0.09-T02's close) waits for Terry's placement; the architect recommends a diagnosis story in
-  v0.09-T03.
+  v0.09-T02's close) is carried into v0.09-T03 as #0210 (D71's change).
 - #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite
   lacks, among them #0029 point 2 and #0083 point 1) rides with v0.06 (#0055), which leans on the
   same harness.

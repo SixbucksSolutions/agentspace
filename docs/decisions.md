@@ -3891,6 +3891,15 @@ counted.
 **The release's budget is 14.5 hours**, the sum of its turns'. **Its instance hours are T05's
 alone, up to the 4 Terry said yes to (Q11).**
 
+**Changed at T02's close (architect, 2026-11-23, on Terry's "Whatever you recommend is fine"):**
+T03 gains a third story, #0210, `E0.09-T03-S03`, which carries defect #0209: the lease CLI's
+isolation guard saw its moved home created once under load on `main` at 7f534f8, hidden since T01
+behind the guard's by-design failure. The guard is what proves no lease CLI test reaches the real
+home, and #0203 changes the placing code those tests drive, so it MUST be sound before T04's whole
+suite. The story makes the guard report what it finds, finds the cause and fixes it; a fix in
+#0203's or #0204's files is routed to that story. T03's peak becomes 8 and its budget 3.5 hours,
+and the release's budget 15 hours (architect.md, Running a turn, step 11).
+
 **Why this shape:**
 - **The same order as v0.07's and v0.08's** (D55, D63): specs before code, libraries before
   programs, the whole suite before any instance starts.
