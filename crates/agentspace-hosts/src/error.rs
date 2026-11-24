@@ -72,6 +72,9 @@ pub enum Failure {
     CannotReplace,
     /// A change that would not be valid. Nothing was written.
     ChangeNotValid(Invalid),
+    /// A change to one host's record, for a project that has none. No operator command adds a
+    /// record, so nothing was written (docs/state.md, "Who writes it").
+    NoSuchRecord,
 }
 
 impl fmt::Display for Failure {
@@ -87,6 +90,7 @@ impl fmt::Display for Failure {
             Failure::CannotOpenLock => f.write_str("the lock file could not be opened"),
             Failure::CannotReplace => f.write_str("the file could not be replaced"),
             Failure::ChangeNotValid(why) => write!(f, "the change is not valid: {why}"),
+            Failure::NoSuchRecord => f.write_str("the registry has no record of that project"),
         }
     }
 }

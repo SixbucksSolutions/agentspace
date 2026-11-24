@@ -266,6 +266,7 @@ mod tests {
             stack: agentspace_hosts::stack_name(project),
             state,
             instance_id: None,
+            instance_type: None,
             last_attempt_at: None,
         }
     }

@@ -156,6 +156,7 @@ mod tests {
             stack: "agentspace-host-agentspace".to_string(),
             state: HostState::Ready,
             instance_id: None,
+            instance_type: None,
             last_attempt_at: Some("2026-11-20T19:05:42Z".to_string()),
         });
         hosts

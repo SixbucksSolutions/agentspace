@@ -412,6 +412,7 @@ impl World {
                 stack: agentspace_hosts::stack_name(project),
                 state: *state,
                 instance_id: None,
+                instance_type: None,
                 last_attempt_at: None,
             });
         }

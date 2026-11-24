@@ -247,6 +247,7 @@ fn record_run(
                 stack: hosts::stack_name(project),
                 state: HostState::Creating,
                 instance_id: None,
+                instance_type: None,
                 last_attempt_at: due.then(|| stamp.clone()),
             });
             true

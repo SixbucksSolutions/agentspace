@@ -40,6 +40,7 @@ fn record(project: &str, state: HostState, instance_id: Option<&str>) -> Record 
         stack: agentspace_hosts::stack_name(project),
         state,
         instance_id: instance_id.map(str::to_string),
+        instance_type: None,
         last_attempt_at: None,
     }
 }
