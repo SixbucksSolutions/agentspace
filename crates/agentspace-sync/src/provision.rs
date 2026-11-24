@@ -26,7 +26,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use agentspace_ca::CaEnv;
-use agentspace_driver_ec2::PendingPlaced;
+use agentspace_driver_ec2::{PendingPlaced, Unplaced};
 use agentspace_hosts::{BOX_PROJECT, Host, HostState, RunLock, Target};
 use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
 
@@ -312,9 +312,11 @@ fn place_pending(
     })
 }
 
-/// Step 9's lines for a call that returned: `place done placed=<n>`, then one
-/// `place failed lease=<id> reason=<message>` per lease left `pending`, in the order it was tried.
-/// The form is operator.md's, provision, "Its log" (architect, 2026-11-21, for v0.07-T03).
+/// Step 9's lines for a call that returned: `place done placed=<n>`, then, in the order the call
+/// tried the leases, one `place failed lease=<id> reason=<message>` per lease whose placement
+/// failed, and from v0.09 one `place refused lease=<id>` per lease it answered `unsatisfiable` and
+/// one `place left lease=<id>` per lease it left for the next run, neither with a reason. The form
+/// is operator.md's, provision, "Its log" (architect, 2026-11-21, for v0.07-T03; pin P37).
 fn log_placed(log: &Log, placed: &PendingPlaced) {
     log.line_with(
         "place",
@@ -322,13 +324,13 @@ fn log_placed(log: &Log, placed: &PendingPlaced) {
         Some(&format!("placed={}", placed.placed)),
         None,
     );
-    for lease in &placed.failed {
-        log.line_with(
-            "place",
-            "failed",
-            Some(&format!("lease={}", log_field(&lease.lease_id))),
-            Some(&lease.message),
-        );
+    for lease in &placed.unplaced {
+        let id = format!("lease={}", log_field(lease.lease_id()));
+        match lease {
+            Unplaced::Failed(f) => log.line_with("place", "failed", Some(&id), Some(&f.message)),
+            Unplaced::Refused { .. } => log.line_with("place", "refused", Some(&id), None),
+            Unplaced::Left { .. } => log.line_with("place", "left", Some(&id), None),
+        }
     }
 }
 
@@ -641,15 +643,21 @@ mod tests {
             &log,
             &PendingPlaced {
                 placed: 2,
-                failed: vec![
-                    agentspace_driver_ec2::PendingFailure {
+                unplaced: vec![
+                    Unplaced::Failed(agentspace_driver_ec2::PendingFailure {
                         lease_id: "8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01".to_string(),
                         message: "agentspace: The CA failed its check.\nThe lease stays pending."
                             .to_string(),
+                    }),
+                    Unplaced::Refused {
+                        lease_id: "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f".to_string(),
                     },
-                    agentspace_driver_ec2::PendingFailure {
+                    Unplaced::Failed(agentspace_driver_ec2::PendingFailure {
                         lease_id: "1f2e3d4c-5b6a-4978-8a1b-2c3d4e5f6a7b".to_string(),
                         message: "The alias file is not agentspace's.".to_string(),
+                    }),
+                    Unplaced::Left {
+                        lease_id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d".to_string(),
                     },
                 ],
             },
@@ -663,7 +671,9 @@ mod tests {
             [
                 "place done placed=2",
                 "place failed lease=8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01 reason=The CA failed its check.?The lease stays pending.",
+                "place refused lease=5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
                 "place failed lease=1f2e3d4c-5b6a-4978-8a1b-2c3d4e5f6a7b reason=The alias file is not agentspace's.",
+                "place left lease=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
                 "place done placed=0",
             ]
         );

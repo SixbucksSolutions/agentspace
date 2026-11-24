@@ -130,14 +130,57 @@ impl Driver for Ec2Driver {
     }
 }
 
-/// What [`place_pending`] did: how many leases it placed, and each it could not, with why
-/// (driver.md, place_pending: its result names each lease it could and could not place).
+/// What [`place_pending`] did: how many leases it placed, and each it did not place `ready`, with
+/// what became of it (driver.md, place_pending: its result names each lease it placed, could not
+/// place, answered `unsatisfiable` and left `pending`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PendingPlaced {
     /// How many `pending` leases it placed and wrote `ready`.
     pub placed: usize,
-    /// Each lease it left `pending`, in the order it tried them.
-    pub failed: Vec<PendingFailure>,
+    /// Each lease it did not place `ready`, in the order it tried them, so that the run logs them
+    /// in that order (operator.md, provision, step 9's lines; architect, 2026-11-23, for
+    /// v0.09-T03, pinned before the turn on pin P37).
+    pub unplaced: Vec<Unplaced>,
+}
+
+/// One lease [`place_pending`] did not place `ready`, and what became of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unplaced {
+    /// Its placement failed, and it stays `pending` for the next run (D48). The run logs
+    /// `place failed lease=<id> reason=<message>`.
+    Failed(PendingFailure),
+    /// From v0.09: its host does not meet its size while a live `ready` lease of the project holds
+    /// the host, so it is now `unsatisfiable` with `no_capacity` (D68; pin P1). The run logs
+    /// `place refused lease=<id>`.
+    Refused {
+        /// The lease's normalized ID.
+        lease_id: String,
+    },
+    /// From v0.09: its host does not meet its size and no live `ready` lease holds the host, so it
+    /// stays `pending` for the next run, which resizes the host to it (D68; pin P1). The run logs
+    /// `place left lease=<id>`.
+    Left {
+        /// The lease's normalized ID.
+        lease_id: String,
+    },
+}
+
+impl Unplaced {
+    /// The lease's normalized ID, whatever became of it.
+    pub fn lease_id(&self) -> &str {
+        match self {
+            Unplaced::Failed(f) => &f.lease_id,
+            Unplaced::Refused { lease_id } | Unplaced::Left { lease_id } => lease_id,
+        }
+    }
+
+    /// Why its placement failed, for [`Unplaced::Failed`] alone.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Unplaced::Failed(f) => Some(&f.message),
+            Unplaced::Refused { .. } | Unplaced::Left { .. } => None,
+        }
+    }
 }
 
 /// One lease [`place_pending`] could not place. It stays `pending`, for the next run (D48).
