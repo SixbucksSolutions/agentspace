@@ -351,6 +351,9 @@ reads before it prints it").
 - **Cards only Terry can move are listed for him.** Bot cannot move a card out of Backlog (HTTP
   403), so a defect met by a release, or one Terry made OBE, stays there until he moves it. The
   release's handoff lists each with its evidence.
+- **Every open row of the last handoff MUST be carried into the next, or say what became of it**
+  (v0.09: the live kit's row was dropped from v0.09's live record at its start, and only T05's
+  sweep found it again). A final handoff accounts for each of the previous one's rows.
 - **When Terry approves the epic into Completed,** in order: remove the release milestone, push,
   `swimcoach stop`; mark the release done in [roadmap.md](roadmap.md)'s table with what it
   produced; stop the reporter if no milestone is left; finalize the handoff; point AGENTS.md's

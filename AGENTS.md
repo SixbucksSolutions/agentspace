@@ -11,20 +11,14 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where it stands:** [docs/handoff-v0.08.md](docs/handoff-v0.08.md), the architect's handoff
-  after v0.08, for the architect who starts v0.09 (#0049). It is final, and v0.08 is closed: Terry
-  approved its epic and twenty-one stories into Completed on 2026-11-23. An agent picking
-  agentspace up SHOULD read it first. v0.08's design is D56 to D63 in
-  [docs/decisions.md](docs/decisions.md). v0.09 is laid out only on Terry's word. Its design calls
-  are settled as D64 to D70 (2026-11-23), D64 ruling that v0.06-T01's whole-turn record meets
-  #0049's re-measurement for the host; the three calls that are Terry's are Q11 to Q13 there,
-  closed with his yes the same day. **v0.09 is laid out** (Terry, 2026-11-23: "Lay out v0.09"), as
-  D71: twelve stories in five turns, #0197 to #0208, each card carrying its staffing plan. **Its
-  live record is [docs/handoff-v0.09.md](docs/handoff-v0.09.md)**, refreshed at each turn's close;
-  all five turns closed by 10:18am Mountain on 2026-11-24, with v0.09 installed and shown live, and
-  the epic waits on Terry's approval. The v0.07 and
-  v0.06 handoffs, [docs/handoff-v0.07.md](docs/handoff-v0.07.md) and
-  [docs/handoff-v0.06.md](docs/handoff-v0.06.md), stay for their pieces and lessons.
+- **Where it stands:** [docs/handoff-v0.09.md](docs/handoff-v0.09.md), the architect's handoff
+  after v0.09, for the architect who starts v0.10 (#0050). It is final, and v0.09 is closed: Terry
+  approved its epic and thirteen stories into Completed on 2026-11-24. **An agent picking
+  agentspace up SHOULD read it first, and it is the only handoff it needs**: it carries forward
+  what the earlier ones hold that is still in use. v0.09's design is D64 to D72 in
+  [docs/decisions.md](docs/decisions.md). v0.10 is laid out only on Terry's word. The handoffs
+  before it, from [docs/handoff-mvp.md](docs/handoff-mvp.md) to
+  [docs/handoff-v0.08.md](docs/handoff-v0.08.md), stay as the history of their releases.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with
   [docs/handoff-v0.02.md](docs/handoff-v0.02.md) and [docs/handoff-mvp.md](docs/handoff-mvp.md),
