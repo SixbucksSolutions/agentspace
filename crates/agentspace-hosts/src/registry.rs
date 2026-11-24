@@ -200,7 +200,26 @@ pub fn set_instance(
     })
 }
 
-/// The change both setters make: take the lock, re-read the file under it, apply `change` to the
+/// Sets a host's `last_success_at` to `at`, and nothing else of any record (docs/state.md, "The
+/// last success", "Who writes it, and when"; D77, D81; pins P23 and P24): the run's record, at its
+/// end, that it succeeded. It takes the host registry lock, waiting for up to 30 seconds (`Busy`
+/// when that runs out), re-reads the file under it, sets that record's member and writes the whole
+/// document as `write` does, releasing the lock after the rename, as `set_instance_type` does.
+///
+/// It is the only call that writes the member: the writes that set `last_attempt_at` remove it in
+/// their own write (pin P24), and no other writer adds, changes or removes it. With no file it
+/// writes the file, starting from the seed document and never the implied record (pin P31). With a
+/// file whose record already holds `at`, nothing is written. A project with no record fails with
+/// `Unwritable(NoSuchRecord)` and nothing is written; a `project` that is not normalized is
+/// `BadProject`; and an `at` that is not the contract's time form, or names no real instant, is
+/// refused as every invalid change is (`Unwritable(ChangeNotValid)`), with nothing written.
+pub fn set_last_success_at(home: &Path, project: &str, at: &str) -> Result<(), HostsError> {
+    change_record(home, project, LOCK_WAIT, |h| {
+        h.last_success_at = Some(at.to_string());
+    })
+}
+
+/// The change every setter makes: take the lock, re-read the file under it, apply `change` to the
 /// one record of `project`, and write. The start is the file, or with no file the seed document and
 /// never the implied record, and a missing file is always written, since the change is then a first
 /// change (docs/state.md, "The seed"). A file that exists and does not change is left alone.
@@ -255,14 +274,18 @@ mod tests {
         assert!(body.contains(&needle), "`lock` MUST wait through LOCK_WAIT");
     }
 
-    /// Both setters wait for the lock as `lock` does, for up to 30 seconds and no longer
+    /// Every setter waits for the lock as `lock` does, for up to 30 seconds and no longer
     /// (docs/state.md, The host registry lock). A test of the full wait would take 30 seconds, so
     /// their source is checked to pass `LOCK_WAIT` and no other value, as `lock`'s is above.
     #[test]
     fn the_setters_wait_through_the_thirty_second_ceiling() {
         let source = include_str!("registry.rs");
         let needle = format!("change_record(home, project, {}, ", "LOCK_WAIT");
-        for setter in ["pub fn set_instance_type(", "pub fn set_instance("] {
+        for setter in [
+            "pub fn set_instance_type(",
+            "pub fn set_instance(",
+            "pub fn set_last_success_at(",
+        ] {
             let body = source
                 .split(setter)
                 .nth(1)

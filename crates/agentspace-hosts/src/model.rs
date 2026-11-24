@@ -65,9 +65,8 @@ pub struct Host {
     pub instance_type: Option<String>,
     /// The start time of the host's last provisioning run, UTC.
     pub last_attempt_at: Option<String>,
-    /// The time the host's last provisioning run that succeeded ended, UTC (docs/state.md, The
-    /// last success; D77, D81). Pinned as code before v0.10-T02, read and written by nothing until
-    /// #0216.
+    /// The time the host's last provisioning run that succeeded ended, UTC, kept as the string it
+    /// is stored as (docs/state.md, The last success; D77, D81). Written after `last_attempt_at`.
     pub last_success_at: Option<String>,
 }
 
@@ -186,7 +185,6 @@ fn text(o: &Map<String, Value>, key: &str) -> Result<Option<String>, Invalid> {
 fn record_from(v: &Value) -> Result<Host, Invalid> {
     let o = v.as_object().ok_or(Invalid::Schema)?;
     Ok(Host {
-        last_success_at: None,
         project: text(o, "project")?.ok_or(Invalid::Schema)?,
         stack: text(o, "stack")?.ok_or(Invalid::Schema)?,
         state: text(o, "state")?
@@ -196,6 +194,7 @@ fn record_from(v: &Value) -> Result<Host, Invalid> {
         instance_id: text(o, "instance_id")?,
         instance_type: text(o, "instance_type")?,
         last_attempt_at: text(o, "last_attempt_at")?,
+        last_success_at: text(o, "last_success_at")?,
     })
 }
 
@@ -219,9 +218,9 @@ fn check_rules(hosts: &[Host]) -> Result<(), Invalid> {
         _ => return Err(Invalid::BoxRecord),
     }
     if hosts.iter().any(|h| {
-        h.last_attempt_at
-            .as_deref()
-            .is_some_and(|t| parse_time(t).is_none())
+        [&h.last_attempt_at, &h.last_success_at]
+            .into_iter()
+            .any(|t| t.as_deref().is_some_and(|t| parse_time(t).is_none()))
     }) {
         return Err(Invalid::TimeNamesNoInstant);
     }
@@ -275,6 +274,10 @@ pub fn serialize(hosts: &Hosts) -> Result<Vec<u8>, Invalid> {
         }
         if let Some(t) = &h.last_attempt_at {
             out.push_str(",\"last_attempt_at\":");
+            out.push_str(&json::quote(t));
+        }
+        if let Some(t) = &h.last_success_at {
+            out.push_str(",\"last_success_at\":");
             out.push_str(&json::quote(t));
         }
         out.push('}');
@@ -597,15 +600,16 @@ mod tests {
         };
     }
 
-    const VALID_SAMPLES: [(&str, &str); 5] = [
+    const VALID_SAMPLES: [(&str, &str); 6] = [
         sample!("hosts.state.creating-and-failed.json"),
         sample!("hosts.state.full.json"),
         sample!("hosts.state.instance-type-on-one.json"),
         sample!("hosts.state.instance-type.json"),
+        sample!("hosts.state.last-success.json"),
         sample!("hosts.state.seed.json"),
     ];
 
-    const INVALID_SAMPLES: [(&str, &str); 16] = [
+    const INVALID_SAMPLES: [(&str, &str); 18] = [
         sample!("invalid/hosts.state.bad-instance-id.json"),
         sample!("invalid/hosts.state.bare-array.json"),
         sample!("invalid/hosts.state.extra-member.json"),
@@ -613,10 +617,12 @@ mod tests {
         sample!("invalid/hosts.state.instance-type-bad-form.json"),
         sample!("invalid/hosts.state.instance-type-not-string.json"),
         sample!("invalid/hosts.state.instance-type-too-long.json"),
+        sample!("invalid/hosts.state.last-success-with-offset.json"),
         sample!("invalid/hosts.state.missing-stack.json"),
         sample!("invalid/hosts.state.missing-state.json"),
         sample!("invalid/hosts.state.null-instance-id.json"),
         sample!("invalid/hosts.state.null-instance-type.json"),
+        sample!("invalid/hosts.state.null-last-success.json"),
         sample!("invalid/hosts.state.stack-of-other-name.json"),
         sample!("invalid/hosts.state.time-with-offset.json"),
         sample!("invalid/hosts.state.unknown-state.json"),
