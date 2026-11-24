@@ -834,8 +834,10 @@ architect, 2026-11-24, for v0.10-T01, pin P3).
   bound as it is read is refused as larger too.
 - **UTF-8.** A UTF-8 byte order mark at its start is accepted and ignored, the one exception to
   [Input tolerance](#input-tolerance)'s rule for U+FEFF. U+FEFF anywhere else in the file is
-  refused. A file that is not valid UTF-8 is refused, among them one in UTF-16 with or without its
-  byte order mark.
+  refused. A file that is not valid UTF-8 is refused. A file in UTF-16 is refused either way: with
+  its byte order mark it is not valid UTF-8 (check 3, below), and without one its bytes can be
+  valid UTF-8, a zero byte beside each ASCII character, and it is then not valid JSON (check 4)
+  (architect, 2026-11-24, for v0.10-T02, pin P8).
 - **One JSON document, whose members' names are unique in each object.** JSON allows an object to
   give a name twice, and parsers then keep one value or the other; a plan MUST NOT, so that what
   agentspace reads is what its writer meant. Two names are the same when they are the same once
@@ -911,7 +913,7 @@ the one of the table below that the first check the plan fails gives, word for w
 | 1. Size | A regular file at that path holds more than 262144 bytes, by its size found before it is read, or grows past that as it is read | `the file is larger than 262144 bytes` |
 | 2. Read | The file's size cannot be found, or it cannot be opened or read, for any reason: no file has that path, a folder, a device or a pipe has it, access is denied, or the argument is not valid Unicode or holds U+FEFF | `the file could not be read` |
 | 3. UTF-8 | The file is not valid UTF-8 | `the file is not valid UTF-8` |
-| 4. JSON | The file, its leading byte order mark set aside, is not one JSON document: it is empty or only whitespace, has text after the document, holds U+FEFF outside a string, holds a string with an unpaired surrogate, or nests deeper than the parser allows | `the file is not valid JSON` |
+| 4. JSON | The file, its leading byte order mark set aside, is not one JSON document: it is empty or only whitespace, has text after the document, holds U+FEFF outside a string, holds a string with an unpaired surrogate, nests deeper than the parser allows, or holds a number the parser cannot hold, such as `1e400` (architect, 2026-11-24, for v0.10-T02, pin P5) | `the file is not valid JSON` |
 | 5. Members | An object gives one member's name twice | `an object has two members named '<member>'` |
 | 6. Schema | The document is not of the shape above: a value of the wrong type, the document included; a required member missing or `null`; a member that is not in the shape; an empty or too long `turns`, `stories` or `subagents`, or an `after` of more than 31 names; an `after` that names one subagent twice; or a name, model or effort not of its form | `the document does not match the plan schema` |
 | 7. Turns | Two turns have one name | `turn '<turn>' is named twice` |
