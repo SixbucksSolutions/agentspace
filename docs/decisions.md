@@ -3985,10 +3985,9 @@ driver exactly as a `--size` lease does, and prints what it was sized for (D75),
 
 ### D73. A plan is sized at half a vCPU and 2 GiB for each agent working at once
 
-**Decided, architect, 2026-11-24; adopting it in place of Terry's per-agent rule is his call
-(Q14).** Until he answers, D69's rule picks a turn's size by hand, as AGENTS.md says. v0.10's
-stories build this figure, so a different answer from him changes one constant and its tests, not
-the design.
+**Decided, architect, 2026-11-24; adopted in place of Terry's per-agent rule by Terry the same
+day (Q14: "Yes, half a vCPU").** It takes effect with v0.10's install, which builds the product
+that applies it; until then, D69's rule still picks a turn's size by hand, as AGENTS.md says.
 - **The figure multiplied is the host's measured peak divided by the agents working at that peak,
   doubled.** v0.06-T01's host peaked at 4.10 cores and 3.81 GiB with 15 agents working (D64;
   [footprint.md](footprint.md#the-third-measured-turn-v006-t01-a-whole-turn-that-compiles)), so
@@ -4290,6 +4289,6 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q11** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~Does he accept D65's four sizes at their prices ($0.10, $0.20, $0.39 and $0.78 an hour for `s` to `xl`), and say yes to D70's live checks, up to 4 instance hours at `l` or smaller, about $1.57 at most?~~ Yes to both. | Closed, D65, D70 |
 | **Q12** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~May the architect start the box under a swimcoach lease, for about half an hour (about $0.10), to fetch v0.06-T01's transcripts to the laptop, outside the repository, before Claude Code's clean-up can remove them, so the per-agent split is had without a new measured turn (D64)?~~ Yes. | Closed, D64 |
 | **Q13** | **Closed (Terry, 2026-11-23: "Yes, all three").** ~~Does his per-agent rule from D39, a vCPU and 4 GiB for each agent at once, stay the way the architect picks a turn's size through v0.09, though v0.06-T01's 15 agents peaked at a quarter of it? The architect recommends it stays until v0.10 replaces it with measurement (D69).~~ It stays through v0.09. | Closed, D69 |
-| **Q14** | **Open, to Terry, 2026-11-24.** Does v0.10 size a plan at D73's half a vCPU and 2 GiB for each agent at once, about twice v0.06-T01's measured share, in place of his rule of a vCPU and 4 GiB? It halves the size, and the price, at every count: v0.06-T01's 15 agents get `l` at $0.39 an hour rather than `xl` at $0.78, and a turn of up to 32 agents fits. The architect recommends it. | D73 |
+| **Q14** | **Closed (Terry, 2026-11-24: "Yes, half a vCPU").** ~~Does v0.10 size a plan at D73's half a vCPU and 2 GiB for each agent at once, about twice v0.06-T01's measured share, in place of his rule of a vCPU and 4 GiB? It halves the size, and the price, at every count: v0.06-T01's 15 agents get `l` at $0.39 an hour rather than `xl` at $0.78, and a turn of up to 32 agents fits. The architect recommends it.~~ Yes, from v0.10's install. | Closed, D73 |
 | **Q15** | **Open, to Terry, 2026-11-24.** Does he want the account's Session Manager idle timeout shortened as well, for #0195? It is account-wide, would cut his other Session Manager sessions too, and D78 fixes the cause in the idle check without it. The architect recommends no. | D78 |
 | **Q16** | **Open, to Terry, 2026-11-24.** Does he want a plan lease shown on agentspace's real host, resized to the plan's size and back, for about 0.5 instance hours at `l` (about $0.20)? D80 shows the done-when without any instance. The architect recommends no. | D80 |
