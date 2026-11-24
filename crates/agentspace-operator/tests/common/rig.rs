@@ -281,10 +281,11 @@ pub fn hosts_doc(records: &[String]) -> Vec<u8> {
 // The answers of the AWS CLI
 // ---------------------------------------------------------------------------------------------
 
-/// What the stack's `describe-stacks` answers: one `InstanceId` output.
+/// What the stack's `describe-stacks` answers: one `InstanceId` output, and an `InstanceType`
+/// parameter of `m9g.xlarge`, which `deploy`'s step 5 reads back (P22, P44).
 pub fn stack_json(id: &str) -> String {
     format!(
-        "{{\"Stacks\":[{{\"StackName\":\"agentbox\",\"Outputs\":[{{\"OutputKey\":\"Other\",\"OutputValue\":\"x\"}},{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{id}\"}}]}}]}}"
+        "{{\"Stacks\":[{{\"StackName\":\"agentbox\",\"Parameters\":[{{\"ParameterKey\":\"InstanceType\",\"ParameterValue\":\"m9g.xlarge\"}}],\"Outputs\":[{{\"OutputKey\":\"Other\",\"OutputValue\":\"x\"}},{{\"OutputKey\":\"InstanceId\",\"OutputValue\":\"{id}\"}}]}}]}}"
     )
 }
 
