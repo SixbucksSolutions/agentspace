@@ -8,9 +8,9 @@
 //! to a child process it starts through `Command::env`. The scan reads every file under `tests` and
 //! under `src`, whatever its extension, and fails on a line that names any function that changes
 //! the environment, in any spelling: a call, a path, a `use`. The names are Rust's two, Windows'
-//! call that sets a variable (in either of its `A` and `W` forms) and the C runtime's call
-//! of the same kind (with its underscored forms), as agentspace-launch's scan has them. It builds its own needles
-//! so that it does not find itself.
+//! call that sets a variable (in either of its `A` and `W` forms) and the C runtime's call of the
+//! same kind (with its underscored forms), as agentspace-launch's scan has them. It builds its own
+//! needles so that it does not find itself.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,7 +39,7 @@ fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every line under `dir` that names either function, as the file and its 1-based line number.
+/// Every line under `dir` that names any of the four, as the file and its 1-based line number.
 fn offenders(dir: &Path) -> Vec<(PathBuf, usize)> {
     let needles = needles();
     let mut files = Vec::new();
