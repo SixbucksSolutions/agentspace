@@ -1026,6 +1026,10 @@ order; the first that fails is reported.
    - **A launcher that fails to start the holder answers with the error**: `NUL could not be
      opened.`, `The holder's log could not be opened.`, `The holder's start time could not be
      read.`, or Windows' own text for the failure.
+   - **A start MUST NOT wait on a Windows dialog** (architect, 2026-11-24, for v0.10-T02, on
+     #0217's finding; #0225; D81's change during T02). A program Windows refuses to start, such as
+     a file named `.exe` that is not a program, answers with Windows' error at once, never after
+     a person presses a button, whatever error mode the launcher inherited.
    - **The launcher then exits 0**, whatever its answer said. If it cannot write the result, it
      exits non-zero, and its pass sees no answer (step 5). It logs nothing. The holder runs on with
      no parent.
