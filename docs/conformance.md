@@ -602,7 +602,8 @@ ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-
 [docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)** (E0.08-T04-S04, #0185), **v0.09's is
 [docs/runs/e0.09-t04-s03.md](runs/e0.09-t04-s03.md)** (E0.09-T04-S03, #0207), **and v0.10's, the
 latest whole-suite run, is [docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md)** (E0.10-T04-S03,
-#0223). Their counts are in them, and this page quotes none of v0.08's, v0.09's or v0.10's.
+#0223). Their counts are in them, and this page quotes none of v0.08's or v0.09's, and of v0.10's only
+the box's 172 ([The idle check's test](#the-idle-checks-test)).
 1. **Build the output folder from the workspace's root, with `cargo xtask dist`**
    ([operator.md, The install folder](operator.md#the-install-folder)). It writes `target\dist\`,
    and the lease CLI is `target\dist\agentspace.exe`. **The run MUST be made from a build of a
@@ -1662,9 +1663,10 @@ them. E0.06-T06-S01 removed the file, so each case now has one home.
   validates, every invalid sample is rejected, the list schema's `$defs` equal the lease schema's,
   the TTL grammar is accepted and refused through the two input schemas, and a sample's host alias
   is `agentspace-<project>-<first 8 hex>`. **From contract v1** (E0.10-T01-S02, #0212; D76) the plan
-  schema's `$defs` MUST appear word for word in the create request schema's, and **every check runs on
-  `schemas/` (whose `$id` carries `v1`) and again on `schemas/v0/` (whose `$id` carries `v0`), each
-  against its own schemas and samples only**, so a v0 sample is never checked against a v1 schema.
+  schema's `$defs` MUST appear word for word in the create request schema's, a check that runs on
+  `schemas/` only, since contract v0 has no plan schema, and **every other check runs on `schemas/`
+  (whose `$id` carries `v1`) and again on `schemas/v0/` (whose `$id` carries `v0`), each against its
+  own schemas and samples only**, so a v0 sample is never checked against a v1 schema.
   `schemas/v0/` MUST exist and hold a schema, a valid sample and an invalid one, so a deleted copy cannot
   pass silently. `-SchemaRoot <folder>` names a planted copy that proves each check fails.
 - **Loads:** No product code. It reads `schemas\`, `schemas\v0\`, their `samples\` and nothing else.
@@ -1674,9 +1676,9 @@ them. E0.06-T06-S01 removed the file, so each case now has one home.
   nothing" test does not apply to it.**
 - **What moving it changed:** The repository root is two folders up, not one. Its output is the
   suite's result lines and its exit code is the suite's ([The keeper suite](#the-keeper-suite),
-  "Output"). Nothing else changed: it checked the same 289 things as before, and it still scans the
-  top level of `schemas/` only. The samples E0.04-T04-S01 added bring it to 293, all passing
-  against the package on 2026-11-18. **No state schema is checked by this check:** every state
+  "Output"). Nothing else changed: it checked the same 289 things as before, and it still scanned the
+  top level of `schemas/` only, as it did until contract v1 added `schemas/v0/` (above). The samples
+  E0.04-T04-S01 added bring it to 293, all passing against the package on 2026-11-18. **No state schema is checked by this check:** every state
   schema is `test-state-schemas.ps1`'s, below, which checks each one that has samples and fails one
   that has none unless it is on a short, commented list of the schemas known to have none, and the
   three keeper schemas in `schemas/state/`, which are on that list, are checked by the keeper suite's
@@ -2159,8 +2161,9 @@ for every file above. Each case's result name starts with the anchor of the spec
 `operator.md#provision:`, `operator.md#the-test-seam:`). **The results of T04's new files are in their
 pull requests (#159 for E0.10-T04-S01's, #160 for E0.10-T04-S02's, #0222); the run record**
 ([docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md)) **covers the whole suite and the crates, and the
-box's tests with the whole discovery command**, and this page gives no count of v0.10's but the box's 172
-([The idle check's test](#the-idle-checks-test)).
+box's tests with the whole discovery command**. This page gives each new file's number of results and
+its results against the installed v0.09 programs and the empty program (below), and of the whole run
+only the box's 172 ([The idle check's test](#the-idle-checks-test)).
 
 | File | Cases it holds | Spec section | Card |
 |---|---|---|---|
@@ -2200,6 +2203,7 @@ box's tests with the whole discovery command**, and this page gives no count of 
   each against the build, at the commit its sections name, and shows by a diff that the files at the
   final `main` are those it ran ([docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md#the-commits)).
 
+## The gaps
 
 **A gap is a spec section that no sorted check covers.** The sorted checks leave these.
 
@@ -2462,9 +2466,10 @@ names the live check or the crate test that shows it, never "Later".
   cells that name contract v0 are v0.07's**, the live-check bullet and the row for "the documents of
   `create`, `get` and `list`" above: v1 supersedes them in part, as this release's rows say, and
   the first cell of the table below is their successor. **Each v0.10 behavior below has a case or one of D80's
-  live checks**, and **the gaps table names the four parts that have a crate test alone or none**: row 6
-  with a seeded `last_success_at`, a lease created after placing's last re-read (pin P31), the stored
-  record of a plan lease, and the per-agent footprint.
+  live checks**, and **the gaps table names the four parts that no case shows whole**: row 6 with a
+  seeded `last_success_at` and the stored record of a plan lease (each a crate test's), a lease created
+  after placing's last re-read (pin P31, shown by nothing), and the per-agent footprint (shown at today's
+  figure only).
 - **No stand-in can show the real programs answering**, so D80's live check shows the build once it is
   installed. **The results of T04's new files are in their pull requests; the record of this turn's
   whole-suite run, [docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md), covers the suite, the crates and
