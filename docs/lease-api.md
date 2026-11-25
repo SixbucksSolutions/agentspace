@@ -1,13 +1,15 @@
-# agentspace lease API, contract v1
+# agentspace lease API, contract v2
 
 RFC 2119 keywords; the capitals are load-bearing.
 
 **The reference for `agentspace lease`, written so that it can be built and used without reading any
 of agentspace's code (decision D20).** It names every command, flag, output field, state, error and
 exit code, and gives the `--help` text at every level word for word. The JSON schemas under
-[`schemas/`](../schemas) are part of this contract, except those under `schemas/v0/`, which are
-contract v0's ([Schemas](#schemas)). Where this page and a schema disagree, both are wrong and MUST
-be fixed together. What contract v1 changes from v0 is in [Changes from v0](#changes-from-v0).
+[`schemas/`](../schemas) are part of this contract, except those under `schemas/v0/` and
+`schemas/v1/`, which are contract v0's and contract v1's ([Schemas](#schemas)). Where this page and
+a schema disagree, both are wrong and MUST be fixed together. What contract v2 changes from v1 is
+in [Changes from v1](#changes-from-v1), and what v1 changed from v0 in
+[Changes from v0](#changes-from-v0).
 
 **What it is for:** a project asks for a lease, which is compute for one agent for a bounded time,
 and gets back an SSH host alias, the user to log in as, and an expiry (D2). The reasoning behind
@@ -41,15 +43,17 @@ of the change.
 
 ## Contents
 
+- [Changes from v1](#changes-from-v1)
 - [Changes from v0](#changes-from-v0)
 - [Conventions](#conventions): [the program](#the-program), [output](#output),
   [times](#times), [input tolerance](#input-tolerance), [command lines](#command-lines),
-  [concurrency and atomicity](#concurrency-and-atomicity)
+  [concurrency and atomicity](#concurrency-and-atomicity), [the board read](#the-board-read)
 - [The lease](#the-lease): [fields](#fields), [states](#states),
   [a host's life follows its leases](#a-hosts-life-follows-its-leases),
   [the credential](#the-credential)
 - [Values](#values): [lease ID](#lease-id), [project](#project), [platform](#platform),
-  [profile](#profile), [plan](#plan), [size](#size), [TTL](#ttl), [state filter](#state-filter)
+  [profile](#profile), [plan](#plan) and [the plan block](#the-plan-block), [board](#board),
+  [epic](#epic), [turn](#turn), [size](#size), [TTL](#ttl), [state filter](#state-filter)
 - [Profiles](#profiles)
 - [Commands](#commands): [`agentspace`](#agentspace), [`agentspace lease`](#agentspace-lease),
   [`create`](#agentspace-lease-create), [`get`](#agentspace-lease-get),
@@ -62,13 +66,49 @@ of the change.
 - [Hardening carried in](#hardening-carried-in)
 - [Open questions](#open-questions)
 
+## Changes from v1
+
+**Contract v2 adds to contract v1, and changes no document or error a caller sees while it gives
+none of `--board`, `--epic` and `--turn`, and no plan with a `budget_minutes` member** (D87). No
+lease output changes at all: every lease and list document v2 prints validates against v1's
+schemas. `create`'s
+help text changes too, which is text, not a document ([Versioning](#versioning)). It comes with
+agentspace's v0.11 release (#0052). The contract's version and agentspace's release are two
+numbers, kept apart (D26). Why each change makes a new version, and what v2 keeps of v1 and of v0,
+are in [Versioning](#versioning).
+
+| Change | Where | Could fail a v1 schema |
+|---|---|---|
+| `create --board <id> --epic <ticket>`: the lease's plan is read from the epic's `agentspace-plan` block on the caller's localswim board, and the lease is made as a `--plan` lease with that plan would be (D83, D86) | [`create`](#agentspace-lease-create), [Board](#board), [Epic](#epic), [The board read](#the-board-read) | No: an input v1 refused |
+| The plan block: one fenced `agentspace-plan` block in an epic's description, holding exactly a plan document (D83) | [The plan block](#the-plan-block) | No: a new input |
+| `create --turn <name>`: the lease is for that turn of its plan, sized for it alone (D84) | [`create`](#agentspace-lease-create), [Turn](#turn) | No: an input v1 refused |
+| `budget_minutes`, a new optional member of a plan's turn, and the TTL a plan gives from it: the budget and half again at today's factor, unless `--ttl` is given (D85) | [Plan](#plan), [TTL](#ttl) | No: a plan v1 refused |
+| `sized_for.turn` names the turn the lease is for, which is `--turn`'s when it is given, and otherwise the busiest, as in v1 (D84) | [Fields](#fields) | No: the same member and pattern, with a meaning that differs only for a lease made with `--turn` |
+| `board`, `epic` and `turn`, new members of the `create` request document (D87; architect, 2026-11-25, for v0.11-T01, pin P6) | [`create`](#agentspace-lease-create) | No: an input v1 refused |
+| `budget_minutes` in `plan.input.schema.json`, and in its copy in `lease-create.input.schema.json` (D85) | [Plan](#plan), [Schemas](#schemas) | No: an input v1 refused |
+| `create`'s help: its usage line, three new rows, the `--ttl` row, and two of its last three lines (D84 to D87) | [`create`](#agentspace-lease-create) | No: help is text, not a document |
+| `board`, `epic` and `turn`, new values of the error document's `field`, of `invalid_value` and of `usage` (D87) | [Exit codes and errors](#exit-codes-and-errors) | Yes: v1's `field` is an enum of eight |
+| Seven new cases in which `usage` carries `field`, thirteen in all (D87; architect, 2026-11-25, for v0.11-T01, pin P4) | [Command lines](#command-lines), [Exit codes and errors](#exit-codes-and-errors) | Yes, through the new `field` values; which cases carry `field` is checked by conformance, since no schema can (D87) |
+| A second message for `plan_too_large`, for a lease made with `--turn` (D84) | [Fields](#fields) | No: a message is text, and no caller parses one |
+| `create --board` reads localswim's service receipt under `LOCALAPPDATA` (D86; architect, 2026-11-25, for v0.11-T01, pin P16) | [Environment](#environment), [The board read](#the-board-read) | No: no document carries it |
+| A board lease's record keeps where its plan came from, in no output (D86, D87; architect, 2026-11-25, for v0.11-T01, pin P7) | [What is recorded](#what-is-recorded) | No: no output prints it |
+| Every schema's `$id` carries `v2`, and every schema's title says contract v2 (D87, D89) | [Schemas](#schemas) | No: no document carries an `$id` |
+| v1's schemas and samples are kept unchanged, under `schemas/v1/` and `schemas/v1/samples/` (D87, D89) | [Schemas](#schemas) | No |
+
+- **Nothing else changes.** No command, state, exit code, error code or reason code is added or
+  removed, no output member is added, and no member of v1's documents changes its meaning for a
+  lease made without `--turn`.
+- **agentspace's TTL factor is not part of the contract** (D85), as its per-agent footprint is not
+  (D76). Today's figure is given in [TTL](#ttl), for information.
+
 ## Changes from v0
 
-**Contract v1 adds to contract v0, and changes no document or error a caller sees while it makes no
-lease with `--plan` and reads none** (D76). `create`'s help text changes too, which is text, not a
-document ([Versioning](#versioning)). It comes with agentspace's v0.10 release (#0050). The contract's
-version and agentspace's release are two numbers, kept apart (D26). Why each change makes a new
-version, and what v1 keeps of v0, are in [Versioning](#versioning).
+**Contract v1 added to contract v0, and changed no document or error a caller sees while it made no
+lease with `--plan` and read none** (D76). `create`'s help text changed too, which is text, not a
+document ([Versioning](#versioning)). It came with agentspace's v0.10 release (#0050). The
+contract's version and agentspace's release are two numbers, kept apart (D26). Why each change made
+a new version, and what v1 kept of v0, are in [Versioning](#versioning). The table stands as v1's
+record, and v2's changes to the same places are in [Changes from v1](#changes-from-v1).
 
 | Change | Where | Could fail a v0 schema |
 |---|---|---|
@@ -84,10 +124,10 @@ version, and what v1 keeps of v0, are in [Versioning](#versioning).
 
 - **No lease lacks `size`.** A `plan_too_large` lease's is `xl`, the largest size (D81), so `size`
   is in every lease, as in v0.
-- **Nothing else changes.** No command, state, exit code or error code is added or removed, and no
-  member of v0's documents changes its meaning for a lease made without `--plan`.
-- **agentspace's per-agent footprint is not part of the contract** (D76). Today's figure is given
-  in [Plan](#plan), for information.
+- **Nothing else changed in v1.** No command, state, exit code or error code was added or removed,
+  and no member of v0's documents changed its meaning for a lease made without `--plan`.
+- **agentspace's per-agent footprint is not part of the contract** (D76). Its figure is given in
+  [Plan](#plan), for information.
 
 ## Conventions
 
@@ -100,7 +140,7 @@ version, and what v1 keeps of v0, are in [Versioning](#versioning).
   - Note on where this came from: the prototype is `scripts/lease-cli.ps1`, started by
     `bin/agentspace.cmd` from cmd and PowerShell, and by `bin/agentspace` from Git Bash and other
     POSIX shells.
-- **Contract v1's caller runs on Windows (D8)**, as v0's did, and runs `agentspace` from cmd,
+- **Contract v2's caller runs on Windows (D8)**, as v0's and v1's did, and runs `agentspace` from cmd,
   PowerShell or Git Bash. A caller on Linux or macOS is later, and not blocking: it comes with the
   hosted control plane (#0011).
 - **The program MUST receive its arguments exactly as the caller's shell passed them.** An
@@ -123,6 +163,10 @@ version, and what v1 keeps of v0, are in [Versioning](#versioning).
 - **No command reads standard input, and no command prompts.** Every command MUST run unattended,
   with no terminal. The one file a command reads that the caller names is the plan of
   `create --plan` ([Plan](#plan)), and `--plan -` names a file called `-`, never standard input.
+- **`create --board <id> --epic <ticket>` also reads files the caller does not name, and makes the
+  CLI's only network requests** (D86): localswim's service receipt and its Bot credential, then
+  one or two reads of the caller's own localswim board, all on the caller's machine, as
+  [The board read](#the-board-read) says. No other command reads them or makes a request.
 
 ### Output
 
@@ -141,7 +185,7 @@ version, and what v1 keeps of v0, are in [Versioning](#versioning).
   - **On a system other than Windows, a stdout the caller closed MAY read as one that discards
     its output** (architect, 2026-11-19, from E0.05-T01-S01's review): Rust's runtime, for one,
     opens a closed standard stream on `/dev/null` before the program starts, so the program cannot
-    tell the two apart in safe code. Contract v1's caller is Windows (D8), and a full or broken
+    tell the two apart in safe code. Contract v2's caller is Windows (D8), and a full or broken
     stdout still fails there.
   - **A change the command already recorded stays recorded.** A `create`, `renew` or `release`
     whose record was written before its document failed to reach stdout has made its change, and
@@ -164,7 +208,7 @@ version, and what v1 keeps of v0, are in [Versioning](#versioning).
   example `2026-11-17T18:04:05Z`. No other form is emitted: no fraction, no offset, no lowercase
   `t` or `z`. The caller's time zone MUST NOT change any time in output.
 - **A time is truncated to the whole second, never rounded.**
-- **"Now" is the clock of the machine that answers the command.** In v1 that is the caller's
+- **"Now" is the clock of the machine that answers the command.** In v2 that is the caller's
   machine.
 - **A lease's certificate is issued at a whole second, its issue time, during the command that
   issues it** (`create` or `renew`), **or by agentspace when it places a lease that `create`
@@ -194,9 +238,12 @@ covers form only:
   U+3000, and no others.
 - **U+FEFF, the byte order mark, is not whitespace, and is never trimmed.** A value that holds one
   is refused with `invalid_value`, wherever it is, and the input schemas refuse it too
-  ([Schemas](#schemas)). **The one exception is a plan file's leading UTF-8 byte order mark**,
-  which is the file's and in no value: it is accepted and ignored, and U+FEFF anywhere else in
-  the file is refused ([Plan](#plan); architect, 2026-11-24, for v0.10-T01, pins P4 and P18).
+  ([Schemas](#schemas)). **The one exception is a plan's leading UTF-8 byte order mark**, a plan
+  file's or, from v2, an `agentspace-plan` block's, which is the plan's bytes and in no value: it
+  is accepted and ignored, and U+FEFF anywhere else in the plan is refused ([Plan](#plan),
+  [The plan block](#the-plan-block); architect, 2026-11-24, for v0.10-T01, pins P4 and P18).
+- **A turn name is never trimmed** ([Turn](#turn)), as a plan's path is not ([Plan](#plan)): it is
+  compared exactly, so a value with whitespace at either end is outside its form and refused.
 - **Every check MUST match the whole value (#0029).** A check that lets a trailing line feed through
   after trimming, as a regular expression's `$` does in several engines, is a defect. Letters and
   digits in a value are ASCII letters and digits only, and "any case" means ASCII case.
@@ -260,11 +307,24 @@ covers form only:
   It is reported where the later of the two flags stands, and a later one with no value or an
   empty value is reported as that instead. Its `field` is `plan` (architect, 2026-11-24, for
   v0.10-T01, pins P6 and P13).
+- **`--board` or `--epic` with `--plan` or `--size`**, to `create`, in either order, because the
+  epic carries the plan and the plan picks the size (D86). Each pair is reported where its later
+  flag stands, and a later one with no value or an empty value is reported as that instead.
+  **Its `field` names the board-side flag, whichever order the pair is in: `board` when `--board`
+  is on the line, and otherwise `epic`**, as `--plan` with `--size` always names `plan`. Where the
+  pair stands fixes only where the error ranks among the line's usage errors, never which `field`
+  it carries (architect, 2026-11-25, for v0.11-T01, pin P4).
 - **An unexpected positional argument:** a second ID, or any positional argument to `create` or
   `list`.
 - **`agentspace` with no command, and `agentspace lease` with no subcommand**, so that a script
   never mistakes help text for JSON.
 - **A missing lease ID** for `get`, `renew` or `release`, and a missing `--project` for `create`.
+- **From v2, a missing partner, to `create`** (D84, D86; architect, 2026-11-25, for v0.11-T01, pin
+  P4): `--board` without `--epic` and `--epic` without `--board`, because one names the board and
+  the other the card on it, and `--turn` without `--plan` or `--epic`, because there is no plan to
+  pick a turn from. For a missing partner of a pair, its `field` is the flag that is missing, as a
+  missing `--project` names `project`: `epic` for `--board` without `--epic`, and `board` for
+  `--epic` without `--board`. For `--turn` without a plan, which has two sources, it is `turn`.
 
 **Which error is reported:**
 1. **`-h` or `--help` anywhere on the line, before any unknown command or subcommand, prints the
@@ -278,11 +338,43 @@ covers form only:
    unknown option comes before it on the line: `agentspace --project x lease create` reports the
    unknown command `x`, not the unknown option `--project`.
 3. **Otherwise, the first of the other usage errors in line order is reported**: an unknown option,
-   a flag with no value or an empty value, a flag given twice, `--plan` with `--size`, or an
-   unexpected argument.
-4. **Otherwise, a missing command, subcommand, lease ID or `--project` is reported.**
+   a flag with no value or an empty value, a flag given twice, a pair of flags that cannot be given
+   together, or an unexpected argument. The pairs are `--plan` with `--size`, and from v2 `--board`
+   or `--epic` with `--plan` or `--size`; each is placed in line order where its later flag stands,
+   as the list below says.
+4. **Otherwise, a missing command, subcommand, lease ID or `--project` is reported, and then, for
+   `create` from v2, a missing partner of `--board`, `--epic` or `--turn`**, in the order of the
+   list below.
 5. **Only when the line has no usage error are the values checked**, in the order of
    [Exit codes and errors](#exit-codes-and-errors).
+
+**Which of `create`'s pairs and partners is reported** (architect, 2026-11-25, for v0.11-T01, pin
+P4). These are the order that steps 3 and 4 give them:
+1. **A pair of flags that cannot be given together is an error at the position of its later
+   flag**, and takes its place in step 3's line order there, among the line's other usage errors.
+   The pairs are `--plan` with `--size`, `--board` with `--plan`, `--board` with `--size`, `--epic`
+   with `--plan`, and `--epic` with `--size`.
+2. **When the later flag of a pair has no value or an empty value, that is the error reported at
+   its position**, not the pair, as for `--plan` with `--size` in v1.
+3. **When two pairs end at the same flag, the pair whose earlier flag stands first on the line is
+   reported** (architect, 2026-11-25, for v0.11-T01, pin P20). So
+   `create --project x --board B --epic 7 --plan p.json` reports `--board` with `--plan`.
+4. **With three or more of `--board`, `--epic`, `--plan` and `--size` on a line, the first pair in
+   line order is reported**, by rules 1 and 3. So `create --project x --plan p.json --board B
+   --size m` reports `--board` with `--plan` at `--board`, before `--plan` with `--size` at
+   `--size`.
+5. **A pair's `field` is the board-side flag, never the one that stands later:** `board` whenever
+   `--board` is on the line, `epic` when only `--epic` is, and `plan` for `--plan` with `--size`.
+   So `create --project x --epic 7 --plan p.json --board B` reports `--epic` with `--plan`, at
+   `--plan`, with `field` `board`.
+6. **Only when step 3 finds nothing are the missing partners looked for**, in step 4, in this
+   order: a missing command, subcommand, lease ID and `--project`; then `--board` without
+   `--epic`; then `--epic` without `--board`; then `--turn` without `--plan` or `--epic`. So
+   `create --project x --board B --turn T01` reports `--board` without `--epic`, field `epic`, and
+   `create --board B` with no `--project` reports the missing `--project`.
+7. **A pair's message names its two flags in a fixed order**, `--board` or `--epic` first and then
+   `--plan` or `--size`, as `--plan` with `--size` is always named in that order, whichever stands
+   first on the line ([Messages](#messages)).
 
 ### Concurrency and atomicity
 
@@ -299,6 +391,9 @@ covers form only:
   value before then, so a plan that is not well formed, or is large, never lengthens how long
   `create` holds the others back, and is refused with `invalid_value` without waiting for them
   (architect, 2026-11-24, for v0.10-T01, pin P28; [Plan](#plan)).
+- **From v2, `create` reads the board of `--board` and `--epic` before it starts to wait too**, its
+  requests' 30 seconds each included, so a slow or refused board read never holds the lease
+  records, and a refused epic never touches them ([The board read](#the-board-read)).
 - **A command that fails MUST leave every lease as it was before the command**, except as the
   bullets below allow.
   - **A failed `create` MUST remove every file and folder it made for the lease** (its key, its
@@ -330,6 +425,203 @@ covers form only:
   - **The connections a failed `release` already ended stay ended.** They cannot be restored, and
     are a change of a failed command that is not undone (architect, 2026-11-21, for v0.08-T01).
 
+### The board read
+
+**`create --board <id> --epic <ticket>` reads the epic's plan from the caller's localswim board,
+and only reads (D86).** localswim is the caller's own board, run as the caller's own Windows user on
+the caller's machine. This section is what the lease CLI does to reach it; how localswim answers is
+localswim's (its `docs/openapi.yaml` and `docs/windows-operations.md`). Which plan the epic holds is
+[The plan block](#the-plan-block)'s.
+
+**When it happens:**
+- **Only on a `create` with `--board` and `--epic`, and only once the command line has no usage
+  error** ([Command lines](#command-lines)) **and every value on it has passed its form and range
+  checks, `--size` and `--ttl` included; `--turn` is matched against the plan only after the board
+  read** (architect, 2026-11-25, for v0.11-T01, pin P20). The full order is
+  [Exit codes and errors](#exit-codes-and-errors)'s. A command line that fails any other check
+  never reaches the board.
+- **Before `create` waits for any other command and before it reads the lease records**, as a
+  `--plan` file is read ([Concurrency and atomicity](#concurrency-and-atomicity)).
+- **Once for each `create`.** Nothing read from a board is kept for a later command, except what
+  the lease's record keeps ([What is recorded](#what-is-recorded)).
+
+**Finding the board: localswim's service receipt** (D86, D89; localswim's
+`docs/windows-operations.md`, "The receipt"):
+- **The receipt is `<LOCALAPPDATA>\localswim-v2\service.json`**, where localswim documents it,
+  `LOCALAPPDATA` being the caller's system's per-user application data folder
+  ([Environment](#environment); architect, 2026-11-25, for v0.11-T01, pin P16). A relative
+  `LOCALAPPDATA` is resolved against the working folder of the command. **No variable of
+  agentspace's moves the receipt** (architect, 2026-11-25, for v0.11-T01, pin P9).
+- **It is read afresh for each `create`, whole, and closed at once**, as localswim asks of a reader.
+  A read that fails is refused at once, and is not tried again within the command.
+- **Its rules are localswim's:** one JSON object in UTF-8, a leading byte order mark accepted,
+  holding `base` and `credential_directory`, each a string and each once, and any other member
+  ignored. A receipt that breaks them is refused.
+- **The base is the receipt's `base`, and MUST be exactly `http://127.0.0.1:<port>`**, localswim's
+  own receipt form, so the token never leaves the caller's machine (D89 as changed for v0.11-T01;
+  architect, 2026-11-25, for v0.11-T01, pin P19). "Exactly" means, character by character:
+  - **The scheme is `http`, in lowercase, then `://`.** `HTTP://`, `https://` and any other scheme
+    are refused.
+  - **The host is `127.0.0.1`**, with no user information (no `@`), no trailing dot, and no other
+    spelling of the loopback address: `localhost`, `127.1`, `[::1]` and `0x7f.0.0.1` are refused.
+  - **Then `:` and the port, 1 to 5 ASCII decimal digits with no leading zero, whose value is
+    from 1 to 65535.** A base with no port is refused.
+  - **Then nothing:** no `/`, no path, no `?` or query, no `#` or fragment, and no whitespace.
+- **The connection is made to 127.0.0.1, at the base's port, directly, never through a proxy**,
+  whatever the environment says: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`, in any
+  case, change nothing ([Environment](#environment); architect, 2026-11-25, for v0.11-T01, pin
+  P19).
+
+**The credential: localswim's Bot token, read for the one read and dropped** (D86, Q17;
+localswim's `docs/windows-operations.md`, "The credential folder" and "The credential files"):
+- **The token is in `bot.json`, in the folder the receipt's `credential_directory` names**,
+  protected with Windows' data protection for the caller's Windows user, and is decrypted for the
+  read, as localswim documents and as its own readers do. The file's rules are localswim's: one
+  JSON object of exactly the members `format`, `format_version`, `role` and `token_dpapi_hex`,
+  `role` being `bot`, and a token of 43 characters of unpadded base64url once decrypted. A file
+  that breaks them, or that cannot be decrypted, is refused.
+- **The token MUST NOT be printed, logged, written to agentspace's state or to any file, put in an
+  environment variable, put in a URL, or passed as a command argument** (D86; AGENTS.md, "The
+  board"). It is sent in the `Authorization` header of the read's requests and nowhere else, and
+  is dropped once the read ends, whatever its outcome.
+- **No message carries the token, a part of it, or anything derived from it.**
+- **agentspace keeps no credential of its own for a board, and adds no file** (D86, Q17).
+- **On a system with no Windows data protection, the credential cannot be read**, and the read
+  fails as an unreadable credential does (below). Contract v2's caller runs on Windows (D8).
+
+**The requests** (D86, D89 as changed for v0.11-T01; architect, 2026-11-25, for v0.11-T01, pins P2
+and P17; localswim's `docs/openapi.yaml`, operation `readBoard`):
+- **One GET of localswim's focused ticket view, with the card's prose:**
+  `<base>/api/2026-11-10/boards/<board>?view=ticket&ticket=<n>&include_prose=true`, where `<base>`
+  is the receipt's base, `/api/2026-11-10` is the API's path as localswim's `docs/openapi.yaml`
+  gives it under `servers`, `<board>` is the normalized [board](#board) ID, and `<n>` is the
+  normalized [epic](#epic) ticket.
+- **Its headers are `Authorization: Bearer <token>`** and those the HTTP client sends with every
+  request (`Host`, and MAY be `User-Agent`, `Accept` and `Connection`). **It MUST NOT carry a body,
+  a cookie, an `Origin`, an `If-None-Match`, or an `Accept-Encoding` that asks for anything but
+  `identity`.**
+- **After a 404 that is localswim's `not_found` (below), one more GET, of the board's summary
+  view:** `<base>/api/2026-11-10/boards/<board>?view=summary`, with the same headers, to tell an
+  unknown ticket from an unknown board, since localswim answers 404 for both alike. Its body is
+  read only as far as a 404's is (below). **The card itself is read once** (D86), and a read
+  refused this way costs at most two GETs.
+- **A 404 counts as not found only when its body is localswim's Problem document**, a JSON object
+  whose `code` is `not_found`, given with the media type `application/problem+json` (architect,
+  2026-11-25, for v0.11-T01, pin P17). **The media type is the `Content-Type`'s type and subtype,
+  compared without regard to case, with any parameters, such as `charset`, ignored** (architect,
+  2026-11-25, for v0.11-T01, pin P26), so
+  `Application/Problem+JSON; charset=utf-8` is that media type. Any other 404
+  is the "did not answer" case below, so a path localswim later retires reads as a failure of
+  agentspace's, never as an unknown board or ticket.
+- **No other request is made**, to the board or anywhere else. These two are the only network
+  requests the lease CLI makes.
+
+**The client only reads** (D86):
+- **Every request is a GET**, made through one function that takes no method and has no way to
+  send another. No code path of the lease CLI can send POST, PUT, PATCH, DELETE, HEAD, OPTIONS or
+  any other method to a board, whatever the token permits. Bot's token can write, so this is what
+  keeps agentspace to reads (Q17).
+- **Conformance MUST show it** (D86, D88): its stand-in board answers any method but GET with a
+  failure that the case reports.
+
+**Bounds** (architect, 2026-11-25, for v0.11-T01, pins P1 and P2):
+- **A redirect is never followed.** A 3xx answer is the "did not answer" case below.
+- **Each request has 30 seconds, from the start of its connection to the last byte of its answer.**
+  A request that runs past them is ended, and is the "did not answer" case below.
+- **A 200 answer's body is read to at most 67108864 bytes (64 MiB), counted as received.** A body
+  that a `Content-Length` says is larger is refused before it is read, and one that grows past the
+  bound as it is read is refused once the next byte arrives: a build MUST NOT read more than
+  67108865 bytes of it. A description is at most 4194304 characters (localswim's `Card`), and the
+  answer's comments come on top of it with no bound, so the bound is on the answer.
+- **A 404's body is read under the same bound**, only to find whether it is localswim's
+  `not_found`; one larger than the bound is not. **Any other answer's body is not read beyond what
+  the HTTP client needs to close the connection.** No body is ever quoted.
+
+**What is read from a 200 answer** (D86; architect, 2026-11-25, for v0.11-T01, pin P1): the body is
+one JSON object, localswim's `TicketInspection`, of which the lease CLI reads three members and no
+more:
+
+| Member | Type | Use |
+|---|---|---|
+| `card.revision` | Integer, 1 to 9007199254740991, written as digits alone | The card's revision as read, kept in the lease's record ([What is recorded](#what-is-recorded)) |
+| `card.archived` | Boolean | `true` is refused: an archived epic is not one being worked (D86) |
+| `prose.description` | String | The description, from which [The plan block](#the-plan-block) takes the plan |
+
+- **Every other member MUST be ignored, whatever it holds**: `prose.comments`, `relationships`,
+  `parent`, `children` and `related_card` among them, and the card's title, lane, owner and
+  priority. **The lease CLI MUST NOT print or record any of them** (architect, 2026-11-25, for v0.11-T01, pin P1), so a change to them in
+  localswim never changes what the lease CLI does.
+- **A body that is not one JSON object, or in which any of the three is missing or is not of its
+  type, is refused** as an answer that could not be read, an `internal` error (below). Two such
+  answers are named here, so that no build reads them otherwise (architect, 2026-11-25, for
+  v0.11-T01, pin P26):
+  - **`card.revision` MUST be a JSON integer written as digits alone, from 1 to
+    9007199254740991, or the answer is refused.** `5.0`, `5e0`, `-5`, `0`, a string such as `"5"`
+    and a number above the bound are each refused, though `5.0` and `5e0` are whole numbers.
+  - **An answer that cannot be read as JSON of its type is refused whole**, a
+    `prose.description` holding an unpaired surrogate, such as `"\ud800"`, included. The answer is
+    read as JSON before the description is looked at, so such a description never reaches
+    [The plan block](#the-plan-block)'s checks, and is never `invalid_value` for `epic`.
+
+**Each outcome** (D86; architect, 2026-11-25, for v0.11-T01, pins P1, P2, P11 and P13). The first
+row that applies is the outcome, and only one is reported:
+
+| What happens | Error | `field` | Message |
+|---|---|---|---|
+| `LOCALAPPDATA` unset, empty or only whitespace | `internal` | None | `agentspace lease create failed: LOCALAPPDATA is unset or empty, so localswim's service receipt cannot be found. Nothing was recorded.` |
+| No file at the receipt's path | `internal` | None | `agentspace lease create failed: localswim's service receipt was not found; localswim may not be running. Nothing was recorded.` |
+| The receipt cannot be read, breaks localswim's rules, or has its `base` missing or not of the form above (architect, 2026-11-25, for v0.11-T01, pins P19 and P26) | `internal` | None | `agentspace lease create failed: localswim's service receipt could not be read. Nothing was recorded.` |
+| `bot.json` missing, unreadable, breaking localswim's rules, or not decrypted to a token | `internal` | None | `agentspace lease create failed: The board's credential could not be read. Nothing was recorded.` |
+| No connection, a connection refused, reset or closed before the whole answer arrived, or 30 seconds passed | `internal` | None | `agentspace lease create failed: The board at 127.0.0.1:<port> did not answer. Nothing was recorded.` |
+| 200, with a body larger than 64 MiB | `invalid_value` | `epic` | `Epic '<value>' carries no usable plan: the board's answer for this card is larger than 64 MiB.` |
+| 200, with a body that is not the shape above | `internal` | None | `agentspace lease create failed: The board's answer could not be read. Nothing was recorded.` |
+| 200, with `card.archived` `true` | `invalid_value` | `epic` | `Epic '<value>' is archived. Name an epic that is being worked.` |
+| 200, with a description [The plan block](#the-plan-block) refuses | `invalid_value` | `epic` | `Epic '<value>' carries no usable plan: <why>.`, `<why>` as that section gives it |
+| 404 that is localswim's `not_found`, then 200 from the summary view | `invalid_value` | `epic` | `No card of ticket '<value>' on board '<board>'. Give the epic's ticket number, as in '52'.` |
+| 404 that is localswim's `not_found`, then the same from the summary view | `invalid_value` | `board` | `No board of ID '<value>' that agentspace can read.` |
+| 404 that is localswim's `not_found`, then any other outcome of the summary view | As that outcome's row, for the summary view | | |
+| 401 or 403 | `internal` | None | `agentspace lease create failed: The board refused agentspace's credential. Nothing was recorded.` |
+| Any other status: 1xx, a 2xx other than 200, 3xx, 400, a 404 that is not localswim's `not_found`, 405, 406, any other 4xx, and 5xx | `internal` | None | `agentspace lease create failed: The board at 127.0.0.1:<port> did not answer. Nothing was recorded.` |
+
+- **`<value>` is the `--epic` value as given in an `epic` row, and the `--board` value as given in
+  the `board` row**, quoted by [Messages](#messages)' rules. **`<board>` is the normalized board
+  ID**, and **`<port>` is the base's port, as the receipt gives it**, the one part of a URL an
+  `internal` message carries (D86).
+- **Every message here is in agentspace's own words** (#0041): **none carries the token, a URL
+  beyond the address and port, a path, the board's answer, an operating system's error text, or
+  any of localswim's own text**, a Problem document's `title`, `detail` or `code` included. The
+  message for a board that is not found names no credential or role (architect, 2026-11-25, for v0.11-T01, pin P13).
+- **A 404 for the board covers every board localswim will not show the caller**: no board of that
+  ID, a board Bot is not a member of, and a board that failed localswim's startup admission
+  (localswim's `docs/openapi.yaml`, `readBoard`). A closed board's ticket view is read as any
+  other's.
+- **A credential refused is not tried again within the command.** localswim's credential changes
+  when it starts afresh, and the next `create` reads the receipt and the credential again
+  (localswim's "The credential folder").
+- **Each `invalid_value` here is a value's error, and each `internal` here is reported among the
+  values**, before the lease records are read ([Exit codes and errors](#exit-codes-and-errors),
+  "When several errors apply", step 2). Every one records no lease, and creates and changes
+  nothing.
+
+#### What is recorded
+
+**A lease whose plan came from a board keeps where it came from in its record** (D86; architect,
+2026-11-25, for v0.11-T01, pin P7), as [docs/state.md](state.md) places it:
+- **`plan_source`: the board, the ticket and the card's revision as read**: the normalized board
+  ID, the normalized ticket as an integer, and `card.revision` as the answer gave it.
+- **The plan as read**, the plan document the block held, kept as a `--plan` lease's plan is kept
+  ([Plan](#plan)).
+- **A lease made with `--plan` has no `plan_source`**, and one made without a plan has neither.
+
+**No output prints any of them** (D87). The lease document of a board lease is the document the
+same plan given with `--plan` would print, with the same members (D83):
+- **`sized_for.plan` is the plan document's own `name`**, as written in the block, and is left out
+  when the plan has none. It is never the board's ID, the board's name, the epic's ticket or the
+  card's title (D75, D87).
+- **The board, the ticket, the revision, the description and the plan are in no output**, an
+  error's message included, except that a refusal's message quotes the `--board` and `--epic`
+  values the caller gave, and the normalized board ID ([Messages](#messages)).
+
 ## The lease
 
 ### Fields
@@ -344,10 +636,10 @@ array of them.** Its schema is [`lease.output.schema.json`](../schemas/lease.out
 | `state` | String, [state](#states) | Always | Where the lease is in its life, as of now. |
 | `platform` | String, [platform](#platform) | Always | The platform asked for, normalized. |
 | `profile` | String, [profile](#profile) | Always | The software profile asked for, normalized. |
-| `size` | String, [size](#size) | Always | The size asked for, normalized, or, for a lease created with `--plan`, the size picked for the plan ([Plan](#plan)), which is `xl` for a lease whose reason is `plan_too_large` (D75, D81). It stays that size even when larger compute serves the lease (D66). |
-| `sized_for` | Object | Every lease created with `--plan`, in every state | What the lease was sized for; see below. |
+| `size` | String, [size](#size) | Always | The size asked for, normalized, or, for a lease created with a plan, the size picked for the plan ([Plan](#plan)), which is `xl` for a lease whose reason is `plan_too_large` (D75, D81). It stays that size even when larger compute serves the lease (D66). |
+| `sized_for` | Object | Every lease created with a plan, from `--plan` or `--epic`, in every state | What the lease was sized for; see below. |
 | `sized_for.plan` | String, [name](#plan) | Inside `sized_for`, when the plan's `name` is given and not `null` | The plan's `name`, as written in the plan. |
-| `sized_for.turn` | String, [name](#plan) | Inside `sized_for` | The name of the plan's busiest turn, as written in the plan. |
+| `sized_for.turn` | String, [name](#plan) | Inside `sized_for` | The name of the turn the lease is for, as written in the plan: the one `--turn` named, or the plan's busiest turn (D84). |
 | `sized_for.agents` | Integer, 2 to 1025 | Inside `sized_for` | That turn's agents at once, its dev lead included. |
 | `ttl_seconds` | Integer, 60 to 86400 | Always | The TTL of the current certificate, or of the one asked for if none was issued. |
 | `created_at` | String, [time](#times) | Always | When `create` recorded the lease: a whole second during the `create` command. |
@@ -377,29 +669,33 @@ then fail with `internal` when none is free; a project would need billions of ke
 to happen. Only kept leases count: an alias file that no record names makes `create` fail, and is
 never a reason to draw again ([docs/state.md](state.md#the-alias-file)).
 
-**`ssh.user` is the user the lease logs in as.** In v1 every project's leases log in as `ubuntu`
-(D3), as in v0. A caller MUST read it from the lease and MUST NOT assume it, because later hosts MAY change
-it. A caller MUST accept any user that the table's rule for `ssh.user` allows. In v1 a lease's user also matches the
+**`ssh.user` is the user the lease logs in as.** In v2 every project's leases log in as `ubuntu`
+(D3), as in v0 and v1. A caller MUST read it from the lease and MUST NOT assume it, because later hosts MAY change
+it. A caller MUST accept any user that the table's rule for `ssh.user` allows. In v2 a lease's user also matches the
 narrower pattern of the lease state file, which is what binds a driver
 ([docs/state.md](state.md#the-lease-state-file)).
 
-**`sized_for` says what a lease created with `--plan` was sized for (D75).** `create` sets it, and
+**`sized_for` says what a lease created with a plan was sized for (D75).** `create` sets it, and
 nothing changes it afterwards: `get`, `renew`, `release` and `list` print it as `create` did, in
 every state (architect, 2026-11-24, for v0.10-T01, pin P10).
 - **`plan` is the plan's `name`, and is left out when the plan's `name` is absent or `null`**,
-  never written as `null`. **`turn` is the plan's busiest turn**, the first such turn in the
-  plan's order on a tie, **and `agents` is that turn's agents at once**, the sum of its stories'
-  peaks plus 1 for its dev lead ([Plan](#plan); D74). Both names are printed exactly as the plan
-  writes them, and each matches the pattern of a [name](#plan). `sized_for` has no other member.
+  never written as `null`. **`turn` is the turn the lease is for** (D84): the one `--turn` names,
+  or, without `--turn`, the plan's busiest turn, the first such turn in the plan's order on a tie.
+  **`agents` is that turn's agents at once**, the sum of its stories' peaks plus 1 for its dev
+  lead ([Plan](#plan); D74). Both names are printed exactly as the plan writes them, and each
+  matches the pattern of a [name](#plan). `sized_for` has no other member.
 - **The lease's `size` is the size picked for those agents**, the smallest that holds them at
   agentspace's per-agent footprint ([Plan](#plan)). **When no size holds them, the lease is
   `unsatisfiable` with the one reason `plan_too_large`, and its `size` is `xl`**, the largest
   (D81): `sized_for` says which turn needed more, and nothing is issued at any size (D5).
-- **A lease created without `--plan` has no `sized_for`**, since a field that does not apply is
+- **A lease created without a plan has no `sized_for`**, since a field that does not apply is
   left out ([Output](#output)), and prints as it did in contract v0 (D76).
-- **`sized_for.plan` is there so that a plan read from elsewhere changes no output**, as one read
-  from an epic will be in agentspace's v0.11 release (#0052; D75).
-- **The plan itself, and each subagent's model and effort, are in no output (D74).**
+- **`sized_for.plan` is there so that a plan read from elsewhere changes no output** (D75), and
+  from agentspace's v0.11 release (#0052) a plan read from an epic changes none: **a board lease
+  prints the plan's own `name`, never the board's ID or the epic's ticket** (D87;
+  [What is recorded](#what-is-recorded)).
+- **The plan itself, each subagent's model and effort, each turn's `budget_minutes`, and the
+  board, ticket and revision a plan was read from are in no output** (D74, D86, D87).
 
 **Reason codes:**
 
@@ -408,8 +704,8 @@ every state (architect, 2026-11-24, for v0.10-T01, pin P10).
 | `unsupported_platform` | No backend can provide the platform asked for. |
 | `unsupported_profile` | No backend can provide the profile asked for. |
 | `unsupported_size` | No backend can provide the size asked for. |
-| `plan_too_large` | The plan given with `--plan` has more agents at once than the largest size holds at agentspace's per-agent footprint ([Plan](#plan)). It is always the lease's only reason, and the lease's `size` is `xl` (D75, D81). |
-| `no_capacity` | The request is supported, but no capacity can be found for it: in v1, its project has no host and cannot have one made (D54), or its project's host is serving other leases at a smaller size (D66, D68). |
+| `plan_too_large` | The lease's turn of its plan, from `--plan` or `--epic`, has more agents at once than the largest size holds at agentspace's per-agent footprint ([Plan](#plan)). It is always the lease's only reason, and the lease's `size` is `xl` (D75, D81, D84). |
+| `no_capacity` | The request is supported, but no capacity can be found for it: in v2, its project has no host and cannot have one made (D54), or its project's host is serving other leases at a smaller size (D66, D68). |
 
 **Every reason that applies MUST be listed, each code once,** in the order of the table, so a
 request with an unsupported platform and an unsupported size gets two reasons, **with one
@@ -430,7 +726,7 @@ v0.10-T01, pins P15 and P16).
   (architect, 2026-11-24, for v0.10-T01, pin P16). Its size is always one of the four sizes, so
   `unsupported_size` comes only from a driver that lacks that size.
 
-In v1 only `linux/arm64` and `agent-linux` are supported, and the sizes `s`, `m`, `l` and `xl`
+In v2 only `linux/arm64` and `agent-linux` are supported, and the sizes `s`, `m`, `l` and `xl`
 ([Size](#size); D5, D65). Until agentspace's v0.09 release (#0049), size `m` alone was.
 `no_capacity` is in the contract for backends that can run out. Until agentspace's v0.07 release
 (#0047) it was never reported. agentspace's driver reports it for a supported request only, in
@@ -478,7 +774,13 @@ v0.09-T01, pin P8):
   `<n>` is `sized_for.agents`, and `<m>` is the most agents at once that `xl` holds at
   agentspace's per-agent footprint, 32 today ([Plan](#plan)). It quotes a name from the plan, not
   a normalized value, since the plan is the value that cannot be met. **agentspace's lease CLI
-  MUST emit it byte for byte** (architect, 2026-11-24, for v0.10-T01, pin P5).
+  MUST emit it byte for byte** (architect, 2026-11-24, for v0.10-T01, pin P5). It is the message
+  of every `plan_too_large` lease created without `--turn`, unchanged in v2.
+- `Plan's turn '<turn>' has <n> agents at once; the largest size, xl, holds <m>.`
+  (D84; from v0.11, #0052), the message of every `plan_too_large` lease created with `--turn`,
+  even one that names the busiest turn, where `<turn>` is the turn `--turn` named, as the plan
+  writes it, and `<n>` and `<m>` are as above. **agentspace's lease CLI MUST emit it byte for
+  byte**, as it does the first (architect, 2026-11-25, for v0.11-T01, pin P20).
 - `No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.`
   ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's, 2026-11-20, for v0.07-T01)
 - `No capacity can be found for project '<project>' at size '<size>': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.`
@@ -554,9 +856,9 @@ one call and `expired` in the next with nothing in between. An `expired` lease h
 
 **How long a lease is kept:** a `released`, `expired` or `unsatisfiable` lease MUST stay readable
 by `get` and `list` for at least 24 hours after it reached that state. After that it MAY be
-forgotten, and `get` then answers `not_found`. In v1 no lease is forgotten.
+forgotten, and `get` then answers `not_found`. In v2 no lease is forgotten.
 
-**Where leases are kept:** in v1, on the caller's machine, so `get` and `list` see the leases
+**Where leases are kept:** in v2, on the caller's machine, so `get` and `list` see the leases
 created there and no others. The files are [docs/state.md](state.md)'s, and
 [`AGENTSPACE_STATE_DIR`](#environment) moves them.
 
@@ -645,8 +947,8 @@ how they are made and removed, are [docs/state.md](state.md)'s.
 - **It permits a terminal (PTY) and port forwarding, and nothing else:** no agent forwarding, no
   X11 forwarding and no user rc file (D7). Port forwarding MUST stay permitted, because agentspace's
   board reaches a lease host through it (D12, D30).
-- **Its serial is not part of this contract,** and a caller MUST NOT rely on it. v1 issues serial 0
-  on every certificate, as v0 did; whether serials are needed is decided with revocation, card
+- **Its serial is not part of this contract,** and a caller MUST NOT rely on it. v2 issues serial 0
+  on every certificate, as v0 and v1 did; whether serials are needed is decided with revocation, card
   #0010 (#0029).
 
 **The certificate authority:**
@@ -678,7 +980,7 @@ how they are made and removed, are [docs/state.md](state.md)'s.
   behavior to copy.
 - **A connection through the alias reaches the lease's host as `ssh.user`**, and how it gets there
   is the driver's ([docs/driver.md](driver.md), D9).
-- **In v1 the alias also forwards the agentspace board's ports to the lease host** (D12, D30), so
+- **In v2 the alias also forwards the agentspace board's ports to the lease host** (D12, D30), so
   a second session through any alias on the same host warns that its remote port forwarding
   failed, and still logs in. A caller MUST NOT rely on these forwards.
 
@@ -729,7 +1031,7 @@ libc a host has; the [profile](#profiles) does.
   `linux/aarch64/v8` becomes `linux/arm64`. Every other variant is kept: `linux/arm64/v9` and
   `linux/amd64/v3` stay as they are.
 - **Default:** `linux/arm64` (D13).
-- **Supported in v1:** `linux/arm64` only. Any other well-formed platform is accepted, and the
+- **Supported in v2:** `linux/arm64` only. Any other well-formed platform is accepted, and the
   lease is `unsatisfiable` with `unsupported_platform` (D5). That includes `windows/amd64`: Windows
   hosts are in scope (D4), and unsatisfiable until a driver supports them.
 
@@ -744,17 +1046,20 @@ each supported profile promises is in [Profiles](#profiles).
   (`Agent-Linux@03` becomes `agent-linux@3`). A profile with no version stays without one, and
   means the profile's current version.
 - **Default:** `agent-linux`.
-- **Supported in v1:** `agent-linux` with no version. Any other well-formed profile, including
+- **Supported in v2:** `agent-linux` with no version. Any other well-formed profile, including
   `agent-linux@1`, is accepted and the lease is `unsatisfiable` with `unsupported_profile`, because
-  v1 has no versioned profiles.
+  v2 has no versioned profiles.
 
 ### Plan
 
 **A plan is a JSON document, read from a file, that says which agents a project's work starts and
-in what order; `create --plan <file>` picks the lease's size from it (D74, D75).** It is the one
-value that names a file rather than holding the value itself. A caller that knows the size it
-wants gives `--size` instead, and the two MUST NOT be given together
-([`create`](#agentspace-lease-create)).
+in what order; `create --plan <file>` picks the lease's size from it (D74, D75), and from v2 its
+TTL when the lease's turn has a budget (D85).** It is the one value that names a file rather than
+holding the value itself. A caller that knows the size it wants gives `--size` instead, and the two
+MUST NOT be given together ([`create`](#agentspace-lease-create)). **From v2 the same plan MAY be
+read from an epic's description instead**, with `--board` and `--epic`
+([The plan block](#the-plan-block)): every rule of this section from the document's shape on
+applies to it alike, and the same plan gives the same lease from either source (D83).
 
 **The argument is a path to the file, and is used as given** (architect, 2026-11-24, for
 v0.10-T01, pin P14):
@@ -778,7 +1083,8 @@ v0.10-T01, pin P14):
 - **`name`**, optional: the plan's name, such as its epic's. It is printed as `sized_for.plan`
   ([Fields](#fields)), and a plan without one gives a lease whose `sized_for` has no `plan`.
 - **A turn** is an object with a `name`, required, and `stories`, required: an array of 1 to 32
-  stories.
+  stories. From v2 it MAY have `budget_minutes`, the turn's wall-clock budget in minutes (D85;
+  below).
 - **A story** is an object with a `name`, required, and `subagents`, required: an array of 1 to 32
   subagents.
 - **A subagent** is an object with a `name`, a `model` and an `effort`, all required, and MAY have
@@ -828,6 +1134,28 @@ architect, 2026-11-24, for v0.10-T01, pin P3).
   D27's later use, and no output prints the plan, a model or an effort**, an error's message
   included.
 
+**A turn's `budget_minutes`** (D85; from v2):
+- **An integer from 1 to 960, both inclusive:** the turn's wall-clock budget, as its milestone
+  holds it. 960 minutes is 16 hours. It is optional, and `null` means that it is not given.
+- **It MUST be written as a JSON integer of digits alone, with no fraction, exponent or sign**
+  (architect, 2026-11-25, for v0.11-T01, pin P24): `90` is 90, and `90.0`, `9e1` and `-0` are
+  refused, though each is a whole number. JSON Schema's `integer` accepts a whole number in any
+  form, so `90.0` and `9e1` pass the plan's schema: this is a check the schema cannot make, and
+  the program makes it ([Schemas](#schemas)). A number with a fraction, such as `90.5`, a string such as `"90"`,
+  `true`, an array and an object are refused, and so are 0, a negative number and a number above
+  960. A number the parser cannot hold, such as `1e400`, is refused as JSON already is (check 4,
+  below).
+- **It is refused like every other fault of the plan's shape:** by check 6, below, with the `<why>`
+  `the document does not match the plan schema`, under `invalid_value` for `plan`, or for `epic`
+  when the plan came from an epic ([The plan block](#the-plan-block)). A `budget_minutes` written
+  with a fraction, an exponent or a sign is refused there too, though the plan's schema accepts it
+  (pin P24).
+- **It sets the TTL of a lease for that turn** ([TTL](#ttl)), and nothing else: it never changes
+  a turn's agents at once or the size, and no output prints it.
+- **Every v1 plan stays valid** (D85): a plan with no `budget_minutes` anywhere is accepted as v1
+  accepted it, and gives the lease v1 gave it. A plan that has one, a `null` one included, was
+  refused by v1, whose plan schema allows no other member ([Changes from v1](#changes-from-v1)).
+
 **The file** (architect, 2026-11-24, for v0.10-T01, pins P1, P4, P18 and P21):
 - **At most 262144 bytes (256 KiB), a byte order mark counted.** Its size is checked before it is
   read whole, and a build MUST NOT read more than 262145 bytes of it, so a file that grows past the
@@ -846,8 +1174,8 @@ architect, 2026-11-24, for v0.10-T01, pin P3).
 - **A build's parser MAY limit how deeply the document nests, and MUST allow at least 64 levels**,
   counting the document as level 1. A plan's deepest value, an `after` entry, is at level 9, so a
   document nested past 9 levels is never a plan.
-- **`null` for an optional member, the plan's `name` or a subagent's `after`, means that it is not
-  given**, as in every input document ([Schemas](#schemas)). `null` for a required member is
+- **`null` for an optional member, the plan's `name`, a turn's `budget_minutes` or a subagent's
+  `after`, means that it is not given**, as in every input document ([Schemas](#schemas)). `null` for a required member is
   refused.
 - **Unlike an argument, nothing in the document is trimmed or normalized.** A value the rules above
   refuse is refused, never corrected.
@@ -870,11 +1198,16 @@ number of subagents. A peak stated anywhere else, such as on a story's card (D31
 D74).** **The plan's agents at once are its busiest turn's**: the turn with the most, and the
 first such turn in the plan's order on a tie. Every plan that is well formed has at least 2.
 
-**A lease is sized for the whole plan it is given (D74).** No flag picks a turn. A caller that
-wants one turn's size gives a plan that holds that turn alone.
+**A lease is for one turn of its plan (D84).** It is the turn `--turn` names ([Turn](#turn)), or,
+without `--turn`, the plan's busiest turn, the first such turn in the plan's order on a tie, as in
+v1. The lease is sized for that turn's agents at once, its TTL is that turn's ([TTL](#ttl)), and
+`sized_for` names that turn ([Fields](#fields)). Without `--turn`, the turn is the busiest, so the
+plan's agents at once and the turn's are the same, as v1 sized every plan. D74's "No flag picks a
+turn" was changed for v0.11 by D84.
 
 **The size picked is the smallest of the [sizes](#size) whose vCPUs and memory are both at least
-the plan's agents at once times agentspace's per-agent footprint (D75).** The size goes on as a
+the agents at once of the turn the lease is for times agentspace's per-agent footprint (D75,
+D84).** The size goes on as a
 `--size` does: the driver judges it as it judges any size, and the lease's platform, profile and
 TTL are given and judged as they are without a plan ([`create`](#agentspace-lease-create)).
 - **The footprint is agentspace's, not this contract's**, and MAY change without a new contract
@@ -894,16 +1227,19 @@ TTL are given and judged as they are without a plan ([`create`](#agentspace-leas
 
 - **A caller MUST read the size from the lease, and MUST NOT work it out from the plan**, since
   the footprint can change.
-- **A plan of more agents at once than the largest size holds is never given less (D5, D75):** its
-  lease is `unsatisfiable` with the one reason `plan_too_large`, its `size` is `xl`, the largest,
-  and its `sized_for` says which turn needed more ([Fields](#fields); D81). Such a plan is met by
-  splitting its busiest turn into turns that fit.
+- **A turn of more agents at once than the largest size holds is never given less (D5, D75,
+  D84):** its lease is `unsatisfiable` with the one reason `plan_too_large`, its `size` is `xl`,
+  the largest, and its `sized_for` says which turn needed more ([Fields](#fields); D81), though
+  another turn of the plan would fit. Such a plan is met by splitting that turn into turns that
+  fit.
 
 **A plan that is not well formed is refused with `invalid_value` for `plan`** (exit 2, D74), and
 its message is `Plan '<value>' is not a valid plan: <why>.` (D81, as changed for v0.10-T01;
 architect, 2026-11-24, for v0.10-T01, pins P7 and P12). `<value>` is the `--plan` argument as
 given, quoted by [Messages](#messages)' rules, never a path agentspace made from it, and `<why>` is
-the one of the table below that the first check the plan fails gives, word for word.
+the one of the table below that the first check the plan fails gives, word for word. **A plan read
+from an epic is refused with `invalid_value` for `epic` instead**, with the same `<why>` in the
+epic's message ([The plan block](#the-plan-block)).
 - **Every refusal of a plan is `invalid_value`**, a bound exceeded included. `out_of_range` stays
   the TTL's alone.
 - **A refused plan records no lease**, and creates nothing.
@@ -915,7 +1251,7 @@ the one of the table below that the first check the plan fails gives, word for w
 | 3. UTF-8 | The file is not valid UTF-8 | `the file is not valid UTF-8` |
 | 4. JSON | The file, its leading byte order mark set aside, is not one JSON document: it is empty or only whitespace, has text after the document, holds U+FEFF outside a string, holds a string with an unpaired surrogate, nests deeper than the parser allows, or holds a number the parser cannot hold, such as `1e400` (architect, 2026-11-24, for v0.10-T02, pin P5) | `the file is not valid JSON` |
 | 5. Members | An object gives one member's name twice | `an object has two members named '<member>'` |
-| 6. Schema | The document is not of the shape above: a value of the wrong type, the document included; a required member missing or `null`; a member that is not in the shape; an empty or too long `turns`, `stories` or `subagents`, or an `after` of more than 31 names; an `after` that names one subagent twice; or a name, model or effort not of its form | `the document does not match the plan schema` |
+| 6. Schema | The document is not of the shape above: a value of the wrong type, the document included; a required member missing or `null`; a member that is not in the shape; an empty or too long `turns`, `stories` or `subagents`, or an `after` of more than 31 names; an `after` that names one subagent twice; a name, model or effort not of its form; or a `budget_minutes` that is not an integer from 1 to 960, or one not written as digits alone, such as `90.0`, `9e1` or `-0`, though the schema accepts `90.0` and `9e1` (architect, 2026-11-25, for v0.11-T01, pin P24) | `the document does not match the plan schema` |
 | 7. Turns | Two turns have one name | `turn '<turn>' is named twice` |
 | 8. Stories | Two stories of one turn have one name | `story '<story>' is named twice in turn '<turn>'` |
 | 9. Subagents | Two subagents of one story have one name | `subagent '<name>' is named twice in story '<story>'` |
@@ -954,12 +1290,205 @@ plan, through that schema's copy in `lease-create.input.schema.json`'s `$defs`, 
 apply to it as to a file's. No request member carries a path (architect, 2026-11-24, for
 v0.10-T01, pins P8 and P19).
 
+#### The plan block
+
+**An epic carries its plan as one fenced block in its card's description, holding exactly a plan
+document (D83).** `create --board <id> --epic <ticket>` reads the description
+([The board read](#the-board-read)) and takes the plan from that block. The plan is then the same
+value as a `--plan` file's: every rule of [Plan](#plan) from its shape on applies to it, and the
+same plan read from an epic and from a file gives the same lease (D83). Where the epic's prose and
+its block disagree, the block is the plan (D83).
+
+**Lines.** The description is read as a sequence of lines, and every rule below is decided by
+lines alone:
+- **A line ends at a line feed (U+000A)**, or at the end of the description for the last line. **A
+  carriage return (U+000D) just before that line feed is part of the line end**, not of the line's
+  text, so lines MAY end in LF or CRLF, mixed in one description. A carriage return anywhere else,
+  a second one before the line feed included, is text.
+- **No other character ends a line:** not U+000B, U+000C, U+0085, U+2028 or U+2029.
+- **A line's text is compared as it is.** Nothing in it is trimmed or folded to one case: a space
+  or a tab, at either end, is text, and so is a U+FEFF.
+
+**The fence lines:**
+- **The opening line is a line whose text is exactly ```` ```agentspace-plan ````**: three
+  backticks (U+0060), then `agentspace-plan` in lowercase, and nothing else.
+- **The closing line is a line whose text is exactly ```` ``` ````**: three backticks, and nothing
+  else. ```` ```` ````, and ```` ``` ```` followed by a space, are not closing lines.
+- **A near miss is a line that is not the opening line, and whose text starts with three or more
+  backticks followed at once by `agentspace-plan`** (D83). So each of these is a near miss:
+  ```` ```agentspace-plan ```` followed by a space or a tab, or by a carriage return that is not
+  just before the line feed; ```` ````agentspace-plan ````, with a fourth backtick;
+  ```` ```agentspace-plan json ````; and ```` ```agentspace-planner ````.
+- **Nothing else is a near miss or an opening line**: a line that starts with anything other than
+  a backtick, such as a space, a tab, a `>` or a U+FEFF; a line of tildes, such as
+  `~~~agentspace-plan`; and a line whose `agentspace-plan` is in another case, such as
+  ```` ```Agentspace-Plan ````. Each is text.
+
+**The block** is an opening line, the lines after it, and the first closing line after it. **Its
+content is every character from the one after the opening line's line feed to the one before the
+closing line's first backtick**, so the line end of its last line is content, and a closing line
+straight after the opening line gives empty content.
+
+**Finding the block.** The lines are read in order, from the first, and the first fault stops the
+reading:
+1. **Outside a block, an opening line starts one.** If a block was already found, the description
+   has two, and is refused.
+2. **Outside a block, a near miss is refused** (D83): a line its writer most likely meant as an
+   opening line is never skipped as text.
+3. **Outside a block, any other line is text for people**, and is skipped. That includes every
+   other fence, such as ```` ```json ```` or ```` ``` ````: no Markdown is parsed, so a line is
+   never read as inside another fence or inside a quote.
+4. **Inside a block, the closing line ends it.**
+5. **Inside a block, an opening line or a near miss is refused** as the block before it never being
+   closed. A plan document is JSON, in which no line can start with a backtick, so such a line is
+   never a plan's.
+6. **Inside a block, any other line is content.**
+7. **At the end of the description, a block still open is refused as never closed, and a
+   description in which no block was found is refused as having none.**
+
+**So the line rule alone decides what a description holds** (D83):
+- **An opening line inside another fence**, such as an example of a plan block inside a
+  ```` ```markdown ```` fence, **is an opening line**, since that fence is not parsed. A
+  description that shows a plan block as an example, and also carries its own, has two blocks and
+  is refused.
+- **A block in a quote**, each line starting `> `, **is text** and carries no plan, since its
+  first line starts with `>`.
+- **An indented block**, its first line starting with a space or a tab, **is text** too.
+- **Prose before and after the block, the epic's execution plan by turn among it (D14), is read by
+  no rule here.**
+
+**The content is the plan document's bytes, read as a `--plan` file's bytes are**
+([Plan](#plan), "The file"; D83): the content in UTF-8, at most 262144 bytes, a byte order mark at
+its start accepted and ignored and U+FEFF anywhere else refused, and one JSON document (checks 1, 3
+and 4), then a plan of the shape and names [Plan](#plan) gives (checks 5 to 11). **The first check
+the content fails gives the `<why>`, word for word as the table in [Plan](#plan) gives it**, checks
+1 and 3 to 11, "the file" in checks 1, 3 and 4 included; check 2, a file that could not be read,
+never applies to a block. **Check 3, not valid UTF-8, cannot be reached for a block read from a
+board either** (architect, 2026-11-25, for v0.11-T01, pin P26)**:** the board's answer is read as JSON before its description is looked at, so a
+description that is not valid text, one holding an unpaired surrogate included, makes the whole
+answer one that could not be read, which is `internal` ([The board read](#the-board-read)), and
+the content of a description that reads is always valid UTF-8.
+
+**The content is checked only after the whole description has been read with no line fault.**
+The reading above runs to the end of the description first, and a line fault it finds, at any
+line, is the refusal, whatever the content of a block before it holds. So a description with a
+block whose content is not a plan and, after it, a second block is refused as having more than one
+block, never with the content's `<why>`.
+
+**Every refusal is `invalid_value` for `epic`** (D86), and records no lease. Its message is
+`Epic '<value>' carries no usable plan: <why>.`, where `<value>` is the `--epic` value as given,
+quoted by [Messages](#messages)' rules (architect, 2026-11-25, for v0.11-T01, pin P11). The `<why>`
+of each fault, word for word, in the order the reading above meets them:
+
+| Fault | `<why>` |
+|---|---|
+| A second opening line outside a block, once a block was found | `its description has more than one agentspace-plan block` |
+| A near miss outside a block | `a line that starts an agentspace-plan block is not exactly the fence line` |
+| An opening line or a near miss inside a block, or the end of the description inside one | `its agentspace-plan block is never closed` |
+| No opening line in the whole description | `its description has no agentspace-plan block` |
+| Content that [Plan](#plan)'s checks refuse | That check's `<why>`, word for word, as [Plan](#plan)'s table gives it |
+
+- **A `<why>` never quotes the description, the block or a line of either**, beyond the names
+  [Plan](#plan)'s own `<why>`s quote.
+- **A description with no fault and one block gives the plan**, which then sizes the lease
+  exactly as a `--plan` file's would ([`create`](#agentspace-lease-create)).
+- **The board's other refusals of an epic**, an archived card, no card of that ticket and an
+  answer too large to read, are [The board read](#the-board-read)'s.
+
+### Board
+
+**The localswim board an epic is read from, by its ID (D86).** `create --board <id>` gives it,
+always with [`--epic`](#epic), and the lease's plan is then read from that epic
+([The board read](#the-board-read)). A board's name is never accepted, since two boards MAY share
+one and a lookup would be a guess (D86).
+- **Accepted:** a UUIDv4 in any case, with surrounding whitespace, as a [lease ID](#lease-id) is:
+  `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`, where each `x` is a hex digit and `y` is one of `8`, `9`,
+  `a` or `b` (D89 as changed for v0.11-T01; architect, 2026-11-25, for v0.11-T01, pin P18).
+- **Normalized to:** lowercase, whitespace trimmed. The board is read, and recorded, by its
+  normalized ID ([The board read](#the-board-read)).
+- **Refused:** any other UUID version, braces, a `urn:uuid:` prefix, a UUID without its `-`
+  separators, an empty value, a board's name, and anything else. Every refusal of a board's form
+  is `invalid_value` for `board` (exit 2).
+- **A well-formed ID that names no board agentspace can read is `invalid_value` for `board`
+  too**, found by the board read, not by its form ([The board read](#the-board-read); architect,
+  2026-11-25, for v0.11-T01, pin P2). It is not `not_found`, which is for a lease ID alone.
+- **No default.** `--board` is given with `--epic` or not at all, and never with `--plan` or
+  `--size` ([Command lines](#command-lines)).
+- **Its messages** are in [Messages](#messages) and [The board read](#the-board-read).
+
+### Epic
+
+**The epic card whose description carries the plan, by its ticket number on the
+[board](#board) (D83, D86).** It is the number `card get` takes, as in `52` for `#0052`.
+- **Accepted:** 1 to 16 ASCII decimal digits, leading zeros allowed, with surrounding whitespace,
+  whose value is from 1 to 9007199254740991, localswim's ticket range (architect, 2026-11-25, for
+  v0.11-T01, pin P5).
+- **Normalized to:** the value in decimal with no leading zero, whitespace trimmed: `0052`
+  becomes `52`.
+- **Refused:** a `#` before the digits, as in `#0052`; a sign, a fraction or an exponent, as in
+  `52.0`; a value of only zeros, `0` among them; more than 16 digits, leading zeros included; a
+  value above 9007199254740991; an empty value; and anything else. **Every refusal of an epic is
+  `invalid_value` for `epic`** (exit 2), a value outside the ticket range included: `out_of_range`
+  stays the TTL's alone.
+- **A well-formed ticket that names no card on the board, a card that is archived, and a card
+  whose description carries no usable plan are `invalid_value` for `epic` too**, found by the board
+  read ([The board read](#the-board-read), [The plan block](#the-plan-block); D86).
+- **No default.** `--epic` is given with `--board` or not at all, and never with `--plan` or
+  `--size` ([Command lines](#command-lines)).
+- **Its messages** are in [Messages](#messages), [The board read](#the-board-read) and
+  [The plan block](#the-plan-block).
+
+### Turn
+
+**The name of one turn of the lease's plan; `create --turn <name>` sizes the lease for that turn
+alone, and gives it that turn's TTL (D84, D85).** Without `--turn`, a plan lease is for the plan's
+busiest turn, as in v1 ([Plan](#plan)). `--turn` needs a plan, from `--plan` or from `--epic`
+([Command lines](#command-lines)).
+- **Accepted:** a turn name exactly as the plan writes it, in a [name](#plan)'s form: 1 to 64
+  printable ASCII characters, U+0020 to U+007E, with no space at either end,
+  `^[!-~]([ -~]{0,62}[!-~])?$` (architect, 2026-11-25, for v0.11-T01, pin P5).
+- **Not trimmed, and never normalized** (architect, 2026-11-25, for v0.11-T01, pin P5). A turn's name is compared exactly, character by
+  character, as every name of a plan is (D84; [Plan](#plan)), so a value is used as given. This is
+  an exception to [Input tolerance](#input-tolerance)'s trimming, as `--plan`'s path is. A value
+  with whitespace at either end is outside the form, and is refused as below; it is never trimmed
+  into a turn's name.
+- **Compared exactly:** `T01` and `t01` are two names, and `--turn t01` names no turn of a plan
+  whose turn is `T01`.
+- **An empty value is the `usage` error that any flag's empty value is**
+  ([Command lines](#command-lines)). A value of only whitespace is a value, outside the form.
+- **Refused with `invalid_value` for `turn`, in two ways** (D84; architect, 2026-11-25, for
+  v0.11-T01, pin P5):
+  - **A value outside the form**, among them one with whitespace at either end, one longer than 64
+    characters, one holding a character outside printable ASCII, one holding U+FEFF, and one that
+    is not valid Unicode. It is refused when the values' forms are checked, before any plan is
+    matched for it ([Exit codes and errors](#exit-codes-and-errors)).
+  - **A well-formed value that names no turn of the plan.** It is refused only after the plan is
+    read, from either source, and after every other value is checked. Its message names the
+    plan's turns ([Messages](#messages)).
+- **The whole plan is still read and checked.** `--turn` picks the turn the lease is for; it does
+  not cut the plan before it is checked, so a fault anywhere in the plan, in a turn `--turn` does
+  not name included, refuses it as [Plan](#plan) says.
+- **Normalized to:** nothing; the name as given, which is the plan's own. It is printed as
+  `sized_for.turn` ([Fields](#fields)).
+
+**What `--turn` changes, and what it does not** (D84):
+- **The lease is sized as if the plan held that turn and no other:** its agents at once are that
+  turn's, the sum of its stories' peaks plus 1 for its dev lead ([Plan](#plan); D74), and the size
+  picked is the smallest that holds them. `sized_for.turn` is that turn's name and
+  `sized_for.agents` its agents at once, whether or not it is the busiest.
+- **A turn that no size holds is `plan_too_large`**, as a busiest turn is, though another turn of
+  the plan would fit, with its own message ([Fields](#fields)).
+- **The TTL is that turn's**, from its `budget_minutes` ([TTL](#ttl)).
+- **`sized_for.plan` is still the plan's `name`**, never a turn's.
+- **It applies alike to a plan from `--plan <file>` and to one from `--epic`**, so the same plan
+  and the same `--turn` give the same lease from either source (D83, D84).
+
 ### Size
 
 - **Accepted:** 1 to 8 letters and digits, in any case, with surrounding whitespace.
 - **Normalized to:** lowercase, whitespace trimmed.
-- **Default:** `m`, for a `create` with no `--plan`. With `--plan`, the plan picks the size, and
-  `--size` MUST NOT be given ([Plan](#plan); D75).
+- **Default:** `m`, for a `create` with no plan. With a plan, from `--plan` or `--epic`, the plan
+  picks the size, and `--size` MUST NOT be given ([Plan](#plan); D75, D86).
 - **A size is a floor of vCPUs and memory** (D65): the compute that serves a lease of that size
   has at least that many vCPUs and at least that much memory. A size names nothing else, and never
   a machine type (D1).
@@ -971,8 +1500,8 @@ v0.10-T01, pins P8 and P19).
   | `l` | 8 | 32 GiB |
   | `xl` | 16 | 64 GiB |
 
-- **Supported in v1:** `s`, `m`, `l` and `xl`, as from agentspace's v0.09 release (#0049; D65), for
-  `linux/arm64`, the one platform v1 supports (D13). Before v0.09, `m` alone was. Any other
+- **Supported in v2:** `s`, `m`, `l` and `xl`, as from agentspace's v0.09 release (#0049; D65), for
+  `linux/arm64`, the one platform v2 supports (D13). Before v0.09, `m` alone was. Any other
   well-formed size, such as `xxl`, is accepted, and the lease is `unsatisfiable` with
   `unsupported_size`.
 - **A size is judged on its own, whatever the platform asked for** (architect, 2026-11-23, for
@@ -992,7 +1521,8 @@ v0.10-T01, pins P8 and P19).
 
 **How long a lease's credential is valid, from the moment it is issued (D24).** It is a duration,
 never a clock time.
-- **Default:** 8 hours for `create`. For `renew`, the lease's current `ttl_seconds`.
+- **Default:** for `create`, the TTL its plan gives (below), and 8 hours for a `create` with no
+  plan. For `renew`, the lease's current `ttl_seconds`, whatever gave it.
 - **Range:** at least 1 minute and at most 24 hours, both inclusive. A TTL outside it MUST be
   refused with `out_of_range`, and MUST NOT be clamped to the nearest limit.
 - **Accepted, short form:** one or more parts, each a whole number of decimal digits (leading zeros
@@ -1025,6 +1555,50 @@ never a clock time.
   large to compute, such as `99999999999999999999h`, is also `out_of_range`, and MUST NOT be
   `internal`. A TTL has no length limit of its own.
 
+**The TTL a plan gives** (D85; from v2). For a `create` with a plan, from `--plan` or from
+`--epic`, and no `--ttl`:
+- **The turn is the lease's** ([Plan](#plan); D84): the one `--turn` names, or the plan's busiest
+  turn, the first such turn in the plan's order on a tie.
+- **When that turn has `budget_minutes`, the TTL is the budget times agentspace's TTL factor,
+  rounded up to the whole minute.** It is that whole number of minutes, in seconds, and the lease's
+  `ttl_seconds` carries it.
+- **When that turn has none, the TTL is the default, 8 hours**, as for a `create` with no plan
+  (D24), whatever budgets the plan's other turns have.
+- **`--ttl` wins over both** (D85): a `create` with a plan and `--ttl` gets the TTL `--ttl` gives,
+  checked as any `--ttl` is, and the budget changes nothing.
+- **It is a TTL like any other:** the lease's certificate is issued for it, `expires_at` is the
+  issue time plus it ([Times](#times)), a `renew` without `--ttl` uses it again, as the lease's
+  `ttl_seconds`, without reading the plan or the board again
+  ([`renew`](#agentspace-lease-renew); architect, 2026-11-25, for v0.11-T01, pin P20), and a
+  lease that is `unsatisfiable`, `plan_too_large` among them, carries it as the TTL asked for
+  ([Fields](#fields)).
+- **Every TTL a plan gives MUST be within the range above, and a plan lease MUST NOT be refused
+  with `out_of_range` for a TTL it was not given** (D85). The budget's bound and the factor are
+  chosen together so that it is: at today's factor, 960 minutes gives 1440 minutes, 24 hours, the
+  range's top, and 1 minute gives 2. So the TTL a plan gives is never clamped, and no plan has an
+  `out_of_range` case.
+- **The factor is agentspace's, not this contract's**, as the per-agent footprint is
+  ([Plan](#plan); D73, D76, D85), and MAY change without a new contract version
+  ([Versioning](#versioning)). A new factor changes which TTL a plan gets, never what a field
+  means. **A caller MUST read the TTL from the lease**, `ttl_seconds` and `expires_at`, and MUST
+  NOT work it out from the budget.
+- **Today's factor, for information: 1.5**, so the TTL is the budget and half again (D85), in
+  seconds `ceil(budget_minutes * 3 / 2) * 60` (architect, 2026-11-25, for v0.11-T01, pin P10):
+
+  | `budget_minutes` | TTL | `ttl_seconds` |
+  |---|---|---|
+  | 1 | 2 minutes | 120 |
+  | 45 | 68 minutes, since 67.5 is rounded up | 4080 |
+  | 120 | 3 hours | 10800 |
+  | 180 | 4 hours 30 minutes | 16200 |
+  | 210 | 5 hours 15 minutes | 18900 |
+  | 960 | 24 hours, the range's top | 86400 |
+
+  So a `create --plan` of v0.11's own plan, [plans/v0.11.json](plans/v0.11.json), with no
+  `--turn`, is for its busiest turn, `T02`, of 11 agents at once and a budget of 210 minutes
+  (D89), and gets size `l` and a TTL of 18900 seconds; with `--turn T01`, 9 agents and 180 minutes
+  give size `l` and 16200 seconds.
+
 ### State filter
 
 **Used by `list --state`.**
@@ -1053,11 +1627,11 @@ beyond that, its libc first.
 - **The platform alone never says the libc.** An agent that ships a Rust `-gnu` binary, Node's
   `linux-arm64` build or a `manylinux` wheel learns from the profile whether it will run.
 - **A musl host, such as Alpine, or a `none` host would be a profile of its own**, unsatisfiable
-  until a driver supports it (D5). No v1 profile has either.
+  until a driver supports it (D5). No v2 profile has either.
 
 ### agent-linux
 
-**The one profile v1 supports, with no version.** Every host that serves a lease with profile
+**The one profile v2 supports, with no version.** Every host that serves a lease with profile
 `agent-linux` MUST meet this promise:
 
 | Promise | `agent-linux` |
@@ -1105,7 +1679,7 @@ agentspace [--help]
 agentspace <command> ...
 ```
 
-**The top level.** In v1, `lease` is the only command, and any other is `usage`. A later version
+**The top level.** In v2, `lease` is the only command, and any other is `usage`. A later version
 MAY add operator commands, which are outside this contract.
 
 | Flag | Meaning |
@@ -1180,7 +1754,8 @@ Exit codes:
 
 ```
 agentspace lease create --project <name> [--platform <os/arch>] [--profile <name>]
-                        [--size <size> | --plan <file>] [--ttl <duration>]
+                        [--size <size> | --plan <file> | --board <id> --epic <ticket>]
+                        [--turn <name>] [--ttl <duration>]
 ```
 
 **Requests a lease for one agent of a project, and prints it.** The lease's state is `ready`,
@@ -1201,23 +1776,30 @@ be checked.
 **A platform, profile or size that cannot be met is never swapped for another (D5).** If any one of
 them cannot be met, the lease is `unsatisfiable`, whatever the others are. Whether a request can be
 met is decided before anything is issued. A lease that larger compute serves is met, not swapped,
-and its `size` stays the size asked for ([Size](#size), D66). **A plan that no size holds is never
-given the largest size instead:** its lease is `unsatisfiable` with `plan_too_large`, as below
-(D75).
+and its `size` stays the size asked for ([Size](#size), D66). **A plan whose lease's turn, the one `--turn`
+names or else the busiest, no size holds is never given the largest size instead:** its lease is
+`unsatisfiable` with `plan_too_large`, as below (D75, D84).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--project <name>` | [Project](#project) | None; required | The project the agent works on. |
-| `--platform <os/arch>` | [Platform](#platform) | `linux/arm64` | Only `linux/arm64` is supported in v1. |
-| `--profile <name>` | [Profile](#profile) | `agent-linux` | Only `agent-linux` is supported in v1. |
-| `--plan <file>` | [Plan](#plan) | None | A file holding a plan; the lease gets the size the plan needs, as below. Not with `--size`. From v0.10 (#0050; D75). |
-| `--size <size>` | [Size](#size) | `m`, without `--plan` | `s`, `m`, `l` and `xl` are supported in v1, as from v0.09 (#0049). Not with `--plan`. |
-| `--ttl <duration>` | [TTL](#ttl) | `8h` | From 1 minute to 24 hours. |
+| `--platform <os/arch>` | [Platform](#platform) | `linux/arm64` | Only `linux/arm64` is supported in v2. |
+| `--profile <name>` | [Profile](#profile) | `agent-linux` | Only `agent-linux` is supported in v2. |
+| `--plan <file>` | [Plan](#plan) | None | A file holding a plan; the lease gets the size its turn needs, the turn `--turn` names or else the plan's busiest, as below. Not with `--size`, `--board` or `--epic`. From v0.10 (#0050; D75). |
+| `--board <id>` | [Board](#board) | None | The localswim board that holds the epic. With `--epic`, and not with `--plan` or `--size`. From v0.11 (#0052; D86). |
+| `--epic <ticket>` | [Epic](#epic) | None | The epic's ticket number on that board; the lease's plan is the epic's ([The plan block](#the-plan-block)). With `--board`, and not with `--plan` or `--size`. From v0.11 (#0052; D83, D86). |
+| `--turn <name>` | [Turn](#turn) | The plan's busiest turn | The turn of the plan the lease is for. Only with `--plan` or `--epic`. From v0.11 (#0052; D84). |
+| `--size <size>` | [Size](#size) | `m`, without a plan | `s`, `m`, `l` and `xl` are supported in v2, as from v0.09 (#0049). Not with `--plan`, `--board` or `--epic`. |
+| `--ttl <duration>` | [TTL](#ttl) | `8h`, or with a plan the TTL its turn gives ([TTL](#ttl)) | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**`--plan` stands before `--size` in this table**, so the values are checked in the order project,
-platform, profile, plan, size and TTL; the two are never both given (architect, 2026-11-24, for
-v0.10-T01, pin P13).
+**The flags stand in this table in the order their values are checked**: project, platform,
+profile, plan, board, epic, turn, size and TTL (architect, 2026-11-24, for v0.10-T01, pin P13;
+architect, 2026-11-25, for v0.11-T01, pin P20). A plan's file is read and checked in `plan`'s
+place, as in v1, and the board is read, and `--turn` is matched against the plan, only once every value of the table
+has passed its own checks ([Exit codes and errors](#exit-codes-and-errors)). `--size` is never
+given with `--plan`, `--board` or `--epic`, nor `--plan` with either of the other two
+([Command lines](#command-lines)).
 
 **`--plan <file>` sizes the lease for a plan** (D74, D75):
 - **The file is read as one UTF-8 JSON document**, a plan as [Plan](#plan) defines it, which also
@@ -1232,14 +1814,39 @@ v0.10-T01, pin P13).
   plan picks the size (D75; architect, 2026-11-24, for v0.10-T01, pin P6).
   [Command lines](#command-lines) says where it ranks among usage errors.
 - **`--platform`, `--profile` and `--ttl` apply as they do without it**, with the same defaults
-  (D75).
+  (D75), except that from v2 the TTL's default is the one the plan's turn gives ([TTL](#ttl); D85).
 - **A file that cannot be read, or that does not hold a plan as [Plan](#plan) defines it, is
   refused with `invalid_value` for `plan`** ([Plan](#plan) gives each message), and no lease is
   recorded.
 
-**The size it picks is the smallest of [Size](#size)'s sizes that holds the plan's agents at once
-at agentspace's per-agent footprint** (D73, D75), as [Plan](#plan) says, with today's figure, for
-information.
+**`--board <id> --epic <ticket>` sizes the lease for the plan an epic carries** (D83, D86):
+- **The two are given together, or neither** ([Command lines](#command-lines)): `--board` is the
+  board's ID, and `--epic` the epic card's ticket number on it. Neither is given with `--plan` or
+  `--size`, since the epic carries the plan and the plan picks the size.
+- **The plan is the one in the epic's `agentspace-plan` block** ([The plan block](#the-plan-block)),
+  read from the board as [The board read](#the-board-read) says, which also says what the read
+  refuses. A plan read from an epic is checked as a plan file is, and **the same plan gives the
+  same lease from either source** (D83): the same size, `sized_for` and TTL.
+- **From the plan on, a board lease is made exactly as a `--plan` lease is** (D86, D88): the same
+  sizing, the same `plan_too_large`, the same TTL, and the same placing. No driver is given the
+  plan, the board or the epic.
+- **A board lease prints the plan's own `name` as `sized_for.plan`, never the board's ID or the
+  epic's ticket** (D87), and leaves `plan` out of `sized_for` when the plan has no `name`. No
+  output prints the board, the ticket or the card's revision ([What is recorded](#what-is-recorded)).
+
+**`--turn <name>` picks the turn the lease is for** (D84; [Turn](#turn)):
+- **It needs a plan, from `--plan` or from `--epic`.** Without either it is a `usage` error
+  ([Command lines](#command-lines)).
+- **The lease is sized for that turn alone**, as if the plan held that turn and no other, and its
+  `sized_for.turn` and `sized_for.agents` are that turn's. Without `--turn` the turn is the busiest,
+  as in v1.
+- **Its TTL is that turn's**, unless `--ttl` is given ([TTL](#ttl)).
+- **A `--turn` that names no turn of the plan is refused** with `invalid_value` for `turn`, and no
+  lease is recorded.
+
+**The size it picks is the smallest of [Size](#size)'s sizes that holds the agents at once of the
+lease's turn at agentspace's per-agent footprint** (D73, D75, D84), as [Plan](#plan) says, with
+today's figure, for information.
 - **From there the lease is placed exactly as a `create` with `--size` set to the size picked, and
   the same other flags, would be** (D75): the same states and reasons, `unsupported_size` among
   them for a platform that lacks the size picked, and the same placing on the project's compute
@@ -1248,10 +1855,11 @@ information.
   cannot be met gets `sized_for`, the size picked, and the reasons a `--size` lease would get
   (architect, 2026-11-24, for v0.10-T01, pin P16).
 - **The lease's `size` is the size picked, and its `sized_for` says what it was sized for**, in
-  every state ([Fields](#fields); D75). A lease made without `--plan` has no `sized_for`.
+  every state ([Fields](#fields); D75). A lease made without a plan has no `sized_for`.
 
-**A plan that no size holds is `unsatisfiable`, with `plan_too_large`** (D75, D81): a plan whose
-agents at once are more than the largest size holds, which is 32 at today's footprint.
+**A plan that no size holds is `unsatisfiable`, with `plan_too_large`** (D75, D81, D84): a plan
+whose lease's turn has more agents at once than the largest size holds, which is 32 at today's
+footprint.
 - **`plan_too_large` is the lease's only reason**, whatever its platform and profile (D81;
   architect, 2026-11-24, for v0.10-T01, pin P16). `create` decides it before any driver is asked
   to place the lease, and that asking is what judges the platform and the profile.
@@ -1270,18 +1878,31 @@ agents at once are more than the largest size holds, which is 32 at today's foot
   changed or started. The lease is kept as every `unsatisfiable` lease is, needs no `release`, and
   its `create` exits 0 ([States](#states)).
 - **Why it is refused rather than given `xl`:** a request that cannot be met is never quietly
-  given less (D5). A plan whose busiest turn is split into turns that fit is met.
+  given less (D5). A plan whose too-large turn is split into turns that fit is met.
 
-**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v2 CLI; see [Schemas](#schemas)):
 [`lease-create.input.schema.json`](../schemas/lease-create.input.schema.json), with members
-`project`, `platform`, `profile`, `plan`, `size` and `ttl`.
+`project`, `platform`, `profile`, `plan`, `board`, `epic`, `turn`, `size` and `ttl`.
 - **`plan` is the plan document itself**, as
   [`plan.input.schema.json`](../schemas/plan.input.schema.json) defines it, never a file name: an
   object, or `null` or absent for no plan ([Plan](#plan); architect, 2026-11-24, for v0.10-T01,
   pins P8 and P19).
-- **A request whose `plan` and `size` are both present and not `null` is refused by the schema**,
-  as the command line refuses `--plan` with `--size` (architect, 2026-11-24, for v0.10-T01, pin
-  P8).
+- **`board` is a string, the board's ID in [Board](#board)'s accepted forms, surrounding
+  whitespace allowed, or `null` or absent** (architect, 2026-11-25, for v0.11-T01, pin P6).
+- **`epic` is a string, the ticket number in [Epic](#epic)'s accepted forms, or `null` or
+  absent, and never a JSON number**, as `ttl` is a string (architect, 2026-11-25, for v0.11-T01, pin P6).
+- **`turn` is a string, a turn name in [Turn](#turn)'s exact form, with no surrounding whitespace,
+  or `null` or absent** (architect, 2026-11-25, for v0.11-T01, pin P6).
+- **The schema refuses each of these, as the command line does**, where "without" and "beside"
+  count `null` and absence alike:
+  - **A `plan` and a `size` both present and not `null`** (architect, 2026-11-24, for v0.10-T01,
+    pin P8).
+  - **A `board` without an `epic`, or an `epic` without a `board`** (architect, 2026-11-25, for v0.11-T01, pin P6).
+  - **A `board` and `epic` beside a `plan` or a `size`** (architect, 2026-11-25, for v0.11-T01, pin P6).
+  - **A `turn` with neither a `plan` nor a `board`** (architect, 2026-11-25, for v0.11-T01, pin P6).
+- **A request's `board` and `epic` name the plan; they never carry it.** A request that holds the
+  plan itself gives `plan`, and a request that names an epic gives `board` and `epic`; no request
+  member carries a path or a credential.
 
 **Output:** the lease document. **Exit codes:** 0, 1 and 2.
 
@@ -1292,18 +1913,24 @@ agents at once are more than the largest size holds, which is 32 at today's foot
 | `usage` | `project` | No `--project`, or `--project` with no value, an empty value, or given twice. |
 | `usage` | The flag | Any other flag with no value, an empty value, or given twice. |
 | `usage` | `plan` | `--plan` with `--size`, in either order (architect, 2026-11-24, for v0.10-T01, pins P6 and P13). |
+| `usage` | `board` | `--board` with `--plan` or with `--size`, in either order; `--epic` with `--plan` or with `--size` when `--board` is on the line; and `--epic` without `--board` (architect, 2026-11-25, for v0.11-T01, pin P4). |
+| `usage` | `epic` | `--epic` with `--plan` or with `--size`, in either order, when `--board` is not on the line; and `--board` without `--epic` (architect, 2026-11-25, for v0.11-T01, pin P4). |
+| `usage` | `turn` | `--turn` without `--plan` or `--epic` (architect, 2026-11-25, for v0.11-T01, pin P4). |
 | `usage` | None | An unknown option, or any positional argument. |
-| `invalid_value` | `project`, `platform`, `profile`, `plan`, `size` or `ttl` | The first value, in the order of the table above, outside its accepted forms. For `plan`, a file that cannot be read, or that does not hold a plan as [Plan](#plan) defines it. |
+| `invalid_value` | `project`, `platform`, `profile`, `plan`, `board`, `epic`, `turn`, `size` or `ttl` | The first bad value, in the order [Exit codes and errors](#exit-codes-and-errors) gives for `create`. For `plan`, a file that cannot be read, or that does not hold a plan as [Plan](#plan) defines it. For `board` and `epic`, a value outside its form, or a board or epic the board read refuses ([Board](#board), [Epic](#epic), [The board read](#the-board-read)). For `turn`, a value outside its form, or one that names no turn of the plan ([Turn](#turn)). |
 | `out_of_range` | `ttl` | A TTL below 1 minute or above 24 hours. |
+| `internal` | None | The board could not be read: the receipt or the credential could not be read, or the board did not answer, refused agentspace's credential, or gave an answer that could not be read ([The board read](#the-board-read)). No lease was recorded, and the lease records were not read. |
 | `internal` | None | The credential could not be issued, agentspace's CA is not set up, the alias could not be set up, the lease's host could not be looked up or its making could not be started (from v0.07, [docs/driver.md](driver.md#where-it-places-a-lease)), or the lease records could not be read, written or locked. No lease was recorded. What a failed `create` removes, what it MAY keep in the OpenSSH configuration, and what its message MUST name when a removal fails are in [Concurrency and atomicity](#concurrency-and-atomicity). |
 
-A plan that no size holds is not an error: its lease is `unsatisfiable`, and `create` exits 0.
+A plan whose lease's turn no size holds is not an error: its lease is `unsatisfiable`, and
+`create` exits 0.
 
 **Help:**
 
 ```
 Usage: agentspace lease create --project <name> [--platform <os/arch>] [--profile <name>]
-                               [--size <size> | --plan <file>] [--ttl <duration>]
+                               [--size <size> | --plan <file> | --board <id> --epic <ticket>]
+                               [--turn <name>] [--ttl <duration>]
 
 Requests a lease for one agent of a project, and prints it as JSON.
 Check the lease's state before connecting: ready, pending or unsatisfiable.
@@ -1320,14 +1947,21 @@ Options:
   --plan <file>         Size the lease for a plan: a JSON file of turns, stories and
                         subagents. Picks the smallest size that holds its busiest turn.
                         Not with --size.
-  --ttl <duration>      Default 8h. From 1m to 24h, never clamped.
+  --board <id>          Read the plan from an epic on this localswim board, by its UUID.
+                        Needs --epic. Only reads the board. Not with --plan or --size.
+  --epic <ticket>       The epic's ticket number, as in 52. Its description holds the
+                        plan in one agentspace-plan block. Needs --board.
+  --turn <name>         Size the lease for this turn of the plan, not its busiest.
+                        Needs --plan or --epic.
+  --ttl <duration>      Default 8h, or with a plan, its turn's budget and half again.
+                        From 1m to 24h, never clamped.
                         Examples: 8h, 90m, 1h30m, '2 hours', PT8H.
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v1 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
+In v2 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
-So does a plan whose busiest turn no size holds.
+So does a plan whose busiest turn, or the turn --turn names, no size holds.
 ```
 
 **Two parts of this help changed in v0.09** (#0049; architect, 2026-11-23, for v0.09-T01, pin
@@ -1336,9 +1970,20 @@ which read `In v0 only linux/arm64, agent-linux and size m can be met.` Every ot
 help was as before v0.09.
 
 **Four parts of this help changed in v0.10** (#0050; D75, D76): the usage line's second line,
-which read `[--size <size>] [--ttl <duration>]`; the `--plan` row, which is new; the line that
-begins `In v1 only`, which began `In v0 only` and is otherwise as in v0.09; and the last line,
-which is new. Every other byte of this help is as in v0.09.
+which read `[--size <size>] [--ttl <duration>]`; the `--plan` row, which was new; the line that
+began `In v1 only`, which began `In v0 only` and was otherwise as in v0.09; and the last line,
+which was new and read `So does a plan whose busiest turn no size holds.` Every other byte of this
+help was as in v0.09.
+
+**Six parts of this help changed in v0.11** (#0052; D84 to D87): the usage line's second line,
+which read `[--size <size> | --plan <file>] [--ttl <duration>]`, and its third line, which is new;
+the `--board`, `--epic` and `--turn` rows, which are new; the `--ttl` row's first line, which read
+`Default 8h. From 1m to 24h, never clamped.` and is now two lines; the line that begins
+`In v2 only`, which began `In v1 only` and is otherwise as in v0.10; and the last line, which read
+`So does a plan whose busiest turn no size holds.` Every other byte of this help is as in v0.10.
+**The `--plan` row is one of those bytes**, so its `Picks the smallest size that holds its busiest
+turn.` says what happens without `--turn`; with `--turn`, the lease is sized for the turn it
+names, as the `--turn` row says ([Plan](#plan), [Turn](#turn)).
 
 ### agentspace lease get
 
@@ -1361,7 +2006,7 @@ passed is printed as `expired`.
 | `<id>` | [Lease ID](#lease-id) | Required. |
 | `-h`, `--help` | | Print the help below and exit 0. |
 
-**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v2 CLI; see [Schemas](#schemas)):
 [`lease-get.input.schema.json`](../schemas/lease-get.input.schema.json), with the member `id`.
 
 **Output:** the lease document. **Exit codes:** 0, 1, 2 and 3.
@@ -1406,7 +2051,9 @@ agentspace lease renew <id> [--ttl <duration>]
   `renew` shortens a lease, that expiry is later than the new `expires_at`, so a leaked copy of the
   previous certificate outlives it.
 - **`ttl_seconds` becomes the TTL used.** Without `--ttl`, the lease's current `ttl_seconds` is
-  used again.
+  used again. For a lease created with a plan, that is the TTL its turn gave, or the `--ttl` its
+  `create` was given: `renew` never reads the plan, the board or a budget again ([TTL](#ttl);
+  architect, 2026-11-25, for v0.11-T01, pin P20).
 - **The key, the alias, the user, the ID and `created_at` do not change**, so clients that saved
   the alias need nothing new.
 - **A retry is safe:** each call sets a new expiry from its own time, and changes nothing else.
@@ -1431,7 +2078,7 @@ with the lease from the moment it becomes `ready`; how is [docs/state.md](state.
 | `--ttl <duration>` | [TTL](#ttl) | The lease's `ttl_seconds` | From 1 minute to 24 hours. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v2 CLI; see [Schemas](#schemas)):
 [`lease-renew.input.schema.json`](../schemas/lease-renew.input.schema.json), with members `id` and
 `ttl`.
 
@@ -1514,9 +2161,16 @@ sees:
   alias that its searches can end**, as [docs/driver.md, Release a lease](driver.md#release-a-lease)
   defines it. Deleting the alias does not stop every client from coming back: the desktop app can
   start the alias's proxy from its own copy of the alias's ProxyCommand after the alias is gone,
-  and a process started after the last search is outside what `release` claims (#0229). Each
-  search is bounded at 10 seconds of its own, a release makes at most six, and none starts after
-  the second once 10 seconds have passed since the first
+  and a process started after the last search is outside what `release` claims (#0229). **From
+  agentspace's v0.11 release (#0052), such a process gets no connection:** agentspace's
+  ProxyCommand refuses the alias of a lease that is not `ready`, a `released` one among them, and
+  refuses every argument of lease alias form while the lease state file exists and cannot be read
+  or is not valid, opening no tunnel for either
+  ([docs/operator.md, A lease that is not ready](operator.md#a-lease-that-is-not-ready-0229);
+  architect, 2026-11-25, for v0.11-T01, pins P21, P22 and P23). That refusal is defined there, and
+  changes no document, field or error of this contract. Each search is bounded at 10 seconds of
+  its own, a release makes at most six, and none starts after the second once 10 seconds have
+  passed since the first
   ([docs/driver.md, The order of a release](driver.md#the-order-of-a-release)).
 - **Ending a connection is best effort** (architect, 2026-11-21, for v0.08-T01): a connection that
   cannot be ended MUST NOT make `release` fail, change its document, or change its exit code, and
@@ -1555,7 +2209,7 @@ sees:
   connections on the caller's machine, as above.
 - **Release needs no CA,** and works on a machine whose CA is missing.
 - **Ending connections changed none of contract v0's release document, schemas or reason codes**
-  (v0.08), and v1 changes none of them for it. `release` prints the same lease document as
+  (v0.08), and neither v1 nor v2 changes any of them for it. `release` prints the same lease document as
   before, with the same fields, exit codes and errors, whether it ended no connection or many. Its
   effect is on the connections on the caller's machine alone, and was
   [not a new contract version](#versioning).
@@ -1571,7 +2225,7 @@ sees:
 | `<id>` | [Lease ID](#lease-id) | Required. |
 | `-h`, `--help` | | Print the help below and exit 0. |
 
-**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v2 CLI; see [Schemas](#schemas)):
 [`lease-release.input.schema.json`](../schemas/lease-release.input.schema.json), with the member
 `id`.
 
@@ -1658,7 +2312,7 @@ agentspace lease list [--project <name>] [--state <state>[,<state>...]]...
 | `--state <state>` | [State filter](#state-filter) | Every state | MAY be repeated, and MAY be a comma-separated list. |
 | `-h`, `--help` | | | Print the help below and exit 0. |
 
-**Request document** (never read by the v1 CLI; see [Schemas](#schemas)):
+**Request document** (never read by the v2 CLI; see [Schemas](#schemas)):
 [`lease-list.input.schema.json`](../schemas/lease-list.input.schema.json), with members `project`
 and `state`.
 
@@ -1699,12 +2353,12 @@ Options:
 | Exit | Error code | When |
 |---|---|---|
 | 0 | None | The command did what was asked, or printed help. Stdout holds its document or help. |
-| 1 | `internal` | Anything that is not the caller's fault, such as a credential that could not be issued or lease records that could not be read. |
-| 2 | `usage` | An unknown or missing command, subcommand, flag or argument, a flag given twice, a flag with no value or an empty value, or `--plan` with `--size` ([Command lines](#command-lines)). |
-| 2 | `invalid_value` | A value outside its [accepted forms](#values), a plan that is not well formed among them ([Plan](#plan)). |
-| 2 | `out_of_range` | A well-formed value outside its allowed range; in v1, only the TTL. |
+| 1 | `internal` | Anything that is not the caller's fault, such as a credential that could not be issued, lease records that could not be read, or a board that did not answer. |
+| 2 | `usage` | An unknown or missing command, subcommand, flag or argument, a flag given twice, a flag with no value or an empty value, `--plan` with `--size`, `--board` or `--epic` with `--plan` or `--size`, `--board` without `--epic` or `--epic` without `--board`, or `--turn` without `--plan` or `--epic` ([Command lines](#command-lines)). |
+| 2 | `invalid_value` | A value outside its [accepted forms](#values), a plan that is not well formed among them ([Plan](#plan)), a board or epic that the board read refuses ([The board read](#the-board-read)), or a turn the plan does not have ([Turn](#turn)). |
+| 2 | `out_of_range` | A well-formed value outside its allowed range; in v2, only the TTL. |
 | 3 | `not_found` | No kept lease has the ID given. |
-| 4 | `invalid_state` | The lease's state does not allow the subcommand; in v1, only `renew`. |
+| 4 | `invalid_state` | The lease's state does not allow the subcommand; in v2, only `renew`. |
 
 **An exit code not in the table MUST NOT be used.** Each non-zero exit code MUST come with one of
 the error codes beside it, and every failure that fits none of the others is `internal`.
@@ -1713,7 +2367,28 @@ the error codes beside it, and every failure that fits none of the others is `in
 1. **`usage`**, for anything wrong with the command line itself, chosen as
    [Command lines](#command-lines) says.
 2. **`invalid_value` or `out_of_range`**, for the first bad value in the order of the command's
-   argument and flag table, so `field` names the first bad one.
+   argument and flag table, so `field` names the first bad one. **For `create`, in this order**
+   (architect, 2026-11-25, for v0.11-T01, pin P20):
+   1. **`project`, `platform` and `profile`**, each value's form.
+   2. **`plan`: the `--plan` file is read and checked**, as in v1, by [Plan](#plan)'s checks 1 to
+      11, in `plan`'s place in the table.
+   3. **`board`, `epic` and `turn`, each value's form**: [Board](#board)'s, [Epic](#epic)'s and
+      [Turn](#turn)'s. No board is read, and no plan is matched, for a value that fails its form.
+   4. **`size`, then `ttl`**: each value's form, and the TTL's range, which gives `out_of_range`.
+   5. **The board read, for `--board` and `--epic`:** `invalid_value` for `board` or for `epic`, or
+      the board read's `internal`, as [The board read](#the-board-read) says. **The board read's
+      `internal` is the one `internal` that step 2 reports**, since the board is read before the
+      lease records are; it is never reported for a line with a bad value, and never after a
+      `not_found` or anything that the lease records give.
+   6. **`turn` against the plan**, from either source: `invalid_value` for `turn` when it names no
+      turn of the plan.
+
+   **All of it comes before step 3**, so a bad epic, a board that does not answer and a turn the
+   plan lacks never touch the lease records, and `create` reads the board, as it reads a plan
+   file, before it waits for any other command
+   ([Concurrency and atomicity](#concurrency-and-atomicity)). **A command line with none of
+   `--board`, `--epic` and `--turn` is checked in v1's order**, project, platform, profile, plan,
+   size and TTL, since items 3, 5 and 6 then check nothing (D87).
 3. **`internal`, when the lease records cannot be read or are busy**, and the no-home `internal`
    ([Messages](#messages)), which belongs here when the state folder is the default one under the
    home (architect, 2026-11-19, gap FB-22). **A command fails with no home only when it needs a
@@ -1728,6 +2403,8 @@ the error codes beside it, and every failure that fits none of the others is `in
 
 So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2),
 `renew <unknown id> --ttl 8` is `invalid_value` for `ttl`, and `get <bad id> --ttl 8h` is `usage`.
+`create --project x --epic 7 --board 0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f --ttl 8` is
+`invalid_value` for `ttl`, and reads no board (architect, 2026-11-25, for v0.11-T01, pin P20).
 
 **The error document** goes to stderr, compact, on one line. Its schema is
 [`error.output.schema.json`](../schemas/error.output.schema.json).
@@ -1736,15 +2413,31 @@ So `renew <id of an expired lease> --ttl 48h` is `out_of_range` (exit 2),
 |---|---|---|---|
 | `code` | String | Always | One of the error codes above. |
 | `message` | String | Always | One or more sentences for a person: what was wrong, and what to do. Never empty. |
-| `field` | String | `invalid_value` and `out_of_range`; `usage` in the six cases below | The flag or request member at fault, without dashes: `id`, `project`, `platform`, `profile`, `plan`, `size`, `ttl` or `state`. `plan` is new in v1 ([Changes from v0](#changes-from-v0)). |
+| `field` | String | `invalid_value` and `out_of_range`; `usage` in the thirteen cases below | The flag or request member at fault, without dashes: `id`, `project`, `platform`, `profile`, `plan`, `board`, `epic`, `turn`, `size`, `ttl` or `state`. `plan` is new in v1 ([Changes from v0](#changes-from-v0)), and `board`, `epic` and `turn` are new in v2 ([Changes from v1](#changes-from-v1)). `out_of_range` names `ttl` alone. |
 | `lease_id` | String, lowercase UUIDv4 | `not_found` and `invalid_state` | The normalized ID asked for. |
 | `state` | String, [state](#states) | `invalid_state` | The state the lease is in. |
 
-**A `usage` error MUST carry `field` in exactly these six cases, and MUST NOT otherwise:** a flag
-with no value, a flag with an empty value, a flag given twice (each naming that flag), a missing
-lease ID (`id`), a missing `--project` (`project`), and `--plan` with `--size` (`plan`, in either
-order; architect, 2026-11-24, for v0.10-T01, pins P6 and P13). The error schema checks none of the
-six, so conformance does ([Schemas](#schemas)).
+**A `usage` error MUST carry `field` in exactly these thirteen cases, and MUST NOT otherwise**
+(the first six as in v1; the last seven from v2, architect, 2026-11-25, for v0.11-T01, pin P4):
+1. **A flag with no value**, naming that flag, `board`, `epic` and `turn` among them.
+2. **A flag with an empty value**, naming that flag.
+3. **A flag given twice**, naming that flag.
+4. **A missing lease ID:** `id`.
+5. **A missing `--project`:** `project`.
+6. **`--plan` with `--size`**, in either order: `plan` (architect, 2026-11-24, for v0.10-T01,
+   pins P6 and P13).
+7. **`--board` with `--plan`**, in either order: `board`.
+8. **`--board` with `--size`**, in either order: `board`.
+9. **`--epic` with `--plan`**, in either order: `board` when `--board` is on the line, and
+   otherwise `epic`.
+10. **`--epic` with `--size`**, in either order: `board` when `--board` is on the line, and
+    otherwise `epic`.
+11. **`--board` without `--epic`:** `epic`, the flag that is missing.
+12. **`--epic` without `--board`:** `board`, the flag that is missing.
+13. **`--turn` without `--plan` or `--epic`:** `turn`.
+
+The error schema checks none of the thirteen, so conformance does, each by its own case
+([Schemas](#schemas)).
 
 **A message MUST NOT echo a secret, and MUST NOT name a backend, a location or a machine (D1).** A
 message SHOULD quote the value that was refused, and SHOULD say how to fix it, as in `TTL '8' has
@@ -1764,7 +2457,7 @@ carry:
   check.
 - **A backend, a location or a machine (D1).**
 
-**The original error is not kept in contract v1, as in v0.** A build MAY drop it, as the
+**The original error is not kept in contract v2, as in v0 and v1.** A build MAY drop it, as the
 prototype does, and MUST NOT put it in the error document, on stdout, or in any file
 [docs/state.md](state.md) lists. A place to keep it for diagnosis, such as a log, is later and not
 blocking. A message such as `agentspace lease create failed: The lease's credential could not be
@@ -1810,14 +2503,26 @@ them differently where this page does not say MUST.
 | `usage` | Empty value | `Option --<flag> has an empty value. Run 'agentspace lease <sub> --help'.` |
 | `usage` | Given twice | `Option --<flag> is given twice. Give it once.` |
 | `usage` | `--plan` with `--size` (`create`), in either order | `Options --plan and --size cannot be given together; the plan picks the size. Run 'agentspace lease create --help'.` (architect, 2026-11-24, for v0.10-T01, pin P6) |
+| `usage` | `--board` with `--plan` (`create`), in either order | `Options --board and --plan cannot be given together; the epic carries the plan. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
+| `usage` | `--board` with `--size` (`create`), in either order | `Options --board and --size cannot be given together; the epic's plan picks the size. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
+| `usage` | `--epic` with `--plan` (`create`), in either order | `Options --epic and --plan cannot be given together; the epic carries the plan. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
+| `usage` | `--epic` with `--size` (`create`), in either order | `Options --epic and --size cannot be given together; the epic's plan picks the size. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
 | `usage` | Unexpected argument | `Unexpected argument '<value>' for agentspace lease <sub>. Run 'agentspace lease <sub> --help'.` |
 | `usage` | No lease ID | `No lease ID given. Run 'agentspace lease <sub> --help'.` |
 | `usage` | No `--project` | `Option --project is required. Run 'agentspace lease create --help'.` |
+| `usage` | `--board` without `--epic` (`create`) | `Option --board needs --epic, the epic's ticket number. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
+| `usage` | `--epic` without `--board` (`create`) | `Option --epic needs --board, the board's ID. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
+| `usage` | `--turn` without `--plan` or `--epic` (`create`) | `Option --turn needs a plan, from --plan or --epic. Run 'agentspace lease create --help'.` (architect, 2026-11-25, for v0.11-T01, pin P4) |
 | `invalid_value` | `id` | `Lease ID '<value>' is not a UUIDv4. Give the id that create printed.` |
 | `invalid_value` | `project` | `Project '<value>' is not a project name. Use 1 to 32 letters, digits and '-', starting and ending with a letter or digit.` |
 | `invalid_value` | `platform` | `Platform '<value>' is not an os/arch pair. Give one as in 'linux/arm64'.` |
 | `invalid_value` | `profile` | `Profile '<value>' is not a profile name. Give name or name@version, as in 'agent-linux'; a version is 1 or more.` |
 | `invalid_value` | `plan` | `Plan '<value>' is not a valid plan: <why>.`, where `<value>` is the `--plan` argument as given, never made a full path, and `<why>` is one of those [Plan](#plan) lists, word for word (architect, 2026-11-24, for v0.10-T01, pins P7 and P12) |
+| `invalid_value` | `board`, not a board ID | `Board '<value>' is not a board ID. Give the board's UUID, as in '0a1b2c3d-...'.` (architect, 2026-11-25, for v0.11-T01, pin P5) |
+| `invalid_value` | `epic`, not a ticket number | `Epic '<value>' is not a ticket number. Give the epic's ticket as digits, as in '52'.` (architect, 2026-11-25, for v0.11-T01, pin P5) |
+| `invalid_value` | `board` or `epic`, refused by the board read | As [The board read](#the-board-read)'s table gives each, and for a description, `Epic '<value>' carries no usable plan: <why>.`, `<why>` as [The plan block](#the-plan-block) gives it (D83, D86; architect, 2026-11-25, for v0.11-T01, pins P11 and P13) |
+| `invalid_value` | `turn`, outside a turn name's form | `Turn '<value>' is not a turn name. Give the plan's turn name, as in 'T01'.` (architect, 2026-11-25, for v0.11-T01, pin P12) |
+| `invalid_value` | `turn`, naming no turn of the plan | `Turn '<value>' is not a turn of the plan; its turns are <turns>.`, where `<turns>` is every turn's name, in the plan's order, each in single quotes and quoted raw, as the plan writes it, separated by `, `, as in `'T01', 'T02', 'T03'` (architect, 2026-11-25, for v0.11-T01, pin P5) |
 | `invalid_value` | `size` | `Size '<value>' is not a size. Use 1 to 8 letters and digits, as in 'm'.` |
 | `invalid_value` | `ttl`, all digits once trimmed | `TTL '<value>' has no unit. Give one, as in '8h'.` |
 | `invalid_value` | `ttl`, anywhere in the trimmed value, a digit, optional whitespace, then an uppercase `M` that ends the trimmed value or is followed by a character that is not a letter, so `1M30s` and `P1M` take it and `8Mx` does not (architect, 2026-11-19) | `TTL '<value>' uses 'M', which could mean months or minutes. Write minutes as 'm' or 'min'.` |
@@ -1838,6 +2543,7 @@ them differently where this page does not say MUST.
 | `internal` | A relative home or state or ssh folder, and the working folder cannot be read | `agentspace lease <sub> failed: The working folder cannot be read, so a relative folder in the environment cannot be made a full path. Nothing was changed.`, only when such a folder is relative and the command needs it ([docs/state.md](state.md#the-home-folder)) (architect, 2026-11-19, for E0.05-T03-S02) |
 | `internal` | Records cannot be locked | `The lease records could not be locked: <why>. Nothing was changed.`, for a failure to open the lock that is not another command holding it ([docs/state.md](state.md#the-lease-state-lock)) |
 | `internal` | No driver (`create`) | `agentspace lease create failed: No lease driver is available. Nothing was recorded.` |
+| `internal` | The board read (`create`) | As [The board read](#the-board-read)'s table gives each, in agentspace's own words (D86, #0041) |
 | `internal` | Unknown stored driver (`renew`, `release`) | `agentspace lease <sub> failed: The lease was placed by a driver this agentspace does not have. Nothing was changed.` It never names the driver ([docs/driver.md](driver.md#the-drivers-name)) |
 | `internal` | Alias file is not this lease's (`release`) | `agentspace lease release failed: The lease's host alias file belongs to another lease or to no lease, so nothing was deleted. A person has to move that file.` ([docs/state.md](state.md#release-and-what-it-leaves)) |
 | `internal` | Credential or alias not deleted (`release`) | `agentspace lease release failed: The lease's local key, certificate or host alias could not be deleted: <why>. Run release again to finish.` |
@@ -1875,8 +2581,22 @@ starts, and one that is unset or empty means the default.
   ([docs/driver.md](driver.md#starting-a-provisioning-run)). So a check MUST keep
   `AGENTSPACE_STATE_DIR`, `AGENTSPACE_SSH_DIR` and `AGENTSPACE_PROXY_COMMAND` the same across a
   `pending` lease's `create`, every `get` of it and its `release`.
-- **No other environment variable changes the contract's behavior.** Variables that the caller's
-  own system uses to name a home folder are [docs/state.md](state.md)'s.
+- **`LOCALAPPDATA` is the caller's system's, not agentspace's, and from v2 `create --board` finds
+  localswim's service receipt under it**, at localswim's documented path,
+  `<LOCALAPPDATA>\localswim-v2\service.json` ([The board read](#the-board-read); architect,
+  2026-11-25, for v0.11-T01, pin P16). Unset, empty or only whitespace, a `create --board` fails
+  with `internal`; no other command reads it. **No `AGENTSPACE_*` variable names the receipt**
+  (architect, 2026-11-25, for v0.11-T01, pin P9).
+- **A check that runs `create --board` MUST point `LOCALAPPDATA` into a throwaway home of its
+  own**, holding a stand-in receipt whose `base` is a stand-in board's and whose
+  `credential_directory` holds a stand-in `bot.json`, so that it never reads the caller's real
+  receipt, Bot credential or board (D86; architect, 2026-11-25, for v0.11-T01, pin P16). The conformance harness already points
+  `LOCALAPPDATA` into its throwaway home ([conformance.md](conformance.md)).
+- **No other environment variable changes the contract's behavior, beyond `LOCALAPPDATA` for the
+  board read** (architect, 2026-11-25, for v0.11-T01, pin P16). `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`, in any case,
+  change nothing: the board read never goes through a proxy ([The board read](#the-board-read)).
+  Variables that the caller's own system uses to name a home folder are
+  [docs/state.md](state.md)'s.
 
 ## Schemas
 
@@ -1893,7 +2613,7 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 | `lease-renew.input.schema.json` | A `renew` request | The argument and flag of `renew` |
 | `lease-release.input.schema.json` | A `release` request | The argument of `release` |
 | `lease-list.input.schema.json` | A `list` request | The flags of `list` |
-| `plan.input.schema.json` | A plan | The file `--plan` names, and the `plan` of a `create` request ([Plan](#plan)) |
+| `plan.input.schema.json` | A plan | The file `--plan` names, an epic's plan block, and the `plan` of a `create` request ([Plan](#plan)) |
 
 - **Output schemas are strict:** `additionalProperties` is false everywhere, every field that is
   always present is required, each state and each error code requires and forbids its own fields,
@@ -1908,10 +2628,10 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
     2026-11-24, for v0.10-T01, pin P15). Conformance MUST check the same rule against what the
     CLI prints.
   - **The error schema does not check which `usage` errors carry `field`.** It allows `field` on
-    any `usage` error and requires it on none, because the six cases that MUST carry it
+    any `usage` error and requires it on none, because the thirteen cases that MUST carry it
     ([Exit codes and errors](#exit-codes-and-errors)) differ from the others only in what went
     wrong, which the document does not say in any member a schema can test. A conformance check
-    MUST test that rule itself.
+    MUST test that rule itself, case by case.
 - **Every anchored output pattern ends with `$(?!\n)`, not a bare `$`.** In .NET's and Python's
   regular expressions, `$` also matches before a final line feed, so a bare `$` would accept
   `"swimcoach\n"`. `(?!\n)` means the same in ECMA-262, .NET and Python, and costs nothing where
@@ -1930,7 +2650,19 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
   cannot see, such as a cycle in `after`, an `after` naming no subagent of its story, two names
   alike where [Plan](#plan) forbids it, and a member name given twice, is found once the plan is
   parsed, and refused with `invalid_value` for `plan`. A file's leading byte order mark is the file's, and is
-  not in the document the schema sees.
+  not in the document the schema sees. **A turn's `budget_minutes` is an `integer` from 1 to 960,
+  or `null`** (D85), and a turn MAY leave it out, so every plan v1's schema accepted is accepted.
+  **JSON Schema's `integer` accepts a whole number in any form, so the schema accepts
+  `budget_minutes` written as `90.0` or `9e1`, and the program refuses it**, since it MUST be
+  written as digits alone ([Plan](#plan); architect, 2026-11-25, for v0.11-T01, pin P24). The
+  schema's own description lists it among the checks it cannot make.
+- **The `create` request schema, `lease-create.input.schema.json`, refuses what the command line
+  refuses as a `usage` error among `plan`, `board`, `epic`, `turn` and `size`** (architect,
+  2026-11-25, for v0.11-T01, pin P6): a `board` without an `epic` or the reverse, a `board` and
+  `epic` beside a `plan` or a `size`, a `plan` beside a `size`, and a `turn` with neither a `plan`
+  nor a `board`, each counting `null` as not given. `turn` is matched exactly, with no whitespace
+  allowed around it, as [Turn](#turn) is never trimmed; `board` and `epic` allow surrounding
+  whitespace, as the values they stand for do.
 - **Input patterns accept whitespace as one character class that lists the `White_Space`
   characters of [Input tolerance](#input-tolerance) and no others**, written out as
   `[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]`, never as `\s`. `\s`
@@ -1942,9 +2674,10 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
 - **An input schema MAY accept more than [Values](#values) does, and MUST NOT accept less.**
   Passing an input schema never makes a value acceptable: a TTL's range, for one, is checked
   after it is parsed, and [Values](#values) decides.
-- **The v1 CLI takes flags and arguments only, and never reads a JSON request.** The one JSON it
-  reads is the plan file that `create --plan` names, which is a plan, not a request
-  ([Plan](#plan)). An input document defines a request: its members are the flags and arguments of
+- **The v2 CLI takes flags and arguments only, and never reads a JSON request.** The JSON it reads
+  is a plan, from the file `create --plan` names or from an epic's `agentspace-plan` block, and
+  localswim's receipt, credential and answer for that epic ([The board read](#the-board-read)),
+  none of which is a request ([Plan](#plan)). An input document defines a request: its members are the flags and arguments of
   the same names, except that a request's `plan` holds the plan itself where `--plan` names a
   file, and no request member carries a path (architect, 2026-11-24, for v0.10-T01, pin P19). It
   is what a request is validated against, and a hosted API (card #0011) MUST accept it as JSON. In
@@ -1964,26 +2697,39 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
     PowerShell's `Test-Json`; on 2026-11-18 the samples were also checked with Python's
     `jsonschema` 4.19.
 - **A schema's `$id` names it and is not a download address.** Each top-level schema's `$id`
-  carries the contract version, `v1`:
-  `https://github.com/SixbucksSolutions/agentspace/schemas/v1/<file name>`, and its title says
-  contract v1 (architect, 2026-11-24, for v0.10-T01, pin P9).
+  carries the contract version, `v2`:
+  `https://github.com/SixbucksSolutions/agentspace/schemas/v2/<file name>`, and its title says
+  contract v2 (D87, D89; as v1's did from v0.10, architect, 2026-11-24, for v0.10-T01, pin P9).
+- **Contract v1's schemas and samples are kept under `schemas/v1/`** (D87, D89): its nine schemas,
+  and their samples under `schemas/v1/samples/`, the invalid ones under
+  `schemas/v1/samples/invalid/`, each byte for byte as in v1, `$id`s and titles unchanged. They are
+  not v2's schemas, and MUST NOT change.
+  - **They show what v2 keeps of v1** ([Versioning](#versioning)): every document that a command
+    line with none of `--board`, `--epic` and `--turn`, and with no `budget_minutes` member in its
+    plan, prints, error documents included, MUST validate against its v1 schema as well as its v2 one,
+    and v2's conformance MUST check it (D87).
+  - **They also show where v2 parts from v1:** v2's conformance MUST show that an error naming
+    `board`, `epic` or `turn` validates against v2's error schema and fails v1's, so a validator
+    that accepted everything could not pass the check above.
 - **Contract v0's schemas and samples are kept under `schemas/v0/`** (D76; architect, 2026-11-24,
   for v0.10-T01, pin P9): its eight schemas, and their samples under `schemas/v0/samples/`, the
   invalid ones under `schemas/v0/samples/invalid/`, each byte for byte as in v0, `$id`s and titles
-  unchanged. They are not v1's schemas, and MUST NOT change.
-  - **They show what v1 keeps of v0** ([Versioning](#versioning)): every document that a command
-    line with no `--plan` prints, error documents included, MUST validate against its v0 schema as
-    well as its v1 one, and v1's conformance MUST check it (D76, D80).
-  - **A check of `schemas/` reads `schemas/v0/` as its own set**, each schema against its own
-    samples, and never mixes the two versions' schemas and samples.
+  unchanged. They are not v1's or v2's schemas, and MUST NOT change.
+  - **They show what v2 keeps of v0:** every document that a command line with no `--plan` and none
+    of `--board`, `--epic` and `--turn` prints, error documents included, MUST validate against
+    its v0 schema as well as its v1 and v2 ones, and v2's conformance MUST check it (D76, D80,
+    D87).
+- **A check of `schemas/` reads `schemas/v0/` and `schemas/v1/` each as its own set**, each schema
+  against its own samples, and never mixes two versions' schemas and samples.
 - **The lease state file's schema, `schemas/state/leases.state.schema.json`, is not part of this
   contract.** It is [docs/state.md](state.md)'s.
 
 ## Versioning
 
-**This is contract v1, which agentspace's v0.10 release (#0050) brings (D76).** Contract v0 was the
-MVP's, and stood until v0.10, the first release that changes an output. The contract's version and
-agentspace's release are two numbers, kept apart (D26). Every change v1 makes is listed in
+**This is contract v2, which agentspace's v0.11 release (#0052) brings (D87).** Contract v0 was the
+MVP's, and stood until v0.10, the first release that changed an output; contract v1 was v0.10's
+(D76). The contract's version and agentspace's release are two numbers, kept apart (D26). Every
+change v2 makes is listed in [Changes from v1](#changes-from-v1), and every change v1 made in
 [Changes from v0](#changes-from-v0).
 
 **What makes a new version:**
@@ -2003,6 +2749,61 @@ agentspace's release are two numbers, kept apart (D26). Every change v1 makes is
 - **agentspace's per-agent footprint is not part of the contract** (D73, D76). A new figure
   changes which size a plan gets ([Plan](#plan)), never what a field means, and is not a new
   version. So a plan answered `plan_too_large` today MAY get a size later, with no new version.
+- **agentspace's TTL factor is not part of the contract** (D85), as its footprint is not. A new
+  factor changes which TTL a plan gets ([TTL](#ttl)), never what a field means, and is not a new
+  version, so long as every TTL a plan gives stays inside the TTL's range.
+
+**What made v2** (D87):
+- **`board`, `epic` and `turn`, new values of `field` in error documents**, of `invalid_value` and
+  of `usage` ([Exit codes and errors](#exit-codes-and-errors)). v1's error schema holds `field` to
+  an enum of eight, so an error naming one of them fails it.
+- **The seven `usage` cases that carry one of them** (architect, 2026-11-25, for v0.11-T01, pin
+  P4). They are new through their `field`, and which `usage` errors carry `field` is a rule no
+  schema can check, so conformance checks each of the thirteen ([Schemas](#schemas)).
+
+**What is not a change** (D87):
+- **`--board`, `--epic`, `--turn`, `budget_minutes`, and the request document's `board`, `epic`
+  and `turn` are inputs that v1 refused**, which alone would not make a new version.
+- **No lease output changes.** `sized_for` keeps its three members, and a board lease prints the
+  plan's own `name` as `sized_for.plan`, as D75 foresaw, never the board or the ticket. A lease's
+  TTL from a budget is a `ttl_seconds` in v1's range. **So every lease and list document v2 prints
+  validates against v1's schemas**, whatever made the lease.
+- **`sized_for.turn` names the turn `--turn` named, for a lease made with it** (D84). That lease
+  could not be made in v1, and for every lease made without `--turn` the member means what it
+  meant in v1.
+- **Reporting every new error under `plan`, to stay v1, was not taken** (D87): a caller acts on
+  `field`, and `plan` for a bad `--board` would send it to fix a flag it never gave.
+
+**What v2 keeps of v1** (D87):
+- **A command line with none of `--board`, `--epic` and `--turn`, in any case and in either form,
+  and whose plan, when `--plan` is given, has no `budget_minutes` member, not even a `null` one,
+  MUST print the JSON document v1
+  printed for it, and MUST fail with the errors v1 failed with:** the same members, meaning the
+  same, and the same exit code, error code and `field`, its values checked in v1's order
+  ([Exit codes and errors](#exit-codes-and-errors)). v2 changes no message that such a command
+  prints. Its help is text, not a document, and `create`'s help changed in v2
+  ([`create`](#agentspace-lease-create)).
+  - **So every document such a command prints validates against v1's schema in `schemas/v1/` as
+    well as against v2's, and one with no `--plan` either against v0's in `schemas/v0/` too**, and
+    v2's conformance MUST show both ([Schemas](#schemas); D76, D87).
+  - **A plan with a `budget_minutes` member is the one input outside the new flags that v2 answers
+    differently:** v1 refused it with `invalid_value` for `plan`, a `null` one included, since v1's
+    plan schema allows no other member, and v2 accepts it. That is
+    accepting an input the version before refused, which is not a new version.
+- **A v1 client that reads leases fails no schema in v2**: every lease document validates against
+  v1's lease and list schemas. **A v1 client fails v1's error schema only on an error naming
+  `board`, `epic` or `turn`**, which only a command line with one of the new flags prints. **A
+  client that gives the new flags MUST validate errors against v2's schema.** When v2 was made,
+  every caller was agentspace's own: its conformance suite, the architect's live checks, and a
+  person at the command line (D76, D87), so no caller outside agentspace's repository had to move
+  with v2.
+- **A lease made from an epic has `sized_for`, as a `--plan` lease has**, so a v0 client that reads
+  one can fail its v0 schema, as for a `--plan` lease (D76).
+- **Output schemas stay strict** (D76, D87). No rule tells a client to ignore an unknown member, so
+  a later new output member is a new version again.
+
+**v1's history, kept as v1's:** "What made v1" and "What v1 keeps of v0", word for word as they
+stood in contract v1.
 
 **What made v1** (D76, as D81 changed it):
 - **`sized_for`, a new output member**, on every lease made with `--plan` ([Fields](#fields)).
@@ -2086,7 +2887,8 @@ Terry's call, and nothing here closes one.
 **What reading the prototype and its docs could not settle.** After the clean-room review
 (E0.04-T04-S01, #0080), every question here is either closed or marked "Later, not blocking", and
 none blocks building a drop-in of contract v0. v1's changes ([Changes from v0](#changes-from-v0))
-add no question here, so none blocks a drop-in of contract v1 either.
+add no question here, so none blocks a drop-in of contract v1 either, and neither do v2's
+([Changes from v1](#changes-from-v1)), so none blocks a drop-in of contract v2.
 
 1. **Closed by D8 (architect, 2026-11-18): contract v0's caller runs on Windows**, from cmd,
    PowerShell and Git Bash ([The program](#the-program)); the program's file name is outside the
@@ -2120,14 +2922,14 @@ add no question here, so none blocks a drop-in of contract v1 either.
    shell**, as in `ssh <host_alias> node --version`. Today Node and Codex are put on the `PATH` by
    lines at the end of `ubuntu`'s `~/.bashrc`, after Ubuntu's early return for non-interactive
    shells. Only a run through an alias settles what such a command finds.
-7. **Later, not blocking:** v1's alias, as v0's did, carries the forwards as
+7. **Later, not blocking:** v2's alias, as v0's and v1's did, carries the forwards as
    [docs/state.md](state.md#the-alias-file) gives them, and a caller MUST NOT rely on them
    ([The credential](#the-credential)), so moving them to the keeper (#0008) changes nothing a
    caller sees.
    **Whether the board's forwards belong in the lease's alias at all** (D12, D30, card #0008), or
    should move to the keeper's own connection. Today a caller's second session on a host warns
    that its remote port forwarding failed.
-8. **Later, not blocking:** every lease in v1, as in v0, logs in as `ubuntu` (D3), which the
+8. **Later, not blocking:** every lease in v2, as in v0 and v1, logs in as `ubuntu` (D3), which the
    pattern accepts, and a user it would refuse comes only with a later driver's host (v0.12,
    #0051).
    **Whether `ssh.user`'s pattern fits every host a later driver serves** (D4, v0.12, #0051). It
