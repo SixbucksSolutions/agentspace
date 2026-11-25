@@ -14,6 +14,10 @@
 //! - [`ssh_program_with`]: the same, over an injectable variable lookup.
 //! - [`ssh_found`] and [`ssh_found_with`]: the same ssh as a [`Program`], its path with the line a
 //!   failed start of it MUST give, for a caller that starts the ssh itself (`bootstrap`, #0227).
+//! - [`start_guarded`]: starts a caller's own prepared [`std::process::Command`] the way this crate
+//!   starts every program, under the same guard against a dialog. **A crate that starts a program
+//!   itself MUST start it through this** (`bootstrap`'s ssh, the architect's ruling P7 for
+//!   E0.10-T03-S03).
 //!
 //! # What this crate guarantees
 //!
@@ -390,6 +394,20 @@ fn start(cmd: &mut Command) -> std::io::Result<Child> {
     #[cfg(windows)]
     let _quiet = win::NoErrorBoxes::new();
     cmd.spawn()
+}
+
+/// Starts `cmd`, a command its caller has prepared (its arguments, its streams, and the
+/// environment [`prepare_child_env`] gives), as this crate starts every program: on Windows with
+/// the starting thread's error mode holding `SEM_FAILCRITICALERRORS` and `SEM_NOOPENFILEERRORBOX`
+/// for the start, and the thread's earlier mode put back after, however the start ended (#0191,
+/// #0225). A file Windows takes for a 16-bit program then fails to start at once, with error 216,
+/// and never waits at a modal dialog, whatever error mode the thread had.
+///
+/// The caller waits for the child itself, after the thread's error mode is back as it was, and
+/// answers a failed start with its own line ([`Program::cannot_start`] for a program the finder
+/// found).
+pub fn start_guarded(cmd: &mut Command) -> std::io::Result<Child> {
+    start(cmd)
 }
 
 /// Whether a call passes `--output json` (operator.md, AWS failures; Calls by command): every

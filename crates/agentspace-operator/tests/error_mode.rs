@@ -291,9 +291,11 @@ fn run_at_error_mode_0(mut cmd: Command) -> Outcome {
 /// What a start that fails at once must look like, as a reason, or `Ok`. Pure, so that a planted
 /// outcome can show that it rejects.
 ///
-/// The operator's seam rule (operator.md, The test seam) is `agentspace: <variable> names <value>,
-/// which cannot be run.`, and its rule for a program that exists and cannot be started
-/// (Programs it starts) is `agentspace: Could not run <path>.`; either is the program's own error.
+/// The program here is one a seam variable names, so its error is the seam's line only (operator.md,
+/// The test seam): `agentspace: <variable> names <value>, which cannot be run.`, since a file the
+/// system cannot start is one that names nothing runnable. `agentspace: Could not run <path>.` is
+/// the line for a default program (Programs it starts), and for a seam's program it is #0227's
+/// defect, so it is rejected (the architect's ruling P6 for E0.10-T03-S03).
 fn judge(outcome: &Outcome, variable: &str, program: &Path) -> Result<(), String> {
     judge_timing(outcome.code, outcome.elapsed)?;
     let Some(code) = outcome.code else {
@@ -308,12 +310,11 @@ fn judge(outcome: &Outcome, variable: &str, program: &Path) -> Result<(), String
     let last = outcome.stderr.trim_end().lines().last().unwrap_or("");
     let path = program.display();
     let seam = format!("agentspace: {variable} names {path}, which cannot be run.");
-    let could_not = format!("agentspace: Could not run {path}.");
-    if last == seam || last == could_not {
+    if last == seam {
         Ok(())
     } else {
         Err(
-            "The last line of stderr is not the operator's error for a program that cannot be run"
+            "The last line of stderr is not the seam's line for a program that cannot be run"
                 .to_string(),
         )
     }
@@ -453,7 +454,7 @@ fn the_timing_judge_rejects_planted_waits() {
 }
 
 #[test]
-fn the_judge_accepts_the_two_spec_errors_and_rejects_planted_outcomes() {
+fn the_judge_accepts_only_the_seams_line_and_rejects_planted_outcomes() {
     let program = Path::new(r"C:\throwaway\bin\ssh.exe");
     let seam =
         "agentspace: AGENTSPACE_SSH_CMD names C:\\throwaway\\bin\\ssh.exe, which cannot be run.\n";
@@ -464,12 +465,22 @@ fn the_judge_accepts_the_two_spec_errors_and_rejects_planted_outcomes() {
     );
     assert_eq!(
         judge(
-            &planted(Some(1), "", &format!("Running...\n{could_not}")),
+            &planted(Some(1), "", &format!("Running...\n{seam}")),
             "AGENTSPACE_SSH_CMD",
             program
         ),
         Ok(())
     );
+    // #0227's defect: the default's line for a program the seam variable names, alone or last.
+    for stderr in [could_not.to_string(), format!("Running...\n{could_not}")] {
+        let reason = judge(
+            &planted(Some(1), "", &stderr),
+            "AGENTSPACE_SSH_CMD",
+            program,
+        )
+        .unwrap_err();
+        assert!(reason.contains("not the seam's line"), "{reason}");
+    }
     for bad in [
         planted(None, "", seam),
         planted(Some(0), "", seam),

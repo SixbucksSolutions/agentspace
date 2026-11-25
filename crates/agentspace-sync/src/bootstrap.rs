@@ -13,6 +13,10 @@
 //!   [`agentspace_run::ssh_found`] finds the program (so `AGENTSPACE_SSH_CMD` stands in for it) and
 //!   with the environment `agentspace-run` gives every program. The pinned `Remote` has no stdin, so
 //!   this ssh is started here.
+//! - **The ssh MUST be started through [`agentspace_run::start_guarded`]**, never by a start of this
+//!   crate's own (the architect's ruling P7 for E0.10-T03-S03, #0225): on Windows its start then runs
+//!   with the starting thread's error mode quiet, so a file Windows takes for a 16-bit program fails
+//!   at once, whatever error mode the thread or the process had, and never waits at a modal dialog.
 //! - **A start that fails MUST answer with the line the finder gave** (#0227): `agentspace:
 //!   AGENTSPACE_SSH_CMD names <value>, which cannot be run.` for an ssh the seam variable names,
 //!   since a file the system cannot start is one that names nothing runnable (operator.md, The test
@@ -121,8 +125,7 @@ fn run_ssh(
         .args(["-o", steps::CLEAR_FORWARDS, alias, remote_command])
         .stdin(Stdio::piped());
     agentspace_run::prepare_child_env(&mut command);
-    let mut child = command
-        .spawn()
+    let mut child = agentspace_run::start_guarded(&mut command)
         .map_err(|_| failure(program.cannot_start.clone()))?;
     // Written from a thread of its own, so that a script larger than the pipe never waits on an ssh
     // that is waiting for the operator. A write that fails because ssh has already exited is not
@@ -298,6 +301,59 @@ mod tests {
             failure.message,
             format!("agentspace: Could not run {}.", path.display())
         );
+    }
+
+    /// The lines of `source`'s code, before its test module, that start a program other than
+    /// through [`agentspace_run::start_guarded`]: a `Command`'s own `spawn`, `output` or `status`.
+    /// Pure, so that planted sources can show that it finds one.
+    fn unguarded_starts(source: &str) -> Vec<&str> {
+        let code = source.split("#[cfg(test)]").next().unwrap_or(source);
+        let starts = [
+            ".spawn()",
+            ".output()",
+            ".status()",
+            "Command::spawn(",
+            "Command::output(",
+            "Command::status(",
+        ];
+        code.lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .filter(|line| starts.iter().any(|start| line.contains(start)))
+            .collect()
+    }
+
+    /// The architect's ruling P7 for E0.10-T03-S03 (#0225): the bootstrap's ssh is started through
+    /// `agentspace-run`'s guarded start, and this file starts nothing of its own. This crate forbids
+    /// `unsafe`, so it cannot set a thread's error mode to show it by a start; `agentspace-run`'s
+    /// `tests/guarded_start.rs` shows that start failing at once from a thread at error mode 0, with
+    /// this command's shape.
+    #[test]
+    fn the_ssh_is_started_through_the_guarded_start_and_nothing_here_starts_one_itself() {
+        let source = include_str!("bootstrap.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(
+            code.contains("agentspace_run::start_guarded(&mut command)"),
+            "run_ssh does not start its ssh through agentspace_run::start_guarded"
+        );
+        assert_eq!(unguarded_starts(source), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn the_start_check_finds_planted_unguarded_starts() {
+        // Main's `run_ssh` (8037465), which started its ssh itself.
+        let main = "fn run_ssh() {\n    let mut child = command\n        .spawn()\n        .map_err(|_| x)?;\n}\n#[cfg(test)]\nmod tests {}\n";
+        assert_eq!(unguarded_starts(main), vec!["        .spawn()"]);
+        for planted in [
+            "let child = command.spawn()?;\n",
+            "let out = command.output()?;\n",
+            "let status = command.status()?;\n",
+            "let child = Command::spawn(&mut command)?;\n",
+        ] {
+            assert_eq!(unguarded_starts(planted).len(), 1, "{planted:?}");
+        }
+        // A thread's spawn, a comment, and a start in the test module are not the code's starts.
+        let fine = "std::thread::spawn(move || {});\n// command.spawn()\n#[cfg(test)]\nmod tests { fn t() { c.spawn(); } }\n";
+        assert_eq!(unguarded_starts(fine), Vec::<&str>::new());
     }
 
     #[test]
