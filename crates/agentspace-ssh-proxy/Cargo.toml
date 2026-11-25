@@ -27,6 +27,8 @@ agentspace-run = { path = "../agentspace-run" }
 agentspace-state = { path = "../agentspace-state" }
 # The host registry: the host a connection reaches, and its instance ID (D45, D55).
 agentspace-hosts = { path = "../agentspace-hosts" }
+# The program's main sets its process error mode first (#0225, #0226; D81).
+agentspace-launch = { path = "../agentspace-launch" }
 
 # Only src/win.rs uses it, the one module that calls Windows: the process's PATH and the
 # standard output handle and the console's output mode. The version the other crates already use.

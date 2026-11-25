@@ -22,6 +22,10 @@ name = "agentspace-keeper-task-stub-keeper"
 path = "tests/support/stub_keeper.rs"
 test = false
 
+[dependencies]
+# The program's main sets its process error mode first (#0225, #0226; D81).
+agentspace-launch = { path = "../agentspace-launch" }
+
 # Only the test-only stub uses it (GetConsoleWindow, in its own module); the launcher itself needs
 # no Win32 call. The version is the one the other crates use (Cargo.lock).
 [target.'cfg(windows)'.dependencies]

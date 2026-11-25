@@ -444,6 +444,13 @@ command, and caller mode's "Could not reach the host".
 through three environment variables, and nothing else MAY ([The test seam](#the-test-seam)). The
 table is what runs when none is set, and the full-path rule above binds that default alone.
 
+**The operator's and the ProxyCommand's `main` MUST each set the process's error mode to
+`SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX` before they start or open anything** (#0225, D81),
+beside `agentspace-run`'s own guard (#0217), which sets the same two bits on the starting thread
+around its one `CreateProcess` and puts them back: a process at error mode 0 (one started hidden,
+say) that starts a file that is not a program would otherwise wait at a modal "Unsupported 16-Bit
+Application" dialog for a person, and a program's children inherit the process's mode.
+
 **What MUST NOT appear among any program's arguments is in [Secrecy](#secrecy).**
 
 ### AWS failures

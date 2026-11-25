@@ -11,6 +11,10 @@ use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 fn main() {
+    // First, before anything is started or opened: a process at error mode 0 that starts a file
+    // that is not a program waits for a person at a modal dialog (#0225, D81); its children inherit
+    // this mode.
+    agentspace_launch::quiet_hard_errors();
     // A panic prints nothing: its text is a runtime's, and may carry a path or backend detail.
     std::panic::set_hook(Box::new(|_| {}));
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();

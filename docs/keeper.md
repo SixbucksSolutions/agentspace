@@ -478,6 +478,11 @@ pass ran and logged what happened; the next pass tries again.
   Under the installed task, the keeper's stdout and stderr reach no one, so `board-holder.log` is
   the only record of what it did ([The task's launcher](#the-tasks-launcher)).
 - **The keeper reads no stdin.**
+- **The keeper's, the task launcher's and the installer's `main` MUST each set the process's error
+  mode to `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX` first, before they start or open
+  anything** (#0225, D81): a process at error mode 0 (one started hidden, say) that starts a file
+  that is not a program would otherwise wait at a modal "Unsupported 16-Bit Application" dialog
+  for a person, and its children inherit the mode.
 - **`AGENTSPACE_STATE_DIR`**, when set and not empty, names the state folder; a check MUST set it
   to a throwaway folder ([Checking the keeper](#checking-the-keeper)). The keeper creates the state
   folder if it is missing.

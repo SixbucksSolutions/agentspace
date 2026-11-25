@@ -5,6 +5,10 @@ use agentspace_keeper_install::{Mode, parse_args, run, usage_error_lines};
 use std::io::Write;
 
 fn main() {
+    // First, before anything is started or opened: a process at error mode 0 that starts a file
+    // that is not a program waits for a person at a modal dialog (#0225, D81); its children inherit
+    // this mode.
+    agentspace_launch::quiet_hard_errors();
     // An argument that is not valid text is shown with replacement characters, as `Unknown
     // argument '<raw>'.` names what the caller gave as nearly as it can.
     let args: Vec<String> = std::env::args_os()

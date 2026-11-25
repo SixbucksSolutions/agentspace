@@ -154,6 +154,7 @@ name = "agentspace-keeper-install"
 version = "0.6.0"
 dependencies = [
  "agentspace-keeper-files",
+ "agentspace-launch",
  "windows",
  "windows-sys",
 ]
@@ -162,6 +163,7 @@ dependencies = [
 name = "agentspace-keeper-task"
 version = "0.6.0"
 dependencies = [
+ "agentspace-launch",
  "tempfile",
  "windows-sys",
 ]
@@ -197,6 +199,7 @@ dependencies = [
  "agentspace-credential",
  "agentspace-guard",
  "agentspace-hosts",
+ "agentspace-launch",
  "agentspace-operator-api",
  "agentspace-push",
  "agentspace-run",
@@ -258,6 +261,7 @@ version = "0.6.0"
 dependencies = [
  "agentspace-box",
  "agentspace-hosts",
+ "agentspace-launch",
  "agentspace-operator",
  "agentspace-operator-api",
  "agentspace-push",
@@ -289,6 +293,7 @@ dependencies = [
  "agentspace-driver-api",
  "agentspace-driver-ec2",
  "agentspace-hosts",
+ "agentspace-launch",
  "agentspace-operator-api",
  "agentspace-push",
  "agentspace-run",

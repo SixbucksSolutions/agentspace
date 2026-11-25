@@ -10,6 +10,10 @@ use agentspace_keeper_task::{Env, run};
 use std::ffi::OsString;
 
 fn main() {
+    // First, before anything is started or opened: the task's launcher starts the keeper, and a
+    // process at error mode 0 that starts a file that is not a program waits for a person at a
+    // modal dialog (#0225, D81); its children inherit this mode.
+    agentspace_launch::quiet_hard_errors();
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let code = run(&args, std::env::current_exe(), &Env::from_process());
     std::process::exit(code);

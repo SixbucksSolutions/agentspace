@@ -348,8 +348,9 @@ pub fn bootstrap(
 }
 
 /// [`bootstrap`] over [`Seams`].
-// Architect's to confirm: the bootstrap's ssh is started inside this crate, through
-// `agentspace_run::ssh_program` and `prepare_child_env`, since the pinned `Remote` has no stdin.
+// The bootstrap's ssh is started inside this crate, since the pinned `Remote` has no stdin: found by
+// `agentspace_run::ssh_found`, given `prepare_child_env`'s environment, and started through
+// `agentspace_run::start_guarded` (the architect's ruling P7 for E0.10-T03-S03; bootstrap.rs).
 #[doc(hidden)]
 pub fn bootstrap_using(
     ctx: &Context,

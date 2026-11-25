@@ -12,6 +12,14 @@
 //!   stories (the push's ssh, the tunnel, `go build`) MUST call it on theirs.
 //! - [`ssh_program`]: the ssh the push's own pipe-wired ssh MUST be started from (T02).
 //! - [`ssh_program_with`]: the same, over an injectable variable lookup.
+//! - [`ssh_found`] and [`ssh_found_with`]: the same ssh as a [`Program`], its path with the line a
+//!   failed start of it MUST give, for a caller that starts the ssh itself (`bootstrap`, #0227).
+//! - [`start_guarded`]: starts a caller's own prepared [`std::process::Command`] the way this crate
+//!   starts every program, under the same guard against a dialog. **`bootstrap`'s ssh MUST be
+//!   started through this** (the architect's ruling P7 for E0.10-T03-S03). The other starts that a
+//!   program makes itself outside this crate and `agentspace-launch` (the push's ssh, the tunnel,
+//!   `go build`, the task launcher's keeper) are covered by their program's process error mode,
+//!   which each program's `main` sets first (#0226); a start that WMI makes gets WMI's own mode.
 //!
 //! # What this crate guarantees
 //!
@@ -167,9 +175,16 @@ impl Runner {
 /// a program a seam variable names, since a file the system cannot start is one that names
 /// nothing runnable (operator.md, The test seam), or "Could not run" for a default (Programs it
 /// starts, "When a default program cannot be run").
-struct Program {
-    path: PathBuf,
-    cannot_start: String,
+///
+/// **A caller that starts the program itself MUST answer a failed start with `cannot_start`**,
+/// exactly, and never with a line of its own (#0227): only the finder knows whether a seam
+/// variable named the program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program {
+    /// The full path to start.
+    pub path: PathBuf,
+    /// The command's line when the start fails.
+    pub cannot_start: String,
 }
 
 impl Program {
@@ -200,7 +215,22 @@ pub fn ssh_program_with(
     ctx: &Context,
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, Failure> {
-    program_or_default(ctx, lookup, SSH_VAR, "ssh.exe").map(|program| program.path)
+    ssh_found_with(ctx, lookup).map(|program| program.path)
+}
+
+/// The ssh [`ssh_program`] finds, with the line a failed start of it gives: the seam's for a
+/// program `AGENTSPACE_SSH_CMD` names, `Could not run` for the default (operator.md, The test
+/// seam; Programs it starts).
+pub fn ssh_found(ctx: &Context) -> Result<Program, Failure> {
+    ssh_found_with(ctx, &|name| std::env::var_os(name))
+}
+
+/// [`ssh_found`] over an injectable variable lookup.
+pub fn ssh_found_with(
+    ctx: &Context,
+    lookup: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<Program, Failure> {
+    program_or_default(ctx, lookup, SSH_VAR, "ssh.exe")
 }
 
 /// The seam variable's value, or `None` when it is unset, empty or only whitespace.
@@ -366,6 +396,20 @@ fn start(cmd: &mut Command) -> std::io::Result<Child> {
     #[cfg(windows)]
     let _quiet = win::NoErrorBoxes::new();
     cmd.spawn()
+}
+
+/// Starts `cmd`, a command its caller has prepared (its arguments, its streams, and the
+/// environment [`prepare_child_env`] gives), as this crate starts every program: on Windows with
+/// the starting thread's error mode holding `SEM_FAILCRITICALERRORS` and `SEM_NOOPENFILEERRORBOX`
+/// for the start, and the thread's earlier mode put back after, however the start ended (#0191,
+/// #0225). A file Windows takes for a 16-bit program then fails to start at once, with error 216,
+/// and never waits at a modal dialog, whatever error mode the thread had.
+///
+/// The caller waits for the child itself, after the thread's error mode is back as it was, and
+/// answers a failed start with its own line ([`Program::cannot_start`] for a program the finder
+/// found).
+pub fn start_guarded(cmd: &mut Command) -> std::io::Result<Child> {
+    start(cmd)
 }
 
 /// Whether a call passes `--output json` (operator.md, AWS failures; Calls by command): every

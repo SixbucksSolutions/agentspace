@@ -33,6 +33,8 @@ agentspace-alias = { path = "../agentspace-alias" }
 agentspace-zone = { path = "../agentspace-zone" }
 # The guard's run, which `guard` calls (operator.md, guard; D56, D63; E0.08-T03-S02).
 agentspace-guard = { path = "../agentspace-guard" }
+# The program's main sets its process error mode first (#0225, #0226; D81).
+agentspace-launch = { path = "../agentspace-launch" }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 
 [dev-dependencies]
