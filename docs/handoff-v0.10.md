@@ -31,7 +31,8 @@ that is still in use is carried here, and each rule is cited at its home rather 
   person. Every agentspace program now sets its own error mode first, and so does the live kit's
   wrapper.
 - **Nothing is running.** Both hosts are stopped, no lease is live, no milestone exists, the
-  reporter is stopped, and every dev lead is archived. The board watcher was running at close.
+  reporter is stopped, and every dev lead is archived. The board watcher is stopped too, on Terry's
+  word, for his `/clear`; **restart it first** ([Start here](#start-here), step 4).
 - **v0.10 is installed on Terry's laptop**, and its keeper runs the new build.
 - **Next is v0.11 (#0052), plan from the board, and it MUST NOT be laid out until Terry says so.**
   Its prep is [The scope ahead](#the-scope-ahead-v011).
@@ -52,7 +53,7 @@ that is still in use is carried here, and each rule is cited at its home rather 
    Any process found MAY be stopped by its checked PID, with Terry's yes.
 3. **Check the board answers:** `(Test-NetConnection 127.0.0.1 -Port 8811).TcpTestSucceeded`. If it
    is `False`, localswim is down, and starting it is Terry's; he MUST be asked.
-4. **Arm the board watcher** under the Monitor tool, with a forward-slash path, a 30-minute timeout,
+4. **Restart the board watcher, which was stopped for the `/clear`**, under the Monitor tool, with a forward-slash path, a 30-minute timeout,
    re-armed at each expiry:
    `pwsh -NoProfile -File 'C:/Projects/claude-localswim-watcher/watch.ps1' -Board agentspace -Reader agentspace 2>&1`.
    The reporter starts only once `scripts/milestones.json` lists a milestone; today it lists none.
@@ -100,7 +101,7 @@ Mountain, when it was written.
 | Leases | 44 recorded, none `ready` or `pending`. Four are T05's `unsatisfiable` leases for `v010-plancheck`, which no release needs (D80) |
 | The board | Every v0.10 card in Completed, and #0225 and #0227 with them. #0229 and #0230 folded into v0.11 (#0052), #0228 into v0.12 (#0051), and archived (D82). No defect or hardening card is open in Backlog |
 | Swimcoach | No milestone; `scripts/milestones.json` is empty (053f71d), `v0.10` was stopped at 9:42am, and the reporter is stopped |
-| Sessions | Every dev lead archived; `git worktree list` shows `main` alone. The board watcher was armed at close, as reader `agentspace` |
+| Sessions | Every dev lead archived; `git worktree list` shows `main` alone. The board watcher was stopped on Terry's word, for his `/clear`, and MUST be restarted after it ([Start here](#start-here), step 4) |
 | Terry's laptop, otherwise | Unchanged by v0.10 beyond the install. T02's run wrapper raised "Unsupported 16-Bit Application" dialogs on his desktop, at least 17 by the subagents' reports; he closed each (#0225) |
 
 ### v0.10 by turn
@@ -177,6 +178,7 @@ v0.12, D79 the folded-in work, and D80 the done-when shown with no instance.
 | AWS's sign-in renewed during T05 ("Signed in") | 2026-11-25 | runs/e0.10-t05-s01.md |
 | v0.10 approved into Completed ("Approved") | 2026-11-25 | The board |
 | This handoff, modeled on the handoffs in `docs/` and improved where it can be | 2026-11-25 | This file |
+| The board watcher stopped for the `/clear`, to be restarted after it | 2026-11-25 | [Start here](#start-here), step 4 |
 
 ## Rules that are easy to break
 
@@ -515,4 +517,5 @@ and its stories in Completed. Kept as the record of this close; the procedure is
 3. v0.10 marked done in roadmap.md's table.
 4. AGENTS.md's sizing section rewritten for `--plan` at T05's close (52a1ae2).
 5. This file made final, and AGENTS.md's "Where it stands" pointed at it.
-6. Waiting for Terry's word before laying out v0.11.
+6. The board watcher stopped on Terry's word, for his `/clear`.
+7. Waiting for Terry's word before laying out v0.11.
