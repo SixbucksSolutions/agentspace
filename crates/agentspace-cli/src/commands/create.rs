@@ -167,6 +167,7 @@ fn record_of(req: &Request, id: &str, now: i64, placed: Placed, driver: &str) ->
         // plan lease adds; pin P17).
         sized_for: req.plan.as_ref().map(|p| p.sized_for.clone()),
         plan: req.plan.as_ref().map(|p| p.document.clone()),
+        plan_source: None,
         id: id.to_owned(),
         project: req.project.clone(),
         state: String::new(),

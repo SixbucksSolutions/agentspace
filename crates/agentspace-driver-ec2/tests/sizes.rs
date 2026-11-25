@@ -21,6 +21,7 @@ fn record(state: &str, project: &str, driver: Option<&str>, size: &str) -> Recor
     Record {
         sized_for: None,
         plan: None,
+        plan_source: None,
         id: "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90".to_string(),
         project: project.to_string(),
         state: state.to_string(),
