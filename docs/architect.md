@@ -145,9 +145,13 @@ first.**
     a line in the epic's plan and in the layout decision, and both milestones raised (v0.06-T05,
     #0140).
 
-12. **An edit refused by auto mode with "no verdict" MAY be retried once, word for word**, never
-    reworded or routed through another session; a second refusal goes to Terry (v0.11-T01: a
-    README sentence refused once passed on its one retry).
+12. **An edit refused by auto mode with "no verdict" MAY be retried once, word for word, only when
+    the refusal's own text allows another attempt**, never reworded or routed through another
+    session; a second refusal goes to Terry (v0.11-T01: a README sentence refused once passed on
+    its one retry). **A refusal whose text says not to retry, such as "hard failure ... Don't retry
+    it", MUST NOT be retried at all, by the same subagent or a fresh one**: it goes to Terry with
+    its text (v0.11-T02, where two such were relaunched under this rule's first wording before the
+    architect stopped them).
 13. **A dev lead idle only on the architect's merge is not stalled**: the architect stops its
     watchdog while its own merge check runs and restarts it at the merge, as for a wait on Terry
     (v0.11-T01).
