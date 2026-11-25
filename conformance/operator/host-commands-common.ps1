@@ -659,6 +659,80 @@ function Stop-CaseHolders {
   Close-ProvisionLock
 }
 
+# ---- The case's processes (E0.10-T02-S05, card #0218) ----
+# Invoke-HostFile ends, in its `finally`, every process its case started: a process that is a child,
+# or a descendant of a child, of the process running the file and that was not running when the file's
+# case began, and a process the case registered by its PID with Register-CaseProcess. A process is
+# identified by its PID and the time it was created together, so that a PID the system gave to another
+# program later is never taken for the case's own, and it is ended by that PID alone. A process of the
+# same name that the case did not start is never touched, and nothing is selected by name alone.
+
+# One row for every process, from the system's own list: its PID, its parent's PID, its name and the
+# time it was created as ticks. Nothing about a command line is read.
+function Get-CaseProcessTable {
+  @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate -ErrorAction SilentlyContinue | ForEach-Object {
+      [pscustomobject]@{ ProcessId = [int]$_.ProcessId; ParentProcessId = [int]$_.ParentProcessId; Name = [string]$_.Name; Created = [long]$_.CreationDate.Ticks }
+    })
+}
+# The processes under this one: its children, their children and so on, as rows of the table. A row
+# whose parent was created after it is a reused parent PID, not a child, and is left out.
+function Get-CaseDescendants {
+  $table = Get-CaseProcessTable
+  $byId = @{}
+  foreach ($r in $table) { $byId[$r.ProcessId] = $r }
+  $found = [System.Collections.Generic.List[object]]::new()
+  $wanted = [System.Collections.Generic.HashSet[int]]::new()
+  [void]$wanted.Add($PID)
+  $grew = $true
+  while ($grew) {
+    $grew = $false
+    foreach ($r in $table) {
+      if ($r.ProcessId -eq $PID -or $wanted.Contains($r.ProcessId) -or -not $wanted.Contains($r.ParentProcessId)) { continue }
+      $parent = $byId[$r.ParentProcessId]
+      if ($null -ne $parent -and $parent.Created -gt $r.Created) { continue }
+      [void]$wanted.Add($r.ProcessId)
+      $found.Add($r)
+      $grew = $true
+    }
+  }
+  $found.ToArray()
+}
+function Get-CaseProcessKeys {
+  $keys = [System.Collections.Generic.HashSet[string]]::new()
+  foreach ($r in Get-CaseDescendants) { [void]$keys.Add("$($r.ProcessId):$($r.Created)") }
+  , $keys
+}
+# Records a process the case started that is not this process's descendant (a program started detached,
+# whose parent has gone): its PID, with the time it was created, which is read now.
+function Register-CaseProcess([Parameter(Mandatory)][int]$ProcessId) {
+  $row = Get-CaseProcessTable | Where-Object { $_.ProcessId -eq $ProcessId } | Select-Object -First 1
+  if ($null -eq $row) { return }
+  if ($null -eq $script:CaseRegisteredProcesses) { $script:CaseRegisteredProcesses = [System.Collections.Generic.List[object]]::new() }
+  $script:CaseRegisteredProcesses.Add($row)
+}
+# Ends each process the case started: the descendants that were not in $Before, and the registered ones.
+# Each is read again by its PID at the moment it is ended and ended only when its creation time is still
+# the one recorded. Returns what it ended, as rows of PID and name, and ends only those.
+function Stop-CaseProcesses {
+  param([System.Collections.Generic.HashSet[string]]$Before = [System.Collections.Generic.HashSet[string]]::new())
+  $mine = [System.Collections.Generic.List[object]]::new()
+  foreach ($r in Get-CaseDescendants) { if (-not $Before.Contains("$($r.ProcessId):$($r.Created)")) { $mine.Add($r) } }
+  foreach ($r in @($script:CaseRegisteredProcesses)) { if ($null -ne $r -and -not ($mine | Where-Object { $_.ProcessId -eq $r.ProcessId })) { $mine.Add($r) } }
+  $script:CaseRegisteredProcesses = [System.Collections.Generic.List[object]]::new()
+  $ended = [System.Collections.Generic.List[object]]::new()
+  foreach ($r in $mine) {
+    if ($r.ProcessId -eq $PID) { continue }
+    try {
+      $p = [Diagnostics.Process]::GetProcessById($r.ProcessId)
+      if ($p.StartTime.Ticks -ne $r.Created -and [math]::Abs($p.StartTime.Ticks - $r.Created) -gt 10000000) { continue }
+      $p.Kill($true)
+      [void]$p.WaitForExit(10000)
+      $ended.Add([pscustomobject]@{ ProcessId = $r.ProcessId; Name = $r.Name })
+    } catch { }
+  }
+  $ended.ToArray()
+}
+
 # The AWS calls of Calls by command, as one string each (their arguments separated by one space).
 function Get-CallStack([string]$Stack) { "cloudformation describe-stacks --region us-west-2 --output json --stack-name $Stack" }
 function Get-CallDescribe([string]$Id) { "ec2 describe-instances --region us-west-2 --output json --instance-ids $Id" }
@@ -782,6 +856,10 @@ function Join-Lines([string[]]$Lines) { ($Lines -join "`n") + "`n" }
 # SKIPPED or FAIL result and returns.
 function Invoke-HostFile {
   param([Parameter(Mandatory)][string]$FileName, [Parameter(Mandatory)][scriptblock]$Body, [switch]$Push)
+  # What runs under this process before the case starts, so that the `finally` ends only what the case
+  # started after it.
+  $before = Get-CaseProcessKeys
+  $script:CaseRegisteredProcesses = [System.Collections.Generic.List[object]]::new()
   $h = New-ConformanceHome
   try {
     $program = Get-ConformanceProgram -Variable 'AGENTSPACE_OPERATOR_CMD'
@@ -801,7 +879,11 @@ function Invoke-HostFile {
     $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name "${FileName}: The check ran to its end without an unexpected error" -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
   } finally {
+    # A case that failed, or threw, still holds what it started. Each is let go before the home is
+    # removed, since a lock held open or a process running inside the home keeps its files from going.
+    Stop-CaseHolders
     Close-HostsLock
+    $script:CaseEndedProcesses = @(Stop-CaseProcesses -Before $before)
     Remove-ConformanceHome -ConformanceHome $h
   }
 }
