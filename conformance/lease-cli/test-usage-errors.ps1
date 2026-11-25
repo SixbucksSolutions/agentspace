@@ -6,7 +6,9 @@
 # process, in a throwaway home. Each failing run MUST give the exit code of its error code, nothing on
 # stdout, and one compact error document on stderr that validates against the error schema.
 # `field` is checked here because the error schema cannot say which usage errors carry it
-# (docs/lease-api.md#schemas): exactly five cases MUST, and every other usage error MUST NOT.
+# (docs/lease-api.md#schemas): exactly six cases MUST, and every other usage error MUST NOT. The sixth, `--plan`
+# with `--size` (field `plan`, contract v1), and the ranking of that error among the others are in
+# test-plan-errors.ps1; the five of contract v0 are here.
 # It never reads or writes the real ~/.ssh or %USERPROFILE%\.agentspace, and loads no prototype code.
 # Run: pwsh -NoProfile -File conformance/lease-cli/test-usage-errors.ps1
 # Exits 0 when every check passed, 1 when any failed, 2 when none failed but any was skipped.
