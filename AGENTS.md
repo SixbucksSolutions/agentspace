@@ -11,23 +11,17 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
-- **Where v0.10 stands:** [docs/handoff-v0.10.md](docs/handoff-v0.10.md), v0.10's live record,
-  started at T01's close (2026-11-24) and refreshed at each turn's close. **Every v0.10 turn is
-  closed (T05, 2026-11-25), v0.10 is installed, and the release waits on Terry's approval.** An
-  architect picking up v0.10 reads it first, then handoff-v0.09.md for the tools and rules it cites.
+- **Where v0.10 ended:** [docs/handoff-v0.10.md](docs/handoff-v0.10.md), the architect's handoff
+  after v0.10, now final: Terry approved v0.10's epic and fifteen stories into Completed on
+  2026-11-25, and v0.10 is installed. **The architect who starts v0.11 reads it first**, then
+  handoff-v0.09.md for the tools and rules it cites.
 - **Where it stood at v0.09's close:** [docs/handoff-v0.09.md](docs/handoff-v0.09.md), the architect's handoff
-  after v0.09, for the architect who starts v0.10 (#0050). It is final, and v0.09 is closed: Terry
-  approved its epic and thirteen stories into Completed on 2026-11-24. **An agent picking
-  agentspace up SHOULD read it first, and it is the only handoff it needs**: it carries forward
-  what the earlier ones hold that is still in use. v0.09's design is D64 to D72 in
-  [docs/decisions.md](docs/decisions.md). **v0.10's design prep is D73 to D80 (2026-11-24)**, with
-  Q14 to Q16 put to Terry the same day. **He said yes to Q14**: D73's half a vCPU and 2 GiB per
-  agent replaces his per-agent rule from v0.10's install, and this file's sizing section is
-  rewritten then. He said no to Q15 and Q16: no account setting changes for #0195, and v0.10 asks
-  for no instance hours. **v0.10 is laid out (D81, 2026-11-24, on Terry's word):** fourteen
-  stories in five turns, #0211 to #0224, every turn on the laptop and none on EC2; each turn
-  starts on Terry's word. The handoffs
-  before it, from [docs/handoff-mvp.md](docs/handoff-mvp.md) to
+  after v0.09, final since Terry approved v0.09 on 2026-11-24. **It is the reference for the tools,
+  lanes, pitfalls and rules that handoff-v0.10.md cites**, and carries forward what the earlier
+  handoffs hold that is still in use. v0.09's design is D64 to D72 and v0.10's D73 to D81 in
+  [docs/decisions.md](docs/decisions.md): Terry said yes to Q14 (D73's half a vCPU and 2 GiB per
+  agent, which this file's sizing section applies from v0.10's install) and no to Q15 and Q16. The
+  handoffs before it, from [docs/handoff-mvp.md](docs/handoff-mvp.md) to
   [docs/handoff-v0.08.md](docs/handoff-v0.08.md), stay as the history of their releases.
 - **How a release is run:** [docs/architect.md](docs/architect.md), the architect's playbook, kept
   current. It replaces the release cycles in the v0.04 and v0.05 handoffs, which stay, with

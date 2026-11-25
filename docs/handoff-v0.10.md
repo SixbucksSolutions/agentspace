@@ -4,8 +4,8 @@ RFC 2119 keywords; the capitals are load-bearing.
 
 > **Live record of v0.10 (#0050), started at T01's close, 3:19pm Mountain on 2026-11-24, and
 > refreshed at T02's close, 8:32pm, at T03's close, 11:50pm, at T04's close, 3:56am on
-> 2026-11-25, and at T05's close, 9:40am the same day.** It is refreshed at each turn's close and made
-> final when Terry approves v0.10. Where this file and AGENTS.md, the board or decisions.md
+> 2026-11-25, and at T05's close, 9:40am the same day. It is final: Terry approved v0.10, its epic
+> and fifteen stories, into Completed on 2026-11-25.** Where this file and AGENTS.md, the board or decisions.md
 > disagree, they win, and the disagreement is a bug to fix in this file.
 
 **Written for an architect who picks up v0.10 mid-release.** It carries only what v0.10 changed;
@@ -42,7 +42,8 @@ it lists, and every row of its "What is open" is carried below or says what beca
 - **T05, the install and the live check, is closed, and so is every turn of v0.10**: v0.10 is
   installed on Terry's laptop, `test-help.ps1` passes 30 of 30 against it, and D80's check gave
   plans of 4, 15 and 33 agents `s`, `l` and `plan_too_large` with no finding and no instance
-  started ([runs/e0.10-t05-s01.md](runs/e0.10-t05-s01.md)). **v0.10 waits on Terry's approval.**
+  started ([runs/e0.10-t05-s01.md](runs/e0.10-t05-s01.md)).
+- **v0.10 is closed**: Terry approved its epic and fifteen stories into Completed on 2026-11-25.
 
 ## Start here
 
@@ -51,16 +52,16 @@ it lists, and every row of its "What is open" is carried below or says what beca
    AGENTS.md, [architect.md](architect.md), and D73 to D81 with their change notes.
 2. **The standing duties**: the board watcher as reader `agentspace`; the reporter, since
    `scripts/milestones.json` lists `v0.10`; a watchdog on any running dev lead.
-3. **v0.10 is done and waits on Terry:** its fifteen stories and the epic are in Ready For Review.
-   When he moves them to Completed, remove `v0.10` from `scripts/milestones.json`, send `swimcoach
-   stop` for it, and make this file final.
+3. **v0.10 is closed**, every card in Completed, the `v0.10` milestone stopped and the reporter with
+   it. The next release is v0.11, which is not broken into stories until Terry says so (AGENTS.md,
+   The board).
 
 ## Where things stand
 
 | What | State |
 |---|---|
-| v0.10 (#0050) | Ready For Review, with all fifteen stories (#0211 to #0224, #0226) |
-| Milestones | `v0.10` (cap 15.5 hours) reporting; `v0.10-T01` to `v0.10-T05` removed at their dev leads' archives |
+| v0.10 (#0050) | Completed, with all fifteen stories (#0211 to #0224, #0226), on Terry's approval, 2026-11-25 |
+| Milestones | `v0.10` (cap 15.5 hours) stopped at Terry's approval; `v0.10-T01` to `v0.10-T05` removed at their dev leads' archives |
 | Instance hours | None asked for, none used (Q16) |
 | The hosts | Both `stopped` (T05's last `status -All`, 9:22am on 2026-11-25) |
 | Terry's laptop | v0.10 installed at 7:47am on 2026-11-25 (8 programs, keeper restarted on the new build); no change to `PATH`, the ssh config or the task. T02's dialogs appeared on his desktop (#0225) and were each closed |
@@ -176,7 +177,7 @@ passed 61 of 61 three times alone (on #0223); the deadline case 5 of 5.
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| v0.10's approval: its fifteen stories and the epic in Ready For Review | Terry | The board; then `v0.10` leaves `scripts/milestones.json` and this file is made final |
+| v0.10's approval | **Done**: Terry, 2026-11-25; the `v0.10` milestone removed and stopped | The board |
 | #0230, mask the log lines Get-HpLogShape quotes in a failing case's reason | Terry places it, or the architect proposes a release | Backlog |
 | #0225 and #0227, met by #0226 and #0219 in T03, sit in Backlog | Terry, who moves them to Completed (Bot cannot move a card out of Backlog) | The board |
 | #0228 (one walk ends a chain, in `agentspace-connections`) and #0229 (the ProxyCommand refuses a lease alias that is not ready) | Terry places them, or the architect proposes a release | Backlog; D59's change for v0.10-T03 |
