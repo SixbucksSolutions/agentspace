@@ -13,3 +13,10 @@ folder here as a member, so a story adds its crate without editing the root.
   rest of `docs/` as each card cites it. The prototype's code under `scripts/` and `bin/` MUST NOT
   be read.
 - **Which crate holds what** is D38's table.
+- **`agentspace-cli`'s library MUST NOT hold doctests** (P53, E0.10-T02-S05). The isolation guard
+  (`agentspace-cli/tests/isolation_guard.rs`) runs the crate's test executables under a moved
+  home, and cannot run doctests there, since rustdoc is a toolchain program and a toolchain
+  program MUST NOT run under the moved home (AGENTS.md, "Terry's real files in a review"). So it
+  lists them with `cargo test --doc -- --list` and the real environment, and fails when the
+  library holds one. An example in a doc comment that is not meant to run MUST be fenced as
+  `text`, or left out.

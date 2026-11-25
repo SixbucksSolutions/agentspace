@@ -39,8 +39,26 @@
 //!   it created would be caught like the run's. Its run MUST then report `passed` plus `ignored`
 //!   equal to the tests the listing names. A failed count is reported by the executable's file
 //!   name only.
-//! - **The guard does not run doctests**, which `cargo test` runs for the library through
-//!   rustdoc. The library holds none (2026-11-23), so `cargo test` runs none for it.
+//! - **The guard does not run doctests, so the library MUST NOT hold any** (P53, E0.10-T02-S05).
+//!   `cargo test` runs a library's doctests through rustdoc, and rustdoc is a toolchain program,
+//!   which MUST NOT run under the moved home, so the guard cannot run them in it. The guard
+//!   therefore lists them, with `cargo test --doc -- --list` and the real environment, and
+//!   MUST fail when the library holds one, naming it. The listing runs no test. Every place a
+//!   doctest can come from counts: a fenced block, and an indented block, in a `///` or `//!`
+//!   comment of the library. A comment's example that is not a test MUST be fenced as `text`,
+//!   which rustdoc does not run, or MUST NOT be written as an example. `crates/README.md` states
+//!   the same rule.
+//! - **A build that fails MUST show rustc's own diagnostic** (P51, E0.10-T02-S05): the `rendered`
+//!   text of each error in the `compiler-message` records of `--message-format=json`, which is
+//!   what a person reads from `cargo build`, and not the tail of cargo's stderr, which holds only
+//!   "could not compile" and the warnings that came last. The workspace root and the real
+//!   profile folder are masked in it. When the build reported no diagnostic, cargo's own stderr
+//!   tail is shown instead.
+//! - **Whichever assertion fails first, the message MUST carry the moved home's listing when the
+//!   home exists** (P52, E0.10-T02-S05). A failed child and a created home are separate findings,
+//!   and #0209's lesson is that the second sat behind the first through every review: a home
+//!   created beside a failing test went unseen because the failing assertion came first and said
+//!   nothing of the home. The listing is the one `created_under` writes, relative names only.
 //! - **`TMP` and `TEMP` MUST be set on each run to the guard's own values.** With neither set,
 //!   Windows falls back to `USERPROFILE` for the temp folder, which is the moved home.
 //! - **A test MUST NOT read a variable that only `cargo test` sets through `std::env` at run
@@ -149,6 +167,97 @@ fn tail(b: &[u8]) -> String {
     let s = String::from_utf8_lossy(b);
     let lines: Vec<&str> = s.lines().collect();
     lines[lines.len().saturating_sub(40)..].join("\n")
+}
+
+/// `text` with each of `masks` replaced by `<name>`, in each spelling a path can have: as given,
+/// without a `\\?\` prefix, and with `/` between the parts. An empty mask is skipped.
+fn masked(text: &str, masks: &[(&Path, &str)]) -> String {
+    let mut out = text.to_string();
+    for (path, name) in masks {
+        let given = path.to_string_lossy().into_owned();
+        let plain = given.strip_prefix(r"\\?\").unwrap_or(&given).to_string();
+        for spelling in [given.clone(), plain.clone(), plain.replace('\\', "/")] {
+            if !spelling.is_empty() {
+                out = out.replace(&spelling, &format!("<{name}>"));
+            }
+        }
+    }
+    out
+}
+
+/// How many lines of rustc's diagnostics a build failure's message holds.
+const DIAGNOSTIC_LINES: usize = 80;
+
+/// The rendered text of each error among the `compiler-message` records of cargo's
+/// `--message-format=json` output (P51), in the order cargo reported them. A warning, another
+/// record and a line that is not JSON are skipped.
+fn rendered_errors(json_lines: &str) -> Vec<String> {
+    json_lines
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|msg| msg["reason"] == "compiler-message")
+        .filter(|msg| msg["message"]["level"] == "error")
+        .filter_map(|msg| msg["message"]["rendered"].as_str().map(String::from))
+        .collect()
+}
+
+/// The message for a build that failed (P51): rustc's rendered errors, masked and cut to
+/// `DIAGNOSTIC_LINES` lines, or, when the build reported none, the tail of cargo's own stderr.
+fn build_failure_message(json_lines: &str, stderr: &[u8], masks: &[(&Path, &str)]) -> String {
+    let errors = rendered_errors(json_lines);
+    if errors.is_empty() {
+        return format!(
+            "The crate's test executables MUST build with the real environment.\n\
+             The build reported no rustc diagnostic; cargo's own output ends:\n{}",
+            masked(&tail(stderr), masks)
+        );
+    }
+    let text = masked(&errors.join("\n"), masks);
+    let lines: Vec<&str> = text.lines().collect();
+    let shown = lines.len().min(DIAGNOSTIC_LINES);
+    let mut m = format!(
+        "The crate's test executables MUST build with the real environment.\n\
+         rustc reported {} error(s); its own text, first {shown} of {} lines:\n{}",
+        errors.len(),
+        lines.len(),
+        lines[..shown].join("\n")
+    );
+    if shown < lines.len() {
+        m.push_str("\n...");
+    }
+    m
+}
+
+/// A failure message with the moved home's listing (P52): the assertion's own `head`, then the
+/// listing when the home exists (`listing` is `Some`), then `note`.
+fn failure_message(head: &str, listing: Option<&[String]>, note: &str) -> String {
+    let mut m = String::from(head);
+    if let Some(created) = listing {
+        m.push('\n');
+        m.push_str(&created_message(created));
+    }
+    m.push_str(note);
+    m
+}
+
+/// The doctests in the output of `cargo test --doc -- --list` (P53): each line ending in `: test`,
+/// as cargo printed it.
+fn listed_doctests(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .filter(|l| l.ends_with(": test"))
+        .map(String::from)
+        .collect()
+}
+
+/// The message for a library that holds doctests (P53).
+fn doctest_message(found: &[String]) -> String {
+    format!(
+        "The library MUST NOT hold doctests, since the guard cannot run them under the moved home \
+         ({} found):\n{}",
+        found.len(),
+        found.join("\n")
+    )
 }
 
 /// The test executables of this crate in cargo's `--message-format=json` output: each
@@ -413,6 +522,147 @@ fn the_undeleted_folder_is_named_by_its_own_name_and_the_errors_kind() {
 }
 
 #[test]
+fn a_failed_build_shows_rustcs_rendered_errors_and_not_the_tail_of_cargos_stderr() {
+    let root = Path::new(r"C:\planted-root\work");
+    let line = |reason: &str, level: &str, rendered: &str| {
+        serde_json::json!({
+            "reason": reason,
+            "message": {"level": level, "rendered": rendered}
+        })
+        .to_string()
+    };
+    let json = [
+        line(
+            "compiler-message",
+            "warning",
+            "warning: unused variable: `w`\n",
+        ),
+        String::from("not json"),
+        line(
+            "compiler-message",
+            "error",
+            "error[E0425]: cannot find value `nope` in this scope\n --> tests/planted.rs:3:5\n  \
+             |\n3 |     nope;\n  |     ^^^^ not found in this scope\n",
+        ),
+        line("compiler-artifact", "error", "not a compiler message\n"),
+        line(
+            "compiler-message",
+            "error",
+            "error: could not read C:\\planted-root\\work\\crates\\x.rs and \
+             C:/planted-root/work/crates/y.rs\n",
+        ),
+        String::from(r#"{"reason":"build-finished","success":false}"#),
+    ]
+    .join("\n");
+    assert_eq!(
+        rendered_errors(&json).len(),
+        2,
+        "Only the errors among the compiler messages MUST be found"
+    );
+
+    let stderr =
+        b"error: could not compile `agentspace-cli` (test \"planted\") due to 1 previous error";
+    let m = build_failure_message(&json, stderr, &[(root, "workspace")]);
+    for needed in [
+        "error[E0425]: cannot find value `nope` in this scope",
+        "--> tests/planted.rs:3:5",
+        "^^^^ not found in this scope",
+        "rustc reported 2 error(s)",
+    ] {
+        assert!(
+            m.contains(needed),
+            "The message MUST carry rustc's rendered text: {needed}\n{m}"
+        );
+    }
+    assert!(
+        !m.contains("could not compile") && !m.contains("unused variable"),
+        "The message MUST NOT carry cargo's stderr tail or a warning\n{m}"
+    );
+    assert!(
+        !m.contains("planted-root") && m.contains("<workspace>"),
+        "The workspace root MUST be masked in either spelling\n{m}"
+    );
+
+    let none = build_failure_message(r#"{"reason":"build-finished"}"#, stderr, &[]);
+    assert!(
+        none.contains("no rustc diagnostic") && none.contains("could not compile"),
+        "A build with no diagnostic MUST fall back to cargo's own output\n{none}"
+    );
+
+    let long = line(
+        "compiler-message",
+        "error",
+        &(0..200).map(|n| format!("line {n}\n")).collect::<String>(),
+    );
+    let cut = build_failure_message(&long, b"", &[]);
+    assert!(
+        cut.contains("first 80 of 200 lines")
+            && cut.contains("line 79")
+            && !cut.contains("line 80"),
+        "A long diagnostic MUST be cut to its first {DIAGNOSTIC_LINES} lines\n{cut}"
+    );
+}
+
+#[test]
+fn every_failure_message_carries_the_listing_when_the_home_exists() {
+    let created = vec![String::from("AppData"), String::from("AppData/Local")];
+    let note = "\nNOTE";
+    for head in [
+        "The crate's test executables MUST build",
+        "The build MUST report at least one test executable",
+        "The crate's suite MUST pass with the home moved away",
+        "Each executable MUST run every test its listing names.",
+        "Every executable of the build's list MUST be run and counted",
+        "The library MUST NOT hold doctests",
+    ] {
+        let m = failure_message(head, Some(&created), note);
+        assert!(
+            m.starts_with(head) && m.ends_with(note),
+            "The message MUST be the head, the listing, then the note\n{m}"
+        );
+        assert!(
+            m.contains("(2 paths)") && m.contains("\n  AppData\n  AppData/Local"),
+            "The message for `{head}` MUST carry the home's listing\n{m}"
+        );
+    }
+    let without = failure_message("Head", None, note);
+    assert_eq!(
+        without, "Head\nNOTE",
+        "A home that does not exist MUST add no listing"
+    );
+    let empty: Vec<String> = Vec::new();
+    assert!(
+        failure_message("Head", Some(&empty), "").contains("Nothing is under it"),
+        "A home that exists and is empty MUST say so"
+    );
+}
+
+#[test]
+fn doctests_are_the_listing_lines_that_end_in_test() {
+    let listing = "Doc-tests agentspace_cli\n\
+                   src\\lib.rs - planted (line 108): test\n\
+                   src\\parse.rs - other (line 7): test\n\
+                   \n2 tests, 0 benchmarks\n";
+    assert_eq!(
+        listed_doctests(listing),
+        [
+            "src\\lib.rs - planted (line 108): test",
+            "src\\parse.rs - other (line 7): test"
+        ],
+        "Each doctest MUST be found"
+    );
+    assert!(
+        listed_doctests("Doc-tests agentspace_cli\n0 tests, 0 benchmarks\n").is_empty(),
+        "A library with no doctest MUST list none"
+    );
+    let m = doctest_message(&listed_doctests(listing));
+    assert!(
+        m.contains("MUST NOT hold doctests") && m.contains("(2 found)") && m.contains("planted"),
+        "The message MUST name the rule, the count and each doctest\n{m}"
+    );
+}
+
+#[test]
 fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
     if std::env::var_os(CHILD).is_some() {
         return;
@@ -450,6 +700,31 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
         )
     } else {
         Vec::new()
+    };
+
+    // The library's doctests, listed and not run, with the real environment (P53). Rustdoc is a
+    // toolchain program, so it cannot run them under the moved home.
+    let doc_listing = if built.status.success() {
+        Some(
+            Command::new(env!("CARGO"))
+                .current_dir(workspace_root())
+                .args([
+                    "test",
+                    "-p",
+                    "agentspace-cli",
+                    "--locked",
+                    "--offline",
+                    "--doc",
+                ])
+                .arg("--target-dir")
+                .arg(&target)
+                .args(["--", "--list"])
+                .stdin(Stdio::null())
+                .output()
+                .expect("The listing of the doctests can be started"),
+        )
+    } else {
+        None
     };
 
     // The runs, each with the home moved away and the temp folder kept.
@@ -537,33 +812,111 @@ fn the_whole_suite_creates_nothing_in_a_home_that_does_not_exist() {
         Err(e) => undeleted_note(&scratch_name, e.kind()),
     };
 
+    // Each assertion's message carries the moved home's listing when the home exists (P52).
+    let listing = home_created.then_some(created.as_slice());
+    let profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    let root = workspace_root();
+    let mut masks: Vec<(&Path, &str)> = vec![(root.as_path(), "workspace")];
+    if let Some(p) = profile.as_deref() {
+        masks.push((p, "profile"));
+    }
+    let doctests = doc_listing.as_ref().map(|o| {
+        (
+            o.status.success(),
+            listed_doctests(&String::from_utf8_lossy(&o.stdout)),
+        )
+    });
+
     assert!(
         built.status.success(),
-        "The crate's test executables MUST build with the real environment.\n{}{note}",
-        tail(&built.stderr)
+        "{}",
+        failure_message(
+            &build_failure_message(
+                &String::from_utf8_lossy(&built.stdout),
+                &built.stderr,
+                &masks
+            ),
+            listing,
+            &note
+        )
     );
     assert!(
         !exes.is_empty(),
-        "The build MUST report at least one test executable of agentspace-cli.{note}"
+        "{}",
+        failure_message(
+            "The build MUST report at least one test executable of agentspace-cli.",
+            listing,
+            &note
+        )
     );
+    if let (Some(out), Some((listed_ok, found))) = (doc_listing.as_ref(), doctests.as_ref()) {
+        assert!(
+            *listed_ok,
+            "{}",
+            failure_message(
+                &format!(
+                    "The listing of the library's doctests MUST succeed.\n{}",
+                    masked(&tail(&out.stderr), &masks)
+                ),
+                listing,
+                &note
+            )
+        );
+        assert!(
+            found.is_empty(),
+            "{}",
+            failure_message(&masked(&doctest_message(found), &masks), listing, &note)
+        );
+    }
     assert!(
         failed.is_empty(),
-        "The crate's suite MUST pass with the home moved away ({} of {} executables failed).\n{}{note}",
-        failed.len(),
-        exes.len(),
-        failed.join("\n\n")
+        "{}",
+        failure_message(
+            &format!(
+                "The crate's suite MUST pass with the home moved away ({} of {} executables \
+                 failed).\n{}",
+                failed.len(),
+                exes.len(),
+                failed.join("\n\n")
+            ),
+            listing,
+            &note
+        )
     );
     assert!(
         miscounted.is_empty(),
-        "Each executable MUST run every test its listing names.\n{}{note}",
-        miscounted.join("\n")
+        "{}",
+        failure_message(
+            &format!(
+                "Each executable MUST run every test its listing names.\n{}",
+                miscounted.join("\n")
+            ),
+            listing,
+            &note
+        )
     );
     assert!(
         counted.len() == exes.len() && uncounted.is_empty(),
-        "Every executable of the build's list MUST be run and counted ({} of {}); not: {}.{note}",
-        counted.len(),
-        exes.len(),
-        uncounted.join(", ")
+        "{}",
+        failure_message(
+            &format!(
+                "Every executable of the build's list MUST be run and counted ({} of {}); not: \
+                 {}.",
+                counted.len(),
+                exes.len(),
+                uncounted.join(", ")
+            ),
+            listing,
+            &note
+        )
     );
-    assert!(!home_created, "{}{note}", created_message(&created));
+    assert!(
+        !home_created,
+        "{}",
+        failure_message(
+            "Every executable ran and was counted, and no doctest was found.",
+            listing,
+            &note
+        )
+    );
 }
