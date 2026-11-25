@@ -142,6 +142,14 @@ pub(crate) fn set_instance(
         .map_err(|e| record_failure(home, project, &e))
 }
 
+/// Sets `project`'s record's `last_success_at` to `at`, under `hosts.lock` alone, changing nothing
+/// else of any record (docs/operator.md, provision, step 9's end; D77; pin P23). A failure is the
+/// registry's message, as every other change's is.
+pub(crate) fn set_last_success_at(home: &Path, project: &str, at: &str) -> Result<(), Failure> {
+    agentspace_hosts::set_last_success_at(home, project, at)
+        .map_err(|e| record_failure(home, project, &e))
+}
+
 /// The failure of a change to one project's record: a project with no record is the "has no host"
 /// message, any other error is the registry's.
 fn record_failure(home: &Path, project: &str, error: &HostsError) -> Failure {

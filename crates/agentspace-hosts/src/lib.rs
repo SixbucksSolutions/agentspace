@@ -40,6 +40,7 @@ pub use paths::{
 };
 pub use projects::{Project, Projects, is_listed, read_projects};
 pub use registry::{
-    HostsLock, lock, read, read_for_placing, set_instance, set_instance_type, try_lock, write,
+    HostsLock, lock, read, read_for_placing, set_instance, set_instance_type, set_last_success_at,
+    try_lock, write,
 };
 pub use runlock::{RunLock, run_is_running, try_run_lock};

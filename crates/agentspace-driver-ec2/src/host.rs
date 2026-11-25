@@ -14,7 +14,11 @@
 //! - **A `pending` answer from place MUST check the CA first**, and `check_pending` runs no CA check.
 //! - **The driver MUST NOT change the `state` of a `ready` record.**
 //! - **A run MUST NOT be started while the host's `provision.lock` is held, or when the record's
-//!   `last_attempt_at` is under 5 minutes old.** The run lock is only tried, never waited for.
+//!   `last_attempt_at` is under 5 minutes old and the run that started then did not succeed**
+//!   (D77): it succeeded when the record's `last_success_at` is present and at or after its
+//!   `last_attempt_at`, the two compared as instants. The run lock is only tried, never waited for.
+//! - **Every write that sets `last_attempt_at` MUST remove `last_success_at` in the same write**
+//!   (D77's change note, pin P24), and the driver MUST NOT write `last_success_at` otherwise.
 //! - **`check_pending` MUST NOT wait for `hosts.lock`, write the lease state file or take its lock,
 //!   and MUST end within 20 seconds.**
 //! - **The driver MUST NOT open or make `provision.log` or `provision.lock`**; the host's folder is
@@ -50,7 +54,8 @@ use crate::text::{
 /// The detached start the driver holds, shared with the thread that bounds a start.
 pub type SharedDetach = Arc<dyn Detach + Send + Sync>;
 
-/// A run is due only when the last one started at least this long before now (D48).
+/// After a run that did not succeed, the next is due only when that one started at least this long
+/// before now (D48; D77 keeps it for retries).
 const RUN_EVERY_SECONDS: i64 = 5 * 60;
 
 /// How long place waits for a start to return. `WmiDetach` bounds itself at 10 seconds; this keeps
@@ -351,13 +356,20 @@ fn record_run(
     held: &HostsLock,
 ) -> Result<Option<Run>, Failure> {
     let now = now();
-    let last = match record {
-        Record::New => None,
-        Record::Existing => {
-            hosts::host_for(registry, project).and_then(|h| h.last_attempt_at.clone())
-        }
+    // A record that step 4 is about to add has neither time.
+    let (attempt, success) = match record {
+        Record::New => (None, None),
+        Record::Existing => hosts::host_for(registry, project).map_or((None, None), |h| {
+            (h.last_attempt_at.clone(), h.last_success_at.clone())
+        }),
     };
-    let due = run_is_due(&ctx.home, project, last.as_deref(), now);
+    let due = run_is_due(
+        &ctx.home,
+        project,
+        attempt.as_deref(),
+        success.as_deref(),
+        now,
+    );
     // Step 3: a program that cannot be found fails before anything is written.
     let run = if due {
         Some(operator_run(ctx, project)?)
@@ -383,6 +395,9 @@ fn record_run(
         Record::Existing if due => {
             if let Some(host) = registry.hosts.iter_mut().find(|h| h.project == project) {
                 host.last_attempt_at = Some(stamp);
+                // The same write removes `last_success_at`, so a start in the second the run
+                // before it succeeded never reads as a run that has succeeded (pin P24).
+                host.last_success_at = None;
                 // A `ready` record never has its `state` changed by the driver (D48).
                 if host.state != HostState::Ready {
                     host.state = HostState::Creating;
@@ -398,20 +413,41 @@ fn record_run(
     Ok(run)
 }
 
-/// Step 2: a run is due when the record's `last_attempt_at` is absent or at least 5 minutes
-/// before now, and no run holds the host's `provision.lock`. The lock is tried once and let go at
-/// once; a missing folder or lock file is a lock nobody holds, and the try makes neither.
-fn run_is_due(home: &Path, project: &str, last: Option<&str>, now: i64) -> bool {
-    let old_enough = last
-        .and_then(parse_time)
-        .is_none_or(|at| now.saturating_sub(at) >= RUN_EVERY_SECONDS);
-    if !old_enough {
+/// Step 2 (D77): a run is due when no run holds the host's `provision.lock`, and the record's
+/// `last_attempt_at` is absent or at least 5 minutes before `now`, or the run that started at
+/// `last_attempt_at` succeeded. The lock is tried once and let go at once; a missing folder or
+/// lock file is a lock nobody holds, and the try makes neither.
+fn run_is_due(
+    home: &Path,
+    project: &str,
+    attempt: Option<&str>,
+    success: Option<&str>,
+    now: i64,
+) -> bool {
+    if !spacing_allows(attempt, success, now) {
         return false;
     }
     // QUESTION: driver.md does not say what place does when the run lock cannot be opened for a
     // reason other than its being held (state.md: "not a free lock ... starts or runs nothing").
     // Interim: no run is due, so nothing is started and the lease is `pending`.
     matches!(hosts::run_is_running(home, project), Ok(false))
+}
+
+/// Step 2's reads of the record alone, by reads and `now` and nothing else (D77): `last_attempt_at`
+/// absent, or at least 5 minutes before `now`, or the run that started then succeeded, which is
+/// `last_success_at` present and at or after `last_attempt_at`, compared as instants, so equal
+/// seconds read as a success. A `last_attempt_at` that is not a time reads as absent, as it did
+/// before D77; a `last_success_at` that is not a time is no success.
+fn spacing_allows(attempt: Option<&str>, success: Option<&str>, now: i64) -> bool {
+    let Some(attempt) = attempt.and_then(parse_time) else {
+        return true;
+    };
+    if now.saturating_sub(attempt) >= RUN_EVERY_SECONDS {
+        return true;
+    }
+    success
+        .and_then(parse_time)
+        .is_some_and(|success| success >= attempt)
 }
 
 /// Whether `program` is agentspace's own operator beside the CLI, as the CLI resolves it with
@@ -772,12 +808,16 @@ mod tests {
     fn check_pending_for_a_listed_project_adds_the_record_and_starts_one_run() {
         let f = fx();
         f.list("other");
+        let t0 = now();
         f.check("other").unwrap();
+        let t1 = now();
         let host = f.host("other").unwrap();
         assert_eq!(host.state, HostState::Creating);
         assert_eq!(host.stack, "agentspace-host-other");
+        assert_eq!(host.last_success_at, None);
+        // Bracketed by the clock read before and after the call, not by a margin from now.
         let at = parse_time(host.last_attempt_at.as_deref().unwrap()).unwrap();
-        assert!((now() - at).abs() <= 5);
+        assert!(t0 <= at && at <= t1);
         // The box's record stays first.
         let all = hosts::read(&f.ctx.home).unwrap();
         assert_eq!(all.hosts[0].stack, "agentbox");
@@ -866,12 +906,23 @@ mod tests {
         assert_eq!(f.starts().len(), 1);
     }
 
+    /// #0189: the exact 5-minute boundary is decided against a fixed `now`, never the clock. The
+    /// test before this one seeded `ago(299)` and let `check_pending` read the clock again, at
+    /// second resolution: whenever a whole second ticked over between the two reads, the record
+    /// was 300 seconds old and due, so it failed alone too, about as often as the fixture's own
+    /// time is a fraction of a second. Through `check_pending` the margins are now a minute each
+    /// way, which no parallel build closes.
     #[test]
     fn a_failed_record_five_minutes_old_runs_again_and_a_newer_one_does_not() {
+        let at = |s: i64| format_time(NOW - s);
+        assert!(!spacing_allows(Some(&at(299)), None, NOW));
+        assert!(spacing_allows(Some(&at(300)), None, NOW));
+        assert!(spacing_allows(Some(&at(301)), None, NOW));
+
         let f = fx();
         f.seed_with(&format!(
             r#"{{"project":"other","stack":"agentspace-host-other","state":"failed","last_attempt_at":"{}"}}"#,
-            ago(299)
+            ago(240)
         ));
         let before = f.registry();
         f.check("other").unwrap();
@@ -881,12 +932,143 @@ mod tests {
         let f = fx();
         f.seed_with(&format!(
             r#"{{"project":"other","stack":"agentspace-host-other","state":"failed","last_attempt_at":"{}"}}"#,
-            ago(301)
+            ago(360)
         ));
         f.check("other").unwrap();
         assert_eq!(f.starts().len(), 1);
         let host = f.host("other").unwrap();
         assert_eq!(host.state, HostState::Creating);
+    }
+
+    // ---- v0.10: D77, a run due at once after one that succeeded ---------------------------------
+
+    #[test]
+    fn spacing_is_due_at_once_after_a_success_at_or_after_the_attempt() {
+        let at = |s: i64| format_time(NOW - s);
+        // The run that started 10 seconds ago succeeded: at a later second, and in the same one.
+        assert!(spacing_allows(Some(&at(10)), Some(&at(2)), NOW));
+        assert!(spacing_allows(Some(&at(10)), Some(&at(10)), NOW));
+        assert!(spacing_allows(Some(&at(0)), Some(&at(0)), NOW));
+        // No attempt at all is due, whatever the success says.
+        assert!(spacing_allows(None, None, NOW));
+        assert!(spacing_allows(None, Some(&at(10)), NOW));
+    }
+
+    #[test]
+    fn spacing_waits_five_minutes_after_a_failure_a_death_or_a_start_not_yet_locked() {
+        let at = |s: i64| format_time(NOW - s);
+        // A failed run, or one whose placing failed or left a lease: the success is an earlier
+        // run's, before this attempt.
+        assert!(!spacing_allows(Some(&at(10)), Some(&at(11)), NOW));
+        assert!(!spacing_allows(Some(&at(10)), Some(&at(299)), NOW));
+        // A run that died, or a start whose run has not yet taken its lock: no success at all,
+        // since every start removes it.
+        assert!(!spacing_allows(Some(&at(10)), None, NOW));
+        assert!(!spacing_allows(Some(&at(0)), None, NOW));
+        // A success that is not a time is no success.
+        assert!(!spacing_allows(Some(&at(10)), Some("not a time"), NOW));
+        // The 5 minutes still end the wait.
+        assert!(spacing_allows(Some(&at(300)), Some(&at(400)), NOW));
+    }
+
+    /// A record whose last run, started `attempt` seconds ago, ended `success` seconds ago.
+    fn ran(state: &str, attempt: i64, success: Option<i64>) -> String {
+        let success = success
+            .map(|s| format!(r#","last_success_at":"{}""#, ago(s)))
+            .unwrap_or_default();
+        format!(
+            r#"{{"project":"other","stack":"agentspace-host-other","state":"{state}","instance_id":"i-1234567890abcdef0","last_attempt_at":"{}"{success}}}"#,
+            ago(attempt)
+        )
+    }
+
+    #[test]
+    fn a_run_is_due_at_once_after_one_that_succeeded_and_the_start_removes_the_success() {
+        let f = fx();
+        f.seed_with(&ran("ready", 30, Some(20)));
+        let t0 = now();
+        f.check("other").unwrap();
+        let t1 = now();
+        assert_eq!(f.starts().len(), 1, "A run that succeeded is not a retry");
+        let host = f.host("other").unwrap();
+        assert_eq!(host.state, HostState::Ready);
+        let at = parse_time(host.last_attempt_at.as_deref().unwrap()).unwrap();
+        assert!(
+            t0 <= at && at <= t1,
+            "last_attempt_at is the start's own time"
+        );
+        assert_eq!(
+            host.last_success_at, None,
+            "The write that sets last_attempt_at removes last_success_at"
+        );
+        assert_eq!(host.instance_id.as_deref(), Some("i-1234567890abcdef0"));
+        // The start after that one waits its 5 minutes, unless that run succeeds in turn.
+        let before = f.registry();
+        f.check("other").unwrap();
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.registry(), before);
+    }
+
+    #[test]
+    fn a_success_in_the_same_second_as_its_attempt_is_a_success() {
+        let f = fx();
+        f.seed_with(&ran("ready", 30, Some(30)));
+        f.check("other").unwrap();
+        assert_eq!(f.starts().len(), 1);
+    }
+
+    #[test]
+    fn no_run_within_five_minutes_of_a_failure_or_a_run_that_died() {
+        // A failed run on a `ready` host: the success is the run before it.
+        for record in [
+            ran("ready", 30, Some(400)),
+            ran("ready", 30, None),
+            ran("creating", 30, None),
+            ran("failed", 30, Some(31)),
+        ] {
+            let f = fx();
+            f.seed_with(&record);
+            let before = f.registry();
+            f.check("other").unwrap();
+            assert!(f.starts().is_empty(), "{record}");
+            assert_eq!(f.registry(), before, "{record}");
+        }
+    }
+
+    #[test]
+    fn a_held_run_lock_starts_nothing_even_after_a_success() {
+        let f = fx();
+        f.seed_with(&ran("ready", 30, Some(20)));
+        let held = hosts::try_run_lock(&f.ctx.home, "other").unwrap().unwrap();
+        let before = f.registry();
+        f.check("other").unwrap();
+        assert!(f.starts().is_empty());
+        assert_eq!(f.registry(), before, "Nothing is written, the success kept");
+        drop(held);
+        f.check("other").unwrap();
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.host("other").unwrap().last_success_at, None);
+    }
+
+    #[test]
+    fn place_starts_a_run_at_once_after_a_success_and_removes_it() {
+        let f = fx_ca();
+        f.seed_with(&format!(
+            r#"{{"project":"other","stack":"agentspace-host-other","state":"ready","instance_type":"m9g.4xlarge","last_attempt_at":"{}","last_success_at":"{}"}}"#,
+            ago(30),
+            ago(20)
+        ));
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        let host = f.host("other").unwrap();
+        assert_eq!(host.last_success_at, None);
+        assert_eq!(host.state, HostState::Ready);
+        assert_eq!(host.instance_type.as_deref(), Some("m9g.4xlarge"));
+        // And the next place within 5 minutes starts nothing.
+        let before = f.registry();
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.registry(), before);
     }
 
     #[test]
@@ -910,7 +1092,9 @@ mod tests {
         let held = hosts::lock(&f.ctx.home).unwrap();
         let begun = Instant::now();
         f.check("other").unwrap();
-        assert!(begun.elapsed() < Duration::from_secs(2));
+        // Well under the lock's 30-second wait, which is what a wait would take, and wide enough
+        // that a parallel build does not reach it.
+        assert!(begun.elapsed() < Duration::from_secs(10));
         assert!(f.starts().is_empty());
         drop(held);
         assert_eq!(f.registry(), None);

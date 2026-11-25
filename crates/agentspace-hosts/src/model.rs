@@ -65,9 +65,8 @@ pub struct Host {
     pub instance_type: Option<String>,
     /// The start time of the host's last provisioning run, UTC.
     pub last_attempt_at: Option<String>,
-    /// The time the host's last provisioning run that succeeded ended, UTC (docs/state.md, The
-    /// last success; D77, D81). Pinned as code before v0.10-T02, read and written by nothing until
-    /// #0216.
+    /// The time the host's last provisioning run that succeeded ended, UTC, kept as the string it
+    /// is stored as (docs/state.md, The last success; D77, D81). Written after `last_attempt_at`.
     pub last_success_at: Option<String>,
 }
 
@@ -186,7 +185,6 @@ fn text(o: &Map<String, Value>, key: &str) -> Result<Option<String>, Invalid> {
 fn record_from(v: &Value) -> Result<Host, Invalid> {
     let o = v.as_object().ok_or(Invalid::Schema)?;
     Ok(Host {
-        last_success_at: None,
         project: text(o, "project")?.ok_or(Invalid::Schema)?,
         stack: text(o, "stack")?.ok_or(Invalid::Schema)?,
         state: text(o, "state")?
@@ -196,6 +194,7 @@ fn record_from(v: &Value) -> Result<Host, Invalid> {
         instance_id: text(o, "instance_id")?,
         instance_type: text(o, "instance_type")?,
         last_attempt_at: text(o, "last_attempt_at")?,
+        last_success_at: text(o, "last_success_at")?,
     })
 }
 
@@ -219,9 +218,9 @@ fn check_rules(hosts: &[Host]) -> Result<(), Invalid> {
         _ => return Err(Invalid::BoxRecord),
     }
     if hosts.iter().any(|h| {
-        h.last_attempt_at
-            .as_deref()
-            .is_some_and(|t| parse_time(t).is_none())
+        [&h.last_attempt_at, &h.last_success_at]
+            .into_iter()
+            .any(|t| t.as_deref().is_some_and(|t| parse_time(t).is_none()))
     }) {
         return Err(Invalid::TimeNamesNoInstant);
     }
@@ -275,6 +274,10 @@ pub fn serialize(hosts: &Hosts) -> Result<Vec<u8>, Invalid> {
         }
         if let Some(t) = &h.last_attempt_at {
             out.push_str(",\"last_attempt_at\":");
+            out.push_str(&json::quote(t));
+        }
+        if let Some(t) = &h.last_success_at {
+            out.push_str(",\"last_success_at\":");
             out.push_str(&json::quote(t));
         }
         out.push('}');
@@ -477,6 +480,61 @@ mod tests {
     }
 
     #[test]
+    fn the_last_success_is_read_as_stored_written_last_and_only_when_present() {
+        let mut hosts = two();
+        hosts.hosts[1].last_success_at = Some("2026-11-20T19:07:00Z".to_string());
+        let text = String::from_utf8(serialize(&hosts).unwrap()).unwrap();
+        assert!(text.contains(
+            "\"last_attempt_at\":\"2026-11-20T19:05:42Z\",\"last_success_at\":\"2026-11-20T19:07:00Z\"}"
+        ));
+        assert_eq!(text.matches("last_success_at").count(), 1);
+        assert_eq!(parse(text.as_bytes()).unwrap(), hosts);
+        // A success older than the attempt is a valid record, and is kept as stored.
+        hosts.hosts[1].last_success_at = Some("2026-11-20T18:00:00Z".to_string());
+        assert_eq!(
+            parse(&serialize(&hosts).unwrap()).unwrap().hosts[1].last_success_at,
+            hosts.hosts[1].last_success_at
+        );
+        assert_eq!(parse(&serialize(&two()).unwrap()).unwrap(), two());
+        assert_eq!(
+            parse(&serialize(&two()).unwrap()).unwrap().hosts[1].last_success_at,
+            None
+        );
+    }
+
+    #[test]
+    fn a_last_success_that_is_not_a_time_makes_the_file_not_valid() {
+        let rec = |v: &str| {
+            format!(
+                r#"{{"project":"agentspace","stack":"agentspace-host-agentspace","state":"ready","last_success_at":{v}}}"#
+            )
+        };
+        for bad in [
+            "null",
+            "4",
+            r#""2026-11-20T19:07:00+00:00""#,
+            r#""2026-11-20T19:07:00Z\n""#,
+            r#""2026-11-20T23:59:60Z""#,
+            r#""""#,
+        ] {
+            assert_eq!(refused(&doc(&[BOX, &rec(bad)])), Invalid::Schema, "{bad}");
+        }
+        assert_eq!(
+            refused(&doc(&[BOX, &rec(r#""2026-02-30T00:00:00Z""#)])),
+            Invalid::TimeNamesNoInstant
+        );
+        let ok = parse(doc(&[BOX, &rec(r#""2026-11-20T19:07:00Z""#)]).as_bytes()).unwrap();
+        assert_eq!(
+            ok.hosts[1].last_success_at.as_deref(),
+            Some("2026-11-20T19:07:00Z")
+        );
+        // A change to one that names no instant is not serialized.
+        let mut hosts = two();
+        hosts.hosts[1].last_success_at = Some("2026-04-31T00:00:00Z".to_string());
+        assert_eq!(serialize(&hosts).unwrap_err(), Invalid::TimeNamesNoInstant);
+    }
+
+    #[test]
     fn a_change_to_an_instance_type_not_of_its_form_is_not_serialized() {
         let mut hosts = two();
         hosts.hosts[1].instance_type = Some("M9G.XLARGE".to_string());
@@ -597,15 +655,16 @@ mod tests {
         };
     }
 
-    const VALID_SAMPLES: [(&str, &str); 5] = [
+    const VALID_SAMPLES: [(&str, &str); 6] = [
         sample!("hosts.state.creating-and-failed.json"),
         sample!("hosts.state.full.json"),
         sample!("hosts.state.instance-type-on-one.json"),
         sample!("hosts.state.instance-type.json"),
+        sample!("hosts.state.last-success.json"),
         sample!("hosts.state.seed.json"),
     ];
 
-    const INVALID_SAMPLES: [(&str, &str); 16] = [
+    const INVALID_SAMPLES: [(&str, &str); 18] = [
         sample!("invalid/hosts.state.bad-instance-id.json"),
         sample!("invalid/hosts.state.bare-array.json"),
         sample!("invalid/hosts.state.extra-member.json"),
@@ -613,10 +672,12 @@ mod tests {
         sample!("invalid/hosts.state.instance-type-bad-form.json"),
         sample!("invalid/hosts.state.instance-type-not-string.json"),
         sample!("invalid/hosts.state.instance-type-too-long.json"),
+        sample!("invalid/hosts.state.last-success-with-offset.json"),
         sample!("invalid/hosts.state.missing-stack.json"),
         sample!("invalid/hosts.state.missing-state.json"),
         sample!("invalid/hosts.state.null-instance-id.json"),
         sample!("invalid/hosts.state.null-instance-type.json"),
+        sample!("invalid/hosts.state.null-last-success.json"),
         sample!("invalid/hosts.state.stack-of-other-name.json"),
         sample!("invalid/hosts.state.time-with-offset.json"),
         sample!("invalid/hosts.state.unknown-state.json"),
