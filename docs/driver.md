@@ -2095,6 +2095,10 @@ taking a holder's place:
   opened and checked on its own handle, its parent process ID its parent's and its creation no
   earlier than its parent's. A descendant that cannot be opened, or fails its checks, MUST NOT be
   ended, and is not reported.
+  - **A descendant that has exited is not taken into the tree either, and the walk does not go
+    below it**, so nothing below it is in the tree, even while the process above it still holds it
+    open. A client below it is then in no client's tree, and is reached only on its own, by a later
+    walk of the release ([Release a lease](#release-a-lease), #0196).
 - **The handles held**: every handle is held until the call ends, so no process ID in a tree is
   reused meanwhile.
 - **Leaves first**: each tree is ended leaves first, the client last.

@@ -230,7 +230,8 @@ const NAME_END: char = '\u{1c}';
 /// leaf's process ID to a file, and then either waits (for at most 60 seconds, or until it is
 /// ended) or exits at once, which leaves its leaves with a parent that has gone. Told to repeat, it
 /// starts them again and again, as an app that reconnects does, for as long as the watched file
-/// exists and at most `NODE_CAP` times. A leaf gets none of the node's `ASDRV_` variables, only
+/// exists and at most `NODE_CAP` times, and ends a leaf itself whose start returned after the
+/// watched file was gone. A leaf gets none of the node's `ASDRV_` variables, only
 /// those `NODE_LEAF_ENV` names.
 #[test]
 fn chain_node_is_not_a_test() {
@@ -285,13 +286,24 @@ fn chain_node_is_not_a_test() {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
-            let child = command.spawn().expect("A leaf starts");
+            let mut child = command.spawn().expect("A leaf starts");
             let mut file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&pids)
                 .expect("The ID file opens");
             writeln!(file, "{}", child.id()).expect("The ID is written");
+            // A leaf whose start returned after the watched file was gone may have started after
+            // the release's last walk read the process list, which driver.md's "Release a lease"
+            // places outside its claim (#0229). The node ends it itself, so that a case asserts
+            // only what that rule claims: every leaf found running with the file still there was
+            // running before the file's deletion, so before the release's second walk.
+            if let Some(w) = &watch
+                && !w.exists()
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             started.push(child);
         }
     }
@@ -967,11 +979,15 @@ fn a_clients_tree_that_is_still_growing_is_ended_whole() {
 
 /// A desktop app that reconnects: it starts an `agentspace-ssh-proxy.exe <alias>` again and again
 /// for as long as the alias file exists, as an app does that connects through the alias, and each
-/// start takes a moment. The release deletes the alias file, so the app starts no more, and the
-/// card's done-when is that no process holding the alias is left running: #0196 saw a proxy running
-/// one second after a release that returned in 0.1 seconds. **driver.md as it stands on main does not
-/// require this case**: its second walk runs once, right after the alias file is gone, so a proxy
-/// being started at that moment is not ended. **This is the rule the implementer is writing.**
+/// start takes a moment. The release deletes the alias file, so the app starts no more, and
+/// driver.md's "Release a lease" says that no process holding the alias that its walks can end is
+/// left running when it returns: every proxy running when its last walk read the process list
+/// (D59, as changed for v0.10-T03; #0196 saw a proxy running one second after a release that
+/// returned in 0.1 seconds). **A proxy started after that read is outside the rule's claim**
+/// (#0229), so the app ends a proxy whose start returned after the alias file was gone itself, and
+/// the case asserts nothing of it: a proxy the app found the alias file still there for was
+/// running before the file's deletion, so before the release's second walk, and the release MUST
+/// have ended it.
 #[test]
 fn a_reconnecting_apps_proxies_are_all_gone_once_its_alias_is_gone() {
     let rel = Rel::ready();
