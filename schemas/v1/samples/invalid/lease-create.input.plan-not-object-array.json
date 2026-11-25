@@ -1,0 +1,1 @@
+{"project":"swimcoach","plan":[{"name":"v0.10","turns":[{"name":"T01","stories":[{"name":"E0.10-T01-S01","subagents":[{"name":"implementer","model":"Opus","effort":"high"},{"name":"reviewer","model":"Opus","effort":"high","after":["implementer"]}]}]}]}]}

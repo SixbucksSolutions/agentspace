@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/plan.input.schema.json",
-  "title": "Plan (input, contract v1)",
-  "description": "A plan: the turns of a piece of work in order, each turn's stories, and each story's subagents, from which agentspace lease create picks a lease's size. On the command line, --plan names a UTF-8 JSON file that holds this document; a create request's plan member holds it as an object, and lease-create.input.schema.json copies these $defs. Unknown members are refused everywhere. As in every input schema, null for an optional member (the plan's name, a subagent's after) means it is not given, and null for a required member is refused. Names are compared exactly, never trimmed or case-folded; model and effort are recorded as given and read by no sizing. Anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET and Python. What this schema cannot check, and the program checks (docs/lease-api.md, Values, Plan): a cycle in after, a subagent after itself included; an after entry that names no subagent of the same story; two turns of one name, two stories of one turn of one name, or two subagents of one story of one name; two members of one name in one object; a file larger than 262144 bytes, a byte order mark counted; a byte order mark anywhere but the file's start; and bytes that are not UTF-8.",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v2/plan.input.schema.json",
+  "title": "Plan (input, contract v2)",
+  "description": "A plan: the turns of a piece of work in order, each turn's stories, and each story's subagents, from which agentspace lease create picks a lease's size, and each turn's optional budget, from which it picks a plan lease's TTL. On the command line, --plan names a UTF-8 JSON file that holds this document, and --board with --epic reads it from the epic's agentspace-plan block on a localswim board; a create request's plan member holds it as an object, and lease-create.input.schema.json copies these $defs. Unknown members are refused everywhere. As in every input schema, null for an optional member (the plan's name, a turn's budget_minutes, a subagent's after) means it is not given, and null for a required member is refused. Names are compared exactly, never trimmed or case-folded; model and effort are recorded as given and read by no sizing. Anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET and Python. What this schema cannot check, and the program checks (docs/lease-api.md, Values, Plan): a cycle in after, a subagent after itself included; an after entry that names no subagent of the same story; two turns of one name, two stories of one turn of one name, or two subagents of one story of one name; two members of one name in one object; a file larger than 262144 bytes, a byte order mark counted; a byte order mark anywhere but the file's start; a budget_minutes not written as digits alone, such as 90.0 or 9e1, which JSON Schema's integer accepts and the program refuses; and bytes that are not UTF-8.",
   "$ref": "#/$defs/plan",
   "$defs": {
     "plan": {
@@ -25,7 +25,7 @@
       }
     },
     "plan_turn": {
-      "description": "A turn: its name, unique in the plan, and its stories, which run at once.",
+      "description": "A turn: its name, unique in the plan, its stories, which run at once, and its budget, if it has one.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "stories"],
@@ -37,6 +37,12 @@
           "minItems": 1,
           "maxItems": 32,
           "items": { "$ref": "#/$defs/plan_story" }
+        },
+        "budget_minutes": {
+          "description": "The turn's wall-clock budget in whole minutes, 1 to 960, from which a lease for this turn takes its TTL. Null or absent means the turn has none.",
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 960
         }
       }
     },

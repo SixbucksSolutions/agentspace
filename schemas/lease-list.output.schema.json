@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/lease-list.output.schema.json",
-  "title": "Lease list (output, contract v1)",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v2/lease-list.output.schema.json",
+  "title": "Lease list (output, contract v2)",
   "description": "The leases that agentspace lease list prints, oldest first. Each item is a lease exactly as in lease.output.schema.json, whose $defs this file copies word for word, because Test-Json -SchemaFile does not resolve a $ref to another file. Strict: anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET. See docs/lease-api.md.",
   "type": "object",
   "additionalProperties": false,

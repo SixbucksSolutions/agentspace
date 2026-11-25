@@ -1,0 +1,20 @@
+{
+  "id": "4bfdcf35-cf41-4e60-a28a-b1df5e709c2b",
+  "project": "swimcoach",
+  "state": "unsatisfiable",
+  "platform": "linux/arm64",
+  "profile": "agent-linux",
+  "size": "xl",
+  "sized_for": {
+    "turn": "T01",
+    "agents": 40
+  },
+  "ttl_seconds": 28800,
+  "created_at": "2026-11-24T14:14:00Z",
+  "reasons": [
+    {
+      "code": "plan_too_large",
+      "message": "Plan's busiest turn 'T01' has 40 agents at once; the largest size, xl, holds 32."
+    }
+  ]
+}

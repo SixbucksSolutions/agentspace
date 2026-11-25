@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/lease.output.schema.json",
-  "title": "Lease (output, contract v1)",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v2/lease.output.schema.json",
+  "title": "Lease (output, contract v2)",
   "description": "One lease, as printed by agentspace lease create, get, renew and release. Strict: anchored patterns end with $(?!\\n), since $ alone matches before a final line feed in .NET. Every value is in its one canonical form, and each state requires and forbids its own fields. A lease created with a plan carries sized_for, in every state; a lease whose reasons hold plan_too_large holds it alone, has sized_for and has size xl. Whether a lease was created with a plan, and whether its size is the one its sized_for gives, are not checked here. See docs/lease-api.md.",
   "$ref": "#/$defs/lease",
   "$defs": {

@@ -1,0 +1,1 @@
+{"code":"out_of_range","message":"TTL '48h' is outside the allowed range. Give from 1m to 24h; it is never clamped.","field":"ttl"}
