@@ -14,6 +14,7 @@
 //!   change it reports is made where the document is known first.
 
 mod create;
+mod plan;
 mod release;
 mod renew;
 mod show;

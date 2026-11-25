@@ -47,7 +47,7 @@ Exit codes:
 "##;
 
 pub const CREATE: &str = r##"Usage: agentspace lease create --project <name> [--platform <os/arch>] [--profile <name>]
-                               [--size <size>] [--ttl <duration>]
+                               [--size <size> | --plan <file>] [--ttl <duration>]
 
 Requests a lease for one agent of a project, and prints it as JSON.
 Check the lease's state before connecting: ready, pending or unsatisfiable.
@@ -61,13 +61,17 @@ Options:
   --profile <name>      Default agent-linux. Accepts name or name@version.
   --size <size>         Default m. One of s, m, l or xl: at least 2, 4, 8 or 16 vCPUs,
                         with 4 GiB of memory for each.
+  --plan <file>         Size the lease for a plan: a JSON file of turns, stories and
+                        subagents. Picks the smallest size that holds its busiest turn.
+                        Not with --size.
   --ttl <duration>      Default 8h. From 1m to 24h, never clamped.
                         Examples: 8h, 90m, 1h30m, '2 hours', PT8H.
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v0 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
+In v1 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
+So does a plan whose busiest turn no size holds.
 "##;
 
 pub const GET: &str = r##"Usage: agentspace lease get <id>

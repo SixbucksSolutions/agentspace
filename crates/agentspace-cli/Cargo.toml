@@ -13,8 +13,15 @@ name = "agentspace"
 path = "src/main.rs"
 
 [dependencies]
+# The ProxyCommand program's search beside this program, for the checks a `plan_too_large` lease
+# still makes before it is recorded (lease-api.md, `create`, pin P32).
+agentspace-alias = { path = "../agentspace-alias" }
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-driver-ec2 = { path = "../agentspace-driver-ec2" }
+# quiet_hard_errors, which main calls first (#0225; D81, as changed during v0.10-T02).
+agentspace-launch = { path = "../agentspace-launch" }
+# The plan of `create --plan`: its parse, its busiest turn and the size it gets (D74, D75, D81).
+agentspace-plan = { path = "../agentspace-plan" }
 agentspace-state = { path = "../agentspace-state" }
 agentspace-values = { path = "../agentspace-values" }
 # The OS's random source, for a new lease ID (the architect's conditions on the seam, 2026-11-19).
@@ -23,6 +30,11 @@ getrandom = { version = "=0.3.4", default-features = false }
 # The lock holds itoa at 1.0.18, because 1.0.19 (2026-11-09) is under two weeks old at 2026-11-19,
 # so a re-lock MUST keep it.
 serde_json = { version = "=1.0.154", default-features = false, features = ["std", "preserve_order"] }
+
+# Whether an open plan file is a file on a disk, never a device or a pipe (lease-api.md, Plan, pin
+# P7). The version and features the other crates already use.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # Throwaway folders under the temp folder for the commands' unit tests; the version the other
