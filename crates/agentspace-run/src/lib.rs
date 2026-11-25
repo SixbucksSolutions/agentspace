@@ -12,6 +12,8 @@
 //!   stories (the push's ssh, the tunnel, `go build`) MUST call it on theirs.
 //! - [`ssh_program`]: the ssh the push's own pipe-wired ssh MUST be started from (T02).
 //! - [`ssh_program_with`]: the same, over an injectable variable lookup.
+//! - [`ssh_found`] and [`ssh_found_with`]: the same ssh as a [`Program`], its path with the line a
+//!   failed start of it MUST give, for a caller that starts the ssh itself (`bootstrap`, #0227).
 //!
 //! # What this crate guarantees
 //!
@@ -167,9 +169,16 @@ impl Runner {
 /// a program a seam variable names, since a file the system cannot start is one that names
 /// nothing runnable (operator.md, The test seam), or "Could not run" for a default (Programs it
 /// starts, "When a default program cannot be run").
-struct Program {
-    path: PathBuf,
-    cannot_start: String,
+///
+/// **A caller that starts the program itself MUST answer a failed start with `cannot_start`**,
+/// exactly, and never with a line of its own (#0227): only the finder knows whether a seam
+/// variable named the program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program {
+    /// The full path to start.
+    pub path: PathBuf,
+    /// The command's line when the start fails.
+    pub cannot_start: String,
 }
 
 impl Program {
@@ -200,7 +209,22 @@ pub fn ssh_program_with(
     ctx: &Context,
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, Failure> {
-    program_or_default(ctx, lookup, SSH_VAR, "ssh.exe").map(|program| program.path)
+    ssh_found_with(ctx, lookup).map(|program| program.path)
+}
+
+/// The ssh [`ssh_program`] finds, with the line a failed start of it gives: the seam's for a
+/// program `AGENTSPACE_SSH_CMD` names, `Could not run` for the default (operator.md, The test
+/// seam; Programs it starts).
+pub fn ssh_found(ctx: &Context) -> Result<Program, Failure> {
+    ssh_found_with(ctx, &|name| std::env::var_os(name))
+}
+
+/// [`ssh_found`] over an injectable variable lookup.
+pub fn ssh_found_with(
+    ctx: &Context,
+    lookup: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<Program, Failure> {
+    program_or_default(ctx, lookup, SSH_VAR, "ssh.exe")
 }
 
 /// The seam variable's value, or `None` when it is unset, empty or only whitespace.

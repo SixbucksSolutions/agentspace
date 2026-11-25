@@ -10,9 +10,13 @@
 //!   operator's, so the script's output passes through. There is no time limit of the operator's
 //!   own: the ssh is waited for until it exits.
 //! - **The ssh is `ssh -o ClearAllForwardings=yes <alias> <remote command>`**, started as
-//!   [`agentspace_run::ssh_program`] finds the program (so `AGENTSPACE_SSH_CMD` stands in for it) and
+//!   [`agentspace_run::ssh_found`] finds the program (so `AGENTSPACE_SSH_CMD` stands in for it) and
 //!   with the environment `agentspace-run` gives every program. The pinned `Remote` has no stdin, so
 //!   this ssh is started here.
+//! - **A start that fails MUST answer with the line the finder gave** (#0227): `agentspace:
+//!   AGENTSPACE_SSH_CMD names <value>, which cannot be run.` for an ssh the seam variable names,
+//!   since a file the system cannot start is one that names nothing runnable (operator.md, The test
+//!   seam), and `agentspace: Could not run <path>.` for the default (Programs it starts).
 //! - **The remote command is the operator's own words** (D34), one argument, the last, and holds no
 //!   `%`, no double quote and no control character and does not end in a backslash (gap FA-15). It
 //!   runs the script it reads from its stdin with bash as the login user, and exits with the
@@ -21,13 +25,13 @@
 //!   The toolchain bootstrap failed on the instance.`
 
 use std::io::Write;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 use agentspace_box::start_and_wait;
 use agentspace_ca::CaEnv;
 use agentspace_hosts::Target;
 use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Remote, Say};
+use agentspace_run::Program;
 
 use crate::files::Places;
 use crate::syncing::plan;
@@ -73,7 +77,12 @@ pub(crate) fn run(
 
     // Step 3: the ssh, with the script on its stdin.
     say.progress("Running the toolchain bootstrap on the instance...", None);
-    let code = ssh_with_stdin(ctx, &plan.alias, REMOTE_COMMAND, embedded::BOOTSTRAP)?;
+    let code = ssh_with_stdin(
+        || agentspace_run::ssh_found(ctx),
+        &plan.alias,
+        REMOTE_COMMAND,
+        embedded::BOOTSTRAP,
+    )?;
 
     // Step 4: any non-zero exit fails.
     if code != 0 {
@@ -86,32 +95,35 @@ pub(crate) fn run(
 }
 
 /// One ssh with forwards cleared, `alias`, and `remote_command` as its last argument, whose stdin is
-/// a pipe that `stdin` is written to and closed; returns its exit code.
+/// a pipe that `stdin` is written to and closed; returns its exit code. `find` is the finder, which
+/// the command passes as [`agentspace_run::ssh_found`] over the real environment and a test over a
+/// lookup of its own.
 fn ssh_with_stdin(
-    ctx: &Context,
+    find: impl FnOnce() -> Result<Program, Failure>,
     alias: &str,
     remote_command: &str,
     stdin: &'static [u8],
 ) -> Result<i32, Failure> {
-    let program = agentspace_run::ssh_program(ctx)?;
+    let program = find()?;
     run_ssh(&program, alias, remote_command, stdin)
 }
 
-/// [`ssh_with_stdin`] for a program that is already found.
+/// [`ssh_with_stdin`] for a program that is already found. A start that fails gives the line the
+/// finder gave with the program (#0227).
 fn run_ssh(
-    program: &Path,
+    program: &Program,
     alias: &str,
     remote_command: &str,
     stdin: &'static [u8],
 ) -> Result<i32, Failure> {
-    let mut command = Command::new(program);
+    let mut command = Command::new(&program.path);
     command
         .args(["-o", steps::CLEAR_FORWARDS, alias, remote_command])
         .stdin(Stdio::piped());
     agentspace_run::prepare_child_env(&mut command);
     let mut child = command
         .spawn()
-        .map_err(|_| failure(format!("agentspace: Could not run {}.", program.display())))?;
+        .map_err(|_| failure(program.cannot_start.clone()))?;
     // Written from a thread of its own, so that a script larger than the pipe never waits on an ssh
     // that is waiting for the operator. A write that fails because ssh has already exited is not
     // an error here: the exit code reports it.
@@ -134,6 +146,52 @@ fn run_ssh(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::{Scratch, ctx_in, raw_stand_in};
+    use std::ffi::OsStr;
+    use std::path::{Path, PathBuf};
+
+    const SSH_VAR: &str = "AGENTSPACE_SSH_CMD";
+
+    /// Bootstrap's step 3 as the command runs it, with the ssh found by `agentspace-run`'s finder
+    /// over a lookup in which `AGENTSPACE_SSH_CMD` is `seam` (unset for `None`) and nothing else is
+    /// set, in place of the real environment.
+    fn bootstrap_ssh(ctx: &Context, seam: Option<&OsStr>) -> Result<i32, Failure> {
+        let seam = seam.map(OsStr::to_os_string);
+        let lookup = move |name: &str| if name == SSH_VAR { seam.clone() } else { None };
+        ssh_with_stdin(
+            || agentspace_run::ssh_found_with(ctx, &lookup),
+            "agentspace-host.demo",
+            REMOTE_COMMAND,
+            embedded::BOOTSTRAP,
+        )
+    }
+
+    /// The seam's line (operator.md, The test seam), for a value given as `value`.
+    fn seam_line(value: &Path) -> String {
+        format!(
+            "agentspace: {SSH_VAR} names {}, which cannot be run.",
+            value.display()
+        )
+    }
+
+    /// A file named `ssh.exe` in `dir` that holds no PE image, which Windows takes for a 16-bit
+    /// program and cannot start. The process's error mode is made quiet first (#0225), so that its
+    /// start fails at once under any runner and never waits at a modal dialog.
+    fn not_a_program(dir: &Path) -> PathBuf {
+        agentspace_launch::quiet_hard_errors();
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("ssh.exe");
+        std::fs::write(&path, b"not a program").unwrap();
+        path
+    }
+
+    /// The default ssh's path under the context's `SystemRoot` (operator.md, Programs it starts).
+    fn default_ssh(ctx: &Context) -> PathBuf {
+        ctx.system_root
+            .join("System32")
+            .join("OpenSSH")
+            .join("ssh.exe")
+    }
 
     #[test]
     fn the_remote_command_keeps_fa15s_rule() {
@@ -147,7 +205,6 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_ssh_gets_its_arguments_and_the_script_on_its_stdin_and_its_exit_code_comes_back() {
-        use crate::tests::{Scratch, raw_stand_in};
         let dir = Scratch::new("bootstrap-ssh");
         // Records its arguments, then copies its stdin to a file, then exits with 7.
         let program = raw_stand_in(
@@ -155,13 +212,7 @@ mod tests {
             "ssh",
             "@echo off\r\necho %1 %2 %3 %4 > \"%~dp0args.txt\"\r\nfindstr \"^\" > \"%~dp0stdin.txt\"\r\nexit /b 7\r\n",
         );
-        let code = run_ssh(
-            &program,
-            "agentspace-host.demo",
-            REMOTE_COMMAND,
-            embedded::BOOTSTRAP,
-        )
-        .unwrap();
+        let code = bootstrap_ssh(&ctx_in(dir.path()), Some(program.as_os_str())).unwrap();
         assert_eq!(code, 7);
         let args = std::fs::read_to_string(dir.path().join("args.txt")).unwrap();
         // Quotes aside, which a `.cmd` stand-in's quoting adds.
@@ -176,13 +227,76 @@ mod tests {
         assert_eq!(sent, want);
     }
 
+    /// #0227: a seam value that names a file that does not exist answers with the seam's line.
     #[test]
-    fn a_program_that_cannot_be_started_fails_with_its_own_message() {
-        let dir = std::env::temp_dir().join("agentspace-sync-no-such-ssh.exe");
-        let failure = run_ssh(&dir, "agentspace", REMOTE_COMMAND, embedded::BOOTSTRAP).unwrap_err();
+    fn a_seam_naming_a_missing_file_fails_with_the_seams_line() {
+        let dir = Scratch::new("bootstrap-seam-missing");
+        let missing = dir.path().join("nowhere").join("ssh.exe");
+        let failure = bootstrap_ssh(&ctx_in(dir.path()), Some(missing.as_os_str())).unwrap_err();
+        assert_eq!(failure.message, seam_line(&missing));
+        assert!(matches!(failure.caller, CallerFailure::CouldNotReach));
+    }
+
+    /// #0227: a seam value that names a folder answers with the seam's line.
+    #[test]
+    fn a_seam_naming_a_folder_fails_with_the_seams_line() {
+        let dir = Scratch::new("bootstrap-seam-folder");
+        let folder = dir.path().join("ssh.exe");
+        std::fs::create_dir_all(&folder).unwrap();
+        let failure = bootstrap_ssh(&ctx_in(dir.path()), Some(folder.as_os_str())).unwrap_err();
+        assert_eq!(failure.message, seam_line(&folder));
+        assert!(matches!(failure.caller, CallerFailure::CouldNotReach));
+    }
+
+    /// #0227: a seam value that names a file the system cannot start (a file named `ssh.exe` that
+    /// holds no program) names nothing runnable, and answers with the seam's line, never the
+    /// default's "Could not run" (operator.md, The test seam).
+    #[test]
+    fn a_seam_naming_a_file_that_is_not_a_program_fails_with_the_seams_line() {
+        let dir = Scratch::new("bootstrap-seam-not-a-program");
+        let ctx = ctx_in(dir.path());
+        let file = not_a_program(&dir.path().join("bin"));
+        let failure = bootstrap_ssh(&ctx, Some(file.as_os_str())).unwrap_err();
+        assert_eq!(failure.message, seam_line(&file));
+        assert!(matches!(failure.caller, CallerFailure::CouldNotReach));
+    }
+
+    /// The default ssh, which exists but cannot be started, keeps the default's line (operator.md,
+    /// Programs it starts, "When a default program cannot be run").
+    #[test]
+    fn a_default_ssh_that_is_not_a_program_fails_with_could_not_run() {
+        let dir = Scratch::new("bootstrap-default-not-a-program");
+        let ctx = ctx_in(dir.path());
+        let path = default_ssh(&ctx);
+        assert_eq!(not_a_program(path.parent().unwrap()), path);
+        let failure = bootstrap_ssh(&ctx, None).unwrap_err();
         assert_eq!(
             failure.message,
-            format!("agentspace: Could not run {}.", dir.display())
+            format!("agentspace: Could not run {}.", path.display())
+        );
+        assert!(matches!(failure.caller, CallerFailure::CouldNotReach));
+    }
+
+    /// The default ssh, found and then gone before its start, keeps the default's line too.
+    #[test]
+    fn a_default_ssh_gone_before_its_start_fails_with_could_not_run() {
+        let dir = Scratch::new("bootstrap-default-gone");
+        let ctx = ctx_in(dir.path());
+        let path = default_ssh(&ctx);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"").unwrap();
+        let found = agentspace_run::ssh_found_with(&ctx, &|_| None).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let failure = ssh_with_stdin(
+            || Ok(found),
+            "agentspace",
+            REMOTE_COMMAND,
+            embedded::BOOTSTRAP,
+        )
+        .unwrap_err();
+        assert_eq!(
+            failure.message,
+            format!("agentspace: Could not run {}.", path.display())
         );
     }
 

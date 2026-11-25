@@ -49,3 +49,7 @@ sha2 = { version = "=0.10.9", default-features = false }
 # CryptProtectData, for the dummy Bot credential of the push test; and SetFileTime, which gives a
 # throwaway operator folder its old creation time for the 24-hour sweep's test.
 windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+# quiet_hard_errors, which bootstrap's unit tests call before they start a file that is not a
+# program, so that no start can wait at a modal dialog under any runner (#0227, #0225). The
+# library forbids unsafe code, its tests included, so they cannot call SetErrorMode themselves.
+agentspace-launch = { path = "../agentspace-launch" }

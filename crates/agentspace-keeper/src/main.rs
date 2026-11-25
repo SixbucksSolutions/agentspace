@@ -260,6 +260,10 @@ fn program(
 }
 
 fn main() {
+    // First, before anything is started or opened, the launcher role included: a process at error
+    // mode 0 that starts a file that is not a program waits for a person at a modal dialog (#0225,
+    // D81); its children inherit this mode.
+    agentspace_launch::quiet_hard_errors();
     let raw: Vec<OsString> = std::env::args_os().skip(1).collect();
     std::process::exit(program(&raw, &keeper, &run_launcher));
 }
