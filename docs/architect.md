@@ -305,6 +305,23 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **A reviewer that dies on an API error leaves its wrapped runs running**; a fresh reviewer adopts
   them by their output paths rather than starting another heavy run.
 
+**Learned in v0.10-T04, the conformance turn.**
+- **A turn that changes no product code builds once**, and every story names that one build; the
+  record's diff over `crates`, `xtask`, `Cargo.*` and `box` shows it is the final `main`'s.
+- **Runs whose inputs no later merge changes start early, each tied to the final `main` by a quoted
+  diff over the inputs it reads** (P55). Banning every story from editing a shared harness is what
+  makes that diff provable for the files that load it.
+- **One story's whole-suite run MAY stand for another's** when it ran on the commit that merged and
+  the record shows the diff over every input it read; a file changed after it is rerun on a checkout
+  of the commit, never on a working copy.
+- **A whole-suite command comes from the last record's count, not from a passage about one file**:
+  a box-test tasking copied conformance.md's one-file pattern and ran 22 of 172 tests.
+- **Run files are copied to the record's worktree before a checkout is removed**, since
+  `git worktree remove --force` deletes its ignored `target\`.
+- **A doc writer's tasking ends with an anchor check proven on a planted bad anchor**.
+- **Operator lanes are balanced by seconds, not by file count**: `deploy-size` (about 680 s) and
+  `sync-patch-wait` (about 440 s) in one lane made it 38 minutes against the other's 21.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
