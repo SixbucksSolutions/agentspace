@@ -2840,7 +2840,10 @@ impl Throwaway {
 
     /// Runs the program in the home, as its working folder, with every variable agentspace reads
     /// passed through `Command::env`, and the provisioning program named a file that is not there,
-    /// so that no run can ever be started.
+    /// so that no run can ever be started. The way to reach the host is named too, as a command that
+    /// is not there and is never run, so that the check for it passes whether or not the build put
+    /// `agentspace-ssh-proxy.exe` beside the program (lease-api.md, Environment: the program is then
+    /// not looked for). A workspace build places it and the isolation guard's child build does not.
     fn run(&self, line: &[&str]) -> Run {
         let mut cmd = Command::new(common::BIN);
         cmd.args(line)
@@ -2855,11 +2858,11 @@ impl Throwaway {
             .env(
                 "AGENTSPACE_PROVISION_CMD",
                 self.home.join("no-such-run.cmd"),
-            );
+            )
+            .env("AGENTSPACE_PROXY_COMMAND", "no-such-forwarder --stdio");
         for var in [
             "AGENTSPACE_STATE_DIR",
             "AGENTSPACE_SSH_DIR",
-            "AGENTSPACE_PROXY_COMMAND",
             "AGENTSPACE_OPERATOR_CMD",
             "AGENTSPACE_CHECK_SEAM",
         ] {
