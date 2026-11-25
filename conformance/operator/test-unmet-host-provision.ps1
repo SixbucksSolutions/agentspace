@@ -25,7 +25,8 @@
 #
 #   1. A new host's first run (a listed project with no record): the calls in order across the steps;
 #      the record `creating` at the run's start, its instance ID removed and written again by the
-#      deploy step, then `ready` with the ID and the run's start time; the log's lines; the sign-in
+#      deploy step, then `ready` with the ID and the run's start time, and from v0.10 the run's
+#      `last_success_at` (D77), since it placed every pending lease; the log's lines; the sign-in
 #      line last; every ssh and scp naming agentspace-host.<project>; one operator\<hex>\ folder for
 #      the deploy and the sync, named to the stand-ins and removed at the end; provision.lock held at
 #      every call and released at the end; -Quiet.
@@ -67,7 +68,7 @@ function Find-Call($Calls, [string]$Name) { @($Calls | Where-Object { (Get-HpCal
 # What a record holds, as one comparable text: the members in the table's order.
 function Format-Rec($R) {
   if ($null -eq $R) { return '(none)' }
-  (@('project', 'stack', 'state', 'instance_id', 'last_attempt_at') | ForEach-Object { if ($R.ContainsKey($_)) { "$_=$($R[$_])" } }) -join ' '
+  (@('project', 'stack', 'state', 'instance_id', 'last_attempt_at', 'last_success_at') | ForEach-Object { if ($R.ContainsKey($_)) { "$_=$($R[$_])" } }) -join ' '
 }
 # The lines of one run the stand-ins saw, for the ssh and scp alias checks.
 function Add-AliasProblems($Problems, $Calls, [string]$Want) {
@@ -148,11 +149,25 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
   } else { $p.Add('No bootstrap ssh was made') }
   Write-HpProblems "${sec}: the deploy step removes the instance ID and writes the stack's again (so it is missing at the read and present after), and the state stays creating until step 8, with last_attempt_at left as step 3 wrote it (steps 4 and 8; deploy, step 5)" $p
 
+  # From v0.10 the run, having placed every pending lease (here none), ends by writing the record's
+  # last_success_at, the time it ended, after last_attempt_at (step 9's end; state.md, The last
+  # success; D77, pins P22 to P24). Its value is the run's clock, so it is read from the file and
+  # checked to lie within the run and at or after last_attempt_at.
   $final = Get-HpRecordFromText ([IO.File]::ReadAllText((Get-HpHostsFile $h))) 'agentspace'
-  $wantBytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-HpHostsText -BoxId $script:HpBoxId -Records @((New-HpRecord 'agentspace' 'ready' $script:HpHostId $la))))
+  $ls = if ($final -and $final.ContainsKey('last_success_at')) { [string]$final['last_success_at'] } else { '' }
+  $host8 = New-HpRecord 'agentspace' 'ready' $script:HpHostId $la
+  $host9 = $host8.Substring(0, $host8.Length - 1) + ',"last_success_at":"' + $ls + '"}'
+  $wantBytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-HpHostsText -BoxId $script:HpBoxId -Records @($host9)))
   $p = New-HpProblems
-  if (-not (Test-HpSameBytes (Get-HpFileBytes (Get-HpHostsFile $h)) $wantBytes)) { $p.Add("hosts.json is not the box's record unchanged and the host's: ready, instance_id the stack's, last_attempt_at the run's start ($(Format-Rec $final)); written compact, UTF-8, one LF") }
-  Write-HpProblems "${sec}: step 8 records the host ready with the instance ID the deploy read and last_attempt_at left as step 3 wrote it, and changes no other record (step 8)" $p
+  if ($ls -eq '') { $p.Add('The record holds no last_success_at, though the run placed every pending lease (there were none)') }
+  else {
+    $lsAt = ConvertFrom-HpTime $ls
+    $laAt = ConvertFrom-HpTime $la
+    if ($null -eq $lsAt -or -not (Test-HpTimeBetween $ls $t0 $t1)) { $p.Add('last_success_at is not in the UTC form, or not a time within the run') }
+    elseif ($null -eq $laAt -or $lsAt -lt $laAt) { $p.Add('last_success_at is before last_attempt_at') }
+  }
+  if (-not (Test-HpSameBytes (Get-HpFileBytes (Get-HpHostsFile $h)) $wantBytes)) { $p.Add("hosts.json is not the box's record unchanged and the host's: ready, instance_id the stack's, last_attempt_at the run's start, last_success_at last ($(Format-Rec $final)); written compact, UTF-8, one LF") }
+  Write-HpProblems "${sec}: step 8 records the host ready with the instance ID the deploy read and last_attempt_at left as step 3 wrote it, step 9's end adds last_success_at at or after it, and no other record changes (steps 8 and 9; D77)" $p
 
   $p = New-HpProblems
   if ($null -eq $log.Bytes) { $p.Add('There is no provision.log') }
