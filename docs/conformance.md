@@ -1306,6 +1306,20 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
     check.** The file runs from the wrapper's error mode (0x8001) and changes none, and **a file named
     `ssh.exe` that is not a program MUST NOT raise a modal "Unsupported 16-Bit Application" dialog**
     (#0225); a run that did would hang until the case's timeout, and **a dialog is a finding**.
+  - **Two known limits of `test-unmet-host-provision-success.ps1`** (the reviewer's N7 and N8 on PR #160,
+    ruled by the architect for v0.10-T04). **Neither makes a result wrong**; each says how a failure of
+    the file is read.
+    - **N7, card #0230:** the shared helper `Get-HpLogShape` (`host-provision-common.ps1`) quotes a log
+      line it cannot parse, raw, in a failure's reason, and a case's `provision.log` is in its throwaway
+      home, which `New-ConformanceHome` makes under `%TEMP%`, so such a line can carry the profile's 8.3
+      short name. **A failure reason of a `provision` file MUST be masked before it is printed outside the
+      run's own folder or written to a record**, as for any command's error text
+      (AGENTS.md, "Terry's real files in a review"); the helper's own fix is #0230's.
+    - **N8:** in a case that reports several results, an error in the check itself reports one `FAIL`
+      under the case's name and not one for each result. **A file's count is therefore a count of
+      results only when no case failed**: against an empty operator the success file gives 23 results
+      and `main`'s build gives its 30, and a `FAIL` against a build is read from the reason it prints,
+      not from the count.
   - **What no stand-in shows** is the crates' own tests (`agentspace-sync`'s
     `tests/provision_success.rs` and `agentspace-hosts`' `tests/last_success.rs`), and
     **a lease created after placing's last re-read and before the run exits** (pin P31) is not shown at
@@ -2143,7 +2157,7 @@ E0.10-T05 (#0224) installs v0.10, do not meet them** where v0.09 lacks the behav
 for every file above. Each case's result name starts with the anchor of the spec section it enforces
 (`lease-api.md#plan:`, `lease-api.md#fields:`, `driver.md#starting-a-provisioning-run: Y1 ...`,
 `operator.md#provision:`, `operator.md#the-test-seam:`). **The results of T04's new files are in their
-pull requests (#159 for E0.10-T04-S01's, S02's own for #0222); the run record**
+pull requests (#159 for E0.10-T04-S01's, #160 for E0.10-T04-S02's, #0222); the run record**
 ([docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md)) **covers the whole suite and the crates, and the
 box's tests with the whole discovery command**, and this page gives no count of v0.10's but the box's 172
 ([The idle check's test](#the-idle-checks-test)).
@@ -2182,8 +2196,9 @@ box's tests with the whole discovery command**, and this page gives no count of 
     passed and 4 failed for the seam file. The whole-suite run's empty-program step
     MUST show each lease CLI file exiting 1 ([Running the suite against a build's output
     folder](#running-the-suite-against-a-builds-output-folder), step 5).
-- **A file's results in its pull request are not the build's whole-suite result**: the run record runs each
-  at the final `main`.
+- **A file's results in its pull request are not the build's whole-suite result**: the run record runs
+  each against the build, at the commit its sections name, and shows by a diff that the files at the
+  final `main` are those it ran ([docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md#the-commits)).
 
 
 **A gap is a spec section that no sorted check covers.** The sorted checks leave these.
