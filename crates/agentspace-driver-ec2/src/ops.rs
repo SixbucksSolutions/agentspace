@@ -10,12 +10,14 @@
 //! - **Release MUST remove the alias file before the lease folder,** and MUST work for a lease
 //!   that was just placed and has no record.
 //! - **Release MUST walk for the alias's clients before it deletes the alias file and again after
-//!   it, and MUST log one line for both walks before it deletes the lease folder.**
+//!   it, MUST then walk again for as long as the walk before ended a client, within the bounds of
+//!   `walk::further_walk_due` (#0196), and MUST log one line for all its walks before it deletes the
+//!   lease folder.**
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use agentspace_alias::{
     AliasFailure, AliasFailureKind, AliasFile, alias_file_bytes, alias_name, check_alias_owner,
@@ -23,7 +25,6 @@ use agentspace_alias::{
     lease_file_text, remove_alias, write_alias,
 };
 use agentspace_connections::Result as WalkResult;
-use agentspace_connections::line::release_text;
 use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
 };
@@ -35,7 +36,7 @@ use crate::text::{
     capitalize, delete_failed, failure, lease_file_name, lease_folder_name, still_there,
     transport_failed,
 };
-use crate::walk::{Walker, append_release_line};
+use crate::walk::{Walker, append_release_line, further_walk_due, release_line_text};
 
 /// The certificate's one principal, the returned user and the alias's login user (D3).
 pub const USER: &str = "ubuntu";
@@ -322,10 +323,11 @@ pub fn remove_files(ctx: &Context, lease: &LeaseRef) -> Result<(), Failure> {
     delete_lease_folder(ctx, lease)
 }
 
-/// What release's step 3 holds between its first walk and the alias file's deletion: the alias
-/// and the first walk's result.
+/// What release's step 3 holds between its first walk and the alias file's deletion: the alias,
+/// when the first walk started, and its result.
 struct FirstWalk {
     alias: String,
+    started: Instant,
     first: WalkResult<usize>,
 }
 
@@ -337,13 +339,19 @@ struct FirstWalk {
 fn first_walk(ctx: &Context, lease: &LeaseRef, walk: &Walker) -> Result<FirstWalk, Failure> {
     let alias = alias_name(lease.project, lease.id);
     check_alias_owner(&ctx.ssh_dir, &alias, lease.id).map_err(|f| check_failure(&f))?;
+    let started = Instant::now();
     let first = walk.end(&alias);
-    Ok(FirstWalk { alias, first })
+    Ok(FirstWalk {
+        alias,
+        started,
+        first,
+    })
 }
 
 /// Release's step 3, from the alias file's deletion on: the alias file's deletion, the second walk,
-/// the one line of `release.log`, and, when the alias file's deletion succeeded, the lease's
-/// folder's. A client that cannot be ended never fails it.
+/// a further walk for as long as the one before ended a client, the one line of `release.log`, and,
+/// when the alias file's deletion succeeded, the lease's folder's. A client that cannot be ended
+/// never fails it.
 fn after_first_walk(
     ctx: &Context,
     lease: &LeaseRef,
@@ -352,17 +360,18 @@ fn after_first_walk(
 ) -> Result<(), Failure> {
     let removed = delete_alias_file(ctx, lease, &held.alias);
 
-    // The second walk runs whether or not the deletion succeeded: a client that came back through
-    // the alias while the first walk ran is ended here, and none can after the alias is gone.
-    let second = walk.end(&held.alias);
+    // The second walk runs whether or not the deletion succeeded: a client that came back while
+    // the first walk ran is ended here. Then the release walks again while the walk before ended a
+    // client (#0196): a client that no tree of that walk reached, below a program that had exited
+    // under the client it ended, is found on its own only by a later walk.
+    let mut walks = vec![held.first, walk.end(&held.alias)];
+    while further_walk_due(&walks, held.started.elapsed()) {
+        walks.push(walk.end(&held.alias));
+    }
 
-    // One line for both walks, written before the lease folder is deleted. A log that cannot be
+    // One line for every walk, written before the lease folder is deleted. A log that cannot be
     // written is ignored.
-    append_release_line(
-        &ctx.state_dir,
-        lease.id,
-        &release_text(&held.first, &second),
-    );
+    append_release_line(&ctx.state_dir, lease.id, &release_line_text(&walks));
 
     // When the alias file could not be deleted, the lease folder is left alone.
     removed?;

@@ -574,13 +574,39 @@ MUST return nothing.
 - **It removes the lease's alias next.** An alias file that is absent is a success, and the driver
   goes on to the rest.
 - **From v0.08, it then ends the lease's connections a second time** (D59's change for v0.08-T01;
-  architect, 2026-11-21, for v0.08-T01, pin P23): any client that came back through the alias
-  while the first ending ran is ended, and once the alias is gone no client can come back through
-  it. This second ending is best effort as the first is.
-- **It appends one line to `release.log` in the CLI's state folder**, how many connections the two
-  endings ended between them, in the form of
+  architect, 2026-11-21, for v0.08-T01, pin P23): any client that came back while the first
+  ending ran is ended. This second ending is best effort as the first is. **It runs whether or not
+  the alias file's deletion succeeded.**
+- **From v0.10, it then ends them again, for as long as the ending before ended a client** (#0196;
+  E0.10-T03-S02). A client below a program that has exited, while the client above it still holds
+  that program, is no part of the upper client's tree, and is not counted on its own while the
+  upper client runs ([Each with its tree](#each-with-its-tree)). So an ending that ends the upper
+  client leaves it running, and only a later ending finds it with no client above it; a chain of
+  two such programs needs a third ending. Before v0.10 no rule ended such a client after the
+  second ending, so it could outlive a release that returned at once, with nothing logged for it.
+  v0.08's live release left a proxy holding the alias running a second after it returned, and its
+  record does not show which process that was; this is one way it could have happened, and the
+  other, a process started after the last ending, is below (finding 1 of
+  [its run record](runs/e0.08-t06-s02.md), #0196).
+  - **After each ending from the second on that ended at least one client, the release MUST end
+    them again, within the bounds below.** It MUST stop at the first ending that ends none, or that
+    cannot look for the clients at all.
+  - **A release MUST make at most six endings in all, and MUST start none after the second once 10
+    seconds have passed since the first started.** Each ending returns within 10 seconds of its own
+    start ([Each with its tree](#each-with-its-tree)), so a release's endings take at most 20
+    seconds between them, as its two did before v0.10, and a release stays inside the 30-second
+    wait of every other changing command ([Ordering and concurrency](#ordering-and-concurrency)).
+  - **Each further ending is one call of `end_alias_clients`**, as the second is, and best effort
+    as every ending is. A release with no client, or whose second ending ends none, makes two
+    endings, as before v0.10.
+- **It appends one line to `release.log` in the CLI's state folder**, how many connections all of
+  its endings ended between them, in the form of
   [Where the count is logged](#where-the-count-is-logged), whichever driver it is (architect,
-  2026-11-21, for v0.08-T01, pin P23).
+  2026-11-21, for v0.08-T01, pin P23). **A release of three endings or more MUST count them as that
+  section counts two** (E0.10-T03-S02): `<n>` is the clients every ending that read the process
+  list ended, summed; `<k>` is the clients that the last ending that read it could not end, each
+  once, so that a client an earlier ending could not end, and a later one ended or found gone, is
+  not in it; and `<e>` is the Windows error of the first ending that could not read it.
 - **It then removes the lease's key, certificate and anything else it made for the lease,**
   including a leftover temporary file of a renew that was cut short.
 - **It does not edit the caller's OpenSSH client configuration.** The line that pulls the alias
@@ -588,6 +614,23 @@ MUST return nothing.
 - **It needs no CA** and runs no CA check, so release works on a machine whose CA is missing.
 - **It does not revoke any certificate (D10).** Until v0.08 it closed no open connection either;
   from v0.08 it ends those on the caller's machine, as above, and none on the host (D59).
+
+**A release MUST leave no process holding the alias that its endings can end** (#0196;
+E0.10-T03-S02). When the release step returns, every client of the alias that was running when its
+last ending read the process list has been ended, or is counted in its `release.log` line as one
+that could not be ended ([What cannot be ended](#what-cannot-be-ended)), or is in the tree of a
+client so counted. A client, here, is a process that
+[Which processes are the alias's clients](#which-processes-are-the-aliass-clients) takes as one;
+v0.10 does not change those rules. Two cases are outside this, and the release makes no claim about
+them:
+- **A process started after the last ending read the process list.** Deleting the alias file does
+  not stop every client from coming back: the Claude desktop app's `ssh.exe` names its own
+  `claude-ssh-proxy.exe` as its ProxyCommand, which runs the alias's ProxyCommand line from the
+  app's own `proxy-command.txt` (decisions.md, D12's findings for E3.03, and D9's for
+  E0.02-T03-S01). So the app can start the alias's `agentspace-ssh-proxy.exe` after the alias file
+  is gone, and a release cannot end a process that does not yet exist.
+- **Endings stopped by the bounds above**, at six or at 10 seconds, while the last still ended a
+  client. Only a client that comes back as fast as it is ended can cause it.
 
 **A release that fails part way MUST NOT leave a lease `ready` or `expired` with its alias, key or
 certificate partly gone** ([lease-api.md](lease-api.md#concurrency-and-atomicity), #0041). From
@@ -637,7 +680,7 @@ finishes the job:
 |---|---|---|
 | The alias is another lease's | The check step | The file at the alias's place does not name this lease. Nothing is ended, logged or deleted, and the CLI writes no record |
 | The alias is another lease's | The release step | The same, found by its own check. Nothing is ended, logged or deleted, and the record stays `released` |
-| The credential or alias could not be deleted | The release step | A file cannot be removed. The connections ended stay ended, both endings run and its line is logged, and the record stays `released` |
+| The credential or alias could not be deleted | The release step | A file cannot be removed. The connections ended stay ended, every ending after the alias file's deletion runs and its line is logged, and the record stays `released` |
 
 A failure's message SHOULD be the wording lease-api.md's table gives for release, and MUST be in
 agentspace's own words and MUST NOT carry an absolute path. The prototype lets the underlying
