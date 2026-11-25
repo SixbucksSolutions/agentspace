@@ -28,7 +28,8 @@
 //! unless the calling thread has asked for no critical-error message boxes. The create calls run
 //! with `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX` set for this thread alone
 //! (`NoErrorBoxes`; architect, 2026-11-24, option B for #0191), so the create fails without
-//! waiting, with Windows' own text, which the launcher answers (keeper.md, The handshake, step 4).
+//! waiting, with Windows' own text, which the launcher answers (keeper.md, The handshake, step 4:
+//! "A start MUST NOT wait on a Windows dialog").
 //! The thread's mode is put back afterwards on every way out, a panic included, and the process's
 //! mode, which the holder inherits, is never changed here. `CreateProcessW` in `spawn` is this
 //! crate's only start of a program; the launcher itself is made by WMI (`wmi`), outside this

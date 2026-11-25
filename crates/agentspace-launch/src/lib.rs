@@ -10,7 +10,7 @@
 //! | `WmiStarter` | The pinned `agentspace_keeper_api::Starter`: the pass's half of the handshake. It writes the request, has the launcher created through WMI's `Win32_Process.Create`, waits for the claim and the result within every bound of The handshake, withdraws an unanswered request with `abandoned`, checks the holder once, and removes the three files in the spec's order, keeping the claim of a request it cannot remove. |
 //! | `run_launcher` | The launcher's half: it claims the request, starts the holder with `CreateProcessW`, and writes the result. It returns the launcher's exit code. |
 //! | `LAUNCHER_ARGUMENT`, `launcher_request` | The private argument that makes the keeper's own program the launcher (D42), and its reader. |
-//! | `quiet_hard_errors` | Turns Windows' hard-error message boxes off for the whole process (#0191), for every program's `main` from v0.10-T03 (#0226). |
+//! | `quiet_hard_errors` | Turns Windows' hard-error message boxes off for the whole process (#0191), for the mains that D81, changed during v0.10-T02, names (#0226, #0219). |
 //!
 //! # The launcher's command line
 //!
@@ -114,8 +114,9 @@ pub fn run_launcher(request: &Path) -> i32 {
 /// fails at once with Windows' own text. Children inherit the process's mode, so a program's own
 /// children are quiet too.
 ///
-/// **Who calls it:** every agentspace program's `main`, first, from v0.10-T03 (#0226, carried into
-/// v0.10-T03 from #0225 as D81 was changed for it). This crate calls it nowhere but its tests: the
+/// **Who calls it** (D81, changed during v0.10-T02, which carries defect #0225 into T03): from
+/// v0.10-T03, the operator's, the ssh proxy's and the three keeper programs' mains call it first
+/// (#0226), and so does the CLI's (#0219). This crate calls it nowhere but its tests: the
 /// launcher's own create is already quiet for its thread alone (`run_launcher`), whatever the
 /// process's mode.
 pub fn quiet_hard_errors() {
