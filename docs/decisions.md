@@ -119,6 +119,7 @@ line's text after `Status:`, without its full stop.
 - [D79. v0.10 carries its folded-in work in a hardening story first and with the driver work](#d79-v010-carries-its-folded-in-work-in-a-hardening-story-first-and-with-the-driver-work): Decided
 - [D80. v0.10's done-when is shown by conformance and by a live check that starts no instance](#d80-v010s-done-when-is-shown-by-conformance-and-by-a-live-check-that-starts-no-instance): Decided
 - [D81. v0.10 is fourteen stories in five turns: specs, foundations and hardening, programs, conformance, install](#d81-v010-is-fourteen-stories-in-five-turns-specs-foundations-and-hardening-programs-conformance-install): Decided
+- [D82. v0.10's three follow-up cards are folded into v0.11 and v0.12](#d82-v010s-three-follow-up-cards-are-folded-into-v011-and-v012): Decided
 
 ## The interface
 
@@ -4350,6 +4351,24 @@ key IDs, account IDs with hyphens, and a `--token value` with no `=` or `:`), ea
 and the lost observer script, rebuilt from runs/e0.09-t05-s01.md (handoff-v0.09.md, What is open;
 D79). With v0.10's install, AGENTS.md's "Sizing a host before it runs agents" is rewritten for
 plan-sized leases (D73).
+
+### D82. v0.10's three follow-up cards are folded into v0.11 and v0.12
+
+**Decided, Terry, 2026-11-25**, on the architect's placement in
+[handoff-v0.10.md](handoff-v0.10.md#cards-only-terry-can-move): "Yes, go ahead". v0.10 carded three
+follow-ups that no release held, against AGENTS.md's rule that the Backlog matches the roadmap. Each
+is folded whole into its epic's description and archived, as D72 folded nine; the epic `references`
+the card, and the story that meets it cites its number.
+
+| Card | Epic | Where in it |
+|---|---|---|
+| #0229: the ProxyCommand connects a lease alias whose record is not ready, so a desktop app can reconnect after a release | v0.11 (#0052) | A story of its first build turn: it is the one open defect a user can meet |
+| #0230: `Get-HpLogShape` quotes raw provision log lines, which can carry the profile's 8.3 short name, in a failing case's reason | v0.11 (#0052) | Its conformance turn, which runs the operator's suite |
+| #0228: a release takes a found client that no built tree holds as a top in the same walk (`agentspace-connections`) | v0.12 (#0051) | Its driver work; whether D59's further walks stay is ruled in its design prep |
+
+- **#0225 and #0227, met by #0226 and #0219 in v0.10-T03, are Completed**, approved by Terry the same
+  day. Bot cannot move a card into Completed (HTTP 403). A move of each straight from Ready For
+  Work to Ready For Review exited 1, its error not read; the same move through In Progress passed.
 
 ## Keys
 

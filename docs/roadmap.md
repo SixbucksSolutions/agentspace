@@ -98,6 +98,10 @@ when Terry says so (D14).
   #0192, #0193, and #0195's build if it is code, into v0.12 (#0051); #0190, #0082 and #0109 into
   v1.0's first turn (#0053), before the real project measures its own turn. #0027 (OBE by v0.06)
   and #0194 (met) are Completed.
+- **v0.10's follow-ups are folded the same way** (Terry, 2026-11-25; D82): #0229 (the ProxyCommand
+  connects an alias that is not ready) and #0230 (a conformance helper's unmasked log lines) into
+  v0.11 (#0052); #0228 (one walk ends a chain of clients) into v0.12 (#0051). #0225 and #0227, met
+  in v0.10-T03, are Completed.
 - #0209 (the lease CLI's isolation guard saw its moved home created once under load, found at
   v0.09-T02's close) is carried into v0.09-T03 as #0210 (D71's change).
 - #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite

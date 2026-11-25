@@ -98,7 +98,7 @@ Mountain, when it was written.
 | The hosts | Both `stopped` (T05's last `status -All`, 9:22am on 2026-11-25). The box (`agentbox`, swimcoach's): 20 GiB. `agentspace-host-agentspace`: 8 GiB. Both at `m9g.xlarge` |
 | Instance hours | None asked for and none used in v0.10 (Q16). No instance has run since v0.09-T05 |
 | Leases | 44 recorded, none `ready` or `pending`. Four are T05's `unsatisfiable` leases for `v010-plancheck`, which no release needs (D80) |
-| The board | Every v0.10 card in Completed. In Backlog: #0225 and #0227, met, waiting on Terry; #0228, #0229 and #0230, waiting to be placed ([Cards only Terry can move](#cards-only-terry-can-move)) |
+| The board | Every v0.10 card in Completed, and #0225 and #0227 with them. #0229 and #0230 folded into v0.11 (#0052), #0228 into v0.12 (#0051), and archived (D82). No defect or hardening card is open in Backlog |
 | Swimcoach | No milestone; `scripts/milestones.json` is empty (053f71d), `v0.10` was stopped at 9:42am, and the reporter is stopped |
 | Sessions | Every dev lead archived; `git worktree list` shows `main` alone. The board watcher was armed at close, as reader `agentspace` |
 | Terry's laptop, otherwise | Unchanged by v0.10 beyond the install. T02's run wrapper raised "Unsupported 16-Bit Application" dialogs on his desktop, at least 17 by the subagents' reports; he closed each (#0225) |
@@ -306,7 +306,7 @@ v0.12, D79 the folded-in work, and D80 the done-when shown with no instance.
 | A worktree folder stays held by the session that was in it | Remove the empty folder after that session is archived |
 | `archive_session` is refused once by a hook that relabels the call, and refused while the dev lead is mid-turn | Resend with exactly the input the refusal quotes; retry after its turn ends |
 | `start_session` is refused on a turn an event started, not Terry | Propose the session as a card; Terry starts it with one click |
-| Bot's card moves out of Backlog answer HTTP 403, and auto mode refuses them without Terry's word | Ask Terry; move it on his word |
+| Bot's card moves out of Backlog or into Completed answer HTTP 403; a move straight from Ready For Work to Ready For Review exited 1 once, its error not read | Terry moves a card out of Backlog and approves it into Completed; the architect moves it through In Progress to Ready For Review |
 | `localswim board get` shows no lanes, and `lane list` does not exist | `board get --view lanes <board>`, or the lane IDs below |
 | `agentspace-operator status` prints on stderr | Capture `2>&1` |
 | `localswim` on `PATH` is stale | `C:\Projects\localswim\localswim.exe`, by full path, as Bot |
@@ -429,7 +429,10 @@ decisions.md; this table only finds them.
 
 ## Cards only Terry can move
 
-**Bot cannot move a card out of Backlog (HTTP 403).** Each waits on his word.
+**Bot cannot move a card out of Backlog, or into Completed (HTTP 403).** Each waited on his word.
+**All five are settled, 2026-11-25** (D82): Terry moved them out of Backlog, the architect moved
+#0225 and #0227 through In Progress to Ready For Review and he approved them into Completed, and
+#0228 to #0230 were folded into their epics as recommended below and archived.
 
 | Card | What | Its evidence | His call |
 |---|---|---|---|
@@ -446,7 +449,7 @@ decisions.md; this table only finds them.
 | What | Who acts | Where it goes |
 |---|---|---|
 | v0.11 (#0052) is laid out only on Terry's word | Terry, then the architect | [The scope ahead](#the-scope-ahead-v011) |
-| #0225, #0227, #0228, #0229 and #0230 | Terry | [Cards only Terry can move](#cards-only-terry-can-move) |
+| #0229 and #0230, folded into v0.11; #0228, folded into v0.12 | Their epics | #0052 and #0051 (D82) |
 | v0.09-T05's observer script (`observe-once.ps1`) was lost with its worktree; not needed while no turn starts an instance | The architect, before the next live turn on a host, rebuilt from runs/e0.09-t05-s01.md | `scripts\live\` |
 | A spec for what "time to a prompt" measures when the keeper starts a lease's holder first | The next release that specifies the lifecycle; not yet placed | v0.08's live records |
 | #0192, #0193 and #0195's fix (D78) | v0.12 | #0051 (D72, D78) |
