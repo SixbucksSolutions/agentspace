@@ -248,7 +248,7 @@ fn a_record_in_each_state_keeps_both_members_through_a_round_trip() {
         plan_released_from_ready(ID_C),
         plan_released_from_pending("a1b2c3d4-5555-4666-a777-888899990000"),
         plan_unsatisfiable("b1b2c3d4-5555-4666-a777-888899990000"),
-        plan_too_large("c1b2c3d4-5555-4666-a777-888899990000"),
+        plan_too_large("0b1c2d3e-0000-4000-8000-000000000a01"),
     ];
     let f = parsed(recs.clone());
     for (r, rec) in f.leases.iter().zip(&recs) {

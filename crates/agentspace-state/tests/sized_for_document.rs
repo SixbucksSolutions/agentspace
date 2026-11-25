@@ -284,7 +284,7 @@ fn the_plan_and_the_driver_are_in_no_document() {
             "a1b2c3d4-5555-4666-a777-888899990000",
         )),
         rich(plan_unsatisfiable("b1b2c3d4-5555-4666-a777-888899990000")),
-        rich(plan_too_large("c1b2c3d4-5555-4666-a777-888899990000")),
+        rich(plan_too_large("0b1c2d3e-0000-4000-8000-000000000a01")),
     ];
     let f = parsed(recs);
     // Each of these is in the stored plan and in no output; "plan" and "v0.10" are not here,
@@ -332,9 +332,9 @@ fn every_plan_document_validates_both_ways() {
         plan_released_from_ready(ID_C),
         plan_released_from_pending("a1b2c3d4-5555-4666-a777-888899990000"),
         plan_unsatisfiable("b1b2c3d4-5555-4666-a777-888899990000"),
-        plan_too_large("c1b2c3d4-5555-4666-a777-888899990000"),
+        plan_too_large("0b1c2d3e-0000-4000-8000-000000000a01"),
         with(
-            plan_pending("d1b2c3d4-5555-4666-a777-888899990000"),
+            plan_pending("0c1d2e3f-0000-4000-8000-000000000a02"),
             "sized_for",
             Some(sized_for(None, "T01", 2)),
         ),
