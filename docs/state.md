@@ -2097,8 +2097,11 @@ go before the lease folder, so that an alias never points at a key that is gone.
 **What release leaves:**
 - **The certificate stays valid until it expires**, on every host that trusts the CA, for anyone
   who copied it and its key. It is not revoked (D10; card #0010 replaces this).
-- **No connection through the lease's alias**, since step 3 of the order above ended them, and
-  the lease's alias is gone for any new one. A connection that step could not end is logged
+- **No process holding the lease's alias that step 3's walks can end**, since step 3 of the order
+  above ended them ([driver.md, Release a lease](driver.md#release-a-lease); D59, as changed for
+  v0.10-T03). A process started after its last walk is outside that claim: the Claude desktop app
+  can start the ProxyCommand again from its own copy of the alias's line after the alias file is
+  gone (#0229). A connection the walks could not end is logged
   ([driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)).
 - **The record**, `released`, in the lease state file.
 - **The `Include` line, `agentspace.d` (empty if no other lease is ready) and any config backup.**
