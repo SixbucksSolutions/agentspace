@@ -1502,13 +1502,22 @@ sees:
   2026-11-21, for v0.08-T01, pin P23). A `release` that fails after ending them has still ended
   them: an ended connection is not restored, which is a change of a failed `release` that
   [Concurrency and atomicity](#concurrency-and-atomicity) does not undo.
-- **They are looked for again once the alias is deleted, and any found is ended** (D59's change
-  for v0.08-T01; architect, 2026-11-21, for v0.08-T01, pin P23). The reason is a window the first
-  search alone would leave: a client that reconnects by itself, as the desktop app's can, can come
-  back through the alias between its end and the alias's deletion, up to the first search's 10
-  seconds, while the credential still exists. The second search ends any client that came back
-  that way, and after it none can, since the alias is gone. Each search is bounded at 10 seconds
-  of its own ([docs/driver.md, The order of a release](driver.md#the-order-of-a-release)).
+- **They are looked for again once the alias is deleted, and any found is ended, and from v0.10
+  again for as long as the search before ended one** (D59's change for v0.08-T01; architect,
+  2026-11-21, for v0.08-T01, pin P23; D59, as changed for v0.10-T03, #0196). The reason for the
+  second search is a window the first search alone would leave: a client that reconnects by
+  itself, as the desktop app's can, can come back through the alias between its end and the
+  alias's deletion, up to the first search's 10 seconds, while the credential still exists. The
+  second search ends any client that came back that way. A further search ends a client that no
+  search before it could reach, one below a program that has exited while the client above it
+  still held that program. **When `release` returns, it MUST have left no process holding the
+  alias that its searches can end**, as [docs/driver.md, Release a lease](driver.md#release-a-lease)
+  defines it. Deleting the alias does not stop every client from coming back: the desktop app can
+  start the alias's proxy from its own copy of the alias's ProxyCommand after the alias is gone,
+  and a process started after the last search is outside what `release` claims (#0229). Each
+  search is bounded at 10 seconds of its own, a release makes at most six, and none starts after
+  the second once 10 seconds have passed since the first
+  ([docs/driver.md, The order of a release](driver.md#the-order-of-a-release)).
 - **Ending a connection is best effort** (architect, 2026-11-21, for v0.08-T01): a connection that
   cannot be ended MUST NOT make `release` fail, change its document, or change its exit code, and
   `release` goes on to remove the credential. While agentspace's guard runs on the caller's
