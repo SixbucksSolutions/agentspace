@@ -15,9 +15,11 @@
 //! - [`ssh_found`] and [`ssh_found_with`]: the same ssh as a [`Program`], its path with the line a
 //!   failed start of it MUST give, for a caller that starts the ssh itself (`bootstrap`, #0227).
 //! - [`start_guarded`]: starts a caller's own prepared [`std::process::Command`] the way this crate
-//!   starts every program, under the same guard against a dialog. **A crate that starts a program
-//!   itself MUST start it through this** (`bootstrap`'s ssh, the architect's ruling P7 for
-//!   E0.10-T03-S03).
+//!   starts every program, under the same guard against a dialog. **`bootstrap`'s ssh MUST be
+//!   started through this** (the architect's ruling P7 for E0.10-T03-S03). The other starts that a
+//!   program makes itself outside this crate and `agentspace-launch` (the push's ssh, the tunnel,
+//!   `go build`, the task launcher's keeper) are covered by their program's process error mode,
+//!   which each program's `main` sets first (#0226); a start that WMI makes gets WMI's own mode.
 //!
 //! # What this crate guarantees
 //!
