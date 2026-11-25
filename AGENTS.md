@@ -15,8 +15,8 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   after v0.10, now final: Terry approved v0.10's epic and fifteen stories into Completed on
   2026-11-25, and v0.10 is installed. **The architect who starts v0.11 reads it first**, then
   handoff-v0.09.md for the tools and rules it cites. **Its "The scope ahead: v0.11" is settled as
-  D83 to D88** in [docs/decisions.md](docs/decisions.md) (2026-11-25), with Q17 and Q18 put to
-  Terry; v0.11 is still not laid out.
+  D83 to D88** in [docs/decisions.md](docs/decisions.md) (2026-11-25), and Terry took the
+  architect's recommendation on Q17 and Q18; v0.11 is still not laid out.
 - **Where it stood at v0.09's close:** [docs/handoff-v0.09.md](docs/handoff-v0.09.md), the architect's handoff
   after v0.09, final since Terry approved v0.09 on 2026-11-24. **It is the reference for the tools,
   lanes, pitfalls and rules that handoff-v0.10.md cites**, and carries forward what the earlier

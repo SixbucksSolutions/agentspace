@@ -4390,8 +4390,8 @@ the card, and the story that meets it cites its number.
 [handoff-v0.10.md](handoff-v0.10.md#the-scope-ahead-v011) asks. Each is the architect's,
 2026-11-25, unless it says otherwise. They bind the stories, which carry each one into the spec
 that owns the fact in the same pull request that builds it (D34). v0.11 MUST NOT be broken into
-stories until Terry says so (AGENTS.md, "The board"). Two calls are his, and are put to him the
-same day: Q17 and Q18.
+stories until Terry says so (AGENTS.md, "The board"). Two calls were his, put to him the same
+day as Q17 and Q18, and he took the architect's recommendation on both (D86, D88).
 
 **What was read first, so that none of this is assumed:** localswim's API
 (`C:\Projects\localswim\docs\openapi.yaml`, its README and `docs/schemas/`) and card #0052 as Bot.
@@ -4490,7 +4490,13 @@ v0.11 reads a whole epic, and a turn's lease is cut from it.
 
 ### D86. `create --board <id> --epic <ticket>` reads the epic's plan from the board, and only reads
 
-**Decided, architect, 2026-11-25**, except where the credential comes from, which is Terry's (Q17).
+**Decided, architect, 2026-11-25**, except where the credential comes from, which was Terry's (Q17).
+- **The credential is Bot's, read for each call** (Terry, 2026-11-25, Q17: "I'll take whatever recommendation you prefer"; the
+  architect's was (a)). The CLI finds localswim's service receipt where localswim documents it, and
+  decrypts `bot.json` with DPAPI for the one request, as Terry's board watcher does. It adds no file
+  and no secret. Bot's token can write, so the GET-only client below is what keeps agentspace to
+  reads, and its conformance case is required. The receipt's path is a seam variable, so tests name
+  a stand-in.
 - **`--board <id>` and `--epic <ticket>` are given together, or neither.** `--board` is the board's
   UUID; `--epic` is the card's ticket number, decimal digits, as `card get` takes it. A board's
   name is not accepted, since two boards may share one and a lookup would be a guess. One without
@@ -4512,7 +4518,7 @@ v0.11 reads a whole epic, and a turn's lease is cut from it.
 
 - **The lease's record keeps where its plan came from**: the board, the ticket, the card's revision
   read, and the plan as read, which state.md places. No output prints them (D87).
-- **The credential is never agentspace's to keep.** Whatever Q17 decides, the token MUST NOT be
+- **The credential is never agentspace's to keep.** The token MUST NOT be
   printed, logged, written to agentspace's state or any file, or passed as a command argument
   (AGENTS.md, "The board"). It is read for the one request and dropped.
 - **Conformance MUST read a stand-in board with a stand-in credential, never Terry's**, named by a
@@ -4546,18 +4552,21 @@ v0.11 reads a whole epic, and a turn's lease is cut from it.
 
 **Decided, architect, 2026-11-25** (D19, as D80), except the live check's board, which is Terry's
 (Q18).
+- **The live check reads #0052, v0.11's own epic** (Terry, 2026-11-25, Q18: "I'll take whatever recommendation you prefer"; the
+  architect's was (a)), once the architect has written its plan block at layout (D83). The check
+  makes one GET as Bot and writes nothing to the board.
 - **Every part of #0052's done-when is the lease CLI's**, decided before any driver is asked: the
   read, the block, the size, the TTL and every refusal (D83 to D86). Conformance shows each against
   the build with a stand-in board, a stand-in credential and a stand-in driver, as v0.10's did, and
   shows that the board client sent nothing but GETs.
 - **After the install, one live check reads a real epic on Terry's board** for a project that is not
   on the project list, which D54 answers `unsatisfiable` with `no_capacity` before any AWS call
-  (D80). Which epic, or whether any, is Q18. It shows the size, `sized_for` and TTL the same plan
+  (D80). It shows the size, `sized_for` and TTL the same plan
   gives from a file.
 - **No instance hours are asked for, and nothing costs money.** A board lease reaches the driver
   exactly as a `--plan` lease does (D75), which v0.09-T05 showed resizing a real host.
 - **No change to Terry's laptop beyond the install**: his ssh config, keeper task and `PATH` are
-  unchanged, as in v0.10. What Q17 decides adds no file to his laptop.
+  unchanged, as in v0.10. Q17's answer adds no file to his laptop.
 - **#0229 and #0230 ride as D82 placed them:** #0229 a story of the first build turn, #0230 with the
   conformance turn.
 
@@ -4644,5 +4653,5 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q14** | **Closed (Terry, 2026-11-24: "Yes, half a vCPU").** ~~Does v0.10 size a plan at D73's half a vCPU and 2 GiB for each agent at once, about twice v0.06-T01's measured share, in place of his rule of a vCPU and 4 GiB? It halves the size, and the price, at every count: v0.06-T01's 15 agents get `l` at $0.39 an hour rather than `xl` at $0.78, and a turn of up to 32 agents fits. The architect recommends it.~~ Yes, from v0.10's install. | Closed, D73 |
 | **Q15** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want the account's Session Manager idle timeout shortened as well, for #0195? It is account-wide, would cut his other Session Manager sessions too, and D78 fixes the cause in the idle check without it. The architect recommends no.~~ No: the account setting is not changed. | Closed, D78 |
 | **Q16** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want a plan lease shown on agentspace's real host, resized to the plan's size and back, for about 0.5 instance hours at `l` (about $0.20)? D80 shows the done-when without any instance. The architect recommends no.~~ No: v0.10 asks for no instance hours. | Closed, D80 |
-| **Q17** | **Open, put to Terry 2026-11-25.** With what credential does the lease CLI read his board (D86)? localswim has two tokens, Human and Bot, and neither is read-only. **(a)** The CLI reads Bot's token for each call from localswim's service receipt and `bot.json`, decrypted by DPAPI for his Windows user alone, as his board watcher does; no new secret and no file added, but agentspace's product then decrypts a token that can write, held to GETs by D86's one read-only client and its conformance case. **(b)** localswim gains a read-only token first: a change to his localswim, outside this repository, landed before v0.11's programs turn. **(c)** agentspace keeps a copy of Bot's token in its own home: a second copy of a write token, which the architect does not recommend. The architect recommends (a). | D86 |
-| **Q18** | **Open, put to Terry 2026-11-25.** What does v0.11's live check read on his board (D88)? **(a)** #0052, v0.11's own epic, once the architect writes its plan block when laying it out (D83), so the release that builds the reader is also its first input: one GET as Bot, nothing written by the check. **(b)** A throwaway epic the architect creates and archives on his board. **(c)** None: conformance against a stand-in board alone. Each starts no instance and costs nothing. The architect recommends (a). | D88 |
+| **Q17** | **Closed (Terry, 2026-11-25: "I'll take whatever recommendation you prefer"; the architect's was (a)).** ~~With what credential does the lease CLI read his board (D86)? localswim has two tokens, Human and Bot, and neither is read-only. **(a)** The CLI reads Bot's token for each call from localswim's service receipt and `bot.json`, decrypted by DPAPI for his Windows user alone, as his board watcher does; no new secret and no file added, but agentspace's product then decrypts a token that can write, held to GETs by D86's one read-only client and its conformance case. **(b)** localswim gains a read-only token first: a change to his localswim, outside this repository, landed before v0.11's programs turn. **(c)** agentspace keeps a copy of Bot's token in its own home: a second copy of a write token, which the architect does not recommend. The architect recommends (a).~~ (a): the CLI reads Bot's token for each call from localswim's receipt, and only reads. | Closed, D86 |
+| **Q18** | **Closed (Terry, 2026-11-25: "I'll take whatever recommendation you prefer"; the architect's was (a)).** ~~What does v0.11's live check read on his board (D88)? **(a)** #0052, v0.11's own epic, once the architect writes its plan block when laying it out (D83), so the release that builds the reader is also its first input: one GET as Bot, nothing written by the check. **(b)** A throwaway epic the architect creates and archives on his board. **(c)** None: conformance against a stand-in board alone. Each starts no instance and costs nothing. The architect recommends (a).~~ (a): #0052, once its plan block is written at layout. | Closed, D88 |
