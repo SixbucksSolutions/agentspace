@@ -11,6 +11,8 @@ agentspace is Terry's compute for coding agents, and the agent working here owns
 one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md)). It is becoming a
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
+- **Where v0.11 stands:** [docs/handoff-v0.11.md](docs/handoff-v0.11.md), the live record of
+  v0.11, refreshed at each turn's close; read it after handoff-v0.10.md.
 - **Where v0.10 ended:** [docs/handoff-v0.10.md](docs/handoff-v0.10.md), the architect's handoff
   after v0.10, now final: Terry approved v0.10's epic and fifteen stories into Completed on
   2026-11-25, and v0.10 is installed. **The architect who starts v0.11 reads it first**, then

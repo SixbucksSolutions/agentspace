@@ -89,6 +89,10 @@ first.**
    `blocks`; a defect carried into a story a `references`. The epic's description carries the plan
    by turn, with each turn's peak.
 7. **Add the release milestone**, commit and push.
+8. **A decision that adds a fail-safe rule designs its failure modes before the layout**: what an
+   unreadable input does, whether a read is retried, and how a test sees it without racing a timer
+   (v0.11-T01). #0229's refusal was decided without them, and P21, P23 and P27 each cost #0233 a
+   fix pass, three in all.
 
 ## Running a turn
 
@@ -140,6 +144,13 @@ first.**
     word: a card under the epic, `references` to the defect, `blocks` to the next turn's stories,
     a line in the epic's plan and in the layout decision, and both milestones raised (v0.06-T05,
     #0140).
+
+12. **An edit refused by auto mode with "no verdict" MAY be retried once, word for word**, never
+    reworded or routed through another session; a second refusal goes to Terry (v0.11-T01: a
+    README sentence refused once passed on its one retry).
+13. **A dev lead idle only on the architect's merge is not stalled**: the architect stops its
+    watchdog while its own merge check runs and restarts it at the merge, as for a wait on Terry
+    (v0.11-T01).
 
 **While a question to Terry is open, the architect's turn is held, and the dev leads' messages
 queue** (v0.06-T05: an 80-minute wait). When his answer comes, read each linked session's state
@@ -205,6 +216,23 @@ names.**
 - **A spec that links into another story's new sections merges after it**, and the architect
   checks every anchor resolves on `main` before each such merge, and every link between the specs
   once all are in (1,954 in T01).
+
+**Learned in v0.11-T01, 2026-11-25, where three specs were written against another system's API.**
+- **A sweep that reads another system's API reads its `servers` entry and each path parameter's
+  input schema, not only the operation.** The sweep confirmed localswim's ticket view and missed its
+  `/api/2026-11-10` prefix, its v4-only `UuidInput` and its loopback-only receipt base; each came
+  back as a pin (P17 to P19) after ten others were ruled.
+- **A link between two stories of one turn targets a heading already on `main`**, so it resolves at
+  every merge; one into the other story's new section would have dangled between them.
+- **A red list placed from an inventory's reading is confirmed by a workspace run before the cards
+  are final**: three reds (an isolation guard's whole-suite test and two state round-trip tests)
+  appeared only in reviewers' workspace runs, about 22 minutes each.
+- **The architect's merge checks are planned into a spec turn's budget.** T01's three merges ran in
+  series for 83 minutes, each behind a check of about 40 minutes: a build, the workspace, and the
+  suites that read the changed files. Those suites are found by grepping for runtime reads of the
+  file (`ReadAllText`, `include_str!`, `Get-Content`), never by every file that cites it.
+- **The clock is read in its own call before any message carries a time.** The architect twice
+  sent a ruling whose time was written beside the clock read, not after it, and corrected each.
 
 ## A turn that builds
 
