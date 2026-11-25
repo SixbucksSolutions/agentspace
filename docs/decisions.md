@@ -4496,8 +4496,8 @@ v0.11 reads a whole epic, and a turn's lease is cut from it.
   architect's was (a)). The CLI finds localswim's service receipt where localswim documents it, and
   decrypts `bot.json` with DPAPI for the one request, as Terry's board watcher does. It adds no file
   and no secret. Bot's token can write, so the GET-only client below is what keeps agentspace to
-  reads, and its conformance case is required. The receipt's path is a seam variable, so tests name
-  a stand-in.
+  reads, and its conformance case is required. Tests name a stand-in receipt through
+  `LOCALAPPDATA`, which the harness already moves (changed for v0.11-T01, below).
 - **`--board <id>` and `--epic <ticket>` are given together, or neither.** `--board` is the board's
   UUID; `--epic` is the card's ticket number, decimal digits, as `card get` takes it. A board's
   name is not accepted, since two boards may share one and a lookup would be a guess. One without
@@ -4522,9 +4522,21 @@ v0.11 reads a whole epic, and a turn's lease is cut from it.
 - **The credential is never agentspace's to keep.** The token MUST NOT be
   printed, logged, written to agentspace's state or any file, or passed as a command argument
   (AGENTS.md, "The board"). It is read for the one request and dropped.
-- **Conformance MUST read a stand-in board with a stand-in credential, never Terry's**, named by a
-  seam variable as every other stand-in is (conformance.md, The harness). A review or check MUST
-  NOT read `%LOCALAPPDATA%\localswim-v2` (AGENTS.md, "Terry's real files in a review").
+- **Conformance MUST read a stand-in board with a stand-in credential, never Terry's** (conformance.md,
+  The harness). A review or check MUST NOT read `%LOCALAPPDATA%\localswim-v2` (AGENTS.md, "Terry's
+  real files in a review").
+- **Changed for v0.11-T01 (architect, 2026-11-25, on the dev lead's pins P1, P2 and P9):**
+  - **No seam variable names the receipt.** `agentspace-push`'s `receipt_path` finds it under
+    `LOCALAPPDATA`, which the conformance harness already points into the throwaway home, so the
+    stand-in receipt and `bot.json` are written there. "Named by a seam variable" is withdrawn.
+  - **A 404 is told apart by one more GET.** localswim answers 404 alike for an unknown board, a
+    board Bot is not a member of, and an unknown ticket. After a 404 for the ticket view, the client
+    makes one GET of the board's summary view: 200 means the ticket is unknown (`invalid_value` for
+    `epic`), and 404 means the board is (`invalid_value` for `board`). So "reads the epic's card
+    once" stands, and a refused read costs at most two GETs.
+  - **A response over 64 MiB is refused** as `invalid_value` for `epic`, since only the epic's own
+    description and comments make it that large; one that lacks the card's revision, its archived
+    flag or the description is `internal`.
 
 ### D87. Contract v2: the new flags and their error fields; every command line without them prints what v1 printed
 
