@@ -394,13 +394,15 @@ mod tests {
     }
 
     /// Bounded by the lock's own deadline rather than a fixed figure, for the reason given on the
-    /// state file's test below (#0189): a lock that waited returns only once `lock_wait` has passed.
+    /// state file's test below (#0189): with the gap between tries as long as the deadline, a lock
+    /// that tried again returns only once `lock_wait` has passed.
     #[test]
     fn a_folder_at_the_lock_fails_at_once_and_is_not_busy() {
         let t = TempDir::new();
         fs::create_dir(t.path().join("leases.lock")).unwrap();
         let timing = Timing {
             lock_wait: Duration::from_secs(60),
+            retry_every: Duration::from_secs(60),
             ..short()
         };
         let began = Instant::now();
@@ -623,9 +625,10 @@ mod tests {
     /// timed the whole write, which includes work no retry rule governs: the first schema check in
     /// the test process builds every embedded validator (about 40 ms in a quiet debug build, and
     /// many times that beside a parallel workspace build), and the temporary file is flushed to the
-    /// disk, which waits on a busy disk. Under load those passed 200 ms with no retry at all. A
-    /// write that retried instead returns only once `replace_wait` has passed (`pause`), so
-    /// finishing before it shows the rename was not tried again, however slow the machine is.
+    /// disk, which waits on a busy disk. Under load those passed 200 ms with no retry at all. The
+    /// gap between tries is set as long as `replace_wait`, so a write that tried the rename again,
+    /// even once, returns only once `replace_wait` has passed (`pause`): finishing before it shows
+    /// the rename was not tried again, however slow the machine is.
     #[test]
     fn a_folder_at_the_state_file_fails_a_write_at_once_leaving_no_temporary_file() {
         let t = TempDir::new();
@@ -633,6 +636,7 @@ mod tests {
         let guard = lock_with(t.path(), short()).unwrap();
         let timing = Timing {
             replace_wait: Duration::from_secs(60),
+            retry_every: Duration::from_secs(60),
             ..short()
         };
         let began = Instant::now();
