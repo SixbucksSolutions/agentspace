@@ -10,7 +10,8 @@
 # It runs one command in a child pwsh with its streams to files under the numbered prefix, in this
 # order. A name that already has any of these files is refused; a run picks the next number, and a
 # letter suffix (221a, 221b) or a counter (401-status-0001) keeps a group's names apart:
-#   <Name>.start   First: the start time, ISO 8601 UTC and the laptop's local time.
+#   <Name>.start   First: the start time, ISO 8601 UTC and the laptop's local time, and the error
+#                  mode the command inherits, read back after the wrapper sets it.
 #   <Name>.cmd.ps1 The command as run (-Command only). It MAY hold a lease ID, so it stays raw.
 #   <Name>.out     The command's stdout, raw.
 #   <Name>.err     The command's stderr, raw.
@@ -24,6 +25,14 @@
 #
 # The exit code is the command's: a native program's nonzero $LASTEXITCODE wins, then a failed last
 # statement gives 1, else 0. The wrapper's own exit code is the same.
+#
+# The error mode (v0.10-T05; architect.md, "A turn that builds", v0.10-T02): the wrapper MUST add
+# 0x8001 (SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX) to its own process's error mode before it
+# starts the command, which inherits it, and log the mode read back in .start. It adds the bits and
+# clears none, so a mode it inherits with more set (0x8003 from the Claude app's shell) keeps them. A
+# process with error mode 0 that starts a file named .exe that is not a program raises a modal dialog
+# on Terry's desktop and waits for a person (#0225). When the mode read back lacks either bit the
+# wrapper refuses with exit 97 and runs nothing.
 param(
   [Parameter(Mandatory)][string]$Out,
   [Parameter(Mandatory)][string]$Name,
@@ -53,11 +62,35 @@ function Get-WrapLocalTime {
   return $now.ToString('h:mm:ss', [Globalization.CultureInfo]::InvariantCulture) + $now.ToString('tt', [Globalization.CultureInfo]::InvariantCulture).ToLowerInvariant()
 }
 
+$errorMode = 0
+if ($IsWindows) {
+  if (-not ('LiveWrap.ErrorMode' -as [type])) {
+    Add-Type -Namespace LiveWrap -Name ErrorMode -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint uMode);
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern uint GetErrorMode();
+'@
+  }
+  [void][LiveWrap.ErrorMode]::SetErrorMode([LiveWrap.ErrorMode]::GetErrorMode() -bor 0x8001)
+  $errorMode = [LiveWrap.ErrorMode]::GetErrorMode()
+}
+$errorModeText = '0x{0:X4}' -f $errorMode
+
 $start = [DateTime]::UtcNow
 Set-Content -LiteralPath ($base + '.start') -Encoding utf8 -Value @(
   "start_utc=$($start.ToString('yyyy-MM-ddTHH:mm:ssZ'))",
-  "start_local=$(Get-WrapLocalTime)"
+  "start_local=$(Get-WrapLocalTime)",
+  "error_mode=$errorModeText"
 )
+if ($IsWindows -and ($errorMode -band 0x8001) -ne 0x8001) {
+  Set-Content -LiteralPath ($base + '.masked.txt') -Encoding utf8 -Value "Wrapper: the error mode read back is $errorModeText, which lacks 0x8001; nothing was run."
+  $end = [DateTime]::UtcNow
+  Set-Content -LiteralPath ($base + '.exit') -Encoding utf8 -Value @(
+    'exit=97',
+    "end_utc=$($end.ToString('yyyy-MM-ddTHH:mm:ssZ'))",
+    "end_local=$(Get-WrapLocalTime)"
+  )
+  exit 97
+}
 
 if ($Command) {
   $runFile = $base + '.cmd.ps1'
