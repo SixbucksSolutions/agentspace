@@ -266,6 +266,29 @@ deliberately red tests green.** A dev lead's brief carries these.
   that runs it in its writer, its runner and its reviewer pays it three times, and its turn's cap
   counts each.
 
+**Learned in v0.10-T02, the foundations and hardening turn.**
+- **A run wrapper sets the error mode its runs need, 0x8001, and logs it.** A process started by
+  `Start-Process -WindowStyle Hidden` has error mode 0, and so do its children: every test that
+  starts a file named `.exe` that is not a program then raised a modal "Unsupported 16-Bit
+  Application" dialog on Terry's desktop and waited for a person. At least 17 appeared, by the
+  subagents' reports, before the wrapper was fixed, and they were #0191's hangs (#0225).
+- **Heavy runs are gated mechanically, and the gate queues fairly.** Three named mutexes behind
+  one run wrapper held the laptop to three heavy runs while 13 subagents worked; until a shared
+  queue was added, one-slot runs starved a two-slot load window for 40 minutes.
+- **A ruling reaches a running subagent only after it ends.** One investigator shipped a fix the
+  architect had ruled out, and another loaded the laptop with a CPU burner after the ruling that
+  load comes from builds and suites only. A tasking names its forbidden methods at launch, and a
+  turn that investigates plans a fresh fixer after its investigators.
+- **Open PRs that touch shared start paths are merge-checked together**: one local merge of all of
+  them onto `main`, every suite against its build, and each squash merge checked to leave `main`'s
+  tree equal to the tested one.
+- **A reviewer MAY run beside its load runner**, with its own `CARGO_TARGET_DIR` and a bounded wait
+  for the run record, so a turn near its cap does not serialize them.
+- **Facts handed to a record writer are checked against the repository first**: a base SHA taken
+  from a dev lead's notes was wrong in a record until review.
+- **The editing tools decode `\uXXXX` escapes on the way into a file**, so a test or doc that MUST
+  hold one is checked byte for byte after the edit: three escape tests held none.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
