@@ -24,6 +24,10 @@
 //!   its own right, "An `agentspace-ssh-proxy.exe` is a client when exactly one token follows the
 //!   program, and that token is the alias", and is counted on its own, "The clients are counted by
 //!   the processes that are a client and have no client among their ancestors".
+//! - **A client below a proxy that has exited while the client above still holds it, two deep:**
+//!   "Release a lease", "the release MUST end them again" for as long as the ending before ended a
+//!   client, and "A release MUST leave no process holding the alias that its endings can end"
+//!   (D59, as changed for v0.10-T03; #0196).
 //! - **The spelling:** "The alias is compared whole, without regard to ASCII case", and so is the
 //!   image file name.
 //! - **Not clients:** another lease's proxy and `ssh.exe` stay running ("The call MUST NOT end any
@@ -150,7 +154,7 @@ impl Rel {
         let want = release_text(&Ok::<usize, EndError>(n), &Ok::<usize, EndError>(0));
         assert_eq!(
             rest, want,
-            "The line counts {n} clients ended by the first walk and none by the second"
+            "The line counts {n} clients ended by the release's walks between them"
         );
     }
 }
@@ -211,9 +215,14 @@ const NODE_GO: &str = "ASDRV_DP_GO";
 const NODE_WATCH: &str = "ASDRV_DP_WATCH";
 /// How many times the node starts all its leaves, at most.
 const NODE_CAP: &str = "ASDRV_DP_CAP";
+/// Variables the node sets on every leaf, after it has removed its own: `PAIR`-separated pairs,
+/// each a name, `NAME_END`, and a value. Only the two-deep chain sets it.
+const NODE_LEAF_ENV: &str = "ASDRV_DP_LEAF_ENV";
 const NODE_TEST: &str = "chain_node_is_not_a_test";
 const UNIT: char = '\u{1f}';
 const RECORD: char = '\u{1e}';
+const PAIR: char = '\u{1d}';
+const NAME_END: char = '\u{1c}';
 
 /// Not a test of its own: the stand-in for a desktop app's `claude-ssh-proxy.exe`, or any process
 /// between a client and what it runs. It passes at once when it is not told to act, as in every
@@ -221,7 +230,8 @@ const RECORD: char = '\u{1e}';
 /// leaf's process ID to a file, and then either waits (for at most 60 seconds, or until it is
 /// ended) or exits at once, which leaves its leaves with a parent that has gone. Told to repeat, it
 /// starts them again and again, as an app that reconnects does, for as long as the watched file
-/// exists and at most `NODE_CAP` times.
+/// exists and at most `NODE_CAP` times. A leaf gets none of the node's `ASDRV_` variables, only
+/// those `NODE_LEAF_ENV` names.
 #[test]
 fn chain_node_is_not_a_test() {
     let Some(pids) = std::env::var_os(NODE_PIDS).map(PathBuf::from) else {
@@ -244,6 +254,7 @@ fn chain_node_is_not_a_test() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
     let leaves = std::env::var(NODE_LEAVES).unwrap_or_default();
+    let leaf_env = std::env::var(NODE_LEAF_ENV).unwrap_or_default();
     let stay = std::env::var(NODE_STAY).is_ok_and(|v| v == "1");
     let mut started = Vec::new();
     for round in 0..cap {
@@ -263,6 +274,11 @@ fn chain_node_is_not_a_test() {
             for (name, _) in std::env::vars_os() {
                 if name.to_string_lossy().starts_with("ASDRV_") {
                     command.env_remove(name);
+                }
+            }
+            for pair in leaf_env.split(PAIR).filter(|p| !p.is_empty()) {
+                if let Some((name, value)) = pair.split_once(NAME_END) {
+                    command.env(name, value);
                 }
             }
             command
@@ -628,6 +644,113 @@ fn a_proxy_whose_parent_has_exited_is_ended_as_a_client() {
     };
     assert_ended_held("The proxy", &leaves.0);
     rel.assert_released(since, until, 1);
+}
+
+/// #0196's chain, two deep: `ssh.exe <alias>`, below it a desktop-app proxy that has exited while
+/// that `ssh.exe` still holds it, below that a second `ssh.exe <alias>`, holding a second proxy that
+/// has exited, and below that a third `ssh.exe <alias>`. A client below a proxy that has exited, while
+/// a client above still holds that proxy, is in no client's tree and is not counted on its own while
+/// the client above runs, so each ending reaches one level more: the first ends the top client, the
+/// second the next, and only a third the last (driver.md, "Release a lease": the release MUST end the
+/// clients again for as long as the ending before ended one, and MUST leave no process holding the
+/// alias that its endings can end; D59, as changed for v0.10-T03). Two endings, as before v0.10,
+/// leave the last client running when the release returns.
+#[test]
+fn a_chain_of_clients_below_proxies_that_have_exited_is_ended_whole() {
+    let rel = Rel::ready();
+    let mut lab = Lab::new();
+    let a = rel.alias.clone();
+    let file = lab.dir.join("ccd-ssh-0a1b2c3d").join("proxy-command.txt");
+    let ssh = lab.copy_of("ssh.exe");
+    // The IDs the first proxy writes (the second client), the second client writes (the second
+    // proxy), and the second proxy writes (the third client).
+    let pids_1 = lab.dir.join("leaves-1.txt");
+    let pids_2 = lab.dir.join("stub-pids-2.txt");
+    let pids_3 = lab.dir.join("leaves-3.txt");
+
+    // The lower proxy: it starts the third client and exits at once.
+    let (lower_exe, lower_args, lower_env) = node(
+        &lab,
+        "claude-ssh-proxy-1.exe",
+        &pids_3,
+        &[(ssh.clone(), vec![a.clone()])],
+        false,
+        &file,
+    );
+    // The second client: a stand-in `ssh.exe <alias>` that starts the lower proxy and holds it.
+    let mut second_env = vec![
+        ("ASDRV_STUB_CHILDREN".to_string(), "1".to_string()),
+        (
+            "ASDRV_STUB_CHILD0_EXE".to_string(),
+            lower_exe.to_string_lossy().into_owned(),
+        ),
+        (
+            "ASDRV_STUB_CHILD0_ARGS".to_string(),
+            lower_args.join(&UNIT.to_string()),
+        ),
+        (
+            "ASDRV_STUB_PIDS".to_string(),
+            pids_2.to_string_lossy().into_owned(),
+        ),
+    ];
+    second_env.extend(lower_env);
+    let encoded: Vec<String> = second_env
+        .iter()
+        .map(|(name, value)| format!("{name}{NAME_END}{value}"))
+        .collect();
+    // The upper proxy: it starts the second client, with the variables above, and exits at once.
+    let (upper_exe, upper_args, mut upper_env) = node(
+        &lab,
+        "claude-ssh-proxy-0.exe",
+        &pids_1,
+        &[(ssh.clone(), vec![a.clone()])],
+        false,
+        &file,
+    );
+    upper_env.push((NODE_LEAF_ENV.to_string(), encoded.join(&PAIR.to_string())));
+    // The top client, which holds the upper proxy.
+    let top = lab.start_with(
+        "ssh.exe",
+        &[&a],
+        Opts {
+            children: vec![(upper_exe, upper_args)],
+            env: upper_env,
+            ..Opts::default()
+        },
+    );
+    let mut clients = Leaves(Vec::new());
+    hold_leaves(&mut clients, &pids_1, 1);
+    let mut lower = Leaves(Vec::new());
+    hold_leaves(&mut lower, &pids_2, 1);
+    hold_leaves(&mut clients, &pids_3, 2);
+    wait_for(
+        || !lab.children(top)[0].alive() && !lower.0[0].alive(),
+        "Both proxies' exits",
+    );
+    assert!(
+        clients.0.iter().all(Held::alive),
+        "Every client below a proxy runs before the release"
+    );
+
+    let (since, until) = {
+        let since = unix_now();
+        rel.release(&lab).expect("The release succeeds");
+        (since, unix_now())
+    };
+    assert_ended(&mut lab, top, "The top client");
+    for (depth, h) in [(1, &clients.0[0]), (2, &clients.0[1])] {
+        assert!(
+            !h.alive(),
+            "The client {depth} exited proxies down is still running when the release returned"
+        );
+        assert_eq!(
+            h.exit_code(),
+            Some(1),
+            "The client {depth} exited proxies down was not given exit code 1"
+        );
+    }
+    // Each client is counted on its own, by the ending that found it with no client above it.
+    rel.assert_released(since, until, 3);
 }
 
 #[test]
