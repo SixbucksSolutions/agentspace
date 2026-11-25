@@ -28,8 +28,8 @@ use agentspace_keeper_files::{
     Claim, LaunchResult, parse_claim, parse_launch_request, serialize_launch_result,
 };
 use common::{
-    ALIAS, FakeMatcher, Fixture, Kind, LEASE, look, running, start_watched, stub_args, stub_exe,
-    wait_for,
+    ALIAS, Captured, Change, FakeMatcher, Fixture, Kind, LEASE, look, parse_ms, running,
+    start_watched, stub_args, stub_exe, wait_for,
 };
 
 fn never_claims() -> PathBuf {
@@ -59,6 +59,33 @@ fn claim_path(request: &std::path::Path) -> PathBuf {
 
 fn seconds(a: Instant, b: Instant) -> f64 {
     b.duration_since(a).as_secs_f64()
+}
+
+/// Seconds from the moment the pass took its deadline to a change the watcher saw, on the UTC
+/// clock. The request's `not_after` is that moment plus 30 seconds, written by the pass itself, so
+/// this needs no clock of the test's around the start: the watcher's setup, its teardown and the
+/// start's other work are not in it. The watcher takes a change's time when it reads it, never
+/// before the change happened, so load can only make this later, never earlier.
+fn since_deadline_taken(cap: &Captured, change: &Change) -> f64 {
+    let request = parse_launch_request(cap.request.as_ref().expect("The request was read."))
+        .expect("The request meets its schema.");
+    let not_after = parse_ms(&request.not_after).expect("The deadline is a time.");
+    (change.wall_ms - (not_after - 30_000)) as f64 / 1000.0
+}
+
+/// The pass's withdrawal claim says `abandoned`, when the watcher could read it. The pass removes
+/// its claim at once after it made it, so a watcher held back by load can find it already gone;
+/// the reason's last sentence, which each caller checks, is then the pass's own report that its
+/// `abandoned` claim was made, since it says so only once that claim's create succeeded.
+fn assert_withdrawn_with_abandoned(cap: &Captured) {
+    match cap.claim.as_ref() {
+        Some(bytes) => assert_eq!(
+            parse_claim(bytes),
+            Some(Claim::Abandoned),
+            "The pass's claim says `abandoned`."
+        ),
+        None => eprintln!("The pass removed its claim before the watcher could read it."),
+    }
 }
 
 #[test]
@@ -91,9 +118,7 @@ fn an_unanswered_request_is_withdrawn_with_abandoned_at_35_seconds_and_a_late_la
         Some(called)
     });
 
-    let started = Instant::now();
     let (out, watch) = start_watched(&fx, &never_claims(), &exe, &matcher, LEASE, ALIAS);
-    let elapsed = started.elapsed().as_secs_f64();
     let late_result = late.join().expect("The late launcher did not panic.");
     assert!(late_result.is_some(), "The request was seen.");
     eprintln!(
@@ -114,10 +139,6 @@ fn an_unanswered_request_is_withdrawn_with_abandoned_at_35_seconds_and_a_late_la
         ),
         "Step 5: the reason, with the withdrawal."
     );
-    assert!(
-        (34.5..=42.0).contains(&elapsed),
-        "The pass waits until 35 seconds after the request, then withdraws: {elapsed:.1} seconds."
-    );
 
     let changes = watch.changes();
     let first_four: Vec<(Kind, bool)> = changes.iter().take(4).map(|c| (c.kind, c.added)).collect();
@@ -135,17 +156,18 @@ fn an_unanswered_request_is_withdrawn_with_abandoned_at_35_seconds_and_a_late_la
         changes.iter().all(|c| c.kind != Kind::Result),
         "No launcher answered, and the late one started nothing, so no result was ever written."
     );
-    let gap = seconds(changes[0].at, changes[1].at);
-    assert!(
-        (34.8..=36.5).contains(&gap),
-        "The withdrawal comes 35 seconds after the request: {gap:.1} seconds."
-    );
     let cap = &watch.captured()[0];
-    assert_eq!(
-        parse_claim(cap.claim.as_ref().expect("The claim was read.")),
-        Some(Claim::Abandoned),
-        "The pass's claim says `abandoned`."
+    // When the 35 seconds are up, and not before: the lower bound is exact, since load can only
+    // make the watcher's time later. The upper bound leaves 3 seconds for the pass's last 100 ms
+    // look and for a loaded laptop's scheduling, and still tells this wait from any longer one:
+    // the 60 more seconds of a claimed request, or 35 seconds counted from a create call that
+    // took 3 seconds or more instead of from the request.
+    let withdrawn = since_deadline_taken(cap, &changes[1]);
+    assert!(
+        (34.95..=38.0).contains(&withdrawn),
+        "The withdrawal comes 35 seconds after the deadline was taken: {withdrawn:.2} seconds."
     );
+    assert_withdrawn_with_abandoned(cap);
     assert!(
         !fx.profile.join("spec-starts.txt").exists(),
         "The late launcher started no holder."
@@ -301,9 +323,7 @@ fn a_create_that_fails_does_not_wait_for_an_answer_and_withdraws_the_request_at_
     let matcher = FakeMatcher::stub("stub_marker");
     let nowhere = fx.root.join("no-such-launcher").join("agentspace.exe");
 
-    let started = Instant::now();
     let (out, watch) = start_watched(&fx, &nowhere, &exe, &matcher, LEASE, ALIAS);
-    let elapsed = started.elapsed().as_secs_f64();
     let why = match out {
         Started::Failed(why) => why,
         Started::Holder(_) => panic!("A launcher that is not there started a holder."),
@@ -320,11 +340,8 @@ fn a_create_that_fails_does_not_wait_for_an_answer_and_withdraws_the_request_at_
         why.ends_with("Its request was withdrawn, so no holder was started."),
         "The request was withdrawn by the pass's claim."
     );
-    assert!(
-        elapsed < 40.0,
-        "No wait for an answer: three bounded tries and two gaps are at most about 34 seconds ({elapsed:.1})."
-    );
-    let kinds: Vec<(Kind, bool)> = watch.changes().iter().map(|c| (c.kind, c.added)).collect();
+    let changes = watch.changes();
+    let kinds: Vec<(Kind, bool)> = changes.iter().map(|c| (c.kind, c.added)).collect();
     assert_eq!(
         kinds,
         vec![
@@ -334,14 +351,17 @@ fn a_create_that_fails_does_not_wait_for_an_answer_and_withdraws_the_request_at_
             (Kind::Claim, false),
         ]
     );
-    assert_eq!(
-        parse_claim(
-            watch.captured()[0]
-                .claim
-                .as_ref()
-                .expect("The claim was read.")
-        ),
-        Some(Claim::Abandoned)
+    // No wait for an answer: a pass that waited would withdraw 35 seconds after the request at
+    // the earliest. This one withdraws when its create tries end: one call for a launcher that
+    // is not there, which WMI answers with a code, or at most three tries of 10 seconds and two
+    // gaps of 2, 34 seconds. The two times are the watcher's, taken as it read each change, so
+    // neither the watcher's setup and teardown nor the starter's own work after the withdrawal
+    // is in the gap; a bound on the whole start counted those, which load stretches by seconds.
+    let gap = seconds(changes[0].at, changes[1].at);
+    assert!(
+        gap < 35.0,
+        "No wait for an answer: the withdrawal came {gap:.1} seconds after the request."
     );
+    assert_withdrawn_with_abandoned(&watch.captured()[0]);
     assert!(fx.launch_files().is_empty());
 }

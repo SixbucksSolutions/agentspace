@@ -38,6 +38,7 @@ fn stop_ends_the_whole_tree_with_the_leaves_first_and_the_holder_last() {
     let record = record_of(&tree.holder);
     let matcher = FakeMatcher::new(true);
     let ssh = fake_ssh();
+    assert!(all_run(&tree), "The whole tree runs before the stop");
 
     let result = processes().stop(&record, &ssh, &matcher);
 
@@ -49,15 +50,11 @@ fn stop_ends_the_whole_tree_with_the_leaves_first_and_the_holder_last() {
             "Every process of the tree is gone"
         );
     }
-    // The order, as far as the kernel's exit times show it: "The tree is terminated leaves first,
-    // the holder last." Two exits in one timer tick tie, and a tie is not a wrong order.
-    let (holder, mid) = (tree.holder.exit_ticks(), tree.mid.exit_ticks());
-    let (a, b) = (tree.leaf_a.exit_ticks(), tree.leaf_b.exit_ticks());
-    assert!(
-        a <= mid && b <= mid,
-        "The leaves end before the process above them"
-    );
-    assert!(mid <= holder, "The holder ends last");
+    // "The tree is terminated leaves first, the holder last" is the order of the stop's terminate
+    // calls, which src/process.rs's `the_whole_tree_is_stopped_leaves_first_and_the_holder_last`
+    // checks call by call. The kernel's exit times cannot show it (#0189): TerminateProcess only
+    // begins a process's end and returns, so four terminates made in order can finish exiting in
+    // another order when the laptop is loaded, and this spec no longer compares them.
     // The holder is the test's own child: it is reaped as an ended process.
     let mut tree = tree;
     let status = tree

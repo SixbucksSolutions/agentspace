@@ -557,6 +557,10 @@ fn read_retry(path: &Path, whole: impl Fn(&[u8]) -> bool) -> Option<Vec<u8>> {
             return Some(b);
         } else if let Ok(b) = fs::read(path) {
             last = Some(b);
+        } else if !path.exists() {
+            // A file that is gone is given up at once: waiting on it would only hold the watcher
+            // back from the changes after it, whose times it takes as it reads them.
+            break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
