@@ -2166,7 +2166,7 @@ sees:
   ProxyCommand refuses the alias of a lease that is not `ready`, a `released` one among them, and
   refuses every argument of lease alias form while the lease state file exists and cannot be read
   or is not valid, opening no tunnel for either
-  ([docs/operator.md, A lease that is not ready](operator.md#a-lease-that-is-not-ready-0229);
+  ([docs/operator.md, The ProxyCommand](operator.md#the-proxycommand);
   architect, 2026-11-25, for v0.11-T01, pins P21, P22 and P23). That refusal is defined there, and
   changes no document, field or error of this contract. Each search is bounded at 10 seconds of
   its own, a release makes at most six, and none starts after the second once 10 seconds have
