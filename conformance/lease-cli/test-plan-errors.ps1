@@ -772,7 +772,9 @@ try {
 
   # --- plan_too_large (lease-api.md#fields, #agentspace-lease-create) ---
   function Test-PeTooLarge {
-    param([Parameter(Mandatory)][string]$Desc, [Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Turn, [Parameter(Mandatory)][int]$Agents, [AllowNull()]$PlanName, [string[]]$Extra = @(), [string]$Project = 'pe-case', [string]$Platform = 'linux/arm64', [string]$ProfileText = 'agent-linux', [int]$TtlSeconds = 28800, [switch]$Fits)
+    param([Parameter(Mandatory)][string]$Desc, [Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Turn, [Parameter(Mandatory)][int]$Agents, [AllowNull()]$PlanName, [string[]]$Extra = @(), [string]$Project = 'pe-case', [string]$ProjectArg, [string]$Platform = 'linux/arm64', [string]$ProfileText = 'agent-linux', [int]$TtlSeconds = 28800, [switch]$Fits)
+    # $Project is the normalized project the lease MUST carry; $ProjectArg, when given, is what --project is given.
+    if (-not $ProjectArg) { $ProjectArg = $Project }
     $script:PeFiles++
     $file = 'g{0:d3}.json' -f $script:PeFiles
     $verdict = if ($Fits) { 'is not plan_too_large' } else { 'is unsatisfiable with the one reason plan_too_large, size xl' }
@@ -780,7 +782,7 @@ try {
     $p = [System.Collections.Generic.List[string]]::new()
     try {
       Write-PeText -Name $file -Text $Text
-      $run = Invoke-PeLease -Arguments (@('create', '--project', $Project, '--plan', $file) + $Extra)
+      $run = Invoke-PeLease -Arguments (@('create', '--project', $ProjectArg, '--plan', $file) + $Extra)
       if ($Fits) { foreach ($x in (Get-PeFitsProblems -Run $run -Turn $Turn -Agents $Agents -PlanName $PlanName -Size 'xl')) { $p.Add($x) } }
       else { foreach ($x in (Get-PeTooLargeProblems -Run $run -Turn $Turn -Agents $Agents -PlanName $PlanName -Project $Project -Platform $Platform -ProfileText $ProfileText -TtlSeconds $TtlSeconds)) { $p.Add($x) } }
     } catch { $p.Add("It threw: $($_.Exception.Message)") }
@@ -815,7 +817,7 @@ try {
   Test-PeTooLarge -Desc 'A profile no driver supports' -Text (New-PePlan -Turns @((New-PeWideTurn -Name 'T1' -Stories $most))) -Turn 'T1' -Agents ($most + 1) -PlanName $null -Extra @('--profile', 'agent-linux@1') -ProfileText 'agent-linux@1'
   Test-PeTooLarge -Desc 'A platform and a profile no driver supports' -Text (New-PePlan -Turns @((New-PeWideTurn -Name 'T1' -Stories $most))) -Turn 'T1' -Agents ($most + 1) -PlanName $null -Extra @('--platform', 'linux/amd64', '--profile', 'other@2') -Platform 'linux/amd64' -ProfileText 'other@2'
   Test-PeTooLarge -Desc 'A platform and a profile in other forms, normalized' -Text (New-PePlan -Turns @((New-PeWideTurn -Name 'T1' -Stories $most))) -Turn 'T1' -Agents ($most + 1) -PlanName $null -Extra @('--Platform', ' Linux/AArch64 ', '--PROFILE=Agent-Linux@03') -ProfileText 'agent-linux@3'
-  Test-PeTooLarge -Desc 'A TTL of 1h and a project in upper case, normalized' -Text (New-PePlan -Turns @((New-PeWideTurn -Name 'T1' -Stories $most))) -Turn 'T1' -Agents ($most + 1) -PlanName $null -Extra @('--ttl', '1h') -TtlSeconds 3600
+  Test-PeTooLarge -Desc 'A TTL of 1h and a project in mixed case with spaces around it, normalized' -Text (New-PePlan -Turns @((New-PeWideTurn -Name 'T1' -Stories $most))) -Turn 'T1' -Agents ($most + 1) -PlanName $null -Extra @('--ttl', '1h') -TtlSeconds 3600 -ProjectArg ' PE-Case '
   Test-PeTooLarge -Desc 'The box, project swimcoach, whose host needs no making' -Text (New-PePlan -Turns @((New-PeWideTurn -Name 'T1' -Stories $most))) -Turn 'T1' -Agents ($most + 1) -PlanName $null -Project 'swimcoach'
   # A project with a host the driver would place on: still the one reason, decided before any driver is asked, the registry untouched.
   [void](Add-ConformanceReadyHost -ConformanceHome $h2 -Project 'pe-host')
@@ -857,8 +859,8 @@ try {
     if ($run.Json -is [hashtable] -and $rel.Json -is [hashtable] -and (ConvertTo-CcCanonical $run.Json) -cne (ConvertTo-CcCanonical $rel.Json)) { $p.Add('release does not print the lease unchanged') }
     Complete-PeCheck -Name 'lease-api.md#agentspace-lease-release: release of a plan_too_large lease prints it unchanged, as for any unsatisfiable lease' -Problems $p
   } else {
-    foreach ($n in 'get prints a plan_too_large lease with its sized_for as create printed it', 'list prints a plan_too_large lease with its sized_for, and the list validates', 'release of a plan_too_large lease prints it unchanged, as for any unsatisfiable lease') {
-      Write-ConformanceResult -Name "lease-api.md#fields: $n" -Status FAIL -Reason 'The create printed no lease ID, so there was nothing to read back'
+    foreach ($n in 'fields: get prints a plan_too_large lease with its sized_for as create printed it', 'fields: list prints a plan_too_large lease with its sized_for, and the list validates', 'agentspace-lease-release: release of a plan_too_large lease prints it unchanged, as for any unsatisfiable lease') {
+      Write-ConformanceResult -Name "lease-api.md#$n" -Status FAIL -Reason 'The create printed no lease ID, so there was nothing to read back'
     }
   }
   $p = Get-PvNoStartProblems -StandIn $script:PeStandIn

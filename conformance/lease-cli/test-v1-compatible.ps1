@@ -324,14 +324,14 @@ try {
   }
   # The state file is not a document: every command that reads it fails with internal, and nothing is changed.
   $statePath = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.StateDir 'leases.json')
-  [IO.File]::WriteAllBytes($statePath, [Text.UTF8Encoding]::new($false).GetBytes("this is not a lease state file`n"))
+  [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $lab -Path $statePath), [Text.UTF8Encoding]::new($false).GetBytes("this is not a lease state file`n"))
   [void](Test-VcLine -Why 'the lease records cannot be read: a get' -Arguments @('lease', 'get', $notFound) -Kind error -Code internal)
   [void](Test-VcLine -Why 'the lease records cannot be read: a list' -Arguments @('lease', 'list') -Kind error -Code internal)
   [void](Test-VcLine -Why 'the lease records cannot be read: a create' -Arguments @('lease', 'create', '--project', 'vc-ready', '--platform', 'windows/amd64') -Kind error -Code internal)
 
   # --- Controls: what v1 adds MUST fail v0's schema, so the checks above are not vacuous ---
   $plansDir = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.Root 'plans')
-  New-Item -ItemType Directory -Force -Path $plansDir | Out-Null
+  New-Item -ItemType Directory -Force -Path (Assert-ConformancePath -ConformanceHome $lab -Path $plansDir) | Out-Null
   $okPlan = '{"name":"vc-plan","turns":[{"name":"T1","stories":[{"name":"S1","subagents":[{"name":"A","model":"Opus","effort":"high"}]}]}]}'
   $stories = @(1..32 | ForEach-Object { '{"name":"s' + $_ + '","subagents":[{"name":"A","model":"Opus","effort":"high"}]}' }) -join ','
   $bigPlan = '{"name":"vc-big","turns":[{"name":"T1","stories":[' + $stories + ']}]}'

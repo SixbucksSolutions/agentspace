@@ -2,9 +2,11 @@
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
 # EXPECTED TO FAIL against the installed v0.09 programs, which know no `last_success_at`: a build before
-# v0.10 refuses a hosts.json that holds the member as not valid by its schema, so each case that seeds one
-# fails there, and its rule of an earlier start (D77) is not theirs. A v0.10 build MUST pass every result
-# line (docs/conformance.md, "The files that are expected to fail").
+# v0.10 refuses a hosts.json that holds the member as not valid by its schema, so each `create` that seeds
+# one fails there, and each case whose start D77 makes due starts nothing there. A `get` that seeds one and
+# expects no start passes there, since check_pending drops a registry it cannot read, and so do the cases
+# that seed none (Y2's absent case and Y4), whose 5 minutes v0.09 already had. A v0.10 build MUST pass every
+# result line (docs/conformance.md, "The files that are expected to fail").
 #
 # A conformance check under D34: it drives the lease CLI only as a separate process, through what
 # docs/lease-api.md, docs/driver.md and docs/state.md document, with a stand-in for the provisioning run
@@ -30,6 +32,11 @@
 #   Y5  A held lock still stops a start that a success would make due: with last_success_at at or after
 #       last_attempt_at and the project's provision.lock held by the check, a `get` and a `create --size l`
 #       start nothing and leave the registry as it was.
+# A row's seed is the whole seed, the lease state file with its stored pending lease included (the
+# architect's ruling for v0.10-T04, the dev lead's pin P6 of E0.10-T04-S01), so every `create --size l` of Y1, Y2, Y4 and Y5 is made beside the
+# project's stored pending lease of the EC2 driver at `l`, and is decided by driver.md, "On a `ready` host",
+# row 1 (the project has a pending lease that a run would place), never row 6. Row 1 starts a run when one is
+# due by "Starting a provisioning run", steps 2 to 5, which is what these rows show.
 # A run's own writing of last_success_at, the run's start record removing it, and a lease created after
 # placing's last re-read are not lease CLI rows: driver.md, "Conformance cases for v0.10", gives them to the
 # operator's cases of E0.10-T04-S02 and to the order of the locks.
@@ -209,7 +216,8 @@ function Get-SdNoFurtherStartProblems {
 
 # Runs one case of a row: seeds hosts.json with the project's record ready at m9g.xlarge, with last_attempt_at
 # AttemptAgo seconds before now and last_success_at SuccessAgo seconds before now (negative for none), the
-# project list, a stored pending lease of the project when -Pending or the command is a `get`, and a held
+# project list, a stored pending lease of the project when -Pending or the command is a `get` (every row of
+# this file passes -Pending, so a `create` is decided by row 1, by the ruling above), and a held
 # provision.lock when -Lock; runs `get` of that lease or `create --size l`; and checks that the stand-in
 # was started once with exactly provision -Host <project> and the registry written as step 4 says, or that
 # it was not started and the registry is as it was. -SecondGet makes a second `get` straight after the first
@@ -282,7 +290,7 @@ $verb = @{ get = 'a get of the project''s stored pending lease'; create = 'a cre
 
 # ---- Y1 -----------------------------------------------------------------------------------------------
 foreach ($cmd in 'get', 'create') {
-  Invoke-SdCase -Command $cmd -AttemptAgo 60 -SuccessAgo 30 -Start $true -Name "${starting}: Y1 (steps 2 and 4): With a record ready at m9g.xlarge whose last_attempt_at is 1 minute before now and last_success_at 30 seconds before now, $($verb[$cmd]) starts the stand-in once with exactly provision -Host <project>, sets last_attempt_at to now, leaves the record with no last_success_at and every other member as it was, and answers pending"
+  Invoke-SdCase -Command $cmd -AttemptAgo 60 -SuccessAgo 30 -Start $true -Pending -Name "${starting}: Y1 (steps 2 and 4): With a record ready at m9g.xlarge whose last_attempt_at is 1 minute before now and last_success_at 30 seconds before now, beside a stored pending lease of the project, $($verb[$cmd]) starts the stand-in once with exactly provision -Host <project>, sets last_attempt_at to now, leaves the record with no last_success_at and every other member as it was, and answers pending"
 }
 
 # ---- Y2 -----------------------------------------------------------------------------------------------
@@ -290,9 +298,9 @@ foreach ($seedKind in 'older', 'absent') {
   $successAgo = $(if ($seedKind -ceq 'older') { 180 } else { -1 })
   $successText = $(if ($seedKind -ceq 'older') { 'last_success_at 2 minutes before it' } else { 'no last_success_at' })
   foreach ($cmd in 'get', 'create') {
-    Invoke-SdCase -Command $cmd -AttemptAgo 60 -SuccessAgo $successAgo -Start $false -Name "${starting}: Y2 (step 2): With a record ready at m9g.xlarge whose last_attempt_at is 1 minute before now and $successText, $($verb[$cmd]) answers pending, starts nothing and leaves the registry as it was"
+    Invoke-SdCase -Command $cmd -AttemptAgo 60 -SuccessAgo $successAgo -Start $false -Pending -Name "${starting}: Y2 (step 2): With a record ready at m9g.xlarge whose last_attempt_at is 1 minute before now and $successText, beside a stored pending lease of the project, $($verb[$cmd]) answers pending, starts nothing and leaves the registry as it was"
     $dueSuccess = $(if ($seedKind -ceq 'older') { 360 + 120 } else { -1 })
-    Invoke-SdCase -Command $cmd -AttemptAgo 360 -SuccessAgo $dueSuccess -Start $true -Name "${starting}: Y2 (step 2): With a record ready at m9g.xlarge whose last_attempt_at is 6 minutes before now and $successText, $($verb[$cmd]) starts the stand-in once with exactly provision -Host <project>, sets last_attempt_at to now and leaves the record with no last_success_at"
+    Invoke-SdCase -Command $cmd -AttemptAgo 360 -SuccessAgo $dueSuccess -Start $true -Pending -Name "${starting}: Y2 (step 2): With a record ready at m9g.xlarge whose last_attempt_at is 6 minutes before now and $successText, beside a stored pending lease of the project, $($verb[$cmd]) starts the stand-in once with exactly provision -Host <project>, sets last_attempt_at to now and leaves the record with no last_success_at"
   }
 }
 
