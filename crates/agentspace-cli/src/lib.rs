@@ -5,6 +5,7 @@
 //! never panics on bad input.
 
 pub mod commands;
+mod disk;
 mod help;
 mod osx;
 mod parse;

@@ -180,6 +180,8 @@ impl Driver for Fake {
 struct Env {
     dir: tempfile::TempDir,
     vars: HashMap<String, OsString>,
+    /// The world's own executable: `agentspace`, relative, unless a test sets a full one.
+    own_exe: PathBuf,
 }
 
 impl Env {
@@ -187,7 +189,11 @@ impl Env {
         let dir = tempfile::TempDir::new().unwrap();
         let mut vars = HashMap::new();
         vars.insert("USERPROFILE".to_owned(), dir.path().as_os_str().to_owned());
-        Env { dir, vars }
+        Env {
+            dir,
+            vars,
+            own_exe: PathBuf::from("agentspace"),
+        }
     }
 
     /// No home, and the state folder set inside the throwaway folder.
@@ -227,7 +233,7 @@ impl Env {
         let world = World {
             var: &var,
             cwd: Some(self.dir.path()),
-            own_exe: Path::new("agentspace"),
+            own_exe: &self.own_exe,
             now: &now,
             new_id: &new_id,
             drivers,
@@ -1041,3 +1047,6 @@ fn the_operator_program_is_agentspace_provision_cmd_made_full() {
         None
     );
 }
+
+/// The lease CLI's `--plan` (E0.10-T03-S01, #0219).
+mod plan;

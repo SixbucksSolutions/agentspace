@@ -71,7 +71,7 @@ impl<'a> Arg<'a> {
 /// The flags each subcommand has, by lowercase name.
 fn flags_of(sub: Sub) -> &'static [&'static str] {
     match sub {
-        Sub::Create => &["project", "platform", "profile", "size", "ttl"],
+        Sub::Create => &["project", "platform", "profile", "plan", "size", "ttl"],
         Sub::Get | Sub::Release => &[],
         Sub::Renew => &["ttl"],
         Sub::List => &["project", "state"],
@@ -232,6 +232,25 @@ pub fn parse(args: &[OsString]) -> Parsed {
                     usage(
                         format!("Option --{} is given twice. Give it once.", flag.name),
                         Some(flag.name),
+                    )
+                });
+                continue;
+            }
+            // `--plan` with `--size`, in either order, reported where the later of the two stands
+            // (lease-api.md, Command lines; D75, pins P6 and P13). A later one with no value or an
+            // empty value was reported as that above.
+            let other = match flag.name {
+                "plan" => Some("size"),
+                "size" => Some("plan"),
+                _ => None,
+            };
+            if other.is_some_and(|other| flags.iter().any(|(n, _)| n == other)) {
+                first_error.get_or_insert_with(|| {
+                    usage(
+                        "Options --plan and --size cannot be given together; the plan picks the \
+                         size. Run 'agentspace lease create --help'."
+                            .to_owned(),
+                        Some("plan"),
                     )
                 });
                 continue;
@@ -465,6 +484,94 @@ mod tests {
         for line in without {
             assert_eq!(usage_of(line).field, None, "{line:?}");
         }
+    }
+
+    const TOGETHER: &str = "Options --plan and --size cannot be given together; the plan picks \
+                            the size. Run 'agentspace lease create --help'.";
+
+    #[test]
+    fn plan_with_size_is_a_usage_error_for_plan_in_either_order() {
+        for line in [
+            &[
+                "lease",
+                "create",
+                "--project",
+                "x",
+                "--plan",
+                "p",
+                "--size",
+                "m",
+            ][..],
+            &[
+                "lease",
+                "create",
+                "--SIZE=m",
+                "--project",
+                "x",
+                "--Plan",
+                "p",
+            ][..],
+        ] {
+            let e = usage_of(line);
+            assert_eq!(e.code, ErrorCode::Usage, "{line:?}");
+            assert_eq!(e.field.as_deref(), Some("plan"), "{line:?}");
+            assert_eq!(e.message, TOGETHER, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn plan_with_size_is_reported_where_the_later_stands_and_in_line_order() {
+        // An earlier error on the line comes first.
+        let e = usage_of(&["lease", "create", "--bogus", "--plan", "p", "--size", "m"]);
+        assert!(e.message.starts_with("Unknown option '--bogus'"));
+        // An error after the later flag comes after it.
+        let e = usage_of(&["lease", "create", "--plan", "p", "--size", "m", "--bogus"]);
+        assert_eq!(e.message, TOGETHER);
+        // A later one with no value, or an empty one, is reported as that.
+        let e = usage_of(&["lease", "create", "--size", "m", "--plan"]);
+        assert_eq!(
+            (e.message.as_str(), e.field.as_deref()),
+            (
+                "Option --plan needs a value. Run 'agentspace lease create --help'.",
+                Some("plan")
+            )
+        );
+        let e = usage_of(&["lease", "create", "--plan", "p", "--size="]);
+        assert_eq!(
+            (e.message.as_str(), e.field.as_deref()),
+            (
+                "Option --size has an empty value. Run 'agentspace lease create --help'.",
+                Some("size")
+            )
+        );
+        // Help still wins.
+        assert_eq!(
+            run(&["lease", "create", "--plan", "p", "--size", "m", "-h"]),
+            Parsed::Help(help::CREATE, Some(Sub::Create))
+        );
+    }
+
+    #[test]
+    fn plan_alone_is_a_flag_of_create_only() {
+        match run(&["lease", "create", "--project", "x", "--plan", " p "]) {
+            Parsed::Command(c) => assert_eq!(c.flags[1], ("plan".to_owned(), " p ".into())),
+            other => panic!("{other:?}"),
+        }
+        let e = usage_of(&["lease", "list", "--plan", "p"]);
+        assert!(
+            e.message
+                .starts_with("Unknown option '--plan' for agentspace lease list")
+        );
+        let e = usage_of(&[
+            "lease",
+            "create",
+            "--project",
+            "x",
+            "--plan",
+            "a",
+            "--plan=b",
+        ]);
+        assert_eq!(e.message, "Option --plan is given twice. Give it once.");
     }
 
     #[test]
