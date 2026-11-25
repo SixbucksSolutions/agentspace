@@ -3055,6 +3055,16 @@ driver: how a `pending` lease becomes `ready`.
   lease's project in `hosts.json`. An `agentspace-host.<project>` alias names its host directly, and
   no argument means the box. So the alias line's format, `"<program>" <alias>`, does not change, and
   every alias file already on the laptop keeps working.
+- **Changed for v0.11 (architect, 2026-11-25, for v0.11-T01, pins P21 and P22; #0229):** the
+  ProxyCommand finds a lease's record by the alias its stored `project` and `id` build
+  (`agentspace-<project>-<first 8 hex digits of id>`), and also, as before, by a `ready` record's
+  `ssh.host_alias`. A record that is not `ready`, or is stored `ready` at or after its `expires_at`,
+  is refused with exit 1 and no tunnel, before the host registry is read. **An argument of lease
+  alias form, when the lease state file exists and cannot be read or is not valid, is refused the
+  same way**, where until v0.11 it went to the box (architect, 2026-11-20, for v0.07-T01): with the
+  file broken no lease command works (P15), so refusing costs a ready lease nothing it still had,
+  and keeps a released lease's alias from reaching the box. Any other argument keeps v0.07's rule.
+  operator.md and driver.md own the detail, and D55's table row below is history.
 - **The token push and its stamp are per host** (D50).
 
 ### D50. One holder per host, one push stamp per host, one CA for every host
