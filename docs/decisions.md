@@ -120,6 +120,12 @@ line's text after `Status:`, without its full stop.
 - [D80. v0.10's done-when is shown by conformance and by a live check that starts no instance](#d80-v010s-done-when-is-shown-by-conformance-and-by-a-live-check-that-starts-no-instance): Decided
 - [D81. v0.10 is fourteen stories in five turns: specs, foundations and hardening, programs, conformance, install](#d81-v010-is-fourteen-stories-in-five-turns-specs-foundations-and-hardening-programs-conformance-install): Decided
 - [D82. v0.10's three follow-up cards are folded into v0.11 and v0.12](#d82-v010s-three-follow-up-cards-are-folded-into-v011-and-v012): Decided
+- [D83. An epic carries its plan as one fenced `agentspace-plan` block in its description, holding exactly a plan document](#d83-an-epic-carries-its-plan-as-one-fenced-agentspace-plan-block-in-its-description-holding-exactly-a-plan-document): Decided
+- [D84. `--turn` names the turn a lease is for; without it, the plan's busiest turn](#d84---turn-names-the-turn-a-lease-is-for-without-it-the-plans-busiest-turn): Decided
+- [D85. A turn MAY carry `budget_minutes`, and a plan lease's TTL is its turn's budget and half again](#d85-a-turn-may-carry-budget_minutes-and-a-plan-leases-ttl-is-its-turns-budget-and-half-again): Decided
+- [D86. `create --board <id> --epic <ticket>` reads the epic's plan from the board, and only reads](#d86-create---board-id---epic-ticket-reads-the-epics-plan-from-the-board-and-only-reads): Decided
+- [D87. Contract v2: the new flags and their error fields; every command line without them prints what v1 printed](#d87-contract-v2-the-new-flags-and-their-error-fields-every-command-line-without-them-prints-what-v1-printed): Decided
+- [D88. v0.11's done-when is shown by conformance against a stand-in board and a live check that starts no instance](#d88-v011s-done-when-is-shown-by-conformance-against-a-stand-in-board-and-a-live-check-that-starts-no-instance): Decided
 
 ## The interface
 
@@ -4083,6 +4089,10 @@ cards v0.09 was laid out on.
 - **The spec turn sets the bounds:** the most turns, stories and subagents, and the file's largest
   size. They MUST hold every plan agentspace has laid out; v0.06's, twenty-six stories in six
   turns, is the largest.
+- **Changed for v0.11 (architect, 2026-11-25, D84 and D85):** "No flag picks a turn" is replaced.
+  `--turn <name>` sizes a lease for that turn alone, with `--epic` and with `--plan <file>`, and
+  without it a lease is for the busiest turn, as here. A turn MAY carry `budget_minutes`, from which
+  a plan lease's TTL follows (D85).
 
 ### D75. `create --plan <file>` picks the size, prints `sized_for`, and answers `plan_too_large` for a plan no size holds
 
@@ -4144,6 +4154,10 @@ version numbers, kept apart").
   for information. A new figure changes which size a plan gets, never what a field means.
 - **Changed when v0.10 was laid out (architect, 2026-11-24, D81):** no lease lacks `size`, so "`size`
   is absent from one kind of lease" is no longer among what makes v1.
+- **Changed for v0.11 (architect, 2026-11-25, D87):** "no release before 1.0 plans another output"
+  did not hold. v0.11's `--board`, `--epic` and `--turn` add three values to the error document's
+  `field`, which makes contract v2; v1's schemas are kept under `schemas/v1/` as v0's are here, and
+  no lease output changes.
 
 ### D77. A run is due at once after a run that succeeded; D48's 5-minute spacing is for retries
 
@@ -4370,6 +4384,183 @@ the card, and the story that meets it cites its number.
   day. Bot cannot move a card into Completed (HTTP 403). A move of each straight from Ready For
   Work to Ready For Review exited 1, its error not read; the same move through In Progress passed.
 
+## v0.11: plan from the board
+
+**D83 to D88 settle v0.11's (#0052) design calls before its stories are laid out**, as
+[handoff-v0.10.md](handoff-v0.10.md#the-scope-ahead-v011) asks. Each is the architect's,
+2026-11-25, unless it says otherwise. They bind the stories, which carry each one into the spec
+that owns the fact in the same pull request that builds it (D34). v0.11 MUST NOT be broken into
+stories until Terry says so (AGENTS.md, "The board"). Two calls are his, and are put to him the
+same day: Q17 and Q18.
+
+**What was read first, so that none of this is assumed:** localswim's API
+(`C:\Projects\localswim\docs\openapi.yaml`, its README and `docs/schemas/`) and card #0052 as Bot.
+- **A card has no field of its own for data.** Its schema allows no member beyond its fixed ones
+  (`additionalProperties: false`): a title, a description of up to 4,194,304 characters, a lane, an
+  owner, a priority, a parent, and attachment metadata.
+- **A card MAY carry attachments**: immutable bytes, up to about 10 MiB a request, whose size, media
+  type and SHA-256 the server computes.
+- **localswim has exactly two tokens, Human and Bot**, each set in the server's environment and kept
+  on the laptop as a DPAPI file (`human.json`, `bot.json`) in the folder its service receipt names.
+  Its credential schema's `role` is `human` or `bot`, and nothing else. **No token is read-only**:
+  Bot creates, moves and edits cards, which is how the architect works the board.
+
+**The order of a board lease, end to end:** `create --board <id> --epic <ticket>` reads the epic's
+card once (D86), takes the one plan block from its description (D83), and hands the document to
+v0.10's parser and bounds (D74). From there it is a `--plan` lease: the turn it is for is the one
+`--turn` names or the busiest (D84), its size is that turn's at D73's footprint (D75), and its TTL
+is that turn's budget and half again (D85). Contract v2 carries the new flags (D87).
+
+### D83. An epic carries its plan as one fenced `agentspace-plan` block in its description, holding exactly a plan document
+
+**Decided, architect, 2026-11-25**, for #0052's design call.
+- **The block is a fenced code block in the epic card's description:** a line that is exactly
+  ```` ```agentspace-plan ````, then the plan document, then a line that is exactly ```` ``` ````.
+  Lines end in LF or CRLF. Everything between the two fence lines is the document's bytes, read as
+  a v0.10 plan file is read: UTF-8 JSON, at most 262,144 bytes (lease-api.md, Plan). It renders on
+  the board as code, so Terry reads it on his phone as written.
+- **It holds exactly a plan document (D74)**, as D85 extends it, and nothing else. The board adds a
+  source, not a format: `agentspace-plan`'s parser, its bounds and its errors stay the one check, and
+  a plan read from an epic and the same plan read from a file give the same lease.
+- **Exactly one block, or the epic is refused, never guessed at (D5):**
+  - **No block** is refused: the epic carries no plan.
+  - **Two or more** are refused, since agentspace cannot tell which is meant.
+  - **A line that starts with ```` ```agentspace-plan ```` and is not exactly that line**, such as
+    one with trailing text or a fourth backtick, is refused rather than skipped: a near miss read as
+    no block would hide a plan its writer meant.
+  - **An opening line with no closing line after it** is refused.
+  - **A block whose document `agentspace-plan` refuses** is refused with that crate's `<why>`.
+- **The block is the plan; the epic's prose is for people.** An epic's description still carries
+  its execution plan by turn in prose (D14), and where the two disagree, the block wins and the
+  prose is the bug. **The architect MUST write the block when it lays an epic out, in the same
+  description edit as the prose**, from the same staffing plans its story cards carry (D31).
+- **Not an attachment.** An attachment's bytes are immutable, so changing a plan takes an upload and
+  a detach, two writes that are not atomic; between them, or after a forgotten detach, an epic holds
+  two plans. It is not shown in the description Terry reads, and reading one takes a list and a
+  download where a description is one read. A description edit is one revision-checked write
+  (`card description --revision`).
+- **Not one block per story card.** A plan read from many cards is many reads at different
+  revisions, and a story card does not exist until the epic is laid out, which is also when the
+  epic's own block is written.
+
+### D84. `--turn` names the turn a lease is for; without it, the plan's busiest turn
+
+**Decided, architect, 2026-11-25.** It changes D74's "No flag picks a turn", which foresaw this:
+v0.11 reads a whole epic, and a turn's lease is cut from it.
+- **`create --turn <name>` sizes the lease for that turn alone**, as if the plan held that turn and
+  no other: its agents at once are its stories' peaks plus 1 for its dev lead (D74), and
+  `sized_for.turn` is that turn's name. It applies with `--epic` and with `--plan <file>` alike, so
+  the two sources stay interchangeable (D83).
+- **Without `--turn`, a lease is for the plan's busiest turn**, as in v0.10. **So every plan lease
+  is for one turn**, named in its `sized_for`, and D85 takes its TTL from the same turn.
+- **A `--turn` that names no turn of the plan is refused** with `invalid_value` for `turn`, and its
+  message names the plan's turns. It is compared exactly, as D74's names are.
+- **`--turn` without `--plan` or `--epic` is a `usage` error**, since there is no plan to cut.
+- **The architect's turn lease asks with `--epic` and `--turn`** from v0.11's install, and stops
+  writing a one-turn plan file. AGENTS.md's "Sizing a host before it runs agents" is rewritten with
+  that install, as D73's was with v0.10's.
+
+### D85. A turn MAY carry `budget_minutes`, and a plan lease's TTL is its turn's budget and half again
+
+**Decided, architect, 2026-11-25**, for #0052's "sets its TTL from it".
+- **A turn of the plan document MAY have `budget_minutes`**: an integer from 1 to 960, the turn's
+  wall-clock budget, as D81's table and a turn's milestone `cap_hours` give it. It is optional, so
+  every v0.10 plan stays valid.
+- **A plan lease's TTL is its turn's budget times 1.5, rounded up to the whole minute.** The turn is
+  D84's. A turn with no budget gives the default TTL, 8 hours, as a lease without a plan does
+  (D24). **`--ttl` given with a plan wins over both.**
+- **The 960-minute bound keeps every TTL a plan gives inside D24's 24 hours**, so a plan never
+  needs a clamp or a new `out_of_range` case. A turn of more than 16 hours is not one D14's
+  3-hour stories make.
+- **Why half again:** a TTL is when new connections stop, and a turn that overruns its budget would
+  lose its host mid-turn. v0.10's largest overrun was T02, 4:13 of 3.5 hours (1.2 times); the
+  largest extension Terry has given was v0.08-T03's, 3 hours to 4.5 (1.5 times). Half again covers
+  both. A turn longer still renews, which signs on the laptop and touches no host (D24).
+- **Not from model and effort.** D27 lets them feed the TTL, since they predict a turn's length, but
+  D27 also requires a footprint to come from measurement, and no turn's length has been measured
+  against them. A budget is a figure the plan's writer states and the milestone already holds.
+  Model and effort stay recorded and read by nothing (D74).
+- **The factor is not in the contract**, as D73's footprint is not (D76): it sits beside the
+  footprint in `agentspace-plan`, one named place, and a new factor changes which TTL a plan gets,
+  never what a field means. lease-api.md gives today's figure for information.
+- **What a longer TTL costs is bounded elsewhere.** A host runs only while its project holds a live
+  lease (D56), and the architect releases a turn's lease at the turn's close (AGENTS.md); a lease
+  forgotten past its turn holds its host up to half the budget longer than it would at the budget
+  alone, and D57's horizon still powers the host off while the laptop is away.
+
+### D86. `create --board <id> --epic <ticket>` reads the epic's plan from the board, and only reads
+
+**Decided, architect, 2026-11-25**, except where the credential comes from, which is Terry's (Q17).
+- **`--board <id>` and `--epic <ticket>` are given together, or neither.** `--board` is the board's
+  UUID; `--epic` is the card's ticket number, decimal digits, as `card get` takes it. A board's
+  name is not accepted, since two boards may share one and a lookup would be a guess. One without
+  the other is a `usage` error, and so is either with `--plan` or with `--size`.
+- **The CLI reads the epic's card once**, takes D83's block from its description, and refuses an
+  archived card, since an archived epic is not one being worked.
+- **The board client only reads.** Every request it can make is a GET, fixed in one function that
+  takes no method, so no code path in agentspace writes to a board. Conformance MUST show it: the
+  stand-in board answers any other method with a failure the case reports (D88).
+- **What it refuses, and how:**
+
+  | Case | Error |
+  |---|---|
+  | `--board` not a UUID, or no board of that ID | `invalid_value` for `board` |
+  | `--epic` not a ticket number, no card of that ticket on the board, or an archived card | `invalid_value` for `epic` |
+  | No block, two or more, a malformed fence, or a document `agentspace-plan` refuses (D83) | `invalid_value` for `epic`, its message giving the reason |
+  | `--turn` naming no turn of the epic's plan (D84) | `invalid_value` for `turn` |
+  | The board does not answer, refuses the credential, or the credential cannot be read | `internal`, in agentspace's own words (#0041): no token, no URL beyond the host and port, no path |
+
+- **The lease's record keeps where its plan came from**: the board, the ticket, the card's revision
+  read, and the plan as read, which state.md places. No output prints them (D87).
+- **The credential is never agentspace's to keep.** Whatever Q17 decides, the token MUST NOT be
+  printed, logged, written to agentspace's state or any file, or passed as a command argument
+  (AGENTS.md, "The board"). It is read for the one request and dropped.
+- **Conformance MUST read a stand-in board with a stand-in credential, never Terry's**, named by a
+  seam variable as every other stand-in is (conformance.md, The harness). A review or check MUST
+  NOT read `%LOCALAPPDATA%\localswim-v2` (AGENTS.md, "Terry's real files in a review").
+
+### D87. Contract v2: the new flags and their error fields; every command line without them prints what v1 printed
+
+**Decided, architect, 2026-11-25**, against lease-api.md's Versioning section.
+- **What makes it a new version:** `board`, `epic` and `turn` are new values of the error document's
+  `field`, whose v1 schema is an enum of eight. A v1 client reading such an error fails its schema.
+  The new `usage` cases that carry a `field` are new too, and the conformance suite checks those,
+  since the schema does not (lease-api.md, Exit codes and errors).
+- **What does not:** `--board`, `--epic`, `--turn` and `budget_minutes` are inputs v1 refused. **No
+  lease output changes**: `sized_for` keeps its three members, and a board lease prints the plan's
+  own `name` as `sized_for.plan`, as D75 foresaw, never the board or the ticket. The `create`
+  request document gains `board`, `epic` and `turn` as inputs.
+- **What v2 keeps:** a command line with none of the new flags prints the document v1 printed and
+  fails with the errors v1 failed with, so every document it prints validates against v1's schemas;
+  one with no `--plan` either still validates against v0's. **v1's schemas and samples are kept
+  unchanged under `schemas/v1/`**, as v0's are under `schemas/v0/` (D76), and conformance MUST show
+  both checks.
+- **Not reporting every new error under `plan` to stay v1.** A caller acts on `field`, and a `field`
+  that names a flag the caller did not give, `plan` for a bad `--board`, would send it to fix the
+  wrong thing. Every caller is still agentspace's own (D76: its conformance suite, the architect's
+  live kit, and a person), so a new version costs no other project a change.
+- **Output schemas stay strict** (D76). v2 is the second version in two releases, and no release
+  after it to 1.0 plans another: v0.12's platforms are not a new version (lease-api.md, Versioning).
+
+### D88. v0.11's done-when is shown by conformance against a stand-in board and a live check that starts no instance
+
+**Decided, architect, 2026-11-25** (D19, as D80), except the live check's board, which is Terry's
+(Q18).
+- **Every part of #0052's done-when is the lease CLI's**, decided before any driver is asked: the
+  read, the block, the size, the TTL and every refusal (D83 to D86). Conformance shows each against
+  the build with a stand-in board, a stand-in credential and a stand-in driver, as v0.10's did, and
+  shows that the board client sent nothing but GETs.
+- **After the install, one live check reads a real epic on Terry's board** for a project that is not
+  on the project list, which D54 answers `unsatisfiable` with `no_capacity` before any AWS call
+  (D80). Which epic, or whether any, is Q18. It shows the size, `sized_for` and TTL the same plan
+  gives from a file.
+- **No instance hours are asked for, and nothing costs money.** A board lease reaches the driver
+  exactly as a `--plan` lease does (D75), which v0.09-T05 showed resizing a real host.
+- **No change to Terry's laptop beyond the install**: his ssh config, keeper task and `PATH` are
+  unchanged, as in v0.10. What Q17 decides adds no file to his laptop.
+- **#0229 and #0230 ride as D82 placed them:** #0229 a story of the first build turn, #0230 with the
+  conformance turn.
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -4453,3 +4644,5 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q14** | **Closed (Terry, 2026-11-24: "Yes, half a vCPU").** ~~Does v0.10 size a plan at D73's half a vCPU and 2 GiB for each agent at once, about twice v0.06-T01's measured share, in place of his rule of a vCPU and 4 GiB? It halves the size, and the price, at every count: v0.06-T01's 15 agents get `l` at $0.39 an hour rather than `xl` at $0.78, and a turn of up to 32 agents fits. The architect recommends it.~~ Yes, from v0.10's install. | Closed, D73 |
 | **Q15** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want the account's Session Manager idle timeout shortened as well, for #0195? It is account-wide, would cut his other Session Manager sessions too, and D78 fixes the cause in the idle check without it. The architect recommends no.~~ No: the account setting is not changed. | Closed, D78 |
 | **Q16** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want a plan lease shown on agentspace's real host, resized to the plan's size and back, for about 0.5 instance hours at `l` (about $0.20)? D80 shows the done-when without any instance. The architect recommends no.~~ No: v0.10 asks for no instance hours. | Closed, D80 |
+| **Q17** | **Open, put to Terry 2026-11-25.** With what credential does the lease CLI read his board (D86)? localswim has two tokens, Human and Bot, and neither is read-only. **(a)** The CLI reads Bot's token for each call from localswim's service receipt and `bot.json`, decrypted by DPAPI for his Windows user alone, as his board watcher does; no new secret and no file added, but agentspace's product then decrypts a token that can write, held to GETs by D86's one read-only client and its conformance case. **(b)** localswim gains a read-only token first: a change to his localswim, outside this repository, landed before v0.11's programs turn. **(c)** agentspace keeps a copy of Bot's token in its own home: a second copy of a write token, which the architect does not recommend. The architect recommends (a). | D86 |
+| **Q18** | **Open, put to Terry 2026-11-25.** What does v0.11's live check read on his board (D88)? **(a)** #0052, v0.11's own epic, once the architect writes its plan block when laying it out (D83), so the release that builds the reader is also its first input: one GET as Bot, nothing written by the check. **(b)** A throwaway epic the architect creates and archives on his board. **(c)** None: conformance against a stand-in board alone. Each starts no instance and costs nothing. The architect recommends (a). | D88 |
