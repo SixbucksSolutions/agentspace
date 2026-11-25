@@ -628,7 +628,13 @@ them:
   `claude-ssh-proxy.exe` as its ProxyCommand, which runs the alias's ProxyCommand line from the
   app's own `proxy-command.txt` (decisions.md, D12's findings for E3.03, and D9's for
   E0.02-T03-S01). So the app can start the alias's `agentspace-ssh-proxy.exe` after the alias file
-  is gone, and a release cannot end a process that does not yet exist.
+  is gone, and a release cannot end a process that does not yet exist. **From v0.11 such a process
+  opens no tunnel**: the ProxyCommand refuses a lease alias whose record is not `ready`, a
+  `released` one among them, and an argument of lease alias form while the lease state file cannot
+  be read or is not valid, with exit 1 before it reads the host registry or starts anything
+  ([operator.md, A lease that is not ready (#0229)](operator.md#a-lease-that-is-not-ready-0229);
+  architect, 2026-11-25, for v0.11-T01, pins P21 and P22). The CLI records `released` before the
+  release step, so every such process started after that write is refused.
 - **Endings stopped by the bounds above**, at six or at 10 seconds, while the last still ended a
   client. Only a client that comes back as fast as it is ended can cause it.
 
@@ -1924,7 +1930,12 @@ so it ends any client that came back through the alias while the first walk ran.
 close it:** deleting the alias file does not stop every client from coming back, since the
 desktop app can start the alias's `agentspace-ssh-proxy.exe` from its own `proxy-command.txt`
 after the file is gone, and a client started after the last walk read the process list is outside
-what a release claims ([Release a lease](#release-a-lease), #0229). **The further walks** end a
+what a release claims ([Release a lease](#release-a-lease), #0229). **From v0.11 the ProxyCommand
+closes it from the laptop's side**: a ProxyCommand such a client starts after the CLI recorded the
+lease `released` is refused, and opens no tunnel
+([operator.md, A lease that is not ready (#0229)](operator.md#a-lease-that-is-not-ready-0229);
+architect, 2026-11-25, for v0.11-T01, pins P21 and P22). The walks still end every client that was
+running, as above. **The further walks** end a
 client that no walk before could reach: one below a program that has exited while the client above
 it still holds that program, which is in no client's tree and is not counted on its own while the
 client above runs ([Each with its tree](#each-with-its-tree), #0196). E0.08-T06-S02's live check,
@@ -2354,7 +2365,11 @@ a provisioning run, detached, and never wait for it
 
 **Which host a connection reaches is the ProxyCommand's to find, from the lease itself** (D49, D55;
 pin P7, architect, 2026-11-20, for v0.07-T01): the lease's record's `project`, then that
-project's record in the host registry if it is `ready`, and otherwise the box. The alias line does not change for that. A lease alias for a host
+project's record in the host registry if it is `ready`, and otherwise the box. **From v0.11 it
+refuses, before it reads the host registry, a lease alias whose record is not `ready`, and an
+argument of lease alias form while the lease state file cannot be read or is not valid**
+([operator.md, A lease that is not ready (#0229)](operator.md#a-lease-that-is-not-ready-0229);
+architect, 2026-11-25, for v0.11-T01, pins P21 and P22). The alias line does not change for that. A lease alias for a host
 that is not the box checks the host's key under that host's own name, so a fall back to the box
 fails ssh's strict key check rather than reaching the wrong machine
 ([state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)).

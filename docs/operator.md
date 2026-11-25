@@ -518,7 +518,7 @@ operation is `wait`**, and `instance-stopped` is the first of its own arguments,
 | `USERNAME`, `COMPUTERNAME` | Read by `ca` and `sync` | The user named in the CA's messages, and the computer named in a new CA's key comment (docs/state.md). |
 | `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD`, `AGENTSPACE_SCP_CMD`, `AGENTSPACE_TIMEZONE` | Read, each time the operator needs what it names | Name the programs the operator starts in place of the AWS CLI, `ssh` and `scp`, and the zone the token push sends in place of the laptop's. For tests only ([The test seam](#the-test-seam)). |
 | `AGENTSPACE_DIAGNOSTIC` | Read by the ProxyCommand | When it is set to a non-empty value, the ProxyCommand MAY print backend detail to stderr that it otherwise withholds ([What a caller sees](#what-a-caller-sees-d1-card-0087)), and its token push drops nothing of its ssh's stderr, `The host is ready.` included ([What the laptop sends](#what-the-laptop-sends), step 2; #0167, P14, architect, 2026-11-21, for v0.08-T01). |
-| `AGENTSPACE_STATE_DIR` | Read by the ProxyCommand, `provision`, `status -All` and `guard` | Moves the state folder, where the lease state file is, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). The ProxyCommand reads the lease state file from there to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)), `provision` reads its project's leases there for its deploy step's instance type ([provision](#provision), step 4) and places the project's pending leases there ([provision](#provision), step 9), `status -All` counts each host's live leases from it ([status](#status)), and `guard` reads it to decide which hosts a live lease explains ([guard](#guard)). It moves nothing else the operator reads: the host registry, the project list, each host's folder, `guard.log` and `guard.lock` stay under `%USERPROFILE%\.agentspace`, as state.md says. |
+| `AGENTSPACE_STATE_DIR` | Read by the ProxyCommand, `provision`, `status -All` and `guard` | Moves the state folder, where the lease state file is, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). The ProxyCommand reads the lease state file from there to find a lease alias's lease, refusing one that is not `ready` from v0.11, and its host ([From the ProxyCommand](#from-the-proxycommand)), `provision` reads its project's leases there for its deploy step's instance type ([provision](#provision), step 4) and places the project's pending leases there ([provision](#provision), step 9), `status -All` counts each host's live leases from it ([status](#status)), and `guard` reads it to decide which hosts a live lease explains ([guard](#guard)). It moves nothing else the operator reads: the host registry, the project list, each host's folder, `guard.log` and `guard.lock` stay under `%USERPROFILE%\.agentspace`, as state.md says. |
 | `AGENTSPACE_SSH_DIR` | Read by `provision`, and by every command that writes a host's operator alias | Moves the ssh folder, where a placed lease's alias file and the `Include` line are written, as it does for the lease CLI ([state.md, What moves which files](state.md#what-moves-which-files)). `provision`'s step 9 uses it as `create` does. The operator's own alias for a host is written in the ssh folder it names too ([How the operator reaches a host](#how-the-operator-reaches-a-host)). |
 | `AGENTSPACE_PROXY_COMMAND` | Read by `provision` | The lease CLI's ProxyCommand override ([lease-api.md, Environment](lease-api.md#environment)): `provision`'s step 9 writes it into each placed lease's alias file as `create` would. |
 | `PATH` | Read; the ProxyCommand prepends two folders | Finding `go`, the AWS CLI's fallback, and the Session Manager plugin. |
@@ -713,7 +713,7 @@ history;** where the rewrite keeps each is
 | `%USERPROFILE%\.agentspace\ca\agentspace_ca.pub` | `ca`, `sync`; `deploy`, when it creates a host's stack | `ca`, once | The CA's public key, which `sync` sends to every host, and `deploy -Host` passes as `CaPublicKey` to the stack it creates for a host that is not the box |
 | `%USERPROFILE%\.ssh\id_ed25519.pub` | `deploy` | Never | The user's own public key, passed as `SshPublicKey` to the box's stack at every deploy and to a new host's stack when it is created ([deploy](#deploy), step 1) |
 | `%USERPROFILE%\.ssh\config` | The ssh client, for the `agentspace` entry and lease aliases | Never, but for agentspace's `Include` line, which every command that writes a host's operator alias, and `provision`'s `place_pending`, add when it is missing, as `create` does ([state.md, The `Include` line](state.md#the-include-line)) | [The `agentspace` SSH entry](#the-agentspace-ssh-entry) |
-| `<state folder>\leases.json`, and its lock `leases.lock` beside it | The ProxyCommand, without the lock, to find a lease alias's host ([From the ProxyCommand](#from-the-proxycommand)); `status -All` and `guard`, without the lock, for each project's live leases ([status](#status); [guard](#guard)); `provision`'s deploy step, under the lock, which it takes and releases before any call to AWS, for the instance type its project's leases need ([provision](#provision), step 4; architect, 2026-11-23, for v0.09-T01, pin P26); `provision`'s `place_pending`, under the lock | `provision`'s `place_pending`, which writes a placed lease's record `ready`, and from v0.09 a `pending` lease the host does not meet `unsatisfiable` when a live `ready` lease holds the host (pin P1), one lease per hold of the lock ([provision](#provision), step 9) | The lease state file ([state.md, The lease state file](state.md#the-lease-state-file)), which the lease CLI owns |
+| `<state folder>\leases.json`, and its lock `leases.lock` beside it | The ProxyCommand, without the lock, to find a lease alias's lease, refusing one that is not `ready` from v0.11, and its host ([From the ProxyCommand](#from-the-proxycommand)); `status -All` and `guard`, without the lock, for each project's live leases ([status](#status); [guard](#guard)); `provision`'s deploy step, under the lock, which it takes and releases before any call to AWS, for the instance type its project's leases need ([provision](#provision), step 4; architect, 2026-11-23, for v0.09-T01, pin P26); `provision`'s `place_pending`, under the lock | `provision`'s `place_pending`, which writes a placed lease's record `ready`, and from v0.09 a `pending` lease the host does not meet `unsatisfiable` when a live `ready` lease holds the host (pin P1), one lease per hold of the lock ([provision](#provision), step 9) | The lease state file ([state.md, The lease state file](state.md#the-lease-state-file)), which the lease CLI owns |
 | `%USERPROFILE%\.agentspace\leases\<id>\` and the key and certificate in it | The ssh client, through a lease alias | `provision`'s `place_pending`, for each lease it places, after removing a killed placement's leftovers | A placed lease's folder ([state.md, The lease folder](state.md#the-lease-folder)) |
 | `<ssh folder>\agentspace.d\<alias>`, a lease's alias file | The ssh client | `provision`'s `place_pending`, for each lease it places; never the operator's own commands | A placed lease's alias ([state.md, The alias file](state.md#the-alias-file); [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)) |
 | `%USERPROFILE%\.claude\CLAUDE.md` | `sync` | Never | The user's global instructions for Claude Code, copied to each host |
@@ -1234,20 +1234,108 @@ on it for v0.07's specs.
    AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.`, exit 1, no tunnel.
 3. **Any other argument: a lease alias.** The ProxyCommand reads the lease state file,
    `<state folder>\leases.json` ([state.md, The lease state file](state.md#the-lease-state-file)),
-   without taking the lease state lock, as the keeper does, and never writes it (D49). It looks for
-   the record whose `ssh.host_alias` equals the argument exactly, case-sensitively. Only a stored
-   `ready` record carries `ssh` (state.md), so a lease in any other state never matches. Then:
-   - **A record is found, and its `project`'s host record is `ready`: that host.**
-   - **A record is found, and its project has no record, or one that is not `ready`: the box.**
-   - **No record is found, or there is no lease state file: the box.**
-   - **The lease state file exists and cannot be read, or is not valid** by state.md's checks: the
-     box (architect, 2026-11-20, for v0.07-T01). That keeps every swimcoach lease connecting as it did before
-     v0.07, when the ProxyCommand never read the file; a lease alias of another host that falls to
-     the box fails ssh's strict host key check under `agentspace-host.<project>`, so it never
-     reaches the wrong machine (P7). With `AGENTSPACE_DIAGNOSTIC` set, the ProxyCommand prints a
-     line naming the file and the problem.
-   - **The lease's expiry is not checked here.** A lease whose certificate has expired is refused
-     by the host's sshd, as before.
+   whole, as the keeper does, and never writes it (D49). **From v0.11 the read MUST be retried on a
+   sharing violation alone, at most 3 attempts within 1 second in all** (architect, 2026-11-25, for
+   v0.11-T01, pin P23), as the bullet on a file that cannot be read gives below; every other failure
+   of the read gets no retry. From v0.07 to v0.10 the read was made once and never retried. **It
+   MUST NOT take the lease state lock** ([state.md, The lease state
+   lock](state.md#the-lease-state-lock)), and it opens the file sharing read, write and delete
+   access, so it never blocks a writer's rename and sees the file as it was before a change or as
+   it is after it, never part of either ([state.md, Replacing a file](state.md#replacing-a-file)).
+   **From v0.11 it finds the alias's lease in any state, and refuses one that is not `ready`**
+   (#0229; D49, as changed for v0.11-T01; architect, 2026-11-25, for v0.11-T01, pins P21 and P22;
+   [A lease that is not ready (#0229)](#a-lease-that-is-not-ready-0229)):
+   - **A record is the alias's when the argument equals the alias built from the record**:
+     `agentspace-`, its `project`, `-`, then the first 8 characters of its `id`, which are the
+     first 8 hex digits of the lease ID. That is the form
+     [lease-api.md, Fields](lease-api.md#fields) gives `ssh.host_alias`, built from the stored
+     `project` and `id`, both normalized lowercase, as the EC2 driver's release builds the alias to
+     find its file ([driver.md, Ending a lease's connections](driver.md#ending-a-leases-connections)).
+     **A stored `ready` record whose `ssh.host_alias` equals the argument is the alias's too**, as
+     before v0.11. Both comparisons are exact and case-sensitive. Every record keeps `project` and
+     `id` in every state, so a `released`, `pending` or `unsatisfiable` lease, which carries no
+     `ssh` (state.md), is found as a `ready` one is.
+   - **The lease CLI never writes two records that are the alias's.** Two kept leases MUST NOT
+     share a host alias, in any state, and `create` draws a new ID until no kept lease uses its
+     alias ([lease-api.md, Fields](lease-api.md#fields)); no command forgets a lease
+     ([state.md, The lease state file](state.md#the-lease-state-file)), so a released lease's
+     alias is never given to a later one. **A file that holds two or more anyway**, which only a
+     person's edit or a program that broke that rule can make, is decided by them all (architect,
+     2026-11-25, for v0.11-T01, pin P22): when any of them is `ready`, the first such in the file's
+     order is the alias's lease; when none is, the alias is refused, and the message names the state
+     of the last of them in the file's order. **`ready` here means `ready` at the clock's one reading
+     below, not as stored** (the dev lead, 2026-11-25, for v0.11-T01, under pin P22): a record
+     stored `ready` whose `expires_at` that reading has reached is `expired`, so it is not chosen,
+     and it is named `expired` when it is the last.
+   - **The lease's state is decided at one reading of the clock**, taken once for the read however
+     many attempts it took: a record stored `pending`, `released` or `unsatisfiable` is in that
+     state, and one stored `ready` is `expired` when the reading's time is at or after its `expires_at`, compared as
+     instants to the second, and `ready` otherwise ([state.md, The lease state
+     file](state.md#the-lease-state-file); [lease-api.md, States](lease-api.md#states)).
+
+   Then:
+   - **The alias's lease is `ready`, and its `project`'s host record is `ready`: that host.**
+   - **The alias's lease is `ready`, and its project has no record, or one that is not `ready`:
+     the box.**
+   - **The alias's lease is `released`, `expired`, `unsatisfiable` or `pending`: the connection is
+     refused**, before the host registry is read, with exit 1, the refusal's one line on stderr and
+     no tunnel ([A lease that is not ready (#0229)](#a-lease-that-is-not-ready-0229)).
+   - **No record is the alias's, or there is no lease state file: the box**, as before v0.11.
+   - **The lease state file exists and cannot be read, or is not valid** by state.md's checks
+     (architect, 2026-11-25, for v0.11-T01, pin P21): no record can be found, so the ProxyCommand
+     decides by the argument's form alone.
+     - **An argument of lease alias form is refused**, with exit 1 and no tunnel, before the host
+       registry is read, and the refusal's one line on stderr says that the lease records could not
+       be read ([A lease that is not ready (#0229)](#a-lease-that-is-not-ready-0229)). **Lease alias
+       form is `agentspace-<project>-<8 lowercase hex>`**: the whole argument matches
+       `^agentspace-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{8}$`, compared case-sensitively.
+       `<project>` is a project in the normalized form [lease-api.md, Project](lease-api.md#project)
+       gives, and **`<8 lowercase hex>` is exactly 8 characters, each one of `0` to `9` or `a` to
+       `f`**, as the first 8 hex digits of a lease ID stand in `ssh.host_alias`. So
+       `agentspace-swimcoach-3a9c5e21` is of lease alias form, and `agentspace`,
+       `agentspace-swimcoach-3A9C5E21`, `agentspace-swimcoach-3a9c5e2` and
+       `agentspace-swimcoach-3a9c5e21x` are not.
+     - **Any other argument keeps v0.07's rule and reaches the box** (architect, 2026-11-20, for
+       v0.07-T01).
+     - **With `AGENTSPACE_DIAGNOSTIC` set, the ProxyCommand prints a line naming the file and the
+       problem**, as before v0.11, for either kind of argument; for a refused one it comes before
+       the refusal's line, which stays the last.
+     - **A read refused on a sharing violation, because another process holds the file without
+       sharing the access this read asks, MUST be retried, at most 3 attempts within 1 second in
+       all** (architect, 2026-11-25, for v0.11-T01, pin P23). The read MUST pause 400 milliseconds
+       before each retry, so its attempts start about 0, 400 and 800 milliseconds after the first
+       (architect, 2026-11-25, for v0.11-T01, pin P27), and it MUST NOT start an attempt more than
+       1 second after the first began. An attempt that reads the file ends the retries, and the
+       file is decided as one read on the first attempt is. **When the last attempt is refused on a
+       sharing violation, the file cannot be read**, and an argument of lease alias form is
+       refused on it.
+     - **With `AGENTSPACE_DIAGNOSTIC` set, the ProxyCommand MUST print one line to stderr for each
+       retry, and the line MUST be exactly `agentspace: The lease records were held by another
+       program; trying again.`** (architect, 2026-11-25, for v0.11-T01, pin P27). Each is printed
+       before that retry's 400 millisecond pause, so a read refused on all 3 attempts prints 2 of
+       them. A read that is not refused on a sharing violation prints none. They come before the
+       line naming the file and the problem, which a read that is finally refused prints (above),
+       and that line comes before the refusal's line, which stays the last.
+     - **Every other failure of the read gets no retry**: a missing file, a folder at the path, a
+       file that is not valid, and a read that fails for any other reason are decided on the
+       attempt that met them, a missing file reaching the box (above) and each of the others
+       refusing an argument of lease alias form. An attempt after a sharing violation that meets
+       one of these ends the retries the same way.
+     - **Note: from v0.07 to v0.10 the read was made once and never retried**, a sharing violation
+       included, and a file it could not read sent every argument to the box (the note below).
+     - **Note: the rule from v0.07 to v0.10 was the box for every argument** (architect,
+       2026-11-20, for v0.07-T01). That kept every swimcoach lease connecting as it did before
+       v0.07, when the ProxyCommand never read the file; a lease alias of another host that fell to
+       the box failed ssh's strict host key check under `agentspace-host.<project>`, so it never
+       reached the wrong machine (P7). **v0.11 refuses a lease-form argument instead** (D49, as
+       changed for v0.11-T01): with the file broken no lease command works
+       ([state.md, The lease state file](state.md#the-lease-state-file)), so the refusal costs a
+       `ready` lease nothing it still had, and it keeps a released lease's alias from reaching the
+       box.
+   - **From v0.11 the lease's expiry is checked here**, as above. Before v0.11 it was not, and an
+     expired lease's connection was refused only by the host's sshd, after the host had been
+     started. sshd still refuses a certificate that has expired, so a lease that expires between
+     this read and its login is refused there, as before.
 4. **A host registry that cannot be read or is not valid fails the connection** (P9, architect,
    2026-11-20, for v0.07-T01), with the caller's "Could not reach the host" line, and the detail
    naming the file only with `AGENTSPACE_DIAGNOSTIC`
@@ -1263,7 +1351,11 @@ lease alias is `agentspace`, and so reaches the box.
 **Why the lease's record, rather than the alias's text.** A lease alias is
 `agentspace-<project>-<8 hex digits>`, and a project can hold `-`, so the text alone could name two
 projects; the record names one. No lease alias holds a `.`, so none can start
-`agentspace-host.` (D47).
+`agentspace-host.` (D47). **The record is found by the alias built from it, from v0.11**, because
+a lease that is not `ready` carries no `ssh.host_alias` to compare, and it is exactly such a lease
+that the ProxyCommand has to recognize in order to refuse it (#0229). **The alias's text alone is
+used only to refuse**, when no record can be read (architect, 2026-11-25, for v0.11-T01, pin P21),
+and never to pick a host.
 
 ### The host registry, as the operator uses it
 
@@ -1683,6 +1775,28 @@ state file.
 | No `last_success_at` for a run that failed at step 4, 5, 6 or 7, or at step 8's write | Conformance case, E0.10-T04-S02 |
 | A failed write of `last_success_at` (pin P23), with the registry unwritable at that point: `success failed reason=<why>` in the log between step 9's lines and `run done`, no change to the record, and the exit code of a run that did not fail | Conformance case, E0.10-T04-S02, failing the write as the v0.07 row for `provision`'s step 3 and step 8 fails theirs (`hosts.lock` held past its 30 seconds, or a write that fails) |
 | The lock the write takes (pin P23): `hosts.lock` alone, with `provision.lock` held and the lease state lock free | Conformance case, E0.10-T04-S02, as the v0.09 lock row shows the deploy step's |
+
+**Every behavior v0.11 adds to this page is #0229's refusal**, [A lease that is not ready
+(#0229)](#a-lease-that-is-not-ready-0229), shown by `conformance/operator/test-unmet-proxy-not-ready.ps1`,
+new in v0.11-T02 (D89), by the same harness as v0.07's ProxyCommand rows: a throwaway home, a
+seeded host registry, a seeded lease state file and the stand-in `aws`. v0.07's ProxyCommand row
+above, for the host each alias reaches, MUST keep passing, but for its cases that v0.11 changes,
+which #0237 changes with the ProxyCommand: a lease alias whose lease has expired is refused, no
+longer reaching its host, and a lease alias with a lease state file that cannot be read or is not
+valid is refused, no longer reaching the box (architect, 2026-11-25, for v0.11-T01, pin P21).
+
+| Behavior | Shown by |
+|---|---|
+| Each state refused: the ProxyCommand given the alias of a record stored `released` (one with `expires_at`, one released from `pending` without it), stored `ready` with an `expires_at` before the case's time (`expired`), stored `unsatisfiable` (with `no_capacity`, and with `plan_too_large`), and stored `pending`, each of a project whose host record is `ready`: exit 1; one line on stderr naming the state and that no connection was opened; nothing on stdout; no call the stand-in `aws` records, no `ssm start-session` among them; no ssh started; no file in the throwaway home changed, `hosts.json`'s `instance_id` and the push stamp included; and stderr holding no lease ID beyond its alias's 8 hex digits, and none of the backend text [What a caller sees](#what-a-caller-sees-d1-card-0087) lists | Conformance case, E0.11-T02 |
+| The record found by the alias built from it: a `released` record, which has no `ssh`, refused for `agentspace-<project>-<first 8 hex digits of its id>`; a `ready` record whose `ssh.host_alias` is the argument found as before | Conformance case, E0.11-T02 |
+| A `ready` lease's alias still connecting: a stored `ready` record with an `expires_at` after the case's time, its host record `ready`, starting the stand-in tunnel for that host's instance and exiting with its code, as v0.07's row shows | Conformance case, E0.11-T02 |
+| A release followed by a ProxyCommand started for its alias: a `ready` lease released by the build's `agentspace lease release`, then the ProxyCommand given its alias, refused as `released`, with no call the stand-in `aws` records | Conformance case, E0.11-T02 |
+| What stays: an alias that is no record's alias, of lease alias form or not, and a missing lease state file, each reaching the box as before v0.11 and refusing nothing; `AGENTSPACE_DIAGNOSTIC` set adding no line to a refusal of a lease whose record was read; a person's `up -Alias <alias>` for a released lease's alias not refused | Conformance case, E0.11-T02 |
+| A lease state file that cannot be read (a folder at its path, and a file the case holds open without sharing it from before the ProxyCommand starts until the ProxyCommand exits, so past the read's 1-second bound, pin P23), with the host registry `ready` for the alias's project: an argument of lease alias form refused, exit 1, one line on stderr saying the lease records could not be read and naming no file, nothing on stdout, no call the stand-in `aws` records, no file in the home changed; an argument not of that form (`agentspace`, a lease alias in upper case, one with 7 hex digits) reaching the box as before v0.11; with `AGENTSPACE_DIAGNOSTIC` set, the line naming the file and the problem before either (architect, 2026-11-25, for v0.11-T01, pin P21), and the retry lines before that one, counted: the folder giving zero lines of `agentspace: The lease records were held by another program; trying again.` and a refusal, the hold past the bound giving two and a refusal (pin P27); no case replaces or releases a file on a timer; each ProxyCommand run ending within 10 seconds of its start, or the case fails and ends it, and the case's hold ending with the run | Conformance case, E0.11-T02 |
+| A hold that ends inside the read's bound (pin P23): a lease state file holding the alias's `ready` lease, its host record `ready`, which the case holds open without sharing it from before the ProxyCommand starts, run with `AGENTSPACE_DIAGNOSTIC` set, and releases inside the read's bound, on the first retry line reaching its stderr and never on a timer: one or two retry lines (pin P27) and the connection made, starting the stand-in tunnel for that host's instance and exiting with its code, as the `ready` row above shows; the ProxyCommand ending within 10 seconds of its start, or the case fails and ends it; a planted build that never retries shows zero retry lines on a hold and MUST be refused under the same case | Conformance case, E0.11-T02 |
+| A failure that is not a sharing violation refused with no retry (pin P23): a folder at the lease state file's path, held by nothing and never replaced, run with `AGENTSPACE_DIAGNOSTIC` set: zero retry lines (pin P27) and an argument of lease alias form refused as the row above, never connecting; the ProxyCommand ending within 10 seconds of its start, or the case fails and ends it; a planted build that retries every failure as it retries a sharing violation shows retry lines on the folder and MUST be refused under the same case | Conformance case, E0.11-T02 |
+| A lease state file that is not valid (not JSON, `version` 1, two records with one `id`, a record that does not fit its schema), each refusing an argument of lease alias form and sending an argument not of that form to the box, as the row above (pin P21) | Conformance case, E0.11-T02 |
+| Two records that are one alias's, which only an edit makes: a `released` record and a later `ready` one connecting through the `ready` one; a stored `ready` record past its `expires_at` skipped, and named `expired` when it is the last match (the dev lead's call, 2026-11-25, for v0.11-T01, under pin P22); two that are not `ready` refused with the later one's state | Conformance case, E0.11-T02 |
 
 ## Commands
 
@@ -3825,7 +3939,11 @@ CLI writes holds none ([state.md, The alias file](state.md#the-alias-file)).
    before any ssh or tunnel, with the `-Alias` message, and before the lease state file or the
    host registry is read. **Then they find the host from the alias** ([From the
    ProxyCommand](#from-the-proxycommand)), and act on that host: its instance ID, its start and
-   wait, and its push stamp (D49, D50).
+   wait, and its push stamp (D49, D50). **From v0.11 a lease alias whose lease is not `ready` is
+   refused there, and so is an argument of lease alias form while the lease state file cannot be
+   read or is not valid**, before the host registry is read and before anything is started
+   ([A lease that is not ready (#0229)](#a-lease-that-is-not-ready-0229); architect, 2026-11-25,
+   for v0.11-T01, pin P21).
 4. **If they failed, exits 1**, starting no tunnel.
 5. **Takes that host's instance ID from its record in the host registry**
    ([The host registry, as the operator uses it](#the-host-registry-as-the-operator-uses-it)),
@@ -3848,8 +3966,9 @@ CLI writes holds none ([state.md, The alias file](state.md#the-alias-file)).
    and exits with that shell's code. The tunnel's stderr is the caller's only as
    [What a caller sees](#what-a-caller-sees-d1-card-0087) allows.
 
-**Exit codes:** 1 for a second argument, a failure of step 3 or 5, or a tunnel that cannot be
-started; otherwise the tunnel's. ssh ends the
+**Exit codes:** 1 for a second argument, a failure of step 3 or 5, step 3's refusal of a lease that
+is not `ready` or of a lease-form argument while the lease records cannot be read, or a tunnel that
+cannot be started; otherwise the tunnel's. ssh ends the
 ProxyCommand when the connection closes, so a caller of ssh rarely sees it: ssh exits 255 with
 `Connection closed by UNKNOWN port 65535` when the ProxyCommand fails before the tunnel.
 
@@ -3874,6 +3993,10 @@ app's output.
   the repair is [Q17](#open-questions).
 - **Start the tunnel for an instance other than the one its host's record holds**, the host step 3
   found and made ready.
+- **Start the tunnel, or start or wait for a host, for a lease alias whose lease is not `ready`, or
+  for an argument of lease alias form while the lease state file cannot be read or is not valid**
+  (from v0.11; [A lease that is not ready (#0229)](#a-lease-that-is-not-ready-0229); architect,
+  2026-11-25, for v0.11-T01, pin P21).
 - **Write the lease state file, or take its lock** (D49). It reads the file as the keeper does.
 
 **The threat model.** The alias argument comes from a ProxyCommand line the lease CLI wrote
@@ -3887,9 +4010,99 @@ argument, so the proxy does not defend against a hostile line. **`up`'s exact ch
 for the alias. **The lease state file and the host registry are new inputs from v0.07**, and both
 are the user's own laptop state, which only agentspace writes: whoever can change them can already
 change an alias file. The most a changed file can do is send a connection to another of the user's
-own hosts, and every lease alias checks its host's key strictly, so ssh then refuses it (P7). A
+own hosts, and every lease alias checks its host's key strictly, so ssh then refuses it (P7), or,
+from v0.11, refuse a connection by recording its lease as not `ready`, or by making the lease state
+file unreadable or not valid. A
 project read from either file reaches a path (`hosts\<project>\`) only after it matches the
 normalized project form, which the files' schemas also require.
+
+### A lease that is not ready (#0229)
+
+**From v0.11 the ProxyCommand MUST refuse a lease alias whose lease's record exists and is not
+`ready`**: a lease that is `released`, `expired`, `unsatisfiable` or `pending`, decided from the
+lease state file as [From the ProxyCommand](#from-the-proxycommand), step 3, says (#0229; D59, as
+changed for v0.10-T03; D49, as changed for v0.11-T01; D89; architect, 2026-11-25, for v0.11-T01,
+pins P21 and P22). **It MUST also refuse an argument of lease alias form while the lease state
+file exists and cannot be read, or is not valid** (pin P21), since it cannot then tell whether that
+alias's lease is `ready`. #0229 is carried in here as a requirement.
+
+**Why.** A release is meant to end a lease's access from the laptop (D59, #0064), and deleting the
+alias file does not stop every client from coming back. The Claude desktop app's ssh runs its own
+`claude-ssh-proxy.exe`, which keeps the alias's ProxyCommand line in its own `proxy-command.txt`,
+so it can start `agentspace-ssh-proxy.exe <alias>` after a release has deleted the alias file
+([driver.md, Release a lease](driver.md#release-a-lease)). Before v0.11 such an alias matched no
+record, since a released record carries no `ssh`, and fell to the box; for a lease on the box, the
+session then logged in again on a certificate that stays valid until it expires (D10), up to the
+lease's TTL. **D59's "once the alias is gone no client can connect through it again" was withdrawn
+for that reason**, and this refusal is what closes the gap from the laptop's side.
+
+**What the ProxyCommand does when it refuses:**
+- **It exits 1, with nothing on stdout and no tunnel**, and prints the refusal's one line to
+  stderr, the last line it prints.
+- **It refuses before it reads the host registry, starts any program, makes any AWS call, starts
+  or waits for a host, pushes the token, or writes any file.** So no instance ID is cached, no
+  push stamp changes, and no host is started for a lease that cannot use it.
+- **`AGENTSPACE_DIAGNOSTIC` adds no line to the refusal of a lease whose record was read**: that
+  refusal reached no backend, so there is no backend detail to add. **To the refusal of a lease-form
+  argument while the lease state file cannot be read or is not valid, it adds the line naming the
+  file and the problem** that v0.07's rule prints, before the refusal's line, which stays the last
+  ([From the ProxyCommand](#from-the-proxycommand), step 3).
+
+**The refusal's line.** It MUST be one line on stderr that starts `agentspace: ` and says that no
+connection was opened. For a lease whose record was read, it names the lease's state by its name
+in [lease-api.md, States](lease-api.md#states); for a lease-form argument while the lease state file
+cannot be read or is not valid, it says that the lease records could not be read (pin P21). **It
+MUST NOT hold the lease ID beyond the 8 hex digits the alias already carries, a file's path, or a
+host's name, an instance, volume or host ID, a region, a machine type, or any other
+backend text** ([What a caller sees](#what-a-caller-sees-d1-card-0087)). `<alias>` is the
+ProxyCommand's argument, as given. The lease states are the lease contract's words, never a cloud
+instance's state, so `pending` here is not backend text. **Its wording SHOULD be:**
+
+| The alias's lease | The line |
+|---|---|
+| `released` | `agentspace: The lease for <alias> has been released; no connection was opened. Create a new lease.` |
+| `expired` | `agentspace: The lease for <alias> has expired; no connection was opened. Create a new lease.` |
+| `unsatisfiable` | `agentspace: The lease for <alias> is unsatisfiable; no connection was opened. Create a new lease.` |
+| `pending` | `agentspace: The lease for <alias> is pending, not yet ready; no connection was opened. Connect once 'agentspace lease get' answers ready.` |
+| None read: the lease state file cannot be read, or is not valid, and `<alias>` is of lease alias form (pin P21) | `agentspace: The lease records could not be read; no connection was opened for <alias>. Run 'agentspace lease list' to see the error.` |
+
+**What it does not change:**
+- **An alias that is no record's alias, and a missing lease state file, reach the box**, as
+  before v0.11: [From the ProxyCommand](#from-the-proxycommand), step 3, says "No record is the
+  alias's, or there is no lease state file: the box."
+- **A lease state file that cannot be read, or is not valid, still sends an argument that is not of
+  lease alias form to the box**, as the architect ruled for v0.07-T01. **Note:** until v0.11 it
+  sent every argument there, and refused no lease; from v0.11 an argument of lease alias form is
+  refused instead (architect, 2026-11-25, for v0.11-T01, pin P21;
+  [From the ProxyCommand](#from-the-proxycommand), step 3).
+- **A person's `up -Alias <alias>` is unchanged.** It never reads the lease state file
+  ([From the command line](#from-the-command-line)), so the refusal is the ProxyCommand's alone.
+- **A `ready` lease's alias connects exactly as it did before v0.11**, to the same host.
+
+**How it meets the lease CLI's writers** (each writes the lease state file under the lease state
+lock and replaces it in one rename, and the ProxyCommand reads it whole, without the lock, retrying
+only a read refused on a sharing violation, within pin P23's 3 attempts and 1 second, as
+[From the ProxyCommand](#from-the-proxycommand), step 3, says):
+- **`release`** writes the record `released` before its release step ends the alias's clients and
+  deletes the alias file ([driver.md, The order of a release](driver.md#the-order-of-a-release)).
+  So a ProxyCommand that reads the file after that write is refused, and one that read it before
+  is already a client of the alias, with the alias on its command line, which the release's walks
+  end. **So a release followed by a ProxyCommand started for its alias opens no tunnel.**
+- **A provisioning run's `place_pending`** writes a placed lease's alias file before the one write
+  that makes its record `ready` ([state.md, The lease state file](state.md#the-lease-state-file)).
+  A ProxyCommand started through the alias between the two is refused as `pending`. A caller
+  waits for `ready` before it connects ([lease-api.md, States](lease-api.md#states)).
+- **`create`** writes a `ready` lease's alias file before its record. A ProxyCommand started
+  through the alias between the two finds no record that is the alias's, and reaches the box, as
+  before v0.11.
+- **`renew`** changes a `ready` record's `expires_at` only. A ProxyCommand reads the old record or
+  the new one, never part of either, and an expired lease cannot be renewed
+  ([lease-api.md, States](lease-api.md#states)).
+
+**Shown by** `conformance/operator/test-unmet-proxy-not-ready.ps1` (D89), as
+[Which checks show it](#which-checks-show-it) gives it: each state refused, a lease-form argument
+refused while the lease state file cannot be read or is not valid, a `ready` lease's alias still
+connecting, and a release followed by a ProxyCommand started for its alias opening no tunnel.
 
 ### What a caller sees (D1, card #0087)
 
@@ -3937,6 +4150,12 @@ tunnel:
 | `agentspace: Instance <id> is <state>.` | `agentspace: The host is not available, and could not be started.` |
 | `agentspace: <id> was not ready within 15 minutes; check: ...` | `agentspace: The host was not ready within 15 minutes; try again later.` |
 | Any other failure: an AWS call's error text, a host registry that cannot be read or written, a host alias whose project has no record, a stack with no `InstanceId` output, a missing AWS CLI, and any failure this page gives no text for | `agentspace: Could not reach the host. Set AGENTSPACE_DIAGNOSTIC=1 and connect again to see why.` |
+
+**The refusal of a lease that is not `ready`, and of a lease-form argument while the lease records
+cannot be read, has no counterpart in a person's `up`**, which never
+reads the lease state file. It prints its own line, which names no backend, as
+[A lease that is not ready (#0229)](#a-lease-that-is-not-ready-0229) gives it, and is not the
+"Could not reach the host" line.
 
 **The tunnel.** Its stdout is the connection. **Its stderr MUST be withheld from the caller unless
 `AGENTSPACE_DIAGNOSTIC` is set**, since what the AWS CLI and Session Manager's plugin write there
