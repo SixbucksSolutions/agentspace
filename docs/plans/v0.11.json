@@ -1,0 +1,71 @@
+{"name":"v0.11","turns":[
+{"name":"T01","budget_minutes":180,"stories":[
+ {"name":"E0.11-T01-S01","subagents":[
+  {"name":"inventory","model":"Sonnet","effort":"medium"},
+  {"name":"drafter, board and block","model":"Opus","effort":"high"},
+  {"name":"drafter, turn, TTL and errors","model":"Opus","effort":"high"},
+  {"name":"integrator","model":"Opus","effort":"high","after":["inventory","drafter, board and block","drafter, turn, TTL and errors"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["integrator"]}]},
+ {"name":"E0.11-T01-S02","subagents":[
+  {"name":"schema writer","model":"Opus","effort":"high"},
+  {"name":"sample writer","model":"Sonnet","effort":"high"},
+  {"name":"checker runner","model":"Sonnet","effort":"medium","after":["schema writer","sample writer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["checker runner"]}]},
+ {"name":"E0.11-T01-S03","subagents":[
+  {"name":"state writer","model":"Sonnet","effort":"high"},
+  {"name":"operator and README writer","model":"Opus","effort":"high"},
+  {"name":"conformance writer","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["state writer","operator and README writer","conformance writer"]}]}]},
+{"name":"T02","budget_minutes":210,"stories":[
+ {"name":"E0.11-T02-S01","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author"]}]},
+ {"name":"E0.11-T02-S02","subagents":[
+  {"name":"client implementer","model":"Opus","effort":"high"},
+  {"name":"block implementer","model":"Sonnet","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["client implementer","block implementer","test author"]}]},
+ {"name":"E0.11-T02-S03","subagents":[
+  {"name":"implementer","model":"Sonnet","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"medium"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author"]}]},
+ {"name":"E0.11-T02-S04","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"case writer","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["implementer","test author","case writer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]}]},
+{"name":"T03","budget_minutes":180,"stories":[
+ {"name":"E0.11-T03-S01","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"baseline runner","model":"Sonnet","effort":"medium"},
+  {"name":"branch runner","model":"Sonnet","effort":"medium","after":["implementer","test author","baseline runner"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["branch runner"]}]}]},
+{"name":"T04","budget_minutes":240,"stories":[
+ {"name":"E0.11-T04-S01","subagents":[
+  {"name":"stand-in writer","model":"Opus","effort":"high"},
+  {"name":"case writer, board","model":"Sonnet","effort":"high"},
+  {"name":"case writer, turn, TTL and versions","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["stand-in writer","case writer, board","case writer, turn, TTL and versions"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.11-T04-S02","subagents":[
+  {"name":"implementer","model":"Sonnet","effort":"high"},
+  {"name":"runner, operator lane A","model":"Sonnet","effort":"medium","after":["implementer"]},
+  {"name":"runner, operator lane B","model":"Sonnet","effort":"medium","after":["implementer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner, operator lane A","runner, operator lane B"]}]},
+ {"name":"E0.11-T04-S03","subagents":[
+  {"name":"runner, lease CLI, schemas and keeper","model":"Sonnet","effort":"medium"},
+  {"name":"runner, operator lane A","model":"Sonnet","effort":"medium"},
+  {"name":"runner, operator lane B and the deadline case","model":"Sonnet","effort":"medium"},
+  {"name":"runner, crates and box tests","model":"Sonnet","effort":"medium","after":["runner, lease CLI, schemas and keeper"]},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["runner, lease CLI, schemas and keeper","runner, operator lane A","runner, operator lane B and the deadline case","runner, crates and box tests"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]},
+{"name":"T05","budget_minutes":120,"stories":[
+ {"name":"E0.11-T05-S01","subagents":[
+  {"name":"installer","model":"Sonnet","effort":"medium"},
+  {"name":"check drafter","model":"Sonnet","effort":"high"},
+  {"name":"checks runner","model":"Sonnet","effort":"high","after":["installer","check drafter"]},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["checks runner"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]}]}

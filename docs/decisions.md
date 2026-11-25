@@ -126,6 +126,7 @@ line's text after `Status:`, without its full stop.
 - [D86. `create --board <id> --epic <ticket>` reads the epic's plan from the board, and only reads](#d86-create---board-id---epic-ticket-reads-the-epics-plan-from-the-board-and-only-reads): Decided
 - [D87. Contract v2: the new flags and their error fields; every command line without them prints what v1 printed](#d87-contract-v2-the-new-flags-and-their-error-fields-every-command-line-without-them-prints-what-v1-printed): Decided
 - [D88. v0.11's done-when is shown by conformance against a stand-in board and a live check that starts no instance](#d88-v011s-done-when-is-shown-by-conformance-against-a-stand-in-board-and-a-live-check-that-starts-no-instance): Decided
+- [D89. v0.11 is twelve stories in five turns: specs, foundations and #0229, the CLI, conformance, install](#d89-v011-is-twelve-stories-in-five-turns-specs-foundations-and-0229-the-cli-conformance-install): Decided
 
 ## The interface
 
@@ -4569,6 +4570,82 @@ v0.11 reads a whole epic, and a turn's lease is cut from it.
   unchanged, as in v0.10. Q17's answer adds no file to his laptop.
 - **#0229 and #0230 ride as D82 placed them:** #0229 a story of the first build turn, #0230 with the
   conformance turn.
+
+### D89. v0.11 is twelve stories in five turns: specs, foundations and #0229, the CLI, conformance, install
+
+**Decided, architect, 2026-11-25, when Terry had v0.11 (#0052) broken into stories:** "Break v0.11
+into stories. Make sure to make a staffing plan and show me peak subagents per turn and where the
+agents run (laptop or EC2)". It lays v0.11 out as D81 laid out v0.10, on the designs of D83 to D88,
+and the stories' cards (#0231 to #0242) carry the detail, each with its staffing plan (D31, D63).
+
+**The plan is also #0052's plan block (D83)**, the first epic to carry one, written by the architect
+in the same description edit as the prose. **The same bytes are committed as
+[plans/v0.11.json](plans/v0.11.json)**, so T05's live check compares a board lease with the same
+plan given through `--plan` without reading the board any other way (D88). Where the two disagree,
+the block wins, and the file is fixed.
+
+**The pinned names.** Every story uses these, and the specs written in T01 own their exact forms;
+T01's dev lead proposes any signature this table leaves open as a pin in its first minutes.
+
+| Name | Pinned as |
+|---|---|
+| The board crate | `crates/agentspace-board`, new in T02. It reads the receipt and Bot's token through `agentspace-push`'s `receipt_path`, `parse_receipt`, `credential_path` and `read_token`, with `DpapiUnprotect` on Windows, and copies none of their code |
+| The HTTP client | `ureq`, with TLS off: the board client refuses any base but `http://127.0.0.1:<port>` and `http://localhost:<port>`, which is localswim's own rule for `LOCALSWIM_URL`, so the token never leaves the laptop and no TLS stack is built |
+| The block | `agentspace_board::plan_block(description: &str) -> Result<&str, BlockError>`, portable, with `pub struct BlockError { pub message: String }`, lease-api.md's `<why>` |
+| The read | `agentspace_board::read_epic`, returning the description, the archived flag and the card's revision, or a `BoardError` whose kinds are an unknown board, an unknown ticket, and an `internal` failure with its message; its arguments are T01's pin |
+| The request | localswim's focused ticket view, `GET <base>/boards/<board>?view=ticket&ticket=<n>&include_prose=true`, with `Authorization: Bearer <token>`. T01-S01 confirms it from localswim's `docs/openapi.yaml` and pins any difference |
+| The plan crate | `Plan::turn_agents(&self, name: &str) -> Option<u32>` and `Plan::budget_minutes(&self, turn: &str) -> Option<u32>`; `pub const TTL_FACTOR_PERCENT: u32 = 150` and `pub fn ttl_seconds_for(budget_minutes: u32) -> u32`, beside the footprint |
+| The lease record | `agentspace_state::Record` gains `plan_source: Option<PlanSource>`, with `pub struct PlanSource { pub board: String, pub ticket: u64, pub revision: u64 }` |
+| The flags and fields | `--board`, `--epic` and `--turn`; the request document's `board`, `epic` and `turn`; the error `field` values `board`, `epic` and `turn` |
+| The schemas | v2 in `schemas/`; v1's under `schemas/v1/`, samples in `schemas/v1/samples/`; v0's unchanged |
+| The stand-in board | `conformance/lease-cli/board-standin.ps1`, new in T04; conformance.md (T01-S03) gives its interface |
+| #0229's case | `conformance/operator/test-unmet-proxy-not-ready.ps1`, new in T02 |
+| Branches | `v0.11/e0.11-tnn-smm` (D29) |
+
+**Pinned as code before T02, by the architect:** one pull request adds `Record`'s `plan_source`,
+read and written by nothing, and gives every struct literal of it in the workspace `None`, as #150
+did for v0.10. So T02's four stories share no file.
+
+**The turns.** Stories in a turn run in parallel, each in its own worktree; a turn starts when
+every pull request of the turn before is merged (D16). The peak is the turn's subagents at once,
+counted from the plan's starts as D74 counts them, its dev lead not counted; agents at once adds
+the dev lead. The TTL is what D85 gives a lease for that turn.
+
+| Turn | Stories | What | Peak | Agents at once | Budget | TTL | Runs on |
+|---|---|---|---|---|---|---|---|
+| T01 | #0231 to #0233 | **The specs.** lease-api.md as contract v2; schemas/ with v1's kept; state.md, operator.md (#0229), README and conformance.md | 8 | 9 | 3 h | 4.5 h | The laptop |
+| T02 | #0234 to #0237 | **The foundations and #0229.** `agentspace-plan`'s turn and budget; `agentspace-board`, new; `agentspace-state`'s `plan_source`; the ProxyCommand's refusal | 10 | 11 | 3.5 h | 5.25 h | The laptop |
+| T03 | #0238 | **The CLI.** `--board`, `--epic` and `--turn`, the TTL from a plan, contract v2 | 3 | 4 | 3 h | 4.5 h | The laptop |
+| T04 | #0239 to #0241 | **Conformance.** The lease CLI's board, turn, TTL and v2 cases; #0230; the whole suite with conformance.md | 8 | 9 | 4 h | 6 h | The laptop |
+| T05 | #0242 | **The install and D88's live check**, reading #0052 and starting no instance | 2 | 3 | 2 h | 3 h | The laptop |
+
+**The release's budget is 15.5 hours**, the sum of its turns'. **It asks for no instance hours.**
+
+**Where the agents run: every dev lead and subagent runs on Terry's laptop, and no turn starts an
+EC2 instance.**
+- **The build and conformance turns test Windows programs on Windows**, as v0.09's and v0.10's did:
+  the lease CLI, the ProxyCommand and the board's DPAPI credential are Windows-only.
+- **The board is on the laptop.** localswim's base is a loopback URL (its README, for
+  `LOCALSWIM_URL`), and D89's client refuses any other base, so a host could not read it without the forwards a lease carries (D12), which
+  conformance MUST NOT use (D86).
+- **T05's live check makes only `unsatisfiable` leases** (D88), as v0.10-T05's did.
+- **If a turn did run on a host, D73 would size it:** T01, T02 and T04, with 9 to 11 agents, would
+  get `l`, and T03 and T05, with 4 and 3, `s`.
+
+**Why this shape:**
+- **The same order as v0.07's to v0.10's** (D55, D63, D71, D81): specs before code, libraries before
+  the program, the whole suite before the install.
+- **#0229 is in T02, the first build turn** (D82): it is the one open defect a user can meet, and
+  it shares no crate with the rest of T02.
+- **T03 is one story**, since the lease CLI is one crate and one owner writes its `src/` (architect.md,
+  "A turn that builds"); its 2.5-hour estimate is under D14's 3 hours.
+- **T02 is the widest turn, 10 subagents, and the laptop's limit is its heavy runs, not its
+  agents**: at most three at once, gated mechanically (architect.md). T04's six runners share the
+  same three.
+- **T04 gets 4 hours**, as v0.10's did, since the operator suite runs twice in it (S02's lanes and
+  S03's).
+- **Budgets are not raised to cover v0.10-T02's overrun**: D85's TTL already allows half again, and
+  a cap is extended only on Terry's word (architect.md).
 
 ## Keys
 
