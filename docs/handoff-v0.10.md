@@ -3,7 +3,7 @@
 RFC 2119 keywords; the capitals are load-bearing.
 
 > **Live record of v0.10 (#0050), started at T01's close, 3:19pm Mountain on 2026-11-24, and
-> refreshed at T02's close, 8:32pm the same day.** It is refreshed at each turn's close and made
+> refreshed at T02's close, 8:32pm, and at T03's close, 11:50pm, the same day.** It is refreshed at each turn's close and made
 > final when Terry approves v0.10. Where this file and AGENTS.md, the board or decisions.md
 > disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -28,9 +28,13 @@ it lists, and every row of its "What is open" is carried below or says what beca
   that is not a program raises "Unsupported 16-Bit Application" and waits for a person when the
   caller's error mode is 0. T02 fixed the two start points; T03's #0226 and #0219 make every
   program set its own error mode (D81's change during T02, on Terry's word).
-- **`main` is green but for the create help**, which T03 brings to v1 (below).
+- **T03, the programs, is closed**: the CLI's `--plan`, `sized_for` and `plan_too_large` (#0219);
+  a release walks again while a walk ends a client, so no chain outlives it (#0196, #0220); and
+  every program sets its error mode first (#0225, #0226), with bootstrap's seam line (#0227).
+- **`main` is green**: the whole workspace 5,598 passed and 0 failed, for the first time in this
+  release, and the conformance suite 4,060 of 4,061 (T03's merge check, below).
 - **No turn runs on EC2 and v0.10 asks for no instance hours** (D81; Q16). Both hosts are stopped.
-- **T03 starts on Terry's word.**
+- **T04, conformance, starts on Terry's word.**
 
 ## Start here
 
@@ -39,15 +43,15 @@ it lists, and every row of its "What is open" is carried below or says what beca
    AGENTS.md, [architect.md](architect.md), and D73 to D81 with their change notes.
 2. **The standing duties**: the board watcher as reader `agentspace`; the reporter, since
    `scripts/milestones.json` lists `v0.10`; a watchdog on any running dev lead.
-3. **Before T03:** sweep #0219, #0220 and #0226 against `main` (architect.md, Running a turn,
-   step 2), then wait for Terry's "Start T03".
+3. **Before T04:** sweep #0221 to #0223 against `main` (architect.md, Running a turn,
+   step 2), then wait for Terry's "Start T04".
 
 ## Where things stand
 
 | What | State |
 |---|---|
-| v0.10 (#0050) | In Progress. T01's and T02's eight stories in Ready For Review; T03 to T05's seven (#0219 to #0224, #0226) in Ready For Work |
-| Milestones | `v0.10` (cap 15.5 hours) reporting; `v0.10-T01` and `v0.10-T02` removed at their dev leads' archives |
+| v0.10 (#0050) | In Progress. T01 to T03's eleven stories in Ready For Review; T04 and T05's four (#0221 to #0224) in Ready For Work |
+| Milestones | `v0.10` (cap 15.5 hours) reporting; `v0.10-T01` to `v0.10-T03` removed at their dev leads' archives |
 | Instance hours | None asked for, none used (Q16) |
 | The hosts | Both `stopped`, `m9g.xlarge` (`status -All`, 1:01pm) |
 | Terry's laptop | Unchanged by v0.10 so far; v0.09 installed. T02's dialogs appeared on his desktop (#0225) and were each closed |
@@ -58,6 +62,7 @@ it lists, and every row of its "What is open" is carried below or says what beca
 |---|---|---|---|---|---|---|
 | T01, the specs | #0211 to #0213 | 1:25pm, 2026-11-24 | 3:19pm, 2026-11-24 | #147, #148, #149 | 1:54 of 3 h | Contract v1 in lease-api.md; schemas/ v1 with schemas/v0/; the plan's record, `last_success_at` and D77's due rule in state.md, driver.md, operator.md and README; 32 pins ruled |
 | T02, the foundations and the hardening | #0214 to #0218 | 3:44pm, 2026-11-24 | 7:57pm, 2026-11-24 | #150 (the architect's pin as code), #151 to #155 | 4:13 of 3.5 h; an extension was asked at 6:31pm and not answered | `agentspace-plan`; the plan's record and `sized_for`; D77 in the registry, driver and provision; #0191's dialog and the run stand-in's cost fixed, #0189's bounds made load-proof; #0137 met, P51 to P53, `Invoke-HostFile` ends its case's processes; 23 pins ruled |
+| T03, the programs | #0219, #0220, #0226 | 8:34pm, 2026-11-24 | 11:43pm, 2026-11-24 | #156, #157, #158 | 3:09 of 3 h | The CLI's `--plan`; the release's further walks and D59's change; every program's error mode and bootstrap's seam line (#0227); 14 pins ruled; follow-ups #0228 and #0229 carded |
 
 **T02's merge check**, on a local merge of #154 and #155 onto 01d14c2, whose tree `main` then
 matched byte for byte at c5909e4: the whole workspace with no exclusion, 5,473 passed, the only
@@ -67,15 +72,15 @@ failures the six by design below; clippy and fmt clean; the whole conformance su
 
 ## Red on `main` by design, and who turns it green
 
-| Test | Fails because | Turned green by |
-|---|---|---|
-| `agentspace-cli` tests/help.rs, five create-help tests (help.rs:61) | create's help is v1's in lease-api.md | #0219 (T03) |
-| `agentspace-cli` tests/isolation_guard.rs `the_whole_suite_creates_nothing_in_a_home_that_does_not_exist` (isolation_guard.rs:871 since #0218) | Its child suite runs the create-help tests; only help's executable fails | #0219 (T03) |
-| Conformance `test-help.ps1`, eight create cases | The same help | #0219's build, and v0.10's install (T05) for the installed programs |
+**Nothing in the workspace, from T03's close.** Conformance's `test-help.ps1` eight create cases still
+fail against the *installed* v0.09 programs, and v0.10's install (T05) turns them green; against
+`main`'s build they pass (30 of 30).
 
-**Turned green in T02:** `agentspace-state`'s three sample tests (#0215) and `agentspace-hosts`'
-samples test at model.rs:668 (#0216). **#0191's four targets** pass alone and 20 of 20 under load
-(#0217).
+**T03's merge check**, on #158's head d7504a5, which `main` then matched byte for byte at da1376b:
+the whole workspace with no exclusion, 5,598 passed, 0 failed, 58 ignored; clippy, fmt and dist
+clean; the whole conformance suite in three lanes, 83 files, 4,060 passed, 1 failed, 0 skipped, the
+one failure R15 of `test-unmet-release-ends-connections.ps1` beside three other heavy runs, which
+passed 61 of 61 three times alone (on #0223); the deadline case 5 of 5.
 
 ## Lessons from v0.10, by turn
 
@@ -110,12 +115,31 @@ samples test at model.rs:668 (#0216). **#0191's four targets** pass alone and 20
 - **Slips, all transcript-only:** a load runner started cargo with `Start-Process -WindowStyle
   Hidden` outside the wrapper; one time sent from estimate, not a command.
 
+**T03**, each now in [architect.md](architect.md), A turn that builds:
+- **A ruling cannot stop a running subagent**: a test author made four runs on main's code after the
+  dev lead's "no further reproduction". A tasking lists every run on `main` it may make, with its
+  stop point, and the dev lead counts them from its run ledger.
+- **A dialog test MUST bound the time against the fixed build and check its child ended on its
+  own**: the operator `up` test passed on `main` in 10.63 s while a dialog waited.
+- **When every start is already guarded, a probe of the process's own error mode is the test that
+  fails without `main`'s call**, and adds no product surface.
+- **Read the source before relaying a ruling's premise**: the architect carded #0227 in
+  `agentspace-run`, and its cause was in `agentspace-sync`'s bootstrap.
+- **A rule change's doc conformance is wide**: #0220's further walks touched more than 20 line
+  ranges in four docs, found in three passes.
+- **Two reviewers died on API 529 Overloaded**; their wrapped runs survived, and fresh reviewers
+  adopted them by their output paths.
+- **Slips, all transcript-only:** the architect's three ruling times and two of the dev lead's
+  status times not read from a clock; a fixer's test printed a `%TEMP%` path with the profile's 8.3
+  short name; a reviewer launched from the wrong worktree, stopped before it acted.
+
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T03 to T05 | Terry's word for each turn, then a dev lead | D81; #0219, #0220, #0226, #0221 to #0224 |
-| #0225, every program sets its error mode | #0226 and #0219 in T03; the start sites outside run and launch are listed on #0226 | D81's change during T02 |
+| T04 and T05 | Terry's word for each turn, then a dev lead | D81; #0221 to #0224 |
+| #0225 and #0227, met by #0226 and #0219 in T03, sit in Backlog | Terry, who moves them to Completed (Bot cannot move a card out of Backlog) | The board |
+| #0228 (one walk ends a chain, in `agentspace-connections`) and #0229 (the ProxyCommand refuses a lease alias that is not ready) | Terry places them, or the architect proposes a release | Backlog; D59's change for v0.10-T03 |
 | `docs/conformance.md`'s stale state-schema passages; `test-unmet-host-deploy-size.ps1`'s three load timeouts (180 of 180 alone, and 180 of 180 in T02's merge check); `test-unmet-release-ends-connections.ps1`'s one failure under the rig's load (passed in T02's merge check) | #0223 | Its card |
 | T02 ran 43 minutes past its cap with no extension; the release's 15.5 hours are unchanged | Terry, if he extends | `scripts/milestones.json` |
 | The live kit's three mask gaps (from handoff-v0.09.md) | **Done during T02**: `scripts\live\mask.ps1` rules 9a, 11a and 16a, with proof cases; `mask-proof.ps1` 285 passed | `scripts\live\` |

@@ -289,6 +289,22 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **The editing tools decode `\uXXXX` escapes on the way into a file**, so a test or doc that MUST
   hold one is checked byte for byte after the edit: three escape tests held none.
 
+**Learned in v0.10-T03, the programs turn.**
+- **A tasking lists every run it may make on `main`'s code, with its stop point**, and the dev lead
+  counts them from its run ledger: a ruling cannot stop a running subagent, and one test author
+  made four runs on `main` after the dev lead's "no further reproduction".
+- **A test that shows a program raises no dialog MUST bound its time against the fixed build and
+  check that its child ended on its own.** The operator `up` test passed on `main` in 10.63 seconds
+  while a dialog waited on Terry's desktop.
+- **Where every start a program makes is already guarded, a probe of the process's own error mode
+  is the test that fails without `main`'s call**, and it adds no product surface.
+- **The architect reads the source before it relays a ruling's premise**: #0227 was carded in
+  `agentspace-run`, and its cause was in `agentspace-sync`'s bootstrap.
+- **A change to a rule that several docs restate is conformed in one pass that greps every doc**:
+  #0220's further walks touched more than 20 line ranges in four docs, found in three passes.
+- **A reviewer that dies on an API error leaves its wrapped runs running**; a fresh reviewer adopts
+  them by their output paths rather than starting another heavy run.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
