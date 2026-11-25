@@ -251,6 +251,27 @@ mod tests {
     }
 
     #[test]
+    fn the_schema_accepts_a_whole_budget_written_with_a_fraction_or_an_exponent() {
+        // Pin P24: JSON Schema's integer accepts a whole number in any form, so read() passes 90.0
+        // and 9e1, and lib.rs's shape() is what refuses them. -0 is below the schema's minimum.
+        let text = |raw: &str| {
+            format!(
+                r#"{{"turns":[{{"name":"T","budget_minutes":{raw},"stories":[{{"name":"S","subagents":[{{"name":"a","model":"m","effort":"e"}}]}}]}}]}}"#
+            )
+        };
+        for raw in ["90", "90.0", "9e1", "960.0", "1e2", "null"] {
+            assert!(read(text(raw).as_bytes()).is_ok(), "{raw}");
+        }
+        for raw in ["0", "961", "90.5", "-0", r#""90""#] {
+            assert_eq!(
+                read(text(raw).as_bytes()).unwrap_err(),
+                WHY_NOT_SCHEMA,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
     fn a_leading_byte_order_mark_is_set_aside() {
         let plan = br#"{"turns":[{"name":"T","stories":[{"name":"S","subagents":[{"name":"a","model":"m","effort":"e"}]}]}]}"#;
         let mut with_bom = b"\xef\xbb\xbf".to_vec();
