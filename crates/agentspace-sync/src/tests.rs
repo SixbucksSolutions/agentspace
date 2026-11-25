@@ -2632,6 +2632,7 @@ mod host_deploy_and_provision {
             agentspace_state::Record {
                 sized_for: None,
                 plan: None,
+                plan_source: None,
                 id: format!("8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f90{n:02x}"),
                 project: project.to_string(),
                 state: state.to_string(),

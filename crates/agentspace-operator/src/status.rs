@@ -229,6 +229,7 @@ mod tests {
         Record {
             sized_for: None,
             plan: None,
+            plan_source: None,
             id: "00000000-0000-4000-8000-000000000000".into(),
             project: project.into(),
             state: state.into(),

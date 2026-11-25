@@ -497,6 +497,11 @@ reads before it prints it").
 - **At most three suite or workspace runs SHOULD share the laptop at once** (v0.08-T02 and T04). More
   make #0189's timing tests fail and #0191's targets hang, and each such failure then has to be rerun
   alone before it counts.
+- **Every heavy run goes through `scripts\heavy-gate.ps1`** (v0.11, after T01, where the dev lead
+  wrote a gate per worktree): three named mutexes, a queue so waiters take slots in turn, `-Slots 2`
+  for a load window, and the run itself through `scripts\live\wrap.ps1`. The architect's merge
+  check in another checkout goes through it too, or holds a slot with `-HoldMinutes`, so the dev
+  lead's runs count it.
 - **Every command a runner runs, short or long, MUST write its exit code to a file through a wrapper**
   (v0.08-T04), as live checks do ("Live checks on Terry's laptop and the box"), and the runner MUST
   wait for it in the foreground. A record cannot claim a result whose exit code was not kept.

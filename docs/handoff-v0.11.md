@@ -77,7 +77,7 @@ v0.11-T01, pin Pn". Those that changed a decision are change notes:
 | What | Who acts | Where it goes |
 |---|---|---|
 | The architect's pin as code before T02: `Record`'s `plan_source`, read and written by nothing, every struct literal `None` | The architect, before T02 starts | D89 |
-| The heavy-run gate as a committed script, from T01's dev lead's notes | The architect, before T02's brief | `scripts\` |
+| The heavy-run gate is a committed script, `scripts\heavy-gate.ps1`, written by the architect after T01 and proven on four runs of three slots (the fourth waited 7 seconds for a slot) and on a failing run's exit code | Every dev lead from T02, and the architect's merge checks | `scripts\heavy-gate.ps1`; architect.md |
 | T02 starts on Terry's "Start T02" | Terry | #0234 to #0237 |
 | The empty `.claude\worktrees\rvmain` from 2026-11-23 | A person, if wanted | Nothing depends on it |
 | Every open row of handoff-v0.10.md's "What is open" not met by v0.11 so far | As that file says | handoff-v0.10.md |

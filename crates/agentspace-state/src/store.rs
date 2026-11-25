@@ -328,6 +328,7 @@ mod tests {
         Record {
             sized_for: None,
             plan: None,
+            plan_source: None,
             id: id.to_string(),
             project: "demo".to_string(),
             state: "pending".to_string(),

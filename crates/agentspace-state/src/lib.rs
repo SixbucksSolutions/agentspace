@@ -67,6 +67,19 @@ pub struct Record {
     /// The plan document a lease was created with, as parsed (docs/state.md, What a plan lease
     /// adds; D74, D81). Stored last, after `driver`, and never in any output (pin P25).
     pub plan: Option<serde_json::Value>,
+    /// Where a board lease's plan came from: the board, the ticket and the card's revision read
+    /// (docs/state.md; D86, D89). Pinned as code before v0.11-T02 and read and written by nothing
+    /// until E0.11-T02-S03 (#0236), which stores it last, after `plan` (pin P25).
+    pub plan_source: Option<PlanSource>,
+}
+
+/// A board lease's `plan_source` (docs/state.md; D86, D89; architect, 2026-11-25, for v0.11-T01,
+/// pin P7): the normalized board ID, the epic's ticket and the card's revision as read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanSource {
+    pub board: String,
+    pub ticket: u64,
+    pub revision: u64,
 }
 
 /// A lease record's `sized_for`: the plan's name when it has one, its busiest turn, and that
@@ -187,6 +200,8 @@ fn record_from(v: &Value) -> Option<Record> {
     Some(Record {
         sized_for,
         plan,
+        // Read by nothing until E0.11-T02-S03 (#0236); pinned as code before v0.11-T02 (D89).
+        plan_source: None,
         id: text(o, "id")?,
         project: text(o, "project")?,
         state: text(o, "state")?,
@@ -617,6 +632,7 @@ mod tests {
             driver: Some("ec2".to_string()),
             sized_for: None,
             plan: None,
+            plan_source: None,
         }
     }
 
@@ -625,6 +641,7 @@ mod tests {
         Record {
             sized_for: Some(sized(Some("v0.10"))),
             plan: Some(plan_doc()),
+            plan_source: None,
             ..plain()
         }
     }
@@ -829,6 +846,7 @@ mod tests {
         let without = Record {
             sized_for: None,
             plan: None,
+            plan_source: None,
             ..too_large()
         };
         assert_eq!(change(without), not_valid);

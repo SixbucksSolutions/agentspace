@@ -839,6 +839,7 @@ fn a_ready_record_with_an_impossible_expiry_is_expired_with_no_ssh() {
     let record = Record {
         sized_for: None,
         plan: None,
+        plan_source: None,
         id: ID_A.to_string(),
         project: "demo".to_string(),
         state: "ready".to_string(),
