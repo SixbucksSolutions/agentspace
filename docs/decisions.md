@@ -4614,6 +4614,22 @@ T01's dev lead proposes any signature this table leaves open as a pin in its fir
 | #0229's case | `conformance/operator/test-unmet-proxy-not-ready.ps1`, new in T02 |
 | Branches | `v0.11/e0.11-tnn-smm` (D29) |
 
+**Changed for v0.11-T01 (architect, 2026-11-25, on the dev lead's pins P17 to P19, each checked
+against localswim's `docs/openapi.yaml`, its `docs/windows-operations.md` and `agentspace-push`'s
+`receipt.rs`):**
+- **The request carries localswim's API prefix**, which its `servers` entry gives as
+  `/api/2026-11-10`: `GET <base>/api/2026-11-10/boards/<board>?view=ticket&ticket=<n>&include_prose=true`,
+  and P2's second read `GET <base>/api/2026-11-10/boards/<board>?view=summary`. The prefix is one
+  constant in `agentspace-board`. **A 404 counts as not found only when its body is localswim's
+  `application/problem+json` document with `code` `not_found`**; any other 404 is `internal`, so a
+  prefix localswim later retires reads as a failure of agentspace's, never as an unknown board.
+- **`--board` takes a UUIDv4 alone**, in any case, as a lease ID does, since localswim's `UuidInput`
+  is v4 only; anything else is `invalid_value` for `board`. It replaces "any UUID version" in P5.
+- **The base is localswim's receipt form alone, `http://127.0.0.1:<port>`**, as `agentspace-push`'s
+  `parse_receipt` already enforces: port 1 to 65535, no leading zero, no slash or path. `localhost`
+  is withdrawn from the HTTP client row above. Any other base is `internal`, naming no URL, and the
+  connection goes to 127.0.0.1 directly, never through a proxy.
+
 **Pinned as code before T02, by the architect:** one pull request adds `Record`'s `plan_source`,
 read and written by nothing, and gives every struct literal of it in the workspace `None`, as #150
 did for v0.10. So T02's four stories share no file.
