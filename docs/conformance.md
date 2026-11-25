@@ -543,6 +543,87 @@ picks the size from it, prints `sized_for`, and answers `plan_too_large` for a p
   build ([handoff-v0.10.md](handoff-v0.10.md), "Red on `main` by design"); the v0.10 install turns them
   green.
 
+**What v0.11 changes for a run of the lease CLI's checks** (D83 to D89;
+[lease-api.md, Changes from v1](lease-api.md#changes-from-v1); E0.11-T01-S03, #0233). A pin cited
+"pin Pn" in this section and in [The stand-in board and its
+credential](#the-stand-in-board-and-its-credential) is v0.11-T01's, as the architect ruled it
+(architect, 2026-11-25, for v0.11-T01). `create`
+takes `--board <id> --epic <ticket>` and `--turn <name>` (contract v2): it reads the epic's plan from
+a board, and only reads. **This section says what the suite needs for that, and T04's cases
+(#0239 to #0241) build it.**
+- **A board case reads a stand-in board with a stand-in credential, never Terry's** (D86, D88). The
+  stand-in board is `conformance/lease-cli/board-standin.ps1`, a loopback server the case starts and
+  stops, and the credential is a receipt and a `bot.json` the case writes into its throwaway home
+  ([The stand-in board and its credential](#the-stand-in-board-and-its-credential)). **No new
+  seam variable names either**: the lease CLI finds the receipt under `LOCALAPPDATA`, which the
+  harness already points into the home ([The harness](#the-harness)).
+- **A board case needs no CA, no host and no run when its lease is `unsatisfiable`** (D54, D88): a
+  project that is not on the project list is answered `no_capacity` before any host is made. **A case
+  that reaches a host seeds its own `hosts.json` and names v0.07's recording stand-in as
+  `AGENTSPACE_PROVISION_CMD`, as v0.09's and v0.10's cases do**, by the rule above for a case whose
+  `create` or `get` can start a run. A case about a refusal of
+  the board read makes no lease and needs neither.
+- **A board case writes its plan files, receipt, credential and fixture inside the throwaway home**,
+  through `Assert-ConformancePath`, as v0.10's plan cases do, and **MUST NOT change `harness.ps1` or a
+  helper that the operator, keeper and schemas files load**: T04's stories add a helper file of their
+  own, as `provision-standin.ps1` is.
+- **A plan the lease CLI read from a board is shown by the printed document**, as a plan from a file
+  is: validated against v2's schemas, with each result reading the member itself. No board case reads
+  `plan_source` from the lease state file, since D87 never prints it; the schemas check shows its
+  form from the samples ([state.md, What a plan lease adds](state.md#what-a-plan-lease-adds)).
+- **The ProxyCommand's refusal of a lease alias whose lease is not `ready` (#0229) is one operator
+  file, `conformance/operator/test-unmet-proxy-not-ready.ps1`** (D89), written by T02 beside the
+  ProxyCommand's own change and run by T04's operator lane. It follows
+  [operator.md, From the ProxyCommand](operator.md#from-the-proxycommand) and [A lease that is not
+  ready (#0229)](operator.md#a-lease-that-is-not-ready-0229), and its rows are operator.md's
+  [Which checks show it](operator.md#which-checks-show-it), v0.11's table. It runs by the same
+  harness as v0.07's ProxyCommand cases: a throwaway home, a seeded host registry, a seeded lease
+  state file, the recording stand-in `aws` that logs every call, and tripwires for
+  `AGENTSPACE_SSH_CMD` and `AGENTSPACE_SCP_CMD` ([The harness](#the-harness)). **It MUST show each
+  of these:**
+  - **The alias of a lease that is `released`, `expired`, `unsatisfiable` or `pending`, refused**,
+    each of a project whose host record is `ready`: exit 1, the one line on stderr that operator.md
+    gives, nothing on stdout, **and no tunnel, no call the stand-in `aws` records, no host started,
+    no ssh or scp, and no push.** These four states are the only ones refused for a lease the file
+    names; **a `ready` lease whose project's host is not `ready`, or has no record, reaches the box
+    as before v0.11 and is not refused.**
+  - **An argument of lease alias form refused while the lease state file exists and cannot be read,
+    and while it is not valid** (architect, 2026-11-25, for v0.11-T01, pin P21), in the same way,
+    with operator.md's line saying the lease records could not be read; **and an argument that is
+    not of lease alias form reaching the box in both, with the `AGENTSPACE_DIAGNOSTIC` line as
+    before v0.11.** **A file the case holds open without sharing is retried on that sharing
+    violation alone, at most 3 attempts within 1 second in all** (architect, 2026-11-25, for
+    v0.11-T01, pin P23): a hold past that bound refuses the argument of lease alias form as above,
+    and a hold that ends inside it lets the read through, so a `ready` lease's alias connects. A
+    folder at the path, and a file that is not valid, are refused with no retry. **The cases run
+    with `AGENTSPACE_DIAGNOSTIC` set and count the retry lines** that operator.md gives, `agentspace:
+    The lease records were held by another program; trying again.` (architect, 2026-11-25, for
+    v0.11-T01, pin P27): zero with a refusal for the folder, two with a refusal for a hold past
+    the bound, and one or two with a connection to the `ready` lease's host for a hold released
+    inside it. **No case swaps, replaces or releases a file on a timer**; the hold is released by
+    the case on the first retry line reaching the ProxyCommand's stderr. Every such run is
+    bounded in time, by operator.md's [Which checks show it](operator.md#which-checks-show-it)
+    rows.
+  - **The alias of a `ready` lease whose host is `ready` still connecting**, as the control that
+    shows the refusal is the lease's state and not a broken stand-in.
+  - **An alias that is no record's alias at all, and a missing lease state file, reaching the box**,
+    as before v0.11 ([operator.md, From the ProxyCommand](operator.md#from-the-proxycommand), step 3).
+  - **A release followed by a ProxyCommand started for its alias opening no tunnel**: a `ready`
+    lease released by the build's `agentspace lease release`, then the ProxyCommand given its alias,
+    refused as `released`, in that order and never at once, so no timing is in the case.
+  - **Nothing written by a refusal**: the lease state file and the host registry byte for byte as
+    seeded, no lock taken, and no file in the home that was not there.
+  - **The refusal naming no backend** ([operator.md, What a caller
+    sees](operator.md#what-a-caller-sees-d1-card-0087)), and no file path.
+- **v0.07's `test-unmet-host-proxy-lookup.ps1` holds cases that v0.11 changes**, which pass against
+  a build before v0.11 and fail against one that refuses, and which #0237 changes with the
+  ProxyCommand (architect, 2026-11-25, for v0.11-T01, pin P21): the lease alias whose lease has
+  expired, which reaches its host there and is refused from v0.11; the lease state file that is not
+  JSON, has `version` 1, holds two records with one `id`, or holds a record that does not fit its
+  schema, and a folder at its path, each given a lease-form alias that reaches the box there and is
+  refused from v0.11; and the `AGENTSPACE_DIAGNOSTIC` case, whose connection reaches the box there
+  and is refused from v0.11 after the line naming the file.
+
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
   enforces, as in `lease-api.md#agentspace-lease-get: ...`. The summary is `<n> passed, <n> failed,
@@ -870,6 +951,293 @@ reach no provisioning run**: the bullets below give the rules.
   `..\..\..\..\<folder>` and `..\..\..\..\<folder>\id_ed25519`, where the folder is a sibling of
   the home under `%TEMP%`, makes every check FAIL or refuse, and leaves the file in that folder
   untouched.
+
+### The stand-in board and its credential
+
+**RFC 2119 keywords again: these bind every board case** (E0.11-T01-S03, #0233; D86, D88, D89;
+architect, 2026-11-25, for v0.11-T01, pins P8 and P9 with P2 and P17 to P19). **A case of `create --board <id> --epic <ticket>` reads
+a stand-in board with a stand-in credential, and never Terry's board, receipt or token.** The
+stand-in is a program outside agentspace, so it follows [What a conformance run
+needs](#what-a-conformance-run-needs)'s rule for stubs: **it stands for localswim, which is the
+caller's board and not a backend**, and it stands for nothing of agentspace's. T04 writes it
+(`conformance/lease-cli/board-standin.ps1`, D89); **this section is its interface, and T04's writer
+works from it and from [lease-api.md, The board read](lease-api.md#the-board-read) alone.**
+
+#### The stand-in board
+
+**One process serves one board's fixture on one loopback port, for one case.**
+- **How it is started:** `pwsh -NoProfile -File conformance/lease-cli/board-standin.ps1 -Port <n>
+  -Fixture <path> -Log <path> -Ready <path>`. The case starts it, with the harness's environment for
+  the throwaway home (`Get-ConformanceChildEnvironment`, [The harness](#the-harness)), and every one
+  of the three paths is a file inside the home, passed as the result of `Assert-ConformancePath` at
+  the call that starts it. **The script reads the fixture and writes the log and the ready file, and
+  nothing else, and it refuses a missing or unreadable fixture with exit 2 before it listens.** The
+  case names the ready file with `-Ready`, since the script is not told the home (the dev lead's
+  call on pin P8, which stands with the rulings of P17 to P19).
+- **It listens on `127.0.0.1` and the port the case picks, and on no other address.** It MUST NOT
+  bind `0.0.0.0`, `::` or any other address, so that no other machine can reach it, and it MUST NOT
+  need elevation. **The case picks the port by binding port 0 on `127.0.0.1`, reading the port and
+  closing the socket, and MUST NOT use a fixed port**, and above all not localswim's own, 8811
+  (AGENTS.md, "The board"). **The stand-in MUST refuse to start when `-Port` is 8811**, with exit 2
+  before it binds anything and without writing the ready file (pin P8). When the stand-in cannot
+  bind the port it exits 2 without writing the ready file, and the case picks another port and
+  starts it again, at most 3 times, and then FAILs.
+- **The case knows it is listening from the ready file** (pin P8): **the stand-in MUST write the
+  file only after its listener is bound** and accepts connections, holding its own PID in decimal
+  and one LF, UTF-8 with no byte order mark. **The case waits for the file in a loop with a deadline
+  of 30 seconds, never a fixed sleep, and FAILs when the PID is not the one it started**, or when
+  the process exits first.
+- **It is ended by the case, by its name and its PID, and nothing else is touched** (AGENTS.md; as
+  every process a stand-in recorded is, [The harness](#the-harness)): in the case's `finally`, after
+  checking that the process's creation time is the one recorded at its start. **It has no stop
+  request**, since a request would be logged, and **it ends itself after 10 minutes** when no case
+  has, so that a failed case leaves none running.
+- **The fixture is one UTF-8 JSON file, and every member is defined:**
+
+  | Member | Holds |
+  |---|---|
+  | `token` | A string, the stand-in token in the form the real reader checks (43 characters of `A-Z`, `a-z`, `0-9`, `-` and `_`), **drawn at random by the case for each run and never written in a file of the repository**, so that no value in a document or a sample can be mistaken for a real one. It sits in the fixture in the case's home and nowhere else. The stand-in compares it with each request's `Authorization: Bearer <token>`, and **MUST NOT log, print or answer it, and the case MUST NOT print it, a failing case's reason included** (pin P8) |
+  | `boards` | An object. Each name is a board's ID, a version 4 UUID in lowercase (`--board` takes a UUIDv4 alone, pin P18), patterned to read as fake, such as `0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f`, and each value is `{"cards": {...}}`. An empty object is a stand-in that knows no board |
+  | `boards.<id>.cards` | An object. Each name is a ticket in decimal digits with no leading zero, 1 to 9007199254740991, and each value is `{"revision": <integer 1 to 9007199254740991>, "archived": <boolean>, "description": <string>}`, each required |
+  | `answer` | Optional, `null` when absent. `{"status": <integer 400 to 599>}` answers every request of any kind with that status and a localswim Problem document; `{"status": <integer 400 to 599>, "problem": false}` answers every request with that status and an empty body with no `Content-Type`, which is how a case gets a bare 404; `"hang"` reads each request and never answers it; `{"body_bytes": <n>, "chunked": <boolean>}` answers a ticket view of a known card with a body of exactly `n` bytes (the dev lead's call, which stands with the rulings of P17 to P19). **An `answer` of `{"status": ...}` or `"hang"` overrides every other reply**, so it covers the unknown-board and unknown-ticket answers too. **An `answer` of `{"body_bytes": <n>, "chunked": <boolean>}` applies to the ticket view of a known card alone** (the dev lead's call, 2026-11-25, for v0.11-T01): every other request, an unknown board or ticket, a `?view=summary` request and a request the `Authorization` check refuses among them, gets the reply it would get with `answer` `null` |
+
+  **A fixture with another member, a missing required member, a value of another type or a board ID
+  that is not a lowercase version 4 UUID is refused with exit 2**, so that a case's typo cannot make
+  the stand-in answer something nobody meant.
+- **Every path it serves carries localswim's API prefix, `/api/2026-11-10/`** (pin P17), as the
+  lease CLI's requests do; a request for a path without it is logged and answered with a bare 404,
+  an empty body with no `Content-Type`, so that a client that dropped the prefix reads `internal`
+  and never an unknown board or ticket.
+- **The ticket view** is `GET /api/2026-11-10/boards/<board>?view=ticket&ticket=<n>&include_prose=true`
+  with `Authorization: Bearer <token>`, the request [lease-api.md](lease-api.md#the-board-read) gives. The
+  stand-in answers 200 with `application/json` and **a whole `TicketInspection`**
+  (localswim's `docs/openapi.yaml`, `readBoard`; its members
+  `board_id`, `board_revision`, `card`, `relationships`, `parent`, `children` and `prose`, none
+  missing), **with every part the client has no use for filled in**: `prose.comments` holds at least
+  two comments, `relationships` at least one link, `parent` a card and `children` at least one card.
+  The case shows by those that the client reads `card.revision`, `card.archived` and
+  `prose.description` and ignores the rest (pin P1). **Each of those parts holds a marker string
+  that the case looks for in the program's output and finds nowhere**, since a client that echoed a
+  comment into an error would leak a card's prose. The stand-in:
+  - **Takes the ticket as an integer, with leading zeros accepted**, as localswim does, and takes
+    the board's ID in any case, **and logs the request's path and query exactly as received**, so a
+    case shows what the client sent (the board's ID in lowercase, the ticket with no leading zero);
+  - **Answers a board it does not know, and a ticket the board has no card of, 404** with
+    `application/problem+json` and a Problem document (`type` `about:blank`, `status` 404, `code`
+    `not_found`, a `request_id` and the other members localswim requires), **the same document for
+    both**, as localswim's does ([lease-api.md, The board read](lease-api.md#the-board-read)); a
+    client that tells the two apart does so by a second request. **A 404 counts as not found only
+    with that body** (pin P17): **a case MUST show that a bare 404**, from a `{"status": 404,
+    "problem": false}` fixture, **gives `internal`**, and neither `invalid_value` for `board` nor for
+    `epic`;
+  - **Answers `GET /api/2026-11-10/boards/<board>?view=summary` 200 for a board it knows**, with a
+    JSON object holding the board's `id` and nothing the client may read, and 404 with the Problem
+    document above for one it does not: pin P2's second request, made only after a 404 for the
+    ticket view, so a refused read costs at most two GETs;
+  - **Checks a request in this order, and answers the first check it fails** (the dev lead's call,
+    2026-11-25, for v0.11-T01, ruled by the architect under pin P27): the method (405 for any but
+    `GET`), then the `/api/2026-11-10/` prefix (a bare 404, with no Problem document), then
+    `Authorization` (401), then the lookup of the board and the card (404 with the Problem
+    document). So a `POST` to a path with no prefix is 405, and a `GET` with no prefix and no
+    token is a bare 404;
+  - **Answers a request with no `Authorization` header, or any value but `Bearer <token>`, 401** with
+    a Problem document, and logs `auth=none` or `auth=wrong`. **It MUST check the header before it
+    looks up the board or the card** (the dev lead's call, 2026-11-25, for v0.11-T01), as localswim
+    does: a missing or wrong token answers 401 for an unknown board or ticket too, never 404, so a
+    client that sent no token is never told whether the board exists;
+  - **Answers every method but `GET` 405** with a Problem document (`method_not_allowed`) **and logs
+    it**: `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH`, `DELETE` and any other. **The case FAILs on any
+    log line whose method is not `GET`** (D86: conformance MUST show that the board client sends
+    nothing but GETs). Bot's token can write to a real board, and this is the only proof that the
+    client's code has no path that does;
+  - **Never follows, makes or accepts a redirect**, and answers no `Location` header;
+  - **Answers a `{"status": 403}` and a `{"status": 401}` fixture** with the Problem document for
+    that status, a `{"status": 500}` with a Problem document of `internal_error`, and any other
+    status in the same way, so the case reaches each of pin P2's statuses (401 and 403 as
+    "refused the credential", 400, 405, 406 and 5xx as "did not answer").
+- **`"hang"` and the body past the bound:** a `"hang"` stand-in accepts the connection, reads the
+  request, logs it and holds the connection open without a byte of answer until the case ends the
+  process, so a case shows pin P2's 30-second timeout: the program's run MUST end within 60 seconds
+  of its start, exit 1 with an `internal` error that names the host and port and nothing else, and
+  **the case runs it with `Invoke-ConformanceProgram -Variable 'AGENTSPACE_CMD'` and a
+  `-TimeoutSeconds` of 90**, since `Invoke-AgentspaceCli` takes no timeout and `harness.ps1` is not
+  changed for it (above), so that a client with no
+  timeout fails by `TimedOut` and is not mistaken for a slow pass. A `{"body_bytes": <n>, "chunked":
+  <boolean>}` stand-in answers the ticket view of a card of its fixture with the card's whole
+  document padded, by `prose.comments` entries each under the 4,194,304 characters localswim allows
+  a comment, to exactly `n` bytes (a smaller `n` than the unpadded document is refused with exit 2),
+  and sends it with a `Content-Length` of `n` when `chunked` is `false`, and in chunks with none when
+  it is `true`. The cases of the bound are `n` = 67,108,864 and 67,108,865, each both ways (pin P1:
+  the client reads at most 67,108,864 bytes, **counted as received**, so a declared length and a
+  chunked body both show it), the first read as a good epic and the second refused as pin P1 says.
+- **The log is one line per request, UTF-8, LF, written to the `-Log` path and flushed per line**
+  (pin P8): `<METHOD> <path and query as received> auth=<ok|wrong|none>`, such as `GET
+  /api/2026-11-10/boards/<board>?view=ticket&ticket=52&include_prose=true auth=ok`. **The token is
+  compared and never logged or printed**, and neither is a header, a body or an address, **so that a
+  log read by a case or printed in a failure reason holds nothing secret**. **A request the stand-in could not parse is
+  logged as `INVALID - auth=none`**, and a connection that sent nothing is not logged. The case reads
+  the log only after the program under test has exited, and **counts lines, never times**.
+- **It is never a copy or a part of an installed program, of localswim, or of Windows' own HTTP
+  server's configuration**: it is a script in `conformance/lease-cli/` that holds no request of the
+  real board's and makes none. **It MUST NOT make an outbound connection of any kind.**
+
+#### The stand-in credential
+
+**The credential is what the lease CLI reads for the one request, as localswim's receipt and
+`bot.json` ([operator.md, The receipt](operator.md#the-receipt), [The Bot
+credential](operator.md#the-bot-credential); localswim's `docs/windows-operations.md`), and the case
+writes both into its throwaway home**, each through `Assert-ConformancePath`, as the shapes
+`agentspace-push`'s reader parses (`receipt_path`, `parse_receipt`, `credential_path` and
+`read_token`):
+- **The receipt is `<home>\AppData\Local\localswim-v2\service.json`**, where the lease CLI looks for
+  it, because **the harness gives every program it starts `LOCALAPPDATA` set to `home\AppData\Local`**
+  ([The harness](#the-harness), "Every program the harness starts gets the same environment"). It is
+  one UTF-8 JSON object, with no byte order mark, with `base` `http://127.0.0.1:<port>` (the stand-in's
+  port, with no trailing slash) and `credential_directory` the full path of a folder inside the home,
+  `<home>\AppData\Local\localswim-v2\credentials`. **A case MAY add a member the reader ignores**
+  (localswim's receipt holds others), to show that it is ignored.
+- **`bot.json` is `<credential_directory>\bot.json`**, one UTF-8 JSON object with exactly the four
+  members `format` (`localswim-credential`), `format_version` (the integer `1`), `role` (`bot`) and
+  `token_dpapi_hex`: **the fixture's token, protected with DPAPI in user scope with no entropy, for the
+  Windows user the case runs as**, as lowercase hex. The case makes the blob in its own process, with
+  `ConvertTo-SecureString -AsPlainText -Force` on the token and `ConvertFrom-SecureString`, which
+  writes the hex of a user-scope blob whose plaintext is the token in UTF-16LE, **the form the real
+  reader decrypts and checks**. **The token is read from the fixture's object in the case's memory
+  and is never a command argument** (AGENTS.md, "The board"), and a case's failure reason names a
+  member or a count, never the token's value or a decrypted byte.
+- **A preflight shows that DPAPI works under the moved home, before the first board case runs.**
+  Windows may find a user's DPAPI key through the profile, and the harness moves `USERPROFILE` and
+  `APPDATA` for every child. The preflight protects a random string in the case's process and
+  decrypts it in a `pwsh` child started with the harness's environment, and prints nothing of either.
+  **When it fails, every board case that needs a token is reported SKIPPED with the reason, and a run
+  with any skip is incomplete, never passed** ([Running the suite](#running-the-suite); the dev
+  lead's call, which stands with the rulings of P17 to P19); the cases of a missing or unreadable
+  credential do not need one and still run.
+- **The cases of the receipt itself, each answered `internal` by the lease CLI, in agentspace's own
+  words** (D86, #0041), **with the stand-in listening throughout and its log empty after the run**,
+  which shows that **no request was made, and so the token reached nobody**:
+  - **No receipt**, and **a folder at the receipt's path**, and an empty file, and one that is not
+    JSON, and one holding `credential_directory` twice, or none.
+  - **A `base` that is not `http://127.0.0.1:<port>`**, the one form `agentspace-push`'s
+    `parse_receipt` accepts (pin P19), each refused before any request as `internal`, its message
+    naming no URL: `http://localhost:<port>` (P19 withdrew `localhost` from D89), `https` in place
+    of `http`, a host that is a name (`board.invalid`, a name that never resolves, so a client that
+    connected would reach nobody), `127.0.0.2`, `[::1]`, a user name before the host
+    (`user@127.0.0.1`), a trailing slash or a path, a port of 0, of 65536, with a leading zero or
+    with a letter, and a `base` that is not a string. **No case uses a routable address**, and no
+    name but `localhost`, which resolves only to the laptop itself, so that a build that wrongly
+    connected would still send the token nowhere but the laptop. **The `localhost` case's port is
+    the stand-in's own**, so that a build that wrongly accepted it would reach the stand-in, log a
+    line, and FAIL on the log that MUST be empty.
+  - **A receipt with no `base`**, which `agentspace-push` allows and D86's read cannot use.
+  - **`credential_directory` naming a folder with no `bot.json`**, a `bot.json` that is a folder, an
+    empty file, not JSON, with a fifth member, with `role` `human`, with `format_version` `1.0` or
+    `"1"`, with `token_dpapi_hex` holding odd or non-hex digits, or a blob that DPAPI refuses (a
+    DPAPI header followed by zero bytes, as localswim's own examples are), or one that decrypts to a
+    string that is not 43 base64url characters.
+  - **Each of these is answered with the same `internal` error shape, naming no path, no URL beyond
+    a host and port, and no token** ([lease-api.md, The board read](lease-api.md#the-board-read)), and
+    leaves no lease and no file changed in the home.
+- **The credential is the receipt's alone**: a case sets `LOCALSWIM_URL` to another loopback port,
+  where nothing listens, and `LOCALSWIM_TOKEN` to another value, and the read still reaches the
+  stand-in with the credential's token (`auth=ok`), since no other variable changes the contract
+  ([lease-api.md, Environment](lease-api.md#environment)). **Every other board case removes the
+  caller's `LOCALSWIM_*` variables** with `-Environment`, each name set to `$null`, found by listing
+  the case's own process's names that start `LOCALSWIM_`, because the harness removes only
+  `AGENTSPACE_*` ones, and a build that wrongly read one would reach Terry's real board.
+
+#### What a board case never reads
+
+**A case MUST NOT read, write, list, hash or connect to anything of Terry's board** (D86, D88;
+AGENTS.md, "Terry's real files in a review": "isolation is enough"):
+- **It MUST NOT read his receipt, his credential or `%LOCALAPPDATA%\localswim-v2`**, by any path, and
+  MUST NOT start `localswim.exe` or the board's service, read a `LOCALSWIM_*` variable's value, or
+  run his board watcher. **It builds every path it reads or writes from the throwaway home's own
+  object** (`New-ConformanceHome`'s `UserProfile` and the folders under it, held in a variable
+  that is never named `$home`, which is PowerShell's own `$HOME` in any case), **never from its own process's
+  `LOCALAPPDATA`, `APPDATA` or `USERPROFILE`**, which are the real ones: the harness points only the
+  programs it starts.
+- **It MUST NOT connect to any port it did not open.** The only address a case or a program under
+  test connects to is the stand-in's `127.0.0.1:<port>`, and the receipt the case writes names no
+  other. A case never probes a port, never reads a port from a file of Terry's and never uses 8811.
+- **It MUST NOT print a token**: not the fixture's, not a decrypted one, not a header, and not in a
+  failure reason (AGENTS.md, "A test MUST NOT print, log or format the values of an environment it
+  captured"). It reports by a name or a count.
+- **How a review confirms it is isolation, never a snapshot.** The reviewer checks that **every write
+  and delete of a board case goes through `Assert-ConformancePath` at the call**, as the audit
+  of [The program under test is untrusted](#the-program-under-test-is-untrusted) does, and the
+  stand-in's own writes are the log and the ready file at the paths the case gave. The reviewer
+  searches `conformance/` for `localswim-v2`, `LOCALAPPDATA`, `localswim.exe`, `LOCALSWIM_` and `8811`,
+  **after running the same search against lines known to hold each, so that a zero is not believed
+  blind**, and finds `localswim-v2` only in a path built from the home's object, `LOCALAPPDATA` only as
+  the harness's own assignment, and `LOCALSWIM_` only in the case that sets and removes them. The
+  reviewer never lists, reads or hashes Terry's real `%LOCALAPPDATA%\localswim-v2` as a proof.
+
+#### What the board cases MUST show
+
+**These are T04's case writers' list** (D86, D88; each result's name starts with the spec section it
+enforces, as every result's does):
+1. **Each refusal of the board read, with its error code and its `field`**
+   ([lease-api.md, The board read](lease-api.md#the-board-read), [Exit codes and
+   errors](lease-api.md#exit-codes-and-errors)), each from the stand-in or the credential and each
+   with the message the spec gives, byte for byte. The messages below are the architect's rulings
+   (pins P11 and P13), quoted for the case writer; lease-api.md owns them, and where the two differ
+   lease-api.md wins and this list is the bug:
+   - `--board` not a UUIDv4, a UUID of another version included, refused before any request (pin
+     P18), and a board the stand-in does not know, `No board of ID '<value>' that agentspace can
+     read.` (pin P13), each `invalid_value` for `board`;
+   - `--epic` not a ticket number; a ticket the board has no card of, `No card of ticket '<value>' on
+     board '<board>'. Give the epic's ticket number, as in '52'.`; and an archived card, `Epic
+     '<value>' is archived. Name an epic that is being worked.` (pin P11), each `invalid_value` for
+     `epic`;
+   - No block, two or more blocks, a malformed fence, a block never closed, and a document
+     `agentspace-plan` refuses, from a description in the fixture, each `invalid_value` for `epic`
+     with `Epic '<value>' carries no usable plan: <why>.`, its `<why>` as the spec gives it (pin
+     P11; [lease-api.md, The plan block](lease-api.md#the-plan-block));
+   - `--turn` naming no turn of the epic's plan (`invalid_value` for `turn`);
+   - A board that answers 401, 403, 400, 405, 406 or 500, a bare 404 with no Problem document (pin
+     P17), one that hangs past the timeout, and a body past pin P1's bound (the last
+     `invalid_value` for `epic` with `Epic '<value>' carries no usable plan: <why>.`, the others
+     `internal`), each answered in agentspace's own words: **no token, no URL beyond the host and
+     port, no path** (#0041);
+   - The receipt and credential cases above, each `internal`, the `localhost` base among them (pin
+     P19).
+2. **The number of requests.** **One GET for a good epic**, whose log line is exactly the request
+   [lease-api.md](lease-api.md#the-board-read) gives with `auth=ok`; **a ticket the board has no card
+   of, and a board it does not know, each two lines** (the ticket view and then `?view=summary`,
+   both under `/api/2026-11-10/`, pins P2 and P17), **and no more**; **a bare 404 one line**, since
+   only a Problem document of code `not_found` leads to the second; **a refusal before any request** (a bad `--board`,
+   `--epic`, `--turn` form, a usage conflict, a bad receipt or credential) **none**. A refusal of the
+   epic reads the card once and never again, so a lease the case makes twice makes two good reads and
+   not more.
+3. **No other method was sent.** In every board case, the log holds no line whose method is not `GET`,
+   whatever the case, and **a control proves the check can see one**: a planted line the case writes
+   into a copy of the log, or a request the case itself sends to the stand-in with `POST`, which the
+   stand-in answers 405 and logs, makes the same check FAIL. **A checker is proven to fail on a
+   planted value before its pass is believed.**
+4. **The token reached the stand-in, and appears nowhere else.** The log's line has `auth=ok`, which
+   shows the stand-in compared the credential's token with the fixture's. **The token's value then
+   appears in no stdout or stderr of any run of the program under test, no error document, no file
+   under the throwaway home but `bot.json`'s blob and the fixture** (a search of every file of the home
+   for the token's text and for its UTF-16LE bytes, with the fixture and the case's own files
+   left out, and the search proven on a planted copy), **no log line and no lease state file**
+   ([state.md](state.md#the-lease-state-file)), and **the program's own command line carries it
+   nowhere** (the case starts it through the harness with the arguments the spec gives).
+5. **The client reads three members and nothing else.** The markers in `prose.comments`,
+   `relationships`, `parent` and `children` appear in no output, and **a card whose ignored members
+   are changed gives the same result**, since a client that read one would differ.
+6. **A board lease and the same plan given through `--plan` give the same size, `sized_for` and
+   TTL** (D85, D86): the fixture's description holds the block built from the plan file the case
+   also gives `--plan`, and the two printed documents are compared member by member. `size` and
+   `sized_for` on an `unsatisfiable` lease for a project not on the list need no host, and the TTL is
+   `expires_at` minus `created_at` of a lease that is `ready` on a seeded host, **for `--turn` given
+   and for none given** (D84, D85; pin P10).
+7. **`--board` and `--epic` with `--plan` or `--size`, and the other usage cases of pin P4**,
+   the program refuses them before any request. **A case with no stand-in running could not show
+   that none was made, so each of these cases starts one and finds its log empty.**
+
+**What no case shows:** that the real board answers as the stand-in does. D88's live check shows it
+once, after the install, with one GET that reads #0052.
 
 ### What the first run proved
 

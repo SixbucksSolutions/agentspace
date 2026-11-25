@@ -72,6 +72,15 @@ due at once after a success (D77; [The last success](#the-last-success)). Every 
 **Where D73 to D81 left a point open, the architect ruled it on the dev lead's pins for v0.10's
 specs, and each ruling is cited "architect, 2026-11-24, for v0.10-T01, pin Pn" where it stands.**
 
+**Board plans and the ProxyCommand's refusal (v0.11, D83 to D89).** A lease created with
+`--board` and `--epic` keeps three more members in its record: `sized_for` and the plan, as a
+`--plan` lease does, and `plan_source`, which says where the plan was read from
+([What a plan lease adds](#what-a-plan-lease-adds)). The ProxyCommand finds a lease alias's record
+in any state, and refuses a lease that is not `ready` (#0229;
+[Which host a connection reaches](#which-host-a-connection-reaches)). **Where D83 to D89 left a
+point open, the architect ruled it on the dev lead's pins for v0.11's specs, and each ruling is
+cited "architect, 2026-11-25, for v0.11-T01, pin Pn" where it stands.**
+
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
 D34), where they touch the files; the rest of #0041, and #0029, are
@@ -444,6 +453,10 @@ differences:
 - **`plan`**, from v0.10, is one more member, as `driver` is: the plan document the lease was
   created with, whole, on the same records as `sized_for`. It MUST NOT reach any output
   (architect, 2026-11-24, for v0.10-T01, pin P25; [What a plan lease adds](#what-a-plan-lease-adds)).
+- **`plan_source`**, from v0.11, is one more member, as `plan` is: the board, ticket and revision
+  a board lease's plan was read from, on the record of a lease created with `--board` and `--epic`,
+  in every state, and on no other. It MUST NOT reach any output (D87; architect, 2026-11-25, for
+  v0.11-T01, pin P7; [What a plan lease adds](#what-a-plan-lease-adds)).
 - **`ssh.user` in a record MUST match the state schema's pattern**, a lowercase letter or `_`, then
   up to 31 lowercase letters, digits, `_` or `-`. That is narrower than lease-api.md's `ssh.user`
   ([lease-api.md](lease-api.md#fields)), and the record's pattern is the one that binds, because
@@ -476,7 +489,9 @@ The common fields are `id`, `project`, `state`, `platform`, `profile`, `size`, `
 `created_at`. A `released` record keeps `expires_at` when the lease was ever `ready`, and has none
 when it was released from `pending`. **`sized_for` and `plan` are neither required nor forbidden
 by a state**: a plan lease's record carries both in every state, and every other record carries
-neither. **An `unsatisfiable` record whose `reasons` hold `plan_too_large` has rules of its own**
+neither. **Nor is `plan_source`, from v0.11**: a board lease's record carries it in every state,
+beside `sized_for` and `plan` ([What a plan lease adds](#what-a-plan-lease-adds); architect,
+2026-11-25, for v0.11-T01, pin P7). **An `unsatisfiable` record whose `reasons` hold `plan_too_large` has rules of its own**
 ([What a plan lease adds](#what-a-plan-lease-adds)).
 
 **The driver is kept for as long as the lease is (#0041, point 2).** `renew` and `release` hand it
@@ -526,7 +541,8 @@ point (2026-11-18):
   `ready` and adds `expires_at` and `ssh`, before it releases the lock and takes it again for the
   next lease. So no hold spans several placements. It keeps every other member as it was: `id`,
   `project`, `platform`, `profile`, `size`, `ttl_seconds`, `created_at` and `driver`, and, from
-  v0.10, `sized_for` and `plan` (architect, 2026-11-24, for v0.10-T01, pin P17). **A record
+  v0.10, `sized_for` and `plan` (architect, 2026-11-24, for v0.10-T01, pin P17), and from v0.11
+  `plan_source` (architect, 2026-11-25, for v0.11-T01, pin P7). **A record
   that is not `pending` when the run re-reads the file for it under the lock is skipped, and never
   changed by the run**, so a lease released meanwhile is never placed. Which leases it places, and in what steps, is
   [driver.md](driver.md#place_pending)'s.
@@ -536,7 +552,8 @@ point (2026-11-18):
   holds the host, is answered `unsatisfiable` with the one reason `no_capacity`. Under the lease
   state lock, taken and re-read for that lease as for a placement, it sets `state` to
   `unsatisfiable` and adds `reasons`, in one write, and keeps every other member as it was, `driver`
-  included, and from v0.10 `sized_for` and `plan` (pin P17); it adds no `expires_at` and no `ssh`. A record that is not `pending` at that re-read is
+  included, from v0.10 `sized_for` and `plan` (pin P17), and from v0.11 `plan_source` (architect,
+  2026-11-25, for v0.11-T01, pin P7); it adds no `expires_at` and no `ssh`. A record that is not `pending` at that re-read is
   skipped, as above. Which leases it answers so, and the reason's message, are
   [driver.md](driver.md#place_pending)'s; the files it removes for such a lease are its own
   leftovers, as driver.md says (pin P21).
@@ -544,14 +561,16 @@ point (2026-11-18):
   truncated to the whole second, and either MAY come first
   ([lease-api.md](lease-api.md#fields)). The prototype reads `created_at` after signing.
 - **`renew`** sets `expires_at` to the new certificate's valid-before time and `ttl_seconds` to the
-  TTL used, and changes nothing else, `sized_for` and `plan` included (pin P17).
+  TTL used, and changes nothing else, `sized_for` and `plan` included (pin P17), and from v0.11
+  `plan_source` (architect, 2026-11-25, for v0.11-T01, pin P7).
 - **`release` of a stored `ready` or `pending` record** sets `state` to `released`, adds
   `released_at`, and removes `ssh`, keeping `expires_at`. **`release` of a `released` record**
   changes nothing in it, keeping its first `released_at`, though it removes the files a failed
   release left, which the prototype does not
   ([Release, and what it leaves](#release-and-what-it-leaves)). **`release` of an
   `unsatisfiable` record** changes nothing. **Every `release` keeps `sized_for` and `plan` as they
-  were** (pin P17).
+  were** (pin P17), **and from v0.11 `plan_source`** (architect, 2026-11-25, for v0.11-T01, pin
+  P7).
 - **`get` and `list` MUST NOT write it, and the keeper, the ProxyCommand and the guard MUST NOT
   write it either** (the guard's: D56). `get`'s `check_pending` MAY start a provisioning run, which writes it later in a
   process of its own ([driver.md](driver.md#check_pending)); `get` itself never does (card #0143,
@@ -610,10 +629,15 @@ horizon](#live-leases-and-the-lease-horizon); architect, 2026-11-21, for v0.08-T
 **The guard and `status -All` MUST NOT take a file that is not valid, or that cannot be read, for
 no live lease**, and neither takes a missing one for no leases
 ([Live leases and the lease horizon](#live-leases-and-the-lease-horizon)).
-The ProxyCommand reads it only to find the record whose `ssh.host_alias` is its argument, and so
-the host that lease is on ([Which host a connection reaches](#which-host-a-connection-reaches)).
-**A reader that finds the file missing, or not valid, reads no lease from it**; what the
-ProxyCommand then does is operator.md's.
+The ProxyCommand reads it only to find the lease its argument is the alias of, and so whether to
+refuse the connection and which host that lease is on
+([Which host a connection reaches](#which-host-a-connection-reaches)). **From v0.11 a record is
+the argument's when the alias built from its stored `project` and `id`,
+`agentspace-<project>-<first 8 characters of id>`, is the argument, in any state, or when it is
+stored `ready` and its `ssh.host_alias` is the argument**, both compared exactly; until v0.11 only
+the second (architect, 2026-11-25, for v0.11-T01, pins P21 and P22; [operator.md, From the
+ProxyCommand](operator.md#from-the-proxycommand)). **A reader that finds the file missing, or not
+valid, reads no lease from it**; what the ProxyCommand then does is operator.md's.
 
 ### What a plan lease adds
 
@@ -683,6 +707,35 @@ provisioning run's `place_pending`, placing a lease or answering it `unsatisfiab
 exactly as they read them ([The lease state file](#the-lease-state-file)). **No writer adds them to
 a record, changes them or removes them, and a record is never rewritten to drop them.**
 
+**`plan_source`, from v0.11, is one more optional member of a record that holds a `plan`** (D86,
+D87, D89; architect, 2026-11-25, for v0.11-T01, pin P7). It says which board card the plan was read
+from, and is on a lease created with `create --board --epic` and on no other:
+- **It is an object with three members, all required, and no others:** `board`, the board's ID, a
+  lowercase UUID, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?!\n)`; `ticket`,
+  the epic card's ticket number; and `revision`, the card's revision at the read. **`ticket` and
+  `revision` are integers from 1 to 9007199254740991**, and `null` is never accepted for the member
+  or for any of its three.
+- **It is present only on a record that holds a `plan`**, so a record that holds it holds `sized_for`
+  and `driver` too. A lease created with `--plan <file>`, and a lease created without a plan, has
+  none. **That `plan_source` is on a board lease alone is `create`'s rule, not the schema's**
+  (architect, 2026-11-25, for v0.11-T01, pin P15). The schema refuses `plan_source` without `plan`,
+  and cannot refuse a `plan_source` beside a plan that came from a file, since the record does not
+  say where a plan came from: `create` alone decides.
+- **Only `create` writes it, once, in the record it appends**, as it writes `plan` (architect,
+  2026-11-24, for v0.10-T01, pin P17).
+  `renew`, `release` and a provisioning run keep it exactly as they read it, and no writer adds it
+  to a record, changes it or removes it.
+- **It MUST be written last in a record, after `plan`**, as v0.10 placed `sized_for` right after
+  `size`, the order of [lease-api.md, Fields](lease-api.md#fields), and `plan` after `driver`, the
+  last member then (the dev lead, 2026-11-25, for v0.11-T01; the sample
+  [`leases.state.plan-source.json`](../schemas/state/samples/leases.state.plan-source.json) orders
+  it so). This fixes a record's bytes. A record without it is written as v0.10 wrote it, since an
+  absent member adds no bytes. A reader MUST NOT depend on member order.
+- **It reaches no output** (D87): no lease command, log or error prints it, as for `plan`. **It
+  never holds the token, the base URL or anything else of the board's receipt**; the board's ID, a
+  ticket and a revision are all it keeps. **No program reads it for any decision**, and no sizing
+  does.
+
 **The file grows with every plan lease** (pin P29). Each lease created with a plan adds up to one
 plan to the lease state file, at most 262144 bytes, the plan file's largest size (pin P1), and no
 command forgets a lease ([The lease state file](#the-lease-state-file)), so the file keeps that
@@ -707,6 +760,14 @@ v0.10-T01, pin P27):
   created needs `sized_for` and `plan` removed by hand from every record that holds them, and
   every record whose `reasons` hold `plan_too_large` changed or removed by hand** (pin P27): v0.09's
   schema knows no such reason, and no command forgets a lease.
+- **`plan_source`, from v0.11, is the same case, one version later** (architect, 2026-11-25, for
+  v0.11-T01, pin P15; the record's schema allows
+  no member it does not list, so it refuses a record that holds `plan_source` as it refuses one
+  that holds `sized_for`, with `version` still `0`). A program built before v0.11 refuses a lease
+  state file that holds one, and each of its lease commands fails with `internal`, "could not be
+  read", as above. **So v0.11's programs MUST be installed together, and a return to v0.10's
+  programs after a lease was created with `--board` needs `plan_source` removed by hand from every
+  record that holds it.** The `plan` beside it stays, since v0.10's schema knows it.
 
 ## Live leases and the lease horizon
 
@@ -1380,10 +1441,24 @@ v0.10-T01, pin P27):
 the files on this page** (D49, D55; architect, 2026-11-20, for v0.07-T01, the dev lead's pin P7):
 - **A host's operator alias, `agentspace-host.<project>`, reaches that project's host**, whatever
   its record's state.
-- **A lease alias reaches the host of the lease whose `ssh.host_alias` it is**: the record in the
-  lease state file with that alias, then its `project`'s record in the host registry, if that
-  record is `ready`. **Otherwise, the box**: when no lease record has that alias, when the
-  project has no record, or when its record is not `ready`.
+- **A lease alias names the lease whose alias it is**, from v0.11 (D49, as changed for v0.11-T01;
+  architect, 2026-11-25, for v0.11-T01, pins P21 and P22; #0229): the record whose stored `project`
+  and `id` build it, `agentspace-<project>-<first 8 characters of id>`, in any state, or a record
+  stored `ready` whose `ssh.host_alias` it is, both compared exactly. **The lease's state is judged
+  at one reading of the clock**: a record stored `ready` is `expired` when that reading is at or
+  after its `expires_at`. Then:
+  - **A `ready` lease reaches its `project`'s host**, if that project's record in the host
+    registry is `ready`, **and otherwise the box**: when the project has no record, or when its
+    record is not `ready`.
+  - **A lease that is `released`, `expired`, `unsatisfiable` or `pending` reaches no host**: the
+    ProxyCommand refuses the connection before it reads the host registry.
+  - **An alias that is no record's, or a missing lease state file, reaches the box.**
+  - **A lease state file that exists and cannot be read, or is not valid, refuses an argument of
+    lease alias form, and sends any other to the box.**
+
+  Until v0.11 a lease alias was matched only by a `ready` record's `ssh.host_alias`, and every
+  other case reached the box. The exact rules are
+  [operator.md, From the ProxyCommand](operator.md#from-the-proxycommand)'s.
 - **A ProxyCommand given no alias reaches the box**, as the user's own `agentspace` entry does.
 - **A fallback to the box is refused by ssh** for a lease whose host is not the box, because its
   alias checks the key under `agentspace-host.<project>` in agentspace's `known_hosts`, and the box's

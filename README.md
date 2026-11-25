@@ -239,6 +239,32 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    `agentspace-ssh-proxy.exe`, so no checkout needs to exist ([Install it](#install-it)). The JSON
    gives the lease's `id`, its `expires_at` (8 hours from now unless `--ttl` says otherwise) and
    `ssh.host_alias`, such as `agentspace-swimcoach-3a9c5e21`.
+
+   **Once v0.11 is installed, a lease for a turn of an epic MAY be sized from the plan on the
+   epic's card** ([D83](docs/decisions.md#d83-an-epic-carries-its-plan-as-one-fenced-agentspace-plan-block-in-its-description-holding-exactly-a-plan-document),
+   [D84](docs/decisions.md#d84---turn-names-the-turn-a-lease-is-for-without-it-the-plans-busiest-turn),
+   [D86](docs/decisions.md#d86-create---board-id---epic-ticket-reads-the-epics-plan-from-the-board-and-only-reads)):
+   `--board` names the localswim board by its ID, a version 4 UUID, and `--epic` the epic's ticket
+   number. The board ID below is a sample; a real one is the board's own UUID. The second line is the
+   architect's turn lease, which `--turn` sizes for one turn of the epic's plan:
+
+   ```bat
+   agentspace lease create --project <project> --board 0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f --epic <ticket>
+   agentspace lease create --project agentspace --board 0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f --epic <ticket> --turn T02
+   ```
+
+   Without `--turn` the lease is sized for the plan's busiest turn. Either way its `expires_at` is
+   the turn's budget and half again from when it is ready, or 8 hours for a turn with no budget,
+   unless `--ttl` says otherwise
+   ([D85](docs/decisions.md#d85-a-turn-may-carry-budget_minutes-and-a-plan-leases-ttl-is-its-turns-budget-and-half-again)).
+   `--board` and `--epic` MUST be given together, and MUST NOT be given with `--plan` or `--size`;
+   the rules are [lease-api.md, Board](docs/lease-api.md#board),
+   [Epic](docs/lease-api.md#epic), [Turn](docs/lease-api.md#turn) and
+   [The plan block](docs/lease-api.md#the-plan-block). **The board read needs localswim running
+   on the laptop:** the CLI finds it through localswim's service receipt, accepts no base in it but
+   `http://127.0.0.1:<port>`, and reads Bot's token
+   from localswim's own credential for that one request, never printing, logging or keeping it. It
+   only reads the board.
 2. **Put the project's repo on the box.** Nothing clones it for you. The repo MUST be in the
    folder the agents will open, for example `ssh <alias> "git clone <url> ~/swimcoach"`. Every
    lease is `ubuntu` in the MVP
@@ -334,6 +360,8 @@ in "The localswim board on the box" below. Story E3.03 ran these steps
    keeps a host up once the project holds no live lease: the guard stops it within 25 minutes of
    the release ([A host's life](#a-hosts-life)). The desktop app's SSH environment SHOULD then be
    removed, since its alias no longer exists. The project's checkout stays on the box.
+
+   **Once v0.11 is installed, the ProxyCommand refuses the alias of a lease that is released, expired, unsatisfiable or pending**, with exit 1 and no connection, so a client that kept the alias's ProxyCommand line after the release, as the desktop app does, cannot connect through it again (#0229; [operator.md, A lease that is not ready (#0229)](docs/operator.md#a-lease-that-is-not-ready-0229)).
 
    **A closed holder keeps its forwards on the box for about 90 seconds.** The Session Manager
    tunnel does not tell sshd that the client has gone, so the box drops a dead holder's session,
