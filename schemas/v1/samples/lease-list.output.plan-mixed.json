@@ -1,0 +1,144 @@
+{
+  "leases": [
+    {
+      "id": "3f2a9c1e-7b4d-4e2a-9c1f-5d8e2b7a6c40",
+      "project": "swimcoach",
+      "state": "ready",
+      "platform": "linux/arm64",
+      "profile": "agent-linux",
+      "size": "m",
+      "ttl_seconds": 28800,
+      "created_at": "2026-11-17T18:04:05Z",
+      "expires_at": "2026-11-18T02:04:05Z",
+      "ssh": {
+        "host_alias": "agentspace-swimcoach-3f2a9c1e",
+        "user": "ubuntu"
+      }
+    },
+    {
+      "id": "a7c3e5f1-2b4d-4a6c-8e0f-1d3b5a7c9e21",
+      "project": "swimcoach",
+      "state": "pending",
+      "platform": "linux/arm64",
+      "profile": "agent-linux",
+      "size": "m",
+      "sized_for": {
+        "plan": "v0.09",
+        "turn": "T03",
+        "agents": 6
+      },
+      "ttl_seconds": 28800,
+      "created_at": "2026-11-24T14:00:00Z"
+    },
+    {
+      "id": "c3e5a7b9-4d6f-4c8e-a02b-3f5d7c9e1a43",
+      "project": "localswim",
+      "state": "ready",
+      "platform": "linux/arm64",
+      "profile": "agent-linux",
+      "size": "s",
+      "sized_for": {
+        "turn": "T1",
+        "agents": 2
+      },
+      "ttl_seconds": 3600,
+      "created_at": "2026-11-24T09:00:00Z",
+      "expires_at": "2026-11-24T10:00:00Z",
+      "ssh": {
+        "host_alias": "agentspace-localswim-c3e5a7b9",
+        "user": "ubuntu"
+      }
+    },
+    {
+      "id": "d4f6b8ca-5e7a-4d9f-b13c-4a6e8d0f2b54",
+      "project": "swimcoach",
+      "state": "expired",
+      "platform": "linux/arm64",
+      "profile": "agent-linux",
+      "size": "xl",
+      "sized_for": {
+        "plan": "v0.06",
+        "turn": "T01",
+        "agents": 20
+      },
+      "ttl_seconds": 7200,
+      "created_at": "2026-11-24T06:00:00Z",
+      "expires_at": "2026-11-24T08:00:00Z"
+    },
+    {
+      "id": "e5a7c9db-6f8b-4e0a-8c24-5b7f9e1a3c65",
+      "project": "swimcoach",
+      "state": "released",
+      "platform": "linux/arm64",
+      "profile": "agent-linux",
+      "size": "m",
+      "sized_for": {
+        "plan": "v0.09",
+        "turn": "T02",
+        "agents": 7
+      },
+      "ttl_seconds": 28800,
+      "created_at": "2026-11-24T12:00:00Z",
+      "expires_at": "2026-11-24T20:00:00Z",
+      "released_at": "2026-11-24T15:30:12Z"
+    },
+    {
+      "id": "e4a1c7f9-6d2b-4a8e-9f3c-1b5d7e9a2c86",
+      "project": "swimcoach",
+      "state": "unsatisfiable",
+      "platform": "linux/amd64",
+      "profile": "agent-linux",
+      "size": "m",
+      "ttl_seconds": 28800,
+      "created_at": "2026-11-17T18:10:00Z",
+      "reasons": [
+        {
+          "code": "unsupported_platform",
+          "message": "Platform 'linux/amd64' is not supported; v0 supports linux/arm64 only."
+        }
+      ]
+    },
+    {
+      "id": "07c9ebf1-8b0d-4a2c-ae46-7d9b1a3c5e87",
+      "project": "swimcoach",
+      "state": "unsatisfiable",
+      "platform": "windows/amd64",
+      "profile": "agent-linux",
+      "size": "m",
+      "sized_for": {
+        "plan": "v0.09",
+        "turn": "T03",
+        "agents": 5
+      },
+      "ttl_seconds": 28800,
+      "created_at": "2026-11-24T14:10:00Z",
+      "reasons": [
+        {
+          "code": "unsupported_platform",
+          "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."
+        }
+      ]
+    },
+    {
+      "id": "29ebad13-ad2f-4c4e-8068-9fbd3c5e7a09",
+      "project": "swimcoach",
+      "state": "unsatisfiable",
+      "platform": "linux/arm64",
+      "profile": "agent-linux",
+      "size": "xl",
+      "sized_for": {
+        "plan": "v0.09",
+        "turn": "T02",
+        "agents": 33
+      },
+      "ttl_seconds": 28800,
+      "created_at": "2026-11-24T14:13:00Z",
+      "reasons": [
+        {
+          "code": "plan_too_large",
+          "message": "Plan's busiest turn 'T02' has 33 agents at once; the largest size, xl, holds 32."
+        }
+      ]
+    }
+  ]
+}

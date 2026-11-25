@@ -9,20 +9,21 @@
 # - The list schema's $defs MUST be identical to the lease schema's, since Test-Json -SchemaFile
 #   does not resolve a $ref to another file and each schema carries its own copy.
 # - Every one of the plan schema's $defs MUST appear word for word, compared parsed, in the create
-#   request schema's $defs, for the same reason. Contract v0 has no plan schema, so this check runs on
-#   schemas/ only.
+#   request schema's $defs, for the same reason, in each version's own tree. Contract v0 has no plan
+#   schema, so this check runs on schemas/ and schemas/v1/, never on schemas/v0/.
 # - The TTL grammar MUST accept and refuse the spellings that docs/lease-api.md lists.
 # - A sample lease's host alias MUST be agentspace-<project>-<first 8 hex digits of its ID>.
-# - Contract v1 keeps v0's schemas and samples unchanged under schemas/v0/ (D76). Every check above
-#   MUST run on schemas/ (whose $id carries v1) and again on schemas/v0/ (whose $id carries v0), each
-#   against its own schemas and samples only, so a v0 sample is never checked against a v1 schema.
-#   schemas/v0/ MUST exist and hold at least one schema, one valid sample and one invalid sample, so
-#   a deleted copy cannot pass silently.
+# - Contract v2 keeps v1's schemas and samples unchanged under schemas/v1/ (D87), and v0's under
+#   schemas/v0/ (D76). Every check above MUST run on schemas/ (whose $id carries v2), again on
+#   schemas/v1/ (whose $id carries v1) and again on schemas/v0/ (whose $id carries v0), each against
+#   its own schemas and samples only, so a sample of one version is never checked against another
+#   version's schema. schemas/v1/ and schemas/v0/ MUST each exist and hold at least one schema, one
+#   valid sample and one invalid sample, so a deleted copy cannot pass silently.
 #
 # It drives no program, so it names none and reads no variable. It reads files and changes nothing.
 # Run:  pwsh -NoProfile -File conformance\schemas\test-schemas.ps1 [-SchemaRoot <folder>]
-# -SchemaRoot names the folder that holds the schemas and its v0 folder (default: the repository's
-# schemas\), so a planted copy can prove that each check fails.
+# -SchemaRoot names the folder that holds the schemas and its v1 and v0 folders (default: the
+# repository's schemas\), so a planted copy can prove that each check fails.
 # Output: PASS <check name>, FAIL <check name>: <reason>, SKIPPED <check name>: <reason>, then one
 # summary line. Exit 0 when every check passed, 1 when any failed, 2 when none failed but any was
 # skipped (a run with a skip is incomplete, never passed).
@@ -61,8 +62,9 @@ function Test-Document([string]$Json, [string]$SchemaPath) {
 }
 
 # Checks one tree: its schemas in $Dir, its samples in $Dir\samples and $Dir\samples\invalid. $Version is the
-# contract version its $ids carry; $Tag is '' for the top level and 'v0/' for the kept copy, and prefixes the names.
-function Test-SchemaTree([string]$Dir, [string]$Version, [string]$Tag) {
+# contract version its $ids carry; $Tag is '' for the top level and 'v1/' or 'v0/' for a kept copy, and prefixes the
+# names. $WithPlan is true for a contract that has a plan schema (v1 on), whose $defs the create request copies.
+function Test-SchemaTree([string]$Dir, [string]$Version, [string]$Tag, [bool]$WithPlan) {
   $sampleDir = Join-Path $Dir 'samples'
   $invalidDir = Join-Path $sampleDir 'invalid'
   $found = Test-Path -LiteralPath $Dir -PathType Container
@@ -122,11 +124,12 @@ function Test-SchemaTree([string]$Dir, [string]$Version, [string]$Tag) {
     Write-Result $false $defsName 'One of the two schemas is missing.'
   }
 
-  # The create request carries a copy of the plan schema's $defs; no def of the plan's MAY drift from its copy.
-  if (-not $Tag) {
+  # The create request carries a copy of the plan schema's $defs; no def of the plan's MAY drift from its copy. Each
+  # version's copy is compared with that version's own plan schema.
+  if ($WithPlan) {
     $planFile = Join-Path $Dir 'plan.input.schema.json'
     $createFile = Join-Path $Dir 'lease-create.input.schema.json'
-    $planDefsName = "lease-api.md#schemas: lease-create.input.schema.json `$defs hold plan.input.schema.json `$defs word for word"
+    $planDefsName = "lease-api.md#schemas: ${Tag}lease-create.input.schema.json `$defs hold plan.input.schema.json `$defs word for word"
     if ((Test-Path -LiteralPath $planFile) -and (Test-Path -LiteralPath $createFile)) {
       $planDefs = (Get-Content -Raw -LiteralPath $planFile | ConvertFrom-Json -AsHashtable)['$defs']
       $createDefs = (Get-Content -Raw -LiteralPath $createFile | ConvertFrom-Json -AsHashtable)['$defs']
@@ -174,7 +177,8 @@ function Test-SchemaTree([string]$Dir, [string]$Version, [string]$Tag) {
   }
 }
 
-Test-SchemaTree $schemaDir 'v1' ''
-Test-SchemaTree (Join-Path $schemaDir 'v0') 'v0' 'v0/'
+Test-SchemaTree $schemaDir 'v2' '' $true
+Test-SchemaTree (Join-Path $schemaDir 'v1') 'v1' 'v1/' $true
+Test-SchemaTree (Join-Path $schemaDir 'v0') 'v0' 'v0/' $false
 
 Exit-Run

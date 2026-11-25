@@ -1,0 +1,7 @@
+{
+    "project" :   "  SwimCoach ",
+    "platform":   "Linux/AArch64/v8",
+    "profile" :   "Agent-Linux@03",
+    "size"    :   " M ",
+    "ttl"     :   " 1 hour 30 MIN "
+}

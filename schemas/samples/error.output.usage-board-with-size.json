@@ -1,0 +1,1 @@
+{"code":"usage","message":"Options --board and --size cannot be given together; the epic's plan picks the size. Run 'agentspace lease create --help'.","field":"board"}

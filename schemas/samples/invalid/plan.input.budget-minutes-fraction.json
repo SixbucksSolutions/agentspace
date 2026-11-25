@@ -1,0 +1,1 @@
+{"name":"v0.11","turns":[{"name":"T01","budget_minutes":1.5,"stories":[{"name":"E0.11-T01-S01","subagents":[{"name":"implementer","model":"Opus","effort":"high"}]}]}]}

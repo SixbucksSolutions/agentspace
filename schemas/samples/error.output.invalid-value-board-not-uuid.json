@@ -1,0 +1,1 @@
+{"code":"invalid_value","message":"Board 'swimcoach' is not a board ID. Give the board's UUID, as in '0a1b2c3d-...'.","field":"board"}

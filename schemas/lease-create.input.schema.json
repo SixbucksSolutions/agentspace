@@ -1,13 +1,32 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v1/lease-create.input.schema.json",
-  "title": "Create request (input, contract v1)",
-  "description": "A request to agentspace lease create. The CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning (unknown members and ambiguous values are refused). The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. A plan and a size are never both given, since the plan picks the size. The plan's $defs are copied word for word from plan.input.schema.json, because Test-Json -SchemaFile does not resolve a $ref to another file, and what that schema cannot check is checked after parsing. See docs/lease-api.md.",
+  "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/v2/lease-create.input.schema.json",
+  "title": "Create request (input, contract v2)",
+  "description": "A request to agentspace lease create. The CLI takes it as flags and arguments only and never reads this document; it defines the request for validation, and for the hosted API (#0011), which takes it as JSON. Tolerant in form (any case, surrounding whitespace, null for not given) and strict in meaning (unknown members and ambiguous values are refused). The TTL's range, 1 minute to 24 hours, is checked after parsing, not here. A plan and a size are never both given, since the plan picks the size. A board and an epic are given together or not at all, and never with a plan or a size, since the epic's plan, read from the board, picks the size. A turn is given only with a plan or a board, and is matched exactly, never trimmed or case-folded; that it names a turn of the plan is checked once the plan is read. The plan's $defs are copied word for word from plan.input.schema.json, because Test-Json -SchemaFile does not resolve a $ref to another file, and what that schema cannot check is checked after parsing. See docs/lease-api.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["project"],
   "if": { "required": ["plan"], "properties": { "plan": { "not": { "type": "null" } } } },
   "then": { "properties": { "size": { "type": "null" } } },
+  "allOf": [
+    {
+      "if": { "required": ["board"], "properties": { "board": { "not": { "type": "null" } } } },
+      "then": { "required": ["epic"], "properties": { "epic": { "not": { "type": "null" } }, "plan": { "type": "null" }, "size": { "type": "null" } } }
+    },
+    {
+      "if": { "required": ["epic"], "properties": { "epic": { "not": { "type": "null" } } } },
+      "then": { "required": ["board"], "properties": { "board": { "not": { "type": "null" } }, "plan": { "type": "null" }, "size": { "type": "null" } } }
+    },
+    {
+      "if": { "required": ["turn"], "properties": { "turn": { "not": { "type": "null" } } } },
+      "then": {
+        "anyOf": [
+          { "required": ["plan"], "properties": { "plan": { "not": { "type": "null" } } } },
+          { "required": ["board"], "properties": { "board": { "not": { "type": "null" } } } }
+        ]
+      }
+    }
+  ],
   "properties": {
     "project": {
       "description": "Letters, digits and '-', 1 to 32, starting and ending with a letter or digit, in any case.",
@@ -25,17 +44,31 @@
       "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(@0*[1-9][0-9]*)?[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
     },
     "size": {
-      "description": "1 to 8 letters and digits in any case. Null or absent means m, or, with a plan, the size the plan picks. Refused with a plan that is not null.",
+      "description": "1 to 8 letters and digits in any case. Null or absent means m, or, with a plan or a board, the size the plan picks. Refused with a plan or a board that is not null.",
       "type": ["string", "null"],
       "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[A-Za-z0-9]{1,8}[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
     },
     "ttl": {
       "$ref": "#/$defs/ttl",
-      "description": "A duration with units. Null or absent means 8 hours."
+      "description": "A duration with units. Null or absent means 8 hours, or, with a plan whose turn has a budget, the TTL that budget gives."
     },
     "plan": {
-      "description": "The plan document, as plan.input.schema.json defines it, from which the size is picked. On the command line, --plan names a file that holds it. Null or absent means no plan.",
+      "description": "The plan document, as plan.input.schema.json defines it, from which the size is picked. On the command line, --plan names a file that holds it. Null or absent means no plan, or, with a board, the epic's plan. Refused with a board that is not null.",
       "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/plan" }]
+    },
+    "board": {
+      "description": "The ID of the localswim board that holds the epic: a UUIDv4 in any case, as a lease ID is. Given with epic, whose plan is read from this board. Null or absent means no board.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "epic": {
+      "description": "The epic's ticket number on the board: 1 to 16 decimal digits, leading zeros allowed, not all zeros, given as a string and never as a JSON number. Its range, 1 to 9007199254740991, is checked after parsing, not here. Given with board. Null or absent means no epic.",
+      "type": ["string", "null"],
+      "pattern": "^[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?=[0-9]{0,15}[1-9])[0-9]{1,16}[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$"
+    },
+    "turn": {
+      "description": "The name of the plan's turn the lease is for, as a turn's name is written in a plan, never trimmed or case-folded. That the plan has a turn of this name is checked once the plan is read, not here. Refused without a plan or a board that is not null. Null or absent means the plan's busiest turn.",
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/plan_name" }]
     }
   },
   "$defs": {
@@ -59,7 +92,7 @@
       }
     },
     "plan_turn": {
-      "description": "A turn: its name, unique in the plan, and its stories, which run at once.",
+      "description": "A turn: its name, unique in the plan, its stories, which run at once, and its budget, if it has one.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "stories"],
@@ -71,6 +104,12 @@
           "minItems": 1,
           "maxItems": 32,
           "items": { "$ref": "#/$defs/plan_story" }
+        },
+        "budget_minutes": {
+          "description": "The turn's wall-clock budget in whole minutes, 1 to 960, from which a lease for this turn takes its TTL. Null or absent means the turn has none.",
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 960
         }
       }
     },

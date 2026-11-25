@@ -1,0 +1,24 @@
+{
+  "turns": [
+    {
+      "name": "T01",
+      "stories": [
+        {
+          "name": "S01",
+          "subagents": [
+            {
+              "name": "implementer",
+              "model": "claude-opus-4.5",
+              "effort": "x-high"
+            },
+            {
+              "name": "runner",
+              "model": "Sonnet_5.5",
+              "effort": "med.2"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
