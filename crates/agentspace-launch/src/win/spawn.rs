@@ -26,10 +26,13 @@
 //! one (a `.exe` that is not a Windows program), `CreateProcessW` raises a modal "Unsupported
 //! 16-Bit Application" message box on the desktop and does not return until someone closes it,
 //! unless the calling thread has asked for no critical-error message boxes. The create calls run
-//! with `SEM_FAILCRITICALERRORS` set for this thread alone (`NoErrorBoxes`), so the create fails
-//! without waiting, with Windows' own text, which the launcher answers (keeper.md, The handshake,
-//! step 4). The thread's mode is put back afterwards, and the process's mode, which the holder
-//! inherits, is never changed.
+//! with `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX` set for this thread alone
+//! (`NoErrorBoxes`; architect, 2026-11-24, option B for #0191), so the create fails without
+//! waiting, with Windows' own text, which the launcher answers (keeper.md, The handshake, step 4).
+//! The thread's mode is put back afterwards on every way out, a panic included, and the process's
+//! mode, which the holder inherits, is never changed here. `CreateProcessW` in `spawn` is this
+//! crate's only start of a program; the launcher itself is made by WMI (`wmi`), outside this
+//! process.
 
 use super::process::{command_line, creation_time};
 use super::{Owned, error_text, wide};
@@ -44,7 +47,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::Diagnostics::Debug::{
-    GetThreadErrorMode, SEM_FAILCRITICALERRORS, SetThreadErrorMode,
+    GetThreadErrorMode, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetThreadErrorMode,
 };
 use windows_sys::Win32::System::JobObjects::IsProcessInJob;
 use windows_sys::Win32::System::Threading::{
@@ -142,9 +145,14 @@ impl Drop for HandleList {
     }
 }
 
-/// Windows' critical-error message boxes, off for the calling thread while this lives: its error
-/// mode gains `SEM_FAILCRITICALERRORS`, and is put back as it was when this drops. A mode that
-/// cannot be set leaves the thread as it was, and the create goes ahead.
+/// The error-mode bits every create runs with: no critical-error message box, and no message box
+/// for a file that cannot be found.
+const NO_BOXES: u32 = SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX;
+
+/// Windows' hard-error message boxes, off for the calling thread while this lives: its error mode
+/// gains `NO_BOXES`, keeping its other bits, and is put back as it was when this drops, which it
+/// does on every way out of `spawn`, a panic included. A mode that cannot be set leaves the thread
+/// as it was, and the create goes ahead.
 struct NoErrorBoxes {
     old: Option<u32>,
 }
@@ -153,8 +161,7 @@ impl NoErrorBoxes {
     fn new() -> NoErrorBoxes {
         let mut old = 0u32;
         // SAFETY: reads and sets this thread's own error mode; the out-parameter is ours.
-        let ok =
-            unsafe { SetThreadErrorMode(GetThreadErrorMode() | SEM_FAILCRITICALERRORS, &mut old) };
+        let ok = unsafe { SetThreadErrorMode(GetThreadErrorMode() | NO_BOXES, &mut old) };
         NoErrorBoxes {
             old: (ok != 0).then_some(old),
         }
@@ -360,14 +367,14 @@ mod tests {
     #[test]
     fn the_holder_is_created_with_windows_message_boxes_off_and_the_thread_mode_is_put_back() {
         let dir = Scratch::new("error-boxes");
-        for mode in [0, SEM_FAILCRITICALERRORS] {
+        for mode in [0, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, NO_BOXES] {
             let (at_create, after, out) = spawn_on_a_thread_in(mode, missing_program(dir.path()));
             let at_create = at_create.expect("The create was called.");
-            assert_ne!(
-                at_create & SEM_FAILCRITICALERRORS,
-                0,
-                "The create runs with critical-error message boxes off (mode {mode:#x} before), \
-                 so it cannot wait on a person (#0191)."
+            assert_eq!(
+                at_create & NO_BOXES,
+                NO_BOXES,
+                "The create runs with critical-error and open-file message boxes off (mode \
+                 {mode:#x} before), so it cannot wait on a person (#0191)."
             );
             assert_eq!(
                 after, mode,
@@ -379,16 +386,40 @@ mod tests {
     }
 
     #[test]
-    fn no_error_boxes_sets_the_flag_and_puts_back_the_mode_it_found() {
+    fn no_error_boxes_sets_both_flags_and_puts_back_the_mode_it_found() {
+        use windows_sys::Win32::System::Diagnostics::Debug::SEM_NOGPFAULTERRORBOX;
+        std::thread::spawn(|| {
+            for before in [0, SEM_NOGPFAULTERRORBOX] {
+                // SAFETY: sets this thread's own error mode; no old mode is asked for.
+                unsafe { SetThreadErrorMode(before, std::ptr::null_mut()) };
+                {
+                    let _guard = NoErrorBoxes::new();
+                    // SAFETY: reads this thread's own error mode.
+                    let during = unsafe { GetThreadErrorMode() };
+                    assert_eq!(
+                        during,
+                        before | NO_BOXES,
+                        "Both flags, and the others kept."
+                    );
+                }
+                // SAFETY: reads this thread's own error mode.
+                assert_eq!(unsafe { GetThreadErrorMode() }, before);
+            }
+        })
+        .join()
+        .expect("The guard's thread did not panic.");
+    }
+
+    #[test]
+    fn no_error_boxes_puts_back_the_mode_when_a_panic_unwinds_through_it() {
         std::thread::spawn(|| {
             // SAFETY: sets this thread's own error mode; no old mode is asked for.
             unsafe { SetThreadErrorMode(0, std::ptr::null_mut()) };
-            {
+            let unwound = std::panic::catch_unwind(|| {
                 let _guard = NoErrorBoxes::new();
-                // SAFETY: reads this thread's own error mode.
-                let during = unsafe { GetThreadErrorMode() };
-                assert_eq!(during & SEM_FAILCRITICALERRORS, SEM_FAILCRITICALERRORS);
-            }
+                panic!("A panic inside the guard.");
+            });
+            assert!(unwound.is_err());
             // SAFETY: reads this thread's own error mode.
             assert_eq!(unsafe { GetThreadErrorMode() }, 0);
         })

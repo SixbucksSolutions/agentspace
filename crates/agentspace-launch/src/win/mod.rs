@@ -11,7 +11,8 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows_sys::Win32::System::Diagnostics::Debug::{
-    FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS, FormatMessageW,
+    FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS, FormatMessageW, GetErrorMode,
+    SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode,
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 
@@ -63,6 +64,14 @@ pub(crate) fn system32() -> Option<PathBuf> {
         return None;
     }
     Some(PathBuf::from(String::from_utf16_lossy(&buffer[..n])))
+}
+
+/// The process's error mode gains `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX`, keeping every
+/// other bit it had (`GetErrorMode`, then `SetErrorMode` with the union). The crate root's
+/// `quiet_hard_errors` documents it.
+pub(crate) fn quiet_hard_errors() {
+    // SAFETY: reads and sets this process's own error mode; no pointer is passed.
+    unsafe { SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX) };
 }
 
 /// A handle closed when it is dropped.
