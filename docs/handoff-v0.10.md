@@ -3,8 +3,8 @@
 RFC 2119 keywords; the capitals are load-bearing.
 
 > **Live record of v0.10 (#0050), started at T01's close, 3:19pm Mountain on 2026-11-24, and
-> refreshed at T02's close, 8:32pm, at T03's close, 11:50pm, and at T04's close, 3:56am on
-> 2026-11-25.** It is refreshed at each turn's close and made
+> refreshed at T02's close, 8:32pm, at T03's close, 11:50pm, at T04's close, 3:56am on
+> 2026-11-25, and at T05's close, 9:40am the same day.** It is refreshed at each turn's close and made
 > final when Terry approves v0.10. Where this file and AGENTS.md, the board or decisions.md
 > disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -39,7 +39,10 @@ it lists, and every row of its "What is open" is carried below or says what beca
   operator's `last_success_at` and #0227 cases (#0222), and the whole suite against `main`'s build
   with conformance.md (#0223): 91 file runs, 4,599 passed, 0 failed, 0 skipped, plus the crates
   5,598 and the box 172 ([runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md)).
-- **T05, the install and the live check that starts no instance, starts on Terry's word.**
+- **T05, the install and the live check, is closed, and so is every turn of v0.10**: v0.10 is
+  installed on Terry's laptop, `test-help.ps1` passes 30 of 30 against it, and D80's check gave
+  plans of 4, 15 and 33 agents `s`, `l` and `plan_too_large` with no finding and no instance
+  started ([runs/e0.10-t05-s01.md](runs/e0.10-t05-s01.md)). **v0.10 waits on Terry's approval.**
 
 ## Start here
 
@@ -48,18 +51,19 @@ it lists, and every row of its "What is open" is carried below or says what beca
    AGENTS.md, [architect.md](architect.md), and D73 to D81 with their change notes.
 2. **The standing duties**: the board watcher as reader `agentspace`; the reporter, since
    `scripts/milestones.json` lists `v0.10`; a watchdog on any running dev lead.
-3. **Before T05:** sweep #0224 against `main` (architect.md, Running a turn,
-   step 2), then wait for Terry's "Start T05".
+3. **v0.10 is done and waits on Terry:** its fifteen stories and the epic are in Ready For Review.
+   When he moves them to Completed, remove `v0.10` from `scripts/milestones.json`, send `swimcoach
+   stop` for it, and make this file final.
 
 ## Where things stand
 
 | What | State |
 |---|---|
-| v0.10 (#0050) | In Progress. T01 to T04's fourteen stories in Ready For Review; T05's #0224 in Ready For Work |
-| Milestones | `v0.10` (cap 15.5 hours) reporting; `v0.10-T01` to `v0.10-T04` removed at their dev leads' archives |
+| v0.10 (#0050) | Ready For Review, with all fifteen stories (#0211 to #0224, #0226) |
+| Milestones | `v0.10` (cap 15.5 hours) reporting; `v0.10-T01` to `v0.10-T05` removed at their dev leads' archives |
 | Instance hours | None asked for, none used (Q16) |
-| The hosts | Both `stopped`, `m9g.xlarge` (`status -All`, 1:01pm) |
-| Terry's laptop | Unchanged by v0.10 so far; v0.09 installed. T02's dialogs appeared on his desktop (#0225) and were each closed |
+| The hosts | Both `stopped` (T05's last `status -All`, 9:22am on 2026-11-25) |
+| Terry's laptop | v0.10 installed at 7:47am on 2026-11-25 (8 programs, keeper restarted on the new build); no change to `PATH`, the ssh config or the task. T02's dialogs appeared on his desktop (#0225) and were each closed |
 
 ### v0.10 by turn
 
@@ -69,6 +73,7 @@ it lists, and every row of its "What is open" is carried below or says what beca
 | T02, the foundations and the hardening | #0214 to #0218 | 3:44pm, 2026-11-24 | 7:57pm, 2026-11-24 | #150 (the architect's pin as code), #151 to #155 | 4:13 of 3.5 h; an extension was asked at 6:31pm and not answered | `agentspace-plan`; the plan's record and `sized_for`; D77 in the registry, driver and provision; #0191's dialog and the run stand-in's cost fixed, #0189's bounds made load-proof; #0137 met, P51 to P53, `Invoke-HostFile` ends its case's processes; 23 pins ruled |
 | T03, the programs | #0219, #0220, #0226 | 8:34pm, 2026-11-24 | 11:43pm, 2026-11-24 | #156, #157, #158 | 3:09 of 3 h | The CLI's `--plan`; the release's further walks and D59's change; every program's error mode and bootstrap's seam line (#0227); 14 pins ruled; follow-ups #0228 and #0229 carded |
 | T04, conformance | #0221 to #0223 | 1:33am, 2026-11-25 | 3:54am, 2026-11-25 | #159, #160, #161 | 2:21 of 4 h | The lease CLI's plan, v1-compatibility and D77 (Y1 to Y5) cases; the operator's `last_success_at` table and #0227's seam case; the whole suite against `main`'s build, the record and conformance.md; 8 pins ruled; #0230 carded |
+| T05, the install and the live check | #0224 | 7:39am, 2026-11-25 | 9:40am, 2026-11-25 | #162 | About 0:38 of 2 h active; 7:58am to 9:21am in Needs Terry on the expired AWS sign-in | v0.10 installed; the red list closed; D80's check passed with no finding; `scripts\live\wrap.ps1` sets error mode 0x8001 (P1); AGENTS.md's sizing section rewritten for `--plan` |
 
 **T02's merge check**, on a local merge of #154 and #155 onto 01d14c2, whose tree `main` then
 matched byte for byte at c5909e4: the whole workspace with no exclusion, 5,473 passed, the only
@@ -78,9 +83,9 @@ failures the six by design below; clippy and fmt clean; the whole conformance su
 
 ## Red on `main` by design, and who turns it green
 
-**Nothing in the workspace, from T03's close.** Conformance's `test-help.ps1` eight create cases still
-fail against the *installed* v0.09 programs, and v0.10's install (T05) turns them green; against
-`main`'s build they pass (30 of 30).
+**Nothing, from T05's close.** The workspace has been green since T03's close, and `test-help.ps1`'s
+eight create cases, red against the installed v0.09 programs, pass against the installed v0.10
+(30 of 30, T05).
 
 **T03's merge check**, on #158's head d7504a5, which `main` then matched byte for byte at da1376b:
 the whole workspace with no exclusion, 5,598 passed, 0 failed, 58 ignored; clippy, fmt and dist
@@ -153,18 +158,32 @@ passed 61 of 61 three times alone (on #0223); the deadline case 5 of 5.
 - **Slips, all transcript-only:** an `ls -l` printed the user name; a tasking stated an uncounted
   fact.
 
+**T05**, each now in [architect.md](architect.md), Live checks on Terry's laptop and the box:
+- **A ruling that names a tool's property is checked against the tool's source**: the architect's
+  brief said the live kit's `wrap.ps1` set the error mode, and it did not (P1). It now ORs 0x8001
+  into its mode, never sets it, since the app's shell hands children 0x8003.
+- **A guard pass that finds every host stopped logs nothing**, so a tasking that asks for a passing
+  `guard.log` line gets a runner that reads the silence as a conflict.
+- **A dry run in a conformance-harness home against the worktree's build** caught every script error
+  before the sign-in came back, and the live check ran in 47 seconds with no create rerun.
+- **A live turn's sign-in is checked by exit code before the turn starts**, and the card goes to
+  Needs Terry as soon as only the sign-in is left, which paused the clock for 83 minutes.
+- **Slips, transcript and draft only:** a record writer turned a status message into a status read,
+  and a status message said "each within a second" of 17 out of 18; the dev lead caught the first
+  before the review.
+
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T05 | Terry's word, then a dev lead | D81; #0224 |
+| v0.10's approval: its fifteen stories and the epic in Ready For Review | Terry | The board; then `v0.10` leaves `scripts/milestones.json` and this file is made final |
 | #0230, mask the log lines Get-HpLogShape quotes in a failing case's reason | Terry places it, or the architect proposes a release | Backlog |
 | #0225 and #0227, met by #0226 and #0219 in T03, sit in Backlog | Terry, who moves them to Completed (Bot cannot move a card out of Backlog) | The board |
 | #0228 (one walk ends a chain, in `agentspace-connections`) and #0229 (the ProxyCommand refuses a lease alias that is not ready) | Terry places them, or the architect proposes a release | Backlog; D59's change for v0.10-T03 |
-| `docs/conformance.md`'s stale state-schema passages; `test-unmet-host-deploy-size.ps1`'s three load timeouts (180 of 180 alone, and 180 of 180 in T02's merge check); `test-unmet-release-ends-connections.ps1`'s one failure under the rig's load (passed in T02's merge check) | #0223 | Its card |
+| `docs/conformance.md`'s stale state-schema passages; `test-unmet-host-deploy-size.ps1`'s three load timeouts; `test-unmet-release-ends-connections.ps1`'s one failure under load | **Done in T04** (#0223) | [runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md) |
 | T02 ran 43 minutes past its cap with no extension; the release's 15.5 hours are unchanged | Terry, if he extends | `scripts/milestones.json` |
 | The live kit's three mask gaps (from handoff-v0.09.md) | **Done during T02**: `scripts\live\mask.ps1` rules 9a, 11a and 16a, with proof cases; `mask-proof.ps1` 285 passed | `scripts\live\` |
 | The lost observer script (from handoff-v0.09.md) | Not needed in v0.10, since no turn starts an instance (D80, D81); carried to the next release that runs a host live | `scripts\live\` |
-| AGENTS.md's sizing section rewritten for plan-sized leases | The architect, at v0.10's install | D73 |
+| AGENTS.md's sizing section rewritten for plan-sized leases | **Done at T05's close**: a turn's lease asks with `--plan`, and architect.md's Running a turn, step 3, says so | D73 |
 | The "time to a prompt" spec (from handoff-v0.09.md) | Not placed | v0.08's live records |
 | The rest of handoff-v0.09.md's open rows: #0192, #0193 and #0195's build in v0.12; #0190, #0082 and #0109 in v1.0 | Their epics | D72, D78 |

@@ -12,8 +12,9 @@ one Graviton EC2 instance ([docs/how-it-was-built.md](docs/how-it-was-built.md))
 lease API: projects ask for compute and get a way to SSH in, without knowing what hosts it.
 
 - **Where v0.10 stands:** [docs/handoff-v0.10.md](docs/handoff-v0.10.md), v0.10's live record,
-  started at T01's close (2026-11-24) and refreshed at each turn's close. An architect picking up
-  v0.10 mid-release reads it first, then handoff-v0.09.md for the tools and rules it cites.
+  started at T01's close (2026-11-24) and refreshed at each turn's close. **Every v0.10 turn is
+  closed (T05, 2026-11-25), v0.10 is installed, and the release waits on Terry's approval.** An
+  architect picking up v0.10 reads it first, then handoff-v0.09.md for the tools and rules it cites.
 - **Where it stood at v0.09's close:** [docs/handoff-v0.09.md](docs/handoff-v0.09.md), the architect's handoff
   after v0.09, for the architect who starts v0.10 (#0050). It is final, and v0.09 is closed: Terry
   approved its epic and thirteen stories into Completed on 2026-11-24. **An agent picking
@@ -204,30 +205,32 @@ as needed, up to 64 GiB, "so it stays a minimum of 60% used".**
 
 **Terry, 2026-11-19, standing order: "before launching the EC2, make sure it's an M class instance
 with vCPU count >= max number of parallel agents. I want each agent to have its own vCPU and at
-least 4 GB of RAM."** D39 recorded it while hosts were sized by hand. **From v0.09's install
-(2026-11-24, E0.09-T05-S01) a host is sized by its lease**, and the rule is applied as D69 says.
-Terry kept the rule through v0.09 (Q13); it stands until he says otherwise, and v0.10 replaces the
-hand pick with D27's measured product.
-- **A turn's lease MUST ask for the smallest size whose vCPUs are at least the most agents that will
-  work on the host at once**, counted as D27 counts them: the sum of the turn's stories'
-  staffing-plan peaks, plus 1 for its dev lead. The sizes are `s` (`m9g.large`, 2 vCPUs), `m`
-  (`m9g.xlarge`, 4, the default), `l` (`m9g.2xlarge`, 8) and `xl` (`m9g.4xlarge`, 16) (D65). An M
-  class instance has 4 GiB per vCPU, so the memory rule follows from the vCPU rule.
-- **The size is asked through the lease, `agentspace lease create --size <size>`, never set by hand
-  for a turn** (D69). The lease resizes the host when no ready lease holds it (D66, D68), which
-  stops and starts the instance and keeps the disk. A host serving other leases at a smaller size
-  answers `no_capacity`, so those leases are released first. An agent MUST NOT edit
-  `stack-parameters.json` or run `deploy -InstanceType` to size a host for a turn; a resize by hand
-  stays a person's (D67).
-- **A turn of more than 16 agents at once on one host has no size**, and its plan MUST be split or
-  brought to Terry before it starts (D69).
+least 4 GB of RAM."** D39 recorded it while hosts were sized by hand, and from v0.09's install a
+host was sized by its lease (D69). **On 2026-11-24 Terry took D73's footprint in its place** (Q14:
+"Yes, half a vCPU"): half a vCPU and 2 GiB for each agent working at once. **From v0.10's install
+(2026-11-25, E0.10-T05-S01) a turn's lease is sized by its plan** (D73 to D75), and the architect's
+count by hand ends.
+- **A turn's lease MUST ask with `agentspace lease create --plan <file>`**, a plan document holding
+  the turn (D74): its stories, each story's subagents with their model, effort and `after`. The CLI
+  counts each turn's agents at once as D27 does, the sum of its stories' peaks plus 1 for its dev
+  lead, and picks the smallest size that holds the busiest turn: `s` (`m9g.large`, 2 vCPUs) up to
+  4 agents, `m` (`m9g.xlarge`, 4) up to 8, `l` (`m9g.2xlarge`, 8) up to 16 and `xl`
+  (`m9g.4xlarge`, 16) up to 32 (D65, D73). The lease's `sized_for` names the turn and its agents.
+- **The size is asked through the lease, never set by hand for a turn** (D69). The lease resizes the
+  host when no ready lease holds it (D66, D68), which stops and starts the instance and keeps the
+  disk. A host serving other leases at a smaller size answers `no_capacity`, so those leases are
+  released first. An agent MUST NOT edit `stack-parameters.json` or run `deploy -InstanceType` to
+  size a host for a turn; a resize by hand stays a person's (D67).
+- **A plan whose busiest turn has more than 32 agents answers `plan_too_large`**, and the turn MUST
+  be split or brought to Terry before it starts (D75, D81). It replaces D69's limit of 16.
 - **Each use is sized for its own peak**: the next lease at a smaller size brings the host back down
   once the larger lease is released. A lease whose sessions run no agents on the host, such as a
-  live check from the laptop, asks for the default.
-- **Shown live in v0.09-T05** ([docs/runs/e0.09-t05-s01.md](docs/runs/e0.09-t05-s01.md)): `l`
+  live check from the laptop, asks `--size m`, the default, with no plan.
+- **Shown live:** in v0.09-T05 ([docs/runs/e0.09-t05-s01.md](docs/runs/e0.09-t05-s01.md)), `l`
   resized agentspace's host to `m9g.2xlarge` in about 3 minutes, and the default brought it back to
-  `m9g.xlarge` in about 4. Until E0.09-T05-S01 this rule set `InstanceType` in
-  `stack-parameters.json` and ran `deploy` while the box was stopped (D39, D40).
+  `m9g.xlarge` in about 4. In v0.10-T05 ([docs/runs/e0.10-t05-s01.md](docs/runs/e0.10-t05-s01.md)),
+  the installed CLI gave plans of 4, 15 and 33 agents `s`, `l` and `plan_too_large`, for a project
+  with no host, starting no instance.
 - **Until v1.0, a host MUST be stopped as soon as a turn that used it is done** (Terry,
   2026-11-19: "make sure we don't leave it burning money when done with its work for a dev
   turn"): every PR of the turn merged to `main` and its cards in Ready For Review. The architect

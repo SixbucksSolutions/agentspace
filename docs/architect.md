@@ -103,9 +103,10 @@ first.**
      or a grep hit** (v0.07-T01). The sweep ruled that `test-schemas.ps1` would check the new state
      schemas' samples; it reads only the top-level `schemas/`, and the dev lead found it by
      planting a sample. The ruling was corrected on the card.
-3. **If the turn uses a host:** give the turn's lease the `--size` its peak needs (AGENTS.md,
-   "Sizing a host before it runs agents"; D69), and plan the size-down at the turn's close: the
-   next lease at the default brings it back. Before v0.09 a host kept its size until a deploy
+3. **If the turn uses a host:** create the turn's lease with `--plan`, a plan document holding the
+   turn, so the CLI picks the size its busiest turn needs (AGENTS.md, "Sizing a host before it runs
+   agents"; D73 to D75; by `--size` and the architect's count, D69, before v0.10's install), and plan
+   the size-down at the turn's close: the next lease at the default brings it back. Before v0.09 a host kept its size until a deploy
    changed it, so v0.06-T01's `m9g.4xlarge` stayed until T05.
 4. **If the turn is measured:** start the sampler before the dev lead, confirm it records the dev
    lead's session before giving the go, and arm the liveness watch at once.
@@ -361,6 +362,19 @@ reads before it prints it").
   times.
 - **A `guard.log` baseline is a count taken at the turn's start**, never "absent": the laptop's log
   had 165 lines before T05's install.
+
+**Learned in v0.10-T05, a live check that starts no instance.**
+- **A ruling that names a tool's property is checked against the tool's source first**: the brief
+  said `scripts\live\wrap.ps1` set the error mode, and it did not. The wrapper now ORs 0x8001 into
+  its own mode, logs it in `.start` and refuses with exit 97 without it; it MUST NOT set the mode
+  exactly, since the app's shell hands children 0x8003.
+- **The AWS sign-in is checked by exit code before a live turn starts**, never by printing its
+  error, and the card goes to Needs Terry as soon as only the sign-in is left.
+- **A tasking that reads the guard's log says what a passing pass leaves**: nothing in `guard.log`,
+  only a `guard started` line in `board-holder.log` (keeper.md). A runner asked for a passing line
+  reads the silence as a conflict.
+- **A live check's scripts are dry-run in a conformance-harness home against the worktree's build**
+  before the live run, so a script error never costs a rerun of a live command.
 
 ## Reviewing a pull request
 
