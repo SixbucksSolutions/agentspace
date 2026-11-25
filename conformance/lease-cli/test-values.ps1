@@ -56,7 +56,8 @@ try {
     @{ Line = @('lease', 'create', '--project', 'x', '--ttl', 'PT0S'); Code = 'out_of_range'; Field = 'ttl' }
     @{ Line = @('lease', 'create', '--project', 'x', '--ttl', 'P2D'); Code = 'out_of_range'; Field = 'ttl' }
     @{ Line = @('lease', 'create', '--project', 'x', '--ttl=99999999999999999999h'); Code = 'out_of_range'; Field = 'ttl' }
-    # The first bad value in the order of the table (project, platform, profile, size, ttl) is reported.
+    # The first bad value in the order of the table (project, platform, profile, plan, size, ttl) is reported. A line
+    # with no --plan is as in contract v0; the plan's own place in that order is in test-plan-errors.ps1.
     @{ Line = @('lease', 'create', '--project', 'bad_', '--ttl', '8'); Code = 'invalid_value'; Field = 'project' }
     @{ Line = @('lease', 'create', '--ttl', '8', '--project', 'x', '--size', 'toolarge9'); Code = 'invalid_value'; Field = 'size' }
     @{ Line = @('lease', 'create', '--size', 'toolarge9', '--platform', 'linux', '--project', 'x'); Code = 'invalid_value'; Field = 'platform' }
