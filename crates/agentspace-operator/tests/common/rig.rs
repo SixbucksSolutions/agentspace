@@ -843,6 +843,7 @@ impl Rig {
             env: Vec::new(),
             hold_stdin: false,
             real_windows: false,
+            default_error_mode: false,
             exe: None,
             timeout: Duration::from_secs(90),
         }
@@ -887,6 +888,11 @@ pub struct Out {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub elapsed: Duration,
+    /// When the run was seen to end, in milliseconds since the Unix epoch: the clock a stand-in's
+    /// [`Call::time_ms`] is read from, so the time from a call's start to the run's end can be
+    /// bounded without counting the operator's start and its earlier calls, which a loaded
+    /// machine slows most (#0189).
+    pub ended_ms: u128,
 }
 
 impl Out {
@@ -907,9 +913,14 @@ pub struct Op<'a> {
     env: Vec<(String, Option<OsString>)>,
     hold_stdin: bool,
     real_windows: bool,
+    default_error_mode: bool,
     exe: Option<PathBuf>,
     timeout: Duration,
 }
+
+/// `CREATE_DEFAULT_ERROR_MODE`: the new process gets the default error mode, 0, and not the
+/// test process's own.
+const CREATE_DEFAULT_ERROR_MODE: u32 = 0x0400_0000;
 
 impl Op<'_> {
     /// Runs this copy of the operator in place of the one cargo built.
@@ -939,6 +950,14 @@ impl Op<'_> {
     /// process, for `ca`, which calls Windows' own programs. Everything else stays the rig's.
     pub fn real_windows(mut self) -> Self {
         self.real_windows = true;
+        self
+    }
+
+    /// Starts the operator with error mode 0 rather than the test process's own (#0191): a run
+    /// wrapper or a console can hand the test `SEM_FAILCRITICALERRORS`, which the operator would
+    /// inherit, and which hides the 16-bit dialog without the operator's help.
+    pub fn default_error_mode(mut self) -> Self {
+        self.default_error_mode = true;
         self
     }
 
@@ -984,6 +1003,10 @@ impl Op<'_> {
         c.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if self.default_error_mode {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(CREATE_DEFAULT_ERROR_MODE);
+        }
 
         let started = Instant::now();
         let mut child = c.spawn().expect("the operator starts");
@@ -1029,12 +1052,18 @@ impl Op<'_> {
                 Err(e) => panic!("waiting for the operator failed: {e}"),
             }
         };
+        let elapsed = started.elapsed();
+        let ended_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
         drop(stdin.take());
         Out {
             code,
             stdout: t_out.join().unwrap_or_default(),
             stderr: t_err.join().unwrap_or_default(),
-            elapsed: started.elapsed(),
+            elapsed,
+            ended_ms,
         }
     }
 }

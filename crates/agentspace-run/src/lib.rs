@@ -21,6 +21,13 @@
 //!   path `AGENTSPACE_AWS_CMD`, `AGENTSPACE_SSH_CMD` or `AGENTSPACE_SCP_CMD` names, read each
 //!   time a program is about to start. A value that names nothing runnable fails and MUST NOT
 //!   fall back to the default.
+//! - **No start waits on a person** (#0191): on Windows every program is started with the
+//!   starting thread's error mode holding `SEM_FAILCRITICALERRORS` and `SEM_NOOPENFILEERRORBOX`,
+//!   and the thread's earlier mode put back after, however the start ended. A file Windows takes
+//!   for a 16-bit program (a file named `.exe` that holds no PE image) then fails to start at once
+//!   and is answered as one that cannot be run, with the seam's line or "Could not run", where
+//!   it would otherwise put a modal "Unsupported 16-Bit Application" dialog on the desktop and
+//!   wait for OK, whatever error mode the process inherited.
 //! - **The environment at start** (operator.md, Environment variables): every program gets its
 //!   environment with every variable whose name ends `_POSIX_FD_STATE` removed (#0026) and
 //!   `AGENTSPACE_NESTED` set to `1`.
@@ -39,12 +46,17 @@
 //! E0.06-T05-S02, #0139). A `StdoutLock` is reentrant only on the thread that holds it, so a copy
 //! thread's first write would wait for the lock while the call waits for the copy thread.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+/// The only module with `unsafe` code: the error mode every start runs under (#0191).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod win;
 
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 
 use agentspace_operator_api::{
@@ -141,7 +153,7 @@ impl Runner {
     fn run_remote(&self, program: &Program, args: &[&OsStr]) -> Result<i32, Failure> {
         let mut cmd = command(&program.path);
         cmd.args(args).stdin(Stdio::null());
-        match cmd.status() {
+        match start(&mut cmd).and_then(|mut child| child.wait()) {
             Ok(status) => Ok(exit_code(status)),
             Err(_) => Err(Failure {
                 message: program.cannot_start.clone(),
@@ -347,6 +359,15 @@ fn command(program: &Path) -> Command {
     cmd
 }
 
+/// Starts `cmd`: the one place this crate starts a program, so that every start runs with
+/// Windows' error message boxes off for the starting thread (#0191, [`win::NoErrorBoxes`]). A
+/// caller waits for the child itself, after the thread's error mode is back as it was.
+fn start(cmd: &mut Command) -> std::io::Result<Child> {
+    #[cfg(windows)]
+    let _quiet = win::NoErrorBoxes::new();
+    cmd.spawn()
+}
+
 /// Whether a call passes `--output json` (operator.md, AWS failures; Calls by command): every
 /// call but `cloudformation deploy` and `ec2 wait instance-stopped` does, whether or not its
 /// output is read. The tunnel is not started here. The call's shape decides, not its [`Output`]:
@@ -402,10 +423,8 @@ impl Aws for Runner {
         cmd.args(aws_args(call)).stdin(Stdio::null());
         match call.output {
             Output::Json | Output::Checked => {
-                let out = cmd
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .output()
+                let out = start(cmd.stdout(Stdio::piped()).stderr(Stdio::piped()))
+                    .and_then(Child::wait_with_output)
                     .map_err(|_| cannot_run())?;
                 if !out.status.success() {
                     return Err(aws_failure(&out.stderr, &out.stdout, out.status));
@@ -427,10 +446,7 @@ impl Aws for Runner {
                 })
             }
             Output::PassThrough => {
-                let mut child = cmd
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
+                let mut child = start(cmd.stdout(Stdio::piped()).stderr(Stdio::piped()))
                     .map_err(|_| cannot_run())?;
                 // Both streams pass through as written, and are kept for the error text.
                 let out = tee(child.stdout.take(), std::io::stdout);
@@ -450,9 +466,8 @@ impl Aws for Runner {
                 } else {
                     Stdio::null()
                 };
-                cmd.stdout(Stdio::null())
-                    .stderr(stderr)
-                    .status()
+                start(cmd.stdout(Stdio::null()).stderr(stderr))
+                    .and_then(|mut child| child.wait())
                     .map_err(|_| cannot_run())?;
                 Ok(Value::Null)
             }

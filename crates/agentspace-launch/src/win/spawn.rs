@@ -21,6 +21,19 @@
 //! launcher writes its result: a launcher that ends between the two leaves a holder that runs
 //! (keeper.md, The handshake, step 4: "the holder runs on"), never one that a pass would find
 //! running and trust while it holds no forward. Every other way out of `spawn` ends it.
+//!
+//! **The create never waits on a person (#0191).** For a program file Windows takes for a 16-bit
+//! one (a `.exe` that is not a Windows program), `CreateProcessW` raises a modal "Unsupported
+//! 16-Bit Application" message box on the desktop and does not return until someone closes it,
+//! unless the calling thread has asked for no critical-error message boxes. The create calls run
+//! with `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX` set for this thread alone
+//! (`NoErrorBoxes`; architect, 2026-11-24, option B for #0191), so the create fails without
+//! waiting, with Windows' own text, which the launcher answers (keeper.md, The handshake, step 4:
+//! "A start MUST NOT wait on a Windows dialog").
+//! The thread's mode is put back afterwards on every way out, a panic included, and the process's
+//! mode, which the holder inherits, is never changed here. `CreateProcessW` in `spawn` is this
+//! crate's only start of a program; the launcher itself is made by WMI (`wmi`), outside this
+//! process.
 
 use super::process::{command_line, creation_time};
 use super::{Owned, error_text, wide};
@@ -33,6 +46,9 @@ use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ,
     FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING, SYNCHRONIZE,
+};
+use windows_sys::Win32::System::Diagnostics::Debug::{
+    GetThreadErrorMode, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetThreadErrorMode,
 };
 use windows_sys::Win32::System::JobObjects::IsProcessInJob;
 use windows_sys::Win32::System::Threading::{
@@ -130,6 +146,44 @@ impl Drop for HandleList {
     }
 }
 
+/// The error-mode bits every create runs with: no critical-error message box, and no message box
+/// for a file that cannot be found.
+const NO_BOXES: u32 = SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX;
+
+/// Windows' hard-error message boxes, off for the calling thread while this lives: its error mode
+/// gains `NO_BOXES`, keeping its other bits, and is put back as it was when this drops, which it
+/// does on every way out of `spawn`, a panic included. A mode that cannot be set leaves the thread
+/// as it was, and the create goes ahead.
+struct NoErrorBoxes {
+    old: Option<u32>,
+}
+
+impl NoErrorBoxes {
+    fn new() -> NoErrorBoxes {
+        let mut old = 0u32;
+        // SAFETY: reads and sets this thread's own error mode; the out-parameter is ours.
+        let ok = unsafe { SetThreadErrorMode(GetThreadErrorMode() | NO_BOXES, &mut old) };
+        NoErrorBoxes {
+            old: (ok != 0).then_some(old),
+        }
+    }
+}
+
+impl Drop for NoErrorBoxes {
+    fn drop(&mut self) {
+        if let Some(old) = self.old {
+            // SAFETY: sets this thread's own error mode back; no old mode is asked for.
+            unsafe { SetThreadErrorMode(old, std::ptr::null_mut()) };
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// This thread's error mode at its last create call, for this module's tests.
+    static MODE_AT_CREATE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
 /// Whether this process is in a job.
 fn in_a_job() -> bool {
     let mut answer = 0;
@@ -178,6 +232,9 @@ pub(crate) fn spawn(request: &LaunchRequest) -> Result<Made, String> {
         let mut line = wide(&request.command_line);
         // SAFETY: an all-zero PROCESS_INFORMATION is an empty out-parameter.
         let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        #[cfg(test)]
+        // SAFETY: reads this thread's own error mode.
+        MODE_AT_CREATE.with(|m| m.set(Some(unsafe { GetThreadErrorMode() })));
         // SAFETY: every string ends in a NUL and outlives the call; the startup information and
         // its attribute list are ours and initialized; inheritance is limited to the list.
         let ok = unsafe {
@@ -201,6 +258,7 @@ pub(crate) fn spawn(request: &LaunchRequest) -> Result<Made, String> {
             Ok(info)
         }
     };
+    let no_boxes = NoErrorBoxes::new();
     let made = if in_a_job() {
         match create(flags | CREATE_BREAKAWAY_FROM_JOB) {
             Err(ERROR_ACCESS_DENIED) => create(flags),
@@ -209,6 +267,7 @@ pub(crate) fn spawn(request: &LaunchRequest) -> Result<Made, String> {
     } else {
         create(flags)
     };
+    drop(no_boxes);
     let info = made.map_err(error_text)?;
     let holder = Suspended {
         process: Owned(info.hProcess),
@@ -260,5 +319,112 @@ impl Drop for Suspended {
             // SAFETY: the process is ours and has never run.
             unsafe { TerminateProcess(self.process.0, 1) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Scratch;
+
+    /// A request whose program is not there. Its create fails at once with `ERROR_FILE_NOT_FOUND`
+    /// whatever the error mode, so this module's tests never raise a message box, with the guard
+    /// or without it.
+    fn missing_program(dir: &std::path::Path) -> LaunchRequest {
+        let application = dir.join("nowhere").join("ssh.exe");
+        LaunchRequest {
+            application: application.to_string_lossy().into_owned(),
+            command_line: format!("\"{}\" -N", application.display()),
+            log: dir
+                .join("board-holder-ssh.log")
+                .to_string_lossy()
+                .into_owned(),
+            directory: dir.to_string_lossy().into_owned(),
+            not_after: "2099-01-01T00:00:00.0000000Z".to_string(),
+            result: dir.join("result.json").to_string_lossy().into_owned(),
+        }
+    }
+
+    /// Runs `spawn` on a thread of its own whose error mode is `mode` before the call, and gives
+    /// the thread's mode at the create call, its mode after `spawn` returned, and the outcome.
+    fn spawn_on_a_thread_in(
+        mode: u32,
+        request: LaunchRequest,
+    ) -> (Option<u32>, u32, Result<Made, String>) {
+        std::thread::spawn(move || {
+            // SAFETY: sets this thread's own error mode; no old mode is asked for.
+            let set = unsafe { SetThreadErrorMode(mode, std::ptr::null_mut()) };
+            assert_ne!(set, 0, "The test thread's error mode can be set.");
+            let out = spawn(&request);
+            let at_create = MODE_AT_CREATE.with(|m| m.get());
+            // SAFETY: reads this thread's own error mode.
+            let after = unsafe { GetThreadErrorMode() };
+            (at_create, after, out)
+        })
+        .join()
+        .expect("The spawn thread did not panic.")
+    }
+
+    #[test]
+    fn the_holder_is_created_with_windows_message_boxes_off_and_the_thread_mode_is_put_back() {
+        let dir = Scratch::new("error-boxes");
+        for mode in [0, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, NO_BOXES] {
+            let (at_create, after, out) = spawn_on_a_thread_in(mode, missing_program(dir.path()));
+            let at_create = at_create.expect("The create was called.");
+            assert_eq!(
+                at_create & NO_BOXES,
+                NO_BOXES,
+                "The create runs with critical-error and open-file message boxes off (mode \
+                 {mode:#x} before), so it cannot wait on a person (#0191)."
+            );
+            assert_eq!(
+                after, mode,
+                "The thread's own mode is put back after the create."
+            );
+            let error = out.expect_err("A program that is not there is not started.");
+            assert!(!error.is_empty(), "Windows' own text says why.");
+        }
+    }
+
+    #[test]
+    fn no_error_boxes_sets_both_flags_and_puts_back_the_mode_it_found() {
+        use windows_sys::Win32::System::Diagnostics::Debug::SEM_NOGPFAULTERRORBOX;
+        std::thread::spawn(|| {
+            for before in [0, SEM_NOGPFAULTERRORBOX] {
+                // SAFETY: sets this thread's own error mode; no old mode is asked for.
+                unsafe { SetThreadErrorMode(before, std::ptr::null_mut()) };
+                {
+                    let _guard = NoErrorBoxes::new();
+                    // SAFETY: reads this thread's own error mode.
+                    let during = unsafe { GetThreadErrorMode() };
+                    assert_eq!(
+                        during,
+                        before | NO_BOXES,
+                        "Both flags, and the others kept."
+                    );
+                }
+                // SAFETY: reads this thread's own error mode.
+                assert_eq!(unsafe { GetThreadErrorMode() }, before);
+            }
+        })
+        .join()
+        .expect("The guard's thread did not panic.");
+    }
+
+    #[test]
+    fn no_error_boxes_puts_back_the_mode_when_a_panic_unwinds_through_it() {
+        std::thread::spawn(|| {
+            // SAFETY: sets this thread's own error mode; no old mode is asked for.
+            unsafe { SetThreadErrorMode(0, std::ptr::null_mut()) };
+            let unwound = std::panic::catch_unwind(|| {
+                let _guard = NoErrorBoxes::new();
+                panic!("A panic inside the guard.");
+            });
+            assert!(unwound.is_err());
+            // SAFETY: reads this thread's own error mode.
+            assert_eq!(unsafe { GetThreadErrorMode() }, 0);
+        })
+        .join()
+        .expect("The guard's thread did not panic.");
     }
 }

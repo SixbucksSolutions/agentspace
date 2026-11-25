@@ -112,12 +112,20 @@ impl Rig {
 
 // ---------------------------------------------------------------- Stand-in programs
 
-/// A stand-in program: records its arguments (`args.txt`, `argc.txt`), its stdin (`stdin.txt`)
-/// the values of the few variables the tests ask about (`env.txt`, see `RECORDED`) and the NAMES of
-/// its `*_POSIX_FD_STATE` variables (`fdnames.txt`) beside itself, never its whole environment (a
+/// A stand-in program: records its arguments (`args.txt`, `argc.txt`), its stdin (`stdin.txt`; on
+/// Windows its first line only, which is all a check of a leaked stdin reads), the values of the
+/// few variables the tests ask about (`env.txt`, see `RECORDED`) and the NAMES of its
+/// `*_POSIX_FD_STATE` variables (`fdnames.txt`) beside itself, never its whole environment (a
 /// captured environment can hold a secret, and a test MUST NOT print one). It writes `out.txt` and
 /// `err.txt` to its stdout and stderr, and exits with a chosen code. Shell script on Unix, `.cmd`
 /// file on Windows.
+///
+/// **On Windows a call of the stand-in MUST start at most two processes**: `cmd.exe` and the one
+/// `for /f` runs to list the variables' names (tests/standin_cost.rs). Every other step is a
+/// built-in of `cmd.exe`. Each process start is what a loaded machine slows most: with a
+/// `findstr.exe` for the names and another for stdin, a call started four, a test of 18 calls 72,
+/// and under a 40-thread CPU burn on the 20-logical-processor laptop one call passed 60 seconds,
+/// its `cmd.exe` runnable but not run (#0191, E0.10-T02-S04).
 pub struct Standin {
     pub dir: PathBuf,
     name: String,
@@ -174,15 +182,26 @@ impl Standin {
                  >\"%D%argc.txt\" echo %n%\r\n\
                  type nul > \"%D%env.txt\"\r\n\
                  {win_named}\
-                 for /f \"delims==\" %%a in ('set') do @>>\"%D%allnames.txt\" echo(%%a\r\n\
-                 findstr /e /c:\"{suffix}\" \"%D%allnames.txt\" > \"%D%fdnames.txt\"\r\n\
-                 del \"%D%allnames.txt\"\r\n\
-                 findstr \"^\" > \"%D%stdin.txt\"\r\n\
+                 type nul > \"%D%fdnames.txt\"\r\n\
+                 for /f \"delims==\" %%a in ('set') do @call :name \"%%a\"\r\n\
+                 type nul > \"%D%stdin.txt\"\r\n\
+                 set \"IN=\"\r\n\
+                 set /p \"IN=\"\r\n\
+                 if defined IN (\r\n\
+                 setlocal EnableDelayedExpansion\r\n\
+                 >\"%D%stdin.txt\" echo(!IN!\r\n\
+                 endlocal\r\n\
+                 )\r\n\
                  type \"%D%out.txt\"\r\n\
                  type \"%D%err.txt\" 1>&2\r\n\
-                 exit /b {code}\r\n",
+                 exit /b {code}\r\n\
+                 :name\r\n\
+                 set \"N=%~1\"\r\n\
+                 if \"%N:~-{suffix_len}%\"==\"{suffix}\" >>\"%D%fdnames.txt\" echo(%N%\r\n\
+                 exit /b 0\r\n",
                 win_named = recorded_script(true),
                 suffix = FD_STATE_SUFFIX,
+                suffix_len = FD_STATE_SUFFIX.len(),
                 code = self.code
             )
         } else {

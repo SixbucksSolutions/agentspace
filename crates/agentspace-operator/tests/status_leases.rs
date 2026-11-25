@@ -1140,10 +1140,9 @@ fn the_lease_state_file_is_read_without_its_lock_and_never_written() {
         .share_mode(0)
         .open(&lock)
         .expect("the case holds the lease state lock");
-    let out = rig
-        .op(&["status", "-All"])
-        .timeout(std::time::Duration::from_secs(20))
-        .run();
+    // A run that took the lock would wait its 30 seconds for it and fail with the lock's message,
+    // so the bound is the lock's wait, not how fast a loaded machine runs the operator (#0189).
+    let out = rig.op(&["status", "-All"]).run();
     drop(held);
     assert_eq!(out.code, Some(0), "{:?}", out.err());
     assert_eq!(
@@ -1151,7 +1150,7 @@ fn the_lease_state_file_is_read_without_its_lock_and_never_written() {
         report_of_box_and_host(1, 0, Some(&shown(now - 300 + 900)))
     );
     assert!(
-        out.elapsed < std::time::Duration::from_secs(15),
+        out.elapsed < std::time::Duration::from_secs(30),
         "no wait on the lock: {:?}",
         out.elapsed
     );

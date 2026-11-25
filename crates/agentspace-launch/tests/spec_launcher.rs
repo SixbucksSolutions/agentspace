@@ -69,6 +69,32 @@ fn in_30_seconds() -> i64 {
     now_ms() + 30_000
 }
 
+/// How long a holder the launcher started is given to write its line in `spec-starts.txt`, as the
+/// other specs give a holder's first output (20 seconds).
+const HOLDER_LINE_BOUND: Duration = Duration::from_secs(20);
+
+/// How long a launcher that cannot start the holder is given to answer. Each of those answers
+/// takes milliseconds alone; the bound is for a laptop under a parallel build.
+const ANSWER_BOUND: Duration = Duration::from_secs(60);
+
+/// Runs the launcher on a thread of its own and gives its exit code, or fails the spec once
+/// `ANSWER_BOUND` has passed with no answer, so a create that waits on something outside the test
+/// can never hang the spec (#0191).
+fn launch_within_bound(request: &std::path::Path) -> i32 {
+    let request = request.to_path_buf();
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(run_launcher(&request));
+    });
+    receive.recv_timeout(ANSWER_BOUND).unwrap_or_else(|_| {
+        panic!(
+            "The launcher did not answer within {} seconds: its create is waiting on something, \
+             such as a Windows message box on the desktop (#0191).",
+            ANSWER_BOUND.as_secs()
+        )
+    })
+}
+
 fn starts(req: &Req) -> usize {
     read_text(&req.profile.join("spec-starts.txt"))
         .lines()
@@ -191,7 +217,7 @@ fn a_launcher_that_cannot_start_the_holder_answers_with_an_error_and_still_exits
         &missing.to_string_lossy().replace('\\', "\\\\"),
     );
     std::fs::write(&req.request, text).expect("The request can be changed.");
-    assert_eq!(run_launcher(&req.request), 0);
+    assert_eq!(launch_within_bound(&req.request), 0);
     match answer(&req) {
         LaunchResult::NotStarted { error } => assert!(!error.is_empty(), "An error says why."),
         LaunchResult::Started { .. } => panic!("A program that is not there was started."),
@@ -201,7 +227,9 @@ fn a_launcher_that_cannot_start_the_holder_answers_with_an_error_and_still_exits
         Some(Claim::Launcher(std::process::id()))
     );
 
-    // A file that is not a program.
+    // A file that is not a program. Windows takes a `.exe` that is not a Windows program for a
+    // 16-bit one, and its create raises a modal message box unless the launcher turned them off
+    // for its create (src/win/spawn.rs, `NoErrorBoxes`); with them off it fails at once.
     let not_a_program = fx.root.join("not-a-program.exe");
     std::fs::write(&not_a_program, b"Not a program.").expect("The file can be made.");
     let req = make(&fx, "bb02", "stub_marker", in_30_seconds());
@@ -210,7 +238,7 @@ fn a_launcher_that_cannot_start_the_holder_answers_with_an_error_and_still_exits
         &not_a_program.to_string_lossy().replace('\\', "\\\\"),
     );
     std::fs::write(&req.request, text).expect("The request can be changed.");
-    assert_eq!(run_launcher(&req.request), 0);
+    assert_eq!(launch_within_bound(&req.request), 0);
     assert!(matches!(
         answer(&req),
         LaunchResult::NotStarted { error } if !error.is_empty()
@@ -219,7 +247,7 @@ fn a_launcher_that_cannot_start_the_holder_answers_with_an_error_and_still_exits
     // A working folder that is not there.
     let req = make(&fx, "bb03", "stub_marker", in_30_seconds());
     std::fs::remove_dir_all(&req.profile).expect("The home folder can be removed.");
-    assert_eq!(run_launcher(&req.request), 0);
+    assert_eq!(launch_within_bound(&req.request), 0);
     assert!(matches!(
         answer(&req),
         LaunchResult::NotStarted { error } if !error.is_empty()
@@ -390,9 +418,11 @@ fn the_claim_makes_at_most_one_holder_when_launchers_and_the_pass_race_for_a_req
         }
         let pass_claimed = pass.join().expect("The pass did not panic.");
 
-        // Let a holder, if one was started, write its line; then look again for a second.
+        // Let a holder, if one was started, write its line; then look again for a second. The
+        // wait ends at the line, so its bound only matters when a holder starts slowly, as on a
+        // loaded laptop, where 3 seconds can be too short for a process to start (#0189).
         let expected = if pass_claimed { 0 } else { 1 };
-        let _ = wait_for(Duration::from_secs(3), || {
+        let _ = wait_for(HOLDER_LINE_BOUND, || {
             (starts(&req) >= expected).then_some(())
         });
         std::thread::sleep(Duration::from_millis(700));
@@ -452,7 +482,7 @@ fn many_launchers_for_one_request_start_one_holder() {
             .into_iter()
             .map(|t| t.join().expect("A launcher did not panic."))
             .collect();
-        let _ = wait_for(Duration::from_secs(3), || (starts(&req) >= 1).then_some(()));
+        let _ = wait_for(HOLDER_LINE_BOUND, || (starts(&req) >= 1).then_some(()));
         std::thread::sleep(Duration::from_millis(700));
         assert_eq!(
             starts(&req),

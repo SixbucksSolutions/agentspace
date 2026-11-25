@@ -245,6 +245,7 @@ dependencies = [
  "agentspace-operator-api",
  "serde_json",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

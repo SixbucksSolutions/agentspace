@@ -10,6 +10,7 @@
 //! | `WmiStarter` | The pinned `agentspace_keeper_api::Starter`: the pass's half of the handshake. It writes the request, has the launcher created through WMI's `Win32_Process.Create`, waits for the claim and the result within every bound of The handshake, withdraws an unanswered request with `abandoned`, checks the holder once, and removes the three files in the spec's order, keeping the claim of a request it cannot remove. |
 //! | `run_launcher` | The launcher's half: it claims the request, starts the holder with `CreateProcessW`, and writes the result. It returns the launcher's exit code. |
 //! | `LAUNCHER_ARGUMENT`, `launcher_request` | The private argument that makes the keeper's own program the launcher (D42), and its reader. |
+//! | `quiet_hard_errors` | Turns Windows' hard-error message boxes off for the whole process (#0191), for the mains that D81, changed during v0.10-T02, names (#0226, #0219). |
 //!
 //! # The launcher's command line
 //!
@@ -100,6 +101,27 @@ pub(crate) fn launcher_command_line(own_exe: &Path, request: &Path) -> String {
 /// made. Its return value is the launcher's exit code (the crate's docs list them).
 pub fn run_launcher(request: &Path) -> i32 {
     launcher::launch(request, &SystemSpawn)
+}
+
+/// Turns Windows' hard-error message boxes off for this whole process: its error mode gains
+/// `SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX`, and keeps every other bit it already had. On
+/// any other system it does nothing.
+///
+/// **Why (#0191):** a process whose error mode lacks `SEM_FAILCRITICALERRORS` (a process started
+/// hidden by `Start-Process`, or by any parent at mode 0, has mode 0) that starts a `.exe` which is
+/// not a Windows program gets a modal "Unsupported 16-Bit Application" message box on the desktop,
+/// and its `CreateProcess` does not return until someone closes it. With these bits set the start
+/// fails at once with Windows' own text. Children inherit the process's mode, so a program's own
+/// children are quiet too.
+///
+/// **Who calls it** (D81, changed during v0.10-T02, which carries defect #0225 into T03): from
+/// v0.10-T03, the operator's, the ssh proxy's and the three keeper programs' mains call it first
+/// (#0226), and so does the CLI's (#0219). This crate calls it nowhere but its tests: the
+/// launcher's own create is already quiet for its thread alone (`run_launcher`), whatever the
+/// process's mode.
+pub fn quiet_hard_errors() {
+    #[cfg(windows)]
+    win::quiet_hard_errors();
 }
 
 /// The real system for the launcher.

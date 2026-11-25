@@ -207,9 +207,14 @@ fn a_box_that_is_not_running_grows_its_filesystem_at_next_boot_and_is_not_starte
             ],
             "{state}: no ssh, and the box is not started"
         );
+        // The wait would come after the volume's change, so the run's end is timed from that
+        // call's start: a loaded machine slows the operator's start and its earlier calls, which
+        // this leaves out, and cannot make a 10-second wait shorter than 9 seconds (#0189).
+        let changed = rig.calls_of("ec2-modify-volume")[0].time_ms;
+        let tail = out.ended_ms.saturating_sub(changed);
         assert!(
-            out.elapsed < std::time::Duration::from_secs(9),
-            "{state}: no 10-second wait without the online step"
+            tail < 9_000,
+            "{state}: no 10-second wait without the online step: the run ended {tail} ms after the volume's change"
         );
     }
 }
