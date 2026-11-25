@@ -3401,6 +3401,21 @@ under it.
   client that reconnects by itself, as the desktop app's does, can come back through the alias in
   the seconds the first walk takes, while the alias and its credential still exist; the second
   walk ends it, and once the alias is gone no client can connect through it again.
+- **Changed for v0.10-T03 (architect, 2026-11-24, on the dev lead's pins P8 to P11; #0196, #0220):
+  a release walks again after its second walk while the last walk ended a client**, at most six
+  walks in all, none starting more than 10 seconds after the first, and counts them in its one
+  line. A client below a program that has exited, whose handle its parent client still holds, is
+  in no walk's tree until its parent is gone, so a chain two deep outlived two walks: that was
+  #0196. A release MUST leave no process holding the alias that its endings can end
+  (driver.md, Release a lease).
+  - **"Once the alias is gone no client can connect through it again" is withdrawn.** The desktop
+    app's ProxyCommand keeps the alias's line in its own file, so it can start the ssh proxy for
+    the alias after the alias file is gone; the proxy then sends a released lease's alias to its
+    host, where the certificate is still valid until it expires (D10). It is carded for a later
+    release, and the release's rule names it as its limit.
+  - **The cleaner fix, a found client that no built tree holds taken as a top in the same walk**,
+    is in `agentspace-connections`, which no v0.10-T03 story owns; it is carded for later, and the
+    bounded further walks stand until then.
 
 **Why the laptop's end:**
 - **Every client is on the laptop today** (D8): the desktop app's connections and the holder.
