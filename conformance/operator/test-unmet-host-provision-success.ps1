@@ -147,7 +147,11 @@ function Hold-SLock($H, [string]$Path, [int]$Seconds = 20) {
 # holds the lease state lock, so that the run reaches step 9 and waits at its first lease; waits for the log's `record
 # done`, and 3 seconds more, so that the `place_pending` call has read its host's record (it does so before it takes
 # the lease state lock, driver.md, place_pending, step 1) and is waiting for the lease state lock; runs $Gate, which
-# changes what the success write will find, and lets the lease state lock go. It waits for the log's `place done`
+# changes what the success write will find, and lets the lease state lock go. That read holds `hosts.lock` for the read
+# alone, so a read that comes after the 3 seconds, under load, meets the $Gate's change or its hold of `hosts.lock`: the
+# call fails as a whole, or places nothing for a record gone, and the log's `place failed` or `placed=0` fails the case's
+# log check, so a miss is never silent (a read-only file changes no read). Such a failure is rerun alone before it is a
+# finding. It waits for the log's `place done`
 # and runs $AfterPlace, while a write that waits for a lock the check holds is still waiting; then collects the run.
 # $Ctx is the case's table: the blocks get it, and put what they find in it. $Cleanup runs last, in a finally.
 function Invoke-SGatedRun {
@@ -247,9 +251,7 @@ Invoke-HpInHome -Name "${sec}: success: a gated run" -Body {
     } -AfterPlace {
       param($c)
       $c.B2 = Get-HpFileBytes (Get-HpHostsFile $c.H)
-      $c.LogAtPlace = Read-SLogNow $c.H
       Start-Sleep -Milliseconds 2500
-      $c.ReleasedAt = [DateTime]::UtcNow
       $c.HostsLock.Dispose(); $c.HostsLock = $null
     } -Cleanup { param($c) Remove-SHold $c }
   } finally { Remove-SHold $ctx }
@@ -536,6 +538,7 @@ function Test-SuccessWriteFails($C) {
     $lines = if ($r) { Get-HpLines $r.Stderr } else { @() }
 
     $p = New-HpProblems
+    $pathOk = $false
     Add-SGateProblems $p $ctx
     if ($null -eq $r) { $p.Add('The run was not collected') } else { Add-HpRunProblems $p $r 0 }
     if ((Get-HpLogShape $log) -cne "$startSteps,place done placed=1,success failed,run done") { $p.Add("The log's lines are not: $startSteps, place done placed=1, success failed, run done (they are: $(Get-HpLogShape $log))") }
@@ -544,6 +547,10 @@ function Test-SuccessWriteFails($C) {
       $m = [regex]::Match($sf.Rest, $C.Pattern)
       if (-not $m.Success) { $p.Add('The success failed line''s reason is not the registry''s message, as the log gives it') }
       elseif ($C.PathOf -and -not (Test-HpSamePath $m.Groups['p'].Value $(if ($C.PathOf -ceq 'lock') { Get-SHostsLockPath $h } else { Get-HpHostsFile $h }))) { $p.Add('The path in the reason is not the file the write failed on') }
+      else { $pathOk = $true }
+      # No warning (step 9, its end): no line of stderr carries the reason the log gives, whatever the warning's words.
+      $why = $sf.Rest -replace '^ reason=', ''
+      if ($why.Length -gt 0 -and @($lines | Where-Object { $_.Contains($why, [StringComparison]::Ordinal) }).Count -gt 0) { $p.Add('A line of stderr carries the failed write''s reason: it is logged and not warned') }
     }
     if ($lines | Where-Object { $_ -match 'success|last_success' }) { $p.Add('A line of stderr names the failed write: it is logged and not warned') }
     if ($C.Mode -ceq 'lock' -and $ctx.Clock -and $ctx.Clock.Elapsed.TotalSeconds -lt 25) { $p.Add('The write gave up before the lock''s 30 seconds') }
@@ -564,6 +571,7 @@ function Test-SuccessWriteFails($C) {
         if (-not $pr.LeaseFree) { $p.Add('The lease state lock was held while the write waited for hosts.lock: the write takes hosts.lock alone') }
       }
       if (-not (Test-HpFreeLock (Get-HpLockFile $h 'agentspace'))) { $p.Add('provision.lock is still held after the run ended') }
+      if (-not $pathOk) { $p.Add('The success failed line does not name hosts.lock''s own path in the lock''s message') }
       Write-HpProblems "${sec}: success write lock: the write takes hosts.lock alone, with provision.lock held and the lease state lock free, and its message names hosts.lock's path (step 9, its end; pin P23; driver.md, Lock order)" $p
     }
   }
