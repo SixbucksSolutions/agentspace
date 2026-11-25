@@ -55,7 +55,7 @@ it lists, and every row of its "What is open" is carried below or says what beca
 | Test | Fails because | Turned green by |
 |---|---|---|
 | `agentspace-state` tests/samples.rs: `there_are_eight_contract_schemas`, `every_valid_sample_validates_and_every_schema_has_one`, `every_invalid_sample_fails_and_every_schema_has_one` (samples.rs:66, :54) | `plan.input` is not embedded | #0215 (T02) |
-| `agentspace-hosts` `model::tests::the_embedded_samples_cover_every_hosts_state_file` (model.rs:661) | Three new `hosts.state` samples not embedded | #0216 (T02) |
+| `agentspace-hosts` `model::tests::the_embedded_samples_cover_every_hosts_state_file` (model.rs:668 since the pin as code, 5e7b431; :661 before) | Three new `hosts.state` samples not embedded | #0216 (T02) |
 | `agentspace-cli` tests/help.rs, five create-help tests (help.rs:61) | create's help is v1's in lease-api.md | #0219 (T03) |
 | `agentspace-cli` tests/isolation_guard.rs `the_whole_suite_creates_nothing_in_a_home_that_does_not_exist` (isolation_guard.rs:549) | Its child suite runs the create-help tests | #0219 (T03); #0218 owns the file and checks it by assertion |
 | Conformance `test-help.ps1`, eight create cases, against the installed programs | The same help | v0.10's install (T05) |
