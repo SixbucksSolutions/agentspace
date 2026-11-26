@@ -1175,7 +1175,10 @@ architect, 2026-11-24, for v0.10-T01, pin P3).
   valid JSON.
 - **A build's parser MAY limit how deeply the document nests, and MUST allow at least 64 levels**,
   counting the document as level 1. A plan's deepest value, an `after` entry, is at level 9, so a
-  document nested past 9 levels is never a plan.
+  document nested past 9 levels is never a plan. **A document nested 1,000 levels or more MUST be
+  refused as not valid JSON (check 4)**, so a deep one never reaches the schema; between 65 and 999
+  levels, whether check 4 or the schema's check refuses it is the build's (architect, 2026-11-25,
+  for v0.11-T04, pin P5).
 - **`null` for an optional member, the plan's `name`, a turn's `budget_minutes` or a subagent's
   `after`, means that it is not given**, as in every input document ([Schemas](#schemas)). `null` for a required member is
   refused.
