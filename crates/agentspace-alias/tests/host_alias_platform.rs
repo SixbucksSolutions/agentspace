@@ -19,6 +19,13 @@ const KNOWN_HOSTS: &str = "C:/Users/someone/.agentspace/known_hosts";
 const HOST_KEY: &str = "C:/Users/someone/.agentspace/hosts/examplehost/id_ed25519";
 const HOST_CERT: &str = "C:/Users/someone/.agentspace/hosts/examplehost/id_ed25519-cert.pub";
 const WINDOWS_HOST_NAME: &str = "examplehost.windows-amd64";
+// A windows/amd64 host's own key, certificate and ProxyCommand, under `hosts\<host name>\` and
+// naming `agentspace-host.<host name>` (state.md, A host's operator alias; D91).
+const WINDOWS_PROXY: &str =
+    "\"C:\\agentspace\\agentspace-ssh-proxy.exe\" agentspace-host.examplehost.windows-amd64";
+const WINDOWS_KEY: &str = "C:/Users/someone/.agentspace/hosts/examplehost.windows-amd64/id_ed25519";
+const WINDOWS_CERT: &str =
+    "C:/Users/someone/.agentspace/hosts/examplehost.windows-amd64/id_ed25519-cert.pub";
 
 const HOST_BLOCK: &str = "\
 # agentspace host examplehost; Written by agentspace. Do not edit.
@@ -72,6 +79,17 @@ fn host_named(name: &str) -> HostAliasFile<'_> {
     }
 }
 
+fn windows_host() -> HostAliasFile<'static> {
+    HostAliasFile {
+        project: WINDOWS_HOST_NAME,
+        comment: COMMENT,
+        key_path: WINDOWS_KEY,
+        cert_path: WINDOWS_CERT,
+        known_hosts: KNOWN_HOSTS,
+        proxy_command: WINDOWS_PROXY,
+    }
+}
+
 #[test]
 fn the_operator_alias_of_a_windows_host_names_it_by_its_host_name() {
     // state.md: the owner mark, the `Host` name and the `HostKeyAlias` carry `<host name>`.
@@ -95,11 +113,18 @@ fn the_operator_alias_of_a_windows_host_names_it_by_its_host_name() {
 }
 
 #[test]
-fn the_operator_alias_of_a_windows_host_is_the_arm64_block_with_its_name_changed_alone() {
+fn the_operator_alias_of_a_windows_host_is_the_arm64_block_with_its_name_user_and_paths_changed() {
     // state.md's `<user>` for a host's operator alias is `agent` on a `windows/amd64` host, from
-    // the host's platform and never stored (D95, pin P17); the host's name carries the platform.
-    let t = text(host_alias_file_bytes(&host_named(WINDOWS_HOST_NAME)).unwrap());
+    // the host's platform and never stored (D95, pin P17); the host's name carries the platform,
+    // and its key, certificate and ProxyCommand are its own.
+    let t = text(host_alias_file_bytes(&windows_host()).unwrap());
     let want = HOST_BLOCK
+        .replace(HOST_KEY, WINDOWS_KEY)
+        .replace(HOST_CERT, WINDOWS_CERT)
+        .replace(
+            &format!("ProxyCommand {PROXY_HOST}\n"),
+            &format!("ProxyCommand {WINDOWS_PROXY}\n"),
+        )
         .replace("  User ubuntu\n", "  User agent\n")
         .replace(
             "# agentspace host examplehost;",
@@ -127,11 +152,11 @@ fn state_md_host_block_with_a_windows_host_name_is_that_block() {
         .replace("<host name>", WINDOWS_HOST_NAME)
         .replace("<user>", "agent")
         .replace("<comment>", COMMENT)
-        .replace("<key path>", HOST_KEY)
-        .replace("<certificate path>", HOST_CERT)
+        .replace("<key path>", WINDOWS_KEY)
+        .replace("<certificate path>", WINDOWS_CERT)
         .replace("<known_hosts path>", KNOWN_HOSTS)
-        .replace("<proxy command>", PROXY_HOST);
-    let t = text(host_alias_file_bytes(&host_named(WINDOWS_HOST_NAME)).unwrap());
+        .replace("<proxy command>", WINDOWS_PROXY);
+    let t = text(host_alias_file_bytes(&windows_host()).unwrap());
     assert_eq!(t, want);
 }
 
