@@ -4950,6 +4950,15 @@ over whole.
   connection, under `agentspace-host.<project>.windows-amd64`, in agentspace's own `known_hosts`.
 - **The board reaches the host through the keeper's holder, as on Linux** (D12, D30): Microsoft's
   OpenSSH Server binds a `RemoteForward` on the host's loopback. The spike shows it.
+- **Changed for v0.12-T01 (architect, 2026-11-26, pins P12 and P52):** the operator certificate's
+  key ID is `operator-<host name>`: `operator-<project>` on `linux/arm64`, unchanged, and
+  `operator-<project>.windows-amd64` on a Windows host. **The spike confirmed the rest**
+  ([runs/e0.12-t01-s05.md](runs/e0.12-t01-s05.md)): a certificate login as `agent` with a full
+  token, the Credential Manager and DPAPI refused to a key-based logon, sign-in files persisting
+  under `agent`'s profile, and a `RemoteForward` bound to the host's loopback. Two facts follow:
+  Server 2025's default `sshd_config` allows only `administrators` and `openssh users`, so `agent`
+  MUST stay in Administrators; and the Session Manager tunnel reaches sshd from `::1`, which
+  operator.md's Windows section states wherever a loopback address matters.
 
 ### D96. The Windows host agent is PowerShell under `box/windows/`, doing what `box/system` does on Linux
 
@@ -4974,6 +4983,11 @@ Windows that shell is PowerShell.
   | The CA and sshd settings (D7) | `50-agentspace-ca.conf` and `51-agentspace-logins.conf` | `sshd_config` lines with the same meaning, `ClientAliveInterval 15` and `ClientAliveCountMax 5` among them, checked with `sshd -t` before a restart |
   | The sampler (D33) | `agentspace-sample` | None in v0.12: no Windows turn is measured, and v1.0's sampler work is Linux's (D72) |
 
+- **Changed for v0.12-T01 (architect, 2026-11-26, from the spike's review):** Windows installed
+  updates by itself during the spike's session. "A patch run MUST NOT restart the host while a login
+  session is open" covers Windows' own automatic updates too: the bootstrap turns off restarts that
+  Windows Update schedules by itself, and the patch run is the one path that restarts the host.
+  T02-S04 writes how in operator.md.
 - **The guard's horizon and the patch check are sent with Session Manager's PowerShell document**,
   where Linux's use the shell one (D57). Which document a host gets is the driver's, keyed by
   platform.
@@ -5005,6 +5019,15 @@ a platform that has no libc.
 - **Codex is not promised**, as D4's Windows list did not; `agent-linux` keeps promising it.
 - **The SSH login shell is one the desktop app supports**, picked by D100's spike from the app's own
   list. PowerShell 7 is on `agent`'s `PATH` whichever it is.
+- **Changed for v0.12-T01 (architect, 2026-11-26, from the spike):** the login shell is **Git Bash**,
+  from Git for Windows. The desktop app's documentation lists cmd.exe, Windows PowerShell 5.1 and
+  Git Bash for a Windows remote, and under the first two it forks a session only at its first
+  message; Git Bash has no such limit, and the profile installs it for Claude Code anyway. The spike
+  could not show the app's session: Terry's click came, and failed with "Host name not found",
+  since the spike's alias file was not in his `agentspace.d` when he clicked. So the desktop app's
+  session on Windows, with Git Bash, is first shown by T05-S02's live check, which already holds
+  Terry's session; if it fails there, Windows PowerShell 5.1 is the fallback, and the change comes
+  back here.
 - **The root volume starts at 30 GiB, the Windows image's own minimum**, where a Linux host starts
   at 8 (D46). It grows under Terry's standing order on disks, each host on its own, and its standing
   cost while stopped is Q20's.
@@ -5030,6 +5053,9 @@ builds it, in driver.md's "Release a lease".
   and a client can still reconnect while a release runs, through the desktop app's own copy of the
   alias's ProxyCommand line (D59), in the moments before the record is written released and #0229's
   refusal applies. Removing them would save no measurable time and lose that backstop.
+- **Changed for v0.12-T01 (architect, 2026-11-26, pin P51):** the one walk counts each top it
+  ended once, so a chain three deep counts 3, the same total v0.10's walks gave, and the release's
+  line reads "Ended 3 of the lease's connections." for it.
 
 ### D100. v0.12's done-when is shown by a Windows spike first and a live check per platform, with Terry's yes for their instance hours
 
