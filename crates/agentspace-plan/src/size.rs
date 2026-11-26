@@ -3,13 +3,27 @@
 //! The footprint is D73's, kept here as its one named place, outside the contract (D76): a new
 //! figure changes which size a plan gets, never what a field means. The sizes and their floors are
 //! the contract's (docs/lease-api.md, Size; D65). The sizes each footprint gives are computed from
-//! the two, never written out.
+//! the two, never written out. The TTL factor (D85) sits here too, beside the footprint.
 
 /// The vCPUs each agent at once is given, in thousandths of a vCPU: half a vCPU (D73).
 pub const PER_AGENT_MILLIVCPUS: u32 = 500;
 
 /// The memory each agent at once is given, in MiB: 2 GiB (D73).
 pub const PER_AGENT_MIB: u32 = 2048;
+
+/// agentspace's TTL factor, in percent of a turn's budget: half again, 1.5 (D85). It sits beside the
+/// footprint, outside the contract, as the footprint does (D76): a new factor changes which TTL a
+/// plan gets, never what a field means.
+pub const TTL_FACTOR_PERCENT: u32 = 150;
+
+/// The TTL, in seconds, a plan lease gets from its turn's `budget_minutes`: the budget times the
+/// TTL factor, rounded up to the whole minute, in seconds (docs/lease-api.md, TTL; D85). Computed
+/// in 64 bits; a result past `u32::MAX` saturates there, and it never panics. Every budget a plan
+/// can hold, 1 to 960, gives 120 to 86400 at today's factor.
+pub fn ttl_seconds_for(budget_minutes: u32) -> u32 {
+    let minutes = (u64::from(budget_minutes) * u64::from(TTL_FACTOR_PERCENT)).div_ceil(100);
+    u32::try_from(minutes.saturating_mul(60)).unwrap_or(u32::MAX)
+}
 
 /// A size of lease-api.md's table: its name, its floor of vCPUs and its floor of memory in GiB,
 /// smallest first.
@@ -79,6 +93,39 @@ mod tests {
     fn the_largest_counts_neither_overflow_nor_find_a_size() {
         assert_eq!(size_for(u32::MAX), None);
         assert_eq!(size_for(u32::MAX - 1), None);
+    }
+
+    #[test]
+    fn the_ttl_factor_is_half_again() {
+        assert_eq!(TTL_FACTOR_PERCENT, 150);
+    }
+
+    #[test]
+    fn ttl_seconds_for_gives_lease_apis_table_rounded_up_to_the_minute() {
+        // lease-api.md, TTL, pin P10's table, and the card's figures.
+        for (budget, seconds) in [
+            (1, 120),
+            (2, 180),
+            (3, 300),
+            (45, 4080),
+            (120, 10800),
+            (179, 16140),
+            (180, 16200),
+            (210, 18900),
+            (960, 86400),
+        ] {
+            assert_eq!(ttl_seconds_for(budget), seconds, "budget {budget}");
+        }
+    }
+
+    #[test]
+    fn ttl_seconds_for_saturates_and_never_panics() {
+        // u32::MAX * 1.5 minutes in seconds is far past u32::MAX.
+        assert_eq!(ttl_seconds_for(u32::MAX), u32::MAX);
+        assert_eq!(ttl_seconds_for(0), 0);
+        // The largest budget whose TTL still fits: ceil(b * 1.5) * 60 <= u32::MAX.
+        assert_eq!(ttl_seconds_for(47_721_858), 4_294_967_220);
+        assert_eq!(ttl_seconds_for(47_721_859), u32::MAX);
     }
 
     #[test]
