@@ -131,7 +131,10 @@ function ConvertTo-LiveMasked {
     $t = [regex]::Replace($t, '\b' + 'i' + '-(?:[0-9a-f]{17}|[0-9a-f]{8})\b', '<instance-id>')
     $t = [regex]::Replace($t, '\b(vpc|subnet|vol|sg|ami|eni|igw|rtb|snap|r)' + '-(?:[0-9a-f]{17}|[0-9a-f]{8})\b', '<$1-id>')
     # 16a (v0.10). AWS access key IDs and other IAM unique IDs: a four-letter prefix and 16 more.
-    $t = [regex]::Replace($t, '\b(?:AKIA|ASIA|AIDA|AROA|AGPA|ANPA|ANVA|AIPA|APKA)[A-Z0-9]{16}\b', '<access-key-id>')
+    # IAM's IDs: an access key ID has 16 characters after its prefix, a unique ID (AIDA for a user,
+    # AROA for a role, AGPA for a group, and the rest) has 17 (v0.12-T01, 2026-11-26: the {16} form
+    # missed a user's unique ID that `sts get-caller-identity` printed).
+    $t = [regex]::Replace($t, '\b(?:AKIA|ASIA|AIDA|AROA|AGPA|ANPA|ANVA|AIPA|APKA)[A-Z0-9]{16,17}\b', '<access-key-id>')
     # 17. Runs of 32 or more token characters holding a digit, an uppercase and a lowercase letter.
     $t = [regex]::Replace($t, '[A-Za-z0-9_+/=-]{32,}', {
         param($m)

@@ -105,6 +105,8 @@ $cases = @(
   @('account id, hyphenated', ('Account ' + '1234-' + '5678-' + '9012'), 'Account <account-id>', ('5678-' + '9012'), '<account-id>'),
   @('access key id', ('AKIA' + 'PLANTED0123456789'.Substring(0, 16)), '<access-key-id>', 'PLANTED01234567', '<access-key-id>'),
   @('temporary access key id', ('ASIA' + 'ZZPLANTED9876543'), '<access-key-id>', 'ZZPLANTED9876543', '<access-key-id>'),
+  @('IAM user unique id', ('"UserId": "' + 'AIDA' + 'ZZPLANTEDID123456' + '"'), '"UserId": "<access-key-id>"', 'ZZPLANTEDID123456', '<access-key-id>'),
+  @('IAM role unique id', ('AROA' + 'PLANTEDROLE765432' + ':session'), '<access-key-id>:session', 'PLANTEDROLE765432', '<access-key-id>'),
   @('email', ('planted.person' + '@' + 'example.com'), '<email>', 'planted.person', '<email>'),
   @('computer name, upper', $fakePc, '<literal>', $fakePc, '<literal>'),
   @('computer name, lower', $fakePc.ToLowerInvariant(), '<literal>', $fakePc.ToLowerInvariant(), '<literal>'),
