@@ -9,8 +9,14 @@
 # <state>/lease-horizon, which the guard writes; a box without a valid one
 # keeps D11's rule alone.
 #
-# AGENTSPACE_IDLE_STATE, AGENTSPACE_IDLE_CONF and AGENTSPACE_PROC_STAT are for
-# box/tests alone (D63); unset, they name the box's own files.
+# A Session Manager session counts only while its worker holds an established
+# connection to this host's sshd, or runs a shell of its own (D78): a worker
+# whose sshd end is gone, as sshd drops a dead client, is not a session.
+#
+# AGENTSPACE_IDLE_STATE, AGENTSPACE_IDLE_CONF and AGENTSPACE_PROC_STAT are the
+# only test-only variables; they are for box/tests alone (D63), and unset or
+# empty, they name the box's own files. The tests put stand-ins for the
+# programs this starts (ss, pgrep, systemctl and the rest) first on PATH.
 set -euo pipefail
 IDLE_MINUTES=60
 BUSY_CPU_SECONDS=6
@@ -33,11 +39,24 @@ cpu_s=$(( (busy - prev) / $(getconf CLK_TCK) ))
 
 # A session is an SSH or Session Manager session. Only a session or a patch run
 # holds the box past its horizon (architect, 2026-11-21, for v0.08-T01).
+# A Session Manager worker counts (D78) when ss lists it, by its PID, as the
+# owner of an established connection to port 22, or when it has a child: a
+# shell session's worker runs a shell, and a port session's has none.
 session=""
 if [ "$(ss -Htn state established '( sport = :22 )' | wc -l)" -gt 0 ]; then
   session="SSH session open"
-elif pgrep -f ssm-session-worker >/dev/null; then
-  session="Session Manager session open"
+else
+  workers=$(pgrep -f ssm-session-worker || true)
+  if [ -n "$workers" ]; then
+    to_sshd=$(ss -Htnp state established '( dport = :22 )' || true)
+    for worker in $workers; do
+      [[ "$worker" =~ ^[0-9]+$ ]] || continue
+      if [[ "$to_sshd" == *"pid=$worker,"* ]] || [ -n "$(pgrep -P "$worker" || true)" ]; then
+        session="Session Manager session open"
+        break
+      fi
+    done
+  fi
 fi
 patch=""
 if [ -z "$session" ] && systemctl is-active --quiet agentspace-patch.service; then

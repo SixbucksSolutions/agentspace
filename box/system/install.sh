@@ -2,8 +2,22 @@
 # Installs the agentspace system files from the directory this script is in.
 # Run as root; agentspace-operator sync copies the files up and runs it. Safe to run again: every
 # sync runs it, on every host.
+#
+# AGENTSPACE_ENVIRONMENT_FILE and AGENTSPACE_INSTALL_ONLY are for box/tests alone (D63), and no
+# unit, script or file that sync installs or runs sets either. AGENTSPACE_ENVIRONMENT_FILE names
+# the file the PATH step edits in place of /etc/environment, its temporary file made beside it.
+# AGENTSPACE_INSTALL_ONLY=environment runs that step alone, its checks and its Installed: line
+# included, and exits with its status, touching nothing else: no CA check, no systemd, no other
+# file. Unset or empty, the file is /etc/environment and every step runs, as on a host.
 set -euo pipefail
-cd "$(dirname "$0")"
+install_only=${AGENTSPACE_INSTALL_ONLY:-}
+case $install_only in
+  "" | environment) ;;
+  *)
+    echo "install.sh: AGENTSPACE_INSTALL_ONLY names no step it can run alone; the one it takes is environment" >&2
+    exit 1
+    ;;
+esac
 
 # The temporary files this run makes, removed however it exits.
 backup=""
@@ -13,6 +27,126 @@ cleanup() {
   if [ -n "$env_tmp" ]; then rm -f "$env_tmp"; fi
 }
 trap cleanup EXIT
+
+# Put the login user's tool folders on the PATH of every session, a non-interactive ssh command
+# included: it reads /etc/environment through PAM, while Ubuntu's ~/.bashrc returns early for it,
+# before any PATH change there (D61, #0166).
+# PAM does not expand variables there, so the folders are absolute. The PATH line's existing value
+# is kept, and each folder is appended only if it is absent, in this order; only a file with no
+# PATH line gets one, Ubuntu's default followed by the folders (architect, 2026-11-21, for
+# v0.08-T01). Every other line is left as it was, and the file is replaced by a rename, so a
+# reader never sees half of it. A second run finds nothing to add and leaves it untouched.
+env_file=${AGENTSPACE_ENVIRONMENT_FILE:-/etc/environment}
+# The messages name the file as operator.md gives them, whatever file the seam names.
+env_name=/etc/environment
+path_default=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+path_user=(/home/ubuntu/.cargo/bin /home/ubuntu/.local/bin /home/ubuntu/.local/share/fnm/aliases/default/bin)
+
+# Prints a PATH line of /etc/environment with each of path_user's folders appended when absent.
+# pam_env ends a value at its first "#", so the value is what comes before that and before the
+# blanks ahead of it; the trailing text is put back after the value, its closing quote included.
+# The line's prefix ("export " as pam_env allows), the value's quotes and a CR ending are kept as
+# they were. Returns 1, printing nothing, for a line that does not set PATH, and 2, printing
+# nothing, for one whose value is neither plain (no quote character in it) nor quoted whole (one
+# matching pair of quotes around it and no other quote character).
+path_tail_re='^([^#]*[^#[:space:]])?([[:space:]]*(#.*)?)$'
+with_user_path() {
+  local line=$1 cr="" prefix value tail q="" dir
+  if [[ $line == *$'\r' ]]; then cr=$'\r'; line=${line%$'\r'}; fi
+  [[ $line =~ ^([[:space:]]*(export[[:space:]]+)?PATH=)(.*)$ ]] || return 1
+  prefix=${BASH_REMATCH[1]}
+  value=${BASH_REMATCH[3]}
+  [[ $value =~ $path_tail_re ]] || return 2
+  value=${BASH_REMATCH[1]}
+  tail=${BASH_REMATCH[2]}
+  case $value in
+    *[\"\']*)
+      q=${value:0:1}
+      case $q in \"|\') ;; *) return 2 ;; esac
+      if [ "${#value}" -lt 2 ] || [ "${value: -1}" != "$q" ]; then return 2; fi
+      value=${value:1:${#value}-2}
+      case $value in *[\"\']*) return 2 ;; esac
+      ;;
+  esac
+  for dir in "${path_user[@]}"; do
+    case ":$value:" in
+      *":$dir:"*) ;;
+      *) value=${value:+$value:}$dir ;;
+    esac
+  done
+  printf '%s%s%s%s%s%s' "$prefix" "$q" "$value" "$q" "$tail" "$cr"
+}
+
+# The PATH step: writes env_file, checks it, and prints its Installed: line, or exits 1. Its
+# temporary file is made in env_file's own folder, so the rename never crosses file systems.
+install_environment() {
+  env_tmp=$(mktemp "$(dirname "$env_file")/.$(basename "$env_file").XXXXXX")
+  path_lines=0
+  line_no=0
+  last_nl=$'\n'
+  if [ -f "$env_file" ]; then
+    while true; do
+      if IFS= read -r line; then last_nl=$'\n'; elif [ -n "$line" ]; then last_nl=""; else break; fi
+      line_no=$((line_no + 1))
+      path_rc=0
+      new=$(with_user_path "$line") || path_rc=$?
+      if [ "$path_rc" -eq 0 ]; then
+        line=$new
+        path_lines=$((path_lines + 1))
+      elif [ "$path_rc" -eq 2 ]; then
+        echo "install.sh: line $line_no of $env_name sets PATH to a value that is neither plain nor quoted whole; the file is left as it was, so fix that line by hand and run agentspace-operator sync again" >&2
+        exit 1
+      fi
+      printf '%s%s' "$line" "$last_nl"
+      if [ -z "$last_nl" ]; then break; fi
+    done < "$env_file" > "$env_tmp"
+  fi
+  if [ "$path_lines" -eq 0 ]; then
+    # A last line with no line feed gets one, so the new line is a line of its own.
+    if [ -z "$last_nl" ]; then printf '\n' >> "$env_tmp"; fi
+    with_user_path "PATH=\"$path_default\"" >> "$env_tmp"
+    printf '\n' >> "$env_tmp"
+  fi
+  if [ -f "$env_file" ] && cmp -s "$env_tmp" "$env_file"; then
+    rm -f "$env_tmp"
+    env_state="already there"
+  else
+    chmod 0644 "$env_tmp"
+    # A host runs this as root, so the file is root-owned. Only a box test, through the seam
+    # above, runs it as another user, and its throwaway file keeps that user as its owner.
+    if [ "$EUID" -eq 0 ]; then chown root:root "$env_tmp"; fi
+    mv -f "$env_tmp" "$env_file"
+    env_state="added"
+  fi
+  env_tmp=""
+  # Check it as the sshd settings are checked below: every PATH line now holds every folder in the
+  # value pam_env reads, parsed as above, and none is neither plain nor quoted whole.
+  path_lines=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    path_rc=0
+    new=$(with_user_path "$line") || path_rc=$?
+    if [ "$path_rc" -eq 0 ]; then
+      path_lines=$((path_lines + 1))
+      if [ "$new" != "$line" ]; then path_lines=-1; break; fi
+    elif [ "$path_rc" -eq 2 ]; then
+      path_lines=-1
+      break
+    fi
+  done < "$env_file"
+  if [ "$path_lines" -lt 1 ]; then
+    echo "install.sh: $env_name has no PATH line holding ${path_user[*]} after the install wrote it" >&2
+    exit 1
+  fi
+  echo "Installed: $env_name's PATH holds the ubuntu user's tool folders ($env_state)"
+}
+
+# The seam's one step, for box/tests alone (D63): nothing before or after it runs.
+if [ "$install_only" = environment ]; then
+  install_environment
+  exit 0
+fi
+
+cd "$(dirname "$0")"
 
 # sync sends the CA's public key beside these files; it is never in the repo (decision D17).
 if [ ! -s agentspace_ca.pub ]; then
@@ -55,109 +189,7 @@ systemctl enable --now agentspace-idle.timer
 systemctl enable agentspace-patch.service
 echo "Installed: idle check (timer $(systemctl is-active agentspace-idle.timer)), patch at boot ($(systemctl is-enabled agentspace-patch.service))"
 
-# Put the login user's tool folders on the PATH of every session, a non-interactive ssh command
-# included: it reads /etc/environment through PAM, while Ubuntu's ~/.bashrc returns early for it,
-# before any PATH change there (D61, #0166).
-# PAM does not expand variables there, so the folders are absolute. The PATH line's existing value
-# is kept, and each folder is appended only if it is absent, in this order; only a file with no
-# PATH line gets one, Ubuntu's default followed by the folders (architect, 2026-11-21, for
-# v0.08-T01). Every other line is left as it was, and the file is replaced by a rename, so a
-# reader never sees half of it. A second run finds nothing to add and leaves it untouched.
-env_file=/etc/environment
-path_default=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
-path_user=(/home/ubuntu/.cargo/bin /home/ubuntu/.local/bin /home/ubuntu/.local/share/fnm/aliases/default/bin)
-
-# Prints a PATH line of /etc/environment with each of path_user's folders appended when absent.
-# pam_env ends a value at its first "#", so the value is what comes before that and before the
-# blanks ahead of it; the trailing text is put back after the value, its closing quote included.
-# The line's prefix ("export " as pam_env allows), the value's quotes and a CR ending are kept as
-# they were. Returns 1, printing nothing, for a line that does not set PATH, and 2, printing
-# nothing, for one whose value is neither plain (no quote character in it) nor quoted whole (one
-# matching pair of quotes around it and no other quote character).
-path_tail_re='^([^#]*[^#[:space:]])?([[:space:]]*(#.*)?)$'
-with_user_path() {
-  local line=$1 cr="" prefix value tail q="" dir
-  if [[ $line == *$'\r' ]]; then cr=$'\r'; line=${line%$'\r'}; fi
-  [[ $line =~ ^([[:space:]]*(export[[:space:]]+)?PATH=)(.*)$ ]] || return 1
-  prefix=${BASH_REMATCH[1]}
-  value=${BASH_REMATCH[3]}
-  [[ $value =~ $path_tail_re ]] || return 2
-  value=${BASH_REMATCH[1]}
-  tail=${BASH_REMATCH[2]}
-  case $value in
-    *[\"\']*)
-      q=${value:0:1}
-      case $q in \"|\') ;; *) return 2 ;; esac
-      if [ "${#value}" -lt 2 ] || [ "${value: -1}" != "$q" ]; then return 2; fi
-      value=${value:1:${#value}-2}
-      case $value in *[\"\']*) return 2 ;; esac
-      ;;
-  esac
-  for dir in "${path_user[@]}"; do
-    case ":$value:" in
-      *":$dir:"*) ;;
-      *) value=${value:+$value:}$dir ;;
-    esac
-  done
-  printf '%s%s%s%s%s%s' "$prefix" "$q" "$value" "$q" "$tail" "$cr"
-}
-
-env_tmp=$(mktemp /etc/.environment.XXXXXX)
-path_lines=0
-line_no=0
-last_nl=$'\n'
-if [ -f "$env_file" ]; then
-  while true; do
-    if IFS= read -r line; then last_nl=$'\n'; elif [ -n "$line" ]; then last_nl=""; else break; fi
-    line_no=$((line_no + 1))
-    path_rc=0
-    new=$(with_user_path "$line") || path_rc=$?
-    if [ "$path_rc" -eq 0 ]; then
-      line=$new
-      path_lines=$((path_lines + 1))
-    elif [ "$path_rc" -eq 2 ]; then
-      echo "install.sh: line $line_no of $env_file sets PATH to a value that is neither plain nor quoted whole; the file is left as it was, so fix that line by hand and run agentspace-operator sync again" >&2
-      exit 1
-    fi
-    printf '%s%s' "$line" "$last_nl"
-    if [ -z "$last_nl" ]; then break; fi
-  done < "$env_file" > "$env_tmp"
-fi
-if [ "$path_lines" -eq 0 ]; then
-  # A last line with no line feed gets one, so the new line is a line of its own.
-  if [ -z "$last_nl" ]; then printf '\n' >> "$env_tmp"; fi
-  with_user_path "PATH=\"$path_default\"" >> "$env_tmp"
-  printf '\n' >> "$env_tmp"
-fi
-if [ -f "$env_file" ] && cmp -s "$env_tmp" "$env_file"; then
-  rm -f "$env_tmp"
-  env_state="already there"
-else
-  chmod 0644 "$env_tmp"
-  chown root:root "$env_tmp"
-  mv -f "$env_tmp" "$env_file"
-  env_state="added"
-fi
-env_tmp=""
-# Check it as the sshd settings are checked below: every PATH line now holds every folder in the
-# value pam_env reads, parsed as above, and none is neither plain nor quoted whole.
-path_lines=0
-while IFS= read -r line || [ -n "$line" ]; do
-  path_rc=0
-  new=$(with_user_path "$line") || path_rc=$?
-  if [ "$path_rc" -eq 0 ]; then
-    path_lines=$((path_lines + 1))
-    if [ "$new" != "$line" ]; then path_lines=-1; break; fi
-  elif [ "$path_rc" -eq 2 ]; then
-    path_lines=-1
-    break
-  fi
-done < "$env_file"
-if [ "$path_lines" -lt 1 ]; then
-  echo "install.sh: $env_file has no PATH line holding ${path_user[*]} after the install wrote it" >&2
-  exit 1
-fi
-echo "Installed: $env_file's PATH holds the ubuntu user's tool folders ($env_state)"
+install_environment
 
 # Trust the agentspace SSH CA and close root login (decision D7), and keep refused logins from
 # locking everyone out (E3.01) and a dead client's session from holding the board's forwards
