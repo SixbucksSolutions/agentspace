@@ -27,7 +27,8 @@
 #     with 7 hex digits and one with 9 to the box; with AGENTSPACE_DIAGNOSTIC set, the line naming the file
 #     comes before the refusal, which stays the last, and no retry line is printed (P21, P23, P27);
 #   - the sharing-violation retry (P23, P27): a lease state file the case holds open without sharing, past the
-#     read's bound, refusing a lease-form argument with two retry lines; one the case releases on the first
+#     read's bound, refusing a lease-form argument with two retry lines, and sending `agentspace`, an upper case
+#     hex alias and one with 7 hex digits to the box after the same two; one the case releases on the first
 #     retry line to reach the ProxyCommand's stderr, never on a timer, connecting after one or two;
 #   - two records that are one alias's (P22): the first `ready` one is the alias's lease, a stored `ready`
 #     record past its expires_at is skipped and is named `expired` when it is the last, and two that are not
@@ -341,6 +342,23 @@ try {
     Write-HpProblems "${sec}: A lease state file the case holds open without sharing past the read's bound refuses a lease alias: exit 1, one line, no tunnel, within 10 seconds (P23)" $p1
     Write-HpProblems "${sec}: The same hold, with AGENTSPACE_DIAGNOSTIC set: two retry lines, the line naming the file, then the refusal as the last line (P23, P27)" $p2
     Write-HpProblems "${sec}: The hold changed nothing in the home" (Get-NrSnapshotProblems $snap $h)
+
+    # The same hold past the read's bound still sends an argument that is not of lease alias form to the box, with
+    # AGENTSPACE_DIAGNOSTIC set: the two retry lines, then the line naming the file (operator.md, "Which checks show
+    # it", v0.11's row for a lease state file that cannot be read; P21, P23, P27).
+    foreach ($a in $formless[0..2]) {
+      Clear-HpLogs $h $S
+      $fs = [IO.File]::Open($leasesPath, 'Open', 'Read', 'None')
+      try { $r = Invoke-HpProxy $h $S @($a) -Extra @{ AGENTSPACE_DIAGNOSTIC = '1' } -Timeout 10 } finally { $fs.Dispose() }
+      $p = Get-HpReachedProblems $r $S $HpIdBox
+      $lines = @($r.Stderr -split "`r?`n" | Where-Object { $_.Trim() -ne '' } | ForEach-Object { $_.Trim() })
+      $retryAt = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -ceq $RetryLine) { $i } })
+      $fileAt = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match 'leases\.json') { $i } })
+      if ($retryAt.Count -ne 2) { $p.Add("There are $($retryAt.Count) retry lines, not 2") }
+      if ($fileAt.Count -ne 1) { $p.Add('There is not exactly one line naming the lease state file') }
+      elseif ($retryAt.Count -gt 0 -and $retryAt[-1] -gt $fileAt[0]) { $p.Add('A retry line comes after the line naming the file') }
+      Write-HpProblems "${fromSec}: The same hold still sends the argument $a, which is not of lease alias form, to the box, with AGENTSPACE_DIAGNOSTIC set: two retry lines, then the line naming the file (P21, P23, P27)" $p
+    }
 
     Clear-HpLogs $h $S
     $fs = [IO.File]::Open($leasesPath, 'Open', 'Read', 'None')

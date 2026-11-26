@@ -444,7 +444,7 @@ fn each_lease_that_is_not_ready_is_refused_before_anything_starts() {
         for (j, reg) in [GARBAGE.to_string(), registry(true)].iter().enumerate() {
             for diagnostic in [false, true] {
                 let w = World::new(&format!("states-{i}-{j}-{diagnostic}"));
-                w.seed(reg, Some(file(&[record.clone()])));
+                w.seed(reg, Some(file(std::slice::from_ref(record))));
                 let before = w.snapshot();
                 let done = start(&w, ALIAS, diagnostic).finish();
                 assert_refused(&w, &done, &before, &refusal(ALIAS, state));
@@ -475,7 +475,7 @@ fn a_record_is_found_by_the_alias_built_from_it_and_by_its_stored_host_alias() {
         let record = lease(PREFIX, 1, "ready", Some(expires)).replace(ALIAS, stored);
         for (j, arg) in [ALIAS, stored].into_iter().enumerate() {
             let w = World::new(&format!("found-{i}-{j}"));
-            w.seed(&registry(true), Some(file(&[record.clone()])));
+            w.seed(&registry(true), Some(file(std::slice::from_ref(&record))));
             let before = w.snapshot();
             let done = start(&w, arg, false).finish();
             if expires == PAST {
