@@ -663,8 +663,8 @@ mod tests {
                     "The client {level} deep is still running when the release returned"
                 );
             }
-            // One client a walk, and a last walk that ends none.
-            assert_eq!(*walks.lock().unwrap(), 4);
+            // The first walk ends all three clients, and the second ends none.
+            assert_eq!(*walks.lock().unwrap(), 2);
             assert_eq!(w.texts(), vec!["Ended 3 of the lease's connections."]);
         }
     }

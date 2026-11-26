@@ -236,40 +236,59 @@ fn is_spared<H>(spared: &[Spared<H>], id: Identity) -> bool {
         .any(|s| s.pid == id.pid && s.created.is_none_or(|c| c == id.created))
 }
 
-/// Whether a client has another client among its ancestors, walked up by parent process ID with
-/// the creation checks of the ancestor walk (driver.md, Each with its tree: such a client is ended
-/// in that client's tree and not counted on its own).
-fn has_client_ancestor<T: ProcessTable>(
+/// What the walk up from a client finds above it.
+struct Above {
+    /// The clients among its ancestors, the nearest first.
+    clients: Vec<Identity>,
+    /// A process that has exited sits between it and the nearest of those clients, so the walk
+    /// down from that client never reaches it (driver.md, Each with its tree; D99, #0228).
+    cut: bool,
+}
+
+/// The clients among a client's ancestors, walked up by parent process ID with the creation checks
+/// of the ancestor walk, and whether a program that has exited sits between it and the nearest of
+/// them. A client with no client above it is a top (driver.md, Each with its tree); one with a
+/// client above it and no such program between is ended in that client's tree and not counted on
+/// its own. The walk stops where an ancestor cannot be opened or checked, as the ancestor walk
+/// does.
+fn walk_up<T: ProcessTable>(
     t: &T,
     list: &[Entry],
     h: &T::Handle,
     id: Identity,
     clients: &[Identity],
-) -> bool {
+) -> Above {
+    let mut above = Above {
+        clients: Vec::new(),
+        cut: false,
+    };
     let mut parent = t.parent_pid(h).ok().or_else(|| listed_parent(list, id.pid));
     let mut below = id.created;
     let mut seen = vec![id.pid];
     while let Some(pid) = parent {
         if pid == 0 || seen.len() > MAX_ANCESTORS || seen.contains(&pid) {
-            return false;
+            break;
         }
         let Ok(ph) = t.open(pid, Access::Query) else {
-            return false;
+            break;
         };
         let Ok(created) = t.created(&ph) else {
-            return false;
+            break;
         };
         if created > below {
-            return false;
+            break;
         }
-        if clients.contains(&Identity { pid, created }) {
-            return true;
+        let here = Identity { pid, created };
+        if clients.contains(&here) {
+            above.clients.push(here);
+        } else if above.clients.is_empty() && has_exited(t, &ph) {
+            above.cut = true;
         }
         seen.push(pid);
         parent = t.parent_pid(&ph).ok().or_else(|| listed_parent(list, pid));
         below = created;
     }
-    false
+    above
 }
 
 /// Adds to `protected` every process listed under `root` by parent process ID, leaving out only a
@@ -384,6 +403,14 @@ fn holds_spared<T: ProcessTable>(
     })
 }
 
+/// A top's tree as built, with the clients above the top when it is below a program that has
+/// exited (empty for a top with no client above it).
+struct Built<H> {
+    id: Identity,
+    above: Vec<Identity>,
+    tree: Vec<Node<H>>,
+}
+
 /// The tree's indexes, deepest first and the client last, so every process is terminated after
 /// all of its descendants.
 fn leaves_first<H>(tree: &[Node<H>]) -> Vec<usize> {
@@ -441,30 +468,41 @@ pub(crate) fn end_clients<T: ProcessTable, C: Clock>(
         }
     }
 
-    // The clients counted on their own: no client among their ancestors, and not inside a spared
-    // client's tree.
-    let mut tops: Vec<(Identity, &T::Handle)> = Vec::new();
+    // The clients counted on their own, the tops, none inside a spared client's tree: each with no
+    // client among its ancestors, and, from v0.12, each below a program that has exited, whose
+    // ancestors hold a client that the walk down from it never reaches (D99; #0228). The second
+    // kind carries the clients above it, so that one whose ancestors hold a spared client is never
+    // a top, whichever way it was found to be spared.
+    let mut tops: Vec<(Identity, &T::Handle, Vec<Identity>)> = Vec::new();
     for (id, h) in &found {
-        if is_spared(&spared, *id)
-            || protected.contains(&id.pid)
-            || has_client_ancestor(t, &list, h, *id, &clients)
-        {
+        if is_spared(&spared, *id) || protected.contains(&id.pid) {
             continue;
         }
-        tops.push((*id, h));
+        let above = walk_up(t, &list, h, *id, &clients);
+        if above.clients.is_empty() {
+            tops.push((*id, h, Vec::new()));
+        } else if above.cut
+            && !above
+                .clients
+                .iter()
+                .any(|c| is_spared(&spared, *c) || protected.contains(&c.pid))
+        {
+            tops.push((*id, h, above.clients));
+        }
     }
 
     // Each client is opened by its ID with the right to terminate it, and checked again on that
     // handle, so the process checked is the process ended.
-    let mut built: Vec<(Identity, Vec<Node<T::Handle>>)> = Vec::new();
+    let mut built: Vec<Built<T::Handle>> = Vec::new();
     let mut spared_trees: Vec<Vec<Node<T::Handle>>> = Vec::new();
-    for (id, look) in tops {
+    let mut unopened: Vec<(Identity, Vec<Identity>)> = Vec::new();
+    for (id, look, above) in tops {
         let h = match t.open(id.pid, Access::Terminate) {
             Ok(h) => h,
             Err(_) => {
                 // It could not be opened to end it: gone, or a client that could not be ended.
                 if !has_exited(t, look) {
-                    not_ended.push(id);
+                    unopened.push((id, above));
                 }
                 continue;
             }
@@ -482,21 +520,52 @@ pub(crate) fn end_clients<T: ProcessTable, C: Clock>(
             refused: false,
         }];
         add_descendants(t, &list, &mut tree, &protected);
-        built.push((id, tree));
+        built.push(Built { id, above, tree });
     }
     // Every tree is built before any is found to hold a spared process, so that a client inside
     // such a tree is left alone whichever of the two was looked at first.
-    for (id, tree) in &built {
+    let mut holding: Vec<Identity> = Vec::new();
+    for Built { id, tree, .. } in &built {
         if holds_spared(t, &list, tree, &spared) {
             // An ancestor the walk up could not reach, above one it could not check: never
             // ended, counted once as a client that could not be, and its tree left whole.
             not_ended.push(*id);
+            holding.push(*id);
             protect_tree(t, &list, *id, &mut protected);
         }
     }
+    // A top below a program that has exited is one only while no tree built holds it and no
+    // client above it was found to be spared: otherwise it is not ended on its own, and not
+    // counted.
+    let under_spared = |above: &[Identity]| {
+        above
+            .iter()
+            .any(|c| holding.contains(c) || protected.contains(&c.pid))
+    };
+    for (id, above) in &unopened {
+        if !under_spared(above) {
+            not_ended.push(*id);
+        }
+    }
+    let held: Vec<bool> = built
+        .iter()
+        .enumerate()
+        .map(|(i, Built { id, above, .. })| {
+            !above.is_empty()
+                && (under_spared(above)
+                    || built.iter().enumerate().any(|(j, Built { tree, .. })| {
+                        j != i && tree.iter().any(|n| n.depth > 0 && n.pid == id.pid)
+                    }))
+        })
+        .collect();
     let mut trees: Vec<(Identity, Vec<Node<T::Handle>>)> = Vec::new();
-    for (id, mut tree) in built {
-        if protected.contains(&id.pid) || not_ended.contains(&id) {
+    for (Built { id, mut tree, .. }, held) in built.into_iter().zip(held) {
+        if held {
+            // Left to the tree that holds it, or to a spared client's tree, and not counted; its
+            // handles are held until the call returns, as every handle is.
+            not_ended.retain(|n| *n != id);
+            spared_trees.push(tree);
+        } else if protected.contains(&id.pid) || not_ended.contains(&id) {
             // A spared client's tree, or a client inside one, which is not counted on its own.
             spared_trees.push(tree);
         } else {
