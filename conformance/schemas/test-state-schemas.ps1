@@ -44,10 +44,11 @@ $script:skips = 0
 
 # The state schemas known to have no sample here, each with where its files are checked instead. Only these MAY have
 # none; any other schema with none fails. Listed on 2026-11-24 (E0.10-T01-S03) from a count of each schema's samples.
+# board-holder.state left the list in E0.12-T01-S02, when the holder record gained platform and samples of it (state.md,
+# The holder record).
 $knownWithoutSamples = @(
   'board-holder-launch-result.state' # The keeper's; conformance/keeper/test-keeper.ps1 checks the files a run writes.
   'board-holder-launch.state'        # The keeper's; the same.
-  'board-holder.state'               # The keeper's; the same.
   'instance-id.state'                # The retired instance-ID cache, which nothing writes from v0.07 (state.md).
   'localswim-pushed.state'           # The push stamps; agentspace-push's tests check the stamp it writes.
   'stack-parameters.state'           # Written by a person, never by agentspace (state.md, Files in the checkout).
@@ -79,7 +80,7 @@ function Test-Document([string]$Json, [string]$SchemaPath) {
 
 # The state.md section that owns a state schema; a schema the map does not name is cited by the page.
 function Get-SpecFor([string]$Stem) {
-  switch ($Stem) { 'hosts.state' { 'state.md#the-host-registry' } 'projects.state' { 'state.md#the-project-list' } 'leases.state' { 'state.md#the-lease-state-file' } default { 'state.md' } }
+  switch ($Stem) { 'hosts.state' { 'state.md#the-host-registry' } 'projects.state' { 'state.md#the-project-list' } 'leases.state' { 'state.md#the-lease-state-file' } 'board-holder.state' { 'state.md#the-holder-record' } default { 'state.md' } }
 }
 
 $schemas = @(Get-ChildItem -LiteralPath $schemaDir -Filter '*.schema.json' -File | Sort-Object Name)

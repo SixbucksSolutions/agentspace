@@ -1,0 +1,9 @@
+{
+  "version": 0,
+  "hosts": [
+    { "project": "swimcoach", "stack": "agentbox", "state": "ready", "instance_id": "i-0123456789abcdef0", "instance_type": "m9g.xlarge", "last_attempt_at": "2026-11-20T18:30:00Z" },
+    { "project": "agentspace", "stack": "agentspace-host-agentspace", "state": "ready", "instance_id": "i-0fedcba9876543210", "instance_type": "m9g.xlarge", "last_attempt_at": "2026-11-20T19:05:42Z", "last_success_at": "2026-11-20T19:12:03Z" },
+    { "project": "agentspace", "platform": "linux/amd64", "stack": "agentspace-linux-amd64-host-agentspace", "state": "ready", "instance_id": "i-0123456789abcdef1", "instance_type": "m8a.xlarge", "last_attempt_at": "2026-11-27T18:00:00Z", "last_success_at": "2026-11-27T18:09:30Z" },
+    { "project": "agentspace", "platform": "windows/amd64", "stack": "agentspace-windows-amd64-host-agentspace", "state": "creating", "last_attempt_at": "2026-11-27T20:00:00Z" }
+  ]
+}

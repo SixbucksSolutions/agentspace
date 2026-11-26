@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/hosts.state.schema.json",
   "title": "Host registry (laptop, internal)",
-  "description": "%USERPROFILE%\\.agentspace\\hosts.json (D45, D55, D67, D77): the host registry, one record per host, saying which host serves which project, and from v0.09 the instance type its stack was last deployed with, and from v0.10 when its last provisioning run that succeeded ended. Internal: it is laptop state, never output, and no lease command prints anything from it. A missing file reads as one record, the box's: project swimcoach, stack agentbox, state ready, and from v0.09 instance_type m9g.xlarge, only as it is read; the first change writes that record with no instance_type. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). A file in which two records share a project is not valid, though this schema cannot refuse it; docs/state.md says how a reader treats one. A file is valid only with exactly one record whose stack is agentbox, and its project is swimcoach (docs/state.md, \"The host registry\"), which no schema can check. See docs/state.md, \"The host registry\".",
+  "description": "%USERPROFILE%\\.agentspace\\hosts.json (D45, D55, D67, D77, D91): the host registry, one record per host, saying which host serves which project on which platform, and from v0.09 the instance type its stack was last deployed with, and from v0.10 when its last provisioning run that succeeded ended. From v0.12 a host is keyed by its project and its platform (D91): a record's platform member names the platform, and a record without it is linux/arm64's. Internal: it is laptop state, never output, and no lease command prints anything from it. A missing file reads as one record, the box's: project swimcoach, platform linux/arm64, stack agentbox, state ready, and from v0.09 instance_type m9g.xlarge, only as it is read; the first change writes that record with no instance_type. Strict like the contract's output schemas: anchored patterns end with $(?!\\n). A file in which two records share a project and a platform, a record without platform counting as linux/arm64, is not valid, though this schema cannot refuse it, since JSON Schema cannot compare two items' members; docs/state.md says how a reader treats one. A file is valid only with exactly one record whose stack is agentbox, and its project is swimcoach and its platform linux/arm64 (docs/state.md, \"The host registry\"), which no schema can check. A program before v0.12 refuses a record holding platform, so v0.12's programs MUST be installed together (D91); the version stays 0, since an older reader refuses such a file rather than misreading it. See docs/state.md, \"The host registry\".",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "hosts"],
@@ -26,10 +26,14 @@
           "description": "The normalized project the host serves, in the lease contract's form.",
           "$ref": "#/$defs/project"
         },
+        "platform": {
+          "description": "From v0.12 (D91, D101): the platform the host serves, the normalized platform (architect, 2026-11-26, for v0.12-T01, pin P1). Absent means linux/arm64, which is what every record before v0.12 is; a writer omits it for linux/arm64 and writes it for every other platform, and a reader takes an explicit linux/arm64 as equal to absent, so two records of one project, one with linux/arm64 and one without, make the file not valid (pin P16). Written after project. With it absent or linux/arm64 the stack is agentbox or agentspace-host-<project>; with any other platform it is agentspace-<os>-<arch>-host-<project> (D91's table), which this schema checks by its form, never that its <os>-<arch> is this platform with its / written as -.",
+          "$ref": "#/$defs/platform"
+        },
         "stack": {
-          "description": "The host's CloudFormation stack: agentbox, the box's, or agentspace-host-<project>. This schema cannot check that <project> is the record's own project.",
+          "description": "The host's CloudFormation stack: agentbox, the box's, or agentspace-host-<project> on linux/arm64, and agentspace-<os>-<arch>-host-<project> on any other platform (D44, D91). This schema cannot check that <project> is the record's own project.",
           "type": "string",
-          "pattern": "^(agentbox|agentspace-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?)$(?!\\n)"
+          "pattern": "^(agentbox|agentspace-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?|agentspace-[a-z0-9]+-[a-z0-9]+-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?)$(?!\\n)"
         },
         "state": {
           "description": "creating while a provisioning run is under way or has died, ready once the host is made and set up, failed when a run's step failed.",
@@ -55,11 +59,35 @@
           "description": "From v0.10 (D77): the time the last provisioning run that succeeded ended, UTC, written by that run alone. Every write that sets last_attempt_at removes it, so the run that started at last_attempt_at succeeded when it is present and at or after last_attempt_at, compared as instants. Absent while no run has succeeded since the last start. Written after last_attempt_at. See docs/state.md, \"The last success\".",
           "$ref": "#/$defs/time"
         }
+      },
+      "if": { "required": ["platform"], "properties": { "platform": { "not": { "const": "linux/arm64" } } } },
+      "then": {
+        "properties": {
+          "stack": {
+            "description": "A host of any platform but linux/arm64 has a stack of D91's other form, never agentbox and never one that begins agentspace-host-, which is linux/arm64's.",
+            "pattern": "^agentspace-[a-z0-9]+-[a-z0-9]+-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\\n)",
+            "not": { "pattern": "^agentspace-host-[a-z0-9-]*$(?!\\n)" }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "stack": {
+            "description": "A linux/arm64 host keeps the names it had before v0.12 (D91): agentbox or agentspace-host-<project>.",
+            "pattern": "^(agentbox|agentspace-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?)$(?!\\n)"
+          }
+        }
       }
     },
     "project": {
       "type": "string",
       "pattern": "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\\n)"
+    },
+    "platform": {
+      "description": "A normalized platform, os/arch, as lease-api.md's Platform section normalizes one: lowercase letters and digits on each side of one /, with aarch64 written arm64 and x86_64 or x86-64 written amd64 (pin P1). No variant: a platform with a variant is unsupported and makes no host (pin P21), and D91's names write the platform's one / as -. A form, not a list: v0.12 supports linux/arm64, linux/amd64 and windows/amd64 (D98).",
+      "type": "string",
+      "pattern": "^[a-z0-9]+/[a-z0-9]+$(?!\\n)",
+      "not": { "pattern": "^[a-z0-9]+/aarch64$(?!\\n)" }
     },
     "time": {
       "type": "string",
