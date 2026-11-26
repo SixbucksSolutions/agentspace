@@ -15,9 +15,13 @@
 //!   (operator.md, The ProxyCommand, What it MUST NOT do: "Leave the console broken").
 
 use std::ffi::OsStr;
+use std::fs::{File, OpenOptions};
+use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::fs::OpenOptionsExt;
+use std::path::Path;
 
-use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{ERROR_SHARING_VIOLATION, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Console::{
     CONSOLE_MODE, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_PROCESSED_OUTPUT, ENABLE_WRAP_AT_EOL_OUTPUT,
     GetConsoleMode, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetConsoleMode,
@@ -39,6 +43,26 @@ pub fn set_path(value: &OsStr) -> bool {
     let value: Vec<u16> = value.encode_wide().chain(Some(0)).collect();
     // SAFETY: both buffers are NUL-terminated UTF-16 that outlive the call.
     unsafe { SetEnvironmentVariableW(name.as_ptr(), value.as_ptr()) != 0 }
+}
+
+/// `FILE_SHARE_READ`, `FILE_SHARE_WRITE` and `FILE_SHARE_DELETE`, the share mode of the lease state
+/// file's read (state.md, Replacing a file), so that it never blocks a writer's rename.
+const SHARE_READ_WRITE_DELETE: u32 = 0x1 | 0x2 | 0x4;
+
+/// Opens the lease state file for reading, sharing read, write and delete (operator.md, From the
+/// ProxyCommand, step 3). Safe code: std's own `share_mode`.
+pub fn open_shared(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_READ_WRITE_DELETE)
+        .open(path)
+}
+
+/// Whether an open was refused on a sharing violation (`ERROR_SHARING_VIOLATION`) and nothing
+/// else: another process holds the file without sharing the access the open asks. The only
+/// failure the ProxyCommand's read tries again (pin P23). A lock violation is not one.
+pub fn is_sharing_violation(error: &io::Error) -> bool {
+    error.raw_os_error().and_then(|c| u32::try_from(c).ok()) == Some(ERROR_SHARING_VIOLATION)
 }
 
 /// While it lives, standard output is standard error. Dropping it, or [`StdoutGuard::restore`],

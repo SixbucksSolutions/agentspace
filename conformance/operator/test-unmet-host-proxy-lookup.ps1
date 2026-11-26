@@ -9,10 +9,14 @@
 #   - a host alias `agentspace-host.<project>`: that project's record, whatever its state (`ready`,
 #     `creating` or `failed`), `agentspace-host.swimcoach` included; a rest that is not a normalized
 #     project name, or a project with no record, fails as a failed `up` does in caller mode;
-#   - a lease alias: the record in the lease state file whose `ssh.host_alias` equals it exactly, then
-#     its project's host if that record is `ready`; otherwise the box (a project whose host is not
-#     `ready`, a project with no record, an alias no lease has, a different case, no lease state
-#     file, a lease state file that cannot be read or is not valid); the lease's expiry is not checked;
+#   - a lease alias: the record in the lease state file that is the alias's (the alias built from it, or a
+#     stored `ready` record's `ssh.host_alias`, exactly), then its project's host if that lease is
+#     `ready`; otherwise the box (a project whose host is not `ready`, a project with no record, an
+#     alias no lease has, a different case, no lease state file, a lease state file that cannot be read
+#     or is not valid for an argument that is not of lease alias form); from v0.11 the lease's expiry is
+#     checked, and a lease that has expired, and a lease-form argument while the lease state file cannot
+#     be read or is not valid, are refused with exit 1 and no tunnel (#0229, pin P21; #0237). The refusal's
+#     whole shape is test-unmet-proxy-not-ready.ps1's, and this file shows only that each is refused;
 #   - the ProxyCommand never writes the lease state file or takes its lock;
 #   - a host registry that is not valid fails the connection with the caller's line, for each kind of
 #     argument, and starts no tunnel.
@@ -36,6 +40,27 @@
 
 $sec = 'operator.md#from-the-proxycommand'
 $regSec = 'operator.md#the-host-registry-as-the-operator-uses-it'
+
+# The problems of a run the ProxyCommand refused from v0.11 (operator.md, "A lease that is not ready (#0229)"):
+# exit 1, nothing on stdout, no call the stand-in aws records, no tunnel, no ssh or scp, and a last line on
+# stderr that starts `agentspace: ` and holds each of $Words. The refusal's full shape is
+# test-unmet-proxy-not-ready.ps1's.
+function Get-LkRefusedProblems($Run, $S, [string[]]$Words) {
+  $p = New-HpProblems
+  if ($Run.TimedOut) { $p.Add('It timed out'); return , $p }
+  if ($Run.ExitCode -ne 1) { $p.Add("Exit $($Run.ExitCode), not 1") }
+  if ($Run.Stdout.Length -gt 0) { $p.Add('Stdout is not empty') }
+  $a = Get-HpAsked $S
+  if ($a.Raw.Count -gt 0) { $p.Add('The stand-in aws was called') }
+  if ($a.Tunnels.Count -gt 0) { $p.Add('A tunnel was started') }
+  if ((Get-HpSshCallCount $S) -gt 0 -or (Get-StandInCallCount -Log (Join-Path $S.Dir 'scp-tripwire-calls.log')) -gt 0) { $p.Add('ssh or scp was started') }
+  $lines = @($Run.Stderr -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+  if ($lines.Count -eq 0) { $p.Add('Stderr is empty'); return , $p }
+  $last = $lines[-1].Trim()
+  if (-not $last.StartsWith('agentspace: ', [StringComparison]::Ordinal)) { $p.Add('The last line on stderr does not start with "agentspace: "') }
+  foreach ($w in $Words) { if ($last -notmatch [regex]::Escape($w)) { $p.Add("The last line on stderr does not hold '$w'") } }
+  , $p
+}
 
 $leaseOther = '1111111a-1111-4111-8111-11111111111a'
 $leaseThird = '2222222b-2222-4222-8222-22222222222b'
@@ -82,7 +107,6 @@ try {
       @{ N = 'a host alias reaches a host that failed, agentspace-host.broken'; A = @('agentspace-host.broken'); Want = $HpIdFailed },
       @{ N = 'agentspace-host.swimcoach reaches the box''s record'; A = @('agentspace-host.swimcoach'); Want = $HpIdBox },
       @{ N = 'a lease alias of a ready host reaches that host'; A = @($aliasOther); Want = $HpIdOther },
-      @{ N = 'a lease alias whose lease has expired still reaches its ready host (expiry is not checked)'; A = @($aliasExpired); Want = $HpIdOther },
       @{ N = 'a lease alias of a host that is not ready reaches the box'; A = @($aliasThird); Want = $HpIdBox },
       @{ N = 'a lease alias of a project with no host record reaches the box'; A = @($aliasGhost); Want = $HpIdBox },
       @{ N = 'an alias no lease has reaches the box'; A = @('agentspace-nope-12345678'); Want = $HpIdBox },
@@ -94,6 +118,11 @@ try {
       $p = Get-HpReachedProblems $r $S $c.Want
       Write-HpProblems "${sec}: $($c.N)" $p
     }
+
+    # From v0.11 the lease's expiry is checked: a ready lease past its expires_at is expired, and refused.
+    Clear-HpLogs $h $S
+    $r = Invoke-HpProxy $h $S @($aliasExpired)
+    Write-HpProblems "${sec}: A lease alias whose lease has expired is refused, exit 1, a line naming expired, no tunnel (the expiry is checked from v0.11)" (Get-LkRefusedProblems $r $S @('expired', 'no connection was opened', $aliasExpired))
 
     $p = New-HpProblems
     if ((Get-HpBytesHash $leasesPath) -cne $leasesHash) { $p.Add('The lease state file changed') }
@@ -114,7 +143,8 @@ try {
       Write-HpProblems "${sec}: A host alias with $($c.N) fails as a failed up does, exit 1, no tunnel" (Get-HpRefusedProblems $r $S)
     }
 
-    # ---- A lease state file that cannot be read or is not valid reads as the box ----
+    # ---- A lease state file that cannot be read or is not valid (pin P21, from v0.11): a lease-form argument
+    # is refused, and an argument that is not of lease alias form still reaches the box ----
     $badLeases = @(
       @{ N = 'is not JSON'; Text = 'this is not json' },
       @{ N = 'has version 1'; Text = '{"version":1,"leases":[' + (New-HpLeaseRecord $leaseOther 'other' $aliasOther) + ']}' },
@@ -126,19 +156,25 @@ try {
       Set-HpFile $h $leasesPath ($c.Text + "`n")
       Clear-HpLogs $h $S
       $r = Invoke-HpProxy $h $S @($aliasOther)
-      Write-HpProblems "${sec}: A lease state file that $($c.N) reads as the box for a lease alias that the file names (the box's ID, never the lease's host)" (Get-HpReachedProblems $r $S $HpIdBox)
+      Write-HpProblems "${sec}: A lease state file that $($c.N) refuses a lease alias, whatever the file names: exit 1, the lease records could not be read, no tunnel (P21)" (Get-LkRefusedProblems $r $S @('records could not be read', 'no connection was opened'))
+      Clear-HpLogs $h $S
+      $r = Invoke-HpProxy $h $S @('agentspace')
+      Write-HpProblems "${sec}: A lease state file that $($c.N) still sends an argument that is not of lease alias form, agentspace, to the box (the box's ID)" (Get-HpReachedProblems $r $S $HpIdBox)
     }
     Remove-HpPath $h $leasesPath
     New-Item -ItemType Directory -Path (Assert-ConformancePath -ConformanceHome $h -Path $leasesPath) | Out-Null
     Clear-HpLogs $h $S
     $r = Invoke-HpProxy $h $S @($aliasOther)
-    Write-HpProblems "${sec}: A folder at the lease state file's path reads as the box" (Get-HpReachedProblems $r $S $HpIdBox)
+    Write-HpProblems "${sec}: A folder at the lease state file's path refuses a lease alias: exit 1, the lease records could not be read, no tunnel (P21)" (Get-LkRefusedProblems $r $S @('records could not be read', 'no connection was opened'))
+    Clear-HpLogs $h $S
+    $r = Invoke-HpProxy $h $S @('agentspace')
+    Write-HpProblems "${sec}: A folder at the lease state file's path still sends an argument that is not of lease alias form, agentspace, to the box" (Get-HpReachedProblems $r $S $HpIdBox)
     Remove-HpPath $h $leasesPath
 
     # No lease state file at all reads as the box (and, with a host alias, still finds the host).
     Clear-HpLogs $h $S
     $r = Invoke-HpProxy $h $S @($aliasOther)
-    Write-HpProblems "${sec}: No lease state file reads as the box for a lease alias" (Get-HpReachedProblems $r $S $HpIdBox)
+    Write-HpProblems "${sec}: No lease state file reads as the box for a lease alias (a missing file is not refused)" (Get-HpReachedProblems $r $S $HpIdBox)
     Clear-HpLogs $h $S
     $r = Invoke-HpProxy $h $S @('agentspace-host.other')
     Write-HpProblems "${sec}: No lease state file does not stop a host alias from reaching its host" (Get-HpReachedProblems $r $S $HpIdOther)
@@ -147,9 +183,16 @@ try {
     Set-HpFile $h $leasesPath "this is not json`n"
     Clear-HpLogs $h $S
     $r = Invoke-HpProxy $h $S @($aliasOther) -Extra @{ AGENTSPACE_DIAGNOSTIC = '1' }
+    $p = Get-LkRefusedProblems $r $S @('records could not be read', 'no connection was opened')
+    $lines = @($r.Stderr -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+    if (@($lines | Select-Object -SkipLast 1 | Where-Object { $_ -match 'leases\.json' }).Count -eq 0) { $p.Add('With AGENTSPACE_DIAGNOSTIC set, no line before the refusal names the lease state file') }
+    if ($lines.Count -gt 0 -and $lines[-1] -match 'leases\.json') { $p.Add('The refusal''s own line names the file') }
+    Write-HpProblems "${sec}: With AGENTSPACE_DIAGNOSTIC set, a lease state file that is not valid is named on stderr before the refusal of a lease alias, whose line is the last (P21)" $p
+    Clear-HpLogs $h $S
+    $r = Invoke-HpProxy $h $S @('agentspace') -Extra @{ AGENTSPACE_DIAGNOSTIC = '1' }
     $p = Get-HpReachedProblems $r $S $HpIdBox
     if ($r.Stderr -notmatch 'leases\.json') { $p.Add('With AGENTSPACE_DIAGNOSTIC set, stderr names no line about the lease state file') }
-    Write-HpProblems "${sec}: With AGENTSPACE_DIAGNOSTIC set, a lease state file that is not valid is named on stderr, and the connection still reaches the box" $p
+    Write-HpProblems "${sec}: With AGENTSPACE_DIAGNOSTIC set, a lease state file that is not valid is named on stderr, and an argument that is not of lease alias form still reaches the box" $p
     Remove-HpPath $h $leasesPath
     Set-HpLeases $h $validLeases
 

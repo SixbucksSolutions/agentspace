@@ -2131,12 +2131,54 @@ fn a_lease_alias_reaches_its_leases_ready_host() {
     assert_reached(&o, ID_D, &[ID_A, ID_B, ID_C]);
 }
 
+/// A refusal (operator.md, A lease that is not ready (#0229)): exit 1, nothing on stdout, this
+/// one line on stderr, and no program started, so no AWS call, no tunnel, no ssh and no scp.
+fn assert_refused(o: &Out, line: &str) {
+    assert_eq!(
+        o.code,
+        Some(1),
+        "a refusal exits 1; stderr:\n{}",
+        o.err_text()
+    );
+    assert_stdout_empty(o);
+    assert_eq!(o.err_text(), format!("{line}\n"));
+    assert!(o.calls().is_empty(), "a refusal makes no AWS call");
+    assert!(o.no_ssh_or_scp());
+}
+
+/// The line for a lease-form argument while the lease records cannot be read or are not valid.
+fn unreadable_line(alias: &str) -> String {
+    format!(
+        "agentspace: The lease records could not be read; no connection was opened for {alias}. Run 'agentspace lease list' to see the error."
+    )
+}
+
+/// A case whose setup, after seeding the registry and the lease state file, also runs `more`.
+fn after_seeding(mut c: Case, more: impl FnOnce(&Sandbox) + 'static) -> Case {
+    let seeding = c.setup.take().expect("a seeded case");
+    c.setup = Some(Box::new(move |sb: &Sandbox| {
+        seeding(sb);
+        more(sb);
+    }));
+    c
+}
+
+/// A setup step that makes the lease state file text that is not JSON.
+fn write_not_json(sb: &Sandbox) {
+    fs::write(sb.leases_path(), b"garbage, not json").unwrap();
+}
+
 #[test]
-fn a_lease_alias_does_not_check_the_leases_expiry() {
+fn a_lease_alias_checks_the_leases_expiry_and_refuses_an_expired_lease() {
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
     let leases = lease_file(&[ready_lease(PROJ_A, "aaaaaaaa", "2020-01-01T00:00:00Z")]);
-    let o = run(Case::seeded("lease-expired", two_hosts(), Some(leases))
-        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]));
-    assert_reached(&o, ID_C, &[ID_A]);
+    let o = run(Case::seeded("lease-expired", two_hosts(), Some(leases)).args(&[&alias]));
+    assert_refused(
+        &o,
+        &format!(
+            "agentspace: The lease for {alias} has expired; no connection was opened. Create a new lease."
+        ),
+    );
 }
 
 #[test]
@@ -2183,11 +2225,21 @@ fn a_lease_alias_with_no_record_reaches_the_box() {
 }
 
 #[test]
-fn a_leases_alias_that_is_not_stored_ready_never_matches() {
-    // A released record keeps no `ssh`, so its alias matches nothing.
+fn a_leases_alias_that_is_not_stored_ready_is_found_by_its_built_alias_and_refused() {
+    // A released record keeps no `ssh`, and from v0.11 is found by the alias its project and ID
+    // build, and refused, where before it matched nothing and reached the box.
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
     let leases = lease_file(&[released_lease(PROJ_A, "aaaaaaaa")]);
-    let o = run(Case::seeded("lease-released", two_hosts(), Some(leases))
-        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]));
+    let o = run(Case::seeded("lease-released", two_hosts(), Some(leases.clone())).args(&[&alias]));
+    assert_refused(
+        &o,
+        &format!(
+            "agentspace: The lease for {alias} has been released; no connection was opened. Create a new lease."
+        ),
+    );
+    // Only the alias built from the record is its alias: one more character matches nothing.
+    let more = format!("{alias}x");
+    let o = run(Case::seeded("lease-released-x", two_hosts(), Some(leases)).args(&[&more]));
     assert_reached(&o, ID_A, &[ID_C]);
 }
 
@@ -2211,7 +2263,9 @@ fn a_lease_alias_whose_project_has_no_ready_host_reaches_the_box() {
 }
 
 #[test]
-fn a_lease_state_file_that_is_not_readable_or_not_valid_sends_the_connection_to_the_box() {
+fn a_lease_state_file_that_is_not_readable_or_not_valid_refuses_a_lease_alias_only() {
+    // An argument of lease alias form is refused; any other reaches the box (pin P21).
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
     let record = ready_lease(PROJ_A, "aaaaaaaa", LEASE_FUTURE);
     let bad: Vec<(&str, Vec<u8>)> = vec![
         ("empty", Vec::new()),
@@ -2233,40 +2287,62 @@ fn a_lease_state_file_that_is_not_readable_or_not_valid_sends_the_connection_to_
         ("not-utf8", vec![0xFF, 0xFE, 0x00, 0x7B, 0x00, 0x7D, 0x00]),
     ];
     for (name, raw) in bad {
-        let mut c = Case::seeded(&format!("lease-bad-{name}"), two_hosts(), None)
-            .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]);
-        let seeding = c.setup.take().unwrap();
-        c.setup = Some(Box::new(move |sb: &Sandbox| {
-            seeding(sb);
+        let c = Case::seeded(&format!("lease-bad-{name}"), two_hosts(), None).args(&[&alias]);
+        let o = run(after_seeding(c, move |sb: &Sandbox| {
             fs::write(sb.leases_path(), &raw).unwrap();
         }));
-        let o = run(c);
-        assert_reached(&o, ID_A, &[ID_C, ID_D]);
+        assert_refused(&o, &unreadable_line(&alias));
     }
     // Something that is not a file, where the file belongs.
-    let mut c = Case::seeded("lease-bad-folder", two_hosts(), None)
-        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")]);
-    let seeding = c.setup.take().unwrap();
-    c.setup = Some(Box::new(move |sb: &Sandbox| {
-        seeding(sb);
+    let c = Case::seeded("lease-bad-folder", two_hosts(), None).args(&[&alias]);
+    let o = run(after_seeding(c, |sb: &Sandbox| {
         fs::create_dir_all(sb.leases_path()).unwrap();
     }));
-    let o = run(c);
-    assert_reached(&o, ID_A, &[ID_C, ID_D]);
+    assert_refused(&o, &unreadable_line(&alias));
+    // Any other argument keeps v0.07's rule and reaches the box.
+    for (i, other) in [
+        "agentspace",
+        "agentspace-orchard-AAAAAAAA",
+        "agentspace-orchard-aaaaaaa",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let c = Case::seeded(&format!("lease-bad-other-{i}"), two_hosts(), None).args(&[other]);
+        let o = run(after_seeding(c, write_not_json));
+        assert_reached(&o, ID_A, &[ID_C, ID_D]);
+    }
 }
 
 #[test]
 fn a_lease_state_file_that_is_not_valid_is_named_only_under_diagnostic() {
-    let mut c = Case::seeded("lease-bad-diag", two_hosts(), None)
-        .args(&[&lease_alias(PROJ_A, "aaaaaaaa")])
+    let alias = lease_alias(PROJ_A, "aaaaaaaa");
+    // The refusal's line is the last, and the line before it names the file and the problem.
+    let c = Case::seeded("lease-bad-diag", two_hosts(), None)
+        .args(&[&alias])
         .env("AGENTSPACE_DIAGNOSTIC", "1");
-    let seeding = c.setup.take().unwrap();
-    c.setup = Some(Box::new(move |sb: &Sandbox| {
-        seeding(sb);
-        fs::write(sb.leases_path(), b"garbage, not json").unwrap();
-    }));
-    let o = run(c);
-    // The connection still goes to the box; the extra line names the file and the problem.
+    let o = run(after_seeding(c, write_not_json));
+    assert_eq!(o.code, Some(1), "stderr:\n{}", o.err_text());
+    assert_stdout_empty(&o);
+    assert!(o.calls().is_empty(), "a refusal makes no AWS call");
+    let lines = o.err_lines();
+    assert!(lines.len() >= 2, "stderr:\n{}", o.err_text());
+    assert_eq!(lines.last(), Some(&unreadable_line(&alias)));
+    assert!(
+        lines[lines.len() - 2].contains("leases.json"),
+        "with AGENTSPACE_DIAGNOSTIC set, a line names the lease state file; stderr:\n{}",
+        o.err_text()
+    );
+    // Not set, the refusal's line is all there is.
+    let c = Case::seeded("lease-bad-quiet", two_hosts(), None).args(&[&alias]);
+    let o = run(after_seeding(c, write_not_json));
+    assert_refused(&o, &unreadable_line(&alias));
+    // An argument that is not of lease alias form still reaches the box, and the line naming the
+    // file is there under AGENTSPACE_DIAGNOSTIC as before v0.11.
+    let c = Case::seeded("lease-bad-box-diag", two_hosts(), None)
+        .args(&["agentspace"])
+        .env("AGENTSPACE_DIAGNOSTIC", "1");
+    let o = run(after_seeding(c, write_not_json));
     assert_eq!(o.code, Some(0), "stderr:\n{}", o.err_text());
     assert_stdout_empty(&o);
     assert_eq!(o.target().as_deref(), Some(ID_A));

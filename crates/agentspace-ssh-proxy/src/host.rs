@@ -8,22 +8,32 @@
 //! 1. **No argument: the box.**
 //! 2. **`agentspace-host.<project>`: that project's host**, whatever its state. A rest that is not a
 //!    normalized project name, and a project with no record, fail the connection.
-//! 3. **Any other argument, a lease alias:** the lease state file is read without its lock, for the
-//!    record whose `ssh.host_alias` is the argument, then that record's project in the registry. A
-//!    `ready` host that is not the box is that host. Every other outcome is the box: no record, no
-//!    file, a file that cannot be read or is not valid, a project with no record or one that is
-//!    not `ready`.
+//! 3. **Any other argument, a lease alias** ([`lease_project`]): the lease state file is read
+//!    without its lock, retried on a sharing violation alone (pin P23), for the records that are the
+//!    alias's: the alias built from a record's `project` and `id`, or a stored `ready` record's
+//!    `ssh.host_alias` (pins P21 and P22). Their states are decided at one reading of the clock, a
+//!    stored `ready` record at or after its `expires_at` being `expired`. The first `ready` one is
+//!    the alias's lease; when none is `ready`, the connection is refused, naming the last one's
+//!    state, **before the host registry is read** ([`choose`] comes after). No record, or no file,
+//!    is the box. A file that cannot be read or is not valid refuses an argument of lease alias
+//!    form ([`is_lease_alias_form`]), and sends any other argument to the box. A `ready` lease's
+//!    project is then looked up in the registry: a `ready` host that is not the box is that host,
+//!    and every other outcome is the box.
 //!
 //! The ProxyCommand never writes the lease state file and never takes its lock.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use agentspace_box::{CacheRead, InstanceIdCache, cache_bytes, parse_cache};
 use agentspace_hosts::{
     Host, Hosts, HostsError, Target, hosts_path, is_box, is_normalized_project, target_for,
 };
 use agentspace_operator_api::{CallerFailure, Failure, Say};
-use agentspace_state::StoreError;
+use agentspace_state::{Record, StateFile, StoreError, parse_time};
+
+use crate::platform;
 
 /// What a host's operator alias starts with (D47, D55). No lease alias holds a `.`, so none starts
 /// with it.
@@ -77,42 +87,294 @@ fn the_box(hosts: &Hosts) -> Result<&Host, Failure> {
     })
 }
 
-/// The project of the lease whose `ssh.host_alias` is `alias`, exactly and case-sensitively, or
-/// `None`. A file that is missing holds no lease. A file that cannot be read or is not valid reads
-/// no lease from it, and `say` gets a line that names the file and the problem, which only
-/// `AGENTSPACE_DIAGNOSTIC` shows (operator.md, From the ProxyCommand, step 3).
-fn lease_project(state_dir: &Path, alias: &str, say: &dyn Say) -> Option<String> {
-    match agentspace_state::read(state_dir) {
-        Ok(file) => file
-            .leases
-            .iter()
-            .find(|r| r.ssh.as_ref().is_some_and(|s| s.host_alias == alias))
-            .map(|r| r.project.clone()),
-        Err(error) => {
-            let why = match error {
+/// The diagnostic line printed before each retry of a read refused on a sharing violation (pin P27).
+pub const RETRY_LINE: &str =
+    "agentspace: The lease records were held by another program; trying again.";
+
+/// At most this many attempts at the read (pin P23).
+const READ_ATTEMPTS: u32 = 3;
+/// The pause before each retry, so that attempts start about 0, 400 and 800 milliseconds after the
+/// first (pin P27).
+const RETRY_PAUSE: Duration = Duration::from_millis(400);
+/// No attempt starts more than this long after the first began (pin P23).
+const RETRY_WINDOW: Duration = Duration::from_secs(1);
+
+/// Why the file could not be read when every attempt was refused on a sharing violation.
+const WHY_HELD: &str = "another program held it";
+/// The reasons a read of the ProxyCommand's own gives, in the words `agentspace_state::read` uses.
+const WHY_NOT_A_FILE: &str = "a folder is where the state file belongs";
+const WHY_READ: &str = "the state file could not be read";
+
+/// The clocks the lease lookup reads, apart from the system's so that a test injects its own and
+/// never reads the real clock.
+pub trait LeaseClock {
+    /// The time, UTC, in whole seconds since the Unix epoch: the one reading a lease's state is
+    /// decided at.
+    fn now(&self) -> i64;
+    /// The time passed on a monotonic clock since a fixed point of the clock's own.
+    fn elapsed(&self) -> Duration;
+    /// Waits for `duration`.
+    fn pause(&self, duration: Duration);
+}
+
+/// The system's clocks: the wall clock for the lease's state, a monotonic one for the retries.
+pub struct SystemLeaseClock {
+    start: Instant,
+}
+
+impl SystemLeaseClock {
+    pub fn new() -> SystemLeaseClock {
+        SystemLeaseClock {
+            start: Instant::now(),
+        }
+    }
+}
+
+impl Default for SystemLeaseClock {
+    fn default() -> Self {
+        SystemLeaseClock::new()
+    }
+}
+
+impl LeaseClock for SystemLeaseClock {
+    fn now(&self) -> i64 {
+        agentspace_state::now()
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.start.elapsed()
+    }
+
+    fn pause(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+/// Whether `alias` is of lease alias form (operator.md, From the ProxyCommand, step 3; pin P21):
+/// the whole of it matches `^agentspace-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{8}$`,
+/// case-sensitively. The tail is fixed at 9 characters, so the project is what lies between.
+pub fn is_lease_alias_form(alias: &str) -> bool {
+    let Some(rest) = alias.strip_prefix("agentspace-") else {
+        return false;
+    };
+    let Some(split) = rest.len().checked_sub(9) else {
+        return false;
+    };
+    let (Some(project), Some(tail)) = (rest.get(..split), rest.get(split..)) else {
+        return false;
+    };
+    let Some(hex) = tail.strip_prefix('-') else {
+        return false;
+    };
+    hex.len() == 8
+        && hex.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+        && is_normalized_project(project)
+}
+
+/// A lease's state at the clock's one reading (lease-api.md, States).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseState {
+    Ready,
+    Expired,
+    Released,
+    Unsatisfiable,
+    Pending,
+    /// A stored state that is none of the contract's, which a valid file never holds.
+    Unknown,
+}
+
+/// The state of `record` at `now`: its stored state, but a stored `ready` record at or after its
+/// `expires_at`, compared as instants to the second, is `expired`. A stored `ready` record whose
+/// `expires_at` does not parse is `expired`, as the lease CLI's own documents derive it; a valid
+/// file never holds one.
+pub fn state_at(record: &Record, now: i64) -> LeaseState {
+    match record.state.as_str() {
+        "ready" => match record.expires_at.as_deref() {
+            Some(at) if parse_time(at).is_none_or(|at| now >= at) => LeaseState::Expired,
+            _ => LeaseState::Ready,
+        },
+        "released" => LeaseState::Released,
+        "unsatisfiable" => LeaseState::Unsatisfiable,
+        "pending" => LeaseState::Pending,
+        _ => LeaseState::Unknown,
+    }
+}
+
+/// Whether `record` is `alias`'s (pins P21 and P22): the alias built from its `project` and `id`,
+/// `agentspace-<project>-<first 8 characters of id>`, is `alias`, or it is stored `ready` and its
+/// `ssh.host_alias` is `alias`. Both comparisons are exact and case-sensitive.
+fn is_the_alias(record: &Record, alias: &str) -> bool {
+    let built = record
+        .id
+        .get(..8)
+        .is_some_and(|id8| alias == format!("agentspace-{}-{id8}", record.project));
+    built
+        || (record.state == "ready"
+            && record
+                .ssh
+                .as_ref()
+                .is_some_and(|ssh| ssh.host_alias == alias))
+}
+
+fn refusal(message: String) -> Failure {
+    Failure {
+        message,
+        caller: CallerFailure::Same,
+    }
+}
+
+/// The refusal of a lease-form argument while the lease state file cannot be read or is not valid
+/// (operator.md, A lease that is not ready (#0229)).
+pub fn unreadable_refusal(alias: &str) -> Failure {
+    refusal(format!(
+        "agentspace: The lease records could not be read; no connection was opened for {alias}. Run 'agentspace lease list' to see the error."
+    ))
+}
+
+/// The refusal of an alias whose lease is `state` (operator.md, A lease that is not ready (#0229)).
+/// `ready` is never refused; a stored state that is none of the contract's is refused as records
+/// that could not be read, since a file that holds one is not valid.
+pub fn not_ready_refusal(alias: &str, state: LeaseState) -> Failure {
+    let line = match state {
+        LeaseState::Released => format!(
+            "agentspace: The lease for {alias} has been released; no connection was opened. Create a new lease."
+        ),
+        LeaseState::Expired => format!(
+            "agentspace: The lease for {alias} has expired; no connection was opened. Create a new lease."
+        ),
+        LeaseState::Unsatisfiable => format!(
+            "agentspace: The lease for {alias} is unsatisfiable; no connection was opened. Create a new lease."
+        ),
+        LeaseState::Pending => format!(
+            "agentspace: The lease for {alias} is pending, not yet ready; no connection was opened. Connect once 'agentspace lease get' answers ready."
+        ),
+        LeaseState::Ready | LeaseState::Unknown => return unreadable_refusal(alias),
+    };
+    refusal(line)
+}
+
+/// Decides `alias` from the records at `now` (pin P22): the first record that is the alias's and
+/// `ready` gives its project; when records are the alias's and none is `ready`, the alias is
+/// refused naming the last one's state; when none is, `None`.
+pub fn decide(leases: &[Record], alias: &str, now: i64) -> Result<Option<String>, Failure> {
+    let mut last = None;
+    for record in leases.iter().filter(|r| is_the_alias(r, alias)) {
+        let state = state_at(record, now);
+        if state == LeaseState::Ready {
+            return Ok(Some(record.project.clone()));
+        }
+        last = Some(state);
+    }
+    match last {
+        None => Ok(None),
+        Some(state) => Err(not_ready_refusal(alias, state)),
+    }
+}
+
+/// One attempt at the read: the file, or why it cannot be used, or `None` when the open was
+/// refused on a sharing violation.
+fn attempt(state_dir: &Path) -> Option<Result<StateFile, String>> {
+    let path = state_dir.join(LEASE_FILE);
+    match platform::open_shared(&path) {
+        Ok(mut file) => {
+            if file.metadata().is_ok_and(|m| m.is_dir()) {
+                return Some(Err(WHY_NOT_A_FILE.to_string()));
+            }
+            let mut bytes = Vec::new();
+            if file.read_to_end(&mut bytes).is_err() {
+                return Some(Err(WHY_READ.to_string()));
+            }
+            Some(agentspace_state::parse(&bytes).map_err(|e| e.0))
+        }
+        Err(error) if platform::is_sharing_violation(&error) => None,
+        // A missing file or folder, a folder at the path, a file where the state folder belongs,
+        // and every other refusal: the lease records' own read decides, in its own words, and is
+        // not tried again.
+        Err(_) => Some(
+            agentspace_state::read(state_dir).map_err(|error| match error {
                 StoreError::Busy => "it is in use".to_string(),
                 StoreError::CannotLock(why)
                 | StoreError::Unreadable(why)
                 | StoreError::NotValid(why)
                 | StoreError::Unwritable(why) => why,
-            };
+            }),
+        ),
+    }
+}
+
+/// Reads the lease state file whole, without its lock (operator.md, From the ProxyCommand, step 3).
+/// A missing file is no leases. A read refused on a sharing violation is tried again, at most 3
+/// attempts, with a 400 millisecond pause before each retry, and no attempt starts more than 1
+/// second after the first began (pins P23 and P27); before each retry `say` gets [`RETRY_LINE`],
+/// which only `AGENTSPACE_DIAGNOSTIC` shows. Every other failure is decided on the attempt that met
+/// it.
+fn read_leases(
+    state_dir: &Path,
+    say: &dyn Say,
+    clock: &dyn LeaseClock,
+) -> Result<StateFile, String> {
+    let first = clock.elapsed();
+    let since_first = || clock.elapsed().saturating_sub(first);
+    let mut attempts = 1;
+    loop {
+        if let Some(read) = attempt(state_dir) {
+            return read;
+        }
+        if attempts >= READ_ATTEMPTS || since_first() + RETRY_PAUSE > RETRY_WINDOW {
+            return Err(WHY_HELD.to_string());
+        }
+        say.detail(RETRY_LINE);
+        clock.pause(RETRY_PAUSE);
+        if since_first() > RETRY_WINDOW {
+            return Err(WHY_HELD.to_string());
+        }
+        attempts += 1;
+    }
+}
+
+/// Step 3 of From the ProxyCommand for a lease alias, made before the host registry is read: the
+/// project of `alias`'s `ready` lease, or `None` for the box, or the refusal of a lease that is
+/// not `ready` (#0229; pins P21 to P23 and P27).
+///
+/// `None` for no argument and for a host alias, which read nothing here. A file that cannot be
+/// read or is not valid gives `say` a line that names the file and the problem, which only
+/// `AGENTSPACE_DIAGNOSTIC` shows, then refuses an argument of lease alias form and sends any other
+/// to the box. The lease's state is decided at one reading of `clock`, taken once the read is made.
+pub fn lease_project(
+    alias: Option<&str>,
+    state_dir: &Path,
+    say: &dyn Say,
+    clock: &dyn LeaseClock,
+) -> Result<Option<String>, Failure> {
+    let Some(alias) = alias else {
+        return Ok(None);
+    };
+    if alias.starts_with(HOST_ALIAS_PREFIX) {
+        return Ok(None);
+    }
+    match read_leases(state_dir, say, clock) {
+        Ok(file) => decide(&file.leases, alias, clock.now()),
+        Err(why) => {
             say.detail(&format!(
                 "agentspace: The lease state file {} cannot be used: {why}.",
                 state_dir.join(LEASE_FILE).display()
             ));
-            None
+            if is_lease_alias_form(alias) {
+                Err(unreadable_refusal(alias))
+            } else {
+                Ok(None)
+            }
         }
     }
 }
 
 /// The host the connection reaches (operator.md, From the ProxyCommand), from the registry the
 /// caller has already read and validated. `alias` is the ProxyCommand's argument, `None` for no
-/// argument. The lease state file is read only for a lease alias.
+/// argument, and `lease` is what [`lease_project`] found for it before the registry was read.
 pub fn choose<'a>(
     alias: Option<&str>,
     hosts: &'a Hosts,
-    state_dir: &Path,
-    say: &dyn Say,
+    lease: Option<&str>,
 ) -> Result<&'a Host, Failure> {
     let Some(alias) = alias else {
         return the_box(hosts);
@@ -125,10 +387,10 @@ pub fn choose<'a>(
             could_not_reach("agentspace: The host alias names no host in the registry.".to_string())
         });
     }
-    let Some(project) = lease_project(state_dir, alias, say) else {
+    let Some(project) = lease else {
         return the_box(hosts);
     };
-    match target_for(hosts, &project) {
+    match target_for(hosts, project) {
         Target::Host(project) => hosts
             .hosts
             .iter()
@@ -317,35 +579,146 @@ mod tests {
         result.unwrap().project.clone()
     }
 
+    /// The fixture's `expires_at`, 2026-11-20T11:00:00Z, as an instant.
+    fn expiry() -> i64 {
+        parse_time("2026-11-20T11:00:00Z").unwrap()
+    }
+
+    /// A clock the test sets: the wall clock reads `now`, the monotonic one starts at 0 and moves
+    /// only by a pause, plus `per_pause_extra`, and every pause is recorded and calls `on_pause`
+    /// with its count. It never reads the real clock and never sleeps.
+    struct FakeClock {
+        now: i64,
+        elapsed: std::cell::Cell<Duration>,
+        per_pause_extra: Duration,
+        pauses: std::cell::RefCell<Vec<Duration>>,
+        nows: std::cell::Cell<u32>,
+        on_pause: std::cell::RefCell<Box<dyn FnMut(usize)>>,
+    }
+
+    impl FakeClock {
+        fn at(now: i64) -> FakeClock {
+            FakeClock {
+                now,
+                elapsed: std::cell::Cell::new(Duration::ZERO),
+                per_pause_extra: Duration::ZERO,
+                pauses: std::cell::RefCell::new(Vec::new()),
+                nows: std::cell::Cell::new(0),
+                on_pause: std::cell::RefCell::new(Box::new(|_| {})),
+            }
+        }
+
+        /// Before the fixture's expiry.
+        fn before_expiry() -> FakeClock {
+            FakeClock::at(expiry() - 1800)
+        }
+
+        fn pauses(&self) -> Vec<Duration> {
+            self.pauses.borrow().clone()
+        }
+    }
+
+    impl LeaseClock for FakeClock {
+        fn now(&self) -> i64 {
+            self.nows.set(self.nows.get() + 1);
+            self.now
+        }
+        fn elapsed(&self) -> Duration {
+            self.elapsed.get()
+        }
+        fn pause(&self, duration: Duration) {
+            self.elapsed
+                .set(self.elapsed.get() + duration + self.per_pause_extra);
+            let count = {
+                let mut pauses = self.pauses.borrow_mut();
+                pauses.push(duration);
+                pauses.len()
+            };
+            (self.on_pause.borrow_mut())(count);
+        }
+    }
+
+    /// Step 3 whole, as the ProxyCommand runs it: the lease first, then the host.
+    fn pick<'a>(
+        alias: Option<&str>,
+        hosts: &'a Hosts,
+        dir: &Path,
+        say: &dyn Say,
+        clock: &dyn LeaseClock,
+    ) -> Result<&'a Host, Failure> {
+        let lease = lease_project(alias, dir, say, clock)?;
+        choose(alias, hosts, lease.as_deref())
+    }
+
+    /// A record of `project` whose built alias is `agentspace-<project>-<hex8>`, in `state`, with the
+    /// fields state.md gives that state: `ssh` only when `ready`.
+    fn record(project: &str, hex8: &str, state: &str) -> Record {
+        let mut r = lease(project, &format!("agentspace-{project}-{hex8}"));
+        r.id = format!("{hex8}-0000-4000-8000-000000000001");
+        r.state = state.to_string();
+        if state != "ready" {
+            r.ssh = None;
+        }
+        match state {
+            "released" => r.released_at = Some("2026-11-20T10:30:00Z".to_string()),
+            "pending" => r.expires_at = None,
+            "unsatisfiable" => {
+                r.expires_at = None;
+                r.reasons = Some(vec![agentspace_state::Reason {
+                    code: "no_capacity".to_string(),
+                    message: "No host can hold the lease.".to_string(),
+                }]);
+            }
+            _ => {}
+        }
+        r
+    }
+
+    /// The same record under another ID with the same first 8 characters, so that two records
+    /// share one built alias.
+    fn again(mut r: Record, n: u32) -> Record {
+        r.id = format!("{}-0000-4000-8000-{n:012x}", &r.id[..8]);
+        r
+    }
+
+    const LEASE_A: &str = "agentspace-agentspace-3a9c5e21";
+
     #[test]
     fn no_argument_is_the_box_and_reads_no_lease_file() {
         let dir = Dir::new("noarg");
         std::fs::write(dir.0.join(LEASE_FILE), b"not json").unwrap();
         let (printer, cap) = say(true);
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        let clock = FakeClock::before_expiry();
         assert_eq!(
-            project_of(choose(None, &hosts, &dir.0, &printer)),
+            project_of(pick(None, &hosts, &dir.0, &printer, &clock)),
             "swimcoach"
         );
         assert_eq!(cap.text(), "");
+        assert_eq!(clock.nows.get(), 0);
     }
 
     #[test]
     fn a_host_alias_names_its_host_whatever_its_state() {
         let dir = Dir::new("hostalias");
-        let (printer, _) = say(false);
+        // A lease state file that is not valid: a host alias never reads it.
+        std::fs::write(dir.0.join(LEASE_FILE), b"not json").unwrap();
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
         for state in [HostState::Creating, HostState::Ready, HostState::Failed] {
             let hosts = registry(&[host("agentspace", state)]);
             assert_eq!(
-                project_of(choose(
+                project_of(pick(
                     Some("agentspace-host.agentspace"),
                     &hosts,
                     &dir.0,
-                    &printer
+                    &printer,
+                    &clock
                 )),
                 "agentspace"
             );
         }
+        assert_eq!(cap.text(), "");
     }
 
     #[test]
@@ -353,7 +726,15 @@ mod tests {
         let dir = Dir::new("boxalias");
         let (printer, _) = say(false);
         let hosts = registry(&[]);
-        let chosen = choose(Some("agentspace-host.swimcoach"), &hosts, &dir.0, &printer).unwrap();
+        let clock = FakeClock::before_expiry();
+        let chosen = pick(
+            Some("agentspace-host.swimcoach"),
+            &hosts,
+            &dir.0,
+            &printer,
+            &clock,
+        )
+        .unwrap();
         assert!(is_box(chosen));
     }
 
@@ -362,6 +743,7 @@ mod tests {
         let dir = Dir::new("badalias");
         let (printer, _) = say(false);
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        let clock = FakeClock::before_expiry();
         for alias in [
             "agentspace-host.",
             "agentspace-host.Agentspace",
@@ -369,7 +751,7 @@ mod tests {
             "agentspace-host.-x",
             "agentspace-host.a.b",
         ] {
-            let failure = choose(Some(alias), &hosts, &dir.0, &printer).unwrap_err();
+            let failure = pick(Some(alias), &hosts, &dir.0, &printer, &clock).unwrap_err();
             assert_eq!(failure.caller, CallerFailure::CouldNotReach, "{alias}");
         }
     }
@@ -386,21 +768,25 @@ mod tests {
         );
         let (printer, _) = say(false);
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        // Before the fixture's expires_at, so both leases are `ready`.
+        let clock = FakeClock::before_expiry();
         assert_eq!(
-            project_of(choose(
+            project_of(pick(
                 Some("agentspace-agentspace-bbbbbbbb"),
                 &hosts,
                 &dir.0,
-                &printer
+                &printer,
+                &clock
             )),
             "agentspace"
         );
         assert_eq!(
-            project_of(choose(
+            project_of(pick(
                 Some("agentspace-swimcoach-aaaaaaaa"),
                 &hosts,
                 &dir.0,
-                &printer
+                &printer,
+                &clock
             )),
             "swimcoach"
         );
@@ -415,13 +801,14 @@ mod tests {
         );
         let (printer, _) = say(false);
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        let clock = FakeClock::before_expiry();
         for alias in [
             "AGENTSPACE-agentspace-bbbbbbbb",
             "agentspace-agentspace-bbbbbbb",
             "agentspace-agentspace-bbbbbbbb ",
         ] {
             assert_eq!(
-                project_of(choose(Some(alias), &hosts, &dir.0, &printer)),
+                project_of(pick(Some(alias), &hosts, &dir.0, &printer, &clock)),
                 "swimcoach",
                 "{alias}"
             );
@@ -433,13 +820,15 @@ mod tests {
         let dir = Dir::new("norecord");
         let (printer, cap) = say(true);
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        let clock = FakeClock::before_expiry();
         // No file.
         assert_eq!(
-            project_of(choose(
+            project_of(pick(
                 Some("agentspace-x-cccccccc"),
                 &hosts,
                 &dir.0,
-                &printer
+                &printer,
+                &clock
             )),
             "swimcoach"
         );
@@ -449,15 +838,17 @@ mod tests {
             vec![lease("agentspace", "agentspace-agentspace-bbbbbbbb")],
         );
         assert_eq!(
-            project_of(choose(
+            project_of(pick(
                 Some("agentspace-x-cccccccc"),
                 &hosts,
                 &dir.0,
-                &printer
+                &printer,
+                &clock
             )),
             "swimcoach"
         );
         assert_eq!(cap.text(), "");
+        assert!(clock.pauses().is_empty());
     }
 
     #[test]
@@ -471,14 +862,17 @@ mod tests {
             ],
         );
         let (printer, _) = say(false);
+        // Before the fixture's expires_at, so both leases are `ready`.
+        let clock = FakeClock::before_expiry();
         for state in [HostState::Creating, HostState::Failed] {
             let hosts = registry(&[host("agentspace", state)]);
             assert_eq!(
-                project_of(choose(
+                project_of(pick(
                     Some("agentspace-agentspace-bbbbbbbb"),
                     &hosts,
                     &dir.0,
-                    &printer
+                    &printer,
+                    &clock
                 )),
                 "swimcoach"
             );
@@ -486,40 +880,35 @@ mod tests {
         // A project with no record at all.
         let hosts = registry(&[]);
         assert_eq!(
-            project_of(choose(
+            project_of(pick(
                 Some("agentspace-other-dddddddd"),
                 &hosts,
                 &dir.0,
-                &printer
+                &printer,
+                &clock
             )),
             "swimcoach"
         );
     }
+
+    /// An argument that is not of lease alias form, with 7 hex digits.
+    const NOT_LEASE_FORM: &str = "agentspace-x-ccccccc";
 
     #[test]
     fn a_lease_file_that_is_not_valid_is_the_box_and_diagnostic_names_it() {
         let dir = Dir::new("invalid");
         std::fs::write(dir.0.join(LEASE_FILE), b"{\"version\":1}").unwrap();
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        let clock = FakeClock::before_expiry();
         let (printer, cap) = say(false);
         assert_eq!(
-            project_of(choose(
-                Some("agentspace-x-cccccccc"),
-                &hosts,
-                &dir.0,
-                &printer
-            )),
+            project_of(pick(Some(NOT_LEASE_FORM), &hosts, &dir.0, &printer, &clock)),
             "swimcoach"
         );
         assert_eq!(cap.text(), "");
         let (printer, cap) = say(true);
         assert_eq!(
-            project_of(choose(
-                Some("agentspace-x-cccccccc"),
-                &hosts,
-                &dir.0,
-                &printer
-            )),
+            project_of(pick(Some(NOT_LEASE_FORM), &hosts, &dir.0, &printer, &clock)),
             "swimcoach"
         );
         let text = cap.text();
@@ -529,6 +918,39 @@ mod tests {
         );
         assert!(text.contains(LEASE_FILE), "{text}");
         assert_eq!(text.lines().count(), 1);
+        // Not valid is not tried again.
+        assert!(clock.pauses().is_empty());
+    }
+
+    #[test]
+    fn a_lease_file_that_is_not_valid_refuses_a_lease_form_argument() {
+        let dir = Dir::new("invalidform");
+        std::fs::write(dir.0.join(LEASE_FILE), b"{\"version\":1}").unwrap();
+        let clock = FakeClock::before_expiry();
+        for diagnostic in [false, true] {
+            let (printer, cap) = say(diagnostic);
+            let failure =
+                lease_project(Some("agentspace-x-cccccccc"), &dir.0, &printer, &clock).unwrap_err();
+            assert_eq!(
+                failure,
+                refusal(
+                    "agentspace: The lease records could not be read; no connection was opened for agentspace-x-cccccccc. Run 'agentspace lease list' to see the error."
+                        .to_string()
+                )
+            );
+            // The line naming the file comes from the lookup, before the refusal is printed.
+            let text = cap.text();
+            if diagnostic {
+                assert!(
+                    text.starts_with("agentspace: The lease state file "),
+                    "{text}"
+                );
+                assert_eq!(text.lines().count(), 1);
+            } else {
+                assert_eq!(text, "");
+            }
+        }
+        assert!(clock.pauses().is_empty());
     }
 
     #[test]
@@ -537,15 +959,432 @@ mod tests {
         std::fs::create_dir_all(dir.0.join(LEASE_FILE)).unwrap();
         let hosts = registry(&[host("agentspace", HostState::Ready)]);
         let (printer, _) = say(false);
+        let clock = FakeClock::before_expiry();
         assert_eq!(
-            project_of(choose(
-                Some("agentspace-x-cccccccc"),
-                &hosts,
-                &dir.0,
-                &printer
-            )),
+            project_of(pick(Some(NOT_LEASE_FORM), &hosts, &dir.0, &printer, &clock)),
             "swimcoach"
         );
+        assert!(clock.pauses().is_empty());
+    }
+
+    #[test]
+    fn a_folder_at_the_lease_file_refuses_a_lease_form_argument() {
+        let dir = Dir::new("folderform");
+        std::fs::create_dir_all(dir.0.join(LEASE_FILE)).unwrap();
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        let failure =
+            lease_project(Some("agentspace-x-cccccccc"), &dir.0, &printer, &clock).unwrap_err();
+        assert_eq!(failure, unreadable_refusal("agentspace-x-cccccccc"));
+        assert!(
+            cap.text()
+                .contains("a folder is where the state file belongs")
+        );
+        assert!(clock.pauses().is_empty());
+    }
+
+    #[test]
+    fn lease_alias_form_is_the_contracts_pattern() {
+        // A project of 32 characters, the longest, and one of 33.
+        let longest = format!("agentspace-a{}b-12345678", "-".repeat(30));
+        let too_long = format!("agentspace-a{}b-12345678", "-".repeat(31));
+        for yes in [
+            "agentspace-swimcoach-3a9c5e21",
+            "agentspace-x-cccccccc",
+            "agentspace-a-b-00000000",
+            "agentspace-0-ffffffff",
+            longest.as_str(),
+        ] {
+            assert!(is_lease_alias_form(yes), "{yes}");
+        }
+        for no in [
+            "agentspace",
+            "agentspace-swimcoach-3A9C5E21",
+            "agentspace-swimcoach-3a9c5e2",
+            "agentspace-swimcoach-3a9c5e21x",
+            "agentspace--3a9c5e21",
+            "agentspace-Swim-3a9c5e21",
+            "agentspace--x-3a9c5e21",
+            "agentspace-x--3a9c5e21",
+            "agentspace-x_y-3a9c5e21",
+            "Agentspace-x-3a9c5e21",
+            "agentspace-x-3a9c5e2g",
+            "agentspace-x 3a9c5e21",
+            too_long.as_str(),
+            "agentspace-x-3a9c5e21\n",
+            "agentspace-é-3a9c5e21",
+            "conformance-proxy-alias",
+            "",
+        ] {
+            assert!(!is_lease_alias_form(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn each_state_that_is_not_ready_is_refused_with_its_line_and_no_detail() {
+        let dir = Dir::new("states");
+        write_leases(
+            &dir.0,
+            vec![
+                record("agentspace", "11111111", "released"),
+                record("agentspace", "22222222", "unsatisfiable"),
+                record("agentspace", "33333333", "pending"),
+                record("agentspace", "44444444", "ready"),
+            ],
+        );
+        let cases = [
+            (
+                "agentspace-agentspace-11111111",
+                "has been released; no connection was opened. Create a new lease.",
+            ),
+            (
+                "agentspace-agentspace-22222222",
+                "is unsatisfiable; no connection was opened. Create a new lease.",
+            ),
+            (
+                "agentspace-agentspace-33333333",
+                "is pending, not yet ready; no connection was opened. Connect once 'agentspace lease get' answers ready.",
+            ),
+            (
+                "agentspace-agentspace-44444444",
+                "has expired; no connection was opened. Create a new lease.",
+            ),
+        ];
+        // At the fixture's expires_at, so the stored `ready` lease is `expired`.
+        let clock = FakeClock::at(expiry());
+        for (alias, rest) in cases {
+            let (printer, cap) = say(true);
+            let failure = lease_project(Some(alias), &dir.0, &printer, &clock).unwrap_err();
+            assert_eq!(
+                failure,
+                refusal(format!("agentspace: The lease for {alias} {rest}")),
+                "{alias}"
+            );
+            assert_eq!(failure.caller, CallerFailure::Same);
+            // A record was read: the diagnostic adds no line.
+            assert_eq!(cap.text(), "", "{alias}");
+        }
+        // The clock is read once for each lookup.
+        assert_eq!(clock.nows.get(), 4);
+    }
+
+    #[test]
+    fn a_stored_ready_lease_expires_at_its_expires_at_to_the_second() {
+        let r = record("agentspace", "44444444", "ready");
+        assert_eq!(state_at(&r, expiry() - 1), LeaseState::Ready);
+        assert_eq!(state_at(&r, expiry()), LeaseState::Expired);
+        assert_eq!(state_at(&r, expiry() + 1), LeaseState::Expired);
+        let alias = "agentspace-agentspace-44444444";
+        assert_eq!(
+            decide(std::slice::from_ref(&r), alias, expiry() - 1),
+            Ok(Some("agentspace".to_string()))
+        );
+        assert_eq!(
+            decide(std::slice::from_ref(&r), alias, expiry()),
+            Err(not_ready_refusal(alias, LeaseState::Expired))
+        );
+        // Found by its `ssh.host_alias` too, and expired the same way.
+        let by_ssh = lease("agentspace", "agentspace-agentspace-bbbbbbbb");
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&by_ssh),
+                "agentspace-agentspace-bbbbbbbb",
+                expiry()
+            ),
+            Err(not_ready_refusal(
+                "agentspace-agentspace-bbbbbbbb",
+                LeaseState::Expired
+            ))
+        );
+    }
+
+    #[test]
+    fn a_record_is_the_aliass_by_its_built_alias_or_a_ready_records_ssh_alias() {
+        let now = expiry() - 1;
+        // Built from `project` and `id`, though `ssh.host_alias` says otherwise.
+        let mut built = record("agentspace", "55555555", "ready");
+        built.ssh.as_mut().unwrap().host_alias = "elsewhere".to_string();
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&built),
+                "agentspace-agentspace-55555555",
+                now
+            ),
+            Ok(Some("agentspace".to_string()))
+        );
+        // A stored `ready` record by its `ssh.host_alias`.
+        assert_eq!(
+            decide(std::slice::from_ref(&built), "elsewhere", now),
+            Ok(Some("agentspace".to_string()))
+        );
+        // A record that is not stored `ready` is never found by an `ssh.host_alias`.
+        let mut pending = record("agentspace", "66666666", "pending");
+        pending.ssh = Some(agentspace_state::Ssh {
+            host_alias: "elsewhere".to_string(),
+            user: "ubuntu".to_string(),
+        });
+        assert_eq!(
+            decide(std::slice::from_ref(&pending), "elsewhere", now),
+            Ok(None)
+        );
+        // Case-sensitive, and on the first 8 characters of the ID only.
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&built),
+                "agentspace-Agentspace-55555555",
+                now
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&built),
+                "agentspace-agentspace-55555555-0000",
+                now
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn of_two_records_the_first_ready_connects_else_the_last_is_named() {
+        let alias = "agentspace-agentspace-77777777";
+        let now = expiry() - 1;
+        let released = record("agentspace", "77777777", "released");
+        let ready_a = again(record("agentspace", "77777777", "ready"), 2);
+        // Two `ready` with different projects: the first in the file's order. The built alias
+        // holds the project, so the second, of another project, is found by its `ssh.host_alias`,
+        // which is the alias.
+        let mut ready_b = again(record("agentspace", "77777777", "ready"), 3);
+        ready_b.project = "other".to_string();
+        assert_eq!(ready_b.ssh.as_ref().unwrap().host_alias, alias);
+        assert_eq!(
+            decide(
+                &[released.clone(), ready_a.clone(), ready_b.clone()],
+                alias,
+                now
+            ),
+            Ok(Some("agentspace".to_string()))
+        );
+        assert_eq!(
+            decide(&[ready_b.clone(), ready_a.clone()], alias, now),
+            Ok(Some("other".to_string()))
+        );
+        // None `ready`: the last one's state names the refusal.
+        let pending = again(record("agentspace", "77777777", "pending"), 4);
+        assert_eq!(
+            decide(&[released.clone(), pending.clone()], alias, now),
+            Err(not_ready_refusal(alias, LeaseState::Pending))
+        );
+        assert_eq!(
+            decide(&[pending.clone(), released.clone()], alias, now),
+            Err(not_ready_refusal(alias, LeaseState::Released))
+        );
+        // A stored `ready` past its expires_at is skipped, and named `expired` when it is the last.
+        let late = expiry();
+        assert_eq!(
+            decide(&[ready_a.clone(), released.clone()], alias, late),
+            Err(not_ready_refusal(alias, LeaseState::Released))
+        );
+        assert_eq!(
+            decide(&[released.clone(), ready_a.clone()], alias, late),
+            Err(not_ready_refusal(alias, LeaseState::Expired))
+        );
+        // An expired one before a `ready` one: the `ready` one connects.
+        let mut fresh = ready_b.clone();
+        fresh.project = "agentspace".to_string();
+        fresh.expires_at = Some("2026-11-20T12:00:00Z".to_string());
+        assert_eq!(
+            decide(&[ready_a, fresh], alias, late),
+            Ok(Some("agentspace".to_string()))
+        );
+    }
+
+    #[test]
+    fn two_records_are_judged_at_one_clock_reading() {
+        let dir = Dir::new("onereading");
+        let alias = "agentspace-agentspace-88888888";
+        write_leases(
+            &dir.0,
+            vec![
+                record("agentspace", "88888888", "released"),
+                again(record("agentspace", "88888888", "ready"), 2),
+            ],
+        );
+        let (printer, _) = say(false);
+        let clock = FakeClock::before_expiry();
+        assert_eq!(
+            lease_project(Some(alias), &dir.0, &printer, &clock),
+            Ok(Some("agentspace".to_string()))
+        );
+        assert_eq!(clock.nows.get(), 1);
+    }
+
+    #[test]
+    fn a_ready_lease_found_by_its_built_alias_reaches_its_host() {
+        let dir = Dir::new("readyhost");
+        // Its `ssh.host_alias` is another name, so only the built alias finds it.
+        let mut ready = record("agentspace", "3a9c5e21", "ready");
+        ready.ssh.as_mut().unwrap().host_alias = "agentspace-other-00000000".to_string();
+        write_leases(&dir.0, vec![ready]);
+        let hosts = registry(&[host("agentspace", HostState::Ready)]);
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        assert_eq!(
+            project_of(pick(Some(LEASE_A), &hosts, &dir.0, &printer, &clock)),
+            "agentspace"
+        );
+        assert_eq!(cap.text(), "");
+    }
+
+    /// Holds `path` open sharing nothing, so that every other open is refused on a sharing
+    /// violation.
+    #[cfg(windows)]
+    fn hold(path: &Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+            .unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_held_throughout_is_tried_3_times_400_ms_apart_then_refused() {
+        let dir = Dir::new("heldall");
+        write_leases(&dir.0, vec![record("agentspace", "3a9c5e21", "ready")]);
+        let held = hold(&dir.0.join(LEASE_FILE));
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        drop(held);
+        assert_eq!(failure, unreadable_refusal(LEASE_A));
+        assert_eq!(clock.pauses(), vec![RETRY_PAUSE, RETRY_PAUSE]);
+        assert_eq!(RETRY_PAUSE, Duration::from_millis(400));
+        let text = cap.text();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert_eq!(lines[0], RETRY_LINE);
+        assert_eq!(lines[1], RETRY_LINE);
+        assert_eq!(
+            RETRY_LINE,
+            "agentspace: The lease records were held by another program; trying again."
+        );
+        assert!(
+            lines[2].starts_with("agentspace: The lease state file "),
+            "{text}"
+        );
+        // The clock's one reading is never taken for a file that was not read.
+        assert_eq!(clock.nows.get(), 0);
+
+        // Without the diagnostic, the same refusal and no line.
+        let held = hold(&dir.0.join(LEASE_FILE));
+        let (printer, cap) = say(false);
+        let clock = FakeClock::before_expiry();
+        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        drop(held);
+        assert_eq!(failure, unreadable_refusal(LEASE_A));
+        assert_eq!(clock.pauses().len(), 2);
+        assert_eq!(cap.text(), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_held_throughout_sends_an_argument_not_of_lease_form_to_the_box() {
+        let dir = Dir::new("heldbox");
+        write_leases(&dir.0, vec![record("agentspace", "3a9c5e21", "ready")]);
+        let held = hold(&dir.0.join(LEASE_FILE));
+        let (printer, _) = say(false);
+        let clock = FakeClock::before_expiry();
+        let found = lease_project(Some(NOT_LEASE_FORM), &dir.0, &printer, &clock);
+        drop(held);
+        assert_eq!(found, Ok(None));
+        assert_eq!(clock.pauses().len(), 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_freed_during_a_retry_reads_the_file_as_a_first_attempt_would() {
+        let dir = Dir::new("heldonce");
+        write_leases(&dir.0, vec![record("agentspace", "3a9c5e21", "released")]);
+        let held = std::cell::RefCell::new(Some(hold(&dir.0.join(LEASE_FILE))));
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        // The first pause lets the file go.
+        let held = std::rc::Rc::new(held);
+        let in_pause = std::rc::Rc::clone(&held);
+        *clock.on_pause.borrow_mut() = Box::new(move |_| {
+            in_pause.borrow_mut().take();
+        });
+        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        assert_eq!(failure, not_ready_refusal(LEASE_A, LeaseState::Released));
+        assert_eq!(clock.pauses(), vec![RETRY_PAUSE]);
+        assert_eq!(cap.text(), format!("{RETRY_LINE}\n"));
+        assert_eq!(clock.nows.get(), 1);
+        assert!(held.borrow().is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_freed_onto_a_file_that_is_not_valid_ends_the_retries() {
+        let dir = Dir::new("heldinvalid");
+        std::fs::write(dir.0.join(LEASE_FILE), b"{\"version\":1}").unwrap();
+        let held = std::rc::Rc::new(std::cell::RefCell::new(Some(hold(&dir.0.join(LEASE_FILE)))));
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        let in_pause = std::rc::Rc::clone(&held);
+        *clock.on_pause.borrow_mut() = Box::new(move |_| {
+            in_pause.borrow_mut().take();
+        });
+        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        assert_eq!(failure, unreadable_refusal(LEASE_A));
+        assert_eq!(clock.pauses().len(), 1);
+        let text = cap.text();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(lines[0], RETRY_LINE);
+        assert!(lines[1].starts_with("agentspace: The lease state file "));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn no_attempt_starts_more_than_1_second_after_the_first() {
+        let dir = Dir::new("heldslow");
+        write_leases(&dir.0, vec![record("agentspace", "3a9c5e21", "ready")]);
+        let held = hold(&dir.0.join(LEASE_FILE));
+        let (printer, cap) = say(true);
+        // Each pause runs 300 milliseconds long: the second attempt starts at 700, and a third
+        // would start at 1400, so it is never made.
+        let mut clock = FakeClock::before_expiry();
+        clock.per_pause_extra = Duration::from_millis(300);
+        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        drop(held);
+        assert_eq!(failure, unreadable_refusal(LEASE_A));
+        assert_eq!(clock.pauses().len(), 1);
+        assert_eq!(cap.text().lines().filter(|l| *l == RETRY_LINE).count(), 1);
+        // A pause that overruns the second itself ends the retries.
+        let held = hold(&dir.0.join(LEASE_FILE));
+        let (printer, _) = say(false);
+        let mut clock = FakeClock::before_expiry();
+        clock.per_pause_extra = Duration::from_millis(700);
+        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        drop(held);
+        assert_eq!(failure, unreadable_refusal(LEASE_A));
+        assert_eq!(clock.pauses().len(), 1);
+    }
+
+    #[test]
+    fn a_missing_file_is_not_tried_again_and_is_the_box() {
+        let dir = Dir::new("missing");
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        assert_eq!(
+            lease_project(Some(LEASE_A), &dir.0, &printer, &clock),
+            Ok(None)
+        );
+        assert!(clock.pauses().is_empty());
+        assert_eq!(cap.text(), "");
     }
 
     #[test]
