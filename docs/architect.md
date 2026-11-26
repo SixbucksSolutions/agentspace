@@ -165,6 +165,10 @@ first.**
 16. **A ruling about which files load a helper comes from `grep -l`, never from a file's name**
     (v0.11-T04): the architect named `test-unmet-host-deploy-size.ps1` as a loader of
     `host-provision-common.ps1`, and it is not one.
+17. **The architect reads another session's worktree by path or with `git -C`, never by changing its
+    own folder** (v0.11-T05). A `Set-Location` into S02's worktree, made for a read, moved the
+    architect's session into that worktree until it moved back, one command later; a session that
+    stays there can hold the folder and block its removal at the turn's close.
 
 **While a question to Terry is open, the architect's turn is held, and the dev leads' messages
 queue** (v0.06-T05: an 80-minute wait). When his answer comes, read each linked session's state
@@ -403,6 +407,37 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **A dev lead arms a heartbeat under Monitor at its start**, about every 9 minutes, so its status
   lines keep the 10-minute rule while it writes long taskings: T04's went quiet from 11:28pm to
   12:12am, and none slipped after the heartbeat.
+
+**Learned in v0.11-T05, 2026-11-26, the install turn with a build story beside it.**
+- **A runner MUST NOT start a gate call with `Start-Process`, hidden or not.** It runs
+  `scripts\heavy-gate.ps1` in the foreground of its shell tool, or with that tool's own background
+  option. A detached start with a console of its own opened three blank Windows Terminal windows on
+  Terry's desktop at 8:38am, one per queued run, and closing one would have killed its run;
+  `-NoNewWindow` opened none, and is still the same slip. `-WindowStyle Hidden` is no way out: the
+  `pwsh` that runs the gate starts at error mode 0, which only the wrapper's children leave
+  (v0.10-T02, above), so the slip list's "never `Start-Process -WindowStyle Hidden`" stands beside
+  this rule.
+- **A runner's own driver script ends with an explicit `exit 0` after its failure check**, so the
+  wrapper's exit code is the verdict. The empty-program run's driver ended on its last child's
+  `$LASTEXITCODE` of 1, so the wrapper recorded exit 1 for a run whose own count was 46 of 46.
+- **A mask that reads the environment MUST build its rules when it is loaded, not on first use**
+  (F1). The keeper's checks move their own process's `USERPROFILE` and `HOME` into a throwaway
+  home, and a mask built after that hid the throwaway home and left the real profile's 8.3 form. A
+  planted case that moves the environment before the first use shows it, and fails on the lazy form.
+- **Suites on a head that may still move run from a `git archive <sha>`, and a later fix reruns only
+  the files that load what its diff changed**, found with `grep -l` over every folder. A run from the
+  worktree itself was still going when the dev lead edited a file it loaded, and that run could
+  stand only because a later one superseded it.
+- **A count of failures from masked output is a case-sensitive search for `^FAIL`**: a case-blind
+  one also matches a runner's `Failed: none` summary.
+- **A worktree-isolated session reaches a second worktree only by `ExitWorktree` (keep), then `git
+  worktree add` from the main checkout, then `EnterWorktree`.** No path from inside the first one
+  works.
+- **A ruling that changes during a turn goes to a fresh subagent**, never as a message to a running
+  one: T05's dev lead added a drafter when P1 and P6 changed at 7:34am, and no subagent waited.
+- **Two stories in one turn fit its budget when they share no file**: the install and live check ran
+  7:23am to 8:10am, the build story beside it from 7:27am to its PR at 10:30am, inside 4.5 hours, in
+  15 subagent launches with a peak of 4 and none blocked.
 
 ## Live checks on Terry's laptop and the box
 
