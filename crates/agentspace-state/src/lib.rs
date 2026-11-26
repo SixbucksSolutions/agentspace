@@ -128,9 +128,10 @@ fn integer(v: &Value) -> Option<i64> {
     if let Some(n) = v.as_i64() {
         return Some(n);
     }
-    // A schema's "integer" also accepts 3600.0.
+    // A schema's "integer" also accepts 3600.0, up to plan_source's largest, 9007199254740991.0,
+    // which an f64 holds exactly.
     let f = v.as_f64()?;
-    (f.fract() == 0.0 && f.abs() < 9.0e15).then_some(f as i64)
+    (f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_991.0).then_some(f as i64)
 }
 
 /// A stored `sized_for` (state.md, What a plan lease adds). `plan` is absent when the plan had no

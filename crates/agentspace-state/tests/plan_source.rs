@@ -358,6 +358,26 @@ fn revision_bounds() {
     assert!(!r(Value::Null), "null");
 }
 
+/// The schema's "integer" accepts a number written with a zero fraction, up to the largest bound,
+/// so a read accepts it too, and the writer puts it back as digits alone.
+#[test]
+fn a_whole_number_written_with_a_zero_fraction_reads_as_the_schema_allows() {
+    let text = String::from_utf8(bytes_of(vec![base()])).unwrap();
+    for (from, to, want) in [
+        ("\"ticket\":233", "\"ticket\":233.0", 233),
+        ("\"ticket\":233", "\"ticket\":9007199254740990.0", MAX - 1),
+        ("\"ticket\":233", "\"ticket\":9007199254740991.0", MAX),
+    ] {
+        let t = text.replace(from, to);
+        assert_ne!(t, text, "{to}");
+        let doc: Value = serde_json::from_str(&t).unwrap();
+        assert_eq!(validate_schema("leases.state", &doc), Some(true), "{to}");
+        let f = parse(t.as_bytes()).unwrap_or_else(|_| panic!("{to}"));
+        assert_eq!(source_of(&f.leases[0]), Some((BOARD.to_string(), want, 7)));
+        assert!(text_of(&f).contains(&format!("\"ticket\":{want},")), "{to}");
+    }
+}
+
 #[test]
 fn a_number_beyond_u64_is_refused_and_does_not_panic() {
     let text = String::from_utf8(bytes_of(vec![base()])).unwrap();
