@@ -1078,6 +1078,39 @@ fn a_client_below_an_exited_program_held_by_a_client_whose_tree_holds_a_spared_o
 }
 
 #[test]
+fn a_client_that_cannot_be_opened_below_an_exited_program_held_by_a_sparing_tree_is_not_counted() {
+    // As above, but 7200 cannot be opened to end it: it is still never a top, so it is not
+    // counted as a client that could not be ended. Only 7000 is.
+    let fake = Fake::new(vec![
+        (7000, client(4, 50)),
+        (
+            8000,
+            Proc {
+                open_error: Some(ACCESS_DENIED),
+                ..proc(7000, 100)
+            },
+        ),
+        (7100, gone(7000, 60)),
+        (
+            7200,
+            Proc {
+                terminate_open_error: Some(ACCESS_DENIED),
+                ..client(7100, 70)
+            },
+        ),
+        (200, client(4, 2000)),
+    ]);
+    assert_eq!(
+        fake.run(),
+        Err(EndError::NotAllEnded {
+            ended: 1,
+            not_ended: vec![id(7000, 50)],
+        })
+    );
+    assert_eq!(fake.terminated(), vec![200]);
+}
+
+#[test]
 fn a_client_below_a_running_program_of_another_client_is_not_a_top() {
     // 110 runs, so 120 is in 100's tree: ended there, once, and not counted on its own.
     let fake = Fake::new(vec![

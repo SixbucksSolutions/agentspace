@@ -1192,9 +1192,11 @@ fn a_client_below_an_exited_program_that_a_spared_ancestor_holds_is_not_ended() 
         );
         sleep(Duration::from_millis(25));
     };
-    assert!(
-        result.starts_with("ended 0 "),
-        "The call ended a client of a spared ancestor's tree"
+    // The spared ancestor is counted once as a client that could not be ended, and the client
+    // below the exited program is neither ended nor counted.
+    assert_eq!(
+        result, "ended 0 not_ended 1",
+        "The call's result for a spared ancestor's tree"
     );
     assert!(lab.root_alive(top), "The spared ancestor was ended");
     lab.assert_held_alive(top, &[lower], "The client below the exited program");
