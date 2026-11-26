@@ -1,0 +1,1 @@
+{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"agentspace","platform":"linux/amd64","stack":"agentspace-host-agentspace","state":"creating"}]}

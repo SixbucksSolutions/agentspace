@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/board-holder.state.schema.json",
   "title": "Holder record (laptop, internal)",
-  "description": "The keeper's record of the holder it started, <state folder>\\board-holder.json (D30). Internal: it is not part of the lease contract, and only the keeper reads it. Absent when there is no holder. The PID and the start time together are the holder's identity. Strict, as written; a reader is more tolerant (docs/state.md, \"The holder record\"). Anchored patterns end with $(?!\\n).",
+  "description": "The keeper's record of the holder it started, <state folder>\\board-holder.json for the box, and a file of the same form for each other host (D30, D50, D55). Internal: it is not part of the lease contract, and only the keeper reads it. Absent when there is no holder. The PID and the start time together are the holder's identity. From v0.12 a host is keyed by its project and its platform (D91), and the record's file name carries both, board-holder.<project>.<os>-<arch>.json for a host of a platform other than linux/arm64, as a host's folder's name does, so the record holds no platform member (architect's to confirm, pin P5; docs/state.md, \"Another host's holder\"). Strict, as written; a reader is more tolerant (docs/state.md, \"The holder record\"). Anchored patterns end with $(?!\\n).",
   "type": "object",
   "additionalProperties": false,
   "required": ["pid", "process_started_at", "lease_id", "alias"],

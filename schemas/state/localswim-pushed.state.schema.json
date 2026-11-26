@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SixbucksSolutions/agentspace/schemas/state/v0/localswim-pushed.state.schema.json",
   "title": "Push stamp (laptop, internal)",
-  "description": "%USERPROFILE%\\.agentspace\\localswim-pushed.json (D9, D32, D40): the stamp of the last token push the box confirmed. Internal: written by up and sync after the box confirms a push, read by up to decide whether a push is due. A file that does not match this schema makes the next push due. It holds a hash that covers the token, never the token. Anchored patterns end with $(?!\\n). See docs/state.md, \"The push stamp\", and docs/operator.md, \"The stamp\".",
+  "description": "%USERPROFILE%\\.agentspace\\localswim-pushed.json (D9, D32, D40): the stamp of the last token push the box confirmed. Internal: written by up and sync after the box confirms a push, read by up to decide whether a push is due. A file that does not match this schema makes the next push due. It holds a hash that covers the token, never the token. Every other host's stamp has this same form in that host's folder (D50, D55): hosts\\<project>\\localswim-pushed.json on linux/arm64, and from v0.12 hosts\\<project>.<os>-<arch>\\localswim-pushed.json on any other platform (D91). The folder's name carries the platform, so a stamp holds no platform member (architect's to confirm, pin P5). Anchored patterns end with $(?!\\n). See docs/state.md, \"The push stamp\", and docs/operator.md, \"The stamp\".",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "stamp"],
