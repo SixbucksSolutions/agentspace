@@ -2,7 +2,7 @@
   "id": "07c9ebf1-8b0d-4a2c-ae46-7d9b1a3c5e87",
   "project": "swimcoach",
   "state": "unsatisfiable",
-  "platform": "windows/amd64",
+  "platform": "windows/arm64",
   "profile": "agent-linux",
   "size": "m",
   "sized_for": {
@@ -15,7 +15,7 @@
   "reasons": [
     {
       "code": "unsupported_platform",
-      "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."
+      "message": "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64."
     }
   ]
 }

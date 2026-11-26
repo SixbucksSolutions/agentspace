@@ -71,8 +71,9 @@ of the change.
 ## Changes in v0.12, within v2
 
 **agentspace's v0.12 release (#0051) keeps contract v2** (D93). It supports two more platforms and
-a second profile, which the contract answered `unsatisfiable` before, and no schema changes:
-`schemas/` stays v2's, with no copy under `schemas/v2/`. Why none of it is a new version is in
+a second profile, which the contract answered `unsatisfiable` before, and no schema's validation,
+version or `$id` changes: `schemas/` stays v2's, with no copy under `schemas/v2/`, and the one
+schema text that changes is the create request's `profile` description. Why none of it is a new version is in
 [Versioning](#versioning). The contract's version and agentspace's release are two numbers, kept
 apart (D26).
 
@@ -85,19 +86,24 @@ apart (D26).
 | `agent-linux`'s promise is the same on `linux/arm64` and `linux/amd64` (D94) | [agent-linux](#agent-linux) | No |
 | A lease that names no profile gets its platform's default profile: `agent-linux` on either Linux platform, `agent-windows` on `windows/amd64` (D93). A `--platform windows/amd64` with no `--profile` was `unsatisfiable` with `agent-linux`, and is now met with `agent-windows` | [Profile](#profile) | No: the default is part of supporting the platform ([Versioning](#versioning)) |
 | A platform and profile that do not go together are `unsatisfiable` with `unsupported_profile` (D93) | [Profile](#profile) | No: a reason code v0 had |
+| On a platform agentspace does not support, `unsupported_profile` is listed beside `unsupported_platform` only for a profile no supported platform supports, so `windows/arm64` with `agent-windows` lists `unsupported_platform` alone (architect, 2026-11-26, for v0.12-T01, pin P2) | [Profile](#profile) | No: one reason fewer, of codes v0 had |
+| A stored lease record is never re-derived: a lease keeps the profile it printed (architect, 2026-11-26, for v0.12-T01, pin P25) | [Profile](#profile) | No: unchanged records |
 | The four sizes are supported on every supported platform (D93, D94) | [Size](#size) | No: supporting a size the contract answered `unsatisfiable` |
-| `ssh.user` is `agent` on a `windows/amd64` lease (D95) | [Fields](#fields) | No: the pattern has allowed it since v0 |
-| `unsupported_platform`'s and `unsupported_profile`'s messages list what is supported, and say `agentspace supports` where they said `v0 supports` (D93) | [Fields](#fields) | No: a message is text, and no caller parses one |
-| A new `no_capacity` message, for a lease whose platform the project list does not approve for its project (D91) | [Fields](#fields) | No: a message, for a reason code v0 had |
-| A project's compute is per platform: the rules on compute and its size read the project's leases on the lease's platform alone (D91) | [A host's life follows its leases](#a-hosts-life-follows-its-leases) | No: no output carries it |
-| `create`'s help: the `--platform` and `--profile` rows, and the line that begins `In v2 only` (D93) | [`create`](#agentspace-lease-create) | No: help is text, not a document |
+| `ssh.user` is `agent` on a `windows/amd64` lease, and `ubuntu` on both Linux platforms (D95; architect, 2026-11-26, for v0.12-T01, pins P18 and P19) | [Fields](#fields) | No: the pattern has allowed it since v0 |
+| `unsupported_platform`'s and `unsupported_profile`'s messages list what is supported, and say `agentspace supports` where they said `v0 supports` (D93; architect, 2026-11-26, for v0.12-T01, pin P2) | [Fields](#fields) | No: a message is text, and no caller parses one |
+| A new `no_capacity` message, for a lease of a project whose entry on the project list does not approve the lease's platform; a project with no entry keeps the old message on every platform (D91; architect, 2026-11-26, for v0.12-T01, pin P3) | [Fields](#fields) | No: a message, for a reason code v0 had |
+| A project's compute is per platform: the rules on compute and its size read the project's leases on the lease's platform alone, and "its host" is the project's host on that platform (D91; architect, 2026-11-26, for v0.12-T01, pin P23) | [A host's life follows its leases](#a-hosts-life-follows-its-leases), [Fields](#fields) | No: no output carries it |
+| `create`'s help: the `--platform` and `--profile` rows, and the line that begins `In v2 only` (D93; architect, 2026-11-26, for v0.12-T01, pin P24) | [`create`](#agentspace-lease-create) | No: help is text, not a document |
+| The create request schema's `profile` description says the platform's default profile, where it said `agent-linux` (architect, 2026-11-26, for v0.12-T01, pin P36) | [Schemas](#schemas) | No: a description validates nothing, and the schema's validation, version and `$id` are unchanged |
 | Two new samples, a `ready` `linux/amd64` lease and a `ready` `windows/amd64` lease (D93) | [Schemas](#schemas) | No: each validates against v2's lease schema |
+| The samples that showed an unsupported platform use `windows/arm64`, with the new messages, and a new request sample keeps the `x86_64` spelling (architect, 2026-11-26, for v0.12-T01, pin P20) | [Schemas](#schemas) | No: each still validates, or still fails, as before |
 
 - **Nothing else changes.** No command, flag, state, exit code, error code, reason code, output
-  member or `field` value is added or removed, and no schema changes. A lease whose normalized
-  platform is neither `linux/amd64` nor `windows/amd64` gets the state, profile and reason codes
-  that v0.11 gave it, and only its messages can differ: the two reworded ones, and the new
-  `no_capacity` one where the project list's entry for its project leaves its platform out.
+  member or `field` value is added or removed, and no schema's validation changes. A command line
+  that names none of `linux/amd64`, `windows/amd64` and `agent-windows` gets the state, profile and
+  reason codes that v0.11 gave it, and only its messages can differ: the two reworded ones, and
+  the new `no_capacity` one, which only a project-list entry with `platforms` can cause
+  ([Versioning](#versioning); architect, 2026-11-26, for v0.12-T01, pin P22).
 - **Every document v0.12 prints validates against v2's schemas as v0.11 left them**, and those of
   [Versioning](#versioning)'s command lines against v1's and v0's too (D87, D93).
 
@@ -697,9 +703,9 @@ than the time `create` took, and either MAY come first. For a lease that `create
 is still the issue time plus the TTL exactly.
 
 **`ssh.host_alias` is `agentspace-<project>-<first 8 hex digits of id>`**, for example
-`agentspace-swimcoach-3f2a9c1e`, on every platform: the platform is not in it (architect's to
-confirm, pin P7). A caller MUST treat it as an opaque name to pass to `ssh` or to any
-client that reads the OpenSSH client configuration, and MUST NOT build it from the ID itself.
+`agentspace-swimcoach-3f2a9c1e`, on every platform: the platform is not in it (architect,
+2026-11-26, for v0.12-T01, pin P7). A caller MUST treat it as an opaque name to pass to `ssh` or
+to any client that reads the OpenSSH client configuration, and MUST NOT build it from the ID itself.
 **Two kept leases MUST NOT share a host alias:** `create` MUST choose an ID whose alias no kept
 lease uses, in any state, and MUST draw a new ID, as many times as it takes, while the one drawn
 has an alias that a kept lease uses. A build MAY bound the draws at no fewer than 100, and MUST
@@ -709,12 +715,14 @@ never a reason to draw again ([docs/state.md](state.md#the-alias-file)).
 
 **`ssh.user` is the user the lease logs in as.** A lease on `linux/arm64` or `linux/amd64` logs in
 as `ubuntu` (D3), as every lease did in v0 and v1, and from agentspace's v0.12 release (#0051) a
-lease on `windows/amd64` logs in as `agent`, the Windows host's one local user (D95; architect's
-to confirm, pin P6). The table's rule for `ssh.user` has allowed `agent` since v0, so this changes
-no schema (D93). A caller MUST read it from the lease and MUST NOT assume it, because the platform
-decides it and later hosts MAY change it. A caller MUST accept any user that the table's rule for
-`ssh.user` allows. In v2 a lease's user also matches the narrower pattern of the lease state file,
-which is what binds a driver ([docs/state.md](state.md#the-lease-state-file)).
+lease on `windows/amd64` logs in as `agent`, the Windows host's one local user (D95; architect,
+2026-11-26, for v0.12-T01, pins P18 and P19). The table's rule for `ssh.user` has allowed `agent`
+since v0, so this changes no schema (D93), and neither this page's schema nor the lease state
+file's pattern changes for it. A caller MUST read it from the lease and MUST NOT assume it,
+because the platform decides it and later hosts MAY change it. A caller MUST accept any user that
+the table's rule for `ssh.user` allows. In v2 a lease's user also matches the narrower pattern of
+the lease state file, which is what binds a driver
+([docs/state.md](state.md#the-lease-state-file)).
 
 **`sized_for` says what a lease created with a plan was sized for (D75).** `create` sets it, and
 nothing changes it afterwards: `get`, `renew`, `release` and `list` print it as `create` did, in
@@ -777,14 +785,13 @@ alone were, and until agentspace's v0.09 release (#0049), size `m` alone was.
 these cases:
 - **From v0.07, for a project that has no host and is not on the list of projects that may have
   one made** (D54; [docs/driver.md](driver.md#where-it-places-a-lease)).
-- **From v0.12 (#0051), for a lease whose project has no host on the lease's platform, and whose
-  platform the project list does not approve for that project** (D91): its entry's platforms leave
-  the platform out, or the project has no entry and the platform is not `linux/arm64`. A
-  `linux/arm64` lease of a project with no entry is the case above, with its message unchanged. A
-  host that already exists on the lease's platform serves the lease whatever the list says, as
-  D54 has a project's existing host do (architect's to confirm, pin P3). Which platforms an entry
-  approves is [docs/driver.md](driver.md#where-it-places-a-lease)'s and
-  [docs/state.md](state.md)'s.
+- **From v0.12 (#0051), for a lease whose project has an entry on the project list that does not
+  approve the lease's platform, and no host on that platform** (D91; architect, 2026-11-26, for
+  v0.12-T01, pin P3). **A project with no entry is always the case above, on every platform**, with
+  its message unchanged byte for byte, whatever platform was asked for. A host that already exists
+  on the lease's platform serves the lease whatever the list says, as D54 has a project's existing
+  host do. Which platforms an entry approves is
+  [docs/driver.md](driver.md#where-it-places-a-lease)'s and [docs/state.md](state.md)'s.
 - **From v0.09 (#0049), for a project whose host is serving another of the project's `ready`
   leases, and is smaller than the size asked for** (D66). Changing the host's size would stop it
   under those leases, so the request is refused at once, rather than left to wait for them to end.
@@ -797,9 +804,10 @@ these cases:
   `ready` on that host** (D68; architect, 2026-11-23, for v0.09-T01, pin P1). The lease goes from
   `pending` to `unsatisfiable`, with `no_capacity` as its one reason, by the transition that
   [States](#states) already has.
-- **From v0.12, "its host" in the two v0.09 cases is the project's host on the lease's platform,
-  and "the project's leases" are those on that platform** (D91; architect's to confirm, pin P3). A
-  `ready` lease on another platform's host never makes a lease `no_capacity`.
+- **From v0.12, "its host" in every case above is the project's host on the lease's platform,
+  and "the project's leases" are those on that platform** (D91; architect, 2026-11-26, for
+  v0.12-T01, pin P23). A `ready` lease on another platform's host never makes a lease
+  `no_capacity`.
 
 How the driver decides each case is docs/driver.md's: place's in
 [Where it places a lease](driver.md#where-it-places-a-lease) and
@@ -819,22 +827,27 @@ reasons v0 had kept v0's wording, `v0 supports` included, until agentspace's v0.
 that a command line with no `--plan` printed what it printed under v0 (D76). **v0.12 rewords two of
 them, `unsupported_platform`'s and `unsupported_profile`'s**, which list what is supported and say
 `agentspace supports` where they said `v0 supports` (D93); **every other message below is
-unchanged**, `unsupported_size`'s `v0 supports` included (architect's to confirm, pin P2).
-agentspace's driver emits the `unsupported_size` message and the `no_capacity` message for a host
-serving smaller leases byte for byte as below, which is its own rule, not the contract's (D71;
-[docs/driver.md, What it supports](driver.md#what-it-supports); architect, 2026-11-23, for
-v0.09-T01, pin P8), and **from v0.12 it emits the two reworded messages and the new `no_capacity`
-message byte for byte too** (D93; architect's to confirm, pins P2 and P3):
+unchanged**, `unsupported_size`'s `v0 supports` included (architect, 2026-11-26, for v0.12-T01,
+pin P2). agentspace's driver emits the `unsupported_size` message and the `no_capacity` message
+for a host serving smaller leases byte for byte as below, which is its own rule, not the
+contract's (D71; [docs/driver.md, What it supports](driver.md#what-it-supports); architect,
+2026-11-23, for v0.09-T01, pin P8), and **from v0.12 it emits the two reworded messages and the new
+`no_capacity` message byte for byte too** (D93; architect, 2026-11-26, for v0.12-T01, pins P2 and
+P3). **The order of the reasons is unchanged in v0.12** (architect, 2026-11-26, for v0.12-T01, pin
+P26): a lease whose platform, profile and size are all unsupported lists `unsupported_platform`,
+`unsupported_profile` and `unsupported_size`, in that order, and its platform and profile messages
+quote the same normalized platform.
 - `Platform '<platform>' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.`
   (D93, D98; from v0.12, #0051, in place of v0's `Platform '<platform>' is not supported; v0 supports linux/arm64 only.`),
-  where `<platform>` is the normalized platform (architect's to confirm, pin P2).
-- `Profile '<profile>' is not supported on platform '<platform>'; agentspace supports agent-linux on linux/arm64 and linux/amd64, and agent-windows on windows/amd64, each with no version.`
+  where `<platform>` is the normalized platform (architect, 2026-11-26, for v0.12-T01, pin P2).
+- `Profile '<profile>' is not supported on platform '<platform>'; agentspace supports agent-linux on linux/arm64 and linux/amd64, and agent-windows on windows/amd64, each with no version only.`
   (D93, D97; from v0.12, #0051, in place of v0's `Profile '<profile>' is not supported; v0 supports agent-linux with no version only.`),
   where `<profile>` is the normalized profile and `<platform>` the normalized platform, whether or
-  not that platform is supported (architect's to confirm, pin P2).
+  not that platform is supported (architect, 2026-11-26, for v0.12-T01, pin P2).
 - `Size '<size>' is not supported; v0 supports sizes s, m, l and xl.`
   (D65, D71; from v0.09, #0049, in place of v0.08's `Size '<size>' is not supported; v0 supports size m only.`;
-  unchanged in v0.12, since D93 rewords only the two above; architect's to confirm, pin P2)
+  unchanged in v0.12, since D93 rewords only the two above; architect, 2026-11-26, for v0.12-T01,
+  pin P2)
 - `Plan's busiest turn '<turn>' has <n> agents at once; the largest size, xl, holds <m>.`
   (D75; from v0.10, #0050), where `<turn>` is `sized_for.turn`, written as the plan writes it,
   `<n>` is `sized_for.agents`, and `<m>` is the most agents at once that `xl` holds at
@@ -849,16 +862,19 @@ message byte for byte too** (D93; architect's to confirm, pins P2 and P3):
   byte**, as it does the first (architect, 2026-11-25, for v0.11-T01, pin P20).
 - `No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.`
   ([docs/driver.md](driver.md#where-it-places-a-lease), whose wording is the architect's, 2026-11-20, for v0.07-T01).
-  From v0.12 it is the message of a `linux/arm64` lease alone, of a project with no host on that
-  platform and no entry on the list, byte for byte as before (architect's to confirm, pin P3).
-- `No capacity can be found for project '<project>' on platform '<platform>': it has no host on that platform, and agentspace's project list does not approve that platform for it.`
+  From v0.12 it stays the message of every lease of a project with no entry on the list and no
+  host on the lease's platform, whatever platform was asked for, byte for byte as before
+  (architect, 2026-11-26, for v0.12-T01, pin P3).
+- `No capacity can be found for project '<project>' on platform '<platform>': it has no host there and is not approved for that platform on agentspace's project list.`
   (D91; from v0.12, #0051), where `<project>` is the normalized project and `<platform>` the
-  normalized platform. It is the message of every other lease that the list does not approve, as
-  the v0.12 case above says (architect's to confirm, pin P3).
+  normalized platform. It is the message of a lease whose project has an entry on the list that
+  does not approve the lease's platform, and no host on that platform, as the v0.12 case above
+  says, and of no other lease (architect, 2026-11-26, for v0.12-T01, pin P3).
 - `No capacity can be found for project '<project>' at size '<size>': its host is serving other leases at a smaller size. Release them, or ask for a size they fit.`
   (D66, D71; from v0.09, #0049), where `<project>` is the normalized project and `<size>` the
   normalized size asked for. It is the message of both v0.09 cases above, unchanged in v0.12,
-  where "its host" is the project's host on the lease's platform (architect's to confirm, pin P3).
+  where "its host" is the project's host on the lease's platform (architect, 2026-11-26, for
+  v0.12-T01, pin P23).
 
 **Which backend placed a lease MUST NOT appear in any output** (D1), although agentspace keeps it
 to renew and release the lease.
@@ -1111,10 +1127,14 @@ libc a host has; the [profile](#profiles) does.
   `linux/amd64/v3` stay as they are.
 - **Default:** `linux/arm64` (D13).
 - **Supported, from agentspace's v0.12 release (#0051):** exactly `linux/arm64`, `linux/amd64` and
-  `windows/amd64`, as normalized (D93, D94, D95; architect's to confirm, pin P1). Until v0.12,
-  `linux/arm64` alone was. Any other well-formed platform is accepted, and the lease is
-  `unsatisfiable` with `unsupported_platform` (D5): a platform with a variant, such as
-  `linux/amd64/v3`, is not one of the three, and neither is `darwin/arm64`.
+  `windows/amd64`, as normalized (D93, D94, D95; architect, 2026-11-26, for v0.12-T01, pin P1).
+  Until v0.12, `linux/arm64` alone was. Any other well-formed platform is accepted, and the lease
+  is `unsatisfiable` with `unsupported_platform` (D5).
+- **A platform is supported only when its normalized value equals one of the three exactly**
+  (architect, 2026-11-26, for v0.12-T01, pin P21): a platform with a variant, such as
+  `linux/amd64/v3`, is not one of the three, and neither is `darwin/arm64`. Each is
+  `unsatisfiable` with `unsupported_platform` and its message, and a lease on it never has compute
+  made for it.
 - **`windows/arm64` stays unsupported** (D98): it is `unsatisfiable` with `unsupported_platform`
   while no Windows image for `arm64` exists to make a host from, and is supported when a driver can
   make one, which is not a new version ([Versioning](#versioning)).
@@ -1142,7 +1162,12 @@ each supported profile promises is in [Profiles](#profiles).
 
   - **A platform agentspace does not support has no default profile of its own**, so a lease on
     one that names no profile prints `agent-linux`, as v2 printed for every platform before v0.12
-    (architect's to confirm, pin P2).
+    (architect, 2026-11-26, for v0.12-T01, pin P2).
+  - **The default is chosen by agentspace's lease CLI before any driver is asked, and a record
+    keeps the profile its lease printed: a stored record is never re-derived** (architect,
+    2026-11-26, for v0.12-T01, pin P25). `get`, `renew`, `release` and `list` print a lease's
+    record as it was written, so a lease created before v0.12 with `--platform windows/amd64` and
+    no `--profile` keeps `agent-linux` and stays `unsatisfiable`.
   - Until v0.12 the default was `agent-linux` for every platform, and a `--platform windows/amd64`
     with no `--profile` was `unsatisfiable` with `agent-linux`; from v0.12 it is met with
     `agent-windows`. A platform's default profile is part of supporting it
@@ -1154,15 +1179,17 @@ each supported profile promises is in [Profiles](#profiles).
   profile is accepted, and the lease is `unsatisfiable` with `unsupported_profile` (D5), because no
   host can serve it:
   - **On a supported platform, a profile other than the platform's own, with no version, is
-    `unsupported_profile`, whichever profile it is** (D93; architect's to confirm, pin P2):
-    `agent-linux` on `windows/amd64`, `agent-windows` on `linux/arm64` or `linux/amd64`, a
-    versioned profile such as `agent-linux@1` on any platform, since v2 has no versioned profiles,
-    and any other name.
-  - **On a platform agentspace does not support, the lease is `unsupported_platform`, and
-    `unsupported_profile` is listed beside it only when the profile named is neither
-    `agent-linux` nor `agent-windows` with no version** (architect's to confirm, pin P2). So
-    `windows/arm64` with `agent-windows`, with `agent-linux`, or with no profile lists
-    `unsupported_platform` alone, and `windows/arm64` with `agent-windows@2` lists both reasons.
+    `unsupported_profile`, whichever profile it is** (D93; architect, 2026-11-26, for v0.12-T01,
+    pin P2): `agent-linux` on `windows/amd64`, `agent-windows` on `linux/arm64` or `linux/amd64`, a
+    versioned profile such as `agent-linux@1` on any of the three, since v2 has no versioned
+    profiles, and any other name.
+  - **On a platform agentspace does not support, such as `windows/arm64`, the lease is
+    `unsupported_platform`, and `unsupported_profile` is listed beside it only when no supported
+    platform supports the profile named** (architect, 2026-11-26, for v0.12-T01, pin P2): that is,
+    when it is neither `agent-linux` nor `agent-windows` with no version. So `windows/arm64` with
+    no profile, with `agent-linux` or with `agent-windows` lists `unsupported_platform` alone, as
+    v2 answered `windows/amd64` with no profile before v0.12, and `windows/arm64` with
+    `agent-linux@1` lists both reasons.
 
 ### Plan
 
@@ -1815,10 +1842,13 @@ is left out, since it names a backend and that is the driver's (D1):
 | `gh` | The GitHub CLI |
 
 - **Codex is not promised** (D97), where `agent-linux` promises it.
-- **The SSH login shell is one the desktop app supports** (D97), picked by D100's spike from the
-  app's own list. **PowerShell 7 is on `ssh.user`'s `PATH` whichever shell it is.** The contract
-  never promised a POSIX shell, and a lease on `windows/amd64` is reached as any lease is,
+- **This promise names no SSH login shell** (architect, 2026-11-26, for v0.12-T01, pin P27). The
+  shell is chosen later, by D100's spike, and recorded in the Windows spec, which
+  [docs/operator.md](operator.md) gains in v0.12's second turn, T02 (D97, D101). The contract never
+  promised a POSIX shell, and a lease on `windows/amd64` is reached as any lease is,
   `ssh <host_alias>`, as `ssh.user` (D93).
+- **A profile's C runtime family is in no output** (architect, 2026-11-26, for v0.12-T01, pin
+  P27): `ucrt` is stated here, and never printed.
 - **`ssh.user` is `agent`** ([Fields](#fields); D95).
 - **Nothing else is promised**, as for `agent-linux`: anything else a host has MAY change or go
   without a new contract version.
@@ -2156,9 +2186,9 @@ the `--board`, `--epic` and `--turn` rows, which were new; the `--ttl` row's fir
 turn.` says what happens without `--turn`; with `--turn`, the lease is sized for the turn it
 names, as the `--turn` row says ([Plan](#plan), [Turn](#turn)).
 
-**Three parts of this help changed in v0.12** (#0051; D93), and it stays contract v2's: the
-`--platform` row, which read `Default linux/arm64. Also accepts aarch64 for arm64.` on one line and
-is now two; the `--profile` row, which read `Default agent-linux. Accepts name or name@version.` on
+**Three parts of this help changed in v0.12** (#0051; D93; architect, 2026-11-26, for v0.12-T01,
+pin P24), and it stays contract v2's: the `--platform` row, which read
+`Default linux/arm64. Also accepts aarch64 for arm64.` on one line and is now two; the `--profile` row, which read `Default agent-linux. Accepts name or name@version.` on
 one line and is now two; and the line that began `In v2 only`, which read
 `In v2 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.` and is now two lines,
 naming each supported platform with its profile. Every other byte of this help is as in v0.11.
@@ -2878,13 +2908,24 @@ draft 2020-12, one file per document (D20).** The names follow `<document>.<dire
   carries the contract version, `v2`:
   `https://github.com/SixbucksSolutions/agentspace/schemas/v2/<file name>`, and its title says
   contract v2 (D87, D89; as v1's did from v0.10, architect, 2026-11-24, for v0.10-T01, pin P9).
-- **agentspace's v0.12 release changes no schema, and `schemas/` stays v2's** (D93), with no copy
-  under `schemas/v2/`. The platform and profile patterns are open, and `ssh.user`'s has allowed a
-  Windows user name since v0, so every lease v0.12 prints validates against the v2 schemas as
-  v0.11 left them. **Two samples show it:** `lease.output.ready-linux-amd64.json`, a `ready`
-  `linux/amd64` lease with `agent-linux` and `ssh.user` `ubuntu`, and
-  `lease.output.ready-windows-amd64.json`, a `ready` `windows/amd64` lease with `agent-windows`
-  and `ssh.user` `agent`, each of which MUST validate against `lease.output.schema.json`.
+- **agentspace's v0.12 release changes no schema's validation, version or `$id`, and `schemas/`
+  stays v2's** (D93), with no copy under `schemas/v2/`. The platform and profile patterns are
+  open, and `ssh.user`'s has allowed a Windows user name since v0, so every lease v0.12 prints
+  validates against the v2 schemas as v0.11 left them. **Two samples show it:**
+  `lease.output.ready-linux-amd64.json`, a `ready` `linux/amd64` lease with `agent-linux` and
+  `ssh.user` `ubuntu`, and `lease.output.ready-windows-amd64.json`, a `ready` `windows/amd64`
+  lease with `agent-windows` and `ssh.user` `agent`, each of which MUST validate against
+  `lease.output.schema.json`.
+- **One description changes in v0.12** (architect, 2026-11-26, for v0.12-T01, pin P36): the
+  create request schema's `profile` says that null or absent means the platform's default
+  profile, as [Profile](#profile) gives it, where it said `agent-linux`. It changes no validation,
+  version or `$id`, and `schemas/v1/` and `schemas/v0/` keep their own wording.
+- **The v2 samples that showed an unsupported platform use `windows/arm64`** (D98; architect,
+  2026-11-26, for v0.12-T01, pin P20), and those that quote a reason's message quote the v0.12
+  wording ([Fields](#fields)). Nothing under `schemas/v1/` or `schemas/v0/` changes (D76, D87).
+  `lease-create.input.unsupported.json` asked for `linux/x86_64`, which is now supported, and asks
+  for `windows/arm64` instead; `lease-create.input.amd64-alias.json` keeps a request whose
+  architecture is written `x86_64` among the samples.
 - **Contract v1's schemas and samples are kept under `schemas/v1/`** (D87, D89): its nine schemas,
   and their samples under `schemas/v1/samples/`, the invalid ones under
   `schemas/v1/samples/invalid/`, each byte for byte as in v1, `$id`s and titles unchanged. They are
@@ -2934,8 +2975,8 @@ change v2 makes is listed in [Changes from v1](#changes-from-v1), and every chan
   newly supported platform and no profile MAY print a profile it did not print before, with no new
   version: from v0.12, `--platform windows/amd64` with no `--profile` prints `agent-windows` where
   v0.11 printed `agent-linux` ([Profile](#profile)). **Once a platform is supported, changing its
-  default profile is a new version**, since it changes what a lease the contract already met
-  prints.
+  default profile is a new version** (architect, 2026-11-26, for v0.12-T01, pin P37), since it
+  changes what a lease the contract already met prints.
 - **A platform and profile that do not go together are `unsupported_profile`** (D93), as any
   profile that no host can serve is. Pairing a profile with a newly supported platform is part of
   supporting that platform, and not a new version.
@@ -2982,12 +3023,18 @@ change v2 makes is listed in [Changes from v1](#changes-from-v1), and every chan
   ([Exit codes and errors](#exit-codes-and-errors)). v2 as v0.11 made it changed no message that
   such a command prints. Its help is text, not a document, and `create`'s help changed in v2
   ([`create`](#agentspace-lease-create)).
-  - **From agentspace's v0.12 release, within v2** (D93): a command line naming `linux/amd64` or
-    `windows/amd64`, which v1 answered `unsatisfiable`, MAY be met, as supporting a platform
-    allows; and `unsupported_platform`'s and `unsupported_profile`'s messages are reworded, and
-    one `no_capacity` message is added ([Fields](#fields)). A message is not a document, and no
-    caller parses one, so every document such a command prints still validates against v1's
-    schemas, and v0's where the rule above says so
+  - **From agentspace's v0.12 release, within v2** (D93; architect, 2026-11-26, for v0.12-T01,
+    pin P22): **a command line naming `linux/amd64`, `windows/amd64` or `agent-windows`, whose
+    platform or profile v2 answered unsupported before v0.12, MAY print a different document**,
+    as supporting a platform or profile allows. **Every other command line MUST print what v2
+    printed before v0.12, except in three messages:** `unsupported_platform`'s and
+    `unsupported_profile`'s, which are reworded, and the new `no_capacity` message for a project
+    whose entry on the project list does not approve the lease's platform ([Fields](#fields)).
+    **That `no_capacity` message is the one output besides the two reworded messages that can
+    change for a command line naming none of the three**, and only a project-list entry with
+    `platforms` can cause it, which v2 before v0.12 could not read. A message is not a document,
+    and no caller parses one, so every document such a command prints still validates against
+    v1's schemas, and v0's where the rule above says so
     ([Changes in v0.12, within v2](#changes-in-v012-within-v2)).
   - **So every document such a command prints validates against v1's schema in `schemas/v1/` as
     well as against v2's, and one with no `--plan` either against v0's in `schemas/v0/` too**, and
