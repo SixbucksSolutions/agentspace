@@ -486,6 +486,8 @@ class NothingElse(InstallBase):
         self.write_env(path_line('"/usr/bin'))
         code, out, err = self.run_install()
         self.assertEqual(code, 1)
+        # The refusal itself, so a run that stops for any other reason does not pass.
+        self.assertEqual(err.splitlines(), [refused_message(1)], "stderr")
         self.assertEqual(self.snapshot(), [os.path.join("etc", "environment")])
         for d in (self.cwd, self.home, self.tmp):
             self.assertEqual(os.listdir(d), [], "folder MUST stay empty")
@@ -503,6 +505,49 @@ class NothingElse(InstallBase):
         code, out, err = self.run_install()
         self.assertEqual(len(out.splitlines()), 1)
         self.assertTrue(out.startswith("Installed: "))
+
+
+CA_MISSING = ("install.sh: agentspace_ca.pub is missing; run agentspace-operator sync, which "
+              "sends it")
+
+
+class WithNoSeam(unittest.TestCase):
+    """P5: with neither seam variable set, install.sh takes a host's full install path.
+
+    A copy of the script runs from a throwaway folder that holds it alone, so its first check,
+    operator.md's "Fails at once if agentspace_ca.pub is missing or empty", stops it before any
+    step that writes /etc.
+    """
+
+    def test_with_neither_seam_variable_the_install_stops_at_the_ca_check(self):
+        # As root, a script whose CA check were broken would go on to write /etc; as any other
+        # user it cannot, so the real /etc stays out of reach however the script behaves.
+        if os.geteuid() == 0:
+            self.skipTest("MUST NOT run as root: a broken CA check would reach the real /etc")
+        root = tempfile.mkdtemp(prefix="install-noseam-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        folder = os.path.join(root, "system")
+        home = os.path.join(root, "home")
+        tmp = os.path.join(root, "tmp")
+        for d in (folder, home, tmp):
+            os.mkdir(d)
+        copy = os.path.join(folder, "install.sh")
+        shutil.copyfile(SCRIPT, copy)
+        # The guard that keeps the real /etc out of reach: the script's folder has no CA key.
+        self.assertFalse(os.path.exists(os.path.join(folder, "agentspace_ca.pub")),
+                         "the folder MUST hold no CA key")
+        self.assertEqual(os.listdir(folder), ["install.sh"])
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "TMPDIR": tmp, "LC_ALL": "C"}
+        before = sorted(os.path.relpath(os.path.join(d, f), root)
+                        for d, _, files in os.walk(root) for f in files)
+        r = subprocess.run(["bash", copy], env=env, cwd=root, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        after = sorted(os.path.relpath(os.path.join(d, f), root)
+                       for d, _, files in os.walk(root) for f in files)
+        self.assertEqual(r.stderr.decode("utf-8", "replace").splitlines(), [CA_MISSING], "stderr")
+        self.assertEqual(r.stdout, b"", "stdout")
+        self.assertEqual(r.returncode, 1, "exit code")
+        self.assertEqual(after, before, "the run MUST write nothing")
 
 
 if __name__ == "__main__":

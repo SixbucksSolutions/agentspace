@@ -20,9 +20,8 @@ The stubs:
   with `ss -H`; a header would read as a session to a script that tests for any output). That is
   its answer to the `sport = :22` form. Asked the `dport = :22` form (D78's seam, with `-p`), it
   prints the lines in its `ss-dport` file, each as `ss -Htnp` prints it, with a
-  `users:(("ssm-session-wor",pid=<PID>,fd=<n>))` field. With no `ss-dport` and no `workers` file, a
-  listed worker (PID 4242, what pgrep prints) holds a connection, so the older tests that only list
-  `ssm-session-worker` still mean "a session is open".
+  `users:(("ssm-session-wor",pid=<PID>,fd=<n>))` field, and nothing with no `ss-dport` file. So a
+  listed worker holds no connection unless the test gives it one (D78).
 - pgrep matches each non-option argument, as an extended regular expression, against the
   names of the "processes" the test lists in the stub folder's `procs` file, and prints one PID a
   line: the lines of the `workers` file when the match is the Session Manager worker and there is
@@ -65,8 +64,6 @@ case "$*" in
   *dport*)
     if [ -e "$d/ss-dport" ]; then
       cat "$d/ss-dport"
-    elif [ ! -e "$d/workers" ] && [ -s "$d/procs" ] && grep -Eq -- 'ssm-session-worker' "$d/procs"; then
-      echo '0 0 127.0.0.1:41022 127.0.0.1:22 users:(("ssm-session-wor",pid=4242,fd=9))'
     fi
     exit 0 ;;
 esac
@@ -315,7 +312,9 @@ class D11Rule(IdleCheckBase):
     def test_session_manager_session_present_does_not(self):
         self.baseline()
         self.set_last_active(70)
-        self.set_procs(SSM_PROC)
+        # A Session Manager session (D78): a worker that holds a connection to sshd.
+        self.set_workers(4242)
+        self.add_ss_dport(4242)
         code, out = self.run_check()
         self.assertEqual(self.poweroffs(), [], out)
         self.assertLine(out, "Active: Session Manager session open")
@@ -418,7 +417,9 @@ class HorizonRule(IdleCheckBase):
     def test_past_horizon_with_session_manager_session_does_not(self):
         self.baseline()
         self.set_horizon(-25)
-        self.set_procs(SSM_PROC)
+        # A Session Manager session (D78): a worker that holds a connection to sshd.
+        self.set_workers(4242)
+        self.add_ss_dport(4242)
         self.set_cpu(1000 + 100000)
         code, out = self.run_check()
         self.assertEqual(self.poweroffs(), [], out)
