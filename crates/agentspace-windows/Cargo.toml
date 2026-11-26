@@ -1,0 +1,14 @@
+[package]
+name = "agentspace-windows"
+version = "0.12.0"
+edition.workspace = true
+description = "The windows/amd64 platform seam: its rows of the seam the operator and sync take a host's steps from (docs/operator.md, The platform seam, Windows hosts; D95 to D97, D101)"
+publish = false
+
+[lib]
+name = "agentspace_windows"
+path = "src/lib.rs"
+
+# The architect's skeleton (D101), committed before v0.12-T03: E0.12-T03-S06 (#0259) builds it.
+[dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }
