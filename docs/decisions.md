@@ -5066,6 +5066,10 @@ builds it, in driver.md's "Release a lease".
 - **Changed for v0.12-T01 (architect, 2026-11-26, pin P51):** the one walk counts each top it
   ended once, so a chain three deep counts 3, the same total v0.10's walks gave, and the release's
   line reads "Ended 3 of the lease's connections." for it.
+- **Changed for v0.12-T02 (architect, 2026-11-26, from #186's review):** "a found client that no
+  built tree holds" is narrower in the code and in driver.md, whose definition governs: a found
+  client is taken as a top when an exited program stands between it and the nearest client above
+  it ([driver.md, Release a lease](driver.md#release-a-lease)).
 
 ### D100. v0.12's done-when is shown by a Windows spike first and a live check per platform, with Terry's yes for their instance hours
 
