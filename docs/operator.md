@@ -44,10 +44,8 @@ page writes the shared steps and the two Linux platforms' (E0.12-T01-S04); what 
 `windows/amd64` is the Windows spec's, E0.12-T02-S04, written after the spike (D100). **A rule
 cited "architect, 2026-11-26, for v0.12-T01, pin Pn" is one of the dev lead's pins for v0.12's
 specs, as the architect ruled it**, among them the choices this page's writer made in
-E0.12-T01-S04 (#0248) where D91 to D101 left one open. **A text marked "(this page's writer's
-wording; architect's ruling pending, pin Pnn)" is one of those choices that the architect has not
-yet ruled**: it binds as written until the ruling, which then replaces the mark with the pin's
-citation.
+E0.12-T01-S04 (#0248) where D91 to D101 left one open. **The architect ruled every one of those
+choices on 2026-11-26, pins P53 to P60**, and each is cited where it stands.
 
 **What it does not own:**
 - **The lease CLI** (`agentspace lease ...`) is [lease-api.md](lease-api.md)'s. It reaches one
@@ -215,8 +213,8 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   lease CLI's `unsupported_platform` message, byte for byte, with `agentspace: ` before it
   (architect, 2026-11-26, for v0.12-T01, pins P2 and P9), and a value it refuses prints the lease
   CLI's `invalid_value` message for `platform` ([lease-api.md,
-  Platform](lease-api.md#platform)), byte for byte, with `agentspace: ` before it (this page's
-  writer's wording; architect's ruling pending, pin P54). **Without `-Platform` a command acts on a
+  Platform](lease-api.md#platform)), byte for byte, with `agentspace: ` before it (architect,
+  2026-11-26, for v0.12-T01, pin P54). **Without `-Platform` a command acts on a
   `linux/arm64` host**, so with `-Host`, `-Platform linux/arm64` is the same as no `-Platform` in
   every respect (D91). `windows/amd64` is accepted here, and what each command does on it is the Windows spec's,
   E0.12-T02-S04 ([The platform seam](#the-platform-seam); architect, 2026-11-26, for v0.12-T01,
@@ -272,15 +270,15 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
   | `grow` given a `-GiB` value of 0 or less, by `grow`'s check below | `agentspace: -GiB MUST be 1 or more for grow, not '<arg>'.` |
   | A `-Host` value that is not a project name in the form above | `agentspace: -Host MUST be a project name of 1 to 32 letters, digits and '-' that starts and ends with a letter or digit, not '<arg>'.` |
   | A `-Platform` value that the lease CLI's parser accepts and that is not a supported platform (architect, 2026-11-26, for v0.12-T01, pins P2 and P9) | `agentspace: Platform '<platform>' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.` |
-  | A `-Platform` value that the lease CLI's parser refuses as not an `os/arch` pair (this page's writer's wording; architect's ruling pending, pin P54) | `agentspace: Platform '<arg>' is not an os/arch pair. Give one as in 'linux/arm64'.` |
+  | A `-Platform` value that the lease CLI's parser refuses as not an `os/arch` pair (architect, 2026-11-26, for v0.12-T01, pin P54) | `agentspace: Platform '<arg>' is not an os/arch pair. Give one as in 'linux/arm64'.` |
   | An `-InstanceType` value that is not of the form above | `agentspace: -InstanceType MUST be an EC2 instance type such as m9g.xlarge, not '<arg>'.` |
 
   `<name>` is the parameter as this page spells it (`-GiB`, `-Alias`, `-Host`, `-InstanceType`,
   `-Platform`, `-All`, `-Quiet`), whatever case was given. `<platform>` is the value as the lease
   CLI's parser normalizes it, for a value that parser accepts; such a value holds only ASCII
   letters, digits and `/`. A value it refuses is reported as `<arg>`, the argument as given, as in
-  every other row, so `-Platform " Linux "` reports `' Linux '` and an empty value `''` (this
-  page's writer's wording; architect's ruling pending, pin P54). **`-Platform` with no value is
+  every other row, so `-Platform " Linux "` reports `' Linux '` and an empty value `''` (architect,
+  2026-11-26, for v0.12-T01, pin P54). **`-Platform` with no value is
   worded as `-Host`'s is**, by the same row, and its value's two rows stand right after `-Host`'s
   (architect, 2026-11-26, for v0.12-T01, pin P39); both are found
   in the left-to-right reading, as every row of this table is. **The two command-list messages, the `-Host` message
@@ -345,21 +343,21 @@ which its ProxyCommand adds `-ExecutionPolicy Bypass`.
    byte (the `guard` form is the architect's, 2026-11-21, for v0.08-T01, S01 batch). `guard -Host x -All` therefore reports the
    `-Host` message, check 1 coming before check 3.
    - **Check 1a, from v0.12: `-Platform` given with `ca` or `guard`** fails with
-     `agentspace: -Platform does not apply to <command>.`, in the form of check 1's message (this
-     page's writer's wording; architect's ruling pending, pin P55).
+     `agentspace: -Platform does not apply to <command>.`, in the form of check 1's message (architect,
+     2026-11-26, for v0.12-T01, pin P55).
 2. **`-All` given with any command but `status`, `down` and `sync`** fails with
    `agentspace: -All applies to status, down and sync alone.`
 3. **`-Host` and `-All` together** fail with `agentspace: -Host and -All cannot be given together.`
    - **Check 3a, from v0.12: `-Platform` and `-All` together** fail with
      `agentspace: -Platform and -All cannot be given together.`, in the form of check 3's message
-     (this page's writer's wording; architect's ruling pending, pin P55): `-All` acts on every host
+     (architect, 2026-11-26, for v0.12-T01, pin P55): `-All` acts on every host
      of every platform ([Every host at once](#every-host-at-once--all)).
 4. **`provision` without `-Host`** fails with `agentspace: provision needs -Host <project>.`, with
    `<project>` written as those nine characters.
    - **Check 4a, from v0.12: `-Platform` without `-Host`** fails with
      `agentspace: -Platform needs -Host <project>.`, with `<project>` written as those nine
-     characters, in the form of check 4's message (this page's writer's wording; architect's
-     ruling pending, pin P55). `-Platform` names the platform of a project's
+     characters, in the form of check 4's message (architect, 2026-11-26, for
+     v0.12-T01, pin P55). `-Platform` names the platform of a project's
      host, so it never stands alone: swimcoach's host on another platform is
      `-Host swimcoach -Platform <platform>`.
 5. **`-InstanceType` given with any command but `deploy`** fails with
@@ -479,10 +477,10 @@ some cases
   project. A provisioning run's log line carries the message it logs, so its `reason` follows.
   **The rule does not rewrite `provision`'s two project-list refusals** ([provision](#provision),
   step 1): each is about the project's entry, not a host, and names the project as `'<project>'` on
-  every platform. So the no-entry message is v0.07's, byte for byte, on every platform (this page's
-  writer's wording; architect's ruling pending, pin P58), as the EC2 driver's no-entry message stays
+  every platform. So the no-entry message is v0.07's, byte for byte, on every platform (architect,
+  2026-11-26, for v0.12-T01, pin P58), as the EC2 driver's no-entry message stays
   its own (pin P3), and the message for an entry that does not approve the platform names the
-  project and the platform (this page's writer's wording; architect's ruling pending, pin P58).
+  project and the platform (architect, 2026-11-26, for v0.12-T01, pin P58).
 - **Messages carry the instance ID and volume IDs.** A check that captures the operator's stderr
   captures them, and MUST withhold them from anything committed or reported. The repository is
   public.
@@ -1439,8 +1437,8 @@ alone, since the box is swimcoach's `linux/arm64` host.
      makes any AWS call, starts or waits for a host, pushes the token or writes any file
      (architect, 2026-11-26, for v0.12-T01, pin P13). The line follows that section's rules for
      the refusal's line, and SHOULD be `agentspace: The lease for <alias> has no ready host on its
-     platform; no connection was opened.` (this page's writer's wording; architect's ruling
-     pending, pin P56). `AGENTSPACE_DIAGNOSTIC` adds no line to it. The box is
+     platform; no connection was opened.` (architect, 2026-11-26, for v0.12-T01, pin P56).
+     `AGENTSPACE_DIAGNOSTIC` adds no line to it. The box is
      never started for it: a lease alias of another platform checks its host's key under that
      host's own host-key name (architect, 2026-11-26, for v0.12-T01, pin P7), so the box could
      never be reached through it. Place answers such a lease
@@ -2177,14 +2175,14 @@ keeper](conformance.md#coverage-of-the-operator-and-the-keeper) name.
 
 | Behavior | Shown by |
 |---|---|
-| The command line: `-Platform` accepted by `deploy`, `up`, `sync`, `bootstrap`, `provision`, `down`, `status` and `grow`, each with `-Host`; its value normalized through the lease CLI's parser (` Linux/AMD64 `, `linux/x86_64` and `LINUX/X86-64` naming `linux/amd64`, `linux/aarch64` and `linux/aarch64/v8` naming `linux/arm64`); no `-Platform` and `-Platform linux/arm64` acting alike; `windows/arm64`, `linux/386`, `linux/amd64/v3`, `linux`, `linux-amd64` and an empty value each refused with its row of the table, the first three with the unsupported platform's message and the last three with the malformed value's, and that value as the table gives it, nothing on stdout, exit 1, no AWS call and no file written; `-Platform` with no value, given twice, and its value taken whatever it looks like (`-Platform -h` printing help); check 1a for `ca` and `guard`, check 3a with `-All` and check 4a without `-Host`, each right after the `-Host` check it mirrors; the help of the top level, `deploy`, `up`, `sync`, `bootstrap`, `provision`, `down`, `status` and `grow` byte for byte (`conformance/operator/test-unmet-usage-help.ps1`'s copies updated), and `ca`'s and `guard`'s unchanged | Conformance case, E0.12-T04-S02; the parse in process by the operator crate's tests, E0.12-T03-S02 |
+| The command line: `-Platform` accepted by `deploy`, `up`, `sync`, `bootstrap`, `provision`, `down`, `status` and `grow`, each with `-Host`; its value normalized through the lease CLI's parser (` Linux/AMD64 `, `linux/x86_64` and `LINUX/X86-64` naming `linux/amd64`, `linux/aarch64` and `linux/aarch64/v8` naming `linux/arm64`); no `-Platform` and `-Platform linux/arm64` acting alike; `windows/arm64`, `linux/386`, `linux/amd64/v3`, `linux`, `linux-amd64` and an empty value each refused with its row of the table, the first three with the unsupported platform's message and the last three with the malformed value's, and that value as the table gives it, nothing on stdout, exit 1, no AWS call and no file written; `-Platform` with no value, given twice, and its value taken whatever it looks like (`-Platform -h` printing help); check 1a for `ca` and `guard`, check 3a with `-All` and check 4a without `-Host`, each right after the `-Host` check it mirrors; the help of the top level, `deploy`, `up`, `sync`, `bootstrap`, `provision`, `down`, `status` and `grow` byte for byte (`conformance/operator/test-unmet-usage-help.ps1`'s copies updated), `guard`'s with its project's leases on its platform (pin P60), and `ca`'s unchanged | Conformance case, E0.12-T04-S02; the parse in process by the operator crate's tests, E0.12-T03-S02 |
 | A host's names: `-Host example -Platform linux/amd64` naming the stack `agentspace-linux-amd64-host-example` to the stand-in `aws`, the alias `agentspace-host.example.linux-amd64` to the stand-in `ssh` and `scp`, and the folder `hosts\example.linux-amd64\` for its key, certificate, push stamp, `provision.log` and `provision.lock`; the alias file's bytes and its `HostKeyAlias` as state.md gives them; the project's `linux/arm64` host's files left untouched beside them | Conformance case, E0.12-T04-S02 |
 | Two hosts of one project in the registry: each command with `-Host <project>` reaching the `linux/arm64` record alone, and with `-Platform linux/amd64` the other alone; a project with a `linux/arm64` record and none on `linux/amd64` refused for `-Platform linux/amd64` with the platform's no-record message, and a project with neither refused with v0.07's message unchanged for no `-Platform`; `-Host swimcoach -Platform linux/amd64` reaching swimcoach's `linux/amd64` record and never `agentbox`; two records for one project and platform making the registry not valid; a new record appended at the end of the file, the others' order and bytes unchanged | Conformance case, E0.12-T04-S02 |
 | A message about a host off `linux/arm64` naming it by its host name, with ` -Platform <platform>` in a command it suggests (pins P12 and P44), and every message about a `linux/arm64` host unchanged byte for byte | Conformance case, E0.12-T04-S02, by the messages the other rows reach |
 | `deploy -Host <project> -Platform linux/amd64` creating a stack: `ssm get-parameter` for the public parameter before `cloudformation deploy`; `ImageId=<image>` with the stand-in's value, and `InstanceType=m8a.xlarge` last without `-InstanceType`, or `-InstanceType`'s value last with it, after the creation parameters; updating it: no `ssm get-parameter` and no `ImageId`; a failed or malformed `ssm get-parameter` failing before `cloudformation deploy` with its message; the box's `deploy`, and a `linux/arm64` host's, making no `ssm get-parameter` and passing no `ImageId`, exactly as before; the image ID in no line the operator prints (pins P41 and P43) | Conformance case, E0.12-T04-S02, through the stand-in `aws`'s log of its arguments |
 | `agentbox`'s change set empty against the template v0.12 ships | Live, by the template's story, E0.12-T03-S03, read before its merge (D44, D94, D101) |
 | `sync` on a `linux/amd64` host: `Building the localswim CLI for linux/amd64...`, `go build` run with `GOOS=linux`, `GOARCH=amd64` and `CGO_ENABLED=0` into `localswim-linux-amd64`, which row 7's `scp` names; a `linux/arm64` host's build unchanged; `sync -All` over hosts of both platforms building once per platform, each build's `Building` line before the first host of its platform (pin P40) | Crate test of `agentspace-sync`, E0.12-T03-S03, with the `go` finder and the localswim folder passed in, since `go` has no seam ([The test seam](#the-test-seam)), the step's `scp` arguments included; conformance cases W10 and W12, E0.12-T04-S02, with a `go` stand-in on the check's own `PATH` ([conformance.md, Coverage of the operator and the keeper](conformance.md#coverage-of-the-operator-and-the-keeper)); the build on a real host by the live check, E0.12-T05-S01, through `localswim` answering on the host |
-| `status -All`: the hosts in the file's order, a file seeded with a project's `linux/amd64` record before its `linux/arm64` one listing them so (pin P46); a `Host` line naming a host off `linux/arm64` by its host name (pin P12); a `Platform` line after every `Host` line, the box's `linux/arm64` included; `Leases` counting the project's live leases on the host's platform alone; a running `linux/amd64` host whose project holds only `linux/arm64` leases shown `unexplained` with its stop time | Conformance case, E0.12-T04-S02 |
+| `status -All`: the hosts in the file's order, a file seeded with a project's `linux/amd64` record before its `linux/arm64` one listing them so (pin P46); a `Host` line naming a host off `linux/arm64` by its host name (pin P12); a `Platform` line after the `Host` line of each host off `linux/arm64`, and none for a `linux/arm64` host, the box included, whose part stays byte for byte as v0.11's (pin P57); `status -Host <project> -Platform linux/amd64` printing the `Platform` line first, and `status -Host <project>` and `-Platform linux/arm64` none; `Leases` counting the project's live leases on the host's platform alone; a running `linux/amd64` host whose project holds only `linux/arm64` leases shown `unexplained` with its stop time | Conformance case, E0.12-T04-S02 |
 | The guard over two hosts of one project: a running `linux/amd64` host explained only by a live lease of its project on `linux/amd64`; stopped when due with only `linux/arm64` leases; its `provision.lock` tried in `hosts\<project>.linux-amd64\`; its horizon the project's on that platform, sent with `AWS-RunShellScript`; its `guard.log` lines with `host=<project>.linux-amd64` (pin P12), every `linux/arm64` line unchanged; `ec2 describe-instances`' filter in the file's order (pin P46) | Conformance case, E0.12-T04-S02 |
 | The ProxyCommand: `agentspace-host.<project>.linux-amd64` reaching that record; `.linux-arm64`, `.windows-arm64`, `.LINUX-AMD64` and a project with no record on the platform each failing with the caller's line and no tunnel; a `ready` `linux/amd64` lease's alias reaching its `ready` host on that platform and never the project's `linux/arm64` host; one whose host is not `ready` refused, exit 1, one line on stderr, no tunnel and no call the stand-in `aws` records (pin P13); a `ready` `linux/arm64` lease falling to the box as before | Conformance case, E0.12-T04-S02, with a seeded lease state file |
 | `provision -Host <project> -Platform linux/amd64`: refused with the platform's project-list message for an entry with no `platforms`, and for one whose `platforms` omits it, writing nothing; made for one that lists it, its record appended with `platform` and its stack's name; a project with no entry refused with v0.07's project-list message unchanged, on either platform (pins P3 and P44); each refusal before any AWS call; its type found from the project's `pending` leases on that platform alone; its log and lock in `hosts\<project>.linux-amd64\` | Conformance case, E0.12-T04-S02, with a seeded project list and lease state file; `resize_target` and `place_pending` per platform by driver.md's rows |
@@ -2201,7 +2199,7 @@ operator <command> [-Host <project> | -All] [-Platform <os/arch>] [-GiB <n>] [-A
 operator -h | --help
 ```
 
-**Help** (architect, 2026-11-21, for v0.08-T01, as every help text v0.08 changes or adds is; v0.07's were for v0.07-T01; v0.09's change to it, and to `deploy`'s and `provision`'s, are architect, 2026-11-23, for v0.09-T01, pin P25; v0.12's change to it, and to the help of `deploy`, `up`, `sync`, `bootstrap`, `provision`, `down`, `status` and `grow`, written in E0.12-T01-S04 for the behaviour the architect ruled, 2026-11-26, for v0.12-T01, pins P9, P39 and P41, is not yet ruled as worded (this page's writer's wording; architect's ruling pending, pin P53)):
+**Help** (architect, 2026-11-21, for v0.08-T01, as every help text v0.08 changes or adds is; v0.07's were for v0.07-T01; v0.09's change to it, and to `deploy`'s and `provision`'s, are architect, 2026-11-23, for v0.09-T01, pin P25; v0.12's change to it, and to the help of `deploy`, `up`, `sync`, `bootstrap`, `provision`, `down`, `status` and `grow`, written in E0.12-T01-S04 for the behaviour the architect ruled, 2026-11-26, for v0.12-T01, pins P9, P39 and P41 (the help's wording settled by the dev lead's review under a delegation, architect, 2026-11-26, for v0.12-T01, pin P53)):
 
 ```
 Usage: agentspace-operator <command> [-Host <project> | -All] [-Platform <os/arch>] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]
@@ -2439,7 +2437,7 @@ swimcoach` is the box's.
    `^ami-[0-9a-f]{8}([0-9a-f]{9})?\z`; that is `<image>` below. **A call that fails fails `deploy`**
    under [AWS failures](#aws-failures), #0034's sign-in message first, and **an answer with no such
    value** fails it with `agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.`
-   (this page's writer's wording; architect's ruling pending, pin P59), each before step 4 and before any call that changes anything. **Neither message, nor any other
+   (architect, 2026-11-26, for v0.12-T01, pin P59), each before step 4 and before any call that changes anything. **Neither message, nor any other
    line the operator prints, holds the image ID** (architect, 2026-11-26, for v0.12-T01, pin P43). A `linux/arm64` stack, the box's
    included, makes no such call, and a stack it updates on any platform makes none either.
 4. **With `-InstanceType <type>`, first removes `instance_type` from the host's record**, under
@@ -3081,15 +3079,15 @@ failure logged in `provision.log` and the leases `pending` for the next run. The
    pins P3 and P44):
    - **A project with no entry, on any platform:** the message above, with `'<project>'` the
      project, never the host name, so it is unchanged byte for byte on every platform and
-     [Messages](#messages)' host-name rule does not rewrite it (this page's writer's wording;
-     architect's ruling pending, pin P58), as the EC2 driver's no-entry message is unchanged
+     [Messages](#messages)' host-name rule does not rewrite it (architect, 2026-11-26, for
+     v0.12-T01, pin P58), as the EC2 driver's no-entry message is unchanged
      (architect, 2026-11-26, for v0.12-T01, pin P3).
    - **A project whose entry does not approve the platform**, an entry whose `platforms` omits it,
      `linux/arm64` included, or an entry with no `platforms` and a platform other than
      `linux/arm64`, with a message naming the project, never the host name, and the platform, which
      [Messages](#messages)' host-name rule does not rewrite:
      `agentspace: Project '<project>' has no host on <platform>, and <path> does not approve that platform for it, so no host is made for it.`
-     (this page's writer's wording; architect's ruling pending, pin P58)
+     (architect, 2026-11-26, for v0.12-T01, pin P58)
 2. **Opens its log, then takes the run's lock** (P14, P18 and P19, architect, 2026-11-20, for
    v0.07-T01):
    - **It opens `%USERPROFILE%\.agentspace\hosts\<project>\provision.log` for append itself**,
@@ -3720,8 +3718,10 @@ hand](#what-the-guard-can-race)). A failure of that signing fails `status` after
 (architect, 2026-11-21, for v0.08-T01, S01 batch: D60 gives the lease lines to `-All`, and without `-All` the report stays
 exactly as before v0.07, as [From the command line](#from-the-command-line) promises for every
 command line without `-Host`). **So does `status -Host <project> -Platform <platform>`**, for the
-project's host on that platform (D91): the five lines alone, with no `Platform` line, since the
-command line named the platform.
+project's host on that platform (D91), and **for a host off `linux/arm64` it prints one line more,
+`Platform  <platform>`, first, before the five**, as `status -All` below prints it (architect,
+2026-11-26, for v0.12-T01, pin P57). With `-Platform linux/arm64`, as without `-Platform`, it
+prints no `Platform` line, so a `linux/arm64` host's report is byte for byte as v0.11's.
 
 #### status -All
 
@@ -3732,20 +3732,21 @@ host**, so its check never fails on the CA. A host whose record is `creating` or
 holds no instance ID gets one line, `Instance  none recorded`, after its `Host` line, and no AWS
 call.
 
-**From v0.12 `status -All` prints each host's platform** (D60; D91: "`status -All` prints each
-host's platform"), on a line whose text, label and place below are not yet ruled (this page's
-writer's wording; architect's ruling pending, pin P57):
-right after each host's `Host` line, before anything else of its part, `Instance  none recorded`
-and a failure line included, it prints
+**From v0.12 `status -All` prints the platform of each host off `linux/arm64`** (D60; D91:
+"`status -All` prints each host's platform"; architect, 2026-11-26, for v0.12-T01, pin P57):
+right after the `Host` line of such a host, before anything else of its part, `Instance  none
+recorded` and a failure line included, it prints
 
 ```
 Platform  <platform>
 ```
 
-where `<platform>` is the record's normalized platform, `linux/arm64` for a record without one, the
-box's included. The label is `Platform` and two spaces, 10 characters as the others are. It is part
-of the report: it prints whatever `-Quiet` says, and needs no AWS call and no lease state file.
-**The `Host` line before it names a host off `linux/arm64` by its host name** ([Every host at
+where `<platform>` is the record's normalized platform. The label is `Platform` and two spaces, 10
+characters as the others are. It is part of the report: it prints whatever `-Quiet` says, and
+needs no AWS call and no lease state file. **A `linux/arm64` host, the box included, gets no
+`Platform` line**, a record without a platform included, so every `linux/arm64` host's part is byte
+for byte as v0.11's (pin P57); its platform is the one its `Host` line, naming it by its project,
+implies. **The `Host` line names a host off `linux/arm64` by its host name** ([Every host at
 once](#every-host-at-once--all)), and **the hosts come in the file's order**, which is the order
 they were made in (architect, 2026-11-26, for v0.12-T01, pin P46).
 
@@ -3762,13 +3763,12 @@ Each label is padded with spaces to 10 characters, as the other lines' are: `Lea
 spaces, `Guard` and five. So, for the box under a live lease, agentspace's `linux/arm64` host
 running with no live lease on that platform, a host still being made under a pending lease, and
 agentspace's `linux/amd64` host, made after them, stopped, in the file's order (architect,
-2026-11-20, for v0.07-T01, for the lines before v0.08's; v0.12's `Platform` lines, D91 (this
-page's writer's wording; architect's ruling pending, pin P57); v0.12's host name, architect,
-2026-11-26, for v0.12-T01, pin P12; the file's order, pin P46):
+2026-11-20, for v0.07-T01, for the lines before v0.08's; v0.12's `Platform` line, D91 and
+architect, 2026-11-26, for v0.12-T01, pin P57; v0.12's host name, pin P12; the file's order, pin
+P46):
 
 ```
 Host      swimcoach (agentbox), ready
-Platform  linux/arm64
 Instance  <id>
 State     running
 Type      <type>
@@ -3776,7 +3776,6 @@ Disk      <size> GiB gp3 (<vol>)
 SSM       online
 Leases    1 live
 Host      agentspace (agentspace-host-agentspace), ready
-Platform  linux/arm64
 Instance  <id>
 State     running
 Type      <type>
@@ -3785,7 +3784,6 @@ SSM       online
 Leases    0 live
 Guard     unexplained; stops at <h:mm><am|pm>
 Host      example (agentspace-host-example), creating
-Platform  linux/arm64
 Instance  none recorded
 Leases    1 live
 Host      agentspace.linux-amd64 (agentspace-linux-amd64-host-agentspace), ready
@@ -3897,8 +3895,9 @@ Usage: agentspace-operator status [-Host <project> | -All] [-Platform <os/arch>]
 
 Shows a host's instance ID, state, type, root disk size and volume, and
 whether Session Manager can reach it; with -All, each host's, after lines
-naming it and its platform, then its count of live leases and, for a
-running host that no live lease explains, the time the guard will stop it.
+naming it and, off linux/arm64, its platform, then its count of live leases
+and, for a running host that no live lease explains, the time the guard
+will stop it.
 Never starts a host. Prints to stderr. Without -Host it shows the box;
 -Platform picks the host's platform (default: linux/arm64).
 
@@ -4398,17 +4397,17 @@ AWS CLI through `AGENTSPACE_AWS_CMD`, which answers `cloudformation describe-sta
 `ec2 stop-instances` and `ssm send-command`, records each call's arguments, and exits non-zero, or
 prints #0034's sign-in text, where a case needs a failure.
 
-**Help** (architect, 2026-11-21, for v0.08-T01):
+**Help** (architect, 2026-11-21, for v0.08-T01; v0.12's change to it, its project's leases on its platform, architect, 2026-11-26, for v0.12-T01, pin P60):
 
 ```
 Usage: agentspace-operator guard [-Quiet]
 
 Stops every running host that no live lease explains, once 15 minutes have
 passed since the later of its start and its project's last lease end, and
-sends every running host its lease horizon, the end of its project's leases.
-Leaves a host whose provisioning run is working on it. Acts on every host in
-~/.agentspace/hosts.json, and takes no -Host or -All. Logs each stop, each
-unexplained host and each failure to ~/.agentspace/guard.log.
+sends every running host its lease horizon, the end of its project's leases
+on its platform. Leaves a host whose provisioning run is working on it. Acts
+on every host in ~/.agentspace/hosts.json, and takes no -Host or -All. Logs
+each stop, each unexplained host and each failure to ~/.agentspace/guard.log.
 
 The keeper runs it every 5 minutes; you can also run it yourself. A guard
 that finds another one running exits at once.
@@ -4671,7 +4670,7 @@ instance's state, so `pending` here is not backend text. **Its wording SHOULD be
 | `unsatisfiable` | `agentspace: The lease for <alias> is unsatisfiable; no connection was opened. Create a new lease.` |
 | `pending` | `agentspace: The lease for <alias> is pending, not yet ready; no connection was opened. Connect once 'agentspace lease get' answers ready.` |
 | None read: the lease state file cannot be read, or is not valid, and `<alias>` is of lease alias form (pin P21) | `agentspace: The lease records could not be read; no connection was opened for <alias>. Run 'agentspace lease list' to see the error.` |
-| `ready`, on a platform other than `linux/arm64`, and its project has no record on that platform, or one that is not `ready` (from v0.12; pin P13) | `agentspace: The lease for <alias> has no ready host on its platform; no connection was opened.` (this page's writer's wording; architect's ruling pending, pin P56) |
+| `ready`, on a platform other than `linux/arm64`, and its project has no record on that platform, or one that is not `ready` (from v0.12; pin P13) | `agentspace: The lease for <alias> has no ready host on its platform; no connection was opened.` (architect, 2026-11-26, for v0.12-T01, pin P56) |
 
 **What it does not change:**
 - **An alias that is no record's alias, and a missing lease state file, reach the box**, as
@@ -5911,7 +5910,7 @@ code.
 | `ec2 describe-volumes` | `Volumes[0].Size` (GiB) | `status`'s size, and `grow`'s `<size>` |
 | `ssm describe-instance-information` | `InstanceInformationList[0].PingStatus`; online only when it is `Online`, and an empty list is not online | The wait, and `status`'s `<ssm>` |
 | `ssm send-command` | `Command.CommandId` | The poll |
-| `ssm get-parameter`, as `deploy`'s read of a platform's image (from v0.12) | `Parameter.Value`, a string of the form `^ami-[0-9a-f]{8}([0-9a-f]{9})?\z` | The `ImageId` of a stack `deploy` creates on a platform other than `linux/arm64` ([deploy](#deploy), step 3). A missing or non-string value, or one not of that form, fails with `agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.` (this page's writer's wording; architect's ruling pending, pin P59), which holds no part of the answer, the image ID included |
+| `ssm get-parameter`, as `deploy`'s read of a platform's image (from v0.12) | `Parameter.Value`, a string of the form `^ami-[0-9a-f]{8}([0-9a-f]{9})?\z` | The `ImageId` of a stack `deploy` creates on a platform other than `linux/arm64` ([deploy](#deploy), step 3). A missing or non-string value, or one not of that form, fails with `agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.` (architect, 2026-11-26, for v0.12-T01, pin P59), which holds no part of the answer, the image ID included |
 | `ssm get-command-invocation` | `Status`, and once it is not `Pending`, `InProgress` or `Delayed`, `StandardOutputContent`, trimmed | The patch check's answer ([What up waits for](#what-up-waits-for)) |
 
 (The three `ssm` rows were split off below the rulings by an edit on 2026-11-19 and put back by
