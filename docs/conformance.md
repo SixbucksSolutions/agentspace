@@ -1778,7 +1778,7 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
       `ConvertTo-HpMasked`**, which hides the temp folder, the profile, the throwaway home, the computer name
       and the user name in every spelling it reads from the case's own environment, and
       `test-unmet-host-provision.ps1`'s reason for a log line that is not `<time> <step> <outcome>` quotes the
-      line through it too (the architect, 2026-11-26, for v0.11-T04, pin P8). **That is #0230's whole change.**
+      line through it too (the architect, 2026-11-25, for v0.11-T04, pin P8). **That is #0230's whole change.**
       **A failure reason of any other file that quotes captured program output is not masked by it**, and
       **MUST be masked before it is printed outside the run's own folder or written to a record**, as for any
       command's error text (AGENTS.md, "Terry's real files in a review"); **the places that still quote
