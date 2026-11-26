@@ -463,7 +463,7 @@ mod tests {
         )
     }
 
-    /// Three turns: A of 2 + 1 agents with a budget of 30, B of 3 + 1 with 960, C of 1 + 1 with a
+    /// Four turns: A of 2 + 1 agents with a budget of 30, B of 3 + 1 with 960, C of 1 + 1 with a
     /// null budget, D of 1 + 1 with none.
     const BUDGETED: &str = r#"{"turns":[
       {"name":"A","budget_minutes":30,"stories":[{"name":"S","subagents":[{"name":"a","model":"m","effort":"e"},{"name":"b","model":"m","effort":"e"}]}]},
