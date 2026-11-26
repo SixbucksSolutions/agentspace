@@ -5023,8 +5023,9 @@ a platform that has no libc.
   from Git for Windows. The desktop app's documentation lists cmd.exe, Windows PowerShell 5.1 and
   Git Bash for a Windows remote, and under the first two it forks a session only at its first
   message; Git Bash has no such limit, and the profile installs it for Claude Code anyway. The spike
-  could not show the app's session: Terry's click came, and failed with "Host name not found",
-  since the spike's alias file was not in his `agentspace.d` when he clicked. So the desktop app's
+  could not show the app's session: Terry's click came after the spike's teardown had removed its
+  alias, since the architect's request held its own session and the dev lead's messages queued
+  behind it (runs/e0.12-t01-s05.md, Architect's addendum). So the desktop app's
   session on Windows, with Git Bash, is first shown by T05-S02's live check, which already holds
   Terry's session; if it fails there, Windows PowerShell 5.1 is the fallback, and the change comes
   back here.
