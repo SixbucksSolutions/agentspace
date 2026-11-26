@@ -371,7 +371,10 @@ operator's `ca` refuses to create a CA then ([docs/operator.md](operator.md#ca))
 | `test-plan-sizes.ps1` | The size `create --plan` picks (E0.10-T04-S01, #0221; D73 to D76): each size's two edges (2 and 4 agents at once `s`, 5 and 8 `m`, 9 and 16 `l`, 17 and 32 `xl`), the same with a platform no backend has, a tie between two busiest turns (the first wins), turns never summed and stories' peaks summed with one dev lead for the turn, the peak counted as the width of the `after` graph and never as a stated number, and a subagent's model and effort changing nothing ([lease-api.md, Plan](lease-api.md#plan), [`create`](lease-api.md#agentspace-lease-create)). 38 results | Yes. SKIPPED when no CA could be made |
 | `test-plan-sized-for.ps1` | `sized_for` in every state a lease reaches (`ready`, `pending`, `unsatisfiable` by `no_capacity` and by `unsupported_platform`, `expired`, `released`) and through `create`, `get`, `list`, `renew` and `release`, absent on a lease made without `--plan`, left out and never `null` when the plan has no name or a null one, and no output printing the plan, a story, a subagent, a model or an effort ([lease-api.md, Fields](lease-api.md#fields); D75). 50 results | Yes. SKIPPED when no CA could be made |
 | `test-plan-errors.ps1` | `plan_too_large` (32 agents at once fit and 33 do not, by stories, by subagents and by the width of `after`; the busiest turn and not the sum; its only reason, `size` `xl`, `sized_for` through `create`, `get`, `list` and `release`, decided before any driver is asked), `--plan` with `--size` in every order and form, the order the values are checked in (project, platform, profile, plan, size, ttl), and every refusal of a plan with its exact `Plan '<arg>' is not a valid plan: <why>.` and its first fault only: a file too large, missing, a folder, a device, a pipe, locked, `-`, not UTF-8, not JSON, a member named twice, off the schema, a name given twice, an `after` naming no subagent of its story, and a cycle ([lease-api.md, Plan](lease-api.md#plan), [Exit codes and errors](lease-api.md#exit-codes-and-errors); D74, D75, D81). 298 results | No. It removes the throwaway CA first, so that no case can pass because one was there, and has no SKIPPED result |
-| `test-v1-compatible.ps1` | D76's promise: every document a command line with no `--plan` prints, in each state (`ready`, `pending`, `expired`, `released`, `unsatisfiable`), each v0 reason (`unsupported_platform`, `unsupported_profile`, `unsupported_size`, `no_capacity`), a list and an error of each code (`usage`, `invalid_value`, `out_of_range`, `not_found`, `invalid_state`, `internal`), validates against `schemas/v0/` as well as against v1's, in at least 80 documents; with 4 controls that pass v1's schema and fail v0's (a lease made with `--plan`, a `plan_too_large` lease, `--plan` with `--size` and a plan file that does not exist, the last two naming the field `plan`), so that a validator that accepts everything cannot pass ([lease-api.md, Versioning](lease-api.md#versioning), [Schemas](lease-api.md#schemas); D76, D80). 94 results | For the `ready` cases. SKIPPED for them when no CA could be made |
+| `test-v1-compatible.ps1` | D76's promise: every document a command line with no `--plan` prints, in each state (`ready`, `pending`, `expired`, `released`, `unsatisfiable`), each v0 reason (`unsupported_platform`, `unsupported_profile`, `unsupported_size`, `no_capacity`), a list and an error of each code (`usage`, `invalid_value`, `out_of_range`, `not_found`, `invalid_state`, `internal`), validates against `schemas/v0/` as well as against v1's, in at least 80 documents; **from v0.11 v1's schemas are read from `schemas/v1/`**, since the top level of `schemas/` is v2's (E0.11-T04-S01, #0239); with 5 controls: four that pass v1's schema and fail v0's (a lease made with `--plan`, a `plan_too_large` lease, `--plan` with `--size` and a plan file that does not exist, the last two naming the field `plan`), and a fifth, an error that names the field `turn`, which only v2 has, that passes the top level's schema and fails `schemas/v1/`'s and `schemas/v0/`'s, so that a validator that accepts everything cannot pass and this file's v1 is v1's and never v2's ([lease-api.md, Versioning](lease-api.md#versioning), [Schemas](lease-api.md#schemas); D76, D80, D87). 95 results | For the `ready` cases. SKIPPED for them when no CA could be made |
+| `test-board-plan.ps1` | `create --board <id> --epic <ticket>` against the stand-in board and a stand-in credential, never Terry's (E0.11-T04-S01, #0239; D83 to D89), by the seven items of [What the board cases MUST show](#what-the-board-cases-must-show): each refusal of the board read with its error code, its `field` and its message byte for byte (a board or an epic outside its form, an unknown board, an unknown ticket, an archived card, no block, two blocks, a malformed fence, a block never closed, a document `agentspace-plan` refuses, a turn the plan lacks, a board that answers 401, 403, 400, 405, 406, 418, 500 or 503, a bare 404, one that hangs, one that cannot be reached, a body past the 64 MiB bound, and each case of the receipt and of the credential); the requests the stand-in logged, one GET for a good epic; no method but `GET`, with a control that shows the check can see one; the token reaching the stand-in and appearing nowhere else, searched as text and as UTF-16LE on a planted copy first; the three members read and no other; a board lease and the same plan given through `--plan` giving the same size, `sized_for` and TTL; the usage cases of pin P4 refused before any request; and the deep-nesting cases of the architect's pin P5 (a plan nested 64 levels is check 6, one nested 100,000 levels is check 4, from a board and from `--plan`) ([lease-api.md, The board read](lease-api.md#the-board-read), [The plan block](lease-api.md#the-plan-block), [Exit codes and errors](lease-api.md#exit-codes-and-errors)). **245 results** at S01's sent head, `1ef1085`, from [its row in the run record](runs/e0.11-t04-s03.md#the-lease-cli-suite-at-the-final-main) | For its `ready` TTL result only: SKIPPED when no CA could be made. **Every case that needs a token is SKIPPED, and the run is incomplete, never passed, when the DPAPI preflight fails** ([The stand-in credential](#the-stand-in-credential)) |
+| `test-plan-turn-ttl.ps1` | `create --turn` and the TTL a plan gives (E0.11-T04-S01, #0239; D83 to D87): the lease sized for the turn `--turn` names and for no other, with `sized_for.turn` and `sized_for.agents`, the busiest turn when none is named, a tie won by the first and the second when named, a turn name matched exactly, a turn no size holds being `plan_too_large` with its own message while another fits, and the whole plan checked; a `--turn` outside its form and a well-formed one that names no turn, each `invalid_value` for `turn`; each TTL rule (`--ttl` wins, else the lease's turn's budget and half again rounded up to the whole minute, else 8 hours), with the TTL of a `ready` lease read as `expires_at` minus `created_at` of its own document; `budget_minutes` that is not an integer from 1 to 960 written as digits alone refused with `invalid_value` for `plan`, and for `epic` from a board; every usage case that carries `field`, thirteen in all; and the same cases again with the plan read from an epic's block on the stand-in, one GET for a good epic ([lease-api.md, Turn](lease-api.md#turn), [TTL](lease-api.md#ttl), [Plan](lease-api.md#plan), [Command lines](lease-api.md#command-lines)). 381 results | For its `ready` TTL results: SKIPPED when no CA could be made. Its board half is SKIPPED when DPAPI does not work under the moved home |
+| `test-v2-compatible.ps1` | D87's promise: every document a command line with none of `--board`, `--epic` and `--turn` and no `budget_minutes` prints, a lease in each of 5 states, each of 5 reasons (`plan_too_large` among them), a list and an error of each of 6 codes, validates against v1's schemas in `schemas/v1/` as well as against v2's, and one with no `--plan` against v0's in `schemas/v0/` too; the leases that only v2's inputs make (`--turn`, a plan with `budget_minutes`) validate against v1's schemas as well; controls so that a validator that accepts everything cannot pass (a plan lease and the errors naming the field `plan` pass v2's and v1's and fail v0's, and every error that names `board`, `epic` or `turn` passes v2's error schema and fails v1's and v0's); and a result that every state, reason and code was seen ([lease-api.md, Versioning](lease-api.md#versioning), [Schemas](lease-api.md#schemas); D76, D87). It starts no board. 151 results | For the `ready` cases. SKIPPED for them when no CA could be made |
 
 **The first ten rows are the ten checks that this page and the run records mean when they say "the
 ten".** (`test-interop.ps1` was an eleventh until it retired: [Interop retired](#interop-retired).) The five from `test-id-whole-value.ps1` on are
@@ -380,7 +383,7 @@ E0.06-T04-S03's (#0133, #0110 point 4), and four `test-unmet-` files beside them
 
 **The helpers the checks share are three files.** `conformance/lease-cli/lease-cli-common.ps1` serves
 S01's five, and `conformance/lease-cli/lease-check-support.ps1` serves the next five, which are
-E0.04-T03-S03's (and, until it retired, `test-interop.ps1`, E0.05-T02-S05, #0103). `conformance/lease-cli/lease-check-hardening.ps1` serves E0.06-T04-S03's nine files (#0133): a run's error problems without the program's own text, the lease ID refusal, and the map of every file under the home that shows a failed command changed nothing.
+E0.04-T03-S03's (and, until it retired, `test-interop.ps1`, E0.05-T02-S05, #0103). `conformance/lease-cli/lease-check-hardening.ps1` serves E0.06-T04-S03's nine files (#0133): a run's error problems without the program's own text, the lease ID refusal, and the map of every file under the home that shows a failed command changed nothing. **From v0.11, `conformance/lease-cli/board-standin.ps1` is a program a case starts, never a helper a file loads**: it is the stand-in board of [The stand-in board and its credential](#the-stand-in-board-and-its-credential), it holds no case, and `test-board-plan.ps1` and `test-plan-turn-ttl.ps1` start it in a process of their own (E0.11-T04-S01, #0239).
 
 **What v0.07 changes for a run of the lease CLI's checks** (D48, D54, D55; [driver.md, Conformance
 cases for v0.07](driver.md#conformance-cases-for-v007)). From v0.07, a `create` or `get` can start a
@@ -623,6 +626,21 @@ a board, and only reads. **This section says what the suite needs for that, and 
   schema, and a folder at its path, each given a lease-form alias that reaches the box there and is
   refused from v0.11; and the `AGENTSPACE_DIAGNOSTIC` case, whose connection reaches the box there
   and is refused from v0.11 after the line naming the file.
+- **v0.11's lease CLI files are three new ones, one changed, and one program** (E0.11-T04-S01, #0239):
+  `test-board-plan.ps1`, `test-plan-turn-ttl.ps1` and `test-v2-compatible.ps1`, and `test-v1-compatible.ps1`
+  changed to read v1's schemas from `schemas/v1/`, all in the table above, and the stand-in board
+  `board-standin.ps1`, which is no check. **S01 changed no other file**: `harness.ps1`, every helper and every earlier
+  file are as v0.10 left them, which the operator, keeper and schemas files rely on (the run record shows
+  the diff). [The files that are expected to
+  fail](#the-files-that-are-expected-to-fail) lists the cases.
+- **The suite at v0.11 is 94 conformance files**, counted by a command over each folder's `test-*.ps1`: 46
+  lease CLI files (43 at v0.10 and S01's three), 39 operator files (38 at v0.10 and #0229's
+  `test-unmet-proxy-not-ready.ps1`), 7 keeper files and 2 schemas files. **A whole-suite record MUST count
+  the files of the commit it runs by such a command**, and never copy the count from this page.
+- **v0.11's operator files** are `test-unmet-proxy-not-ready.ps1` (E0.11-T02-S04, #0237), the cases of
+  `test-unmet-host-proxy-lookup.ps1` that #0237 changed, and S02's change to the helper
+  `host-provision-common.ps1` and to `test-unmet-host-provision.ps1` (E0.11-T04-S02, #0240), which masks the
+  log line a provision case quotes ([The operator and the token push](#the-operator-and-the-token-push)).
 
 - **Each check prints one line per result and one summary line.** A result line is `PASS <name>`,
   `FAIL <name>: <reason>` or `SKIPPED <name>: <reason>`, and a name starts with the spec section it
@@ -681,10 +699,11 @@ is the first, and shows the results. **v0.06's run, of the whole suite against t
 ProxyCommand and keeper as well, is [docs/runs/e0.06-t04-s01.md](runs/e0.06-t04-s01.md).**
 **v0.07's is [docs/runs/e0.07-t04-s04.md](runs/e0.07-t04-s04.md), v0.08's is
 [docs/runs/e0.08-t04-s04.md](runs/e0.08-t04-s04.md)** (E0.08-T04-S04, #0185), **v0.09's is
-[docs/runs/e0.09-t04-s03.md](runs/e0.09-t04-s03.md)** (E0.09-T04-S03, #0207), **and v0.10's, the
-latest whole-suite run, is [docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md)** (E0.10-T04-S03,
-#0223). Their counts are in them, and this page quotes none of v0.08's or v0.09's, and of v0.10's only
-the box's 172 ([The idle check's test](#the-idle-checks-test)).
+[docs/runs/e0.09-t04-s03.md](runs/e0.09-t04-s03.md)** (E0.09-T04-S03, #0207), **v0.10's is
+[docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md)** (E0.10-T04-S03, #0223), **and v0.11's, the
+latest whole-suite run, is [docs/runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md)** (E0.11-T04-S03,
+#0241). Their counts are in them, and this page quotes none of v0.08's, v0.09's or v0.10's, and of
+v0.11's only the box's 172 ([The idle check's test](#the-idle-checks-test)).
 1. **Build the output folder from the workspace's root, with `cargo xtask dist`**
    ([operator.md, The install folder](operator.md#the-install-folder)). It writes `target\dist\`,
    and the lease CLI is `target\dist\agentspace.exe`. **The run MUST be made from a build of a
@@ -730,6 +749,22 @@ the box's 172 ([The idle check's test](#the-idle-checks-test)).
      base when no merge after it can change its inputs** (the architect's pin P55, as in v0.09), and the
      record MUST show the diff between the base and the final `main`. The run record is
      [docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md).
+   - **v0.11's runs need nothing more from the runner either**: each board case starts its own stand-in
+     board on a port it picks and writes its own receipt and `bot.json` into its throwaway home ([The
+     stand-in board and its credential](#the-stand-in-board-and-its-credential)), so no run reads Terry's
+     board, receipt or token, and none connects to port 8811. **The whole-suite commands are these, and a
+     record MUST take them from the last record's counts and never from a passage about one file** (D89;
+     E0.11-T04-S03, #0241): every `conformance\lease-cli\test-*.ps1` (46 files at v0.11), every
+     `conformance\operator\test-*.ps1` (39), every `conformance\keeper\test-*.ps1` (7) and every
+     `conformance\schemas\test-*.ps1` (2), which are **94 files**, with `test-unmet-start-paths.ps1 -Case
+     deadline` once more, so **95 file runs**; the crates (`cargo test --workspace --locked --no-fail-fast`,
+     `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`); and
+     the box's tests in WSL by the whole discovery command, which prints `Ran 172 tests`. **The
+     empty-program run is of the 46 lease CLI files, and each MUST exit 1.** **A run MAY start early on a
+     diff-checked base** (the architect's pin P55, as in v0.09 and v0.10), and **the record MUST show the
+     diff between the base and the final `main` over every input the early runs read**, with the one
+     exception that a document no early run reads, such as lease-api.md, MAY differ and MUST be named. The run
+     record is [docs/runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md).
 4. **A complete run exits 0 on every file, with no SKIPPED result, on a machine whose zone is not
    UTC.** Each `test-unmet-*` file is a requirement the build MUST meet, so against a build its
    `FAIL` is the build's failure ([The files that are expected to fail](#the-files-that-are-expected-to-fail)).
@@ -1080,6 +1115,64 @@ works from it and from [lease-api.md, The board read](lease-api.md#the-board-rea
 - **It is never a copy or a part of an installed program, of localswim, or of Windows' own HTTP
   server's configuration**: it is a script in `conformance/lease-cli/` that holds no request of the
   real board's and makes none. **It MUST NOT make an outbound connection of any kind.**
+- **The stand-in as built, where the interface above is silent** (the dev lead, for v0.11-T04, pin P9;
+  E0.11-T04-S01, #0239). **RFC 2119 keywords again.** `conformance/lease-cli/board-standin.ps1` makes each of
+  these calls, none of which contradicts the interface, and a case MUST NOT depend on a call this list does
+  not give:
+  - **Its refusals are exit 2, before it listens and without a ready file**, and `-Port` is read first, so
+    that 8811 is refused before the fixture is read, the log opened or anything bound. The others are an
+    argument beyond the four, a `-Port` that is not a decimal from 1 to 65535, a missing `-Fixture`, `-Log` or
+    `-Ready`, a fixture that is missing, unreadable or breaks the fixture's table, a log it cannot open and a
+    port it cannot bind. **An `answer` of `"problem": true` is refused with exit 2 too**, since the fixture's
+    table defines only `false`. **A reason goes to stderr and names a member or an argument, never a value or a
+    path.** (the dev lead, for v0.11-T04, pin P9)
+  - **It binds a plain TCP socket to `127.0.0.1` with exclusive use of the address**, never a `TcpListener`:
+    on .NET 10 a `TcpListener` given `ExclusiveAddressUse` before it starts answers a null `Server` after
+    it, which `Socket.Select` cannot take, and the stand-in's own self-test found it (23 of its first run's 46
+    results failed). (`board-standin.ps1` as built, E0.11-T04-S01, #0239)
+  - **It serves its connections from one loop, one request at a time**: each request is logged and flushed,
+    then answered or held, before the next is read. Every answer carries `Connection: close`, and a
+    connection is closed once the client has closed its side, or 5 seconds after its answer. A connection
+    that sent nothing for 30 seconds is closed and not logged, and a request whose bytes stop for 10 seconds
+    is read as far as it goes. **It ends itself, exit 0, 10 minutes after it starts**; **its self-test does not
+    show that end, which is in the code alone.** (the dev lead, for v0.11-T04, pin P9)
+  - **A request it cannot parse is answered 400**, a Problem document of code `invalid_request`, and logged
+    `INVALID - auth=none`, **unless an `answer` overrides it**: an `answer` of `{"status": ...}` or `"hang"`
+    overrides every reply, an unparsable request included. (the dev lead, for v0.11-T04, pin P9)
+  - **A query the ticket view cannot use is answered 400 `invalid_request` too**, and it is read once the
+    board is found, since an unknown board is a 404 first: **a missing or unknown `view`, a `ticket` that is
+    not decimal digits, is zero or is past 9007199254740991, an `include_prose` that is neither `true` nor
+    `false`, and a query name given twice.** **`view` and `include_prose` are read without regard to case**, as
+    localswim's `docs/openapi.yaml` reads them. **A path under the prefix that is not `boards/<id>` is a 404
+    with the Problem document of code `not_found`.** (the dev lead, for v0.11-T04, pin P9)
+  - **A `405` carries `Allow: GET`, and a `HEAD` gets its answer's headers and no body.** **Each Problem
+    document it makes, the 404's included, has a fresh `request_id` for each request.** (the dev lead, for v0.11-T04, pin P9)
+  - **It opens the log in append mode, so that the file is created empty when it is absent**, and **it
+    overwrites the ready file** when one is there. (the dev lead, for v0.11-T04, pin P9)
+  - **A method or a request target that holds the token's text, raw or percent-decoded, is logged as
+    `[token-withheld]` in its place**, so that a client that put the token in a URL is caught by the line and
+    the token is still never logged. The `Authorization` value is compared while the request is parsed and kept
+    in no variable past that; only `ok`, `wrong` or `none` is. (`board-standin.ps1` as built, E0.11-T04-S01, #0239)
+  - **Every string of the ticket view that a client has no use for begins `STANDIN-MARKER-`**: the card's
+    title, the lane, owner and priority labels of every card, each comment's text, and the title of each
+    relationship, the parent and each child. **Each marker ends with a tag of the board ID's first 8
+    characters and the ticket**, and the numbers of comments (2 to 4), relationships (1 or 2) and children (1
+    or 2) follow the ticket, so that two cards of the same revision, archived flag and description on two
+    boards, or under two tickets, differ in every member the client ignores. **`prose` is present only for
+    `include_prose=true`**, as localswim's is, **except that a `{"body_bytes": <n>, "chunked": <boolean>}`
+    answer's padded ticket view always includes it**, and `prose.description` is the fixture's description
+    exactly as its JSON text writes it. (the dev lead, for v0.11-T04, pin P9)
+  - **A `{"body_bytes": <n>, "chunked": <boolean>}` answer pads the document**, streamed, by lengthening the
+    last comment's text when the gap is smaller than one more comment, and otherwise by adding comments of
+    `x` text, each under 4,000,000 characters; an `n` smaller than any card's unpadded document is refused
+    with exit 2 at the start. (`board-standin.ps1` as built, E0.11-T04-S01, #0239)
+- **A stand-in's own host caches under the home are not a change to the home** (the architect, 2026-11-26,
+  for v0.11-T04, pin P13). **The stand-in is a `pwsh` process started under the case's moved home, and
+  PowerShell writes startup caches under `home\AppData\Local\Microsoft\PowerShell\` of the home's root when it
+  first runs, at a time of its own.** A check that a refused run, or any run, left the home as it was MUST NOT
+  count a file or folder under that path as a change, and **MUST exclude exactly that path and no other**: a
+  check MUST NOT exclude by a file name, a pattern or a wider folder, since the same check MUST still see
+  every other file the program under test wrote.
 
 #### The stand-in credential
 
@@ -1678,12 +1771,19 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
   - **Two known limits of `test-unmet-host-provision-success.ps1`** (the reviewer's N7 and N8 on PR #160,
     ruled by the architect for v0.10-T04). **Neither makes a result wrong**; each says how a failure of
     the file is read.
-    - **N7, card #0230:** the shared helper `Get-HpLogShape` (`host-provision-common.ps1`) quotes a log
-      line it cannot parse, raw, in a failure's reason, and a case's `provision.log` is in its throwaway
-      home, which `New-ConformanceHome` makes under `%TEMP%`, so such a line can carry the profile's 8.3
-      short name. **A failure reason of a `provision` file MUST be masked before it is printed outside the
-      run's own folder or written to a record**, as for any command's error text
-      (AGENTS.md, "Terry's real files in a review"); the helper's own fix is #0230's.
+    - **N7, card #0230, met by #0240** (E0.11-T04-S02, PR #172): the shared helper `Get-HpLogShape`
+      (`host-provision-common.ps1`) quoted a log line it cannot parse, raw, in a failure's reason, and a
+      case's `provision.log` is in its throwaway home, which `New-ConformanceHome` makes under `%TEMP%`, so
+      such a line could carry the profile's 8.3 short name. **From v0.11 the helper quotes it through
+      `ConvertTo-HpMasked`**, which hides the temp folder, the profile, the throwaway home, the computer name
+      and the user name in every spelling it reads from the case's own environment, and
+      `test-unmet-host-provision.ps1`'s reason for a log line that is not `<time> <step> <outcome>` quotes the
+      line through it too (the architect, 2026-11-25, for v0.11-T04, pin P8). **That is #0230's whole change.**
+      **A failure reason of any other file that quotes captured program output is not masked by it**, and
+      **MUST be masked before it is printed outside the run's own folder or written to a record**, as for any
+      command's error text (AGENTS.md, "Terry's real files in a review"); **the places that still quote
+      captured output unmasked are #0243's**, listed whole, file and line, in [the v0.11 run
+      record](runs/e0.11-t04-s03.md#captured-output-quoted-unmasked-0243).
     - **N8:** in a case that reports several results, an error in the check itself reports one `FAIL`
       under the case's name and not one for each result. **A file's count is therefore a count of
       results only when no case failed**: against an empty operator the success file gives 23 results
@@ -2033,11 +2133,13 @@ them. E0.06-T06-S01 removed the file, so each case now has one home.
   is `agentspace-<project>-<first 8 hex>`. **From contract v1** (E0.10-T01-S02, #0212; D76) the plan
   schema's `$defs` MUST appear word for word in the create request schema's, a check that runs on
   `schemas/` only, since contract v0 has no plan schema, and **every other check runs on `schemas/`
-  (whose `$id` carries `v1`) and again on `schemas/v0/` (whose `$id` carries `v0`), each against its
-  own schemas and samples only**, so a v0 sample is never checked against a v1 schema.
-  `schemas/v0/` MUST exist and hold a schema, a valid sample and an invalid one, so a deleted copy cannot
-  pass silently. `-SchemaRoot <folder>` names a planted copy that proves each check fails.
-- **Loads:** No product code. It reads `schemas\`, `schemas\v0\`, their `samples\` and nothing else.
+  and again on `schemas/v0/` (whose `$id` carries `v0`), each against its own schemas and samples
+  only**, so a v0 sample is never checked against a v1 schema. **From contract v2** (E0.11-T01-S02, PR
+  #163; D87) **the top level of `schemas/` is v2's (its `$id` carries `v2`), v1's are kept unchanged under
+  `schemas/v1/` (whose `$id` carries `v1`), and every check runs on all three trees**, the `$defs` check
+  on `schemas/` and `schemas/v1/`. `schemas/v1/` and `schemas/v0/` MUST each exist and hold a schema, a
+  valid sample and an invalid one, so a deleted copy cannot pass silently. `-SchemaRoot <folder>` names a planted copy that proves each check fails.
+- **Loads:** No product code. It reads `schemas\`, `schemas\v1\`, `schemas\v0\`, their `samples\` and nothing else.
 - **Class:** Neither, and now conformance in the one sense that it has no program to name: it is in
   `conformance/`, so the rewrite MAY read it. It drives no program, so there is no variable. **It
   checks the package itself, so it cannot be pointed at another build, and the "program that prints
@@ -2069,7 +2171,10 @@ them. E0.06-T06-S01 removed the file, so each case now has one home.
     [The project list](state.md#the-project-list),
     [The lease state file](state.md#the-lease-state-file)), from E0.07-T01-S01's samples (#0141) and
     v0.10's: the host registry's `last_success_at` (D77) and the lease state file's plan leases and
-    `plan_too_large` record (D74, D75; E0.10-T01-S03, #0213), each with invalid samples.
+    `plan_too_large` record (D74, D75; E0.10-T01-S03, #0213), each with invalid samples. **From v0.11 the
+    lease state file's samples hold a board lease's `plan_source`** (D86; `leases.state.plan-source.json`, with
+    its invalid ones), and the file's count is 139 at v0.10 and 163 at v0.11
+    ([docs/runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md#the-schemas)).
   - **A state schema with no sample fails**, from #0213 (E0.10-T01-S03, 2026-11-24), **unless it is on the
     file's list of schemas known to have none**, so that a new schema, or one whose samples were removed,
     is never skipped silently. The list, `$knownWithoutSamples` in the file, holds six, each with where
@@ -2127,7 +2232,7 @@ host, never a program of the laptop that the harness starts, so the harness, the
   `python3 -I -m unittest discover -v -s box/tests -p test_agentspace_idle.py` for this file alone, **and
   with `python3 -I -m unittest discover -v -s box/tests -p 'test_agentspace_*.py'` for the whole folder**,
   which is what a whole-suite run's box result MUST be. That is WSL's Ubuntu on the laptop, or a host.
-  **The whole discovery runs 172 tests at v0.10-T04** (the architect's ruling for E0.10-T04-S03, #0223):
+  **The whole discovery runs 172 tests at v0.10-T04 and again at v0.11-T04** (the architect's ruling for E0.10-T04-S03, #0223; [docs/runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md#the-boxs-tests)):
   `test_agentspace_agents.py` 51, `test_agentspace_footprint.py` 82, `test_agentspace_idle.py` 22 and
   `test_agentspace_sample.py` 17, each file alone printing `OK`
   ([docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md#the-boxs-tests)). **The one-file command is not
@@ -2571,6 +2676,29 @@ only the box's 172 ([The idle check's test](#the-idle-checks-test)).
   each against the build, at the commit its sections name, and shows by a diff that the files at the
   final `main` are those it ran ([docs/runs/e0.10-t04-s03.md](runs/e0.10-t04-s03.md#the-commits)).
 
+**v0.11's files (E0.11-T04, #0239 to #0241).** **RFC 2119 keywords again.** Each is a conformance file for a
+MUST that v0.11 adds, or a helper: three lease CLI files and one changed for contract v2, the stand-in board,
+one operator file of T02's and S02's change to a helper. **The installed v0.10 programs, which are the suite's
+defaults until E0.11-T05 (#0242) installs v0.11, do not meet them** where v0.10 lacks the behavior: v0.10 has no
+`--board`, `--epic` or `--turn`, no `budget_minutes`, no `board`, `epic` or `turn` as an error's `field`, and a
+ProxyCommand that reaches the box for a lease that is not `ready`. **A v0.11 build MUST pass every one**, and a
+`FAIL` against it is the build's failure, as for every file above. **This page gives no result of these files
+against the installed v0.10 programs, and no run of that kind was made for the record**; the empty-program run
+MUST show each of the 46 lease CLI files exiting 1 ([Running the suite against a build's output
+folder](#running-the-suite-against-a-builds-output-folder), step 5), and the run record
+([docs/runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md)) gives the results against the build.
+
+| File | Cases it holds | Spec section | Card |
+|---|---|---|---|
+| `conformance/lease-cli/board-standin.ps1` | **No case: the stand-in board**, a loopback server a case starts on a port it picks, one fixture, one log and one ready file; its interface is [The stand-in board and its credential](#the-stand-in-board-and-its-credential) and its calls where that is silent are in [The stand-in board](#the-stand-in-board) (pin P9). **It has a self-test of its own**, a planted-copy proof that its log holds no token, which is not committed | [lease-api.md, The board read](lease-api.md#the-board-read); D86, D88 | #0239 (E0.11-T04-S01) |
+| `conformance/lease-cli/test-board-plan.ps1` | The seven items of [What the board cases MUST show](#what-the-board-cases-must-show) and pin P5's deep-nesting cases; **its reasons pass through one redaction function that hides the run's token, with a control result that shows it**, and a DPAPI preflight under the moved home that SKIPs every case that needs a token when it fails. **245 results** at S01's sent head, `1ef1085`, from [its row in the run record](runs/e0.11-t04-s03.md#the-lease-cli-suite-at-the-final-main) | [lease-api.md, The board read](lease-api.md#the-board-read), [The plan block](lease-api.md#the-plan-block), [Board](lease-api.md#board), [Epic](lease-api.md#epic), [Exit codes and errors](lease-api.md#exit-codes-and-errors); D83, D86 to D88 | #0239 |
+| `conformance/lease-cli/test-plan-turn-ttl.ps1` | **381 results**: `--turn`, the TTL rules, `budget_minutes`, the thirteen usage cases that carry `field` and the order the values are checked in, each from a file and again from an epic's block on the stand-in; its reasons pass through `Format-TtText`, with a control result | [lease-api.md, Turn](lease-api.md#turn), [TTL](lease-api.md#ttl), [Plan](lease-api.md#plan), [Command lines](lease-api.md#command-lines); D83 to D87 | #0239 |
+| `conformance/lease-cli/test-v2-compatible.ps1` | **151 results**: contract v2 keeping v1 and v0, with its controls ([The lease CLI's table](#running-the-suite)) | [lease-api.md, Versioning](lease-api.md#versioning), [Schemas](lease-api.md#schemas); D76, D87 | #0239 |
+| `conformance/lease-cli/test-v1-compatible.ps1`, changed | **95 results**, one more than v0.10's 94: v1's schemas read from `schemas/v1/` for v1 and `schemas/v0/` for v0, and a fifth control (an error naming the field `turn` passes `schemas/` and fails `schemas/v1/` and `schemas/v0/`) | [lease-api.md, Versioning](lease-api.md#versioning); D76, D87 | #0239 |
+| `conformance/operator/test-unmet-proxy-not-ready.ps1` | #0229: the alias of a `released`, `expired`, `unsatisfiable` or `pending` lease refused with no tunnel, no call and no push; an argument of lease alias form refused while the lease state file cannot be read or is not valid; a `ready` lease still connecting; an alias that is no record's, and a missing file, reaching the box; the retry on a sharing violation, bounded; nothing written by a refusal | [operator.md, From the ProxyCommand](operator.md#from-the-proxycommand), [A lease that is not ready (#0229)](operator.md#a-lease-that-is-not-ready-0229) | #0237 (E0.11-T02-S04) |
+| `conformance/operator/test-unmet-host-proxy-lookup.ps1`, changed | The cases that #0237 changed: the lease alias whose lease has expired, a lease state file that is not JSON, has `version` 1, holds two records with one `id` or does not fit its schema, a folder at its path, and the `AGENTSPACE_DIAGNOSTIC` case, each refused from v0.11 | [operator.md, From the ProxyCommand](operator.md#from-the-proxycommand) | #0237 |
+| `conformance/operator/host-provision-common.ps1` and `test-unmet-host-provision.ps1`, changed | No case of their own: `Get-HpLogShape` quotes an unparsed log line through `ConvertTo-HpMasked`, and the reason of `test-unmet-host-provision.ps1` that quotes a line does too | [The operator and the token push](#the-operator-and-the-token-push), N7 | #0240 (E0.11-T04-S02, PR #172) |
+
 ## The gaps
 
 **A gap is a spec section that no sorted check covers.** The sorted checks leave these.
@@ -2619,6 +2747,10 @@ only the box's 172 ([The idle check's test](#the-idle-checks-test)).
 | driver.md: Starting a provisioning run, a lease created after `place_pending`'s last re-read and before the run exits (pin P31) | **Not shown by any case**: no stand-in can time it, and it is the order of the locks ([driver.md, Conformance cases for v0.10](driver.md#conformance-cases-for-v010)). D80's live check starts no instance, so it does not show it either |
 | state.md: What a plan lease adds (the stored `sized_for` and `plan`, `driver` required with them, the `plan_too_large` record, and the plan never printed) | **Covered in part, and not by a lease CLI case**: no lease CLI case reads a plan lease's record in the lease state file, and every plan case reads the document the program prints. The record's form is `test-state-schemas.ps1`'s samples (the lease state file's plan leases, its `plan_too_large` record and their invalid samples, and the copy of the plan schema's `$defs`), and what `create` writes is the crates' own tests (`agentspace-state`'s `tests/plan_record.rs` and `tests/sized_for_document.rs`, `agentspace-cli`'s `tests/lease_plan.rs`). **The file's growth with every plan lease is accepted** (state.md, pin P29), and no case shows it |
 | lease-api.md: Plan, the per-agent footprint (D73, D76) | **Covered at today's figure only**: `test-plan-sizes.ps1`'s edges and `test-plan-errors.ps1`'s 32 are taken from lease-api.md's size table at half a vCPU and 2 GiB for each agent, and the footprint is not part of the contract, so a new figure changes those two files and no contract version |
+| state.md: What a plan lease adds, a board lease's `plan_source` (D86; the architect, for v0.11-T01, pin P7) | **Covered in part, and not by a lease CLI case**: no case reads a board lease's record in the lease state file, since no output prints `plan_source` (D87) and every board case reads the document the program prints. The record's form is `test-state-schemas.ps1`'s samples (`leases.state.plan-source.json` and its invalid ones), and what `create` writes is the crates' own tests (`agentspace-state`'s `tests/plan_source.rs`, `agentspace-cli`'s `tests/lease_board.rs`) |
+| lease-api.md: TTL, the factor of half again (D85) | **Covered at today's figure only**: `test-plan-turn-ttl.ps1` takes the budget and half again from lease-api.md's TTL section, and the factor is not part of the contract, so a new factor changes that file and no contract version |
+| lease-api.md: The board read, the rows that no stand-in answer reaches (the architect, 2026-11-26, for v0.11-T04, pins P10 and P11) | **No lease CLI case shows them, and a crate test owns each**: `LOCALAPPDATA` unset, empty or only whitespace (`agentspace-cli`'s `tests/lease_board.rs`, `localappdata_unset_empty_or_only_whitespace_is_an_internal_error_and_reads_no_board`), a 200 that is not the shape (`agentspace-board`'s `tests/read_epic.rs`, `a_200_that_is_not_the_shape_could_not_be_read`), a connection closed with no answer or an answer that stops short (`a_connection_closed_with_no_answer_does_not_answer` and `an_answer_that_stops_short_does_not_answer`, in the same file) and the 30 seconds after which a board that never answers is given up on (`slow_a_board_that_never_answers_is_given_up_on_after_30_seconds`, in the same file) |
+| Every file of `conformance/` that quotes captured program output in a failure's reason (#0230, #0243) | **The helper `Get-HpLogShape` and one provision reason are masked** (#0240). **Every other place that quotes program output, a stand-in's record or an exception's message unmasked is carded as #0243** (Backlog; the architect, 2026-11-26, for v0.11-T04), and is listed whole, file and line, in [the v0.11 run record](runs/e0.11-t04-s03.md#captured-output-quoted-unmasked-0243). A failure of such a file MUST be masked by whoever prints its reason outside the run's own folder |
 
 ## Coverage of the operator and the keeper
 
@@ -2865,6 +2997,49 @@ before any AWS call, so each lease it makes is `unsatisfiable`, nothing is issue
 | state.md: the host registry's `last_success_at` and its schema (D77) | `test-state-schemas.ps1`'s samples of it and its invalid ones, and every case that seeds it | `agentspace-hosts`' `tests/last_success.rs`. A program built before v0.10 refusing a registry that holds it: the install's, E0.10-T05 |
 | operator.md: `provision` removing `last_success_at` at step 3, writing it at step 9's end, writing none for a run that did not succeed, a failed write and the lock the write takes (D77; pins P22 to P24) | `test-unmet-host-provision-success.ps1` (E0.10-T04-S02, #0222), rows 1 to 6 of v0.10's table | `agentspace-sync`'s `tests/provision_success.rs` for the run's own logic. **A real run writing it on a real host** needs no live check by D80, which starts no instance: a stand-in `aws` shows the calls and the answers, and the write is the operator's |
 | operator.md: a program variable that names something that cannot be run, never falling back to the default (the test seam; #0227) | `test-unmet-seam-cannot-run.ps1` (#0222) | Nothing: the seam is the operator's alone |
+
+**v0.11's rows: board plans, turns, budgets, contract v2 and the ProxyCommand's refusal** (E0.11-T04-S03,
+#0241; D88). **RFC 2119 keywords again.** Every behavior that v0.11 adds to lease-api.md, state.md and
+operator.md, or changes on them, is shown by a conformance case of T04 against stand-ins, by a test of a
+crate, or by D88's live check; **no v0.11 behavior is left with none of the three**, but for what [the gaps
+table](#the-gaps) names (D88's last bullet, and [architect.md, Breaking an epic into
+stories](architect.md#breaking-an-epic-into-stories), step 5). A "Not shown by a case" cell therefore names the
+live check or the crate test that shows it, never "Later".
+- **Every "None" this page's coverage tables hold was read for what v0.11 changes** (#0241). **The one
+  coverage cell that says `None` is the keeper's installed task, launcher and installer row**, which no v0.11
+  story touches. **The `None` cells of [The summary](#the-summary) are the prototype's real folders**, history
+  and not coverage. **The cells that say a case reaches nothing, and that v0.11 changes, are named in [the gaps
+  table](#the-gaps) and in the rows below**: a board lease's stored record, the TTL's factor, the rows of the
+  board read that no stand-in answer reaches, and the captured output a failure's reason quotes.
+- **No stand-in can show the real board answering as the stand-in does**, and no case runs the installed
+  programs, so D88's live check shows both once the build is installed. **The results of T04's new files are in
+  their pull requests; the record of this turn's whole-suite run,
+  [docs/runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md), covers the suite, the crates and the box's tests on
+  `main`**, and the table below gives no result.
+
+**D88's live check, E0.11-T05 (#0242), on Terry's laptop after the install, starts no instance** (D88: no
+instance hours are asked for, and nothing costs money):
+- **It reads #0052, v0.11's own epic, with one GET as Bot and writes nothing to the board** (Terry, 2026-11-25,
+  Q18: the architect's recommendation, (a)). The plan block in #0052's description was written at layout (D83).
+- **Its lease is for a project that is not on the project list**, which D54 answers `unsatisfiable` with
+  `no_capacity` before any AWS call, so nothing is issued and none needs a release (D80).
+- **It shows the size, `sized_for` and TTL that the same plan given from a file gives** (D88).
+- **It changes nothing on the laptop beyond the install**: Terry's ssh config, keeper task and `PATH` are as
+  they were (D88).
+
+| Area | Shown by a case | Not shown by a case, and the live check or test that shows it |
+|---|---|---|
+| lease-api.md: `create --board <id> --epic <ticket>` reads the epic's plan from the card and makes the lease a `--plan` lease with that plan would be (D83, D86) | `test-board-plan.ps1` (#0239), its item 6: a board lease and the same plan through `--plan` give the same size, `sized_for` and TTL, for the busiest turn and for `--turn`; `test-plan-turn-ttl.ps1`'s second half, the same cases from an epic's block | The block's parse and the read over their whole domain: `agentspace-board`'s `tests/block.rs` and `tests/read_epic.rs`, and `agentspace-cli`'s `tests/lease_board.rs`. **The real board answering as the stand-in does**, and the installed programs: D88's live check, E0.11-T05 (#0242) |
+| lease-api.md: The board read only reads (D86), and sends the token to the board alone | `test-board-plan.ps1`'s items 3 and 4: no log line of any case holds a method but `GET`, with a control that shows the check can see one, and the token reached the stand-in (`auth=ok`) and appears in no output, no error, no file of the home but the fixture and `bot.json`'s blob, and no command line | That the real board is read once and written nothing: D88's live check makes one GET as Bot |
+| lease-api.md: Each refusal of the board read, with its error code, `field` and message (the outcome table, D86) | `test-board-plan.ps1`'s item 1 and 2: every row a stand-in's answer or a credential can bring about, with the requests it makes (one GET for a good epic, two for an unknown board or ticket, one for a bare 404, none for a refusal made before the read) | **The four rows no stand-in answer reaches, each a crate test** (the architect, 2026-11-26, for v0.11-T04, pins P10 and P11), listed in [the gaps table](#the-gaps): `localappdata_unset_empty_or_only_whitespace_is_an_internal_error_and_reads_no_board` (`agentspace-cli`'s `tests/lease_board.rs`), and in `agentspace-board`'s `tests/read_epic.rs` `a_200_that_is_not_the_shape_could_not_be_read`, `a_connection_closed_with_no_answer_does_not_answer` and `an_answer_that_stops_short_does_not_answer`, and `slow_a_board_that_never_answers_is_given_up_on_after_30_seconds` (the case of a board that hangs shows only that the run ends within 60 seconds with `internal`) |
+| lease-api.md: The plan block, and a plan nested too deep (D83; the architect, 2026-11-25, for v0.11-T04, pin P5) | `test-board-plan.ps1`: no block, two, a malformed fence, a block never closed and a document `agentspace-plan` refuses, each as `invalid_value` for `epic`; a plan nested 64 levels is check 6 and one nested 100,000 levels is check 4, from a board and from `--plan`, within a bound of time and recording no lease | The block's fence and parse over their whole domain: `agentspace-board`'s `tests/block.rs`. **Nesting from 65 to 999 levels is the build's own** (lease-api.md), and no case asserts it |
+| lease-api.md: `create --turn` sizes the lease for the turn it names, `sized_for.turn`, and the second `plan_too_large` message (D84) | `test-plan-turn-ttl.ps1`; `test-plan-sized-for.ps1` and `test-plan-errors.ps1` still show v1's `sized_for` and `plan_too_large` | The turn cut and the sizing over their whole domain: `agentspace-plan`'s `tests/turn_budget.rs` and `agentspace-cli`'s `tests/lease_plan.rs`; the member's record: `agentspace-state`'s `tests/sized_for_document.rs`. The installed programs: D88's live check |
+| lease-api.md: `budget_minutes` and the TTL a plan gives from its turn's budget (D85) | `test-plan-turn-ttl.ps1`: each TTL rule, the budget refusals from a file and from a board, and a lease's TTL as `expires_at` minus `created_at` of its own document | `agentspace-plan`'s `tests/turn_budget.rs`. The factor is not part of the contract ([the gaps table](#the-gaps)). The installed programs: D88's live check ("the same plan gives from a file") |
+| lease-api.md: contract v2 keeps v1 and v0 for a command line that gives none of the new inputs, and the new `field` values (D87) | `test-v2-compatible.ps1` and `test-v1-compatible.ps1` (its fifth control), and `test-schemas.ps1` over `schemas/`, `schemas/v1/` and `schemas/v0/` (E0.11-T01-S02, PR #163); the thirteen usage cases that carry `field` are `test-plan-turn-ttl.ps1`'s, with `test-board-plan.ps1`'s item 7 beside them, and `test-usage-errors.ps1` and `test-values.ps1` are unchanged | **A client outside the repository** that reads a v2 error: none exists (D87), and no check shows it. The installed programs: D88's live check |
+| lease-api.md: `create`'s v2 help | `test-help.ps1`, which reads lease-api.md at run time | The installed programs: D88's live check, with E0.11-T05's install |
+| state.md: What a plan lease adds, a board lease's `plan_source` and the plan as read (D86) | `test-state-schemas.ps1`: the lease state file's `plan_source` sample and its invalid ones | **No lease CLI case reads the stored record** ([the gaps table](#the-gaps)): `agentspace-state`'s `tests/plan_source.rs` and `agentspace-cli`'s `tests/lease_board.rs` show what `create` writes |
+| operator.md: the ProxyCommand refuses a lease alias whose lease is not `ready`, and one whose lease records cannot be read (#0229; D49 as changed for v0.11-T01, pins P21 to P23) | `conformance/operator/test-unmet-proxy-not-ready.ps1` (E0.11-T02-S04, #0237) and the cases of `test-unmet-host-proxy-lookup.ps1` that #0237 changed | Nothing more is claimed: D88's live check does not include it, and the refusal is made before any call, so the case's recording stand-in `aws` and its tripwires show that nothing ran |
+| The suite's own files: a provision case's failure quoting a log line it cannot parse (#0230) | `test-unmet-host-provision.ps1`'s reason, and `Get-HpLogShape` through `ConvertTo-HpMasked` (E0.11-T04-S02, #0240); the mask's own proof is S02's planted checks under its `target\`, not committed | The rest of the captured output a failure's reason quotes: #0243 ([the gaps table](#the-gaps)) |
 
 ## The remaining work
 
