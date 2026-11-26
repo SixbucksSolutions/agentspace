@@ -467,7 +467,7 @@ fn state_md_other_host_lease_block_is_what_the_test_transcribes() {
         .replace("<user>", "ubuntu")
         .replace("<key path>", &lease_key("id_ed25519"))
         .replace("<certificate path>", &lease_key("id_ed25519-cert.pub"))
-        .replace("<project>", PROJECT)
+        .replace("<host name>", PROJECT)
         .replace("<known_hosts path>", KNOWN_HOSTS)
         .replace("<proxy command>", PROXY_LEASE);
     assert_eq!(want, OTHER_HOST_LEASE_BLOCK);
@@ -475,16 +475,171 @@ fn state_md_other_host_lease_block_is_what_the_test_transcribes() {
 
 #[test]
 fn state_md_host_block_is_what_the_test_transcribes() {
+    // From v0.12 the block names the host by `<host name>` (D91; state.md, A host's platform and
+    // names, pin P12), and its `<user>` is `ubuntu` on a Linux host. For a `linux/arm64` host
+    // `<host name>` is the project, so the bytes are v0.11's.
     let template = doc_block(
         "### A host's operator alias",
-        "# agentspace host <project>; <comment>\n",
+        "# agentspace host <host name>; <comment>\n",
     );
     let want = template
-        .replace("<project>", PROJECT)
+        .replace("<host name>", PROJECT)
+        .replace("<user>", "ubuntu")
         .replace("<comment>", COMMENT)
         .replace("<key path>", HOST_KEY)
         .replace("<certificate path>", HOST_CERT)
         .replace("<known_hosts path>", KNOWN_HOSTS)
         .replace("<proxy command>", PROXY_HOST);
     assert_eq!(want, HOST_BLOCK);
+}
+
+// ---------- A host of another platform (v0.12, D91; state.md pins P7 and P12) ----------
+//
+// state.md, A lease alias for a host that is not the box: `HostKeyAlias agentspace-host.<host
+// name>`, where `<host name>` is `<project>.<os>-<arch>` for a host of a platform other than
+// `linux/arm64`, and `<user>` is the lease's `ssh.user` (`agent` on `windows/amd64`). The lease's
+// alias, its `Host` line and its file's name stay `agentspace-<project>-<first 8 hex digits>`.
+
+const WINDOWS_HOST_NAME: &str = "examplehost.windows-amd64";
+const WINDOWS_HOST_KEY_ALIAS: &str = "agentspace-host.examplehost.windows-amd64";
+const LINUX_AMD64_HOST_KEY_ALIAS: &str = "agentspace-host.examplehost.linux-amd64";
+
+const WINDOWS_LEASE_BLOCK: &str = "\
+# agentspace lease 3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90; Written by agentspace. Do not edit.
+Host agentspace-examplehost-3f2a9c1e
+  User agent
+  IdentityFile \"C:/Users/someone/.agentspace/leases/3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90/id_ed25519\"
+  CertificateFile \"C:/Users/someone/.agentspace/leases/3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90/id_ed25519-cert.pub\"
+  IdentitiesOnly yes
+  HostKeyAlias agentspace-host.examplehost.windows-amd64
+  UserKnownHostsFile \"C:/Users/someone/.agentspace/known_hosts\"
+  StrictHostKeyChecking yes
+  ProxyCommand \"C:\\agentspace\\agentspace-ssh-proxy.exe\" agentspace-examplehost-3f2a9c1e
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+  RemoteForward 127.0.0.1:8811 127.0.0.1:8811
+  RemoteForward 127.0.0.1:53147 127.0.0.1:53147
+";
+
+fn lease_on_platform<'a>(
+    user: &'a str,
+    host_key_alias: &'a str,
+    key: &'a str,
+    cert: &'a str,
+) -> AliasFile<'a> {
+    AliasFile {
+        user,
+        host_key_alias,
+        ..other_host_lease(PROXY_LEASE, key, cert, KNOWN_HOSTS)
+    }
+}
+
+#[test]
+fn a_lease_on_a_windows_host_names_the_hosts_key_by_its_host_name_byte_for_byte() {
+    let key = lease_key("id_ed25519");
+    let cert = lease_key("id_ed25519-cert.pub");
+    let f = lease_on_platform("agent", WINDOWS_HOST_KEY_ALIAS, &key, &cert);
+    assert_eq!(text(alias_file_bytes(&f).unwrap()), WINDOWS_LEASE_BLOCK);
+}
+
+#[test]
+fn state_md_other_host_lease_block_with_a_windows_host_name_is_that_block() {
+    let template = doc_block(
+        "### A lease alias for a host that is not the box",
+        "# agentspace lease <id>; <comment>\n",
+    );
+    let want = template
+        .replace("<id>", ID)
+        .replace("<comment>", COMMENT)
+        .replace("<alias>", "agentspace-examplehost-3f2a9c1e")
+        .replace("<user>", "agent")
+        .replace("<key path>", &lease_key("id_ed25519"))
+        .replace("<certificate path>", &lease_key("id_ed25519-cert.pub"))
+        .replace("<host name>", WINDOWS_HOST_NAME)
+        .replace("<known_hosts path>", KNOWN_HOSTS)
+        .replace("<proxy command>", PROXY_LEASE);
+    assert_eq!(want, WINDOWS_LEASE_BLOCK);
+}
+
+#[test]
+fn a_lease_on_a_windows_host_differs_from_one_on_an_arm64_host_in_the_user_and_the_key_name_alone()
+{
+    let key = lease_key("id_ed25519");
+    let cert = lease_key("id_ed25519-cert.pub");
+    let arm64 =
+        text(alias_file_bytes(&other_host_lease(PROXY_LEASE, &key, &cert, KNOWN_HOSTS)).unwrap());
+    let windows = text(
+        alias_file_bytes(&lease_on_platform(
+            "agent",
+            WINDOWS_HOST_KEY_ALIAS,
+            &key,
+            &cert,
+        ))
+        .unwrap(),
+    );
+    let want = arm64.replace("  User ubuntu\n", "  User agent\n").replace(
+        "  HostKeyAlias agentspace-host.examplehost\n",
+        &format!("  HostKeyAlias {WINDOWS_HOST_KEY_ALIAS}\n"),
+    );
+    assert_ne!(want, arm64, "The test's own replacements must hit");
+    assert_eq!(windows, want);
+}
+
+#[test]
+fn a_lease_on_a_linux_amd64_host_keeps_ubuntu_and_names_its_platform_in_the_key() {
+    let key = lease_key("id_ed25519");
+    let cert = lease_key("id_ed25519-cert.pub");
+    let t = text(
+        alias_file_bytes(&lease_on_platform(
+            "ubuntu",
+            LINUX_AMD64_HOST_KEY_ALIAS,
+            &key,
+            &cert,
+        ))
+        .unwrap(),
+    );
+    assert!(t.contains("  User ubuntu\n"), "{t}");
+    assert!(
+        t.contains("  HostKeyAlias agentspace-host.examplehost.linux-amd64\n"),
+        "{t}"
+    );
+    assert!(
+        t.contains(&format!("  UserKnownHostsFile \"{KNOWN_HOSTS}\"\n")),
+        "{t}"
+    );
+}
+
+#[test]
+fn the_lease_alias_and_its_host_line_name_no_platform() {
+    // state.md pin P7: a lease's alias is the same on every platform.
+    let key = lease_key("id_ed25519");
+    let cert = lease_key("id_ed25519-cert.pub");
+    let t = text(
+        alias_file_bytes(&lease_on_platform(
+            "agent",
+            WINDOWS_HOST_KEY_ALIAS,
+            &key,
+            &cert,
+        ))
+        .unwrap(),
+    );
+    assert!(
+        t.contains("\nHost agentspace-examplehost-3f2a9c1e\n"),
+        "{t}"
+    );
+    assert!(
+        t.starts_with("# agentspace lease 3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90; "),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_windows_hosts_key_alias_still_refuses_cr_or_lf() {
+    let key = lease_key("id_ed25519");
+    let cert = lease_key("id_ed25519-cert.pub");
+    for bad in BAD_VALUES {
+        let alias = format!("agentspace-host.examplehost.windows-amd64{bad}");
+        let f = lease_on_platform("agent", &alias, &key, &cert);
+        assert!(alias_file_bytes(&f).is_err(), "key alias {bad:?}");
+    }
 }

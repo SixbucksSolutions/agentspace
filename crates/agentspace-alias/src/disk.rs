@@ -7,8 +7,8 @@
 
 use crate::windows::{is_link_or_read_only, random_bytes, replace_keeping_rules};
 use crate::{
-    IncludePlan, host_alias_name, host_owner_mark, include_plan, is_valid_alias, is_valid_project,
-    owner_mark,
+    IncludePlan, host_alias_name, host_owner_mark, include_plan, is_valid_alias,
+    is_valid_host_name, owner_mark,
 };
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -412,12 +412,14 @@ pub fn remove_alias(ssh_dir: &Path, alias: &str, id: &str) -> Result<(), AliasFa
     remove_owned(ssh_dir, &path, &|b| names_lease(b, id), FOREIGN_WHY)
 }
 
-/// `<ssh folder>\agentspace.d\agentspace-host.<project>` and its name. A project that is not as the
-/// host registry names it (`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`) is refused, so that no path can
-/// leave the folder and no two projects share a file (Windows drops a trailing dot).
+/// `<ssh folder>\agentspace.d\agentspace-host.<host name>` and its name. `project` is the host's
+/// name: the project for a `linux/arm64` host, and from v0.12 `<project>.<os>-<arch>` for a host of
+/// another platform (D91). One that is not a host's name, as the crate's `is_valid_host_name` says,
+/// is refused, so that no path can leave the folder and no two hosts share a file (Windows drops a
+/// trailing dot).
 fn host_alias_path(ssh_dir: &Path, project: &str) -> Result<(String, PathBuf), AliasFailure> {
     let name = host_alias_name(project);
-    if !is_valid_project(project) || !is_valid_alias(&name) {
+    if !is_valid_host_name(project) || !is_valid_alias(&name) {
         return Err(io_fail(INVALID_ALIAS_WHY));
     }
     let path = alias_dir(ssh_dir).join(&name);
@@ -924,6 +926,55 @@ mod tests {
         check_host_alias_owner(&s.0, "proj").unwrap();
         remove_host_alias(&s.0, "proj").unwrap();
         assert!(names(&s.0.join("agentspace.d")).is_empty());
+    }
+
+    /// From v0.12 a host of another platform has its own file, named by its host name, and its
+    /// mark names that host alone (docs/state.md, "A host's operator alias"; D91, pin P12).
+    #[test]
+    fn another_platforms_host_alias_is_its_own_file_and_mark() {
+        let s = scratch();
+        let arm = host_bytes("proj", "");
+        let win = host_bytes("proj.windows-amd64", "");
+        write_host_alias(&s.0, "proj", &arm).unwrap();
+        write_host_alias(&s.0, "proj.windows-amd64", &win).unwrap();
+        let mut found = names(&s.0.join("agentspace.d"));
+        found.sort();
+        assert_eq!(
+            found,
+            ["agentspace-host.proj", "agentspace-host.proj.windows-amd64"]
+        );
+        assert_eq!(
+            check_host_alias_owner(&s.0, "proj.windows-amd64").map_err(|e| e.kind),
+            Ok(())
+        );
+        // The linux/arm64 host's mark does not name another platform's host: a file at that host's
+        // name that carries it is foreign, and is neither replaced nor removed.
+        let other =
+            s.0.join("agentspace.d")
+                .join("agentspace-host.proj.linux-amd64");
+        fs::write(&other, &arm).unwrap();
+        for result in [
+            check_host_alias_owner(&s.0, "proj.linux-amd64"),
+            write_host_alias(&s.0, "proj.linux-amd64", &win),
+            remove_host_alias(&s.0, "proj.linux-amd64"),
+        ] {
+            assert_eq!(result.unwrap_err().kind, AliasFailureKind::Foreign);
+        }
+        assert_eq!(fs::read(&other).unwrap(), arm);
+        // A name that is no host's is refused before any path is made.
+        for bad in [
+            "proj.linux-arm64",
+            "proj.windows",
+            "proj.windows-amd64.x",
+            "proj.",
+            "proj.Windows-amd64",
+            "proj.windows-amd64-v3",
+            "proj.windows/amd64",
+            "proj..windows-amd64",
+        ] {
+            assert!(write_host_alias(&s.0, bad, &win).is_err(), "{bad:?}");
+            assert!(check_host_alias_owner(&s.0, bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -84,7 +84,9 @@ pub fn lease_file_text(home_full: &str, id: &str, file: &str) -> String {
 /// The path of `<home>\.agentspace\hosts\<project>\<file>` in the alias file's form, written as
 /// [`lease_file_text`] writes a lease's: the home's trailing `\` and `/` dropped, the rest joined as
 /// text, every `\` as `/` and every `%` as `%%`. The result is
-/// `<home>/.agentspace/hosts/<project>/<file>`.
+/// `<home>/.agentspace/hosts/<project>/<file>`. From v0.12 `project` is the host's name, which is
+/// the host's folder's name (D91): the project for a `linux/arm64` host, and
+/// `<project>.<os>-<arch>` for a host of another platform.
 ///
 /// Added at review (architect, 2026-11-20, for v0.07-T02).
 pub fn host_file_text(home_full: &str, project: &str, file: &str) -> String {
@@ -109,7 +111,10 @@ pub fn known_hosts_text(home_full: &str) -> String {
 /// A lease on the box passes `host_key_alias` as `agentspace` and `known_hosts` as `None`, and its
 /// bytes are v0.06's. A lease on another host passes `agentspace-host.<project>` and the path of
 /// agentspace's `known_hosts`, as [`known_hosts_text`] gives it, which adds the
-/// `UserKnownHostsFile` line (docs/state.md, "A lease alias for a host that is not the box").
+/// `UserKnownHostsFile` line (docs/state.md, "A lease alias for a host that is not the box"). From
+/// v0.12 a lease on a host of another platform passes `agentspace-host.<project>.<os>-<arch>`, the
+/// host's key's name by its host name (D91; pin P7 of v0.12-T01), and its `user` as the lease's
+/// `ssh.user`, `agent` on `windows/amd64` (D95).
 /// `host_key_alias` MUST be a valid alias, as [`is_valid_alias`] says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasFile<'a> {
@@ -135,6 +140,47 @@ pub(crate) fn is_valid_project(project: &str) -> bool {
         && bytes.iter().all(|b| plain(b) || *b == b'-')
         && bytes.first().is_some_and(plain)
         && bytes.last().is_some_and(plain)
+}
+
+/// The platform part of a host name, `<os>-<arch>` after the first `.`, or `None` for a
+/// `linux/arm64` host's, which is its project alone. `None` too when `host_name` is no host's name.
+fn host_name_platform(host_name: &str) -> Option<(&str, &str)> {
+    let (_, platform) = host_name.split_once('.')?;
+    platform.split_once('-')
+}
+
+/// Whether `host_name` is a host's name as docs/state.md, "A host's platform and names", gives it
+/// (D91; pin P12 of v0.12-T01): a project as the host registry names it, for a `linux/arm64` host,
+/// or that project, `.` and `<os>-<arch>`, each of `os` and `arch` one or more lowercase letters and
+/// digits, for a host of another platform. A platform part of `linux-arm64` names no host, since
+/// `linux/arm64` never appears in a name. No host name holds a second `.`, a trailing dot, a `/`
+/// or a `\`, so none can leave a folder or share a Windows file name with another.
+pub(crate) fn is_valid_host_name(host_name: &str) -> bool {
+    let plain = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    };
+    match host_name.split_once('.') {
+        None => is_valid_project(host_name),
+        Some((project, platform)) => {
+            is_valid_project(project)
+                && platform != "linux-arm64"
+                && platform
+                    .split_once('-')
+                    .is_some_and(|(os, arch)| plain(os) && plain(arch))
+        }
+    }
+}
+
+/// The user a host's operator alias logs in as, from the platform in its host name and never stored
+/// (docs/state.md, "A host's operator alias", the `<user>` row; D95, pin P17 of v0.12-T01): `agent`
+/// for a `windows/amd64` host, and `ubuntu` for a host of either Linux platform and any other.
+fn host_user(host_name: &str) -> &'static str {
+    match host_name_platform(host_name) {
+        Some(("windows", "amd64")) => "agent",
+        _ => "ubuntu",
+    }
 }
 
 fn has_line_break(s: &str) -> bool {
@@ -204,9 +250,11 @@ pub fn alias_file_bytes(f: &AliasFile) -> Result<Vec<u8>, AliasError> {
     Ok(text.into_bytes())
 }
 
-/// The name of a host's operator alias, `agentspace-host.<project>`, which is also the `Host` name,
-/// the `HostKeyAlias` and the file's name in `agentspace.d` (docs/state.md, "A host's operator
-/// alias"). The caller passes the project as the host registry gives it.
+/// The name of a host's operator alias, `agentspace-host.<host name>`, which is also the `Host`
+/// name, the `HostKeyAlias` and the file's name in `agentspace.d` (docs/state.md, "A host's operator
+/// alias"). The caller passes the host's name: the project as the host registry gives it for a
+/// `linux/arm64` host, so the name is `agentspace-host.<project>` as before v0.12, and from v0.12
+/// `<project>.<os>-<arch>` for a host of another platform (D91).
 pub fn host_alias_name(project: &str) -> String {
     format!("agentspace-host.{project}")
 }
@@ -220,6 +268,11 @@ pub const HOST_ALIAS_COMMENT: &str = "written by agentspace; it MUST NOT be edit
 /// The values of one host's operator alias. `key_path` and `cert_path` are in the file's form, as
 /// [`host_file_text`] gives them, and `known_hosts` as [`known_hosts_text`] gives it. `proxy_command` is the raw command, which
 /// `host_alias_file_bytes` escapes.
+///
+/// `project` is the host's name (docs/state.md, "A host's platform and names"): the project for a
+/// `linux/arm64` host, whose bytes are then v0.11's, and from v0.12 `<project>.<os>-<arch>` for a
+/// host of another platform, such as `agentspace.windows-amd64`. The field keeps its v0.11 name so
+/// every caller keeps its meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostAliasFile<'a> {
     pub project: &'a str,
@@ -231,9 +284,11 @@ pub struct HostAliasFile<'a> {
 }
 
 /// A host's operator alias's bytes, exactly as docs/state.md, "A host's operator alias": UTF-8 with
-/// no byte order mark, each line ending in one LF. A CR or LF in any value, or a project that is not
-/// as the host registry names it (`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`), is refused and nothing
-/// is made.
+/// no byte order mark, each line ending in one LF. `f.project` is the host's name, and `<user>` comes
+/// from its platform: `agent` for a `windows/amd64` host and `ubuntu` for every other (D95). A CR or
+/// LF in any value, or a host name that is not one (a project as the host registry names it,
+/// `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`, optionally followed by `.<os>-<arch>` other than
+/// `linux-arm64`), is refused and nothing is made.
 pub fn host_alias_file_bytes(f: &HostAliasFile) -> Result<Vec<u8>, AliasError> {
     if has_line_break(f.key_path) || has_line_break(f.cert_path) || has_line_break(f.known_hosts) {
         return Err(err("a path in the alias file holds a line break"));
@@ -245,14 +300,14 @@ pub fn host_alias_file_bytes(f: &HostAliasFile) -> Result<Vec<u8>, AliasError> {
         return Err(err("a value in the alias file holds a line break"));
     }
     let host = host_alias_name(f.project);
-    if !is_valid_project(f.project) || !is_valid_alias(&host) {
+    if !is_valid_host_name(f.project) || !is_valid_alias(&host) {
         return Err(err("the host alias is not a valid name"));
     }
     let proxy = f.proxy_command.replace('%', "%%");
     let text = format!(
         "# agentspace host {project}; {comment}\n\
          Host {host}\n\
-         \x20 User ubuntu\n\
+         \x20 User {user}\n\
          \x20 IdentityFile \"{key}\"\n\
          \x20 CertificateFile \"{cert}\"\n\
          \x20 IdentitiesOnly yes\n\
@@ -264,6 +319,7 @@ pub fn host_alias_file_bytes(f: &HostAliasFile) -> Result<Vec<u8>, AliasError> {
          \x20 ServerAliveCountMax 4\n",
         project = f.project,
         comment = f.comment,
+        user = host_user(f.project),
         key = f.key_path,
         cert = f.cert_path,
         known_hosts = f.known_hosts,
@@ -549,6 +605,84 @@ mod tests {
             h.project = project;
             assert!(host_alias_file_bytes(&h).is_err(), "{project:?}");
         }
+    }
+
+    /// docs/state.md, "A host's operator alias": `<host name>` and `<user>` for a host of another
+    /// platform (D91, D95; pins P12 and P17 of v0.12-T01).
+    #[test]
+    fn another_platforms_host_alias_names_its_host_and_its_user() {
+        let mut h = host();
+        h.project = "proj.windows-amd64";
+        h.proxy_command = "\"C:\\a\\p.exe\" agentspace-host.proj.windows-amd64";
+        let want = "# agentspace host proj.windows-amd64; test\n\
+            Host agentspace-host.proj.windows-amd64\n\
+            \x20 User agent\n\
+            \x20 IdentityFile \"C:/h/id\"\n\
+            \x20 CertificateFile \"C:/h/id-cert.pub\"\n\
+            \x20 IdentitiesOnly yes\n\
+            \x20 HostKeyAlias agentspace-host.proj.windows-amd64\n\
+            \x20 UserKnownHostsFile \"C:/h/known_hosts\"\n\
+            \x20 StrictHostKeyChecking accept-new\n\
+            \x20 ProxyCommand \"C:\\a\\p.exe\" agentspace-host.proj.windows-amd64\n\
+            \x20 ServerAliveInterval 30\n\
+            \x20 ServerAliveCountMax 4\n";
+        let bytes = host_alias_file_bytes(&h).unwrap();
+        assert_eq!(String::from_utf8(bytes.clone()).unwrap(), want);
+        assert_eq!(
+            host_owner_mark(&bytes).as_deref(),
+            Some("proj.windows-amd64")
+        );
+        h.project = "proj.linux-amd64";
+        let linux = String::from_utf8(host_alias_file_bytes(&h).unwrap()).unwrap();
+        assert!(linux.contains("\n  User ubuntu\n"), "{linux}");
+        assert!(linux.contains("\n  HostKeyAlias agentspace-host.proj.linux-amd64\n"));
+    }
+
+    #[test]
+    fn a_host_name_is_a_project_or_a_project_and_another_platform() {
+        for ok in [
+            "p",
+            "proj",
+            "proj.linux-amd64",
+            "proj.windows-amd64",
+            "a-b.x1-y2",
+        ] {
+            assert!(is_valid_host_name(ok), "{ok:?}");
+        }
+        for bad in [
+            "",
+            "proj.",
+            ".linux-amd64",
+            "proj.linux-arm64",
+            "proj.linux",
+            "proj.linux-",
+            "proj.-amd64",
+            "proj.linux-amd64-v3",
+            "proj.linux-amd64.x",
+            "proj.Linux-amd64",
+            "proj.linux/amd64",
+            "proj.linux_amd64",
+            "Proj.linux-amd64",
+            "a.b",
+        ] {
+            assert!(!is_valid_host_name(bad), "{bad:?}");
+        }
+        assert_eq!(host_user("proj"), "ubuntu");
+        assert_eq!(host_user("proj.linux-amd64"), "ubuntu");
+        assert_eq!(host_user("proj.windows-amd64"), "agent");
+    }
+
+    /// docs/state.md, "A lease alias for a host that is not the box": a lease on a host of another
+    /// platform names that host's key by its host name, and its own alias keeps its form (pin P7).
+    #[test]
+    fn a_lease_on_another_platforms_host_names_its_key_by_the_host_name() {
+        let mut f = lease("agentspace-host.p.windows-amd64", Some("C:/h/known_hosts"));
+        f.user = "agent";
+        let text = String::from_utf8(alias_file_bytes(&f).unwrap()).unwrap();
+        assert!(text.contains(
+            "\n  HostKeyAlias agentspace-host.p.windows-amd64\n  UserKnownHostsFile \"C:/h/known_hosts\"\n  StrictHostKeyChecking yes\n"
+        ));
+        assert!(text.contains("\nHost agentspace-p-3f2a9c1e\n  User agent\n"));
     }
 
     #[test]

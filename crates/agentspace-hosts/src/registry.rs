@@ -3,6 +3,7 @@
 
 use crate::error::{Failure, HostsError};
 use crate::folder;
+use crate::key::HostKey;
 use crate::model::{Host, Hosts, is_normalized_project, parse, serialize};
 use crate::paths::{agentspace_dir, hosts_lock_path, hosts_path};
 use crate::sys::{self, OpenFailure};
@@ -171,7 +172,21 @@ pub fn set_instance_type(
     project: &str,
     instance_type: Option<&str>,
 ) -> Result<(), HostsError> {
-    change_record(home, project, LOCK_WAIT, |h| {
+    if !is_normalized_project(project) {
+        return Err(HostsError::BadProject);
+    }
+    set_instance_type_keyed(home, &HostKey::linux_arm64(project), instance_type)
+}
+
+/// [`set_instance_type`] for the host `key`: the record whose project and platform are the key's
+/// (D91). A key that is not valid ([`HostKey::is_valid`]) is `BadProject`, and a key with no record
+/// is `Unwritable(NoSuchRecord)`, each writing nothing.
+pub fn set_instance_type_keyed(
+    home: &Path,
+    key: &HostKey,
+    instance_type: Option<&str>,
+) -> Result<(), HostsError> {
+    change_record(home, key, LOCK_WAIT, |h| {
         h.instance_type = instance_type.map(str::to_string);
     })
 }
@@ -194,7 +209,25 @@ pub fn set_instance(
     instance_id: Option<&str>,
     instance_type: Option<&str>,
 ) -> Result<(), HostsError> {
-    change_record(home, project, LOCK_WAIT, |h| {
+    if !is_normalized_project(project) {
+        return Err(HostsError::BadProject);
+    }
+    set_instance_keyed(
+        home,
+        &HostKey::linux_arm64(project),
+        instance_id,
+        instance_type,
+    )
+}
+
+/// [`set_instance`] for the host `key`, under the rules [`set_instance_type_keyed`] gives a key.
+pub fn set_instance_keyed(
+    home: &Path,
+    key: &HostKey,
+    instance_id: Option<&str>,
+    instance_type: Option<&str>,
+) -> Result<(), HostsError> {
+    change_record(home, key, LOCK_WAIT, |h| {
         h.instance_id = instance_id.map(str::to_string);
         h.instance_type = instance_type.map(str::to_string);
     })
@@ -214,22 +247,33 @@ pub fn set_instance(
 /// `BadProject`; and an `at` that is not the contract's time form, or names no real instant, is
 /// refused as every invalid change is (`Unwritable(ChangeNotValid)`), with nothing written.
 pub fn set_last_success_at(home: &Path, project: &str, at: &str) -> Result<(), HostsError> {
-    change_record(home, project, LOCK_WAIT, |h| {
+    if !is_normalized_project(project) {
+        return Err(HostsError::BadProject);
+    }
+    set_last_success_at_keyed(home, &HostKey::linux_arm64(project), at)
+}
+
+/// [`set_last_success_at`] for the host `key`, under the rules [`set_instance_type_keyed`] gives a
+/// key.
+pub fn set_last_success_at_keyed(home: &Path, key: &HostKey, at: &str) -> Result<(), HostsError> {
+    change_record(home, key, LOCK_WAIT, |h| {
         h.last_success_at = Some(at.to_string());
     })
 }
 
 /// The change every setter makes: take the lock, re-read the file under it, apply `change` to the
-/// one record of `project`, and write. The start is the file, or with no file the seed document and
-/// never the implied record, and a missing file is always written, since the change is then a first
-/// change (docs/state.md, "The seed"). A file that exists and does not change is left alone.
+/// one record of the host `key`, and write. The start is the file, or with no file the seed
+/// document and never the implied record, and a missing file is always written, since the change
+/// is then a first change (docs/state.md, "The seed"). A file that exists and does not change is
+/// left alone. The record's `platform` member is kept exactly as it was read: no change touches it,
+/// since it is half of the record's key (pin P16).
 fn change_record(
     home: &Path,
-    project: &str,
+    key: &HostKey,
     wait: Duration,
     change: impl FnOnce(&mut Host),
 ) -> Result<(), HostsError> {
-    if !is_normalized_project(project) {
+    if !key.is_valid() {
         return Err(HostsError::BadProject);
     }
     let held = lock_waiting(home, wait)?;
@@ -240,9 +284,11 @@ fn change_record(
     let record = hosts
         .hosts
         .iter_mut()
-        .find(|h| h.project == project)
+        .find(|h| h.is_for(key))
         .ok_or(HostsError::Unwritable(Failure::NoSuchRecord))?;
+    let platform = record.platform.clone();
     change(record);
+    record.platform = platform;
     if file_existed && hosts == before {
         return Ok(());
     }
@@ -280,11 +326,12 @@ mod tests {
     #[test]
     fn the_setters_wait_through_the_thirty_second_ceiling() {
         let source = include_str!("registry.rs");
-        let needle = format!("change_record(home, project, {}, ", "LOCK_WAIT");
+        let needle = format!("change_record(home, key, {}, ", "LOCK_WAIT");
+        // The project-only setters call these, and nothing else changes a record (v0.12, D91).
         for setter in [
-            "pub fn set_instance_type(",
-            "pub fn set_instance(",
-            "pub fn set_last_success_at(",
+            "pub fn set_instance_type_keyed(",
+            "pub fn set_instance_keyed(",
+            "pub fn set_last_success_at_keyed(",
         ] {
             let body = source
                 .split(setter)
@@ -354,6 +401,7 @@ mod tests {
         let mut h = Hosts::seed();
         h.hosts.push(Host {
             last_success_at: None,
+            platform: None,
             project: "agentspace".to_string(),
             stack: "agentspace-host-agentspace".to_string(),
             state: HostState::Creating,
@@ -659,7 +707,7 @@ mod tests {
         // show where a change starts. A change that leaves the member alone can: it writes the
         // record as it started, which MUST be the seed's, with no type (pin P31).
         let t = home();
-        change_record(t.path(), "swimcoach", short(), |h| {
+        change_record(t.path(), &HostKey::linux_arm64("swimcoach"), short(), |h| {
             h.last_attempt_at = Some("2026-11-20T19:05:42Z".to_string());
         })
         .unwrap();
@@ -848,7 +896,9 @@ mod tests {
         let held = lock(t.path()).unwrap();
         let began = Instant::now();
         assert_eq!(
-            change_record(t.path(), "swimcoach", short(), |h| h.instance_type = None),
+            change_record(t.path(), &HostKey::linux_arm64("swimcoach"), short(), |h| {
+                h.instance_type = None
+            }),
             Err(HostsError::Busy)
         );
         assert!(began.elapsed() >= Duration::from_millis(250));
@@ -863,9 +913,14 @@ mod tests {
         let held = lock(t.path()).unwrap();
         let path = t.path().to_path_buf();
         let waiter = std::thread::spawn(move || {
-            change_record(&path, "swimcoach", Duration::from_secs(5), |h| {
-                h.instance_type = Some("m9g.large".to_string());
-            })
+            change_record(
+                &path,
+                &HostKey::linux_arm64("swimcoach"),
+                Duration::from_secs(5),
+                |h| {
+                    h.instance_type = Some("m9g.large".to_string());
+                },
+            )
         });
         std::thread::sleep(Duration::from_millis(100));
         write(t.path(), &added(), &held).unwrap();
@@ -1000,5 +1055,102 @@ mod tests {
             ["hosts.json", "hosts.lock"],
             "No temporary file is left"
         );
+    }
+
+    // The keyed setters (docs/state.md, "A host's platform and names"; D91, pin P16).
+
+    const TWO_PLATFORMS: &[u8] = b"{\"version\":0,\"hosts\":[{\"project\":\"swimcoach\",\"stack\":\"agentbox\",\"state\":\"ready\"},{\"project\":\"agentspace\",\"platform\":\"linux/arm64\",\"stack\":\"agentspace-host-agentspace\",\"state\":\"ready\"},{\"project\":\"agentspace\",\"platform\":\"windows/amd64\",\"stack\":\"agentspace-windows-amd64-host-agentspace\",\"state\":\"ready\"}]}\n";
+
+    #[test]
+    fn a_keyed_setter_changes_its_platforms_record_alone_and_keeps_every_platform_as_read() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), TWO_PLATFORMS).unwrap();
+        let win = HostKey::new("agentspace", "windows/amd64");
+        set_instance_keyed(
+            t.path(),
+            &win,
+            Some("i-0123456789abcdef0"),
+            Some("m8a.large"),
+        )
+        .unwrap();
+        let after = String::from_utf8(bytes_of(&t)).unwrap();
+        assert_eq!(
+            after,
+            String::from_utf8(TWO_PLATFORMS.to_vec()).unwrap().replace(
+                "\"stack\":\"agentspace-windows-amd64-host-agentspace\",\"state\":\"ready\"}",
+                "\"stack\":\"agentspace-windows-amd64-host-agentspace\",\"state\":\"ready\",\"instance_id\":\"i-0123456789abcdef0\",\"instance_type\":\"m8a.large\"}"
+            )
+        );
+        // The project-only setter means linux/arm64, and the written `linux/arm64` stays written.
+        set_last_success_at(t.path(), "agentspace", "2026-11-26T19:07:00Z").unwrap();
+        let h = read(t.path()).unwrap();
+        assert_eq!(h.hosts[1].platform.as_deref(), Some("linux/arm64"));
+        assert_eq!(
+            h.hosts[1].last_success_at.as_deref(),
+            Some("2026-11-26T19:07:00Z")
+        );
+        assert_eq!(h.hosts[2].last_success_at, None);
+        assert_eq!(h.hosts[2].platform.as_deref(), Some("windows/amd64"));
+        set_instance_type_keyed(t.path(), &win, None).unwrap();
+        set_last_success_at_keyed(t.path(), &win, "2026-11-26T19:09:00Z").unwrap();
+        let h = read(t.path()).unwrap();
+        assert_eq!(h.hosts[2].instance_type, None);
+        assert_eq!(
+            h.hosts[2].last_success_at.as_deref(),
+            Some("2026-11-26T19:09:00Z")
+        );
+    }
+
+    #[test]
+    fn a_keyed_setter_for_a_platform_with_no_record_or_a_bad_key_writes_nothing() {
+        let t = home();
+        registry_of(&t, &added());
+        let before = bytes_of(&t);
+        let amd = HostKey::new("agentspace", "linux/amd64");
+        assert_eq!(
+            set_instance_type_keyed(t.path(), &amd, None),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        // The box is swimcoach's linux/arm64 host alone.
+        assert_eq!(
+            set_instance_type_keyed(t.path(), &HostKey::new("swimcoach", "windows/amd64"), None),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        for bad in ["linux/amd64/v3", "", "../x", "Linux/amd64"] {
+            assert_eq!(
+                set_last_success_at_keyed(
+                    t.path(),
+                    &HostKey::new("agentspace", bad),
+                    "2026-11-26T19:07:00Z"
+                ),
+                Err(HostsError::BadProject),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(bytes_of(&t), before);
+        // With no file, a key with no record writes no file.
+        let t = home();
+        assert_eq!(
+            set_instance_keyed(t.path(), &amd, None, None),
+            Err(HostsError::Unwritable(Failure::NoSuchRecord))
+        );
+        assert!(!hosts_path(t.path()).exists());
+    }
+
+    #[test]
+    fn no_change_can_alter_a_records_platform() {
+        let t = home();
+        fs::create_dir_all(agentspace_dir(t.path())).unwrap();
+        fs::write(hosts_path(t.path()), TWO_PLATFORMS).unwrap();
+        let arm = HostKey::linux_arm64("agentspace");
+        change_record(t.path(), &arm, short(), |h| {
+            h.platform = None;
+            h.instance_type = Some("m9g.large".to_string());
+        })
+        .unwrap();
+        let h = read(t.path()).unwrap();
+        assert_eq!(h.hosts[1].platform.as_deref(), Some("linux/arm64"));
+        assert_eq!(h.hosts[1].instance_type.as_deref(), Some("m9g.large"));
     }
 }

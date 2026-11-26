@@ -383,6 +383,7 @@ fn record_run(
         Record::New => {
             registry.hosts.push(Host {
                 last_success_at: None,
+                platform: None,
                 project: project.to_string(),
                 stack: hosts::stack_name(project),
                 state: HostState::Creating,

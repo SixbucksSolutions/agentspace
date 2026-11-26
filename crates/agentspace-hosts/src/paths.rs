@@ -4,8 +4,10 @@
 //! the environment or the disk. `AGENTSPACE_STATE_DIR` moves none of them (docs/state.md, What moves
 //! which files). A function that takes a project makes a path from it as given: a caller that has
 //! not checked the project is in its normalized form MUST do so first (`is_normalized_project`),
-//! since `..` would leave the host folder.
+//! since `..` would leave the host folder. A function that takes a `HostKey` (`*_keyed`) makes a
+//! path from its folder name as given: a caller MUST check `HostKey::is_valid` first.
 
+use crate::key::HostKey;
 use std::path::{Path, PathBuf};
 
 /// `<home>\.agentspace`, agentspace's own folder (D21).
@@ -50,34 +52,66 @@ pub fn hosts_dir(home: &Path) -> PathBuf {
     agentspace_dir(home).join("hosts")
 }
 
-/// `<home>\.agentspace\hosts\<project>`, a host's folder.
+/// `<home>\.agentspace\hosts\<project>`, the `linux/arm64` host's folder: [`host_dir_keyed`] of
+/// [`HostKey::linux_arm64`].
 pub fn host_dir(home: &Path, project: &str) -> PathBuf {
-    hosts_dir(home).join(project)
+    host_dir_keyed(home, &HostKey::linux_arm64(project))
 }
 
-/// A host's operator key, `id_ed25519` in its folder.
+/// `<home>\.agentspace\hosts\<host name>`, the host `key`'s folder (D48, D55, D91):
+/// `hosts\<project>` on `linux/arm64` and `hosts\<project>.<os>-<arch>` on any other platform.
+pub fn host_dir_keyed(home: &Path, key: &HostKey) -> PathBuf {
+    hosts_dir(home).join(key.folder_name())
+}
+
+/// The `linux/arm64` host's operator key, `id_ed25519` in its folder.
 pub fn host_key_path(home: &Path, project: &str) -> PathBuf {
-    host_dir(home, project).join("id_ed25519")
+    host_key_path_keyed(home, &HostKey::linux_arm64(project))
 }
 
-/// A host's operator certificate, `id_ed25519-cert.pub` in its folder.
+/// The host `key`'s operator key, `id_ed25519` in its folder.
+pub fn host_key_path_keyed(home: &Path, key: &HostKey) -> PathBuf {
+    host_dir_keyed(home, key).join("id_ed25519")
+}
+
+/// The `linux/arm64` host's operator certificate, `id_ed25519-cert.pub` in its folder.
 pub fn host_cert_path(home: &Path, project: &str) -> PathBuf {
-    host_dir(home, project).join("id_ed25519-cert.pub")
+    host_cert_path_keyed(home, &HostKey::linux_arm64(project))
 }
 
-/// A host's provisioning run log, `provision.log` in its folder.
+/// The host `key`'s operator certificate, `id_ed25519-cert.pub` in its folder.
+pub fn host_cert_path_keyed(home: &Path, key: &HostKey) -> PathBuf {
+    host_dir_keyed(home, key).join("id_ed25519-cert.pub")
+}
+
+/// The `linux/arm64` host's provisioning run log, `provision.log` in its folder.
 pub fn host_log_path(home: &Path, project: &str) -> PathBuf {
-    host_dir(home, project).join("provision.log")
+    host_log_path_keyed(home, &HostKey::linux_arm64(project))
 }
 
-/// A host's provisioning run lock, `provision.lock` in its folder.
+/// The host `key`'s provisioning run log, `provision.log` in its folder.
+pub fn host_log_path_keyed(home: &Path, key: &HostKey) -> PathBuf {
+    host_dir_keyed(home, key).join("provision.log")
+}
+
+/// The `linux/arm64` host's provisioning run lock, `provision.lock` in its folder.
 pub fn host_run_lock_path(home: &Path, project: &str) -> PathBuf {
-    host_dir(home, project).join("provision.lock")
+    host_run_lock_path_keyed(home, &HostKey::linux_arm64(project))
 }
 
-/// A host's push stamp, `localswim-pushed.json` in its folder.
+/// The host `key`'s provisioning run lock, `provision.lock` in its folder.
+pub fn host_run_lock_path_keyed(home: &Path, key: &HostKey) -> PathBuf {
+    host_dir_keyed(home, key).join("provision.lock")
+}
+
+/// The `linux/arm64` host's push stamp, `localswim-pushed.json` in its folder.
 pub fn host_stamp_path(home: &Path, project: &str) -> PathBuf {
-    host_dir(home, project).join("localswim-pushed.json")
+    host_stamp_path_keyed(home, &HostKey::linux_arm64(project))
+}
+
+/// The host `key`'s push stamp, `localswim-pushed.json` in its folder.
+pub fn host_stamp_path_keyed(home: &Path, key: &HostKey) -> PathBuf {
+    host_dir_keyed(home, key).join("localswim-pushed.json")
 }
 
 #[cfg(test)]
@@ -103,5 +137,31 @@ mod tests {
         assert_eq!(host_log_path(home, "p"), d.join("provision.log"));
         assert_eq!(host_run_lock_path(home, "p"), d.join("provision.lock"));
         assert_eq!(host_stamp_path(home, "p"), d.join("localswim-pushed.json"));
+    }
+
+    #[test]
+    fn a_hosts_folder_is_named_by_its_host_name() {
+        let home = Path::new("h");
+        let hosts = Path::new("h").join(".agentspace").join("hosts");
+        let arm = HostKey::linux_arm64("p");
+        assert_eq!(host_dir_keyed(home, &arm), host_dir(home, "p"));
+        assert_eq!(host_dir_keyed(home, &arm), hosts.join("p"));
+        let win = HostKey::new("p", "windows/amd64");
+        let w = hosts.join("p.windows-amd64");
+        assert_eq!(host_dir_keyed(home, &win), w);
+        assert_eq!(host_key_path_keyed(home, &win), w.join("id_ed25519"));
+        assert_eq!(
+            host_cert_path_keyed(home, &win),
+            w.join("id_ed25519-cert.pub")
+        );
+        assert_eq!(host_log_path_keyed(home, &win), w.join("provision.log"));
+        assert_eq!(
+            host_run_lock_path_keyed(home, &win),
+            w.join("provision.lock")
+        );
+        assert_eq!(
+            host_stamp_path_keyed(home, &win),
+            w.join("localswim-pushed.json")
+        );
     }
 }
