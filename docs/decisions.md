@@ -4654,7 +4654,11 @@ his second.
   live check is done**, not before: the check expects the answers the block gave at T05's start
   (busiest `T02`, 11 agents, `l`, 18900 s; `--turn T05`, 3 agents, `s`, 10800 s), and S02 in T05
   would change `T05`'s agents under it. Until then the block is a turn behind, and this note is
-  why.
+  why. **Done at 7:49am on 2026-11-26**, after S01's check ended and the architect's two reads of
+  #0052 (revision 1902 at 7:44am and 7:46am) showed the board creates wrote nothing: `T05` now
+  holds S02 with `budget_minutes` 270, its agents at once 5 by D74's count, and the busiest turn is
+  still `T02`. #0243's card states S02's peak as 3; the plan counts 2 from its starts, and the
+  block's count is the one D74 reads.
 
 **Pinned as code before T02, by the architect:** one pull request adds `Record`'s `plan_source`,
 read and written by nothing, and gives every struct literal of it in the workspace `None`, as #150

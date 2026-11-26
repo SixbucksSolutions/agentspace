@@ -62,10 +62,16 @@
   {"name":"runner, crates and box tests","model":"Sonnet","effort":"medium","after":["runner, lease CLI, schemas and keeper"]},
   {"name":"record writer","model":"Sonnet","effort":"high","after":["runner, lease CLI, schemas and keeper","runner, operator lane A","runner, operator lane B and the deadline case","runner, crates and box tests"]},
   {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]},
-{"name":"T05","budget_minutes":120,"stories":[
+{"name":"T05","budget_minutes":270,"stories":[
  {"name":"E0.11-T05-S01","subagents":[
   {"name":"installer","model":"Sonnet","effort":"medium"},
   {"name":"check drafter","model":"Sonnet","effort":"high"},
   {"name":"checks runner","model":"Sonnet","effort":"high","after":["installer","check drafter"]},
   {"name":"record writer","model":"Sonnet","effort":"high","after":["checks runner"]},
-  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]}]}
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]},
+ {"name":"E0.11-T05-S02","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"runner, lease CLI and schemas","model":"Sonnet","effort":"medium","after":["implementer","test author"]},
+  {"name":"runner, operator and keeper","model":"Sonnet","effort":"medium","after":["implementer","test author"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner, lease CLI and schemas","runner, operator and keeper"]}]}]}]}
