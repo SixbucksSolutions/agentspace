@@ -84,13 +84,14 @@ cited "architect, 2026-11-25, for v0.11-T01, pin Pn" where it stands.**
 **A host per project and platform (v0.12, D91 to D101).** A project MAY hold one host for each
 platform agentspace supports, `linux/arm64`, `linux/amd64` and `windows/amd64` (D91, D98), and a
 host is keyed by its project and its platform. The host registry's record gains `platform`, the
-project list's entry gains `platforms`, and every name of a host of a platform other than
-`linux/arm64` carries its platform, as [A host's platform and names](#a-hosts-platform-and-names)
-says. **Every `linux/arm64` name, path, byte and rule stays as v0.11 left it** (D91). A record of
-the lease state file names its user `ubuntu` or `agent` alone (D95). Every name is D91's and
-D101's. **Where D91 to D101 left a point open, the dev lead proposed a pin for v0.12's specs, and
-each fact that rests on one is marked "architect's to confirm, pin Pn" where it stands**, until
-the architect's ruling replaces the mark with its citation.
+project list's entry gains `platforms`, the keeper's holder record gains `platform`, and every
+name of a host of a platform other than `linux/arm64` carries its platform, as
+[A host's platform and names](#a-hosts-platform-and-names) says. **Every `linux/arm64` name, path,
+byte and rule stays as v0.11 left it** (D91). The driver writes a lease's user `ubuntu` on both
+Linux platforms and `agent` on `windows/amd64` (D95), under the lease state file's pattern as it
+was. Every name is D91's and D101's. **Where D91 to D101 left a point open, the architect ruled it
+on the dev lead's pins for v0.12's specs, and each ruling is cited "architect, 2026-11-26, for
+v0.12-T01, pin Pn" where it stands.**
 
 **Defects carried in.** #0041's second and third points (a record without its driver; the order
 of renew's and release's writes) are carried into this page as requirements on behavior (D28,
@@ -371,14 +372,14 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `%USERPROFILE%\.agentspace\guard.log` | [The guard's log](#the-guards-log) (D56, D63) | `agentspace-operator guard`, which appends to it, and nobody else | People | Never |
 | `%USERPROFILE%\.agentspace\guard.lock` | [The guard's lock](#the-guards-lock) (D56, D63) | `agentspace-operator guard`, for the run's life; the keeper, which only tries it | None; it is held, not read | Never |
 | `%USERPROFILE%\.agentspace\hosts\` | The folder of host folders | The first writer of a host's folder | Everything in it | Never |
-| `%USERPROFILE%\.agentspace\hosts\<project>\` for a `linux/arm64` host, `hosts\<project>.<os>-<arch>\` for a host of another platform (D91), so `hosts\<host>\` | [A host's folder](#a-hosts-folder) | The first writer of a file in it; the driver, if it is missing, before it starts a provisioning run, which is not started if the folder cannot be made ([The provisioning run's start](#the-provisioning-runs-start)) | The operator; ssh | Never |
-| `...\hosts\<host>\id_ed25519`, `id_ed25519.pub` | [The operator's key](#the-operators-key-and-certificate) for that host | The first operator command that signs a certificate for the host | `ssh`, through the operator alias; the operator, to sign | Never |
-| `...\hosts\<host>\id_ed25519-cert.pub` | [The operator's certificate](#the-operators-key-and-certificate) for that host, key ID `operator-<project>`, one hour | Every operator command that names a host other than the box, `status -Host` included, and every one that connects through the host's operator alias | `ssh` | Never; replaced by the next command's |
-| `...\hosts\<host>\sign-<hex>.pub`, `sign-<hex>-cert.pub` | Signing's temporary files | The same | None | At once |
-| `...\hosts\<host>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, its own lines alone (architect, 2026-11-21, for v0.07-T03); never the driver | People | Never |
-| `...\hosts\<host>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; from v0.09 a person's `deploy`, for its life (architect, 2026-11-23, for v0.09-T01, pin P34); the driver, which only tries it | None; it is held, not read | Never |
-| `...\hosts\<host>\localswim-pushed.json` | [A host's push stamp](#a-hosts-push-stamp), for every host but the box | `up -Host`, `sync -Host`, `sync -All`, `provision` | `up -Host` | Never |
-| `...\hosts\<host>\localswim-pushed.json.<hex>.tmp` | Its temporary file | The same | None | At once |
+| `%USERPROFILE%\.agentspace\hosts\<project>\` for a `linux/arm64` host, `hosts\<project>.<os>-<arch>\` for a host of another platform (D91), so `hosts\<host name>\` | [A host's folder](#a-hosts-folder) | The first writer of a file in it; the driver, if it is missing, before it starts a provisioning run, which is not started if the folder cannot be made ([The provisioning run's start](#the-provisioning-runs-start)) | The operator; ssh | Never |
+| `...\hosts\<host name>\id_ed25519`, `id_ed25519.pub` | [The operator's key](#the-operators-key-and-certificate) for that host | The first operator command that signs a certificate for the host | `ssh`, through the operator alias; the operator, to sign | Never |
+| `...\hosts\<host name>\id_ed25519-cert.pub` | [The operator's certificate](#the-operators-key-and-certificate) for that host, key ID `operator-<host name>`, one hour | Every operator command that names a host other than the box, `status -Host` included, and every one that connects through the host's operator alias | `ssh` | Never; replaced by the next command's |
+| `...\hosts\<host name>\sign-<hex>.pub`, `sign-<hex>-cert.pub` | Signing's temporary files | The same | None | At once |
+| `...\hosts\<host name>\provision.log` | [The provisioning run's log](#the-provisioning-runs-log) | `provision`, which opens it for append as its first step, creating it if it is missing, and writes every line there, its own lines alone (architect, 2026-11-21, for v0.07-T03); never the driver | People | Never |
+| `...\hosts\<host name>\provision.lock` | [The provisioning run's lock](#the-provisioning-runs-lock) | `provision`, for the run's life; from v0.09 a person's `deploy`, for its life (architect, 2026-11-23, for v0.09-T01, pin P34); the driver, which only tries it | None; it is held, not read | Never |
+| `...\hosts\<host name>\localswim-pushed.json` | [A host's push stamp](#a-hosts-push-stamp), for every host but the box | `up -Host`, `sync -Host`, `sync -All`, `provision` | `up -Host` | Never |
+| `...\hosts\<host name>\localswim-pushed.json.<hex>.tmp` | Its temporary file | The same | None | At once |
 | `%USERPROFILE%\.agentspace\leases\` | The folder of lease folders | The first `create` that issues a credential | `renew`, `release` | Never |
 | `%USERPROFILE%\.agentspace\leases\<id>\` | [The lease folder](#the-lease-folder) | `create` | `renew`, `release`, ssh | `release` |
 | `...\leases\<id>\id_ed25519`, `id_ed25519.pub` | [The key](#the-key) | `create` | `ssh`; `renew` | `release` |
@@ -391,8 +392,8 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `<ssh folder>\agentspace.d\` | The folder of alias files | `create`; the operator, before a host's operator alias | `ssh`, through the `Include` line | Never |
 | `<ssh folder>\agentspace.d\<alias>` | [The alias file](#the-alias-file); for a host that is not the box, [in that form](#a-lease-alias-for-a-host-that-is-not-the-box) | `create`; a provisioning run, through `place_pending` | `ssh`; `release` | `release` |
 | `<ssh folder>\<alias>.agentspace-tmp-<hex>` | The alias file's temporary file | The same | None | At once |
-| `<ssh folder>\agentspace.d\agentspace-host.<host>` | [A host's operator alias](#a-hosts-operator-alias) (D47, D55, D91): `agentspace-host.<project>` for a `linux/arm64` host, `agentspace-host.<project>.<os>-<arch>` for another | Every operator command that names a host other than the box, `status -Host` included, and every one that connects to the host through it | `ssh`; the operator, to compare its bytes | Never |
-| `<ssh folder>\agentspace-host.<host>.agentspace-tmp-<hex>` | The operator alias's temporary file | The same | None | At once |
+| `<ssh folder>\agentspace.d\agentspace-host.<host name>` | [A host's operator alias](#a-hosts-operator-alias) (D47, D55, D91): `agentspace-host.<project>` for a `linux/arm64` host, `agentspace-host.<project>.<os>-<arch>` for another | Every operator command that names a host other than the box, `status -Host` included, and every one that connects to the host through it | `ssh`; the operator, to compare its bytes | Never |
+| `<ssh folder>\agentspace-host.<host name>.agentspace-tmp-<hex>` | The operator alias's temporary file | The same | None | At once |
 | `%USERPROFILE%\.ssh\known_hosts` | [The host key](#the-host-key), the box's | `ssh`, never agentspace | `ssh` | Never |
 | `%USERPROFILE%\.agentspace\known_hosts` | [Agentspace's host keys](#agentspaces-host-keys), every other host's (D47) | `ssh`, never agentspace | `ssh` | Never |
 | `%USERPROFILE%\.agentspace\ca\` | [The CA](#the-ca)'s folder | `ca`, once | `ca`, `sync`, `create`, `renew`, a provisioning run's `place_pending`, and every operator command that signs its own certificate | Never |
@@ -406,11 +407,11 @@ section, which this table only summarizes. "Never" under Removed means agentspac
 | `%USERPROFILE%\.agentspace\operator\<hex>\` and what is in it | One operator command's folder: the template, the box's files, the localswim CLI and the bootstrap script, written out for the programs it starts | The one operator command that made it: `deploy`, `sync`, `bootstrap` or `provision` | The AWS CLI, `scp`, as that command starts them | By that command, as it ends; one older than 24 hours, left by a killed command, by the next operator command that finds it |
 | `<state folder>\board-holder.json` | [The holder record](#the-holder-record), the box's | The keeper | The keeper | The keeper |
 | `<state folder>\board-holder.json.<hex>.tmp` | The holder record's temporary file | The keeper | None | At once |
-| `<state folder>\board-holder.<host>.json` | [Another host's holder](#another-hosts-holder) record | The keeper | The keeper | The keeper |
-| `<state folder>\board-holder.<host>.json.<hex>.tmp` | Its temporary file | The keeper | None | At once |
+| `<state folder>\board-holder.<host name>.json` | [Another host's holder](#another-hosts-holder) record | The keeper | The keeper | The keeper |
+| `<state folder>\board-holder.<host name>.json.<hex>.tmp` | Its temporary file | The keeper | None | At once |
 | `<state folder>\board-holder.log` | [The keeper's log](#the-keepers-logs), for every host | The keeper | People | Never |
 | `<state folder>\board-holder-ssh.log`, `.log.1` | The box's holder's output | The holder | People | Replaced by rotation |
-| `<state folder>\board-holder-ssh.<host>.log`, `.log.1` | [Another host's holder](#another-hosts-holder)'s output | The holder | People | Replaced by rotation |
+| `<state folder>\board-holder-ssh.<host name>.log`, `.log.1` | [Another host's holder](#another-hosts-holder)'s output | The holder | People | Replaced by rotation |
 | `<state folder>\board-holder.lock`, `board-holder-keeper.lock` | [The keeper's lock files](#the-keepers-lock-files) | The keeper | The keeper | Never |
 | `<state folder>\board-holder-launch.<hex>.json`, `.claim`, `.result.json` | [A holder's launch files](#a-holders-launch-files) | The keeper and its launcher | The same | The keeper, in the same pass; a late launcher's result file never |
 | `<state folder>\board-holder-launch.<hex>.json.<hex>.tmp`, `board-holder-launch.<hex>.result.json.<hex>.tmp` | The launch request's and result's temporary files | The keeper and its launcher | None | At once |
@@ -428,8 +429,8 @@ the `project` of a record in [the host registry](#the-host-registry). **A file n
 names it by that project, never by its stack:** `agentspace-host.<project>`, with a dot, is the
 operator alias's name and the host's key's name in `known_hosts`, and `agentspace-host-<project>`,
 with a hyphen, is only ever the stack's name (D44, D47, D55). **From v0.12 a file named for a host
-names it by its project and platform** (D91): `<host>` is that host's name in a file's name,
-`<project>` for a `linux/arm64` host, so every `linux/arm64` name is as it was, and
+names it by its host name** (D91; architect, 2026-11-26, for v0.12-T01, pin P12): `<host name>` is
+`<project>` for a `linux/arm64` host, so every `linux/arm64` name is as it was, byte for byte, and
 `<project>.<os>-<arch>` for a host of another platform, where `<os>-<arch>` is the platform written
 as [A host's platform and names](#a-hosts-platform-and-names) gives it, such as
 `agentspace.windows-amd64`. `agentspace-<os>-<arch>-host-<project>` is only ever the stack's name
@@ -477,18 +478,19 @@ differences:
   a board lease's plan was read from, on the record of a lease created with `--board` and `--epic`,
   in every state, and on no other. It MUST NOT reach any output (D87; architect, 2026-11-25, for
   v0.11-T01, pin P7; [What a plan lease adds](#what-a-plan-lease-adds)).
-- **`ssh.user` in a record MUST match the state schema's pattern, `^(ubuntu|agent)$(?!\n)`, from
-  v0.12** (D95; architect's to confirm, pin P6): `ubuntu` for a lease on either Linux platform,
-  `linux/arm64` or `linux/amd64`, and `agent` for a lease on `windows/amd64`, the Windows host's one
-  local user (D95). Until v0.12 the pattern was a lowercase letter or `_`, then up to 31 lowercase
-  letters, digits, `_` or `-`, which both names also match, so a program built before v0.12 reads
-  a record of either. That is narrower than lease-api.md's `ssh.user`
-  ([lease-api.md](lease-api.md#fields)), whose schema v0.12 does not change (pin P6), and the
-  record's pattern is the one that binds, because every record is checked against the schema
-  before it is written. The two stay apart ([driver.md Q16](driver.md#open-questions), closed): the
-  output's wider pattern is what a caller MUST accept, so that a later host needs no new contract
-  version, and the record's narrower one is what a v0 driver's user MUST match. `ubuntu` and
-  `agent` match both.
+- **`ssh.user` in a record MUST match the state schema's pattern**, a lowercase letter or `_`, then
+  up to 31 lowercase letters, digits, `_` or `-`. That is narrower than lease-api.md's `ssh.user`
+  ([lease-api.md](lease-api.md#fields)), and the record's pattern is the one that binds, because
+  every record is checked against the schema before it is written. The two stay as they are
+  ([driver.md Q16](driver.md#open-questions), closed): the output's wider pattern is what a caller
+  MUST accept, so that a later host needs no new contract version, and the record's narrower one is
+  what a v0 driver's user MUST match. `ubuntu` matches both.
+  - **From v0.12 the driver writes `ubuntu` for a lease on either Linux platform, `linux/arm64` or
+    `linux/amd64`, and `agent` for a lease on `windows/amd64`**, the Windows host's one local user
+    (D95; architect, 2026-11-26, for v0.12-T01, pin P19). `agent` matches both patterns, so the
+    state schema's pattern does not change, and a program built before v0.12 reads a record of
+    either. The schema does not check that a record's user goes with its platform; the driver
+    writes it so.
 - **Every other member a record shares with the lease document has the output schema's pattern**
   ([`lease.output.schema.json`](../schemas/lease.output.schema.json)): a reason's message does not
   start with a space, and `reasons` holds each code at most once.
@@ -558,9 +560,9 @@ point (2026-11-18):
   `unsatisfiable` lease with the one reason `no_capacity` for a project that has no host and is not
   on [the project list](#the-project-list) (D54); which answer `create` gives is
   [driver.md](driver.md#where-it-places-a-lease)'s. **From v0.12 "its host" is the host of the
-  lease's project on the lease's platform** (D91), and `no_capacity` also answers a lease whose
-  project has no host on that platform and is not approved for it
-  ([The project list](#the-project-list)).
+  lease's project on the lease's platform** (D91; architect, 2026-11-26, for v0.12-T01, pin P23),
+  and `no_capacity` also answers a lease whose project has no host on that platform and is not
+  approved for it ([The project list](#the-project-list)).
 - **A provisioning run, through the EC2 driver's `place_pending`, changes a `pending` record to
   `ready`** (D48; architect, 2026-11-20, for v0.07-T01). **It takes [the lease state
   lock](#the-lease-state-lock) once for each lease it places, and re-reads the file each time**
@@ -821,15 +823,18 @@ program calls them.
   on" ([keeper.md, Which host a lease is on](keeper.md#which-host-a-lease-is-on)): a lease of a
   project with no host record explains no host, the box included.
   - **From v0.12 a host's leases are its project's leases on its platform** (D91, which has the
-    guard explain a host by a live lease of its project on its platform): the records whose
-    `project` equals the host's record's `project` and whose `platform` equals the host's platform,
-    both compared exactly as the normalized strings they are stored as. A host record with no
-    `platform` is `linux/arm64`'s ([A host's platform and names](#a-hosts-platform-and-names)), and
+    guard explain a host by a live lease of its project on its platform; architect, 2026-11-26,
+    for v0.12-T01, pin P29): the records whose `project` equals the host's record's `project` and
+    whose `platform` equals the host's platform, both compared exactly as the normalized strings
+    they are stored as. A host record with no `platform` is `linux/arm64`'s, as is one that holds
+    `"platform":"linux/arm64"` ([A host's platform and names](#a-hosts-platform-and-names)), and
     every lease record holds its `platform` ([The lease state file](#the-lease-state-file)). **So
     a project's leases, wherever this section names them, are those of one host**, and its last
-    lease end and its horizon are that host's: a running Windows host whose project has only
-    Linux leases has no live lease (D91). Each function takes the host's project and platform; how
-    a program passes them is D101's `HostKey` and E0.12-T02-S01's.
+    lease end and its horizon are that host's: **a host's horizon is the project's horizon below,
+    taken over the leases of the host's project whose platform equals the host's** (pin P29), and
+    a running Windows host whose project has only Linux leases has no live lease (D91). Each
+    function takes the host's project and platform; how a program passes them is D101's `HostKey`
+    and E0.12-T02-S01's.
 - **A live lease** is one whose state at the reading's time is `pending` or `ready`, the state
   decided as [lease-api.md, States](lease-api.md#states) decides it, with expiry applied by that
   time: a record stored `ready` is `expired`, and so not live, when the reading's time is at or
@@ -954,20 +959,19 @@ schema disagree, both are wrong and MUST be fixed together.
 
 **The document** is `{"version":0,"hosts":[<record>, ...]}`:
 - **`version`** is the integer `0`. A reader MUST refuse any other value as an invalid file.
-- **`hosts`** is an array of records. The box's record, which the seed (below) puts first, stays
-  first. Until v0.12 the others were in the order they were added; **from v0.12 a writer writes
-  every record after the box's in order by `project`, then by platform**, each compared by the
-  ordinal order of its normalized string, a record without `platform` taking `linux/arm64`
-  (architect's to confirm, pin P10). The box's record stays first even where that order would put
-  it later, since a file written before v0.12 holds it first. **A reader MUST NOT depend on the
-  records' order.**
+- **`hosts`** is an array of records, in the order they were added. The box's record, which the
+  seed (below) puts first, stays first. **From v0.12 this holds for a host of every platform**
+  (architect, 2026-11-26, for v0.12-T01, pin P46): a writer that adds a record appends it at the
+  end of the array, and no writer reorders the records. So the file's order is the order the hosts
+  were created in, and a file v0.11 wrote keeps its order. A command that acts on every host, and
+  every listing of hosts, follows the file's order; no rule sorts them by project or platform.
 
 **A record** is an object with these members, and no others:
 
 | Member | Required | Value |
 |---|---|---|
 | `project` | Yes | The project the host serves, in the lease contract's normalized form ([lease-api.md](lease-api.md#project)): `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\n)` |
-| `platform` | No | From v0.12: the platform the host serves, the normalized platform, `<os>/<arch>` (D91, D101; architect's to confirm, pin P1): `^[a-z0-9]+/[a-z0-9]+$(?!\n)`, and not one whose architecture is `aarch64`, which normalizes to `arm64`. **Absent means `linux/arm64`**, which is what every record written before v0.12 is ([A host's platform and names](#a-hosts-platform-and-names)) |
+| `platform` | No | From v0.12: the platform the host serves, the normalized platform, `<os>/<arch>` (D91, D101; architect, 2026-11-26, for v0.12-T01, pin P1): `^[a-z0-9]+/[a-z0-9]+$(?!\n)`, with no variant, since a platform with a variant is unsupported and makes no host (pin P21), and not one whose architecture is `aarch64`, which normalizes to `arm64`. **Absent means `linux/arm64`**, which is what every record written before v0.12 is, and a writer omits it for `linux/arm64` (pin P16; [A host's platform and names](#a-hosts-platform-and-names)) |
 | `stack` | Yes | The host's CloudFormation stack (D44): `agentbox` for the box, `agentspace-host-<project>` for every other `linux/arm64` host, so at most 48 characters, 16 for the prefix and 32 for the project (D44; architect, 2026-11-20, for v0.07-T01), and from v0.12 `agentspace-<os>-<arch>-host-<project>` for a host of any other platform, at most 62 characters (D91). `^(agentbox\|agentspace-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?\|agentspace-[a-z0-9]+-[a-z0-9]+-host-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?)$(?!\n)`; a record whose `platform` is present and not `linux/arm64` holds the last form alone, and every other record one of the first two, which the schema checks |
 | `state` | Yes | `creating`, `ready` or `failed` ([Its states](#its-states)) |
 | `instance_id` | No | The host's EC2 instance ID, cached from its stack's `InstanceId` output: `^i-([0-9a-f]{8}\|[0-9a-f]{17})$(?!\n)`. Absent until a writer has read it ([The instance ID](#the-instance-id)) |
@@ -999,6 +1003,9 @@ still not valid when any of these holds, though the schema cannot refuse it:
    the same rule for a file whose records all lack `platform`. This is the lease state file's rule
    for two records with one `id`, and a reader treats such a file as it treats one that fails its
    schema (below). Two records of one project on different platforms are two hosts, and valid.
+   **Two records of one project, one holding `"platform":"linux/arm64"` and one without
+   `platform`, share a platform, and make the file not valid** (architect, 2026-11-26, for
+   v0.12-T01, pin P16).
 2. **A record's `stack` is not the stack name D91 gives its own `project` and platform**: for a
    `linux/arm64` record, `agentspace-host-<p>` with `<p>` other than that record's own `project`,
    such as `{"project":"agentspace","stack":"agentspace-host-swimcoach",...}`; and from v0.12, for
@@ -1106,7 +1113,9 @@ about, leaving every other record's members and values as it read them. The writ
   succeeded ([The last success](#the-last-success); pins P22 and P23;
   [operator.md](operator.md#provision)); it refuses a project with no record that is not on [the project list](#the-project-list), and writes nothing ([operator.md](operator.md#provision)).
   **From v0.12 it acts on one host, its project on its platform** (D91), and refuses a host with no
-  record whose platform the project list does not approve for its project, writing nothing.
+  record whose platform the project list does not approve for its project, before any AWS call,
+  writing nothing, with a message naming the project and the platform that operator.md writes
+  (architect, 2026-11-26, for v0.12-T01, pin P44).
 - **Every other operator command that needs a host's instance ID**: that record's `instance_id`
   alone, but for `deploy`, which writes `instance_type` too (the next item). **The guard is the
   exception: it never writes the registry**, though it is an operator
@@ -1115,7 +1124,9 @@ about, leaving every other record's members and values as it read them. The writ
   for a project with no record fails, writing nothing, with operator.md's message
   ([Which host a command acts on](operator.md#which-host-a-command-acts-on)). From v0.12 the host a
   command acts on is its `-Host` project on its `-Platform`, `linux/arm64` when the flag is absent
-  (D91, D101), and one given a project and platform with no record fails the same way.
+  (D91, D101; architect, 2026-11-26, for v0.12-T01, pin P9), and one given a project and platform
+  with no record fails the same way, its message naming the host by its host name
+  ([A host's platform and names](#a-hosts-platform-and-names); pin P44).
 - **Every `deploy` that names or implies a host, `provision`'s deploy step included**: that
   record's `instance_type`, which a provisioning run's deploy step removes before it decides its
   type, a person's `deploy` that passes `InstanceType` removes before `cloudformation deploy` runs,
@@ -1150,10 +1161,12 @@ and so never drops it, and a program built against this page MUST read it and wr
 unchanged.
 
 **Every writer keeps a record's `platform` exactly as it read it, and only the writer that adds a
-record writes it** (D91): the driver or `provision`, adding the record of a host of a platform
-other than `linux/arm64`. No writer adds, changes or removes it in a record that exists, since it
-is half of the record's key ([A host's platform and names](#a-hosts-platform-and-names)). A program
-built before v0.12 refuses a file that holds it as not valid, by its schema, and so never drops it.
+record writes it** (D91; architect, 2026-11-26, for v0.12-T01, pin P16): the driver or
+`provision`, adding the record of a host of a platform other than `linux/arm64`, and never for a
+`linux/arm64` host. No writer adds, changes or removes it in a record that exists, since it is half
+of the record's key ([A host's platform and names](#a-hosts-platform-and-names)), so a record a
+person wrote with `"platform":"linux/arm64"` keeps it. A program built before v0.12 refuses a file
+that holds it as not valid, by its schema, and so never drops it.
 
 **Who reads it:** the driver, in `create` and in `get` of a `pending` lease, its place reading
 `instance_type` from v0.09 ([The instance type](#the-instance-type)), and its decision whether a run
@@ -1185,38 +1198,54 @@ host a command or a lease reaches is the driver's and the operator's
 ([driver.md](driver.md#where-it-places-a-lease); [operator.md, Which host a command acts
 on](operator.md#which-host-a-command-acts-on)).
 
-**The platform is written in two forms** (D91, D101; architect's to confirm, pin P1):
+**The platform is written in two forms** (D91, D101; architect, 2026-11-26, for v0.12-T01, pin P1):
 - **In a record, a document or a flag, as the normalized platform**, `<os>/<arch>`, trimmed and
   lowercase, as [lease-api.md, Platform](lease-api.md#platform) normalizes `--platform`:
-  `linux/arm64`, `linux/amd64`, `windows/amd64`. A reader MUST NOT normalize a stored platform:
-  one that is not in the normalized form fails the schema, or matches no lease.
+  `linux/arm64`, `linux/amd64`, `windows/amd64`. The operator's `-Platform` takes every form
+  `--platform` takes and normalizes it the same way (pins P9 and P38). A reader MUST NOT normalize a
+  stored platform: one that is not in the normalized form fails the schema, or matches no lease.
 - **In a name, as `<os>-<arch>`**: the normalized platform with its one `/` written `-`, such as
   `linux-amd64` and `windows-amd64`. **`linux/arm64` never appears in a name**: a `linux/arm64`
   host keeps every name it had before v0.12 (D91).
-- **v0.12 supports exactly `linux/arm64`, `linux/amd64` and `windows/amd64`** (D98; pin P1). A
-  lease on any other platform is `unsatisfiable` with `unsupported_platform` (D5) before any host
-  is looked for, so no host of another platform is ever made.
+- **v0.12 supports exactly `linux/arm64`, `linux/amd64` and `windows/amd64`** (D98; pin P1), and a
+  platform is supported only when its normalized value equals one of the three, exactly: a platform
+  with a variant, such as `linux/amd64/v3`, is unsupported (architect, 2026-11-26, for v0.12-T01,
+  pin P21). A lease on any other platform is `unsatisfiable` with `unsupported_platform` (D5)
+  before any host is looked for, so no host of another platform is ever made, and such a request
+  has no host name (pin P21).
 
 **A record's `platform`** ([the member table](#the-host-registry)):
 - **Absent means `linux/arm64`** (D101's pinned member), which is what every record written before
   v0.12 is, the box's included.
 - **A writer MUST write it for a host of any other platform, and MUST NOT write it for a
-  `linux/arm64` host**, so every `linux/arm64` record keeps the bytes it had before v0.12. A record
-  that holds
-  `"platform":"linux/arm64"`, which only a person's edit can make, is valid, and is read as a
-  record without the member: it is the same host's, so beside a record of its project without the
-  member it makes the file not valid by rule 1.
+  `linux/arm64` host** (architect, 2026-11-26, for v0.12-T01, pin P16), so every `linux/arm64`
+  record keeps the bytes it had before v0.12, and Terry's file and a v0.11 program are untouched by
+  `linux/arm64` work. A record that holds `"platform":"linux/arm64"`, which only a person's edit
+  can make, is valid, and a reader takes it as equal to a record without the member (pin P16): it
+  is the same host's, so beside a record of its project without the member it makes the file not
+  valid by rule 1.
 - **It is written after `project` and before `stack`**, in the order of the member table, which
   fixes a record's bytes. A reader MUST NOT depend on member order.
 - **A record of a platform that agentspace does not support**, which only a person's edit can make,
   is valid when its form and its stack are, and no lease reaches it, since a lease on that platform
   never reaches a host (above).
+- **For example**, a file in which agentspace has a `linux/arm64` host and a `windows/amd64` host,
+  added after it, is (pin P16):
 
-**`<host>`, a host's name in a file's name**, is `<project>` for a `linux/arm64` host and
-`<project>.<os>-<arch>` for a host of any other platform, such as `agentspace.windows-amd64` (D91).
-A project holds no `.`, so the first `.` in `<host>` always starts the platform, and no
-`linux/arm64` host's name equals another platform's. **Every name of a host is one of these**, a
-`linux/arm64` host's unchanged:
+  ```
+  {"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"agentspace","stack":"agentspace-host-agentspace","state":"ready"},{"project":"agentspace","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-agentspace","state":"creating"}]}
+  ```
+
+  The `linux/arm64` record holds no `platform`, and its bytes are as v0.11 wrote them.
+
+**A host's name, `<host name>` on this page**, is `<project>` for a `linux/arm64` host and
+`<project>.<os>-<arch>` for a host of any other platform, such as `agentspace.windows-amd64` (D91;
+architect, 2026-11-26, for v0.12-T01, pin P12). A project holds no `.`, so the first `.` in a host
+name always starts the platform, and no `linux/arm64` host's name equals another platform's.
+**Every per-host name but the stack's is built from it**, and every `linux/arm64` name stays byte
+for byte as it was, `operator-<project>` and the holder files included (pin P12); the stack keeps
+D91's own form, since CloudFormation allows no `.` in a stack's name. **Every name of a host is one
+of these:**
 
 | Name | `linux/arm64` (unchanged) | Any other platform |
 |---|---|---|
@@ -1225,21 +1254,26 @@ A project holds no `.`, so the first `.` in `<host>` always starts the platform,
 | [A host's operator alias](#a-hosts-operator-alias), its file in `agentspace.d` and its `Host` name (D47, D91) | `agentspace-host.<project>`, for every host but the box, which has none | `agentspace-host.<project>.<os>-<arch>` |
 | The operator alias's owner mark | `# agentspace host <project>; <comment>` | `# agentspace host <project>.<os>-<arch>; <comment>` |
 | The host's key's name in [agentspace's `known_hosts`](#agentspaces-host-keys) (D47, D91) | `agentspace-host.<project>`; the box's key is `agentspace`, in the user's own `known_hosts` ([The host key](#the-host-key)) | `agentspace-host.<project>.<os>-<arch>` |
-| A lease alias's `HostKeyAlias` ([The alias file](#the-alias-file)) | `agentspace` for a lease on the box, `agentspace-host.<project>` for a lease on another host | `agentspace-host.<project>.<os>-<arch>` (architect's to confirm, pin P7) |
-| A lease's alias, `ssh.host_alias` | `agentspace-<project>-<first 8 hex digits of its ID>` | The same, on every platform (architect's to confirm, pin P7) |
-| [The holder record](#the-holder-record) | `board-holder.json` for the box, `board-holder.<project>.json` for every other host | `board-holder.<project>.<os>-<arch>.json` ([Another host's holder](#another-hosts-holder)) |
-| The holder's log | `board-holder-ssh.log` for the box, `board-holder-ssh.<project>.log` for every other host | `board-holder-ssh.<project>.<os>-<arch>.log` |
+| A lease alias's `HostKeyAlias` and the key name its `UserKnownHostsFile` is read for ([The alias file](#the-alias-file)) | `agentspace` for a lease on the box, `agentspace-host.<project>` for a lease on another host | `agentspace-host.<project>.<os>-<arch>` (architect, 2026-11-26, for v0.12-T01, pin P7) |
+| A lease's alias, `ssh.host_alias` | `agentspace-<project>-<first 8 hex digits of its ID>` | The same, on every platform (pin P7) |
+| [The holder record](#the-holder-record), and so its temporary file's name | `board-holder.json` for the box, `board-holder.<project>.json` for every other host | `board-holder.<project>.<os>-<arch>.json` ([Another host's holder](#another-hosts-holder); pin P12) |
+| The holder's log and its rotation | `board-holder-ssh.log` and `.log.1` for the box, `board-holder-ssh.<project>.log` and `.log.1` for every other host | `board-holder-ssh.<project>.<os>-<arch>.log` and `.log.1` (pin P12) |
 | [The push stamp](#the-push-stamp) | `%USERPROFILE%\.agentspace\localswim-pushed.json` for the box, `hosts\<project>\localswim-pushed.json` for every other host | `hosts\<project>.<os>-<arch>\localswim-pushed.json` |
-| The operator's certificate's key ID ([The operator's key and certificate](#the-operators-key-and-certificate)) | `operator-<project>` | The same (D95) |
-| The user a lease and the operator log in as | `ubuntu` | `ubuntu` on `linux/amd64`, `agent` on `windows/amd64` (D95) |
-| A guard log line's host field ([The guard's log](#the-guards-log)) | `host=<project>` | `host=<project>.<os>-<arch>` |
+| The operator's certificate's key ID ([The operator's key and certificate](#the-operators-key-and-certificate)) | `operator-<project>` | `operator-<project>.<os>-<arch>` (pin P12) |
+| The user a lease and the operator log in as | `ubuntu` | `ubuntu` on `linux/amd64`, `agent` on `windows/amd64` (D95), the operator's from the host's platform, never stored (architect, 2026-11-26, for v0.12-T01, pin P17) |
+| A guard log line's host field ([The guard's log](#the-guards-log)) | `host=<project>` | `host=<project>.<os>-<arch>` (pin P12) |
+
+- **Every log field and message that names a host names it by its host name** (pin P12): besides
+  the guard's `host=`, which this page owns, the keeper's `host=` ([keeper.md](keeper.md)), the
+  provisioning run's lock message and `status -All`'s host column ([operator.md](operator.md)),
+  each owned by the doc named. A `linux/arm64` host's field is its project, as before.
 
 - **Every name stays inside its limit** (D91): a project is at most 32 characters, so the longest
   stack is 62 characters of CloudFormation's 128, and the longest operator alias,
   `agentspace-host.` with 32 and `.windows-amd64`, is 62.
 - **No name of one host equals another host's**: D91 shows it for the stack, whose platform goes
   before `-host-`, where no `linux/arm64` stack has anything, and the `.` shows it for every name
-  that holds `<host>`.
+  that holds `<host name>`.
 
 **In code a host is D101's `agentspace_hosts::HostKey { project: String, platform: String }`**,
 with its stack, operator alias, host-key and folder names as methods, and every function other
@@ -1282,8 +1316,10 @@ what each writer records.
   `failed` apply only to a host that was never `ready`**, and a run on a `ready` host, and the
   driver that starts it, write only `last_attempt_at` at its start, removing `last_success_at` in
   the same write (architect, 2026-11-20, for v0.07-T01; D48; architect, 2026-11-24, for v0.10-T01,
-  pin P24). A host that is not `ready` sends its project's ready leases on its platform to the box,
-  where ssh refuses them ([Which host a connection reaches](#which-host-a-connection-reaches)).
+  pin P24). A `linux/arm64` host that is not `ready` sends its project's ready `linux/arm64` leases
+  to the box, where ssh refuses them, and from v0.12 a host of another platform that is not `ready`
+  has its project's ready leases on that platform refused, with no tunnel (architect, 2026-11-26,
+  for v0.12-T01, pin P13; [Which host a connection reaches](#which-host-a-connection-reaches)).
 - **`instance_type` is not a state, and no row of the table writes it.** A `deploy`,
   `provision`'s deploy step included, writes it whatever the record's state, and every write the
   table names keeps it as it was ([The instance type](#the-instance-type)). A run on a `ready`
@@ -1408,11 +1444,15 @@ pins P11, P26 and P30):
 it:
 - **`deploy -InstanceType <type>` passes that type, for every host, the box included** (D67, D71).
   A `deploy` without it passes the stack's previous value, or the template's default for a host's
-  stack it creates. Neither reads `stack-parameters.json`'s `InstanceType`
+  stack it creates, and from v0.12 the platform's `m` type for a new host of another platform,
+  `m8a.xlarge`, where `linux/arm64`'s stays `m9g.xlarge` (architect, 2026-11-26, for v0.12-T01,
+  pin P41; operator.md owns it). Neither reads `stack-parameters.json`'s `InstanceType`
   ([Files in the checkout](#files-in-the-checkout)).
 - **A provisioning run's command line is unchanged, `provision -Host <project>`, and from v0.12
   `provision -Host <project> -Platform <os/arch>` for a host of a platform other than
-  `linux/arm64` (D91, D101; operator.md owns the command line), and the run finds
+  `linux/arm64` alone, so a `linux/arm64` run's command line stays byte for byte as it was (D91,
+  D101; architect, 2026-11-26, for v0.12-T01, pin P30; operator.md owns the command line), and the
+  run finds
   its own type at its deploy step, in five steps, holding its
   [`provision.lock`](#the-provisioning-runs-lock) throughout** (D71, which changes D68; D68's
   change notes; architect, 2026-11-23, for v0.09-T01, pin P26, which replaces pin P13's read of
@@ -1450,8 +1490,10 @@ it:
   as [Live leases and the lease horizon](#live-leases-and-the-lease-horizon) defines a host's
   leases, so a `linux/amd64` lease neither holds nor sizes a `linux/arm64` host.
 
-  The driver starts the run as before, with no new argument but the platform of a host that is not
-  `linux/arm64`'s, so a run that `get` starts and one that `create` starts agree. **A resize runs
+  The driver starts the run as before, with no new argument but `-Platform` for a host that is not
+  `linux/arm64`'s (pin P30), so a run that `get` starts and one that `create` starts agree, and
+  the platform `check_pending` passes is the one stored in the lease record, never re-read from a
+  flag (architect, 2026-11-26, for v0.12-T01, pin P32). **A resize runs
   provision's steps entire** (D71), each safe to
   repeat (D48), and **a run never takes a `ready` host out of `ready`** (D48, D68).
 - **Why the order closes the race** (pin P26). `create` holds the lease state lock for its whole
@@ -1613,8 +1655,8 @@ v0.10-T01, pin P27):
 the files on this page** (D49, D55; architect, 2026-11-20, for v0.07-T01, the dev lead's pin P7):
 - **From v0.12 a host is found by its project and its platform** (D91). The ProxyCommand's lookup
   by the lease record's `project` and `platform` is
-  [operator.md, The ProxyCommand](operator.md#the-proxycommand)'s (architect's to confirm, pin P8),
-  and this section summarizes it: wherever this section names a
+  [operator.md, The ProxyCommand](operator.md#the-proxycommand)'s (architect, 2026-11-26, for
+  v0.12-T01, pin P8), and this section summarizes it: wherever this section names a
   project's host, it is the registry's record of that project on that platform, a record without
   `platform` being `linux/arm64`'s ([A host's platform and names](#a-hosts-platform-and-names)).
 - **A host's operator alias, `agentspace-host.<project>`, reaches that project's host**, whatever
@@ -1629,7 +1671,10 @@ the files on this page** (D49, D55; architect, 2026-11-20, for v0.07-T01, the de
   - **A `ready` lease reaches its `project`'s host**, if that project's record in the host
     registry is `ready`, **and otherwise the box**: when the project has no record, or when its
     record is not `ready`. From v0.12 that is the record of its `project` on its `platform`, both
-    as the lease record stores them (D91).
+    as the lease record stores them (D91), and **the fallback to the box is `linux/arm64`'s
+    alone** (architect, 2026-11-26, for v0.12-T01, pin P13): a `ready` lease of any other platform
+    whose project has no `ready` record on that platform is refused, with exit 1 and no tunnel, as
+    a lease that is not `ready` is refused (#0229).
   - **A lease that is `released`, `expired`, `unsatisfiable` or `pending` reaches no host**: the
     ProxyCommand refuses the connection before it reads the host registry.
   - **An alias that is no record's, or a missing lease state file, reaches the box.**
@@ -1640,7 +1685,8 @@ the files on this page** (D49, D55; architect, 2026-11-20, for v0.07-T01, the de
   other case reached the box. The exact rules are
   [operator.md, From the ProxyCommand](operator.md#from-the-proxycommand)'s.
 - **A ProxyCommand given no alias reaches the box**, as the user's own `agentspace` entry does.
-- **A fallback to the box is refused by ssh** for a lease whose host is not the box, because its
+- **A fallback to the box, which only a `linux/arm64` lease can meet (pin P13), is refused by
+  ssh** for a lease whose host is not the box, because its
   alias checks the key under `agentspace-host.<project>`, or from v0.12
   `agentspace-host.<project>.<os>-<arch>`, in agentspace's `known_hosts`, and the box's
   key is never there under either name
@@ -1660,7 +1706,7 @@ Terry's yes, since each is a host that costs its disk while it exists (D91; Q21)
 making a host: a project that has a record in [the host registry](#the-host-registry) is placed by
 that record, listed or not, and from v0.12 a project that has a record on a lease's platform is
 placed on that platform by that record, whatever the list approves
-(D54; architect's to confirm, pin P3). Its schema is
+(D54; architect, 2026-11-26, for v0.12-T01, pin P3). Its schema is
 [`schemas/state/projects.state.schema.json`](../schemas/state/projects.state.schema.json), draft
 2020-12 and strict (D20), carried inside every program that reads it, and where this section and
 the schema disagree, both are wrong and MUST be fixed together.
@@ -1674,11 +1720,12 @@ the schema disagree, both are wrong and MUST be fixed together.
 |---|---|---|
 | `name` | Yes | The project, in the lease contract's normalized form: `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\n)` |
 | `approved` | Yes | The date Terry approved it, `YYYY-MM-DD`: `^[0-9]{4}-(0[1-9]\|1[0-2])-(0[1-9]\|[12][0-9]\|3[01])$(?!\n)` |
-| `platforms` | No | From v0.12: the whole list of platforms the project MAY have a host made on, each with the date Terry approved it (D91, D101; architect's to confirm, pin P4). An array of at least one approval, each an object with exactly two members, both required: `platform`, a normalized platform in the form of the host registry's `platform`, `^[a-z0-9]+/[a-z0-9]+$(?!\n)` and not one whose architecture is `aarch64` ([A host's platform and names](#a-hosts-platform-and-names)); and `approved`, the date Terry approved that platform for the project, in the form of the entry's `approved`. Written after `approved` |
+| `platforms` | No | From v0.12: the whole list of platforms the project MAY have a host made on, each with the date Terry approved it (D91, D101; architect, 2026-11-26, for v0.12-T01, pin P4). An array of at least one approval, each an object with exactly two members, both required: `platform`, a normalized platform by the lease's normalized platform pattern, the lease state file's and lease.output.schema.json's, by its form and not from a list (pin P4): `^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$(?!\n)`, and not one whose architecture is `aarch64` or that is `arm64/v8`; and `approved`, the date Terry approved that platform for the project, in the form of the entry's `approved`. Written after `approved` |
 
 - **A project is listed when an entry's `name` equals the lease's normalized project, exactly.** A
   reader MUST NOT normalize a stored name: one that is not in the normalized form fails the schema.
-- **Which platforms an entry approves, from v0.12** (D91, D101; architect's to confirm, pin P4):
+- **Which platforms an entry approves, from v0.12** (D91, D101; architect, 2026-11-26, for
+  v0.12-T01, pin P4):
   - **An entry without `platforms` approves `linux/arm64` alone**, on the entry's `approved` date,
     which is what every entry written before v0.12 is.
   - **An entry with `platforms` approves exactly the platforms it lists**: `linux/arm64` is
@@ -1689,18 +1736,19 @@ the schema disagree, both are wrong and MUST be fixed together.
     exactly**, and a reader MUST NOT normalize a stored platform, as for a name.
   - **The entry's `approved` stays required beside `platforms`**, and records when Terry first
     approved the project; with `platforms` present it approves no platform by itself.
-  - **Approving a platform agentspace does not support has no effect**: no lease on it reaches a
-    host or makes one ([A host's platform and names](#a-hosts-platform-and-names)), and the entry
-    is valid.
+  - **Approving a platform agentspace does not support has no effect**, a platform with a variant
+    such as `linux/amd64/v3` included (pin P21): no lease on it reaches a host or makes one
+    ([A host's platform and names](#a-hosts-platform-and-names)), and the entry is valid.
 - **A date that matches the pattern but names no real day**, such as `2026-02-30`, `2026-04-31`
   or `2026-02-29`, **makes the file not valid**, as a time that names no real instant makes the
   lease state file not valid, an approval's `approved` as well as the entry's. Days are counted in
   the proleptic Gregorian calendar.
 - **Two approvals with one `platform` in an entry make the file not valid** (pin P4), compared as
-  the strings they are stored as, whatever their dates. The schema refuses two equal approvals,
-  and two that name one of the three platforms v0.12 supports, but cannot refuse two that name
-  another platform with different dates, since JSON Schema cannot compare two items' members; a
-  reader treats such a file as one that fails its schema.
+  the strings they are stored as, whatever their dates, as two entries with one `name` do (below).
+  The schema refuses two equal approvals, by `uniqueItems`, and two that name one of the three
+  platforms v0.12 supports, by `maxContains`; it cannot refuse two that name any other platform
+  with different dates, since JSON Schema cannot compare two items' members, so this rule covers
+  them, and a reader treats such a file as one that fails its schema.
 - **`platforms` with no approval, `[]`, makes the file not valid**, by the schema (pin P4).
 - **Nothing in agentspace compares `approved` with the clock.** It records when Terry's yes was
   given; a date in the future is valid.
@@ -1742,14 +1790,14 @@ reads it while it holds [the host registry lock](#the-host-registry-lock), so it
 record it adds agree. A reader SHOULD open it sharing read, write and delete.
 
 **A lease on a platform its project is not approved for, with no host on that platform, is
-`unsatisfiable` with `no_capacity`** (D91, as D54 answers a project with no entry;
-architect's to confirm, pin P3): its project has no entry, or has one whose approved platforms
-omit the lease's.
-Its message names the platform, except for a `linux/arm64` lease of a project with no entry and no
-host, which keeps v0.11's message byte for byte; both messages are
-[lease-api.md, Fields](lease-api.md#fields)'s, and which lease gets which is
-[driver.md](driver.md#where-it-places-a-lease)'s. **A host that already exists on the platform
-serves the lease whatever the list says**, as D54 does for a project with a host.
+`unsatisfiable` with `no_capacity`** (D91, as D54 answers a project with no entry; architect,
+2026-11-26, for v0.12-T01, pin P3): its project has no entry, or has one whose approved platforms
+omit the lease's. **A project with no entry gets v0.11's message, whatever platform the lease
+names, and only a project that has an entry that does not approve the lease's platform gets the
+message that names the platform** (pin P3). Both messages are
+[lease-api.md, Fields](lease-api.md#fields)'s, which lease gets which is
+[driver.md](driver.md#where-it-places-a-lease)'s, and this page restates neither. **A host that already exists on the platform serves the lease
+whatever the list says**, as D54 does for a project with a host.
 
 **Its form, and programs built before v0.12** (D91): **the file's `version` stays `0`**, and
 `platforms` is optional, with `null` never accepted for it or in it. A program built before v0.12
@@ -2007,7 +2055,7 @@ Host <alias>
   start of the line, and compares both the prefix and the ID without regard to case; a reader MUST
   accept at least the exact form.
 - **A host's operator alias carries another owner mark, `# agentspace host <project>; <comment>`**,
-  from v0.12 `# agentspace host <host>; <comment>`
+  from v0.12 `# agentspace host <host name>; <comment>`
   ([A host's operator alias](#a-hosts-operator-alias)), **and it is never a lease's owner mark**:
   `# agentspace host ` does not start with `# agentspace lease `, so a lease's `create`, overwrite
   or `release` that meets an operator alias treats it as a file with no owner mark, and changes
@@ -2057,14 +2105,15 @@ Host <alias>
 ### A lease alias for a host that is not the box
 
 **A lease placed on a host that is not the box has an alias file in the form above, with the host's
-key named in two lines instead of one** (D47, D55): `HostKeyAlias agentspace-host.<host>`, and
-one more line straight after it, `UserKnownHostsFile "<known_hosts path>"`. `<host>` is the host's
-name in a file's name ([A host's platform and names](#a-hosts-platform-and-names)), so the line is
-`HostKeyAlias agentspace-host.<project>` for a lease on a `linux/arm64` host, byte for byte as
-before v0.12, and `HostKeyAlias agentspace-host.<project>.<os>-<arch>` for a lease on a host of
-another platform (D91; architect's to confirm, pin P7). The lease's alias, and so the alias file's
-name and its `Host` line, stays `agentspace-<project>-<first 8 hex digits of the id>` on every
-platform (pin P7). Its bytes, exactly,
+key named in two lines instead of one** (D47, D55): `HostKeyAlias agentspace-host.<host name>`, and
+one more line straight after it, `UserKnownHostsFile "<known_hosts path>"`. `<host name>` is the
+host's name ([A host's platform and names](#a-hosts-platform-and-names); architect, 2026-11-26,
+for v0.12-T01, pin P12), so the line is `HostKeyAlias agentspace-host.<project>` for a lease on a
+`linux/arm64` host, byte for byte as before v0.12, and
+`HostKeyAlias agentspace-host.<project>.<os>-<arch>` for a lease on a host of another platform,
+whose key `UserKnownHostsFile` is then read for under that name (D91; architect, 2026-11-26, for
+v0.12-T01, pin P7). The lease's alias, and so the alias file's name and its `Host` line, stays
+`agentspace-<project>-<first 8 hex digits of the id>` on every platform (pin P7). Its bytes, exactly,
 under the same rules as the box's (UTF-8 without a byte order mark, each line ending in one LF,
 every line after the second indented by two spaces):
 
@@ -2075,7 +2124,7 @@ Host <alias>
   IdentityFile "<key path>"
   CertificateFile "<certificate path>"
   IdentitiesOnly yes
-  HostKeyAlias agentspace-host.<host>
+  HostKeyAlias agentspace-host.<host name>
   UserKnownHostsFile "<known_hosts path>"
   StrictHostKeyChecking yes
   ProxyCommand <proxy command>
@@ -2087,8 +2136,8 @@ Host <alias>
 
 | Placeholder | Value |
 |---|---|
-| `<host>` | The name in a file's name of the host the lease is placed on ([A host's platform and names](#a-hosts-platform-and-names)): the lease's `project`, which is the `project` of the host registry record the lease is placed on, and from v0.12, for a host of a platform other than `linux/arm64`, that project, `.` and the lease's platform written `<os>-<arch>`, which is that record's platform |
-| `<user>` | The lease's `ssh.user`: `ubuntu` on a Linux host, `agent` on a `windows/amd64` host (D95) |
+| `<host name>` | The host name of the host the lease is placed on ([A host's platform and names](#a-hosts-platform-and-names); pin P12): the lease's `project`, which is the `project` of the host registry record the lease is placed on, and from v0.12, for a host of a platform other than `linux/arm64`, that project, `.` and the lease's platform written `<os>-<arch>`, which is that record's platform |
+| `<user>` | The lease's `ssh.user`, as the driver wrote it: `ubuntu` on a Linux host, `agent` on a `windows/amd64` host (D95; architect, 2026-11-26, for v0.12-T01, pins P17 and P19) |
 | `<known_hosts path>` | The full path of [agentspace's `known_hosts`](#agentspaces-host-keys), written as `<key path>` is: the home folder joined as text with `.agentspace\known_hosts`, then every `\` written as `/` and every `%` as `%%`, as in `C:/Users/<user name>/.agentspace/known_hosts` |
 | Every other | As for the box's alias, above |
 
@@ -2210,8 +2259,9 @@ a lease alias is refused. A host whose key changes needs that entry replaced by 
 ### Agentspace's host keys
 
 **`%USERPROFILE%\.agentspace\known_hosts` holds the key of every host but the box, each under
-its own name, `agentspace-host.<project>`, from v0.12 `agentspace-host.<host>`, and only ssh writes
-it** (D47, D55, D91): `agentspace-host.<project>` for a `linux/arm64` host, as before, and
+its own name, `agentspace-host.<project>`, from v0.12 `agentspace-host.<host name>`, and only ssh writes
+it** (D47, D55, D91; architect, 2026-11-26, for v0.12-T01, pin P12):
+`agentspace-host.<project>` for a `linux/arm64` host, as before, and
 `agentspace-host.<project>.<os>-<arch>` for a host of another platform, such as
 `agentspace-host.agentspace.windows-amd64` (D95), so two hosts of one project never share a key's
 name ([A host's platform and names](#a-hosts-platform-and-names)). It never holds the box's
@@ -2219,7 +2269,7 @@ key: the operator reaches the box through the user's own `agentspace` entry and 
 alias for it ([operator.md](operator.md)), and the box's lease aliases never read it.
 - **Written by `ssh`, never by agentspace.** The first connection through a host's operator alias,
   which accepts a new key (`StrictHostKeyChecking accept-new`), makes ssh add the host's key under
-  `agentspace-host.<host>`, creating the file if it is missing
+  `agentspace-host.<host name>`, creating the file if it is missing
   ([A host's operator alias](#a-hosts-operator-alias)). A provisioning run connects that way before
   it records the host `ready`, so the key is there before any lease alias needs it.
 - **Read by `ssh`**, through the `UserKnownHostsFile` line of the host's operator alias and of every
@@ -2231,7 +2281,7 @@ alias for it ([operator.md](operator.md)), and the box's lease aliases never rea
   not the box: every alias agentspace writes for such a host names this file.
 - **A host whose key changes**, such as one whose instance was replaced, **is refused by every
   alias, the operator's included**, since `accept-new` accepts only a name with no key. A person
-  removes the old line, with `ssh-keygen -R agentspace-host.<host> -f <its full path>`, and the
+  removes the old line, with `ssh-keygen -R agentspace-host.<host name> -f <its full path>`, and the
   next operator connection accepts the new key.
 - **`USERPROFILE` moves it; `AGENTSPACE_STATE_DIR` and `AGENTSPACE_SSH_DIR` do not**
   ([What moves which files](#what-moves-which-files)).
@@ -2520,7 +2570,8 @@ changes the file under the other.
 
 **`%USERPROFILE%\.agentspace\hosts\<project>\` holds what the operator keeps for one host (D47,
 D48, D50, D55)**, where `<project>` is the host's record's `project`. **From v0.12 it is
-`hosts\<host>\`** (D91): `hosts\<project>\` for a `linux/arm64` host, as before, and
+`hosts\<host name>\`** (D91; architect, 2026-11-26, for v0.12-T01, pin P12): `hosts\<project>\`
+for a `linux/arm64` host, as before, and
 `hosts\<project>.<os>-<arch>\` for a host of another platform, such as
 `hosts\agentspace.linux-amd64\`, with the record's platform written as
 [A host's platform and names](#a-hosts-platform-and-names) gives it. Each host of a project has its
@@ -2529,7 +2580,7 @@ own folder, and every rule of this section binds each. It holds:
 | File | What it is | Section |
 |---|---|---|
 | `id_ed25519`, `id_ed25519.pub` | The operator's key for this host | [The operator's key and certificate](#the-operators-key-and-certificate) |
-| `id_ed25519-cert.pub` | The operator's certificate, key ID `operator-<project>`, valid one hour | The same |
+| `id_ed25519-cert.pub` | The operator's certificate, key ID `operator-<host name>`, valid one hour | The same |
 | `provision.log` | The provisioning run's log, which the run opens for append as its first step, creating it if it is missing | [The provisioning run's log](#the-provisioning-runs-log) |
 | `provision.lock` | The provisioning run's lock: held while a run is running, and from v0.09 while a person's `deploy` of the host is (pin P34) | [The provisioning run's lock](#the-provisioning-runs-lock) |
 | `localswim-pushed.json` | The host's push stamp, for every host but the box | [A host's push stamp](#a-hosts-push-stamp) |
@@ -2555,23 +2606,25 @@ own folder, and every rule of this section binds each. It holds:
   missing (architect, 2026-11-23, for v0.09-T01, pin P34); it then holds the same files under the
   same rules, but for the push stamp,
   which stays the box's own ([The push stamp](#the-push-stamp)).
-- **Something at `hosts\` or `hosts\<host>\` that is not a folder** fails every command that
+- **Something at `hosts\` or `hosts\<host name>\` that is not a folder** fails every command that
   needs a file in it, writing nothing there, as [The home folder](#the-home-folder) says of any
   folder.
 - **A file in a host's folder needs no platform member**, since the folder's name carries the
-  platform (D91; architect's to confirm, pin P5): the push stamp, the key, the certificate, the
-  log and the lock keep their v0.11 forms on every platform.
+  platform (D91; architect, 2026-11-26, for v0.12-T01, pins P5 and P14): the push stamp, the key,
+  the certificate, the log and the lock keep their v0.11 forms on every platform.
 
 ### The operator's key and certificate
 
 **The operator reaches a host as `ubuntu` with a key of its own and a certificate it signs for
 itself with the CA, never with the user's own key** (D47, D55). **From v0.12 it reaches a
 `windows/amd64` host as `agent`**, the host's one local user, which a lease logs in as too, and a
-host of either Linux platform as `ubuntu` (D95).
+host of either Linux platform as `ubuntu` (D95). **The user, and so the certificate's principal,
+comes from the host's platform, and is stored in no file** (architect, 2026-11-26, for v0.12-T01,
+pin P17): not in the host registry, and not as a value of its own beside the operator alias.
 
 - **The key is an ed25519 key pair in OpenSSH's formats, without a passphrase**, exactly as a
   lease's key is ([The key](#the-key)), with the same line-ending tolerance for a reader. **Its
-  comment SHOULD be `agentspace host <project>`**, from v0.12 `agentspace host <host>`, and MUST
+  comment SHOULD be `agentspace host <project>`**, from v0.12 `agentspace host <host name>`, and MUST
   hold no line break. Nothing reads it. Each host has its own key, in its own folder.
 - **It is made once, by the first operator command that signs a certificate for the host and finds
   `id_ed25519` missing, and kept** (architect, 2026-11-20, for v0.07-T01). The command makes it
@@ -2592,8 +2645,8 @@ host of either Linux platform as `ubuntu` (D95).
 
   | Field | Value |
   |---|---|
-  | Key ID | `operator-<project>` (D47, D55), on every platform (D95) |
-  | Valid principals | Exactly one: `ubuntu`, and from v0.12 `agent` for a `windows/amd64` host (D95) |
+  | Key ID | `operator-<host name>` (D47, D55), so `operator-<project>` for a `linux/arm64` host, byte for byte as before, and `operator-<project>.<os>-<arch>` for a host of another platform (architect, 2026-11-26, for v0.12-T01, pin P12) |
+  | Valid principals | Exactly one: `ubuntu`, and from v0.12 `agent` for a `windows/amd64` host, from the host's platform (D95; pin P17) |
   | Valid before | The issue time plus one hour, 3600 seconds, exactly |
   | Valid after | MUST NOT be later than the issue time, and SHOULD be 5 minutes before it, as a lease's |
   | Extensions | A lease certificate's two, `permit-port-forwarding` and `permit-pty` (architect, 2026-11-20, for v0.07-T01) |
@@ -2609,14 +2662,14 @@ host of either Linux platform as `ubuntu` (D95).
   signs again before it connects again; a connection already open stays open, since the
   certificate is checked only when a connection is made.
 - **A person signing in over `ssh agentspace-host.<project>`** (D52), from v0.12
-  `ssh agentspace-host.<host>`, first runs an operator command
+  `ssh agentspace-host.<host name>`, first runs an operator command
   for that host, and runs one again once an hour has passed: operator.md and D52's procedure in the
   README say which, `agentspace-operator status -Host <project>` (architect, 2026-11-20, for
   v0.07-T01), with `-Platform <os/arch>` for a host of another platform. **That command, as every
   operator command that names a host other than the box,
   writes the host's operator alias and signs a fresh certificate** (architect, 2026-11-20, for
   v0.07-T01), so it
-  always leaves a working `ssh agentspace-host.<host>`. The person's ssh then uses the
+  always leaves a working `ssh agentspace-host.<host name>`. The person's ssh then uses the
   operator's key and certificate through the operator alias
   ([A host's operator alias](#a-hosts-operator-alias)).
 - **A new certificate replaces the old one in one rename** (architect, 2026-11-20, for v0.07-T01): the command
@@ -2632,14 +2685,15 @@ host of either Linux platform as `ubuntu` (D95).
 ### A host's operator alias
 
 **`<ssh folder>\agentspace.d\agentspace-host.<project>` is the operator's way to reach a host**
-(D47, D55), and from v0.12 `agentspace-host.<host>`: `agentspace-host.<project>` for a
+(D47, D55), and from v0.12 `agentspace-host.<host name>`: `agentspace-host.<project>` for a
 `linux/arm64` host, as before, and `agentspace-host.<project>.<os>-<arch>` for a host of another
-platform (D91; [A host's platform and names](#a-hosts-platform-and-names)). It is one file per
+platform (D91; architect, 2026-11-26, for v0.12-T01, pin P12;
+[A host's platform and names](#a-hosts-platform-and-names)). It is one file per
 host, written with the same rules as a lease's alias file, but for what
 this section says (architect, 2026-11-20, for v0.07-T01, the dev lead's pin P11). **It is written
 by every operator command that names a host other than the box, `status -Host` included, whether
 or not it connects** (architect, 2026-11-20, for v0.07-T01), **and by every operator command that connects to a
-host through it**. A person's own `ssh agentspace-host.<host>` uses it too, as D52's sign-ins
+host through it**. A person's own `ssh agentspace-host.<host name>` uses it too, as D52's sign-ins
 do, and is let in only while the certificate the last operator command signed is valid, an hour at
 most; a person gets a fresh one by running `agentspace-operator status -Host <project>` first, with
 `-Platform <os/arch>` for a host of another platform, as
@@ -2647,16 +2701,16 @@ most; a person gets a fresh one by running `agentspace-operator status -Host <pr
 
 **Its bytes, exactly:** UTF-8 without a byte order mark, each line ending in one LF, the last
 included, and every line after the second indented by two spaces. For a `linux/arm64` host,
-`<host>` is `<project>` and `<user>` is `ubuntu`, so its bytes are v0.11's:
+`<host name>` is `<project>` and `<user>` is `ubuntu`, so its bytes are v0.11's:
 
 ```
-# agentspace host <host>; <comment>
-Host agentspace-host.<host>
+# agentspace host <host name>; <comment>
+Host agentspace-host.<host name>
   User <user>
   IdentityFile "<key path>"
   CertificateFile "<certificate path>"
   IdentitiesOnly yes
-  HostKeyAlias agentspace-host.<host>
+  HostKeyAlias agentspace-host.<host name>
   UserKnownHostsFile "<known_hosts path>"
   StrictHostKeyChecking accept-new
   ProxyCommand <proxy command>
@@ -2666,13 +2720,13 @@ Host agentspace-host.<host>
 
 | Placeholder | Value |
 |---|---|
-| `<host>` | The host's name in a file's name ([A host's platform and names](#a-hosts-platform-and-names)): the host's record's `project`, and from v0.12, for a record of a platform other than `linux/arm64`, that project, `.` and the record's platform written `<os>-<arch>` (D91) |
-| `<user>` | `ubuntu` for a host of either Linux platform, and from v0.12 `agent` for a `windows/amd64` host (D95) |
+| `<host name>` | The host's name ([A host's platform and names](#a-hosts-platform-and-names); pin P12): the host's record's `project`, and from v0.12, for a record of a platform other than `linux/arm64`, that project, `.` and the record's platform written `<os>-<arch>` (D91) |
+| `<user>` | `ubuntu` for a host of either Linux platform, and from v0.12 `agent` for a `windows/amd64` host, from the host's platform and never stored (D95; pin P17) |
 | `<comment>` | Any text without a line break. It SHOULD say that agentspace wrote the file and that it MUST NOT be edited |
-| `<key path>` | The full path of the host's `id_ed25519`, the home folder joined as text with `.agentspace\hosts\<host>\id_ed25519`, written as a lease alias's `<key path>` is ([The alias file](#the-alias-file)) |
+| `<key path>` | The full path of the host's `id_ed25519`, the home folder joined as text with `.agentspace\hosts\<host name>\id_ed25519`, written as a lease alias's `<key path>` is ([The alias file](#the-alias-file)) |
 | `<certificate path>` | The full path of the host's `id_ed25519-cert.pub`, written the same way |
 | `<known_hosts path>` | The full path of [agentspace's `known_hosts`](#agentspaces-host-keys), written the same way |
-| `<proxy command>` | The default ProxyCommand line of [The alias file](#the-alias-file), `"<program>" agentspace-host.<host>`, with `%` written as `%%`. `<program>` is the full path of `agentspace-ssh-proxy.exe` as the operator finds it as [operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others) says. `AGENTSPACE_PROXY_COMMAND`, the lease CLI's variable, does not change it (architect, 2026-11-20, for v0.07-T01) |
+| `<proxy command>` | The default ProxyCommand line of [The alias file](#the-alias-file), `"<program>" agentspace-host.<host name>`, with `%` written as `%%`. `<program>` is the full path of `agentspace-ssh-proxy.exe` as the operator finds it as [operator.md, How each program finds the others](operator.md#how-each-program-finds-the-others) says. `AGENTSPACE_PROXY_COMMAND`, the lease CLI's variable, does not change it (architect, 2026-11-20, for v0.07-T01) |
 
 - **It differs from a lease alias only in these:** the owner mark; the `Host` name; `User ubuntu`,
   which from v0.12 is the host's user, as a lease alias's `User` is;
@@ -2680,10 +2734,10 @@ Host agentspace-host.<host>
   adds the host's key ([Agentspace's host keys](#agentspaces-host-keys)); and no `RemoteForward`
   line, since the operator holds no board (D47).
 - **The owner mark is the first line, `# agentspace host `, the project, `;`, one space, then the
-  comment**, written exactly so, and from v0.12 `<host>` in place of the project. A reader
+  comment**, written exactly so, and from v0.12 `<host name>` in place of the project. A reader
   recognizes an operator alias by a first line, up to the
   first LF, that starts with `# agentspace host `, followed by a project and a `;`, and from v0.12
-  by a `<host>` and a `;`. **It names this host when that `<host>` is this host's, exactly**, so
+  by a `<host name>` and a `;`. **It names this host when that `<host name>` is this host's, exactly**, so
   `# agentspace host agentspace;` names agentspace's `linux/arm64` host alone, and no other
   platform's. Neither mark
   ever matches the other ([The alias file](#the-alias-file)), so no lease's `create`, overwrite or
@@ -2692,7 +2746,7 @@ Host agentspace-host.<host>
 - **A value that holds a CR or LF MUST be refused, writing nothing**, as for a lease alias.
 - **Written by a command that names the host whether or not it connects, and always before the
   command's first connection to the host, through a temporary file,
-  `<ssh folder>\agentspace-host.<host>.agentspace-tmp-<hex>`, moved into `agentspace.d`** in one
+  `<ssh folder>\agentspace-host.<host name>.agentspace-tmp-<hex>`, moved into `agentspace.d`** in one
   attempt ([Replacing a file](#replacing-a-file)), after the command has made sure of
   [the `Include` line](#the-include-line). Access rules: inherited from `<ssh folder>`, and MUST be
   OpenSSH-safe.
@@ -2709,7 +2763,7 @@ Host agentspace-host.<host>
 
 ### The provisioning run's log
 
-**`%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, from v0.12 `hosts\<host>\provision.log`,
+**`%USERPROFILE%\.agentspace\hosts\<project>\provision.log`, from v0.12 `hosts\<host name>\provision.log`,
 is the log of every provisioning run for that host** (D48, as D55 moves it; architect, 2026-11-20,
 for v0.07-T01, the dev lead's pin P4; D91).
 D48's `<state folder>\hosts\<project>.log` is not used.
@@ -2740,7 +2794,7 @@ D48's `<state folder>\hosts\<project>.log` is not used.
 ### The provisioning run's lock
 
 **`%USERPROFILE%\.agentspace\hosts\<project>\provision.lock`, from v0.12
-`hosts\<host>\provision.lock` (D91), is held for the whole life of a provisioning run, and from
+`hosts\<host name>\provision.lock` (D91), is held for the whole life of a provisioning run, and from
 v0.09 for the whole life of a person's `deploy` of the host, so a held
 lock means a run or such a `deploy` is running** (D55; architect, 2026-11-23, for v0.09-T01, pin
 P34). The box's is `hosts\swimcoach\provision.lock` ([A host's folder](#a-hosts-folder)). Each
@@ -2803,7 +2857,8 @@ before the start (below).
   executable runs from. **It is never `AGENTSPACE_OPERATOR_CMD`.** What the variable means to the
   lease CLI is [lease-api.md](lease-api.md#environment)'s, and the run's command line,
   `provision -Host <project>`, from v0.12 with `-Platform <os/arch>` for a host of a platform other
-  than `linux/arm64` (D91, D101), is [operator.md](operator.md#provision)'s.
+  than `linux/arm64` alone, so a `linux/arm64` run's command line stays byte for byte (D91, D101;
+  architect, 2026-11-26, for v0.12-T01, pin P30), is [operator.md](operator.md#provision)'s.
 - **The run's environment is the user's logon environment, with these four exactly as this list
   says** (architect, 2026-11-20, for v0.07-T01):
   - **`USERPROFILE`**, as the starting program has it, made full against the starting program's
@@ -2832,7 +2887,7 @@ before the start (below).
   the host's [`provision.log`](#the-provisioning-runs-log) for append as its first step, and
   writes its own lines alone there; the programs it starts write to its own streams (architect,
   2026-11-21, for v0.07-T03).
-- **Before the start, the driver, in the starting program, creates `hosts\<host>\` if it is
+- **Before the start, the driver, in the starting program, creates `hosts\<host name>\` if it is
   missing**, the folder of the host the run is for (architect, 2026-11-20, for v0.07-T01), and
   never creates or opens the log. **A failure
   to make the folder is a start that fails**: no run is started, and the lease stays `pending`;
@@ -2843,12 +2898,13 @@ before the start (below).
 ### A host's push stamp
 
 **`%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json`, from v0.12
-`hosts\<host>\localswim-pushed.json`, records the last token push that host confirmed, for every
+`hosts\<host name>\localswim-pushed.json`, records the last token push that host confirmed, for every
 host but the box** (D50, D55, D91). The box's stays
 `%USERPROFILE%\.agentspace\localswim-pushed.json`. **The stamp is kept per host, and so per
-platform from v0.12** (D50 under D91; architect's to confirm, pin P5): each host of a project has
-its own, in its own folder, whose name carries the platform, so the stamp holds no platform member
-and keeps the box's form on every platform.
+platform from v0.12** (D50 under D91; architect, 2026-11-26, for v0.12-T01, pin P14, which
+amends pin P5): each host of a project has its own, in its own folder, whose name carries the
+platform, so the stamp is unchanged, holds no platform member, and keeps the box's form on every
+platform. The box's stamp is `linux/arm64`'s.
 - **Its form, schema, bytes, temporary file name (`localswim-pushed.json.<hex>.tmp`, in the host's
   folder), atomic replace, access rules and reading rules are [the push stamp](#the-push-stamp)'s**,
   in every point, and so is what it is the hash of, which covers the host's own instance ID
@@ -3051,7 +3107,7 @@ missing. **Access rules, for every keeper file:** inherited; the keeper sets non
   followed by one LF.
 - **Replaced atomically** through `<its name>.<hex>.tmp` in the same folder
   ([Replacing a file](#replacing-a-file)): `board-holder.json.<hex>.tmp`,
-  `board-holder.<host>.json.<hex>.tmp`, `board-holder-launch.<hex>.json.<hex>.tmp` and
+  `board-holder.<host name>.json.<hex>.tmp`, `board-holder-launch.<hex>.json.<hex>.tmp` and
   `board-holder-launch.<hex>.result.json.<hex>.tmp`, where the two `<hex>` are separate values. A rename that fails because the file is in use is
   tried again every 50 milliseconds for up to 5 seconds.
 - **Read whole.** A reader SHOULD share read, write and delete; the prototype's keeper and launcher
@@ -3078,13 +3134,32 @@ strict, as a writer MUST write it.
 | `process_started_at` | The holder's creation time in UTC, truncated to the millisecond, as `YYYY-MM-DDTHH:MM:SS.fffZ` |
 | `lease_id` | The ID of the lease it holds through, normalized |
 | `alias` | That lease's `ssh.host_alias`, which the holder was started with, in the form [lease-api.md](lease-api.md#fields) gives it |
+| `platform` | Optional, from v0.12: the platform of the host the holder is on, the normalized platform in the host registry's form, `^[a-z0-9]+/[a-z0-9]+$(?!\n)` and not one whose architecture is `aarch64` ([A host's platform and names](#a-hosts-platform-and-names)). **Absent means `linux/arm64`**. Written last, after `alias` |
 
-- **From v0.12 the record is kept per host, keyed by its project and platform, and its form does
-  not change** (D50 under D91; architect's to confirm, pin P5): the file's name carries the host,
-  `board-holder.<project>.<os>-<arch>.json` for a host of a platform other than `linux/arm64`
-  ([Another host's holder](#another-hosts-holder)), as a host's folder's name does, so the record
-  holds no platform member. A lease's alias names no platform (pin P7), so the file's name, not the
-  record, says which of a project's hosts the holder is on.
+- **From v0.12 the record is kept per host, keyed by its project and platform, and gains
+  `platform`** (D50 under D91; architect, 2026-11-26, for v0.12-T01, pins P5 and P14): the file's
+  name carries the host's name, `board-holder.<project>.<os>-<arch>.json` for a host of a platform
+  other than `linux/arm64` ([Another host's holder](#another-hosts-holder); pin P12), and the record
+  names the platform too, since a lease's alias names none (pin P7).
+  - **A writer omits `platform` for a `linux/arm64` host, and writes it for a host of any other
+    platform** (pin P16), so every `linux/arm64` record keeps the bytes it had before v0.12, the
+    box's included, in the block above, and a record for a host of another platform is:
+
+    ```
+    {"pid":<int>,"process_started_at":"<time>","lease_id":"<id>","alias":"<alias>","platform":"<platform>"}
+    ```
+
+  - **A reader takes an explicit `"platform":"linux/arm64"` as equal to an absent one** (pin P16).
+  - **A record whose platform, `linux/arm64` when it is absent, is not the platform of the host its
+    file is named for is not a record**: a reader MUST treat it as no record, as for a record whose
+    members do not have their forms (below), and keeper.md says the same. `board-holder.json` and
+    `board-holder.<project>.json` are `linux/arm64`'s, and `board-holder.<project>.<os>-<arch>.json`
+    is that platform's. A holder record is one object per file, so the host registry's rule for two
+    records with one key has no counterpart here.
+  - **The member is optional, and `null` is never accepted for it.** A keeper built before v0.12
+    reads a record holding it without the member, since a reader ignores a member the schema does
+    not name (below); v0.12's programs are installed together all the same
+    ([A host's platform and names](#a-hosts-platform-and-names)).
 
 - **Written by:** a keeper pass that started a holder. **Read by:** every keeper pass. **Removed
   by:** a keeper pass, when the holder it names is stopped, gone or not to be trusted; when, is
@@ -3105,20 +3180,21 @@ strict, as a writer MUST write it.
 
 **The keeper holds one holder per host (D50), and every host but the box has its own record and
 its own holder log, named by its project** (D55; architect, 2026-11-20, for v0.07-T01, the dev
-lead's pin P6), **and from v0.12 by its project and platform, `<host>`** (D50 under D91;
-architect's to confirm, pin P5):
+lead's pin P6), **and from v0.12 by its host name, `<host name>`, which carries its project and
+platform** (D50 under D91; architect, 2026-11-26, for v0.12-T01, pins P5 and P12):
 
 | File | What it is | In the form of |
 |---|---|---|
-| `<state folder>\board-holder.<host>.json` | The record of the holder the keeper started on that host, absent when there is none | [The holder record](#the-holder-record), with its schema, `board-holder.state.schema.json` |
-| `<state folder>\board-holder.<host>.json.<hex>.tmp` | Its temporary file | The keeper's JSON files' |
-| `<state folder>\board-holder-ssh.<host>.log` | That holder's output | `board-holder-ssh.log` ([The keeper's logs](#the-keepers-logs)) |
-| `<state folder>\board-holder-ssh.<host>.log.1` | Its rotation | `board-holder-ssh.log.1` |
+| `<state folder>\board-holder.<host name>.json` | The record of the holder the keeper started on that host, absent when there is none | [The holder record](#the-holder-record), with its schema, `board-holder.state.schema.json` |
+| `<state folder>\board-holder.<host name>.json.<hex>.tmp` | Its temporary file | The keeper's JSON files' |
+| `<state folder>\board-holder-ssh.<host name>.log` | That holder's output | `board-holder-ssh.log` ([The keeper's logs](#the-keepers-logs)) |
+| `<state folder>\board-holder-ssh.<host name>.log.1` | Its rotation | `board-holder-ssh.log.1` |
 
 - **`<project>` is the host's record's `project`** in [the host registry](#the-host-registry), and
-  **`<host>` is `<project>` for a `linux/arm64` host and `<project>.<os>-<arch>` for a host of
+  **`<host name>` is `<project>` for a `linux/arm64` host and `<project>.<os>-<arch>` for a host of
   another platform** ([A host's platform and names](#a-hosts-platform-and-names)), so a
-  `linux/arm64` host's files keep their v0.11 names, and a `windows/amd64` host of agentspace's has
+  `linux/arm64` host's files keep their v0.11 names, byte for byte (pin P12), and a
+  `windows/amd64` host of agentspace's has
   `board-holder.agentspace.windows-amd64.json` and `board-holder-ssh.agentspace.windows-amd64.log`.
   A project holds no `.`, so in a file's name the part after `board-holder.` and before `.json`
   is a project alone, or a project, `.` and a platform. The box's files keep their names,
@@ -3158,7 +3234,7 @@ architect's to confirm, pin P5):
 |---|---|
 | `application` | The full path of the program the holder runs: the ssh program, or `cmd.exe` for a batch stand-in |
 | `command_line` | The holder's whole command line |
-| `log` | The full path of the holder's log, which its output is appended to: `board-holder-ssh.log` for the box, `board-holder-ssh.<project>.log` for another host, and from v0.12 `board-holder-ssh.<host>.log` ([Another host's holder](#another-hosts-holder)) |
+| `log` | The full path of the holder's log, which its output is appended to: `board-holder-ssh.log` for the box, `board-holder-ssh.<project>.log` for another host, and from v0.12 `board-holder-ssh.<host name>.log` ([Another host's holder](#another-hosts-holder)) |
 | `directory` | The holder's working folder, as a full path: the home folder |
 | `not_after` | The launcher's deadline, UTC, as `YYYY-MM-DDTHH:MM:SS.fffffffZ` (seven fraction digits) |
 | `result` | The full path of the result file |
@@ -3297,17 +3373,17 @@ D63). Which events write a line, and the exact text of each line, are operator.m
 - **A line's form is provision.log's and the keeper's** (the dev lead's pin P2; architect, 2026-11-21,
   for v0.08-T01; [The provisioning run's log](#the-provisioning-runs-log),
   [keeper.md](keeper.md#log-lines)): a UTC time in the form `YYYY-MM-DDTHH:MM:SSZ` ([lease-api.md,
-  Times](lease-api.md#times)), one space, `host=<project>`, one space, then the event's text:
+  Times](lease-api.md#times)), one space, `host=<host name>`, one space, then the event's text:
 
   ```
-  <time> host=<project> <text>
+  <time> host=<host name> <text>
   ```
 
-  - **`<project>` is the host's record's `project`** in [the host registry](#the-host-registry),
-    the box's included, as `swimcoach`. **From v0.12 the field is `host=<host>`** (D91): the
-    project alone for a `linux/arm64` host, so every such line is as before, and
-    `<project>.<os>-<arch>` for a host of another platform, such as
-    `host=agentspace.windows-amd64` ([A host's platform and names](#a-hosts-platform-and-names)).
+  - **`<host name>` is the host's name** ([A host's platform and names](#a-hosts-platform-and-names);
+    D91; architect, 2026-11-26, for v0.12-T01, pin P12): the host's record's `project` in
+    [the host registry](#the-host-registry) for a `linux/arm64` host, the box's included, as
+    `swimcoach`, so every such line is as it was before v0.12, and `<project>.<os>-<arch>` for a
+    host of another platform, such as `host=agentspace.windows-amd64`.
   - **A line that is not about one host carries no `host=` field and no space for it**: it is
     `<time> <text>`. A failed AWS call, an expired AWS sign-in and the guard's own failure are such
     lines.
@@ -3387,7 +3463,7 @@ and owns none of their formats but the project list's.
 |---|---|---|---|
 | `%USERPROFILE%\.ssh\config`, outside the `Include` line | The user | `ssh` | The user's `agentspace` entry ([operator.md](operator.md#the-agentspace-ssh-entry)) |
 | `%USERPROFILE%\.ssh\known_hosts` | `ssh` | `ssh` | The box's host key under `agentspace` ([The host key](#the-host-key)) |
-| `%USERPROFILE%\.agentspace\known_hosts` | `ssh` | `ssh` | Every other host's key under `agentspace-host.<project>`, from v0.12 `agentspace-host.<host>` ([Agentspace's host keys](#agentspaces-host-keys)) |
+| `%USERPROFILE%\.agentspace\known_hosts` | `ssh` | `ssh` | Every other host's key under `agentspace-host.<project>`, from v0.12 `agentspace-host.<host name>` ([Agentspace's host keys](#agentspaces-host-keys)) |
 | `%USERPROFILE%\.agentspace\projects.json` | A person, or the architect with Terry's yes | The driver and `provision` | The projects that may have a host made, and from v0.12 on which platforms ([The project list](#the-project-list)) |
 | `%USERPROFILE%\.ssh\id_ed25519` | The user | `ssh`, through the `agentspace` entry | Logging in to the box as the user, not as a lease |
 | `%USERPROFILE%\.ssh\id_ed25519.pub` | The user | The operator's `deploy` | One line, the user's public key, trimmed ([operator.md](operator.md#deploy)) |
@@ -3429,7 +3505,7 @@ format. None is committed.
 | `%USERPROFILE%\.agentspace\stack-parameters.json` | `<checkout>\infra\local.parameters`, `KEY=VALUE` lines | JSON; see below | A person | Plain `deploy` of the box, for every parameter but `InstanceType`, which no program reads from v0.09 (D67, D71); `deploy -Host` and `provision` when they create a host's stack, for `SubnetId` and `VpcId` alone | Never |
 | `%USERPROFILE%\.agentspace\operator\<hex>\agentspace.yaml` | None: `deploy` names `<checkout>\infra\agentspace.yaml` | The stack's template, the bytes the operator carries, built from the repository's `infra\agentspace.yaml` | `deploy`, or `provision`'s deploy step, just before the call that reads it | The AWS CLI's `cloudformation deploy` | With its command's folder |
 | `%USERPROFILE%\.agentspace\operator\<hex>\system\` | None: `sync` copies `<checkout>\box\system\` | The box's system files, as the operator carries them, built from the repository's `box\system` | `sync`, or `provision`'s sync step, just before the copy | `scp`, which copies the folder to the host | With its command's folder |
-| `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64`, and from v0.12 `localswim-<os>-<arch>` for a host of another platform | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box, and so for every host until v0.12, since each is from the one template; from v0.12 built for each host's own platform, its `GOOS` and `GOARCH` (D94), and named with that platform written `<os>-<arch>` ([A host's platform and names](#a-hosts-platform-and-names)) | `sync`'s build, or `provision`'s | `scp` | With its command's folder |
+| `%USERPROFILE%\.agentspace\operator\<hex>\localswim-linux-arm64`, and from v0.12 `localswim-<os>-<arch>` for a host of another platform, with `.exe` for `windows/amd64` | `<checkout>\.build\localswim-linux-arm64` | The localswim CLI built for today's box, and so for every host until v0.12, since each is from the one template; from v0.12 built for each host's own platform, its `GOOS` and `GOARCH` (D94), and named with that platform written `<os>-<arch>` ([A host's platform and names](#a-hosts-platform-and-names)), built once per platform among the hosts a command acts on (architect, 2026-11-26, for v0.12-T01, pin P40) | `sync`'s build, or `provision`'s | `scp` | With its command's folder |
 | `%USERPROFILE%\.agentspace\operator\<hex>\bootstrap.sh` | None: a person ran `<checkout>\box\bootstrap.sh` on the box by hand | The bootstrap, the bytes the operator carries, built from the repository's `box\bootstrap.sh` (D46) | `bootstrap` and `provision`, just before the copy, when the operator sends the script as a file (operator.md's choice; architect, 2026-11-20, for v0.07-T01) | `scp` | With its command's folder |
 
 - **What a command sends a `windows/amd64` host from its folder**, the Windows host agent of
@@ -3497,7 +3573,9 @@ format. None is committed.
       among them, is not used for that stack; the others are the template's defaults, or the
       values operator.md gives (`SshPublicKey`, `HostName`, `CaPublicKey`). From v0.12 this holds
       for a host of every platform, and the image a host of another platform is deployed with is
-      its platform's (D94), operator.md's to pass, never a value from this file.
+      its platform's (D94), operator.md's to pass on a new stack only, never a value from this
+      file; a stack's image is set when the stack is created and never changed by a later
+      `deploy` (architect, 2026-11-26, for v0.12-T01, pin P43).
     - **For a host's stack that exists**, `deploy -Host <project>` and `provision`'s deploy step
       pass every parameter's previous value, and read nothing from the file.
     - **A host's size changes only through its stack** (D39, D40, D67): through
@@ -3777,7 +3855,7 @@ none blocks building a drop-in of contract v0.
 | **Q1** | **Closed by D21 (architect, 2026-11-18).** The instance-ID cache is laptop state, so it lives under `%USERPROFILE%\.agentspace`, and the prototype's copy in the checkout is a requirement it does not meet ([Files in the checkout](#files-in-the-checkout)). A rewrite needs no migration, since the cache is rebuilt from the stack's output. The localswim CLI's build output is not state, and MAY stay in the checkout ([operator.md Q7](operator.md#open-questions)). From v0.07 the cache is retired into the host registry's `instance_id` (D45), which lives there too ([The host registry](#the-host-registry)). | Closed |
 | **Q2** | **Later, not blocking:** **Does every part of agentspace find the home folder through `USERPROFILE`?** The lease CLI and the operator's state paths do. The operator's `deploy` and `sync` use the shell's home variable, and the task launcher uses the profile folder the operating system reports; whether those follow a changed `USERPROFILE` is unverified, so a check that moves `USERPROFILE` can still reach the real `id_ed25519.pub`, `CLAUDE.md` or launcher error log. | [The home folder](#the-home-folder) states the rule to build, that agentspace MUST read the home folder from `USERPROFILE`, so only what the prototype's operator and launcher do is open. Later: a run on the laptop |
 | **Q3** | **Later, not blocking:** **SHOULD `create` check that `known_hosts` holds the box's key under `agentspace`?** Without it every login through the alias is refused, and the lease is still `ready`. Today a person's first `ssh agentspace` makes the entry. | [Creation, in order](#creation-in-order) has no such check and [The host key](#the-host-key) says agentspace never writes the key, so a drop-in builds today's behavior, and a check would be an addition. Later: the architect; [driver.md](driver.md#open-questions) (its Q7) |
-| **Q4** | **Later, not blocking:** **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. From v0.07 they include `hosts.json.<hex>.tmp`, `agentspace-host.<project>.agentspace-tmp-<hex>` (from v0.12 `agentspace-host.<host>.agentspace-tmp-<hex>`), and a host's push stamp's and signing's temporary files (`sign-<hex>`) ([A host's folder](#a-hosts-folder)). A provisioning run's start leaves no file, and an operator command's own folder, `operator\<hex>\`, is removed by a later command once it is 24 hours old ([Files in the checkout](#files-in-the-checkout)). Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | Nothing reads the leftovers again, so a cleanup of them is an addition that no other behavior waits on. Later: the architect; [keeper.md](keeper.md#open-questions) for the launch files |
+| **Q4** | **Later, not blocking:** **SHOULD agentspace remove the files a killed process left behind?** Those are the temporary files of [Replacing a file](#replacing-a-file) (`leases.json.<hex>.tmp`, `<alias>.agentspace-tmp-<hex>`, `config.agentspace-tmp-<hex>`, the keeper's `<name>.<hex>.tmp`), renewal's `renew-<hex>` files, a keeper pass's launch files, and a late launcher's result file. From v0.07 they include `hosts.json.<hex>.tmp`, `agentspace-host.<project>.agentspace-tmp-<hex>` (from v0.12 `agentspace-host.<host name>.agentspace-tmp-<hex>`), and a host's push stamp's and signing's temporary files (`sign-<hex>`) ([A host's folder](#a-hosts-folder)). A provisioning run's start leaves no file, and an operator command's own folder, `operator\<hex>\`, is removed by a later command once it is 24 hours old ([Files in the checkout](#files-in-the-checkout)). Nothing reads them again, but they accumulate, and a lease folder's leftovers go only when the lease is released. A cleanup MUST NOT remove a file a running process still uses. | Nothing reads the leftovers again, so a cleanup of them is an addition that no other behavior waits on. Later: the architect; [keeper.md](keeper.md#open-questions) for the launch files |
 | **Q5** | **Later, not blocking:** **SHOULD inserting the `Include` line re-check the config just before it replaces it?** A person's save between the backup and the replace is lost today. The window is short and the insertion happens once per config. | [The `Include` line](#the-include-line) states today's steps, and the window they leave is short and comes once per config. Later: the architect |
 | **Q6** | **Later, not blocking:** **Which access rules does `ssh-keygen` give the files it writes, on every Windows build?** On 2026-11-18 (OpenSSH_for_Windows 9.5p2, Windows 11 build 26300), a run on throwaway files saw a protected list on each: a private key with `SYSTEM` and `Administrators` full control and the user modify, and a public key or certificate with the same and `Everyone` read, whatever the folder passed down. That covers a lease's `id_ed25519`, `id_ed25519.pub` and `id_ed25519-cert.pub`, and the CA's `agentspace_ca.pub`, which agentspace never re-locks. Whether another build or OpenSSH version differs is open. **What a rewrite that sets the lease key's rules itself MUST set is settled** (E0.04-T04-S01, 2026-11-18) in [The lease folder](#the-lease-folder), which closes [lease-api.md Q12](lease-api.md#open-questions). | What a build that sets the lease key's rules itself MUST set is stated in [The lease folder](#the-lease-folder), so what each build's `ssh-keygen` does is an observation, not a rule to build. Later: a run on each supported build |
 | **Q7** | **Later, not blocking:** **What does the prototype's alias test leave if it is killed?** It works in `%USERPROFILE%\.agentspace\tmp-test-lease-alias-<time>` and removes it at its end; a killed run leaves the folder. It is tooling, but it is the only test that writes into the real `.agentspace` outside `leases`. | The test is project tooling, not the product ([Project tooling](#project-tooling)), so a drop-in has nothing to build for it. Later: the conformance suite (E0.04-T02-S04) |

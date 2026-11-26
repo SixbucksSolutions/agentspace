@@ -122,9 +122,8 @@
           "pattern": "^agentspace-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?-[0-9a-f]{8}$(?!\\n)"
         },
         "user": {
-          "description": "From v0.12 (D95; architect's to confirm, pin P6): ubuntu, on both Linux platforms, or agent, on windows/amd64, and nothing else, narrower than lease.output.schema.json's ssh.user, which is unchanged. This schema cannot check that the user goes with the record's platform.",
           "type": "string",
-          "pattern": "^(ubuntu|agent)$(?!\\n)"
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$(?!\\n)"
         }
       }
     },

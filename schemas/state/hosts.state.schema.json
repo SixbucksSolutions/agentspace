@@ -27,7 +27,7 @@
           "$ref": "#/$defs/project"
         },
         "platform": {
-          "description": "From v0.12 (D91, D101): the platform the host serves, the normalized platform (architect's to confirm, pin P1). Absent means linux/arm64, which is what every record before v0.12 is. Written after project. With it absent or linux/arm64 the stack is agentbox or agentspace-host-<project>; with any other platform it is agentspace-<os>-<arch>-host-<project> (D91's table), which this schema checks by its form, never that its <os>-<arch> is this platform with its / written as -.",
+          "description": "From v0.12 (D91, D101): the platform the host serves, the normalized platform (architect, 2026-11-26, for v0.12-T01, pin P1). Absent means linux/arm64, which is what every record before v0.12 is; a writer omits it for linux/arm64 and writes it for every other platform, and a reader takes an explicit linux/arm64 as equal to absent, so two records of one project, one with linux/arm64 and one without, make the file not valid (pin P16). Written after project. With it absent or linux/arm64 the stack is agentbox or agentspace-host-<project>; with any other platform it is agentspace-<os>-<arch>-host-<project> (D91's table), which this schema checks by its form, never that its <os>-<arch> is this platform with its / written as -.",
           "$ref": "#/$defs/platform"
         },
         "stack": {
@@ -84,7 +84,7 @@
       "pattern": "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$(?!\\n)"
     },
     "platform": {
-      "description": "A normalized platform, os/arch, as lease-api.md's Platform section normalizes one: lowercase letters and digits on each side of one /, with aarch64 written arm64 and x86_64 or x86-64 written amd64 (pin P1). No variant: no platform agentspace supports has one, and D91's names write the platform's one / as -. A form, not a list: v0.12 supports linux/arm64, linux/amd64 and windows/amd64 (D98).",
+      "description": "A normalized platform, os/arch, as lease-api.md's Platform section normalizes one: lowercase letters and digits on each side of one /, with aarch64 written arm64 and x86_64 or x86-64 written amd64 (pin P1). No variant: a platform with a variant is unsupported and makes no host (pin P21), and D91's names write the platform's one / as -. A form, not a list: v0.12 supports linux/arm64, linux/amd64 and windows/amd64 (D98).",
       "type": "string",
       "pattern": "^[a-z0-9]+/[a-z0-9]+$(?!\\n)",
       "not": { "pattern": "^[a-z0-9]+/aarch64$(?!\\n)" }
