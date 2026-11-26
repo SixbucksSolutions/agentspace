@@ -5586,7 +5586,16 @@ fn the_built_program_decrypts_the_credential_in_a_moved_home_and_makes_a_board_l
         "--turn",
         "T01",
     ]));
-    assert_eq!(same_lease(from_file), same_lease(doc));
+    // The two creates ran the built program at two moments of the real clock, which may fall on
+    // either side of a second, so their times are left out; `ttl_seconds` is still compared.
+    let untimed = |doc: Value| {
+        let mut doc = same_lease(doc);
+        let o = doc.as_object_mut().expect("A lease is an object");
+        o.remove("created_at");
+        o.remove("expires_at");
+        doc
+    };
+    assert_eq!(untimed(from_file), untimed(doc));
     assert_eq!(standin.count(), 1, "Only the one create read the board");
 }
 
