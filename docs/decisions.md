@@ -127,6 +127,7 @@ line's text after `Status:`, without its full stop.
 - [D87. Contract v2: the new flags and their error fields; every command line without them prints what v1 printed](#d87-contract-v2-the-new-flags-and-their-error-fields-every-command-line-without-them-prints-what-v1-printed): Decided
 - [D88. v0.11's done-when is shown by conformance against a stand-in board and a live check that starts no instance](#d88-v011s-done-when-is-shown-by-conformance-against-a-stand-in-board-and-a-live-check-that-starts-no-instance): Decided
 - [D89. v0.11 is twelve stories in five turns: specs, foundations and #0229, the CLI, conformance, install](#d89-v011-is-twelve-stories-in-five-turns-specs-foundations-and-0229-the-cli-conformance-install): Decided
+- [D90. #0244 is folded into v0.12](#d90-0244-is-folded-into-v012): Decided
 
 ## The interface
 
@@ -4704,6 +4705,21 @@ EC2 instance.**
   S03's).
 - **Budgets are not raised to cover v0.10-T02's overrun**: D85's TTL already allows half again, and
   a cap is extended only on Terry's word (architect.md).
+
+## After v0.11
+
+### D90. #0244 is folded into v0.12
+
+**Decided, Terry, 2026-11-26**: "fold 0244 into v0.12", on the architect's placement in
+[handoff-v0.11.md](handoff-v0.11.md#cards-only-terry-can-move). #0243's review carded two places
+where conformance prints captured output unmasked outside a failing case's reason (N2, O1), which
+no release held, against AGENTS.md's rule that the Backlog matches the roadmap. As D72 and D82 did,
+the card is folded whole into its epic's description and archived; the epic `references` the card,
+and the story that meets it cites its number.
+
+| Card | Epic | Where in it |
+|---|---|---|
+| #0244: `conformance/lease-cli/harness.ps1`'s start failure puts an exception's message into a run's stderr unmasked, and `conformance/keeper/keeper-common.ps1` re-prints a child run's non-result lines unmasked | v0.12 (#0051) | Its conformance turn, which runs the whole suite and so the 63 files that assert on a run's stderr |
 
 ## Keys
 

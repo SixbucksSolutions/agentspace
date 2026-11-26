@@ -106,8 +106,9 @@ when Terry says so (D14).
   of v0.11-T05**, E0.11-T05-S02 (Terry, 2026-11-26: "Let's pull risk early"; D89's change during
   v0.11-T05), met by #176 and Completed.
 - **#0244 (two places conformance prints captured output unmasked outside a reason: the harness's
-  start failure and the keeper's re-print of a child run; found in #0243's review, v0.11-T05) is in
-  Backlog, in no release yet.** Terry's word places it.
+  start failure and the keeper's re-print of a child run; found in #0243's review, v0.11-T05) is
+  folded into v0.12 (#0051)**, for its conformance turn, and archived (Terry, 2026-11-26: "fold
+  0244 into v0.12"; D90).
 - #0209 (the lease CLI's isolation guard saw its moved home created once under load, found at
   v0.09-T02's close) is carried into v0.09-T03 as #0210 (D71's change).
 - #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite

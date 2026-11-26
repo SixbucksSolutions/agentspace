@@ -33,7 +33,7 @@ that is still in use is carried here, and each rule is cited at its home rather 
   reporter is stopped, and every dev lead is archived. **Restart the board watcher first**
   ([Start here](#start-here), step 4).
 - **v0.11 is installed on Terry's laptop**, and its keeper runs the new build.
-- **One card waits on Terry: #0244** in Backlog ([Cards only Terry can move](#cards-only-terry-can-move)).
+- **No card waits on Terry.** #0244, carded at T05, is folded into v0.12 (D90).
 - **Next is v0.12 (#0051), `linux/amd64` and `windows/amd64`, and it MUST NOT be laid out until
   Terry says so.** It is the first release since v0.09 that starts instances. Its prep is
   [The scope ahead](#the-scope-ahead-v012).
@@ -103,7 +103,7 @@ Mountain, when it was written.
 | The hosts | Both `stopped`, 0 live leases (`status -All` at 10:34am on 2026-11-26). The box (`agentbox`, swimcoach's): 20 GiB. `agentspace-host-agentspace`: 8 GiB. Both at `m9g.xlarge` |
 | Instance hours | None asked for and none used in v0.11. No instance has run since v0.09-T05 |
 | Leases | 44 recorded before T05 (36 `released`, 2 `expired`, 6 `unsatisfiable`), plus T05's check leases, released; none `ready` or `pending` |
-| The board | Every v0.11 card in Completed. #0244 in Backlog, waiting on Terry. #0228, #0192, #0193 and #0195's fix are folded into v0.12 (#0051); #0190, #0082 and #0109 into v1.0 (#0053) |
+| The board | Every v0.11 card in Completed. #0244, #0228, #0192, #0193 and #0195's fix are folded into v0.12 (#0051) and archived (D72, D82, D90); #0190, #0082 and #0109 into v1.0 (#0053) |
 | Swimcoach | No milestone; `scripts/milestones.json` is empty (4838418), `v0.11` was stopped at its approval, and the reporter is stopped |
 | Sessions | Every dev lead archived; `git worktree list` shows `main` alone. `.claude\worktrees\rvmain` is an unregistered folder from 2026-11-23, one entry, not a checkout, left for a person |
 | Terry's laptop, otherwise | Unchanged by v0.11 beyond the install. In T05, three queued suite runs started with `Start-Process` opened three blank Windows Terminal windows on his desktop at 8:38am; they closed with their runs |
@@ -460,7 +460,7 @@ decisions.md; this table only finds them.
 | T05 N1: the shared mask is dot-sourced once, by the harness, reached by the operator and keeper through their common files | conformance.md, "The shared mask" |
 | T05 F1: the mask builds its rules at load; the harness MUST be loaded before a check moves its own process's `USERPROFILE`, `HOME` or `TEMP` | `conformance/mask-common.ps1`; conformance.md |
 | T05 N3: the schema checks load the harness for the mask, since `Test-Json`'s message can name a path | conformance.md |
-| T05 N2, O1: the harness's start-failure stderr and the keeper's re-print stay unmasked at their source | #0244 |
+| T05 N2, O1: the harness's start-failure stderr and the keeper's re-print stay unmasked at their source | #0244, folded into v0.12 (D90) |
 | T05: no `Start-Process` for a gate call; a driver ends with `exit 0` | architect.md, "A turn that builds", v0.11-T05 |
 | The rest | The specs and cards, each where it is cited |
 
@@ -470,7 +470,9 @@ decisions.md; this table only finds them.
 
 | Card | What | Its evidence | His call |
 |---|---|---|---|
-| #0244 | Hardening: `conformance/lease-cli/harness.ps1` line 171 puts a start failure's exception message, which can name a path under the profile, into a run's stderr unmasked; `conformance/keeper/keeper-common.ps1` line 644 re-prints a child run's non-result lines unmasked. Neither has fired | #0243's review, N2 and O1; `relates_to` #0243 | Place it. The architect recommends v0.12's conformance turn, which runs the whole suite anyway |
+| #0244 | Hardening: `conformance/lease-cli/harness.ps1` line 171 puts a start failure's exception message, which can name a path under the profile, into a run's stderr unmasked; `conformance/keeper/keeper-common.ps1` line 644 re-prints a child run's non-result lines unmasked. Neither has fired | #0243's review, N2 and O1; `relates_to` #0243 | **Settled, 2026-11-26** ("fold 0244 into v0.12"): folded whole into #0051 for its conformance turn, `references` from #0051, and archived (D90) |
+
+**No card waits on Terry at v0.11's close.**
 
 ## What is open
 
@@ -479,8 +481,7 @@ decisions.md; this table only finds them.
 | What | Who acts | Where it goes |
 |---|---|---|
 | v0.12 (#0051) is laid out only on Terry's word | Terry, then the architect | [The scope ahead](#the-scope-ahead-v012) |
-| #0244, the two unmasked output sites | Terry places it | [Cards only Terry can move](#cards-only-terry-can-move) |
-| #0228; #0192, #0193 and #0195's fix (D78) | v0.12 | #0051 (D72, D78, D82) |
+| #0228; #0192, #0193 and #0195's fix (D78); #0244 | v0.12 | #0051 (D72, D78, D82, D90) |
 | #0190, #0082 and #0109; a footprint per project (D73) | v1.0's first turn, before the real project measures its own turn | #0053 (D72, D73) |
 | v0.09-T05's observer script (`observe-once.ps1`), lost with its worktree; not needed while no turn starts an instance | The architect, before v0.12's first live turn, rebuilt from runs/e0.09-t05-s01.md | `scripts\live\` |
 | A spec for what "time to a prompt" measures when the keeper starts a lease's holder first | The next release that specifies the lifecycle; not yet placed | v0.08's live records |
@@ -513,7 +514,7 @@ serve more than one platform, with a seam per platform (its image, its instance 
 bootstrap), so the two tracks touch different files; then a `linux/amd64` track and a Windows track
 run as parallel stories in the same turns, and the release ends when the Windows track does.
 #0192, #0193 and #0195's fix (D78) ride with the shared turn, which extends `box/system`; #0228
-rides with the driver work.
+rides with the driver work; #0244 rides with its conformance turn (D90).
 
 **Before its stories are laid out, the architect SHOULD settle, each as a numbered decision:**
 - **One host per project, or one per project and platform.** D25 gives a project one host; #0051
@@ -560,4 +561,5 @@ reviewed and approved. Kept as the record of this close; the procedure is
    stopped with no milestone left.
 3. v0.11 marked done in roadmap.md's table, with #0243's row met and #0244's added.
 4. This file made final, and AGENTS.md's pointers updated to it.
-5. Waiting for Terry's word before laying out v0.12.
+5. #0244 folded into v0.12 on Terry's word, after he moved it out of Backlog at 11:19am (D90).
+6. Waiting for Terry's word before laying out v0.12.
