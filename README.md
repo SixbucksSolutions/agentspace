@@ -705,8 +705,8 @@ Linux procedure:
   It MUST stay in Administrators: Windows Server 2025's `sshd_config` lets in only
   `administrators` and `openssh users`, so a host whose `agent` has left the group refuses every
   login.
-- **The login shell is Git Bash**, Git for Windows's, set as sshd's `DefaultShell`, with PowerShell
-  7 on `agent`'s `PATH`
+- **The login shell is Git Bash**, Git for Windows's, set as sshd's `DefaultShell` by the
+  bootstrap once it has installed Git, with PowerShell 7 on `agent`'s `PATH`
   ([D97](docs/decisions.md#d97-agent-windows-windows-server-2025-with-the-universal-c-runtime-in-place-of-a-libc)).
   Windows PowerShell 5.1 is the fallback if the desktop app's session fails under Git Bash, and the
   change then goes back to D97. Every command below that runs at the host's prompt is typed in Git
@@ -722,8 +722,10 @@ Linux procedure:
   with "Access is denied.", and files written under `.claude`, `%APPDATA%\GitHub CLI` and
   `%USERPROFILE%\.config` were all still there at the next login
   ([docs/runs/e0.12-t01-s05.md, Question 4](docs/runs/e0.12-t01-s05.md#question-4-the-credential-manager-dpapi-and-files-q23)).
-- **No patch run restarts the host while a session is open**, the sign-in's included (D96), and the
-  bootstrap turns off the restarts Windows Update schedules by itself.
+- **No patch run restarts the host while a session is open**, the sign-in's included (D96), and
+  Windows Update installs nothing and restarts nothing by itself: the first boot, the bootstrap and
+  every `sync` turn its own updates off, and the patch run at each start of the host is its one
+  updater ([operator.md, Windows hosts](docs/operator.md#windows-hosts)).
 
 1. **Create a lease for the Windows platform first**, and keep it live until step 8 releases it
    (D56). Without one, the guard stops the host within 25 minutes of the later of its launch and the
@@ -764,7 +766,8 @@ Linux procedure:
 5. **Sign in to each tool at the host's prompt:** Claude Code (`claude`, then its URL-and-code
    option) and gh (`gh auth login`, HTTPS and the web browser). Codex is not signed in on a Windows
    host. **Then check who can read each file**, which MUST name no account but `agent`,
-   Administrators and SYSTEM (the three a profile's own access list holds):
+   Administrators and SYSTEM: the `icacls` check accepts those three, the three a profile's own
+   access list holds, and nothing else (architect, 2026-11-26, for v0.12-T02, pin P13):
 
    ```sh
    pwsh -NoProfile -Command 'icacls "$env:USERPROFILE\.claude\.credentials.json"'

@@ -19,11 +19,15 @@ horizon](#the-idle-check-and-the-lease-horizon)); and each host's alarm is the 2
 dev lead's pins for v0.08's specs, P1 to P26, as the architect ruled it; one cited "architect,
 2026-11-21, for v0.08-T01, S01 batch" is a choice this page's writers made that the architect
 confirmed as written, or as P21 changed it for `sync`'s patch wait (P22)**. This page's writers
-marked a choice that no decision or pin settled "architect's to confirm", binding as written
+marked a choice that no decision or pin settled as open for the architect, binding as written
 until the architect ruled on it. v0.08's were all ruled, the last of them as P24, P25 and P27, and
-v0.09's and v0.12-T01's too (below). **The one exception is the Windows spec's, E0.12-T02-S04**:
-its choices carry the mark, each with its own label (N1 to N23, or a pin of v0.12-T02's dev lead),
-until the architect rules on them ([Windows hosts](#windows-hosts)).
+v0.09's, v0.12-T01's and v0.12-T02's too (below), so **no fact on this page carries that mark**.
+**A rule cited "architect, 2026-11-26, for v0.12-T02, pin Pn" is one of v0.12-T02's dev lead's
+pins, as the architect ruled it**, among them every choice the Windows spec's writer made in
+E0.12-T02-S04 (#0253), each labelled N1 to N23 where it stands: N1 and N2 are pin P15, N7 is pin
+P16 with pin P12's line ending, and every other is pin P16 ([Windows hosts](#windows-hosts)). **A
+rule cited "architect, 2026-11-26, for v0.12-T02, spike ruling n" is the architect's ruling n on
+the spike reader's findings**, made the same day.
 
 **From v0.09 a host's size is asked for through a lease** (D65 to D68, D71): the operator takes an
 instance type and knows no size (D67). `deploy -InstanceType <type>` sizes every host, the box
@@ -34,7 +38,7 @@ provisioning run finds the type its project's `pending` leases need at its deplo
 ([provision](#provision)). **A rule cited "architect, 2026-11-23, for v0.09-T01, pin Pn" is one of
 the dev lead's pins for v0.09's specs, as the architect ruled it**, among them every choice this
 page's writer made in E0.09-T01-S02 (#0198) where D64 to D71 and the card left one open: each was
-first marked "architect's to confirm", and each now cites the pin that ruled it.
+first marked as open for the architect, and each now cites the pin that ruled it.
 
 **From v0.12 a host is keyed by its project and its platform** (D91): a project MAY hold one host
 on each of `linux/arm64`, `linux/amd64` and `windows/amd64`, each with names of its own, and every
@@ -1922,12 +1926,12 @@ table as T01 and T02 leave it (D101).
 the host is [Windows hosts](#windows-hosts)'. **The two Linux columns share every row but the
 image, a new stack's instance type and `GOARCH`** (D94; architect, 2026-11-26, for v0.12-T01, pin
 P41). **Each row is stated as its input, its output and its failure**, so the architect can pin it
-as a method of the trait (pin P8, architect's to confirm): its input is the host's record and the
+as a method of the trait (architect, 2026-11-26, for v0.12-T02, pin P8): its input is the host's record and the
 command's own inputs that the row names; its output is the value or the programs the row names;
 and a row whose failure the cell does not name fails as the same step fails on Linux, with the same
 message. The rows below the seventh are rows the Windows column needed and T01's table did not
 have: each was a step this page stated once for "today's box", and each carries the label of the
-Windows spec's choice it rests on (N3 to N23, architect's to confirm).
+Windows spec's choice it rests on (N3 to N23; architect, 2026-11-26, for v0.12-T02, pin P16).
 
 | What the platform supplies | `linux/arm64` | `linux/amd64` | `windows/amd64` |
 |---|---|---|---|
@@ -1942,7 +1946,7 @@ Windows spec's choice it rests on (N3 to N23, architect's to confirm).
 | **Its remote command form**: how every remote command of `sync`, `bootstrap`, `grow` and the push reaches the host's login shell (N4) | The operator's own POSIX shell text, run by `bash` ([What the laptop sends](#what-the-laptop-sends)) | The same | `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b64>`, the one form, whatever shell `DefaultShell` names at that moment ([The remote command on Windows](#the-remote-command-on-windows)). A command that would pass 8,191 characters is never sent: its script goes by `scp` and runs with `-File` |
 | **Its patch check's question**, the command `up`'s wait and `sync`'s patch wait send (N6) | The question of [What up waits for](#what-up-waits-for), answered from `/run/agentspace/patched` and `agentspace-patch.service` | The same | A command that runs `C:\ProgramData\agentspace\agentspace-patch-check.ps1` under PowerShell 7 and prints its one word, answered from the patch task and its markers ([The patch run and its restart rule](#the-patch-run-and-its-restart-rule)). The answers and how they are read are unchanged |
 | **Its patch messages**: the phase message of a `pending` answer, and the command named in the deadline's and a failed run's messages (N19) | `Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...`; `journalctl -u agentspace-patch` | The same | `Patching Windows (Windows Update, restart if an update needs one)...`; `cat C:/ProgramData/agentspace/patch.log`, which both Git Bash and Windows PowerShell read |
-| **Its horizon command**, the guard's send (N7) | Writes `/run/agentspace/lease-horizon` ([guard](#guard), step 7) | The same | Writes `C:\ProgramData\agentspace\lease-horizon` ([The horizon on a Windows host](#the-horizon-on-a-windows-host)) |
+| **Its horizon command**, the guard's send (N7) | Writes `/run/agentspace/lease-horizon` ([guard](#guard), step 7) | The same | Writes `C:\ProgramData\agentspace\lease-horizon` as the digits and an LF, or the digits alone, never with a CR, with `[IO.File]::WriteAllText` and the exact bytes (architect, 2026-11-26, for v0.12-T02, pin P12; [The horizon on a Windows host](#the-horizon-on-a-windows-host)). Its failure is the guard's failed send, as on Linux |
 | **Its online grow**, `grow`'s remote step (N4) | Grows the root partition and filesystem ([grow](#grow), step 3) | The same | Extends the `C:` partition, and its NTFS filesystem with it, to the largest size it supports ([grow on a Windows host](#grow-on-a-windows-host)) |
 | **Its push's zone and remote half** (N17, N23) | An IANA name, converted from the laptop's zone ([The time zone](#the-time-zone)); the half of [What the box does](#what-the-box-does) in a POSIX shell | The same | The laptop's Windows zone ID itself, checked by its own pattern and never converted (D96); the same half under Windows PowerShell 5.1, the zone set with `Set-TimeZone` ([The token push to a Windows host](#the-token-push-to-a-windows-host)) |
 
@@ -2414,7 +2418,7 @@ swimcoach` is the box's.
    it would put another key on the box with no word said. The `<reason>` names the member. **So is
    a file that names `HostName` or `CaPublicKey`** (architect, 2026-11-20, for v0.07-T01), **or,
    from v0.12, `HostOs`** ([The template's Windows first boot](#the-templates-windows-first-boot);
-   N2, architect's to confirm). That is this page's
+   N2; architect, 2026-11-26, for v0.12-T02, pin P15). That is this page's
    own check, made by `deploy` after the file matches its schema, which does not forbid them
    ([state.md, Files in the checkout](state.md#files-in-the-checkout)): `deploy` sets both itself
    for a host that is not the box, and on the box either would change the `agentbox` stack's names
@@ -2510,7 +2514,7 @@ swimcoach` is the box's.
      `linux/amd64` (architect, 2026-11-26, for v0.12-T01, pins P41 and P43). Such a stack's `RootVolumeGiB` is the
      template's default as on `linux/arm64`; **on `windows/amd64`, `RootVolumeGiB=30` and
      `HostOs=windows` follow `ImageId=<image>`, in that order, before `InstanceType`** (D97; the
-     seam's Windows column; N3, architect's to confirm).
+     seam's Windows column; N3; architect, 2026-11-26, for v0.12-T02, pin P16).
    - **A host's stack it updates:** every parameter keeps its previous value, as
      `UsePreviousValue=true` gives it, which `cloudformation deploy` applies to every parameter it
      is not passed: so no parameter is passed at all, and `deploy` reads neither the public key,
@@ -5206,7 +5210,7 @@ When the push is due, the laptop:
      `agentspace-host.<project>` for another host, and `agentspace-host.<project>.<os>-<arch>` for
      a host not on `linux/arm64` (D91).
    - `BatchMode=yes` makes an ssh that would need a prompt fail at once rather than wait for an
-     answer: a passphrase, a password, or a host key to confirm. It does not refuse a host key
+     answer: a passphrase, a password, or a host key's confirmation. It does not refuse a host key
      that the alias accepts without a prompt, such as the `agentspace` entry's first key
      ([The `agentspace` SSH entry](#the-agentspace-ssh-entry)).
    - **`<remote command>` MUST reach ssh as one argument, its last**: a command that makes the
@@ -5726,7 +5730,7 @@ S01 batch):
 2. **Looks for a session**: an SSH session open (an established TCP connection on port 22), or a
    Session Manager session open: a running `ssm-session-worker` that holds an established
    connection to the host's sshd, or runs a shell of its own, which is a person's Session Manager
-   shell (D78; pin P6, architect's to confirm). **A worker that does neither is not a session**:
+   shell (D78; architect, 2026-11-26, for v0.12-T02, pin P6). **A worker that does neither is not a session**:
    its sshd end is gone, as sshd drops a dead client within about 90 seconds (D59), so the horizon's
    power-off comes at most one check after the last sshd login ends, whatever ended its client
    (#0195). **With none, looks for a patch
@@ -5785,18 +5789,19 @@ from this page alone: what the first boot does, what `sync`, `bootstrap`, `grow`
 guard send, what each file of `box/windows/` does on the host, and what each test stands in for.
 Every rule here uses RFC 2119 keywords as the rest of the page does. **Its facts are the spike's**
 ([runs/e0.12-t01-s05.md](runs/e0.12-t01-s05.md), "the spike's record" below), and its heading is
-pinned so other pages link to it (pin P11, architect's to confirm).
+pinned so other pages link to it (architect, 2026-11-26, for v0.12-T02, pin P11).
 
 **How it fits the rest of this page.** Every command, message, exit code, lock, record and AWS call
 this page states binds a Windows host as it binds a Linux one, but where a step names today's
 box's paths or tools: there the seam's Windows column ([The platform seam](#the-platform-seam))
 takes the step's place, and this section says what that step does. **The help blocks under
-[Commands](#commands) are unchanged** (pin P7, architect's to confirm), so `bootstrap`'s help still
+[Commands](#commands) are unchanged** (architect, 2026-11-26, for v0.12-T02, pin P7), so `bootstrap`'s help still
 names the Linux toolchain, and this section is where its Windows meaning is written.
 
-**What is not settled yet.** Each choice this section makes that no decision or pin settles is
-labelled N1 to N23 and marked "architect's to confirm", binding as written until the architect
-rules. **Four facts are unmeasured and are T05-S02's to measure** ([What T05-S02
+**How its choices are ruled.** Each choice this section makes that no decision settled is labelled
+N1 to N23 and cites the pin that ruled it (architect, 2026-11-26, for v0.12-T02): N1 and N2 pin
+P15, N7 pin P16 with pin P12's line ending, and every other pin P16. **Four facts are unmeasured
+and are T05-S02's to measure** ([What T05-S02
 measures](#what-t05-s02-measures)): the desktop app's session with Git Bash, a patch run's time on
 an image that is not current, whether an open SSH session survives a restart of sshd, and how
 Windows PowerShell 5.1 as the login shell passes on the push's stdin.
@@ -5835,7 +5840,8 @@ every accepted login's source was `::1`, and the tunnel's worker held an establi
 `::1` as well as `127.0.0.1`:**
 - **D7's E3.01 exemption** names `127.0.0.1` alone, as `51-agentspace-logins.conf` writes it on
   Linux (`PerSourcePenaltyExemptList 127.0.0.1`). **The host's OpenSSH 9.5p2 has no
-  `PerSourcePenalties`**, so a Windows host's lines carry no exemption today. **A Windows host's sshd
+  `PerSourcePenalties`** (the spike's Question 8; architect, 2026-11-26, for v0.12-T02, spike
+  ruling 2), so a Windows host's lines carry no exemption today. **A Windows host's sshd
   that knows `PerSourcePenalties` MUST exempt both `127.0.0.1` and `::1`**, or the first refused
   login through the tunnel would penalize every login, a person's included; the install adds the
   line when its sshd knows the keyword ([sshd's settings on a Windows
@@ -5846,20 +5852,32 @@ every accepted login's source was `::1`, and the tunnel's worker held an establi
 - **A rule keyed on a login's source**, a `Match Address` block or an `AllowUsers agent@<address>`
   form among them, MUST name `::1` with `127.0.0.1`. The agentspace lines hold none.
 - **The idle check's SSH test counts an established connection on the host's port 22 in either
-  family**, and its Session Manager test a worker's connection to port 22 at `::1` or `127.0.0.1`
-  ([The idle check on a Windows host](#the-idle-check-on-a-windows-host)).
+  family**, and its Session Manager test a worker that is the peer of an established connection
+  to sshd at `[::1]:22`, or at `127.0.0.1:22` (architect, 2026-11-26, for v0.12-T02, spike ruling
+  6; [The idle check on a Windows host](#the-idle-check-on-a-windows-host)).
 
 **The login shell is Git Bash** (D97 as changed for v0.12-T01): it is the one shell on the desktop
 app's list for a Windows remote that does not limit a session's fork to its first message, and the
 profile installs it for Claude Code anyway. **It is written as sshd's `DefaultShell`**, the
-registry value `DefaultShell` under `HKLM:\SOFTWARE\OpenSSH`, a string (N12, architect's to
-confirm):
+registry value `DefaultShell` under `HKLM:\SOFTWARE\OpenSSH`, a string (N12; architect,
+2026-11-26, for v0.12-T02, pin P16):
 - **`C:\Program Files\Git\bin\bash.exe` when that file exists**, Git for Windows' own launcher,
   which puts Git's tools on the session's `PATH`; **otherwise Windows PowerShell 5.1,
-  `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`**, which every image has. The first
-  boot writes the second, since Git is not installed yet; the bootstrap, once it has installed Git
-  for Windows, and the install at every `sync` apply the rule, so the value follows Git. **No
-  `DefaultShellCommandOption` is written**: sshd's own default for each of the two shells is used.
+  `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`**, which every image has. **The first
+  boot MUST write Windows PowerShell 5.1**, since Git is not installed yet; **the bootstrap MUST
+  write Git Bash once it has installed Git for Windows**; and **every `sync`'s install MUST keep
+  it** by the same rule, so the value follows Git (architect, 2026-11-26, for v0.12-T02, pin P15).
+  **No `DefaultShellCommandOption` is written**: sshd's own default for each of the two shells is
+  used.
+- **Every operator step before the bootstrap ends MUST work under Windows PowerShell 5.1 as the
+  login shell, through the encoded form** ([The remote command on
+  Windows](#the-remote-command-on-windows)), **and each MUST NOT assume Git Bash or PowerShell 7**
+  (architect, 2026-11-26, for v0.12-T02, pin P15, which replaces spike ruling 3's cmd.exe): the
+  first connection, a provisioning run's `sync`, which comes before its `bootstrap` (D46), its
+  install's first step, the push's remote half, and `bootstrap`'s own copy and run of
+  `bootstrap.ps1`. Each is written below to run under Windows PowerShell 5.1, and the one step
+  that names PowerShell 7 before the first `sync`, the patch check, has its empty answer read as
+  [The patch run and its restart rule](#the-patch-run-and-its-restart-rule) says.
 - **The fallback is Windows PowerShell 5.1 alone**: if E0.12-T05-S02's desktop-app session fails
   with Git Bash, the rule becomes Windows PowerShell 5.1's whatever is installed, and the change
   goes back to D97 first (D97). **PowerShell 7 MUST NOT be the login shell**: the app's list has
@@ -5880,14 +5898,18 @@ with `-File`**, as `bootstrap` and `sync` do.
 ### The template's Windows first boot
 
 **The first-boot user data lives in the template, `infra/agentspace.yaml`, as a third branch of
-the instance's `UserData`** (N2, architect's to confirm). Reasons: D44 keeps one template; a stack
-parameter's value is limited to 4,096 bytes, and the spike's user data was 4,514; and the user
-data MUST exist before the operator can first connect, since it is what makes the host trust the
-CA. The template's story, E0.12-T03-S03, builds it.
+the instance's `UserData`** (N2; architect, 2026-11-26, for v0.12-T02, pin P15). Reasons: D44
+keeps one template; a stack parameter's value is limited to 4,096 bytes, and the spike's user data
+was 4,514; and the user data MUST exist before the operator can first connect, since it is what
+makes the host trust the CA. The template's story, E0.12-T03-S03 (#0256), builds it;
+`agentspace-windows` (#0259) selects it by `HostOs` and embeds nothing; and **`box/windows/` holds
+no first-boot file** (#0260), pin P9's `first-boot.ps1` being withdrawn by pin P15.
 - **A new parameter, `HostOs`**, a string with the allowed values `linux` and `windows` and the
   default `linux`, picks the branch: `windows` picks the Windows branch, and `linux` keeps the two
-  branches the template has, byte for byte, under `HasCaPublicKey` as today. **The box's `deploy`
-  and every Linux `deploy` pass no `HostOs`**, so `agentbox`'s change set stays empty, shown live
+  branches the template has, byte for byte, under `HasCaPublicKey` as today. **`HostOs` and
+  `RootVolumeGiB` MUST default to what `agentbox` has today**, `linux` and `8`, so its change set
+  stays empty (pin P15). **The box's `deploy` and every Linux `deploy` pass no `HostOs`**, so
+  `agentbox`'s change set stays empty, shown live
   as [The platform seam](#the-platform-seam) requires of any template change in v0.12. A
   `deploy` passes `HostOs=windows` only when it creates a `windows/amd64` stack, and never on an
   update, so a stack keeps its value as it keeps every parameter.
@@ -5911,18 +5933,21 @@ CA. The template's story, E0.12-T03-S03, builds it.
    cryptographic random source, held in memory alone and never written or printed, set never to
    expire, and a member of Administrators (D95). A user `agent` that already exists is left as it
    is but made a member.
-3. **Make OpenSSH Server ready**: add the `OpenSSH.Server` capability when it is not installed
-   (the spike's image had it installed); set the `sshd` service to start automatically; start it
-   once, which makes its host keys and its default `C:\ProgramData\ssh\sshd_config`, and stop it.
-   The spike's enable took 9 seconds.
+3. **Make OpenSSH Server ready, by one of two paths** (architect, 2026-11-26, for v0.12-T02,
+   spike ruling 1). **When the `OpenSSH.Server` capability is installed**, as on the spike's image,
+   where `sshd` was present, stopped and set to start by hand: set the `sshd` service to start
+   automatically, start it once, which makes its host keys and its default
+   `C:\ProgramData\ssh\sshd_config`, and stop it. The spike's enable took 9 seconds. **When the
+   capability is absent**: add it first, then enable and start it, and stop it, as the other path
+   does. **The absent path is untested** until an image without the capability appears.
 4. **Write the CA's public key** to `C:\ProgramData\ssh\agentspace_ca.pub`: `CaPublicKey` and one
    LF, with the access rules the folder gives its files. **A Windows stack's `CaPublicKey` is never
    empty**, since `deploy` passes it at every creation; the branch given an empty one logs it and
    stops before step 5, starting no sshd.
 5. **Write `SshPublicKey`** to `C:\ProgramData\ssh\administrators_authorized_keys`: the key and
    one LF, with inheritance off and exactly two rules, full control for SYSTEM and for
-   Administrators, since Microsoft's OpenSSH ignores that file under any other rules (N22,
-   architect's to confirm). Because
+   Administrators, since Microsoft's OpenSSH ignores that file under any other rules (N22;
+   architect, 2026-11-26, for v0.12-T02, pin P16). Because
    `agent` is an administrator, that file, and not `agent`'s profile, is where sshd looks for its
    keys. It is the user's own key, kept as on Linux for D17's recovery of a host after the CA is
    replaced ([ca](#ca)).
@@ -5932,18 +5957,24 @@ CA. The template's story, E0.12-T03-S03, builds it.
    of the lines MUST be byte for byte the file's**, a check compares them, so the first `sync`
    finds them already there and restarts no sshd. A failed test logs it and stops before step 8.
 7. **Write `DefaultShell`**: Windows PowerShell 5.1's path, since Git is not installed yet
-   ([What a Windows host is](#what-a-windows-host-is)).
+   ([What a Windows host is](#what-a-windows-host-is); pin P15).
 8. **Start `sshd`**, and log the step's end.
 
 **It installs nothing else**: PowerShell 7, Git and the tools are the install's and the
-bootstrap's, so the first boot needs no download. **The spike's user data did steps 2 to 8 in
-substance**: from launch to the first certificate login took about 97 seconds, sshd listening 55
-seconds after launch and Session Manager online within 74 (the spike's record, Question 1).
+bootstrap's, so the first boot needs no download. **The branch's content was shown on a real
+host by the spike's user data, and is next shown live in E0.12-T05-S02** (pin P15): that user
+data made `agent`, made OpenSSH Server ready by the installed path, wrote the CA's trust and
+started sshd, and from launch to the first certificate login took about 97 seconds, sshd
+listening 55 seconds after launch and Session Manager online within 74 (the spike's record,
+Question 1). The record shows no step 1, 5 or 7 of the list above in it.
 
 ### The remote command on Windows
 
 **Every remote command the operator sends to a Windows host, over ssh or through Run Command's
-`commands` parameter, is one line of this form** (N4, architect's to confirm):
+`commands` parameter, is one line of this form** (N4; architect, 2026-11-26, for v0.12-T02, pin
+P16), but the patch check's command and the guard's horizon command, which [The patch run and its
+restart rule](#the-patch-run-and-its-restart-rule) and [The horizon on a Windows
+host](#the-horizon-on-a-windows-host) give:
 
 ```
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b64>
@@ -5978,8 +6009,8 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b
 
 **`sync -Host <project> -Platform windows/amd64` runs [sync](#sync)'s steps 1 to 8, with the same
 messages, exit codes and failures, through the host's alias,
-`agentspace-host.<project>.windows-amd64`**, and with these differences (D96; N5, architect's to
-confirm):
+`agentspace-host.<project>.windows-amd64`**, and with these differences (D96; N5; architect,
+2026-11-26, for v0.12-T02, pin P16):
 - **The staging folder, `<staging>`, is `.agentspace-system` in the login user's home**, which is
   `C:\Users\agent\.agentspace-system` on the spike's host. A folder in the home, and not in a
   system folder, since `scp` reaches the home by a relative path on every login shell.
@@ -6026,7 +6057,8 @@ place bind each row here as they bind Linux's.
 
 **`install.ps1` is `sync`'s installer, the counterpart of `install.sh`**, run by row 4 as `agent`,
 elevated. **It starts under Windows PowerShell 5.1, puts PowerShell 7 in place when it is missing,
-and runs the rest of itself under PowerShell 7** (N1, architect's to confirm). Reason: a
+and runs the rest of itself under PowerShell 7** (N1; architect, 2026-11-26, for v0.12-T02, pin
+P15). Reason: a
 provisioning run makes a host with `sync` before `bootstrap` (D46's order, [provision](#provision)),
 so a new host's first `sync` finds no PowerShell 7, while D96 runs everything after the first boot
 and the bootstrap under it; so the install, which always runs, puts it there, and the bootstrap
@@ -6084,8 +6116,9 @@ seams for the tests are [The tests' seams](#the-tests-seams)'.
 
 ### The host agent's files
 
-**`box/windows/` holds these files, one per duty of D96's table** (D96, D101; pin P9 as this
-section changes it, architect's to confirm). The architect makes each a placeholder before T03, and
+**`box/windows/` holds these files, one per duty of D96's table, and no first-boot file** (D96,
+D101; architect, 2026-11-26, for v0.12-T02, pin P9 as pin P15 changes it, and pin P16 for N6, N13
+and N14). The architect makes each a placeholder before T03, and
 E0.12-T03-S07 builds them. Every `.ps1` file but `bootstrap.ps1` and `localswim.ps1` runs under
 PowerShell 7 alone; those two, and the first step of `install.ps1`, run under Windows PowerShell
 5.1 as well.
@@ -6130,7 +6163,8 @@ install writes `sshd_config`'s lines with its own.
 
 - **The state files are this boot's alone**, as Linux keeps them in `/run`: the boot task removes
   `lease-horizon`, `patched`, `patch-failed`, `last-active` and `busy` at every boot. **Every reader
-  also treats one of them last written before this boot's start as missing** (N7), so a boot task
+  also treats one of them last written before this boot's start as missing** (N7; architect,
+  2026-11-26, for v0.12-T02, pin P16), so a boot task
   that did not run cannot leave the last boot's horizon or marker standing. This boot's start is
   the operating system's last boot time, `Win32_OperatingSystem`'s `LastBootUpTime`.
 - **A log is appended to, a line at a time, and when it passes 1 MiB it is renamed over
@@ -6141,7 +6175,8 @@ install writes `sshd_config`'s lines with its own.
 **The install registers three scheduled tasks in Task Scheduler's folder `\agentspace\`**, each run
 as SYSTEM with the highest privileges, each starting
 `C:\Program Files\PowerShell\7\pwsh.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script>`,
-and each set to start a second instance of nothing while one runs (N21, architect's to confirm):
+and each set to start a second instance of nothing while one runs (N21; architect, 2026-11-26,
+for v0.12-T02, pin P16):
 
 | Task | Trigger | Its script | Time limit |
 |---|---|---|---|
@@ -6182,14 +6217,17 @@ run, as SYSTEM:
 3. **Decides on a restart**, when an installed update asks for one or the system already has one
    pending. **The restart rule** (D96): **a patch run MUST NOT restart the host while a login
    session is open, and one that needs a restart restarts it only before the host's first session
-   after its start.** The run restarts the host only when all of these hold (N9, architect's to
-   confirm):
+   after its start.** The run restarts the host only when all of these hold (N9; architect,
+   2026-11-26, for v0.12-T02, pin P16):
    - **No login has reached sshd since this boot's start**: sshd's `OpenSSH/Operational` event log
      holds no accepted login after it, the spike's `Accepted publickey for agent from ::1 ...`
      events among the kind it reads;
    - **No `ssm-session-worker` process is running**, so no Session Manager session is open; and
    - **`last-patch-reboot` is missing, or names a time 15 minutes or more ago**, so the run never
-     restarts more than once per 15 minutes, as Linux's does not.
+     restarts more than once per 15 minutes, as Linux's does not. **The 15 minutes since the last
+     patch restart is what stops a restart loop** (pin P16): an update that asks for a restart
+     again at every start would otherwise restart the host at every boot, before any login could
+     reach it.
 
    Then it writes the time to `last-patch-reboot`, as Unix seconds, logs the restart, runs
    `shutdown.exe /r /t 0`, and exits 0 with no marker; the next boot's run writes it. **Otherwise
@@ -6209,13 +6247,23 @@ stops as Windows decides; the next run finds where it stands.
 spike's record, Question 7, saw Windows install two things by itself in a session's first
 minutes). **The first boot, the bootstrap and the install each set Windows Update's policy** so
 that Windows installs no update and schedules no restart by itself, and the patch run is the one
-path that restarts the host (N10, architect's to confirm): under
+path that restarts the host (N10; architect, 2026-11-26, for v0.12-T02, pin P16): under
 `HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU`, the DWORD values `NoAutoUpdate` 1 and
 `NoAutoRebootWithLoggedOnUsers` 1. The Windows Update Agent's API still searches and installs with
 them set. Defender's security intelligence and the Store's app updates, which the spike saw, need
 no restart and are left alone.
+- **`NoAutoUpdate` 1 turns off Windows' own installs as well as its restarts**, and that is
+  accepted (pin P16): every start of the host runs the patch task (D96), and a host starts with
+  each lease's first connection, so the boot's patch run is the host's one updater. A host that
+  ran for days with no start would get no update in that time.
+- **The restart rule, and this switch-off of Windows' own restarts, are decisions the spike did
+  not test** (architect, 2026-11-26, for v0.12-T02, spike ruling 5): its one patch run found
+  nothing to install and needed no restart, no restart came in its run, and it set no policy (the
+  spike's record, Question 7). E0.12-T03-S07's test shows the restart rule against stand-ins, and
+  a real restart, and the policy at work, are first seen live, in E0.12-T05-S02.
 
-**The patch check** (`agentspace-patch-check.ps1`, N6) answers, as SYSTEM, the one word of [What up
+**The patch check** (`agentspace-patch-check.ps1`, N6; architect, 2026-11-26, for v0.12-T02, pin
+P16) answers, as SYSTEM, the one word of [What up
 waits for](#what-up-waits-for), from the task and the markers, in this order:
 - **`patched`** when `patched` exists and was written this boot;
 - **`failed`** when the patch task is neither running nor queued, and either `patch-failed` exists
@@ -6228,7 +6276,9 @@ waits for](#what-up-waits-for), from the task and the markers, in this order:
 holds no character the shorthand syntax reads. **Before the first `sync`, with no PowerShell 7 or
 no check, it prints nothing**, and that empty answer is read by `up` as ready, as it reads
 `unknown` ([Q6](#open-questions)); `sync`'s patch wait never meets it, since its install has just
-put both in place. **How long a patch run takes on an image that is not current is unmeasured**:
+put both in place. **The empty answer reads as ready because a new host's provisioning run
+patches it in its own bootstrap and boot task, and a ready read never skips a patch run** (pin
+P16): it only ends `up`'s wait. **How long a patch run takes on an image that is not current is unmeasured**:
 the spike's image was current, and E0.12-T05-S02 measures it (the spike's finding on Question 7);
 a run longer than the 20-minute limit goes back to the architect with that measurement.
 
@@ -6246,17 +6296,21 @@ differs. Each run, in this order:
    over every processor, its kernel and user times less its idle time, in 100-nanosecond units,
    and records the counter in `busy` for the next run. The seconds are that count's difference
    divided by 10,000,000, rounded down.
-2. **Looks for a session** (D78 on Windows, N8, architect's to confirm):
+2. **Looks for a session** (D78 on Windows, N8; architect, 2026-11-26, for v0.12-T02, pin P16):
    - **An SSH session**: an established TCP connection whose local port is 22, in IPv4 or IPv6,
      since the tunnel's reaches sshd from `::1`.
-   - **A Session Manager session**: a running `ssm-session-worker` process that owns an established
-     TCP connection whose remote port is 22, to the host's sshd at `::1` or `127.0.0.1`, or that has
+   - **A Session Manager session**: a running `ssm-session-worker` process that is the peer of an
+     established TCP connection to the host's sshd at `[::1]:22`, owning that connection's client
+     end, as the spike's tunnel worker did (the spike's Question 8; architect, 2026-11-26, for
+     v0.12-T02, spike ruling 6), or at `127.0.0.1:22`; or one that has
      a child process whose name is not `conhost.exe`, which is a person's Session Manager shell. A
      worker that does neither is not counted: its sshd end is gone, so the horizon's power-off comes
      at most one check after the last sshd login ends (#0195). **`conhost.exe` is passed over**
      because Windows gives a console program started without a console a `conhost.exe` child of
      its own, a port session's worker among them, which would count every such session for as
-     long as Session Manager keeps it.
+     long as Session Manager keeps it. **No idle check ran on the spike**: the worker's test rests
+     on the `[::1]:22` pair in the spike's `netstat`, and a check counting it is first seen live,
+     in E0.12-T05-S02.
    - **With none, a patch run under way**: the patch task's state is running.
 3. **The horizon rule** (D57), as Linux's: with no session and no patch run, when there is a
    horizon it can use and the time now is at or after the horizon plus 60 times the grace, it
@@ -6264,12 +6318,14 @@ differs. Each run, in this order:
 4. **D11's rule, unchanged**, for every other case.
 
 - **A horizon it can use is the file's first line, when it is 1 to 15 decimal digits and nothing
-  else**, the first line being the bytes before the first LF with one CR right before that LF
-  removed (N7): so `1764000000` then CR LF, as the guard's command writes it, and `1764000000` then
-  LF are each a horizon. **Anything else counts as no horizon file, without a word**: a missing
-  file, one it cannot read, a folder at the path, an empty first line, a sign, a space, a CR
-  anywhere but right before the LF, 16 digits or more, and **a file last written before this boot's
-  start**.
+  else**, as Linux's reader rule is: the first line is the bytes before the first LF, or the whole
+  file when it holds no LF, so `1764000000` then LF, as the guard's command writes it, and
+  `1764000000` alone are each a horizon. **A line ending in a CR is no horizon, ignored without a
+  word, so the host keeps D11's rule alone** (architect, 2026-11-26, for v0.12-T02, pin P12): so
+  `1764000000` then CR LF is no horizon. **Anything else counts as no horizon file, without a
+  word**: a missing file, one it cannot read, a folder at the path, an empty first line, a sign, a
+  space, a CR anywhere, 16 digits or more, and **a file last written before this boot's start**
+  (N7; pin P16).
 - **`idle.conf` is read as text, never run**: each line `NAME=value`, a line starting `#` ignored,
   the three settings and their defaults as Linux's; a missing file or setting takes the default.
 - **`<h:mm><am|pm>`** is the horizon in the host's own zone, which the push sets to the laptop's
@@ -6285,27 +6341,33 @@ differs. Each run, in this order:
 
 **The guard sends a Windows host its horizon with `AWS-RunPowerShellScript`**, the comment
 `agentspace guard: lease horizon` and one command, as [guard](#guard)'s step 7 sends it to a Linux
-host (D57, D96). **The command MUST, as SYSTEM and never prompting** (N7, architect's to confirm):
+host (D57, D96). **The command MUST, as SYSTEM and never prompting** (N7; architect, 2026-11-26,
+for v0.12-T02, pins P16 and P12):
 1. Make `C:\ProgramData\agentspace` when it is missing, which the install's rules later cover.
-2. Write the horizon as Unix seconds, a decimal integer with no sign and no leading zero, then
-   CR LF and nothing else, to a temporary file in that folder.
+2. Write the horizon as Unix seconds, a decimal integer with no sign and no leading zero, **then
+   one LF, or nothing after the digits, and never a CR**, to a temporary file in that folder,
+   **with `[IO.File]::WriteAllText` and the exact bytes** (pin P12). PowerShell's `Set-Content`
+   and `Out-File` MUST NOT write it, since by default each ends its text with CR LF, which the idle
+   check reads as no horizon.
 3. Move it over `C:\ProgramData\agentspace\lease-horizon`, replacing it, so a reader finds the old
    file or the new one whole.
 4. Exit 0 only when all three succeeded, and stop with a non-zero exit at the first that fails.
 
-**The command MUST hold the horizon's digits as one word of its own**, as Linux's does, and **MUST
-hold no comma, bracket, brace, equals sign or quote**, since the AWS CLI's shorthand syntax reads
-them. PowerShell's commands with named parameters and `-ErrorAction Stop` meet both, as plain
-words. Its text is the operator's own (D34), and it is not the encoded form: Run Command already
-runs it under Windows PowerShell 5.1, and the digits MUST stay readable in it. **A send to a host
-whose Session Manager agent is not online fails and is retried at the next run**, as on Linux.
+**The command MUST hold the horizon's digits as one word of its own**, as Linux's does, so a check
+can find the value in it. **`[IO.File]::WriteAllText` takes brackets, a comma and quotes, which the
+AWS CLI's shorthand syntax for `--parameters` reads, so the command MUST be passed in a form that
+is not split**, as [guard](#guard)'s step 7 allows a Linux host's command. Its text is the
+operator's own (D34), and it is not the encoded form: Run Command already runs it under Windows
+PowerShell 5.1, and the digits MUST stay readable in it. **The bytes the command writes are shown
+by `agentspace-windows`' tests in T03** (pin P12). **A send to a host whose Session Manager agent
+is not online fails and is retried at the next run**, as on Linux.
 
 ### The tools
 
 **The bootstrap installs `agent-windows`' tools** (D97), as `agent`, under Windows PowerShell 5.1,
 each only when it is missing, so a second run is safe (D46). **By winget where a package exists and
 winget answers in the bootstrap's session, and by the tool's own installer otherwise** (D96, D97;
-N20, architect's to confirm): whether winget works in a key-based SSH session on Windows Server
+N20; architect, 2026-11-26, for v0.12-T02, pin P16): whether winget works in a key-based SSH session on Windows Server
 2025 is unmeasured, so the bootstrap first runs `winget --version`, and takes the second column for
 every tool when it fails.
 
@@ -6338,8 +6400,8 @@ every tool when it fails.
 
 **`localswim.ps1` is the Windows `localswim`** (D12, D96), installed in `C:\ProgramData\agentspace\bin`,
 which is on the machine `PATH`. **It MUST run alike under Windows PowerShell 5.1 and PowerShell 7**,
-since it runs in whichever PowerShell an agent calls it from. Each run (N13, architect's to
-confirm):
+since it runs in whichever PowerShell an agent calls it from. Each run (N13; architect,
+2026-11-26, for v0.12-T02, pin P16):
 1. **Refuses when `C:\ProgramData\agentspace\localswim\localswim.exe` is missing**, with
    `localswim: The CLI is not installed; run agentspace-operator sync for this host on the laptop.`
    on stderr and exit 1.
@@ -6365,7 +6427,7 @@ arguments, exiting with its status. **The localswim CLI is built on the laptop f
 ### The token push to a Windows host
 
 **The laptop's side of the push is [The token push](#the-token-push)'s, unchanged, but for the zone
-and the remote half** (D96; N17 and N23, architect's to confirm):
+and the remote half** (D96; N17 and N23; architect, 2026-11-26, for v0.12-T02, pin P16):
 - **The zone is the laptop's Windows zone ID itself**, the ID of the zone the laptop is set to at
   that moment, or `AGENTSPACE_TIMEZONE`'s value when it is set and not empty, as for Linux ([The
   time zone](#the-time-zone)). **It is never converted to an IANA name**, and the legacy map does not
@@ -6398,7 +6460,8 @@ and the remote half** (D96; N17 and N23, architect's to confirm):
 ### sshd's settings on a Windows host
 
 **`box/windows/sshd_config.agentspace` holds the agentspace lines**, D7's meaning written for
-Microsoft's OpenSSH (D95, D96), exactly these (N11, architect's to confirm):
+Microsoft's OpenSSH (D95, D96), exactly these (N11; architect, 2026-11-26, for v0.12-T02, pin
+P16):
 
 ```
 # agentspace begin: installed by agentspace-operator sync from box/windows/sshd_config.agentspace; every sync replaces these lines (D7, D95, D96)
@@ -6511,7 +6574,7 @@ home, never on a host** (D96), and each is written from this page, not from the 
 and #0193 require for Linux. **A test MUST NOT power off, restart, change the time zone of, or
 restart sshd on the laptop**, so each script that can do one of these has a seam that replaces
 every probe of the system and every such act at once, and **refuses to run with only part of its
-seam set** (N16, architect's to confirm). No task, script or file the install puts on a host sets
+seam set** (N16; architect, 2026-11-26, for v0.12-T02, pin P16). No task, script or file the install puts on a host sets
 any of these variables, and a host runs every script with all of them unset.
 
 | Script | Variables, set together or not at all | What they replace |
@@ -6529,8 +6592,8 @@ any of these variables, and a host runs every script with all of them unset.
 - **The clock is the real one**, as for Linux's check: a test sets its horizon and its `boot`
   relative to the time of its run.
 - **Its cases**, D96's list: the idle check's rules, D78's worker rules and the horizon's parse,
-  #0192's four cases with their Windows twins and the CR LF case; the `sshd_config` edit, #0193's
-  twin; and the restart rule.
+  #0192's four cases with their Windows twins, the first of them a horizon whose line ends CR LF,
+  which is no horizon (pin P12); the `sshd_config` edit, #0193's twin; and the restart rule.
 
 ### Which checks show it, on Windows
 
@@ -6548,7 +6611,8 @@ operator sends and how it reads the answers; only the live check shows a Windows
 | The operator's certificate for a Windows host: principal `agent`, key ID `operator-<project>.windows-amd64`; the alias file's `User agent` | Conformance case, E0.12-T04-S02, with a throwaway CA |
 | `sync`'s nine rows on `windows/amd64`: each program's arguments, the staging paths, the build's `GOOS=windows`, `GOARCH=amd64` and `localswim-windows-amd64.exe`, and every message as Linux's | Conformance case, E0.12-T04-S02, with stand-in `ssh`, `scp` and `go`; the build's arguments by `agentspace-sync`'s crate test |
 | Every remote command to a Windows host in the encoded form: decoding to UTF-16LE, no `=`, at most 8,191 characters; the zone inside it and not on the line | Crate test of `agentspace-windows`, E0.12-T03-S06; the arguments by the conformance case |
-| The patch check and the horizon sent with `AWS-RunPowerShellScript`; the horizon's digits as one word; no comma, bracket, brace, equals sign or quote in either command; the Windows phase message and `cat C:/ProgramData/agentspace/patch.log` in the deadline's and failure's messages | Conformance case, E0.12-T04-S02 |
+| The patch check and the horizon sent with `AWS-RunPowerShellScript`; the horizon's digits as one word; no comma, bracket, brace, equals sign or quote in the patch check's command, and the horizon's command passed in a form that is not split; the Windows phase message and `cat C:/ProgramData/agentspace/patch.log` in the deadline's and failure's messages | Conformance case, E0.12-T04-S02 |
+| The horizon's command writing the digits then one LF, or the digits alone, never a CR, with `[IO.File]::WriteAllText` (pin P12) | Crate test of `agentspace-windows`, E0.12-T03-S06, which shows the bytes (pin P12); the file on a host, live, E0.12-T05-S02 |
 | The push to a Windows host: the Windows zone ID sent unconverted, `AGENTSPACE_TIMEZONE` taking its place, a zone outside the pattern sent empty, the stamp over the ID | Conformance case, E0.12-T04-S02 |
 | `bootstrap` on a Windows host: its folder, its `scp` then its `ssh`, its failure on either | Conformance case, E0.12-T04-S02 |
 | The idle check's rules, D78's worker rules with `conhost.exe` passed over, the horizon's parse and its twins, a file older than the boot ignored, and a seam set in part refused | `box/windows` test, E0.12-T03-S07 |
@@ -6604,8 +6668,8 @@ never committed (D37; docs/state.md).
 | `ImageId` | EC2 image ID | A pinned Ubuntu 26.04 LTS arm64 image | The template, for every `linux/arm64` host, the box included; from v0.12, `deploy`, when it creates a stack on another platform: the image that platform's public parameter names, read with `ssm get-parameter` once then ([The platform seam](#the-platform-seam); D94; architect, 2026-11-26, for v0.12-T01, pin P43) | MUST NOT be changed on a live stack: it replaces the instance and destroys its disk. So no `deploy` passes it to a stack that exists, and an update keeps its previous value on every platform, since a kept host patches itself (D46). The resolved ID is never printed unmasked or written to the repository (architect, 2026-11-26, for v0.12-T01, pin P43). The default MUST stay the pinned arm64 image, so `agentbox`'s change set stays empty (D44, D94). |
 | `SubnetId` | Subnet ID | None | The stack parameters file, for the box and for a stack `deploy` creates | A subnet that assigns a public IPv4 address at launch, as a default VPC's do. |
 | `VpcId` | VPC ID | None | The stack parameters file, for the box and for a stack `deploy` creates | The subnet's VPC. |
-| `RootVolumeGiB` | Number, at least 8 | `8` | The template; from v0.12, `deploy`, when it creates a `windows/amd64` stack: `30`, the Windows image's minimum (D97; [The platform seam](#the-platform-seam); N3, architect's to confirm) | The image's minimum. Grown later with `grow`. |
-| `HostOs` (from v0.12) | String, `linux` or `windows` | `linux` | `deploy`, when it creates a `windows/amd64` stack: `windows`; never passed otherwise, so the box's change set stays empty (N2, architect's to confirm) | Picks the first-boot user data: `windows` the Windows branch ([The template's Windows first boot](#the-templates-windows-first-boot)), `linux` the two branches below, unchanged. A stack parameters file naming it is not valid ([deploy](#deploy), step 2). |
+| `RootVolumeGiB` | Number, at least 8 | `8` | The template; from v0.12, `deploy`, when it creates a `windows/amd64` stack: `30`, the Windows image's minimum (D97; [The platform seam](#the-platform-seam); N3; architect, 2026-11-26, for v0.12-T02, pin P16); its default stays `8`, `agentbox`'s (pin P15) | The image's minimum. Grown later with `grow`. |
+| `HostOs` (from v0.12) | String, `linux` or `windows` | `linux` | `deploy`, when it creates a `windows/amd64` stack: `windows`; never passed otherwise, so the box's change set stays empty (N2; architect, 2026-11-26, for v0.12-T02, pin P15) | Picks the first-boot user data: `windows` the Windows branch ([The template's Windows first boot](#the-templates-windows-first-boot)), `linux` the two branches below, unchanged. A stack parameters file naming it is not valid ([deploy](#deploy), step 2). |
 | `SshPublicKey` | String | None | `deploy`, from `%USERPROFILE%\.ssh\id_ed25519.pub`: at every deploy of the box, and when it creates another host's stack (P13) | Installed for the login user at first boot only ([Q13](#open-questions)). |
 | `HostName` | String | `agentbox` | `deploy`, when it creates a host's stack that is not the box's: the stack's name | The alarm's name and the `Name` and `project` tags. Its default reproduces every name the `agentbox` stack had, and the box's `deploy` passes none, so its change set is empty (D44; P5, architect, 2026-11-20, for v0.07-T01). |
 | `CaPublicKey` | String | Empty | `deploy`, when it creates a host's stack that is not the box's: the CA's public key, type and base64 only ([deploy](#deploy), step 3) | When not empty (the condition `HasCaPublicKey`), the first-boot user data writes it to `/etc/ssh/agentspace_ca.pub`, followed by one LF, with its sshd drop-in, so a new host trusts the CA before the operator first connects. The box passes none, so its first boot's user data is unchanged (D44; P5, P8). A public key, which MAY be seen in the stack's parameters. |
