@@ -18,7 +18,10 @@
 //!    order ([`proxy_path`]).
 //! 3. Finds the host from the argument ([`host`]: no argument is the box, `agentspace-host.<project>`
 //!    is that project's host, a lease alias is looked up in the lease state file, read without its
-//!    lock, and then its project's `ready` host or the box), then runs `up`'s steps on that host in
+//!    lock, and then its project's `ready` host or the box; a lease alias whose lease is not
+//!    `ready`, or an argument of lease alias form while the lease state file cannot be read or is
+//!    not valid, is refused with exit 1 before the host registry is read, #0229), then runs `up`'s
+//!    steps on that host in
 //!    its own process, in caller mode (D42): the instance ID from the host's record in the host
 //!    registry or its stack, the start-and-wait step of `agentspace-box`, and, unless
 //!    `AGENTSPACE_NESTED` was set as the program started, the token push of `agentspace-push` over
@@ -250,6 +253,26 @@ fn up(
     Ok(id)
 }
 
+/// Step 3's lookup of the host, before `up`'s steps start anything (operator.md, From the
+/// ProxyCommand): the context, then a lease alias's lease, so that a lease that is not `ready`, or
+/// an argument of lease alias form while the lease records cannot be read, is refused before the
+/// host registry is read and before anything is started (#0229; pin P21). Then the registry is
+/// read for every argument, so one that is not valid fails here, and the host is chosen from it.
+fn find_host(
+    alias: Option<&str>,
+    env: &Env,
+    say: &dyn Say,
+    clock: &dyn host::LeaseClock,
+) -> Result<(Context, Host), Failure> {
+    let ctx = context_from(&|name| env.get(name))?;
+    let state_dir = host::state_dir(env.get("AGENTSPACE_STATE_DIR"), &ctx.home);
+    let lease = host::lease_project(alias, &state_dir, say, clock)?;
+    let hosts = agentspace_hosts::read(&ctx.home)
+        .map_err(|error| host::registry_failure(&ctx.home, &error))?;
+    let found = host::choose(alias, &hosts, lease.as_deref())?.clone();
+    Ok((ctx, found))
+}
+
 /// Steps 1 to 6. `Ok` is the exit code, which is the tunnel's.
 fn proxy(
     args: &[OsString],
@@ -278,12 +301,8 @@ fn proxy(
     env.set("PATH", path.clone());
 
     // Steps 3 to 5, with standard output sent to standard error. The host is found after the alias
-    // check, and the registry is read for every argument, so one that is not valid fails here.
-    let ctx = context_from(&|name| env.get(name))?;
-    let hosts = agentspace_hosts::read(&ctx.home)
-        .map_err(|error| host::registry_failure(&ctx.home, &error))?;
-    let state_dir = host::state_dir(env.get("AGENTSPACE_STATE_DIR"), &ctx.home);
-    let found = host::choose(alias.as_deref(), &hosts, &state_dir, say)?.clone();
+    // check.
+    let (ctx, found) = find_host(alias.as_deref(), &env, say, &host::SystemLeaseClock::new())?;
     let env = Arc::new(env);
     let mut stdout_guard = platform::StdoutGuard::new();
     let read_id = up(
@@ -469,6 +488,133 @@ mod tests {
         printer_side.write_all(b"three\n").unwrap();
         printer_side.flush().unwrap();
         assert_eq!(cap.text(), "one\ntwo\r\nthree\n");
+    }
+
+    /// A clock fixed before the leases' expiry, which never reads the real clock or sleeps.
+    struct FixedClock;
+
+    impl host::LeaseClock for FixedClock {
+        fn now(&self) -> i64 {
+            agentspace_state::parse_time("2026-11-20T10:30:00Z").unwrap()
+        }
+        fn elapsed(&self) -> std::time::Duration {
+            std::time::Duration::ZERO
+        }
+        fn pause(&self, _: std::time::Duration) {}
+    }
+
+    /// Step 3's lookup in process, then the failure printed as `run` prints it, against a throwaway
+    /// home of `name` that holds `leases` as its lease state file (none when `None`) and a host
+    /// registry that is not valid, so that a lookup that gets past the lease fails on the registry.
+    /// It never reaches step 2, which changes the process's `PATH`. Returns 1 for a failure, as
+    /// `run` does, and 0 for a host found.
+    fn go_home(name: &str, alias: &str, leases: Option<&[u8]>, diagnostic: bool) -> (i32, String) {
+        let home = std::env::temp_dir().join(format!(
+            "agentspace-ssh-proxy-lib-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let state = home.join(".agentspace");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(agentspace_hosts::hosts_path(&home), b"not json").unwrap();
+        if let Some(bytes) = leases {
+            std::fs::write(state.join("leases.json"), bytes).unwrap();
+        }
+        let env = Env::from_pairs([
+            ("USERPROFILE", home.clone().into_os_string()),
+            ("HOME", home.clone().into_os_string()),
+            ("LOCALAPPDATA", home.clone().into_os_string()),
+            ("APPDATA", home.clone().into_os_string()),
+            ("SystemRoot", home.join("no-system-root").into_os_string()),
+        ]);
+        let cap = Capture::default();
+        let say = Printer::new(Mode::Caller, false, diagnostic, Box::new(cap.clone()));
+        let code = match find_host(Some(alias), &env, &say, &FixedClock) {
+            Ok(_) => 0,
+            Err(failure) => {
+                report(&say, &failure);
+                1
+            }
+        };
+        let _ = std::fs::remove_dir_all(&home);
+        (code, cap.text())
+    }
+
+    /// A lease state file holding one `released` lease whose alias is `agentspace-agentspace-3a9c5e21`.
+    fn released_file() -> Vec<u8> {
+        let record = agentspace_state::Record {
+            sized_for: None,
+            plan: None,
+            plan_source: None,
+            id: "3a9c5e21-0000-4000-8000-000000000001".to_string(),
+            project: "agentspace".to_string(),
+            state: "released".to_string(),
+            platform: "linux/arm64".to_string(),
+            profile: "agent-linux".to_string(),
+            size: "medium".to_string(),
+            ttl_seconds: 3600,
+            created_at: "2026-11-20T10:00:00Z".to_string(),
+            expires_at: Some("2026-11-20T11:00:00Z".to_string()),
+            released_at: Some("2026-11-20T10:30:00Z".to_string()),
+            ssh: None,
+            reasons: None,
+            driver: Some("ec2".to_string()),
+        };
+        agentspace_state::serialize(&agentspace_state::StateFile {
+            leases: vec![record],
+        })
+        .unwrap()
+    }
+
+    const LEASE: &str = "agentspace-agentspace-3a9c5e21";
+
+    #[test]
+    fn a_lease_that_is_not_ready_is_refused_before_the_registry_is_read() {
+        let refused = format!(
+            "agentspace: The lease for {LEASE} has been released; no connection was opened. Create a new lease.\n"
+        );
+        for diagnostic in [false, true] {
+            let (code, err) = go_home("released", LEASE, Some(&released_file()), diagnostic);
+            // The refusal's one line alone: the registry, which is not valid, was never read.
+            assert_eq!((code, err.as_str()), (1, refused.as_str()), "{diagnostic}");
+        }
+        // The same home with no lease state file reaches the registry and fails on it, so the
+        // refusal above came before it.
+        let (code, err) = go_home("nolease", LEASE, None, false);
+        assert_eq!(
+            (code, err.as_str()),
+            (1, format!("{COULD_NOT_REACH}\n").as_str())
+        );
+    }
+
+    #[test]
+    fn a_lease_form_argument_is_refused_while_the_lease_records_cannot_be_read() {
+        let refused = format!(
+            "agentspace: The lease records could not be read; no connection was opened for {LEASE}. Run 'agentspace lease list' to see the error.\n"
+        );
+        let (code, err) = go_home("broken", LEASE, Some(b"not json"), false);
+        assert_eq!((code, err.as_str()), (1, refused.as_str()));
+        // With the diagnostic, the line naming the file comes first, and the refusal stays last.
+        let (code, err) = go_home("brokendiag", LEASE, Some(b"not json"), true);
+        assert_eq!(code, 1);
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines.len(), 2, "{err}");
+        assert!(
+            lines[0].starts_with("agentspace: The lease state file "),
+            "{err}"
+        );
+        assert_eq!(format!("{}\n", lines[1]), refused);
+        // An argument not of lease alias form keeps v0.07's rule, and so reaches the registry.
+        let (code, err) = go_home(
+            "brokenother",
+            "conformance-proxy-alias",
+            Some(b"not json"),
+            false,
+        );
+        assert_eq!(
+            (code, err.as_str()),
+            (1, format!("{COULD_NOT_REACH}\n").as_str())
+        );
     }
 
     #[test]
