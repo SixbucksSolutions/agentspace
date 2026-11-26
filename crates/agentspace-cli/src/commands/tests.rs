@@ -1049,5 +1049,6 @@ fn the_operator_program_is_agentspace_provision_cmd_made_full() {
     );
 }
 
+mod board;
 /// The lease CLI's `--plan` (E0.10-T03-S01, #0219).
 mod plan;

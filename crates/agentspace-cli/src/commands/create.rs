@@ -6,12 +6,14 @@ use std::collections::HashSet;
 use agentspace_driver_api::{
     Context, Driver, LeaseRef, PlaceRequest, Placed, Reason as DriverReason,
 };
+use agentspace_push::{DpapiUnprotect, StdFiles};
 use agentspace_state::{
-    LockGuard, NotValid, Reason, Record, SizedFor, Ssh, StateFile, format_time, lease_document,
-    lock, read, serialize, write,
+    LockGuard, NotValid, PlanSource, Reason, Record, SizedFor, Ssh, StateFile, format_time,
+    lease_document, lock, read, serialize, write,
 };
 use serde_json::Value;
 
+use super::board::{self, BoardRead, EpicReader, Localswim};
 use super::plan::read_plan;
 use super::support::{
     Purpose, alias_of, check_value, context, driver_failure, failed, flag, lease_document_is_valid,
@@ -32,25 +34,58 @@ struct Request {
     /// holds (D81).
     size: String,
     ttl_seconds: u32,
-    /// What a `--plan` lease was sized for and from; `None` without `--plan`.
+    /// What a plan lease, from `--plan` or `--epic`, was sized for and from; `None` without a
+    /// plan.
     plan: Option<Planned>,
 }
 
-/// What `--plan` adds to a lease (lease-api.md, Plan and Fields; docs/state.md, What a plan lease
-/// adds).
+/// What a plan, from `--plan` or `--epic`, adds to a lease (lease-api.md, Plan, Turn and Fields;
+/// docs/state.md, What a plan lease adds).
 struct Planned {
     sized_for: SizedFor,
     /// The plan document as parsed, for the record alone (pin P25).
     document: Value,
-    /// Whether a size holds the plan's busiest turn; when none does, the lease is answered
-    /// `plan_too_large` and no driver's place is called (D75, D81).
+    /// Whether a size holds the lease's turn; when none does, the lease is answered
+    /// `plan_too_large` and no driver's place is called (D75, D81, D84).
     fits: bool,
+    /// Whether `--turn` named the lease's turn, which picks `plan_too_large`'s message (D84).
+    by_turn: bool,
+    /// Where a board lease's plan came from; `None` for a `--plan` lease (lease-api.md, What is
+    /// recorded; pin P7).
+    source: Option<PlanSource>,
+}
+
+/// What a plan gives the lease besides [`Planned`]: the size picked, and the TTL its turn's budget
+/// gives, when the turn has one (D85).
+struct PlanGives {
+    size: &'static str,
+    ttl_seconds: Option<u32>,
 }
 
 impl Planned {
-    fn of(plan: &agentspace_plan::Plan) -> (Planned, &'static str) {
-        let (turn, agents) = plan.busiest();
+    /// The lease for `turn` of the plan, `--turn`'s when it is given and else the busiest (D84).
+    /// A well-formed `--turn` that names no turn of the plan is `invalid_value` for `turn`.
+    fn of(
+        plan: &agentspace_plan::Plan,
+        turn: Option<&str>,
+        source: Option<PlanSource>,
+    ) -> Result<(Planned, PlanGives), LeaseError> {
+        let by_turn = turn.is_some();
+        let (turn, agents) = match turn {
+            Some(name) => (
+                name,
+                plan.turn_agents(name)
+                    .ok_or_else(|| board::not_a_turn(plan, name))?,
+            ),
+            None => plan.busiest(),
+        };
         let size = agentspace_plan::size_for(agents);
+        let gives = PlanGives {
+            size: size.unwrap_or(LARGEST_SIZE),
+            ttl_seconds: plan
+                .budget_minutes(turn)
+                .map(agentspace_plan::ttl_seconds_for),
+        };
         let planned = Planned {
             sized_for: SizedFor {
                 plan: plan.name().map(str::to_owned),
@@ -59,16 +94,21 @@ impl Planned {
             },
             document: plan.document().clone(),
             fits: size.is_some(),
+            by_turn,
+            source,
         };
-        (planned, size.unwrap_or(LARGEST_SIZE))
+        Ok((planned, gives))
     }
 
-    /// The one reason of a plan that no size holds, byte for byte (lease-api.md, Fields; pin P5).
+    /// The one reason of a plan that no size holds, byte for byte (lease-api.md, Fields; pins P5
+    /// and P20): one message without `--turn`, and another with it, even when it names the
+    /// busiest turn.
     fn too_large(&self) -> DriverReason {
+        let which = if self.by_turn { "turn" } else { "busiest turn" };
         DriverReason {
             code: "plan_too_large",
             message: format!(
-                "Plan's busiest turn '{}' has {} agents at once; the largest size, {LARGEST_SIZE}, \
+                "Plan's {which} '{}' has {} agents at once; the largest size, {LARGEST_SIZE}, \
                  holds {}.",
                 self.sized_for.turn,
                 self.sized_for.agents,
@@ -81,10 +121,18 @@ impl Planned {
 /// The largest size, which a `plan_too_large` lease's `size` is (lease-api.md, Size; D81).
 const LARGEST_SIZE: &str = "xl";
 
-/// The values in the order of create's flag table: project, platform, profile, plan, size, ttl
-/// (lease-api.md, `create`, pin P13). The plan is read and parsed here, before `create` waits for
-/// any other command (pin P28).
-fn request(cmd: &ParsedCommand, world: &World<'_>) -> Result<Request, LeaseError> {
+/// The values in lease-api.md's order for `create` (Exit codes and errors, "When several errors
+/// apply", step 2; pins P13 and P20): the forms of project, platform and profile; the `--plan` file
+/// read and checked; the forms of board, epic and turn; size, then the TTL's form and range; the
+/// board read; and `--turn` matched against the plan. A line with none of `--board`, `--epic` and
+/// `--turn` is so checked in v1's order. The plan is read, and the board too, here, before
+/// `create` waits for any other command and before it reads the lease records (pin P28;
+/// Concurrency and atomicity).
+fn request(
+    cmd: &ParsedCommand,
+    world: &World<'_>,
+    reader: &dyn EpicReader,
+) -> Result<Request, LeaseError> {
     let project = match flag(cmd, "project") {
         Some(v) => check_value(v, "project", agentspace_values::project)?,
         // The parser refuses a line without `--project`, so this is never reached.
@@ -103,29 +151,66 @@ fn request(cmd: &ParsedCommand, world: &World<'_>) -> Result<Request, LeaseError
         Some(v) => check_value(v, "profile", agentspace_values::profile)?,
         None => "agent-linux".to_owned(),
     };
-    let planned = match flag(cmd, "plan") {
-        Some(v) => Some(Planned::of(&read_plan(v, world)?)),
-        None => None,
+    let file_plan = flag(cmd, "plan").map(|v| read_plan(v, world)).transpose()?;
+    let board = flag(cmd, "board")
+        .map(|v| check_value(v, "board", board::board).map(|b| (v, b)))
+        .transpose()?;
+    let epic = flag(cmd, "epic")
+        .map(|v| check_value(v, "epic", board::epic).map(|t| (v, t)))
+        .transpose()?;
+    let turn = flag(cmd, "turn")
+        .map(|v| check_value(v, "turn", board::turn))
+        .transpose()?;
+    let size = flag(cmd, "size")
+        .map(|v| check_value(v, "size", agentspace_values::size))
+        .transpose()?;
+    let ttl = flag(cmd, "ttl")
+        .map(|v| check_value(v, "ttl", agentspace_values::ttl))
+        .transpose()?;
+    // The parser gives `--board` and `--epic` together or neither, and neither with `--plan` or
+    // `--size`, nor `--plan` with `--size`, nor `--turn` without a plan's source.
+    let plan = match (board, epic) {
+        (Some((board_value, board)), Some((epic_value, ticket))) => {
+            let read = BoardRead {
+                board_value,
+                board,
+                epic_value,
+                ticket,
+            };
+            let (plan, source) = board::plan_from_epic(reader, world, &read)?;
+            Some((plan, Some(source)))
+        }
+        _ => file_plan.map(|plan| (plan, None)),
     };
-    // The parser refuses `--plan` with `--size`, so at most one of the two is given.
-    let size = match (flag(cmd, "size"), &planned) {
-        (Some(v), _) => check_value(v, "size", agentspace_values::size)?,
-        (None, Some((_, picked))) => (*picked).to_owned(),
+    let (planned, gives) = match plan {
+        Some((plan, source)) => {
+            let (planned, gives) = Planned::of(&plan, turn.as_deref(), source)?;
+            (Some(planned), Some(gives))
+        }
+        None => (None, None),
+    };
+    let size = match (size, &gives) {
+        (Some(size), _) => size,
+        (None, Some(gives)) => gives.size.to_owned(),
         (None, None) => "m".to_owned(),
     };
-    let ttl_seconds = match flag(cmd, "ttl") {
-        Some(v) => check_value(v, "ttl", agentspace_values::ttl)?,
-        None => 8 * 3600,
-    };
+    // `--ttl` wins over the plan's, and a turn with no budget, or no plan, gives the default
+    // (lease-api.md, TTL; D24, D85).
+    let ttl_seconds = ttl
+        .or_else(|| gives.as_ref().and_then(|g| g.ttl_seconds))
+        .unwrap_or(DEFAULT_TTL_SECONDS);
     Ok(Request {
         project,
         platform,
         profile,
         size,
         ttl_seconds,
-        plan: planned.map(|(planned, _)| planned),
+        plan: planned,
     })
 }
+
+/// The default TTL, 8 hours (lease-api.md, TTL; D24).
+const DEFAULT_TTL_SECONDS: u32 = 8 * 3600;
 
 /// Draws a new lease ID, again while a kept lease (in any state) has the same ID or the same
 /// alias, up to `MAX_DRAWS` draws (lease-api.md, Fields). Only records count, never files.
@@ -167,7 +252,8 @@ fn record_of(req: &Request, id: &str, now: i64, placed: Placed, driver: &str) ->
         // plan lease adds; pin P17).
         sized_for: req.plan.as_ref().map(|p| p.sized_for.clone()),
         plan: req.plan.as_ref().map(|p| p.document.clone()),
-        plan_source: None,
+        // A board lease's alone (lease-api.md, What is recorded; pin P7).
+        plan_source: req.plan.as_ref().and_then(|p| p.source.clone()),
         id: id.to_owned(),
         project: req.project.clone(),
         state: String::new(),
@@ -216,7 +302,20 @@ fn record_of(req: &Request, id: &str, now: i64, placed: Placed, driver: &str) ->
 /// stead the CLI checks that the lease's way to reach its host is installed, as the place would,
 /// and answers `plan_too_large` itself (lease-api.md, `create`; D75, D81; pins P26 and P32).
 pub fn create(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError> {
-    let req = request(cmd, world)?;
+    let localswim = Localswim {
+        files: &StdFiles,
+        unprotect: &DpapiUnprotect,
+    };
+    create_with(cmd, world, &localswim)
+}
+
+/// `create`, with the board read given: the real one from [`create`], a stand-in in a unit test.
+pub(crate) fn create_with(
+    cmd: &ParsedCommand,
+    world: &World<'_>,
+    reader: &dyn EpicReader,
+) -> Result<Value, LeaseError> {
+    let req = request(cmd, world, reader)?;
     let paths = paths(world)?;
     let dir = state_dir(&paths, Sub::Create)?;
     let held = lock(dir).map_err(store_error)?;

@@ -71,7 +71,9 @@ impl<'a> Arg<'a> {
 /// The flags each subcommand has, by lowercase name.
 fn flags_of(sub: Sub) -> &'static [&'static str] {
     match sub {
-        Sub::Create => &["project", "platform", "profile", "plan", "size", "ttl"],
+        Sub::Create => &[
+            "project", "platform", "profile", "plan", "board", "epic", "turn", "size", "ttl",
+        ],
         Sub::Get | Sub::Release => &[],
         Sub::Renew => &["ttl"],
         Sub::List => &["project", "state"],
@@ -152,6 +154,93 @@ fn unexpected_argument(arg: &Arg<'_>, sub: Sub) -> LeaseError {
     )
 }
 
+/// `create`'s pairs of flags that cannot be given together, each named in its message's order: the
+/// board-side flag, or `--plan`, first (lease-api.md, Command lines, "Which of create's pairs and
+/// partners is reported", rules 1 and 7; D75, D86).
+const PAIRS: [(&str, &str); 5] = [
+    ("plan", "size"),
+    ("board", "plan"),
+    ("board", "size"),
+    ("epic", "plan"),
+    ("epic", "size"),
+];
+
+/// The pair that a flag just read ends, when it ends one: of the pairs whose other flag already
+/// stands on the line, the one whose earlier flag stands first (rule 3). `earlier` holds the flags
+/// read so far, in line order.
+fn pair_ended_by(
+    name: &str,
+    earlier: &[(String, OsString)],
+) -> Option<(&'static str, &'static str)> {
+    PAIRS
+        .iter()
+        .filter_map(|&(a, b)| {
+            let other = if name == a {
+                b
+            } else if name == b {
+                a
+            } else {
+                return None;
+            };
+            let at = earlier.iter().position(|(n, _)| n == other)?;
+            Some((at, (a, b)))
+        })
+        .min_by_key(|&(at, _)| at)
+        .map(|(_, pair)| pair)
+}
+
+/// A pair's usage error, with the `field` it carries before the whole line is read: `plan` for
+/// `--plan` with `--size`, and otherwise the pair's board-side flag. A pair with `--epic` names
+/// `board` instead once `--board` is found anywhere on the line (rule 5), which [`parse`] settles at
+/// the end.
+fn pair_error((a, b): (&str, &str)) -> LeaseError {
+    let message = match (a, b) {
+        ("plan", _) => "Options --plan and --size cannot be given together; the plan picks the \
+                        size. Run 'agentspace lease create --help'."
+            .to_owned(),
+        (_, "plan") => format!(
+            "Options --{a} and --plan cannot be given together; the epic carries the plan. Run \
+             'agentspace lease create --help'."
+        ),
+        _ => format!(
+            "Options --{a} and --size cannot be given together; the epic's plan picks the size. \
+             Run 'agentspace lease create --help'."
+        ),
+    };
+    usage(message, Some(a))
+}
+
+/// `create`'s missing partners, in rule 6's order, once the line has no other usage error:
+/// `--board` without `--epic`, `--epic` without `--board`, and `--turn` without `--plan` or
+/// `--epic` (lease-api.md, Command lines; Messages).
+fn missing_partner(flags: &[(String, OsString)]) -> Option<LeaseError> {
+    let has = |name: &str| flags.iter().any(|(n, _)| n == name);
+    if has("board") && !has("epic") {
+        return Some(usage(
+            "Option --board needs --epic, the epic's ticket number. Run 'agentspace lease create \
+             --help'."
+                .to_owned(),
+            Some("epic"),
+        ));
+    }
+    if has("epic") && !has("board") {
+        return Some(usage(
+            "Option --epic needs --board, the board's ID. Run 'agentspace lease create --help'."
+                .to_owned(),
+            Some("board"),
+        ));
+    }
+    if has("turn") && !has("plan") && !has("epic") {
+        return Some(usage(
+            "Option --turn needs a plan, from --plan or --epic. Run 'agentspace lease create \
+             --help'."
+                .to_owned(),
+            Some("turn"),
+        ));
+    }
+    None
+}
+
 fn sub_from(arg: &Arg<'_>) -> Option<Sub> {
     [Sub::Create, Sub::Get, Sub::Renew, Sub::Release, Sub::List]
         .into_iter()
@@ -168,6 +257,10 @@ pub fn parse(args: &[OsString]) -> Parsed {
     let mut first_error: Option<LeaseError> = None;
     let mut flags: Vec<(String, OsString)> = Vec::new();
     let mut id: Option<OsString> = None;
+    // Whether `--board` stands anywhere on `create`'s line, with a value or not, and whether the
+    // error kept is a pair with `--epic`, whose `field` that decides (rule 5).
+    let mut board_on_line = false;
+    let mut first_is_epic_pair = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -189,6 +282,9 @@ pub fn parse(args: &[OsString]) -> Parsed {
                 first_error.get_or_insert_with(|| unknown_option(arg, level));
                 continue;
             };
+            if flag.name == "board" {
+                board_on_line = true;
+            }
 
             // The flag's value: after an equals sign always, else the next argument unless it
             // starts with `--` or asks for help (which is not consumed, and is read next).
@@ -236,23 +332,14 @@ pub fn parse(args: &[OsString]) -> Parsed {
                 });
                 continue;
             }
-            // `--plan` with `--size`, in either order, reported where the later of the two stands
-            // (lease-api.md, Command lines; D75, pins P6 and P13). A later one with no value or an
-            // empty value was reported as that above.
-            let other = match flag.name {
-                "plan" => Some("size"),
-                "size" => Some("plan"),
-                _ => None,
-            };
-            if other.is_some_and(|other| flags.iter().any(|(n, _)| n == other)) {
-                first_error.get_or_insert_with(|| {
-                    usage(
-                        "Options --plan and --size cannot be given together; the plan picks the \
-                         size. Run 'agentspace lease create --help'."
-                            .to_owned(),
-                        Some("plan"),
-                    )
-                });
+            // A pair of `create`'s flags that cannot be given together, in either order, reported
+            // where its later flag stands (lease-api.md, Command lines; D75, D86; pins P4, P6, P13
+            // and P20). A later one with no value or an empty value was reported as that above.
+            if let Some(pair) = pair_ended_by(flag.name, &flags) {
+                if first_error.is_none() {
+                    first_error = Some(pair_error(pair));
+                    first_is_epic_pair = pair.0 == "epic";
+                }
                 continue;
             }
             flags.push((flag.name.to_owned(), from_units(&value)));
@@ -319,8 +406,12 @@ pub fn parse(args: &[OsString]) -> Parsed {
     if let Some(error) = unknown_word {
         return Parsed::Error(error);
     }
-    // 3. The first of the other usage errors in line order.
-    if let Some(error) = first_error {
+    // 3. The first of the other usage errors in line order. A pair with `--epic` names `board`
+    // whenever `--board` is on the line, wherever it stands (rule 5).
+    if let Some(mut error) = first_error {
+        if first_is_epic_pair && board_on_line {
+            error.field = Some("board".to_owned());
+        }
         return Parsed::Error(error);
     }
     // 4. A missing command, subcommand, lease ID or `--project`.
@@ -350,6 +441,11 @@ pub fn parse(args: &[OsString]) -> Parsed {
                         .to_owned(),
                     Some("project"),
                 ));
+            }
+            if sub == Sub::Create
+                && let Some(error) = missing_partner(&flags)
+            {
+                return Parsed::Error(error);
             }
             Parsed::Command(ParsedCommand { sub, flags, id })
         }
@@ -610,6 +706,173 @@ mod tests {
         assert_eq!(
             usage_of(&["lease", "get", "x", ""]).message,
             "Unexpected argument '' for agentspace lease get. Run 'agentspace lease get --help'."
+        );
+    }
+
+    const B: &str = "0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f";
+    const BOARD_PLAN: &str = "Options --board and --plan cannot be given together; the epic \
+                              carries the plan. Run 'agentspace lease create --help'.";
+    const BOARD_SIZE: &str = "Options --board and --size cannot be given together; the epic's \
+                              plan picks the size. Run 'agentspace lease create --help'.";
+    const EPIC_PLAN: &str = "Options --epic and --plan cannot be given together; the epic \
+                             carries the plan. Run 'agentspace lease create --help'.";
+    const EPIC_SIZE: &str = "Options --epic and --size cannot be given together; the epic's \
+                             plan picks the size. Run 'agentspace lease create --help'.";
+
+    /// `create --project x` and then `rest`.
+    fn create(rest: &[&str]) -> Vec<String> {
+        let mut line = vec!["lease".to_owned(), "create".to_owned()];
+        line.extend(["--project".to_owned(), "x".to_owned()]);
+        line.extend(rest.iter().map(|s| (*s).to_owned()));
+        line
+    }
+
+    fn usage_of_line(line: &[String]) -> LeaseError {
+        let refs: Vec<&str> = line.iter().map(String::as_str).collect();
+        usage_of(&refs)
+    }
+
+    fn message_and_field(e: &LeaseError) -> (&str, Option<&str>) {
+        (e.message.as_str(), e.field.as_deref())
+    }
+
+    #[test]
+    fn each_board_side_pair_in_either_order_names_its_board_side_flag() {
+        let cases: [(&[&str], &str, &str); 8] = [
+            (&["--board", B, "--plan", "p"], BOARD_PLAN, "board"),
+            (&["--plan", "p", "--board", B], BOARD_PLAN, "board"),
+            (&["--board", B, "--size", "m"], BOARD_SIZE, "board"),
+            (&["--size", "m", "--BOARD", B], BOARD_SIZE, "board"),
+            (&["--epic", "7", "--plan", "p"], EPIC_PLAN, "epic"),
+            (&["--plan=p", "--epic", "7"], EPIC_PLAN, "epic"),
+            (&["--epic", "7", "--size", "m"], EPIC_SIZE, "epic"),
+            (&["--size", "m", "--Epic=7"], EPIC_SIZE, "epic"),
+        ];
+        for (rest, message, field) in cases {
+            let e = usage_of_line(&create(rest));
+            assert_eq!(e.code, ErrorCode::Usage, "{rest:?}");
+            assert_eq!(message_and_field(&e), (message, Some(field)), "{rest:?}");
+        }
+    }
+
+    #[test]
+    fn a_pair_with_epic_names_board_whenever_board_is_on_the_line() {
+        // Rule 5's example: reported at --plan, and --board stands later.
+        let e = usage_of_line(&create(&["--epic", "7", "--plan", "p.json", "--board", B]));
+        assert_eq!(message_and_field(&e), (EPIC_PLAN, Some("board")));
+        let e = usage_of_line(&create(&["--epic", "7", "--size", "m", "--board", B]));
+        assert_eq!(message_and_field(&e), (EPIC_SIZE, Some("board")));
+        // A --board with no value is on the line too.
+        let e = usage_of_line(&create(&["--epic", "7", "--size", "m", "--board"]));
+        assert_eq!(message_and_field(&e), (EPIC_SIZE, Some("board")));
+    }
+
+    #[test]
+    fn two_pairs_ending_at_one_flag_report_the_one_whose_earlier_flag_stands_first() {
+        // Rule 3's example.
+        let e = usage_of_line(&create(&["--board", B, "--epic", "7", "--plan", "p.json"]));
+        assert_eq!(message_and_field(&e), (BOARD_PLAN, Some("board")));
+        let e = usage_of_line(&create(&["--epic", "7", "--board", B, "--size", "m"]));
+        assert_eq!(message_and_field(&e), (EPIC_SIZE, Some("board")));
+        // Rule 4's example: the first pair in line order.
+        let e = usage_of_line(&create(&["--plan", "p.json", "--board", B, "--size", "m"]));
+        assert_eq!(message_and_field(&e), (BOARD_PLAN, Some("board")));
+        // --plan with --size still names plan.
+        let e = usage_of_line(&create(&["--plan", "p.json", "--size", "m", "--board", B]));
+        assert_eq!(message_and_field(&e), (TOGETHER, Some("plan")));
+    }
+
+    #[test]
+    fn a_pair_ranks_in_line_order_and_a_later_flag_with_no_value_is_that() {
+        let e = usage_of_line(&create(&["--bogus", "--board", B, "--plan", "p"]));
+        assert!(e.message.starts_with("Unknown option '--bogus'"));
+        let e = usage_of_line(&create(&["--board", B, "--plan", "p", "--bogus"]));
+        assert_eq!(e.message, BOARD_PLAN);
+        let e = usage_of_line(&create(&["--plan", "p", "--board"]));
+        assert_eq!(
+            message_and_field(&e),
+            (
+                "Option --board needs a value. Run 'agentspace lease create --help'.",
+                Some("board")
+            )
+        );
+        let e = usage_of_line(&create(&["--size", "m", "--epic="]));
+        assert_eq!(
+            message_and_field(&e),
+            (
+                "Option --epic has an empty value. Run 'agentspace lease create --help'.",
+                Some("epic")
+            )
+        );
+        let e = usage_of_line(&create(&["--turn", "T", "--turn=U"]));
+        assert_eq!(
+            message_and_field(&e),
+            ("Option --turn is given twice. Give it once.", Some("turn"))
+        );
+        // Help still wins over a pair.
+        assert_eq!(
+            run(&["lease", "create", "--board", B, "--plan", "p", "--help"]),
+            Parsed::Help(help::CREATE, Some(Sub::Create))
+        );
+    }
+
+    const NO_EPIC: &str = "Option --board needs --epic, the epic's ticket number. Run 'agentspace lease create --help'.";
+    const NO_BOARD: &str =
+        "Option --epic needs --board, the board's ID. Run 'agentspace lease create --help'.";
+    const NO_PLAN: &str =
+        "Option --turn needs a plan, from --plan or --epic. Run 'agentspace lease create --help'.";
+
+    #[test]
+    fn each_missing_partner_names_the_flag_that_is_missing_in_rule_6s_order() {
+        let cases: [(&[&str], &str, &str); 6] = [
+            (&["--board", B], NO_EPIC, "epic"),
+            (&["--epic", "7"], NO_BOARD, "board"),
+            (&["--turn", "T01"], NO_PLAN, "turn"),
+            // Rule 6's example: --board without --epic before --turn without a plan.
+            (&["--board", B, "--turn", "T01"], NO_EPIC, "epic"),
+            (&["--turn", "T01", "--epic", "7"], NO_BOARD, "board"),
+            (&["--turn", "T01", "--size", "m"], NO_PLAN, "turn"),
+        ];
+        for (rest, message, field) in cases {
+            let e = usage_of_line(&create(rest));
+            assert_eq!(e.code, ErrorCode::Usage, "{rest:?}");
+            assert_eq!(message_and_field(&e), (message, Some(field)), "{rest:?}");
+        }
+        // A missing --project comes first.
+        let e = usage_of(&["lease", "create", "--board", B]);
+        assert_eq!(e.field.as_deref(), Some("project"));
+        // A usage error of step 3 comes before any missing partner.
+        let e = usage_of_line(&create(&["--board", B, "--bogus"]));
+        assert!(e.message.starts_with("Unknown option '--bogus'"));
+    }
+
+    #[test]
+    fn board_epic_and_turn_with_their_partners_are_a_command() {
+        for rest in [
+            &["--board", B, "--epic", "7"][..],
+            &["--epic", "7", "--BOARD", B, "--turn", "T01"][..],
+            &["--plan", "p", "--turn", "T01"][..],
+            &["--turn= T01 ", "--plan", "p"][..],
+        ] {
+            let line = create(rest);
+            let refs: Vec<&str> = line.iter().map(String::as_str).collect();
+            match run(&refs) {
+                Parsed::Command(c) => assert_eq!(c.sub, Sub::Create, "{rest:?}"),
+                other => panic!("{rest:?}: {other:?}"),
+            }
+        }
+        // The turn is kept as given, never trimmed.
+        let line = create(&["--plan", "p", "--turn", " T01 "]);
+        let refs: Vec<&str> = line.iter().map(String::as_str).collect();
+        match run(&refs) {
+            Parsed::Command(c) => assert!(c.flags.contains(&("turn".to_owned(), " T01 ".into()))),
+            other => panic!("{other:?}"),
+        }
+        // They are flags of create alone.
+        let e = usage_of(&["lease", "list", "--board", B]);
+        assert!(
+            e.message
+                .starts_with("Unknown option '--board' for agentspace lease list")
         );
     }
 

@@ -47,7 +47,8 @@ Exit codes:
 "##;
 
 pub const CREATE: &str = r##"Usage: agentspace lease create --project <name> [--platform <os/arch>] [--profile <name>]
-                               [--size <size> | --plan <file>] [--ttl <duration>]
+                               [--size <size> | --plan <file> | --board <id> --epic <ticket>]
+                               [--turn <name>] [--ttl <duration>]
 
 Requests a lease for one agent of a project, and prints it as JSON.
 Check the lease's state before connecting: ready, pending or unsatisfiable.
@@ -64,14 +65,21 @@ Options:
   --plan <file>         Size the lease for a plan: a JSON file of turns, stories and
                         subagents. Picks the smallest size that holds its busiest turn.
                         Not with --size.
-  --ttl <duration>      Default 8h. From 1m to 24h, never clamped.
+  --board <id>          Read the plan from an epic on this localswim board, by its UUID.
+                        Needs --epic. Only reads the board. Not with --plan or --size.
+  --epic <ticket>       The epic's ticket number, as in 52. Its description holds the
+                        plan in one agentspace-plan block. Needs --board.
+  --turn <name>         Size the lease for this turn of the plan, not its busiest.
+                        Needs --plan or --epic.
+  --ttl <duration>      Default 8h, or with a plan, its turn's budget and half again.
+                        From 1m to 24h, never clamped.
                         Examples: 8h, 90m, 1h30m, '2 hours', PT8H.
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v1 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
+In v2 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
-So does a plan whose busiest turn no size holds.
+So does a plan whose busiest turn, or the turn --turn names, no size holds.
 "##;
 
 pub const GET: &str = r##"Usage: agentspace lease get <id>
