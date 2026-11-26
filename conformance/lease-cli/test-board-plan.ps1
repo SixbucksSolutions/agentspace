@@ -443,6 +443,9 @@ function New-BdDescription {
 }
 # The plan, a content of exactly $Bytes bytes: spaces, then the one line feed the block's last line ends with.
 function New-BdPaddedContent { param([string]$Plan, [int]$Bytes) return $Plan + (' ' * ($Bytes - $Plan.Length - 1)) + "`n" }
+# A plan document nested exactly $Levels levels: the document is level 1, and the plan's name holds $Levels - 1 nested
+# arrays, so the innermost array is level $Levels. The rest of it is a good turn, so only its nesting is at fault.
+function New-BdNestedPlan { param([Parameter(Mandatory)][int]$Levels) return '{"name":' + ('[' * ($Levels - 1)) + (']' * ($Levels - 1)) + ',"turns":[' + (New-BdOkTurn) + ']}' }
 
 # --- The home: manifest, token search, markers ---------------------------------------------------------------
 
@@ -892,7 +895,10 @@ function New-BdDescriptionCases {
   # The decided nesting case: the plan's name holds 63 nested arrays, so the document is level 1 and the innermost
   # array is level 64. A parser MUST allow at least 64 levels, and past level 9 a document is check 6, never check 4.
   & $add 'A document that nests exactly 64 levels, the plan''s name holding 63 nested arrays, is refused by the schema and not as invalid JSON' ("${f}agentspace-plan`n{`"name`":" + ('[' * 63) + (']' * 63) + ",`"turns`":[$(New-BdOkTurn)]}`n$f`n") $script:BdWhy.Schema
-  # Pin P5: the deep-nesting case is added after the architect's ruling.
+  # Pin P5 (architect, 2026-11-25, for v0.11-T04; lease-api.md, "Plan", check 4 and "Input tolerance"): nothing between 65
+  # and 999 levels is asserted, since which check refuses a document there is the build's. The two bounds that the ruling
+  # decides are asserted: 64 levels is check 6 (the case above, and the same document through --plan, in the refusals
+  # lab), and 100,000 levels is check 4 (in the refusals lab, from a board and through --plan).
   & $add 'A plan with two turns of one name' ("${f}agentspace-plan`n" + (New-BdPlan -Turns @((New-BdOkTurn 'T01'), (New-BdOkTurn 'T01'))) + "`n$f`n") 'turn ''T01'' is named twice'
   & $add 'A plan with two stories of one name in a turn' ("${f}agentspace-plan`n" + (New-BdPlan -Turns @((New-BdTurn -Name 'T01' -Stories @((New-BdStory -Name 'S1' -Subs @((New-BdSub -Name 'a'))), (New-BdStory -Name 'S1' -Subs @((New-BdSub -Name 'a'))))))) + "`n$f`n") 'story ''S1'' is named twice in turn ''T01'''
   & $add 'A plan with two subagents of one name in a story' ("${f}agentspace-plan`n" + (New-BdPlan -Turns @((New-BdTurn -Name 'T01' -Stories @((New-BdStory -Name 'S1' -Subs @((New-BdSub -Name 'a'), (New-BdSub -Name 'a'))))))) + "`n$f`n") 'subagent ''a'' is named twice in story ''S1'''
@@ -915,6 +921,10 @@ Use-BdLab -Name 'the refusals' -Body {
   $ticket = 100
   foreach ($c in $descCases) { $ticket++; $c.Ticket = [string]$ticket; $cards[[string]$ticket] = New-BdCard -Description $c.Description }
   $cards['400'] = New-BdCard -Description (New-BdDescription -Plan $script:BdPlanSmall -Nl "`r`n")
+  # The nesting of the ruling of pin P5: 100,000 levels, about 200 KB, under the 262144-byte bound of the plan.
+  $deepDeep = New-BdNestedPlan -Levels 100000
+  $deepDeepBytes = $script:BdUtf8.GetByteCount($deepDeep)
+  $cards['500'] = New-BdCard -Description (New-BdDescription -Plan $deepDeep)
   Start-BdBoard -Ctx $ctx -Key 'refusals' -Fixture (New-BdFixture -Cards $cards) | Out-Null
   Set-BdGoodCredential -Ctx $ctx
   $port = $ctx.Cur.Port
@@ -958,6 +968,21 @@ Use-BdLab -Name 'the refusals' -Body {
   foreach ($c in $descCases) {
     Test-BdRefusal -Ctx $ctx -Name "lease-api.md#the-plan-block: $($c.Name), is invalid_value for epic with the spec's reason, after one GET" -Arguments (Get-BdArgs -Board $bd -Epic $c.Ticket) -Code invalid_value -Field epic -Message (Get-BdNoPlan $c.Ticket $c.Why) -Log @((Get-BdTicketLine -Board $bd -Ticket $c.Ticket)) -NeedsToken
   }
+
+  # The nesting of pin P5, from a board and through --plan. 100,000 levels is check 4, within a bound of time, with no
+  # lease recorded; 64 levels is check 6 through --plan as it is from a board above. Nothing between 65 and 999 levels
+  # is asserted. A plan given through --plan reads no board, so the stand-in's log stays empty.
+  $deepBytesProblems = New-BdProblems
+  if ($deepDeepBytes -le 150000 -or $deepDeepBytes -ge 262144) { $deepBytesProblems.Add("The document of 100,000 levels is $deepDeepBytes bytes, not between 150000 and 262143") }
+  Complete-BdCheck -Name 'lease-api.md#the-plan-block: The document nested 100,000 levels is under the 262144-byte bound, so it is refused for its nesting and never for its size' -Problems $deepBytesProblems
+  Test-BdRefusal -Ctx $ctx -Name 'lease-api.md#the-plan-block: A document that nests 100,000 levels, the plan''s name holding 99,999 nested arrays, is invalid_value for epic as not valid JSON, after one GET, within 60 seconds' -Arguments (Get-BdArgs -Board $bd -Epic '500') -Code invalid_value -Field epic -Message (Get-BdNoPlan '500' $script:BdWhy.Json) -Log @((Get-BdTicketLine -Board $bd -Ticket '500')) -NeedsToken -TimeoutSeconds 90 -MaxSeconds 60
+  $nestDir = Join-Path $lab.Root 'plans'
+  Write-BdText -Lab $lab -Path (Join-Path $nestDir 'deep100000.json') -Text $deepDeep
+  Write-BdText -Lab $lab -Path (Join-Path $nestDir 'deep64.json') -Text (New-BdNestedPlan -Levels 64)
+  $deepPath = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $nestDir 'deep100000.json')
+  $deep64Path = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $nestDir 'deep64.json')
+  Test-BdRefusal -Ctx $ctx -Name 'lease-api.md#plan: A plan file that nests 100,000 levels is invalid_value for plan as not valid JSON, with no request, within 60 seconds' -Arguments (Get-BdArgs -More @('--plan', $deepPath)) -Code invalid_value -Field plan -Message "Plan '$(Format-BdQuoted $deepPath)' is not a valid plan: $($script:BdWhy.Json)." -TimeoutSeconds 90 -MaxSeconds 60
+  Test-BdRefusal -Ctx $ctx -Name 'lease-api.md#plan: A plan file that nests exactly 64 levels is invalid_value for plan with the schema''s reason and not as invalid JSON, with no request' -Arguments (Get-BdArgs -More @('--plan', $deep64Path)) -Code invalid_value -Field plan -Message "Plan '$(Format-BdQuoted $deep64Path)' is not a valid plan: $($script:BdWhy.Schema)." -TimeoutSeconds 90 -MaxSeconds 60
 
   # Item 1 and item 7, the forms and the order of the checks: refused before any request, with the stand-in listening.
   $boardMsg = { param($v) "Board '$(Format-BdQuoted $v)' is not a board ID. Give the board's UUID, as in '0a1b2c3d-...'." }
