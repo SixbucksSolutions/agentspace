@@ -927,10 +927,12 @@ conformance file MUST NOT depend on a process tool.
   writers do. A reason that quotes only spec text, a constant or a count needs no mask.
 - **A text that is cut to a length MUST be masked before it is cut**, so that a cut never leaves part of a
   name unmasked (`Format-CcRun`, and each formatter below).
-- **A file's own formatter MUST call the shared mask, never mask on its own**: `ConvertTo-HpMasked`
-  (`host-provision-common.ps1`), `Format-PeText`, `Format-VcText`, `Format-VkText`, `Format-TtText`,
-  `ConvertTo-BdRedacted`, the keeper guard's `Format-Masked` and `Get-CeMaskedError` keep their names and
-  call it. A new check MUST NOT add a mask of its own.
+- **A file's own formatter MUST call the shared mask**, and MAY hide more around it (a home's root, a
+  token, any other drive path as `<path>`): `ConvertTo-HpMasked` (`host-provision-common.ps1`),
+  `Format-PeText`, `Format-VcText`, `Format-VkText`, `Format-TtText`, `ConvertTo-BdRedacted`,
+  `Format-QuotedSpec` (`host-commands-common.ps1`), `Get-GdMasked` (`host-guard-common.ps1`), the keeper
+  guard's `Format-Masked` and `Get-CeMaskedError` keep their names and call it. A new check MUST NOT add
+  a mask of its own in its place.
 
 ### The program under test is untrusted
 

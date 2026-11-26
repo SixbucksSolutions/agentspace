@@ -822,7 +822,8 @@ function Test-HostCase {
   }
 }
 
-# The spec's line as a failure reason quotes it: the temp, profile and other drive paths in it masked,
+# The spec's line as a failure reason quotes it: the temp, profile and other drive paths in it masked, and the
+# suite's mask (conformance\mask-common.ps1) applied before the drive-path step,
 # since an expected line built from a throwaway home's path holds the Windows user name (AGENTS.md; the
 # architect, 2026-11-22, for v0.08-T04, fixing T03's $leasesMissing in test-unmet-host-commands-all.ps1).
 function Format-QuotedSpec([string]$Line) {
@@ -830,6 +831,7 @@ function Format-QuotedSpec([string]$Line) {
   foreach ($pair in @(@($env:TEMP, '<temp>'), @($env:USERPROFILE, '<profile>'))) {
     if ($pair[0]) { $m = $m -ireplace [regex]::Escape($pair[0]), $pair[1] }
   }
+  $m = ConvertTo-ConformanceMasked $m
   $m -replace '[A-Za-z]:\\[^\s''"]*', '<path>'
 }
 

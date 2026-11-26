@@ -211,8 +211,8 @@ function Get-GdProvisionLockPath([string]$Project) { Join-Path $script:Fx.Agents
 # Masks a wanted line, or a pattern for one, before a failure quotes it. A wanted line for a lock, the host registry or
 # the lease state file holds the throwaway home's path, which lies under the profile and so holds the Windows user
 # name (AGENTS.md, "A live run on Terry's real setup MUST mask what it reads before it prints it"). The home's root, the
-# temp folder and the profile are replaced literally, in their regex-escaped and their plain forms, and any path that
-# remains is replaced whole.
+# temp folder and the profile are replaced literally, in their regex-escaped and their plain forms, the suite's mask
+# (conformance\mask-common.ps1) is applied, and any path that remains is replaced whole.
 function Get-GdMasked([string]$Text) {
   $t = $Text
   $roots = [System.Collections.Generic.List[object]]::new()
@@ -222,6 +222,7 @@ function Get-GdMasked([string]$Text) {
   foreach ($r in $roots) {
     $t = $t.Replace([regex]::Escape($r[0]), $r[1]).Replace([string]$r[0], $r[1])
   }
+  $t = ConvertTo-ConformanceMasked $t
   [regex]::Replace($t, '[A-Za-z]:[\\/][^\s''"]*', '<path>')
 }
 
