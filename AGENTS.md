@@ -17,7 +17,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   stands alone**, and its "Start here" and "The scope ahead: v0.12" say what comes next. v0.12
   MUST NOT be laid out until Terry says so.
 - **v0.12's design prep:** D91 to D100 in [docs/decisions.md](docs/decisions.md), settled
-  2026-11-26, with Terry's calls Q19 to Q23 put to him the same day.
+  2026-11-26. Terry took the architect's recommendation on all five of his calls, Q19 to Q23, the
+  same day ("Take all five"): no C class in v0.12, the hours and prices, agentspace's two new
+  platforms, Windows licensing, and sign-ins as files.
 - **Where v0.11 began:** v0.11's design is D83 to D88 and its layout D89 in
   [docs/decisions.md](docs/decisions.md), Terry having taken the architect's recommendation on Q17
   and Q18; its plan is in #0052's plan block and in [docs/plans/v0.11.json](docs/plans/v0.11.json).
