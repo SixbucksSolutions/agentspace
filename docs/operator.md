@@ -1944,9 +1944,9 @@ Windows spec's choice it rests on (N3 to N23; architect, 2026-11-26, for v0.12-T
 | **Its Session Manager document**, for `up`'s patch check, `sync`'s patch wait and the guard's horizon (architect, 2026-11-26, for v0.12-T01, pin P42) | `AWS-RunShellScript`, which runs as root ([Calls by command](#calls-by-command)) | The same | `AWS-RunPowerShellScript`, which runs its commands under Windows PowerShell 5.1 as SYSTEM (D96) |
 | **Its login user**: the operator alias's `User` and the operator certificate's principal, from the host's platform and never stored in the registry or the alias (D95; architect, 2026-11-26, for v0.12-T01, pin P17) | `ubuntu` | `ubuntu` | `agent` (D95) |
 | **Its remote command form**: how every remote command of `sync`, `bootstrap`, `grow` and the push reaches the host's login shell (N4) | The operator's own POSIX shell text, run by `bash` ([What the laptop sends](#what-the-laptop-sends)) | The same | `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b64>`, the one form, whatever shell `DefaultShell` names at that moment ([The remote command on Windows](#the-remote-command-on-windows)). A command that would pass 8,191 characters is never sent: its script goes by `scp` and runs with `-File` |
-| **Its patch check's question**, the command `up`'s wait and `sync`'s patch wait send (N6) | The question of [What up waits for](#what-up-waits-for), answered from `/run/agentspace/patched` and `agentspace-patch.service` | The same | A command that runs `C:\ProgramData\agentspace\agentspace-patch-check.ps1` under PowerShell 7 and prints its one word, answered from the patch task and its markers ([The patch run and its restart rule](#the-patch-run-and-its-restart-rule)). The answers and how they are read are unchanged |
+| **Its patch check's question**, the command `up`'s wait and `sync`'s patch wait send (N6) | The question of [What up waits for](#what-up-waits-for), answered from `/run/agentspace/patched` and `agentspace-patch.service` | The same | A command that runs `C:\ProgramData\agentspace\agentspace-patch-check.ps1` under PowerShell 7, named by its full path, `C:\Program Files\PowerShell\7\pwsh.exe`, never `pwsh` by name (architect, 2026-11-26, for v0.12-T02, pin P18), and prints its one word, answered from the patch task and its markers ([The patch run and its restart rule](#the-patch-run-and-its-restart-rule)). It is sent to Run Command as a JSON value of `--parameters`, `{"commands":["<command>"]}`, as the horizon command is (pin P17), since the full path's quotes are read by the shorthand syntax. The answers and how they are read are unchanged |
 | **Its patch messages**: the phase message of a `pending` answer, and the command named in the deadline's and a failed run's messages (N19) | `Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...`; `journalctl -u agentspace-patch` | The same | `Patching Windows (Windows Update, restart if an update needs one)...`; `cat C:/ProgramData/agentspace/patch.log`, which both Git Bash and Windows PowerShell read |
-| **Its horizon command**, the guard's send (N7) | Writes `/run/agentspace/lease-horizon` ([guard](#guard), step 7) | The same | Writes `C:\ProgramData\agentspace\lease-horizon` as the digits and an LF, or the digits alone, never with a CR, with `[IO.File]::WriteAllText` and the exact bytes (architect, 2026-11-26, for v0.12-T02, pin P12; [The horizon on a Windows host](#the-horizon-on-a-windows-host)). Its failure is the guard's failed send, as on Linux |
+| **Its horizon command**, the guard's send (N7) | Writes `/run/agentspace/lease-horizon` ([guard](#guard), step 7) | The same | Writes `C:\ProgramData\agentspace\lease-horizon` as the digits and an LF, or the digits alone, never with a CR, with `[IO.File]::WriteAllText` and the exact bytes (architect, 2026-11-26, for v0.12-T02, pin P12; [The horizon on a Windows host](#the-horizon-on-a-windows-host)). It is sent to Run Command as a JSON value of `--parameters`, `{"commands":["<command>"]}`, never the shorthand `commands=`, so its brackets, commas and quotes reach the host whole (architect, 2026-11-26, for v0.12-T02, pin P17). Its failure is the guard's failed send, as on Linux |
 | **Its online grow**, `grow`'s remote step (N4) | Grows the root partition and filesystem ([grow](#grow), step 3) | The same | Extends the `C:` partition, and its NTFS filesystem with it, to the largest size it supports ([grow on a Windows host](#grow-on-a-windows-host)) |
 | **Its push's zone and remote half** (N17, N23) | An IANA name, converted from the laptop's zone ([The time zone](#the-time-zone)); the half of [What the box does](#what-the-box-does) in a POSIX shell | The same | The laptop's Windows zone ID itself, checked by its own pattern and never converted (D96); the same half under Windows PowerShell 5.1, the zone set with `Set-TimeZone` ([The token push to a Windows host](#the-token-push-to-a-windows-host)) |
 
@@ -5800,7 +5800,7 @@ names the Linux toolchain, and this section is where its Windows meaning is writ
 
 **How its choices are ruled.** Each choice this section makes that no decision settled is labelled
 N1 to N23 and cites the pin that ruled it (architect, 2026-11-26, for v0.12-T02): N1 and N2 pin
-P15, N7 pin P16 with pin P12's line ending, and every other pin P16. **Eight facts are unmeasured
+P15, N7 pin P16 with pin P12's line ending, and every other pin P16. **Nine facts are unmeasured
 and are T05-S02's to measure** ([What T05-S02
 measures](#what-t05-s02-measures)), among them the desktop app's session with Git Bash, a patch
 run's time on an image that is not current, whether an open SSH session survives a restart of sshd,
@@ -5933,7 +5933,8 @@ no first-boot file** (#0260), pin P9's `first-boot.ps1` being withdrawn by pin P
    cryptographic random source, held in memory alone and never written or printed, set never to
    expire, and a member of Administrators (D95). **The password MUST hold at least one uppercase
    letter, one lowercase letter, one digit and one symbol**, so it meets Windows' default rule on
-   a password's complexity whatever the random draw gave. A user `agent` that already exists is left as it
+   a password's complexity whatever the random draw gave, and is still written nowhere and never
+   read (architect, 2026-11-26, for v0.12-T02, pin P18). A user `agent` that already exists is left as it
    is but made a member.
 3. **Make OpenSSH Server ready, by one of two paths** (architect, 2026-11-26, for v0.12-T02,
    spike ruling 1). **When the `OpenSSH.Server` capability is installed**, as on the spike's image,
@@ -5986,10 +5987,8 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b
   two spaces at its end when needed, so its byte count is a multiple of 3, and base64 then needs no
   padding. So the line holds letters, digits, spaces, `-`, `+` and `/` alone, and meets every rule
   a remote command is under: no `%`, no double quote, no control character and no trailing
-  backslash ([What the laptop sends](#what-the-laptop-sends)), and no comma, bracket, brace or
-  equals sign, which the AWS CLI's shorthand syntax would read ([What up waits
-  for](#what-up-waits-for)). **The script's text is the operator's own** (D34); this section gives
-  what it MUST do.
+  backslash ([What the laptop sends](#what-the-laptop-sends)). **The script's text is the
+  operator's own** (D34); this section gives what it MUST do.
 - **The whole line MUST be at most 8,191 characters**, cmd.exe's limit, so it runs whatever shell
   `DefaultShell` names; a script that would make it longer is copied with `scp` and run with
   `-File` instead. **Git Bash, Windows PowerShell 5.1 and cmd.exe each read the line the same way**,
@@ -6070,7 +6069,10 @@ still installs it on a host that lacks it. The install, in this order:
    installs PowerShell 7's newest stable release, its x64 MSI from PowerShell's GitHub releases,
    quietly, for every user and onto the system `PATH`, prints
    `Installed: PowerShell 7 (<version>)`, then runs itself again under PowerShell 7 with the same
-   arguments, and exits with that run's status. **Already under PowerShell 7, or with it present**,
+   arguments, and exits with that run's status. **The re-run MUST start PowerShell 7 by its full
+   path, `C:\Program Files\PowerShell\7\pwsh.exe`, never `pwsh` by name** (architect, 2026-11-26,
+   for v0.12-T02, pin P18): sshd, a service started before the install, keeps its old `PATH` for
+   the session that runs it. **Already under PowerShell 7, or with it present**,
    it goes on under PowerShell 7. A download or install that fails exits 1 with
    `install.ps1: PowerShell 7 could not be installed: <error>` on stderr.
 2. **Fails at once if `agentspace_ca.pub` is missing or empty** beside itself, with
@@ -6138,11 +6140,11 @@ PowerShell 7 alone; those two, and the first step of `install.ps1`, run under Wi
 | `localswim` | `C:\ProgramData\agentspace\bin\localswim` | By an agent, as `agent`, from Git Bash | A bash script that runs `localswim.ps1` (N13) |
 | `sshd_config.agentspace` | Its lines, at the top of `C:\ProgramData\ssh\sshd_config` | Read by the install and copied by the template | The agentspace lines of sshd's settings (D7, D96) |
 | `idle.conf` | `C:\ProgramData\agentspace\idle.conf` | Read by the idle check | The idle limits and the horizon's grace, as Linux's: `IDLE_MINUTES=60`, `BUSY_CPU_SECONDS=6`, `HORIZON_GRACE_MINUTES=15` (N14) |
-| `tests\test-agentspace-idle-check.ps1`, `tests\test-agentspace-install.ps1`, `tests\test-agentspace-patch.ps1` | Not installed | On the laptop, under PowerShell 7, in a conformance-harness home (D96) | [The tests' seams](#the-tests-seams) |
+| `tests\test-agentspace-idle-check.ps1`, `tests\test-agentspace-install.ps1`, `tests\test-agentspace-patch.ps1`, `tests\test-agentspace-boot.ps1`, `tests\test-agentspace-patch-check.ps1` (the last two architect, 2026-11-26, for v0.12-T02, pin P17) | Not installed | On the laptop, under PowerShell 7, in a conformance-harness home (D96) | [The tests' seams](#the-tests-seams) |
 
 **Three files are added to the dev lead's draft list, each with its reason** (N6, N13, N14):
-`agentspace-patch-check.ps1`, since Run Command's command MUST hold no brace and an answer needs a
-branch; `localswim`, since an agent's Bash tool on Windows runs Git Bash, which cannot run a
+`agentspace-patch-check.ps1`, since an answer needs a branch, which a file on the host holds and
+its test runs through its seam (architect, 2026-11-26, for v0.12-T02, pin P17); `localswim`, since an agent's Bash tool on Windows runs Git Bash, which cannot run a
 `.ps1` file by its name; and `idle.conf`, which Linux has in `box/system`. **`localswim` MUST hold
 LF line endings alone**, which bash needs; every other file's line endings are free, since the
 install writes `sshd_config`'s lines with its own.
@@ -6178,7 +6180,9 @@ install writes `sshd_config`'s lines with its own.
 as SYSTEM with the highest privileges, each starting
 `C:\Program Files\PowerShell\7\pwsh.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script>`,
 and each set to start a second instance of nothing while one runs (N21; architect, 2026-11-26,
-for v0.12-T02, pin P16):
+for v0.12-T02, pin P16). **Each task MUST name PowerShell 7 by that full path, never `pwsh` by
+name** (architect, 2026-11-26, for v0.12-T02, pin P18), since a service started before the install
+keeps its old `PATH`:
 
 | Task | Trigger | Its script | Time limit |
 |---|---|---|---|
@@ -6204,7 +6208,8 @@ into a run under way.
 
 **A guard send that lands in the moments before step 1 is removed with the rest**, and the next
 guard run, within 5 minutes, sends it again; the host then holds no horizon in between, which keeps
-D11's rule alone, as a Linux host does after a boot (D57).
+D11's rule alone, as a Linux host does after a boot (D57). **Its seam for the tests is [The tests'
+seams](#the-tests-seams)'** (architect, 2026-11-26, for v0.12-T02, pin P17).
 
 ### The patch run and its restart rule
 
@@ -6273,14 +6278,20 @@ waits for](#what-up-waits-for), from the task and the markers, in this order:
 - **`pending`** when the patch task is registered and enabled;
 - **`unknown`** otherwise.
 
-**The command Run Command sends runs the check under PowerShell 7 by name**, as
-`pwsh -NoProfile -NonInteractive -File C:\ProgramData\agentspace\agentspace-patch-check.ps1`, which
-holds no character the shorthand syntax reads. **Before the first `sync`, with no PowerShell 7 or
-no check, it prints nothing**, and that empty answer is read by `up` as ready, as it reads
+**The command Run Command sends runs the check under PowerShell 7 by its full path, never `pwsh`
+by name** (architect, 2026-11-26, for v0.12-T02, pin P18), as
+`& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -NonInteractive -File C:\ProgramData\agentspace\agentspace-patch-check.ps1`
+under Run Command's Windows PowerShell 5.1: the Session Manager agent, a service started before a
+new host's first install, keeps the `PATH` it started with, so `pwsh` by name would not be found
+and every answer of `sync`'s first patch wait would be empty. **It is sent as a JSON value of
+`--parameters`, `{"commands":["<command>"]}`, with JSON's escapes, never the shorthand
+`commands=`**, since its quotes are read by the shorthand syntax, as the horizon command is sent
+(pin P17). **Before the first `sync`, with no PowerShell 7 or no check, it prints nothing**, and that empty answer is read by `up` as ready, as it reads
 `unknown` ([Q6](#open-questions)); `sync`'s patch wait never meets it, since its install has just
 put both in place. **The empty answer reads as ready because a new host's provisioning run
 patches it in its own bootstrap and boot task, and a ready read never skips a patch run** (pin
-P16): it only ends `up`'s wait. **How long a patch run takes on an image that is not current is unmeasured**:
+P16): it only ends `up`'s wait. **Its seam for the tests is [The tests'
+seams](#the-tests-seams)'** (pin P17). **How long a patch run takes on an image that is not current is unmeasured**:
 the spike's image was current, and E0.12-T05-S02 measures it (the spike's finding on Question 7);
 a run longer than the 20-minute limit goes back to the architect with that measurement.
 
@@ -6356,12 +6367,14 @@ for v0.12-T02, pins P16 and P12):
 4. Exit 0 only when all three succeeded, and stop with a non-zero exit at the first that fails.
 
 **The command MUST hold the horizon's digits as one word of its own**, as Linux's does, so a check
-can find the value in it. **`[IO.File]::WriteAllText` takes brackets, a comma and quotes, which the
-AWS CLI's shorthand syntax for `--parameters` reads, so the command MUST be passed in a form that
-is not split**, as [guard](#guard)'s step 7 allows a Linux host's command. Its text is the
-operator's own (D34), and it is not the encoded form: Run Command already runs it under Windows
-PowerShell 5.1, and the digits MUST stay readable in it. **The bytes the command writes are shown
-by `agentspace-windows`' tests in T03** (pin P12). **A send to a host whose Session Manager agent
+can find the value in it. **The command MUST go to Run Command as a JSON value of `--parameters`,
+`{"commands":["<command>"]}`, one argument with JSON's escapes, never the shorthand
+`commands=`**, so the brackets, commas and quotes that `[IO.File]::WriteAllText` takes reach the
+host whole (architect, 2026-11-26, for v0.12-T02, pin P17); it is the form not split that
+[guard](#guard)'s step 7 allows a Linux host's command. Its text is the operator's own (D34), and it is not the encoded form: Run Command already runs it under Windows
+PowerShell 5.1, and the digits MUST stay readable in it. **The JSON the guard passes is shown by
+`agentspace-guard`'s tests in T03, and the bytes the command writes by `agentspace-windows`' tests
+in T03** (pins P12 and P17). **A send to a host whose Session Manager agent
 is not online fails and is retried at the next run**, as on Linux.
 
 ### The tools
@@ -6421,8 +6434,10 @@ since it runs in whichever PowerShell an agent calls it from. Each run (N13; arc
    value.
 
 **`localswim`, beside it, is a bash script for Git Bash** that sets `MSYS2_ARG_CONV_EXCL` to `*`,
-so Git Bash converts no argument that looks like a path, and runs
-`pwsh -NoProfile -NonInteractive -File C:/ProgramData/agentspace/bin/localswim.ps1` with its own
+so Git Bash converts no argument that looks like a path, and runs PowerShell 7 by its full path,
+`C:\Program Files\PowerShell\7\pwsh.exe`, quoted as bash needs, never `pwsh` by name (architect,
+2026-11-26, for v0.12-T02, pin P18), with
+`-NoProfile -NonInteractive -File C:/ProgramData/agentspace/bin/localswim.ps1` and its own
 arguments, exiting with its status. **The localswim CLI is built on the laptop for
 `windows/amd64`** (D94, D96) by `sync`'s step 7.
 
@@ -6490,7 +6505,9 @@ ClientAliveCountMax 5
 - **When the host's sshd knows `PerSourcePenalties`**, which `sshd -T` shows by printing a
   `persourcepenaltyexemptlist` line, the install writes one more line before `# agentspace end`:
   `PerSourcePenaltyExemptList 127.0.0.1,::1` ([What a Windows host is](#what-a-windows-host-is)).
-  OpenSSH 9.5p2 does not know it, so the spike's host would get none.
+  OpenSSH 9.5p2 does not know it, so the spike's host would get none. Under the tests' seam the
+  probe reads the stand-in program's output in place of `sshd -T`'s ([The tests'
+  seams](#the-tests-seams); architect, 2026-11-26, for v0.12-T02, pin P17).
 
 **The install's edit** (step 9 of [What the install does](#what-the-install-does); #0193's twin,
 tested from this page, D96):
@@ -6576,14 +6593,25 @@ home, never on a host** (D96), and each is written from this page, not from the 
 and #0193 require for Linux. **A test MUST NOT power off, restart, change the time zone of, or
 restart sshd on the laptop**, so each script that can do one of these has a seam that replaces
 every probe of the system and every such act at once, and **refuses to run with only part of its
-seam set** (N16; architect, 2026-11-26, for v0.12-T02, pin P16). No task, script or file the install puts on a host sets
-any of these variables, and a host runs every script with all of them unset.
+seam set** (N16; architect, 2026-11-26, for v0.12-T02, pin P16). **The boot task and the patch
+check have a seam each, and neither is left to the live check alone** (architect, 2026-11-26, for
+v0.12-T02, pin P17): each takes its state folders from the variables of the groups below, and under
+its seam touches nothing outside them. No task, script or file the install puts on a host sets
+any of these variables, and a host runs every script with all of them unset. **A `box/windows`
+test seam MUST NOT be named `*_CMD`** (architect, 2026-11-26, for v0.12-T02, pin P18): the
+keeper's test
+`guard::tests::the_known_seams_are_every_agentspace_cmd_name_the_specs_give`
+(`crates/agentspace-keeper/src/guard.rs`) reads every `docs/*.md` and requires each
+`AGENTSPACE_*_CMD` name in them to be a seam the keeper knows, and the keeper never starts a
+`box/windows` seam.
 
 | Script | Variables, set together or not at all | What they replace |
 |---|---|---|
 | `agentspace-idle-check.ps1` | `AGENTSPACE_IDLE_STATE`, `AGENTSPACE_IDLE_CONF`, `AGENTSPACE_IDLE_FACTS` | The state folder, which holds `last-active`, `busy` and `lease-horizon`; the settings file; and every probe: a JSON file holding `boot`, this boot's start as Unix seconds, `cpu_busy_ticks`, the busy counter in 100-nanosecond units, `ssh_connections`, the count of established connections on port 22, `workers`, an array with one object per `ssm-session-worker` holding `sshd_connection`, a boolean, and `children`, an array of its children's process names, and `patch_running`, a boolean. **In place of `shutdown.exe` it writes `poweroff` in the state folder**: one line, the time as Unix seconds, and LF |
 | `agentspace-patch.ps1` | `AGENTSPACE_PATCH_STATE`, `AGENTSPACE_PATCH_FACTS` | The state folder, which holds the markers, `last-patch-reboot` and `patch.log`; and Windows Update and the session probes: a JSON file holding `boot`, `result` (`ok` or `failed`), `restart_needed`, a boolean, `logins_since_boot`, a count, and `workers`, a count. **It calls no Windows Update API and starts no tools, and in place of `shutdown.exe /r` it writes `restart` in the state folder**, in `poweroff`'s form |
-| `install.ps1` | `AGENTSPACE_INSTALL_ONLY` set to `sshd-config`, `AGENTSPACE_SSHD_CONFIG`, `AGENTSPACE_SSHD_TEST_CMD` | Steps 1 to 8 and 10, which it skips, running step 9's edit alone; the `sshd_config` file, beside which the CA file is `agentspace_ca.pub`; and `sshd.exe -t -f <file>`, by the program named, given the temporary file's full path as its one argument, whose exit 0 means valid. **In place of restarting sshd and of step 7's check, it writes `sshd-restarted` beside the file**, in `poweroff`'s form, and it exits with step 9's status and prints its lines |
+| `install.ps1` | `AGENTSPACE_INSTALL_ONLY` set to `sshd-config`, `AGENTSPACE_SSHD_CONFIG`, `AGENTSPACE_SSHD_TEST_PROGRAM` (architect, 2026-11-26, for v0.12-T02, pin P18) | Steps 1 to 8 and 10, which it skips, running step 9's edit alone; the `sshd_config` file, beside which the CA file is `agentspace_ca.pub`; `sshd.exe -t -f <file>`, by the program named, given the temporary file's full path as its one argument, whose exit 0 means valid; and **`sshd -T` for the `PerSourcePenalties` probe, by the same program given the one argument `-T`, whose stdout stands for `sshd -T`'s**: the probe reads the keyword from it, a `persourcepenaltyexemptlist` line meaning the host's sshd knows it (architect, 2026-11-26, for v0.12-T02, pin P17). **In place of restarting sshd and of step 7's check, it writes `sshd-restarted` beside the file**, in `poweroff`'s form, and it exits with step 9's status and prints its lines |
+| `agentspace-boot.ps1` | `AGENTSPACE_IDLE_STATE`, `AGENTSPACE_PATCH_STATE` (pin P17) | The state folders: `lease-horizon`, `last-active` and `busy` are removed from the first, and `patched` and `patch-failed` from the second, where `last-patch-reboot` is kept and `boot.log` is written. **In place of growing `C:` and of starting the patch task, it writes `partition-grown` and `patch-started` in the second folder**, each in `poweroff`'s form, and it exits 0 |
+| `agentspace-patch-check.ps1` | `AGENTSPACE_PATCH_STATE`, `AGENTSPACE_PATCH_FACTS` (pin P17) | The state folder, which holds `patched` and `patch-failed`; and the patch task and this boot's start: a JSON file holding `boot`, this boot's start as Unix seconds, `task_state`, one of `running`, `queued`, `ready`, `disabled` and `missing`, the last for a task not registered, `task_last_run`, the task's last run's start as Unix seconds or `null`, and `task_last_result`, its last result as a number or `null`. A marker counts as written this boot when its last write is at or after `boot`. It prints its one word as on a host |
 
 - **A seam set in part** makes the script write
   `<script>: <variables> are set together or not at all; nothing was done` on stderr, `<script>`
@@ -6595,7 +6623,9 @@ any of these variables, and a host runs every script with all of them unset.
   relative to the time of its run.
 - **Its cases**, D96's list: the idle check's rules, D78's worker rules and the horizon's parse,
   #0192's four cases with their Windows twins, the first of them a horizon whose line ends CR LF,
-  which is no horizon (pin P12); the `sshd_config` edit, #0193's twin; and the restart rule.
+  which is no horizon (pin P12); the `sshd_config` edit, #0193's twin, with the
+  `PerSourcePenaltyExemptList` line both ways, the keyword in the probe's output and not (pin P17);
+  the restart rule; and the boot task's removals and the patch check's answers (pin P17).
 
 ### Which checks show it, on Windows
 
@@ -6613,12 +6643,14 @@ operator sends and how it reads the answers; only the live check shows a Windows
 | The operator's certificate for a Windows host: principal `agent`, key ID `operator-<project>.windows-amd64`; the alias file's `User agent` | Conformance case, E0.12-T04-S02, with a throwaway CA |
 | `sync`'s nine rows on `windows/amd64`: each program's arguments, the staging paths, the build's `GOOS=windows`, `GOARCH=amd64` and `localswim-windows-amd64.exe`, and every message as Linux's | Conformance case, E0.12-T04-S02, with stand-in `ssh`, `scp` and `go`; the build's arguments by `agentspace-sync`'s crate test |
 | Every remote command to a Windows host in the encoded form: decoding to UTF-16LE, no `=`, at most 8,191 characters; the zone inside it and not on the line | Crate test of `agentspace-windows`, E0.12-T03-S06; the arguments by the conformance case |
-| The patch check and the horizon sent with `AWS-RunPowerShellScript`; the horizon's digits as one word; no comma, bracket, brace, equals sign or quote in the patch check's command, and the horizon's command passed in a form that is not split; the Windows phase message and `cat C:/ProgramData/agentspace/patch.log` in the deadline's and failure's messages | Conformance case, E0.12-T04-S02 |
+| The patch check and the horizon sent with `AWS-RunPowerShellScript`, each as a JSON value of `--parameters`, `{"commands":["<command>"]}`, never the shorthand `commands=` (pins P17 and P18); the horizon's digits as one word; the patch check's command naming `C:\Program Files\PowerShell\7\pwsh.exe` (pin P18); the Windows phase message and `cat C:/ProgramData/agentspace/patch.log` in the deadline's and failure's messages | Conformance case, E0.12-T04-S02; the guard's JSON by `agentspace-guard`'s crate test, E0.12-T03 (pin P17) |
 | The horizon's command writing the digits then one LF, or the digits alone, never a CR, with `[IO.File]::WriteAllText` (pin P12) | Crate test of `agentspace-windows`, E0.12-T03-S06, which shows the bytes (pin P12); the file on a host, live, E0.12-T05-S02 |
+| The boot task removing this boot's state files and keeping `last-patch-reboot`, in place of growing `C:` and starting the patch task writing their markers, and its seam set in part refused (pin P17) | `box/windows` test, E0.12-T03-S07; the real grow and the task's start at a real boot, live, E0.12-T05-S02 |
+| The patch check's four answers from the task and this boot's markers, a marker from before the boot not counted, and its seam set in part refused (pin P17) | `box/windows` test, E0.12-T03-S07; the check run by Run Command on a host, live, E0.12-T05-S02 |
 | The push to a Windows host: the Windows zone ID sent unconverted, `AGENTSPACE_TIMEZONE` taking its place, a zone outside the pattern sent empty, the stamp over the ID | Conformance case, E0.12-T04-S02 |
 | `bootstrap` on a Windows host: its folder, its `scp` then its `ssh`, its failure on either | Conformance case, E0.12-T04-S02 |
 | The idle check's rules, D78's worker rules with `conhost.exe` passed over, the horizon's parse and its twins, a file older than the boot ignored, and a seam set in part refused | `box/windows` test, E0.12-T03-S07 |
-| The `sshd_config` edit: the lines at the top, a block anywhere replaced, every other line byte for byte, no write and no restart when unchanged, a begin line with no end refused with the file unchanged, a failed test keeping both files | `box/windows` test, E0.12-T03-S07 |
+| The `sshd_config` edit: the lines at the top, a block anywhere replaced, every other line byte for byte, no write and no restart when unchanged, a begin line with no end refused with the file unchanged, a failed test keeping both files, and the `PerSourcePenaltyExemptList` line written when the probe's output holds the keyword and not otherwise (pin P17) | `box/windows` test, E0.12-T03-S07 |
 | The restart rule: no restart after a login this boot, with a worker running, or within 15 minutes of the last; a restart otherwise, with no marker; `patch-failed` on a failed result | `box/windows` test, E0.12-T03-S07 |
 | **`windows/amd64`'s live check**: the lease `pending`, then its run making the host from the image the parameter named, and the lease `ready`; the first boot's log; `sync`'s `Installed:` lines; the bootstrap's tools each found by `command -v` in Git Bash over the lease's alias; `localswim` answering from Git Bash; `DefaultShell` Git Bash's; Terry's sign-ins as `agent` (D52); a desktop-app session working a card on the board; the release letting the guard stop the host within D56's bound | Live check, E0.12-T05-S02 (D100), with instance, volume and image IDs and the host's computer name masked in its record |
 
@@ -6639,6 +6671,9 @@ operator sends and how it reads the answers; only the live check shows a Windows
 - **The idle check's lines with a lease held and the host idle**, against 6 CPU-seconds per check.
 - **No restart that Windows Update schedules by itself**, by the System event log over the
   session.
+- **`sync`'s patch wait on a new host's first boot answers within its wait, not by its 30-minute
+  limit** (architect, 2026-11-26, for v0.12-T02, pin P18), the patch check naming PowerShell 7 by
+  its full path.
 
 ## The AWS side
 
@@ -6758,7 +6793,9 @@ its platform's name. **The `ssm send-command` document below, `AWS-RunShellScrip
 platform's Session Manager document** ([The platform seam](#the-platform-seam); architect,
 2026-11-26, for v0.12-T01, pin P42),
 `AWS-RunShellScript` on both Linux platforms and `AWS-RunPowerShellScript` on `windows/amd64`,
-whose `--parameters commands=<command>` is under the same rule ([Windows hosts](#windows-hosts)).
+where the patch check's and the guard's horizon's `--parameters` is a JSON value,
+`{"commands":["<command>"]}`, in place of `commands=<command>` ([Windows hosts](#windows-hosts);
+architect, 2026-11-26, for v0.12-T02, pins P17 and P18).
 
 | Command | AWS CLI calls, in order |
 |---|---|
