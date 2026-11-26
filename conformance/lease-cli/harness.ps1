@@ -42,6 +42,10 @@ $script:ConformanceSchemas = Join-Path $script:ConformanceRepo 'schemas'
 $script:ConformanceDefaultsFile = Join-Path $script:ConformanceRepo 'conformance\defaults.ps1'
 $global:ConformanceCounts = @{ PASS = 0; FAIL = 0; SKIPPED = 0 }
 
+# The suite's one mask, ConvertTo-ConformanceMasked: every reason that quotes captured text MUST pass it
+# through the mask first (conformance\mask-common.ps1; docs/conformance.md, "The shared mask"; #0243).
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'mask-common.ps1')
+
 # Variables that make a child process reach AWS or the real token: removed from every child.
 $script:ConformanceAwsRemoved = 'AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
   'AWS_CONTAINER_CREDENTIALS_FULL_URI', 'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI'
@@ -325,7 +329,7 @@ function Remove-ConformanceHome {
   for ($try = 0; $try -lt 5 -and (Test-Path -LiteralPath $root); $try++) {
     try { Remove-Item -LiteralPath (Assert-ConformanceHomeRoot -Root ([string]$ConformanceHome.Root)) -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 300 }
   }
-  if (Test-Path -LiteralPath $root) { Write-Host "FAIL Remove-ConformanceHome: The throwaway home could not be removed: $root"; $global:ConformanceCounts['FAIL']++ }
+  if (Test-Path -LiteralPath $root) { Write-Host "FAIL Remove-ConformanceHome: The throwaway home could not be removed: $(ConvertTo-ConformanceMasked $root)"; $global:ConformanceCounts['FAIL']++ }
 }
 
 # Resolves a path and returns it in full, or throws unless it is the home's root or under it. It also

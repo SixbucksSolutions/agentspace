@@ -106,7 +106,7 @@ try {
     Write-HpProblems "${sec}: With the program copied beside the operator the same command succeeds, and the alias's ProxyCommand names that copy" $p
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-host-alias-no-proxy-program.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h

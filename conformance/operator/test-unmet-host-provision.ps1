@@ -68,7 +68,7 @@ function Find-Call($Calls, [string]$Name) { @($Calls | Where-Object { (Get-HpCal
 # What a record holds, as one comparable text: the members in the table's order.
 function Format-Rec($R) {
   if ($null -eq $R) { return '(none)' }
-  (@('project', 'stack', 'state', 'instance_id', 'last_attempt_at', 'last_success_at') | ForEach-Object { if ($R.ContainsKey($_)) { "$_=$($R[$_])" } }) -join ' '
+  (@('project', 'stack', 'state', 'instance_id', 'last_attempt_at', 'last_success_at') | ForEach-Object { if ($R.ContainsKey($_)) { "$_=$(ConvertTo-ConformanceMasked $R[$_])" } }) -join ' '
 }
 # The lines of one run the stand-ins saw, for the ssh and scp alias checks.
 function Add-AliasProblems($Problems, $Calls, [string]$Want) {
@@ -105,7 +105,7 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
   if (($got -join ',') -cne ($want -join ',')) {
     $i = 0
     while ($i -lt $got.Count -and $i -lt $want.Count -and $got[$i] -ceq $want[$i]) { $i++ }
-    $p.Add("The calls differ at call $($i + 1) of $($want.Count) (expected $(if ($i -lt $want.Count) { $want[$i] } else { 'no more calls' }), got $(if ($i -lt $got.Count) { $got[$i] } else { 'none' }); $($got.Count) calls)")
+    $p.Add("The calls differ at call $($i + 1) of $($want.Count) (expected $(if ($i -lt $want.Count) { ConvertTo-ConformanceMasked $want[$i] } else { 'no more calls' }), got $(if ($i -lt $got.Count) { ConvertTo-ConformanceMasked $got[$i] } else { 'none' }); $($got.Count) calls)")
   }
   foreach ($m in (Get-HpPatchWaitProblems $calls $script:HpHostId)) { $p.Add($m) }
   Write-HpProblems "${sec}: the steps run in order: the existence check, the deploy, the instance ID read, the start and wait, sync (its copies, its install, its patch wait's three Session Manager calls, its build, its push), the start and wait again, then bootstrap (steps 4 to 7; The patch wait)" $p

@@ -815,9 +815,9 @@ function Test-HostCase {
     }
     if ($Expect.ContainsKey('Check')) { foreach ($m in @(& $Expect.Check $r $started)) { if ($m) { $p.Add([string]$m) } } }
     if ($p.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-    else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($p -join '; ') }
+    else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($p -join '; ')) }
   } catch {
-    $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+    $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
   }
 }
@@ -876,7 +876,7 @@ function Invoke-HostFile {
       & $Body $fx
     }
   } catch {
-    $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+    $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name "${FileName}: The check ran to its end without an unexpected error" -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
   } finally {
     # A case that failed, or threw, still holds what it started. Each is let go before the home is

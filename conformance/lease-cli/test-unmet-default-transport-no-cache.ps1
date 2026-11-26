@@ -34,7 +34,7 @@ $ErrorActionPreference = 'Stop'
 function Add-UnmetResult {
   param([Parameter(Mandatory)][string]$Name, [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems)
   if ($null -eq $Problems -or $Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 $alias = 'state.md#the-alias-file'
@@ -62,7 +62,7 @@ try {
     Add-UnmetResult -Name "$alias`: With AGENTSPACE_PROXY_COMMAND unset and no instance-ID cache, a ready create MUST succeed (driver.md#how-it-is-reached; D21)" -Problems $p
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-default-transport-no-cache.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($lab) { Remove-ConformanceHome -ConformanceHome $lab }

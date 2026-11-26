@@ -115,7 +115,7 @@ try {
   Test-ConformanceErrorRun -ConformanceHome $h -Arguments @('Lease', 'Get') -Code usage -Field id `
     -Name "lease-api.md#command-lines: $(Format-ConformanceLine @('Lease', 'Get')) is read as lease get, so the ID is missing, exit 2"
 } catch {
-  Write-ConformanceResult -Name 'test-usage-errors.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+  Write-ConformanceResult -Name 'test-usage-errors.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$(ConvertTo-ConformanceMasked $_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($h) { Remove-ConformanceHome -ConformanceHome $h }
 }

@@ -141,9 +141,9 @@ try {
         if (($keys -join ',') -cne ($Expect.Keys -join ',')) { $p.Add("The AWS calls were $($keys.Count), not the $($Expect.Keys.Count) of '$($Expect.Keys -join ', ')'") }
         foreach ($log in $tripLogs) { if ((Get-StandInCallCount -Log $log) -gt 0) { $p.Add("$(Split-Path -Leaf $log) shows a start") } }
         if ($p.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-        else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($p -join '; ') }
+        else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($p -join '; ')) }
       } catch {
-        $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+        $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
         Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
       }
     }
@@ -175,7 +175,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-deploy-passthrough.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h

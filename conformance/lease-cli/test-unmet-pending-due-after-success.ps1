@@ -130,7 +130,7 @@ function Get-SdPendingDocProblems {
   $p = [System.Collections.Generic.List[string]]::new()
   foreach ($x in (Get-PvPendingDocProblems -Run $Run -Project $Project)) { $p.Add($x) }
   if ($Run.Json -is [hashtable]) {
-    if ($Run.Json['size'] -cne $Size) { $p.Add("The document's size is '$($Run.Json['size'])', not '$Size'") }
+    if ($Run.Json['size'] -cne $Size) { $p.Add("The document's size is '$(ConvertTo-ConformanceMasked $Run.Json['size'])', not '$Size'") }
     if ($Id -and $Run.Json['id'] -cne $Id) { $p.Add('The document is not the stored lease''s') }
     if ($Run.Stdout -match 'm9g') { $p.Add('The document names an instance type') }
   }

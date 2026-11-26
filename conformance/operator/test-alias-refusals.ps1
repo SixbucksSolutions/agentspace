@@ -73,7 +73,7 @@ try {
             $r = Invoke-QuotedCase -ConformanceHome $h -Wrapper $wrapper -Value $case.Value -Environment $trip
             Write-RefusalResult -Result $r -ExpectCode 1 -ExpectText $aliasText -Name $case.Name
           } else {
-            Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason "Windows PowerShell 5.1 did not pass the argument intact (code points received: $got). See docs/conformance.md, open question 2"
+            Write-ConformanceResult -Name $case.Name -Status SKIPPED -Reason "Windows PowerShell 5.1 did not pass the argument intact (code points received: $(ConvertTo-ConformanceMasked $got)). See docs/conformance.md, open question 2"
           }
         }
       }

@@ -283,7 +283,7 @@ function Get-PgStoredProblems {
   if ($null -eq $doc) { $p.Add('Stdout is not a JSON object'); return , $p }
   $want = @('id', 'project', 'state', 'platform', 'profile', 'size', 'ttl_seconds', 'created_at')
   $got = @($doc.Keys | Sort-Object)
-  if (($got -join ',') -cne ((@($want) | Sort-Object) -join ',')) { $p.Add("The document's members are '$($got -join ',')'") }
+  if (($got -join ',') -cne ((@($want) | Sort-Object) -join ',')) { $p.Add("The document's members are '$(ConvertTo-ConformanceMasked ($got -join ','))'") }
   foreach ($k in $want) { if ($doc.ContainsKey($k) -and [string]$doc[$k] -cne [string]$Record[$k]) { $p.Add("$k is not as stored") } }
   return , $p
 }
@@ -692,7 +692,7 @@ try {
   }
 }
 catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-pending-get-list-release.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 }
 finally {

@@ -198,7 +198,7 @@ try {
   }
 }
 catch {
-  Write-ConformanceResult -Name 'No unexpected error in test-lease-driver-outcomes' -Status FAIL -Reason ("It threw: " + ($_.Exception.Message -replace '\s+', ' '))
+  Write-ConformanceResult -Name 'No unexpected error in test-lease-driver-outcomes' -Status FAIL -Reason ("It threw: " + ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '\s+', ' '))
 }
 finally {
   Remove-ConformanceHome -ConformanceHome $lab

@@ -97,11 +97,12 @@ function Hide-TtToken([string]$Text) {
   return $x
 }
 
-# A text for a failure reason: the token is replaced first, a path of a drive is hidden, whitespace is collapsed and the
-# length is bounded. EVERY reason this file prints passes through here.
+# A text for a failure reason: the token is replaced first, then the text is masked by the suite's mask
+# (conformance\mask-common.ps1), whitespace is collapsed and the length is bounded, so a cut never leaves part of a
+# name unmasked. EVERY reason this file prints passes through here.
 function Format-TtText([string]$Text) {
   $x = Hide-TtToken $Text
-  $x = $x -replace '[A-Za-z]:[\\/][^\s''"]*', '<path>'
+  $x = ConvertTo-ConformanceMasked $x
   $x = $x -replace '\s+', ' '
   if ($x.Length -gt 320) { $x = $x.Substring(0, 320) + '...' }
   return $x

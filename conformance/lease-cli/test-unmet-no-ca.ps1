@@ -37,7 +37,7 @@ function Invoke-UnmetLease {
 function Add-UnmetResult {
   param([Parameter(Mandatory)][string]$Name, [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems)
   if ($null -eq $Problems -or $Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # The problems with a run that was meant to fail with $Code: its exit code, nothing on stdout, and one
@@ -66,7 +66,7 @@ function New-UnmetReadyLease {
   if ($run.ExitCode -ne 0) { $r.Why = "create exited $($run.ExitCode), not 0"; return $r }
   $doc = $run.Json
   if ($doc -isnot [hashtable] -or -not (Test-ConformanceSchema -Json $run.Stdout.TrimEnd("`n") -Schema 'lease.output.schema.json')) { $r.Why = 'create did not print a lease document that validates'; return $r }
-  if ($doc['state'] -cne 'ready') { $r.Why = "create gave state '$($doc['state'])', not ready"; return $r }
+  if ($doc['state'] -cne 'ready') { $r.Why = "create gave state '$(ConvertTo-ConformanceMasked $doc['state'])', not ready"; return $r }
   $alias = [string]$doc['ssh']['host_alias']
   if ($doc['id'] -cnotmatch $script:UnmetUuid4 -or $alias -cnotmatch $script:UnmetAlias) { $r.Why = 'the ID or the alias does not match its pattern'; return $r }
   $r.Ok = $true; $r.Id = [string]$doc['id']; $r.Alias = $alias
@@ -180,7 +180,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-no-ca.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($labA) { Remove-ConformanceHome -ConformanceHome $labA }

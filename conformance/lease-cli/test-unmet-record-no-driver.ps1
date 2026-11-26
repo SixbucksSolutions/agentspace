@@ -40,7 +40,7 @@ function Invoke-UnmetLease {
 function Add-UnmetResult {
   param([Parameter(Mandatory)][string]$Name, [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems)
   if ($null -eq $Problems -or $Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # The problems with a run that was meant to succeed: exit 0, nothing on stderr, and one document on
@@ -65,7 +65,7 @@ function New-UnmetReadyLease {
   if ($run.ExitCode -ne 0) { $r.Why = "create exited $($run.ExitCode), not 0"; return $r }
   $doc = $run.Json
   if ($doc -isnot [hashtable] -or -not (Test-ConformanceSchema -Json $run.Stdout.TrimEnd("`n") -Schema 'lease.output.schema.json')) { $r.Why = 'create did not print a lease document that validates'; return $r }
-  if ($doc['state'] -cne 'ready') { $r.Why = "create gave state '$($doc['state'])', not ready"; return $r }
+  if ($doc['state'] -cne 'ready') { $r.Why = "create gave state '$(ConvertTo-ConformanceMasked $doc['state'])', not ready"; return $r }
   $alias = [string]$doc['ssh']['host_alias']
   if ($doc['id'] -cnotmatch $script:UnmetUuid4 -or $alias -cnotmatch $script:UnmetAlias) { $r.Why = 'the ID or the alias does not match its pattern'; return $r }
   $r.Ok = $true; $r.Id = [string]$doc['id']; $r.Alias = $alias
@@ -126,7 +126,7 @@ try {
         $p = Get-UnmetSuccessProblems $run
         if ($p.Count -eq 0) {
           if ($run.Json['id'] -cne $a.Id) { $p.Add('The lease printed is not the one renewed') }
-          if ($run.Json['state'] -cne 'ready') { $p.Add("The state is '$($run.Json['state'])', not ready") }
+          if ($run.Json['state'] -cne 'ready') { $p.Add("The state is '$(ConvertTo-ConformanceMasked $run.Json['state'])', not ready") }
         }
         Add-UnmetResult -Name "$renew`: A stored ready record with no driver is read as ec2, so renew exits 0 and prints the lease (state.md#the-lease-state-file, Reading)" -Problems $p
 
@@ -154,7 +154,7 @@ try {
         $p = Get-UnmetSuccessProblems $run
         if ($p.Count -eq 0) {
           if ($run.Json['id'] -cne $b.Id) { $p.Add('The lease printed is not the one released') }
-          if ($run.Json['state'] -cne 'released') { $p.Add("The state is '$($run.Json['state'])', not released") }
+          if ($run.Json['state'] -cne 'released') { $p.Add("The state is '$(ConvertTo-ConformanceMasked $run.Json['state'])', not released") }
         }
         Add-UnmetResult -Name "$release`: A stored ready record with no driver is read as ec2, so release exits 0 and prints the lease released (state.md#the-lease-state-file, Reading)" -Problems $p
 
@@ -175,7 +175,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-record-no-driver.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($lab) { Remove-ConformanceHome -ConformanceHome $lab }

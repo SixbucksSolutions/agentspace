@@ -149,7 +149,7 @@ function Get-SqPendingDocProblems {
   $p = [System.Collections.Generic.List[string]]::new()
   foreach ($x in (Get-PvPendingDocProblems -Run $Run -Project $Project)) { $p.Add($x) }
   if ($Run.Json -is [hashtable]) {
-    if ($Run.Json['size'] -cne $Size) { $p.Add("The document's size is '$($Run.Json['size'])', not '$Size'") }
+    if ($Run.Json['size'] -cne $Size) { $p.Add("The document's size is '$(ConvertTo-ConformanceMasked $Run.Json['size'])', not '$Size'") }
     if ($Run.Stdout -match 'm9g') { $p.Add('The document names an instance type') }
   }
   return , $p

@@ -306,7 +306,7 @@ try {
     }
     function Write-Problems([string]$Name, $Problems) {
       if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-      else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+      else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
     }
     # A usage error or another refusal: exit 1, exactly one message on stderr, nothing on stdout, no
     # program started.
@@ -324,7 +324,7 @@ try {
         if ((Get-TripwireCalls) -gt 0) { $p.Add('A program outside agentspace was started') }
         Write-Problems $Name $p
       } catch {
-        $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+        $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
         Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
       }
     }
@@ -346,7 +346,7 @@ try {
         if ((Get-TripwireCalls) -gt 0) { $p.Add('A program outside agentspace was started') }
         Write-Problems $Name $p
       } catch {
-        $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+        $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
         Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
       }
     }
@@ -363,7 +363,7 @@ try {
         if ((Get-AwsTripwireCalls) -eq 0) { $p.Add('It never reached the AWS CLI, so the command line was not accepted') }
         Write-Problems $Name $p
       } catch {
-        $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+        $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
         Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
       }
     }
@@ -539,7 +539,7 @@ try {
     foreach ($case in $helpWays) { Test-Help "${hp}: $($case.N)" $case.A $case.W }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-usage-help.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h

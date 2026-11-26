@@ -54,9 +54,11 @@ $script:VcCodes = @{}
 $script:VcDocs = 0
 $script:VcUuid = '\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z'
 
+# A text for a failure reason: masked by the suite's mask (conformance\mask-common.ps1) before anything else, then
+# whitespace is collapsed and the length is bounded, so a cut never leaves part of a name unmasked.
 function Format-VcText([string]$Text) {
   $x = [string]$Text
-  $x = $x -replace '[A-Za-z]:[\\/][^\s''"]*', '<path>'
+  $x = ConvertTo-ConformanceMasked $x
   $x = $x -replace '\s+', ' '
   if ($x.Length -gt 260) { $x = $x.Substring(0, 260) + '...' }
   return $x

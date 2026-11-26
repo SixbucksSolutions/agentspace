@@ -29,7 +29,7 @@ $HpSeamSec = 'operator.md#the-test-seam'
 function New-HpProblems { , [System.Collections.Generic.List[string]]::new() }
 function Write-HpProblems([string]$Name, $Problems) {
   if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # ---- Files ----

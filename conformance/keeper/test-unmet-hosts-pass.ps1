@@ -46,7 +46,7 @@ if (-not $IsWindows) {
 # Resolved before the first case, which strips AGENTSPACE_* from the environment.
 $keeperCmd = Resolve-KeeperProgram
 if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
-  Write-ConformanceResult -Name 'keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists' -Status FAIL -Reason $(if ($keeperCmd) { "$keeperCmd is not a file." } else { 'Neither the variable nor its default names a program.' })
+  Write-ConformanceResult -Name 'keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists' -Status FAIL -Reason $(if ($keeperCmd) { "$(ConvertTo-ConformanceMasked $keeperCmd) is not a file." } else { 'Neither the variable nor its default names a program.' })
   Exit-ConformanceRun
 }
 

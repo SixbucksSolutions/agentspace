@@ -634,7 +634,7 @@ function Get-CeExitProblems($Run) {
 function Add-CeProblemResult {
   param([Parameter(Mandatory)][string]$Name, $Problems)
   if ($null -eq $Problems -or @($Problems).Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (@($Problems) -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked (@($Problems) -join '; ')) }
 }
 
 function Get-CeName([string]$Anchor, [string]$Row, [string]$Text) { "$Anchor`: $Row $Text" }
@@ -667,15 +667,15 @@ function Invoke-CeRelease {
   [pscustomobject]@{ Run = $run; From = $from; To = [DateTime]::UtcNow; Seconds = $sw.Elapsed.TotalSeconds; AllBefore = $before.All; LeaseBefore = $before.Lease }
 }
 
-# An error's text, masked before it is printed (AGENTS.md, Terry's real files): the throwaway homes' roots, the
-# temporary folder and the profile folder are replaced by name, literally, so a path with spaces is covered,
-# and only then is any other drive path replaced.
+# An error's text, masked before it is printed (AGENTS.md, Terry's real files): the throwaway homes' roots are
+# replaced by name, literally, so a path with spaces is covered, then the suite's mask (conformance\mask-common.ps1)
+# hides the temp folder, the profile and the user's and the computer's names, and only then is any other drive
+# path replaced.
 function Get-CeMaskedError([string]$Text) {
   $roots = @()
   foreach ($h in @($script:lab, $script:lab11)) { if ($h -and $h.Root) { $roots += , @($h.Root, '<home>') } }
-  if ($env:TEMP) { $roots += , @($env:TEMP, '<temp>') }
-  if ($env:USERPROFILE) { $roots += , @($env:USERPROFILE, '<profile>') }
   foreach ($r in $roots) { $Text = [regex]::Replace($Text, [regex]::Escape($r[0]), $r[1], [Text.RegularExpressions.RegexOptions]::IgnoreCase) }
+  $Text = ConvertTo-ConformanceMasked $Text
   ($Text -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
 }
 
@@ -961,7 +961,7 @@ try {
         $l = New-CeCaseLease -Lab $lab -Anchor $aOrder -Row 'R8'; if (-not $l) { return }
         $first = Invoke-CeRelease -Lab $lab -Id $l.Id
         $p = Get-CeDocProblems -Run $first.Run -Id $l.Id -Created $l.Doc -Expires $true
-        if ($p.Count -gt 0) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R8' 'Setup, the first release succeeds') -Status FAIL -Reason ($p -join '; '); return }
+        if ($p.Count -gt 0) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R8' 'Setup, the first release succeeds') -Status FAIL -Reason (ConvertTo-ConformanceMasked ($p -join '; ')); return }
         $s = New-CeStand -Lab $lab -Base $base -Case r8 -Name late -Image 'ssh.exe'
         Start-CeStand -Lab $lab -Stand $s -Line "ssh.exe $($l.Alias)"
         if (-not (Wait-CeStarted -Tops @($s))) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R8' 'Setup, the stand-in started') -Status FAIL -Reason 'A stand-in did not record itself within 30 seconds'; return }
@@ -971,7 +971,7 @@ try {
         Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'Release of a released lease ends an ssh.exe <a> started after the first release') -Problems $p
         $p = Get-CeExitProblems $second.Run
         if ($p.Count -eq 0) {
-          if ($second.Run.Json['state'] -cne 'released') { $p.Add("The state is '$($second.Run.Json['state'])', not released") }
+          if ($second.Run.Json['state'] -cne 'released') { $p.Add("The state is '$(ConvertTo-ConformanceMasked $second.Run.Json['state'])', not released") }
           if ($second.Run.Json['released_at'] -cne $first.Run.Json['released_at']) { $p.Add('released_at is not the first one') }
         }
         Add-CeProblemResult -Name (Get-CeName $aOrder 'R8' 'Release of a released lease exits 0 and prints the lease with its first released_at') -Problems $p
@@ -1158,7 +1158,7 @@ try {
         $l = $r14
         $p = New-CeProblems
         if ($l.Doc['ttl_seconds'] -ne 60) { $p.Add('The lease was not made with the shortest TTL, 60 seconds') }
-        if ($p.Count -gt 0) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R14' 'Setup, the lease has a TTL of 60 seconds') -Status FAIL -Reason ($p -join '; '); return }
+        if ($p.Count -gt 0) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R14' 'Setup, the lease has a TTL of 60 seconds') -Status FAIL -Reason (ConvertTo-ConformanceMasked ($p -join '; ')); return }
         $s = New-CeStand -Lab $lab -Base $base -Case r14 -Name ssh -Image 'ssh.exe'
         Start-CeStand -Lab $lab -Stand $s -Line "ssh.exe $($l.Alias)"
         if (-not (Wait-CeStarted -Tops @($s))) { Write-ConformanceResult -Name (Get-CeName $aOrder 'R14' 'Setup, the stand-in started') -Status FAIL -Reason 'A stand-in did not record itself within 30 seconds'; return }
@@ -1176,7 +1176,7 @@ try {
           if ([DateTime]::UtcNow -gt $limit.AddSeconds(15)) { break }
           Start-Sleep -Milliseconds 500
         }
-        if ($state -cne 'expired') { Write-ConformanceResult -Name (Get-CeName $aOrder 'R14' 'Setup, the lease is expired once its expires_at has passed') -Status FAIL -Reason "get said '$state', not expired"; return }
+        if ($state -cne 'expired') { Write-ConformanceResult -Name (Get-CeName $aOrder 'R14' 'Setup, the lease is expired once its expires_at has passed') -Status FAIL -Reason "get said '$(ConvertTo-ConformanceMasked $state)', not expired"; return }
         $rel = Invoke-CeRelease -Lab $lab -Id $l.Id
         $endedOk = Wait-CeEnded -Stands @($s)
         $p = New-CeProblems; if (-not $endedOk) { $p.Add('The stand-in is still running after the release') }

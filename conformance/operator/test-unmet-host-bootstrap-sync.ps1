@@ -203,7 +203,7 @@ function Test-SyncCalls([string]$Name, [string[]]$Arguments, [string]$Alias, [st
     if (-not (Test-Same $got $want)) {
       $i = 0
       while ($i -lt $got.Count -and $i -lt $want.Count -and $got[$i] -ceq $want[$i]) { $i++ }
-      $p.Add("The calls differ from the order of operator.md's table at call $($i + 1) of $($want.Count) (expected $(if ($i -lt $want.Count) { $want[$i] } else { 'no more' }), got $(if ($i -lt $got.Count) { $got[$i] } else { 'none' }); $($got.Count) calls)")
+      $p.Add("The calls differ from the order of operator.md's table at call $($i + 1) of $($want.Count) (expected $(if ($i -lt $want.Count) { ConvertTo-ConformanceMasked $want[$i] } else { 'no more' }), got $(if ($i -lt $got.Count) { ConvertTo-ConformanceMasked $got[$i] } else { 'none' }); $($got.Count) calls)")
     }
     foreach ($m in (Get-HpPatchWaitProblems $calls $Id)) { $p.Add($m) }
     Write-HpProblems "${sy}: $($Arguments -join ' ') starts the host, then makes the table's calls in order: the staging folder removed, box/system and the CA key copied, the install, the patch wait's three Session Manager calls, the CLAUDE.md folder and copy, the build, its copy and install, and the push (steps 2 to 8; The patch wait)" $p

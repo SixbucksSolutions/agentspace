@@ -292,9 +292,9 @@ try {
         if ((Get-StandInCallCount -Log $scpLog) -gt 0) { $p.Add('scp was started') }
         if ($Expect.ContainsKey('Check')) { foreach ($m in @(& $Expect.Check $r $started)) { if ($m) { $p.Add($m) } } }
         if ($p.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-        else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($p -join '; ') }
+        else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($p -join '; ')) }
       } catch {
-        $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+        $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
         Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
       }
     }
@@ -823,7 +823,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-commands.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h

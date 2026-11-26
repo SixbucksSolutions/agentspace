@@ -107,7 +107,7 @@ function Write-RefusalResult {
   } elseif (-not $Result.Stderr.Contains($ExpectText)) { $problems.Add("stderr lacks '$ExpectText'") }
   if ($Result.Stderr -match 'CategoryInfo|At line:|Exception') { $problems.Add('stderr shows a runtime error record') }
   if ($problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($problems -join '; ')) }
 }
 
 # Writes a .cmd under the home that runs $Program with $Lead and then one quoted argument, taken

@@ -38,7 +38,7 @@ function Get-Lines([string]$Text) { , @($Text -split "`r?`n" | Where-Object { $_
 # Passes when no problem was listed, else fails with the list.
 function Write-CaResult {
   param([string]$Name, [System.Collections.Generic.List[string]]$Problems)
-  if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS } else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS } else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # The problems with a run meant to be a successful `ca`: exit 0, nothing on stdout, no runtime error.
@@ -183,7 +183,7 @@ try {
     Write-CaResult "${sec}: ca starts no AWS CLI, ssh or scp" $p
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-ca.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h

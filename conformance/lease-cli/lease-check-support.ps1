@@ -31,10 +31,12 @@ $script:CcProxy = 'agentspace-conformance-proxy --not-run'
 
 # --- Results -----------------------------------------------------------------------------------
 
+# A reason passes through the suite's mask (conformance\mask-common.ps1), since it can quote what a program
+# printed or an exception's message.
 function Add-CcResult {
   param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][bool]$Ok, [string]$Reason = 'The condition did not hold.')
   if ($Ok) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason $Reason }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked $Reason) }
 }
 
 # Runs a check body. The body returns $true to pass, or a string that says why it failed; a throw
@@ -45,19 +47,20 @@ function Test-Cc {
     $r = @(& $Body)
     $last = if ($r.Count -gt 0) { $r[$r.Count - 1] } else { $null }
     if ($last -is [bool] -and $last) { Write-ConformanceResult -Name $Name -Status PASS }
-    elseif ($last -is [string] -and $last) { Write-ConformanceResult -Name $Name -Status FAIL -Reason $last }
+    elseif ($last -is [string] -and $last) { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked $last) }
     else { Write-ConformanceResult -Name $Name -Status FAIL -Reason 'The condition did not hold.' }
   } catch {
-    $m = ($_.Exception.Message -replace '\s+', ' ')
+    $m = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '\s+', ' ')
     Write-ConformanceResult -Name $Name -Status FAIL -Reason "It threw: $m"
   }
 }
 
-# A short account of a run, for a failure reason. A stdout or stderr can hold no key.
+# A short account of a run, for a failure reason. A stdout or stderr can hold no key. Each is masked before it
+# is cut, so that a cut never leaves part of a name unmasked.
 function Format-CcRun($Run) {
   if ($null -eq $Run) { return 'There was no run.' }
-  $o = ([string]$Run.Stdout).Trim(); if ($o.Length -gt 160) { $o = $o.Substring(0, 160) + '...' }
-  $e = ([string]$Run.Stderr).Trim(); if ($e.Length -gt 160) { $e = $e.Substring(0, 160) + '...' }
+  $o = (ConvertTo-ConformanceMasked ([string]$Run.Stdout)).Trim(); if ($o.Length -gt 160) { $o = $o.Substring(0, 160) + '...' }
+  $e = (ConvertTo-ConformanceMasked ([string]$Run.Stderr)).Trim(); if ($e.Length -gt 160) { $e = $e.Substring(0, 160) + '...' }
   "exit $($Run.ExitCode), stdout '$o', stderr '$e'"
 }
 
