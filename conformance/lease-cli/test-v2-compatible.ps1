@@ -73,11 +73,17 @@ function Complete-VkCheck {
   else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ((@($Problems | ForEach-Object { Format-VkText $_ })) -join '; ') }
 }
 
-# `agentspace <Arguments>` as typed (the first word is `lease`), with the check's ProxyCommand and the stand-in as the
-# provisioning run.
+# The names of this process's variables that start LOCALSWIM_, found by listing names alone and never reading a value,
+# each removed from every run: a line here gives `--board` and is refused before any read, and a build that wrongly read
+# one would otherwise reach a real board (docs/conformance.md, "The stand-in credential").
+$script:VkLocalswimNames = @([Environment]::GetEnvironmentVariables().Keys | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'LOCALSWIM_*' })
+
+# `agentspace <Arguments>` as typed (the first word is `lease`), with the check's ProxyCommand, the stand-in as the
+# provisioning run, and no LOCALSWIM_* variable.
 function Invoke-VkCli {
   param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Arguments)
   $e = @{ AGENTSPACE_PROXY_COMMAND = $script:CcProxy; AGENTSPACE_PROVISION_CMD = $script:VkStandIn.Path }
+  foreach ($n in $script:VkLocalswimNames) { $e[$n] = $null }
   return (Invoke-AgentspaceCli -ConformanceHome $script:VkLab -Arguments $Arguments -Environment $e)
 }
 

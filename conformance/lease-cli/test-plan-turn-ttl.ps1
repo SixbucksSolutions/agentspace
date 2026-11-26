@@ -391,7 +391,10 @@ function Start-TtBoard {
     while ($sw.Elapsed.TotalSeconds -lt 30) {
       if ($proc.HasExited) { break }
       if (Test-Path -LiteralPath $Ready -PathType Leaf) {
-        try { $text = [IO.File]::ReadAllText($Ready) } catch { $text = '' }
+        # UTF-8 with no byte order mark: the bytes are read, so a mark is seen and not skipped.
+        $bytes = $null
+        try { $bytes = [IO.File]::ReadAllBytes($Ready) } catch { }
+        $text = if ($null -ne $bytes -and $bytes.Length -gt 0 -and $bytes[0] -ne 0xEF) { [Text.UTF8Encoding]::new($false).GetString($bytes) } else { '' }
         if ($text -cmatch '\A\d+\n\z') {
           if ([int]$text.Trim() -eq $proc.Id) { $isReady = $true } else { $script:TtBoardWhy = 'The ready file holds a PID that is not the one this case started' }
           break
@@ -402,20 +405,27 @@ function Start-TtBoard {
     if ($isReady) {
       return [pscustomobject]@{ Port = $port; Process = $proc; Id = $proc.Id; StartTicks = $started; Log = $Log; Ready = $Ready; Fixture = $Fixture }
     }
+    # Only a stand-in that exited 2 before it was ready, the port it could not bind, is started again on another port
+    # (docs/conformance.md, The stand-in board). A wrong PID, a stand-in not ready within 30 seconds and any other exit FAIL at once.
+    $exitedTwo = $proc.HasExited -and $proc.ExitCode -eq 2
     if (-not $script:TtBoardWhy) { $script:TtBoardWhy = $(if ($proc.HasExited) { "The stand-in exited with code $($proc.ExitCode) before it was ready" } else { 'The stand-in was not ready within 30 seconds' }) }
     Stop-TtProcess -Process $proc -StartTicks $started
+    if (-not $exitedTwo -or $script:TtBoardWhy -like 'The ready file holds*') { return $null }
+    if ($attempt -lt 3) { $script:TtBoardWhy = '' } else { $script:TtBoardWhy = "$($script:TtBoardWhy), 3 times in a row" }
   }
   return $null
 }
 
-# Ends a process this case started, by its PID, only when it is still the process started at the time recorded.
+# Ends a process this case started, by its name and its PID, only when it is still the process started at the time
+# recorded.
 function Stop-TtProcess {
   param([Parameter(Mandatory)]$Process, [Parameter(Mandatory)][long]$StartTicks)
   try {
     if ($Process.HasExited) { return }
     $now = Get-Process -Id $Process.Id -ErrorAction SilentlyContinue
     if ($null -eq $now) { return }
-    if ([Math]::Abs($now.StartTime.ToUniversalTime().Ticks - $StartTicks) -gt 20000000) { return }
+    if ($now.ProcessName -notlike 'pwsh*') { return }
+    if ($now.StartTime.ToUniversalTime().Ticks -ne $StartTicks) { return }
     $Process.Kill($true)
     [void]$Process.WaitForExit(10000)
   } catch { }
