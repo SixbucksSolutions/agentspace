@@ -276,7 +276,8 @@ enum Auth {
     None,
 }
 
-/// One request the stand-in got. It holds no header's value and no part of the token.
+/// One request the stand-in got. It holds no part of the token: the target and the one header
+/// value it keeps, `accept-encoding`, are kept through [`redact`].
 #[derive(Clone, Debug)]
 struct Req {
     method: String,
@@ -655,7 +656,8 @@ fn read_request(s: &mut TcpStream, token: &str, stop: &AtomicBool) -> Option<Req
                     token_elsewhere = true;
                 }
                 match other {
-                    "accept-encoding" => accept_encoding = Some(value.to_string()),
+                    // Kept with the token replaced, so no later message can hold it.
+                    "accept-encoding" => accept_encoding = Some(redact(value, token)),
                     "content-length" => content_length = value.parse().unwrap_or(0),
                     "transfer-encoding" => chunked = value.to_ascii_lowercase().contains("chunked"),
                     _ => {}
@@ -687,7 +689,9 @@ fn read_request(s: &mut TcpStream, token: &str, stop: &AtomicBool) -> Option<Req
     }
     Some(Req {
         method: method.to_string(),
-        target: target.to_string(),
+        // The target is kept with the token replaced: `token_elsewhere` already records that it
+        // was there, and every message that formats the target then holds no part of it.
+        target: redact(target, token),
         auth,
         names,
         accept_encoding,
@@ -695,6 +699,17 @@ fn read_request(s: &mut TcpStream, token: &str, stop: &AtomicBool) -> Option<Req
         chunked,
         token_elsewhere,
     })
+}
+
+/// `text` with every copy of the stand-in's token replaced by `<token>`, so that a request's
+/// target or header value can be formatted into a test's message without the token (#0238: "A
+/// token, a stand-in's included, is never printed, logged or passed as an argument").
+fn redact(text: &str, token: &str) -> String {
+    if token.is_empty() {
+        text.to_string()
+    } else {
+        text.replace(token, "<token>")
+    }
 }
 
 /// Holds the connection until the client closes it, the test ends the stand-in, or a minute passes.
@@ -3796,6 +3811,8 @@ fn no_connection_and_a_closed_port_are_the_did_not_answer_error_and_name_the_rec
         l.local_addr().unwrap().port()
     };
     assert_ne!(dead, rig.port());
+    // No test connects to 127.0.0.1:8811, Terry's board (#0238).
+    assert_ne!(dead, 8811);
     rig.write_receipt(&rig.receipt_with_base(&format!("http://127.0.0.1:{dead}")));
     let ran = rig.board_create(&[]);
     assert_no_problems(internal_problems(&rig, &ran, &msg_no_answer(dead)));
@@ -5139,6 +5156,10 @@ fn the_get_only_check_sees_a_post_and_every_header_the_spec_forbids() {
         let standin = standard_standin();
         let status = standin.send_raw(text(standin.token()).as_bytes());
         let found = log_problems(&standin.log(), std::slice::from_ref(&t));
+        // No problem the check writes may hold the token, whichever part of a request carried it.
+        if found.iter().any(|f| f.contains(standin.token())) {
+            problems.push(format!("{what}: a problem the check wrote holds the token"));
+        }
         if expect.is_empty() {
             if !found.is_empty() {
                 problems.push(format!(
@@ -5620,6 +5641,8 @@ fn the_built_program_reads_no_variable_of_localswims_and_none_of_its_own_for_the
         let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.local_addr().unwrap().port()
     };
+    // No test connects to 127.0.0.1:8811, Terry's board (#0238).
+    assert_ne!(dead, 8811);
     let mut cmd = bin.command(&[
         "lease",
         "create",
