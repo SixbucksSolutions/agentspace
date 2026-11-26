@@ -19,8 +19,8 @@ installed programs ([Build](#build), [Install it](#install-it)).
 
 | Piece | What |
 |---|---|
-| Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; once v0.09 is installed, a lease's `--size` sizes its project's host, `s` to `xl` (2 to 16 vCPUs), `m`, `m9g.xlarge` (4 vCPUs, 16 GiB), by default ([D65](docs/decisions.md#d65-four-sizes-s-to-xl-on-the-m9g-ladder-m-stays-the-default-and-todays-host), [D69](docs/decisions.md#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease)) |
-| Disk | gp3, encrypted, per host: the box's is 20 GiB and a new host starts at 8 GiB; each is grown on demand under the disk order ([AGENTS.md](AGENTS.md#growing-the-boxs-disk)), never shrunk |
+| Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; once v0.09 is installed, a lease's `--size` sizes its project's host on the lease's platform, `s` to `xl` (2 to 16 vCPUs), `m`, `m9g.xlarge` (4 vCPUs, 16 GiB), by default ([D65](docs/decisions.md#d65-four-sizes-s-to-xl-on-the-m9g-ladder-m-stays-the-default-and-todays-host), [D69](docs/decisions.md#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease)) |
+| Disk | gp3, encrypted, per host: the box's is 20 GiB and a new host starts at 8 GiB, or 30 GiB on `windows/amd64` ([D97](docs/decisions.md#d97-agent-windows-windows-server-2025-with-the-universal-c-runtime-in-place-of-a-libc)); each is grown on demand under the disk order ([AGENTS.md](AGENTS.md#growing-the-boxs-disk)), never shrunk |
 | Access | Session Manager only: no inbound ports, no key pair, no Elastic IP |
 | Patching | Every boot: `apt-get dist-upgrade` (phased updates included) and `snap refresh`, then one reboot if the kernel or another package needs it; then the newest Node LTS, Codex and uv |
 | Lease guard | Once v0.08 is installed: on the laptop, `agentspace-operator guard`, started by the keeper every 5 minutes, stops a host within 25 minutes of its project's last live lease's end ([D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise); [A host's life](#a-hosts-life)) |
@@ -532,7 +532,7 @@ no guard runs, no host holds a lease horizon, the backstop stops a host after 3 
 under 1% CPU, a release ends no connection, and every host a turn starts is stopped at its close
 (D51).
 
-**A host runs only while its project holds a live lease** (v0.08;
+**A host runs only while its project holds a live lease on the host's platform** (v0.08;
 [D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise),
 [D57](docs/decisions.md#d57-a-host-bounds-itself-by-its-lease-horizon-while-the-laptop-is-away),
 [D58](docs/decisions.md#d58-the-cloudwatch-backstop-stays-lengthened-from-3-hours-to-24),
@@ -540,6 +540,9 @@ under 1% CPU, a release ends no connection, and every host a turn starts is stop
 A live lease explains its host whatever the host is doing, a quiet lease with no session and no
 CPU work included. What counts as a project's live lease, its last lease end and its horizon is
 [state.md, Live leases and the lease horizon](docs/state.md#live-leases-and-the-lease-horizon)'s.
+**Once v0.12 is installed, a project holds a host per platform**
+([D91](docs/decisions.md#d91-a-host-per-project-and-platform)), and a live lease explains the host of
+its own platform alone: a running Windows host with only Linux leases is unexplained.
 Three things stop a host:
 
 | Stop | Where it runs | When |
@@ -590,7 +593,7 @@ Three things stop a host:
   renew the lease before then. Sessions open at expiry stay open, since a certificate is checked
   only at login, and end when the host stops. The architect's turns SHOULD give a dev lead's lease
   a TTL that covers the turn, and renew it when a turn runs long.
-- **Work on a host by hand MUST be done under a live lease of its project**: the sign-in below, a
+- **Work on a host by hand MUST be done under a live lease of its project on its platform**: the sign-in below, a
   `sync`, `grow` or `bootstrap` run by a person, and any direct session. Without one, the guard
   stops the host within 25 minutes of the later of its launch and its project's last lease end,
   whatever is running there.
@@ -611,6 +614,11 @@ v0.07's operator still prints the line it had). Only a run started by hand shows
 a lease starts is detached, its output goes to a hidden console that nothing reads, and its log is
 its only record
 ([operator.md, provision](docs/operator.md#provision)).
+
+**This is the `linux/arm64` host's procedure** (D91). A `linux/amd64` host's is the same, with
+`--platform linux/amd64` on the lease, `-Platform linux/amd64` beside each `-Host <project>`, and
+the alias `agentspace-host.<project>.linux-amd64`. A Windows host's is
+[its own](#signing-in-on-a-new-windows-host).
 
 1. **Create a lease for the project first**, and keep it live until step 8 releases it
    ([D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise)).
@@ -682,6 +690,123 @@ its only record
    The guard then stops the host within 25 minutes, unless another live lease of the project
    explains it ([A host's life](#a-hosts-life)).
 
+### Signing in on a new Windows host
+
+RFC 2119 keywords; the capitals are load-bearing.
+
+**A Windows host is signed in as a Linux host is** (D52, above): by hand, once, by Terry, on his
+laptop, under a lease (D56), and `ready` for leases before any tool on it is signed in. It is
+done as `agent` over the operator's alias, `agentspace-host.<project>.windows-amd64`
+([D91](docs/decisions.md#d91-a-host-per-project-and-platform)). How the host is made, and what its
+files do, is [operator.md, Windows hosts](docs/operator.md#windows-hosts)'s. What differs from the
+Linux procedure:
+- **The user is `agent`**, the host's one local user, made by the first boot, in Administrators
+  ([D95](docs/decisions.md#d95-a-windows-lease-logs-in-as-the-hosts-one-local-user-agent-by-an-agentspace-certificate-through-microsofts-openssh-server)).
+  It MUST stay in Administrators: Windows Server 2025's `sshd_config` lets in only
+  `administrators` and `openssh users`, so a host whose `agent` has left the group refuses every
+  login.
+- **The login shell is Git Bash**, Git for Windows's, set as sshd's `DefaultShell` by the
+  bootstrap once it has installed Git, with PowerShell 7 on `agent`'s `PATH`
+  ([D97](docs/decisions.md#d97-agent-windows-windows-server-2025-with-the-universal-c-runtime-in-place-of-a-libc)).
+  Windows PowerShell 5.1 is the fallback if the desktop app's session fails under Git Bash, and the
+  change then goes back to D97. Every command below that runs at the host's prompt is typed in Git
+  Bash.
+- **Codex is not on a Windows host** (D97), so the connection forwards no port, and step 5 has no
+  `codex login`.
+- **Sign-ins are kept as files in `agent`'s profile, readable by `agent` and Administrators
+  alone** (Q23, in [decisions.md](docs/decisions.md), closed by Terry on 2026-11-26): Claude Code's
+  own credentials file, `.credentials.json` in `.claude`, and gh's token in its config file,
+  `hosts.yml` in `%APPDATA%\GitHub CLI`. **A key-based logon cannot use the Windows Credential
+  Manager** (D95): it has no password, so Windows gives it no saved credentials and no DPAPI. The
+  spike's `cmdkey` was refused with "Credentials cannot be saved from this logon session.", DPAPI
+  with "Access is denied.", and files written under `.claude`, `%APPDATA%\GitHub CLI` and
+  `%USERPROFILE%\.config` were all still there at the next login
+  ([docs/runs/e0.12-t01-s05.md, Question 4](docs/runs/e0.12-t01-s05.md#question-4-the-credential-manager-dpapi-and-files-q23)).
+- **No patch run restarts the host while a session is open**, the sign-in's included (D96), and
+  Windows Update installs nothing and restarts nothing by itself: the first boot, the bootstrap and
+  every `sync` turn its own updates off, and the patch run at each start of the host is its one
+  updater ([operator.md, Windows hosts](docs/operator.md#windows-hosts)).
+
+1. **Create a lease for the Windows platform first**, and keep it live until step 8 releases it
+   (D56). Without one, the guard stops the host within 25 minutes of the later of its launch and the
+   project's last `windows/amd64` lease end ([A host's life](#a-hosts-life)):
+
+   ```bat
+   agentspace lease create --project <project> --platform windows/amd64
+   ```
+
+   The full path, `%USERPROFILE%\.agentspace\bin\agentspace.exe`, is used until the install
+   folder is on `PATH`. Its JSON gives the lease's `id` for step 8. A lease that would end before
+   the sign-in does MUST be renewed before its `expires_at`, since nothing renews it on its own.
+2. **Start once the host is `ready`**: its log,
+   `%USERPROFILE%\.agentspace\hosts\<project>.windows-amd64\provision.log`, ends `run done`, and
+   step 3's `status` shows the host `ready`. Only a project that Terry has approved for
+   `windows/amd64` in `%USERPROFILE%\.agentspace\projects.json` gets a Windows host, and each new
+   platform takes his yes (D91). For a project not approved, the lease is `unsatisfiable` with
+   `no_capacity`, and its message names the platform. A lease for the project answers `pending`
+   until its host is ready.
+3. **Sign the operator's one-hour certificate:**
+
+   ```bat
+   %USERPROFILE%\.agentspace\bin\agentspace-operator.exe status -Host <project> -Platform windows/amd64
+   ```
+
+   The certificate names `agent` and the key ID `operator-<project>.windows-amd64`. It lasts an
+   hour, so the same command MUST be run again after an hour, before any new `ssh` to the host
+   ([operator.md, How the operator reaches a host](docs/operator.md#how-the-operator-reaches-a-host)).
+4. **Connect:**
+
+   ```bat
+   ssh agentspace-host.<project>.windows-amd64
+   ```
+
+   The alias is written by the provisioning run, and written again by any operator command given
+   `-Host <project> -Platform windows/amd64`, step 3's `status` included, whenever its bytes
+   differ. The prompt is Git Bash's.
+5. **Sign in to each tool at the host's prompt:** Claude Code (`claude`, then its URL-and-code
+   option) and gh (`gh auth login`, HTTPS and the web browser). Codex is not signed in on a Windows
+   host. **Then check who can read each file**, which MUST name no account but `agent`,
+   Administrators and SYSTEM: the `icacls` check accepts those three, the three a profile's own
+   access list holds, and nothing else (architect, 2026-11-26, for v0.12-T02, pin P13):
+
+   ```sh
+   pwsh -NoProfile -Command 'icacls "$env:USERPROFILE\.claude\.credentials.json"'
+   ```
+
+   ```sh
+   pwsh -NoProfile -Command 'icacls "$env:APPDATA\GitHub CLI\hosts.yml"'
+   ```
+
+   - **A tool that still tries the Credential Manager fails with the spike's messages**:
+     "Credentials cannot be saved from this logon session." from the Credential Manager, or "Access
+     is denied." from DPAPI. It MUST be made to keep its sign-in in its own file, and it MUST NOT
+     be worked around by a password logon for `agent`, whose password is written nowhere (D95), or
+     by a task that runs as SYSTEM. For gh the file is `gh auth login --insecure-storage`, which
+     writes the token to `hosts.yml`. A tool with no such way MUST be reported to agentspace's
+     architect.
+   - **gh's own fallback to its file was not shown by the spike**, which had neither tool
+     installed: the live check of E0.12-T05-S02 shows it first, and a different result there
+     changes this step.
+6. **Clone the project's checkout after gh's sign-in**, never before it, since a private
+   repository needs gh's credential (D52). `~` is `agent`'s profile, `%USERPROFILE%`:
+
+   ```sh
+   gh repo clone <owner>/<repo> ~/<project>
+   ```
+
+7. **The host's laptop files are agentspace's and MUST NOT be edited by hand**, as the Linux
+   procedure's step 7 says, with the alias `agentspace-host.<project>.windows-amd64` and its key
+   in agentspace's own `known_hosts` under that name (D47).
+8. **Release the lease** once the sign-ins and the clone are done, with step 1's `id`. Step 4's
+   connection is the operator's, which the release does not end; close it first:
+
+   ```bat
+   agentspace lease release <id>
+   ```
+
+   The guard then stops the host within 25 minutes, unless another live lease of the project on
+   `windows/amd64` explains it ([A host's life](#a-hosts-life)).
+
 ### The localswim board on the box
 
 Terry's localswim board (`127.0.0.1:8811`) and the localpost queue behind its watcher
@@ -705,8 +830,9 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
 `/usr/local/lib/localswim/localswim`:
 
 - **The CLI is built on the laptop by `sync`** from `C:\Projects\localswim` (Go,
-  `CGO_ENABLED=0`, linux/arm64, statically linked), so it speaks the same API as the service it
-  talks to. After the service is updated to a newer localswim, `sync` MUST be run again.
+  `CGO_ENABLED=0`, statically linked, for each host's own `GOOS` and `GOARCH`, `linux/arm64` for
+  the box ([D94](docs/decisions.md#d94-linuxamd64-on-the-ec2-driver-the-m8a-ladder-the-same-template-an-image-per-platform))),
+  so it speaks the same API as the service it talks to. After the service is updated to a newer localswim, `sync` MUST be run again.
 - **The Bot token reaches the box when Terry connects.** localswim makes a new token at every
   cold start, so `up` (run by the ProxyCommand of every connection) reads the current one from
   localswim's DPAPI file and, when the instance or the token has changed since the last send,
@@ -742,6 +868,12 @@ wrapper (`box/system/localswim`, installed to `/usr/local/bin`) around the real 
   - **Only a checked zone reaches the box's command line:** letters, digits, `_`, `+` and `-`, in
     segments joined by `/`, not starting with `-`. The zone travels on the command line, while the
     token stays on stdin.
+- **A Windows host's counterparts are D96's**
+  ([D96](docs/decisions.md#d96-the-windows-host-agent-is-powershell-under-boxwindows-doing-what-boxsystem-does-on-linux);
+  [operator.md, Windows hosts](docs/operator.md#windows-hosts)): `localswim.ps1` and the CLI built
+  for `windows/amd64`; the token and URL pushed into `agent`'s profile, readable by `agent` and
+  Administrators alone; the laptop's own Windows zone ID, set with `Set-TimeZone`, with no IANA
+  name between; and the laptop's `CLAUDE.md` copied to `.claude` in `agent`'s profile.
 - **The wrapper sets the URL and token for one run only**, and refuses with a stop-and-report
   message when the board is unreachable, so an agent learns why instead of seeing a timeout.
 - **A project's own localswim wrapper still decides how that project's agents call it.**
@@ -950,7 +1082,9 @@ ssh agentspace "journalctl -u ssh --since -1h --no-pager -o short-iso | grep 'ID
   Certificate invalid: expired`.
 - A login with Terry's own key reads `ED25519 SHA256:...` with no `ID`.
 - Every login comes from 127.0.0.1, where Session Manager delivers it, so the address never tells
-  two leases apart; the `ID` does.
+  two leases apart; the `ID` does. **A Windows host's logins come from `::1`**, not 127.0.0.1, and
+  its sshd logs them to the `OpenSSH/Operational` event log with the same key ID
+  ([operator.md, Windows hosts](docs/operator.md#windows-hosts)).
 - An expired certificate stops new logins only. A session that was open when it expired keeps
   running (D10).
 - Refused logins MUST NOT be retried in a loop: after as few as two, sshd can shut every login out
