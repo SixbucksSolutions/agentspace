@@ -16,6 +16,8 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   2026-11-26, and v0.11 is installed. **The architect who starts v0.12 (#0051) reads it first; it
   stands alone**, and its "Start here" and "The scope ahead: v0.12" say what comes next. v0.12
   MUST NOT be laid out until Terry says so.
+- **v0.12's design prep:** D91 to D100 in [docs/decisions.md](docs/decisions.md), settled
+  2026-11-26, with Terry's calls Q19 to Q23 put to him the same day.
 - **Where v0.11 began:** v0.11's design is D83 to D88 and its layout D89 in
   [docs/decisions.md](docs/decisions.md), Terry having taken the architect's recommendation on Q17
   and Q18; its plan is in #0052's plan block and in [docs/plans/v0.11.json](docs/plans/v0.11.json).

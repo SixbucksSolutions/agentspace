@@ -128,6 +128,16 @@ line's text after `Status:`, without its full stop.
 - [D88. v0.11's done-when is shown by conformance against a stand-in board and a live check that starts no instance](#d88-v011s-done-when-is-shown-by-conformance-against-a-stand-in-board-and-a-live-check-that-starts-no-instance): Decided
 - [D89. v0.11 is twelve stories in five turns: specs, foundations and #0229, the CLI, conformance, install](#d89-v011-is-twelve-stories-in-five-turns-specs-foundations-and-0229-the-cli-conformance-install): Decided
 - [D90. #0244 is folded into v0.12](#d90-0244-is-folded-into-v012): Decided
+- [D91. A host per project and platform](#d91-a-host-per-project-and-platform): Decided
+- [D92. A plan names no platform in v0.12; `--platform` applies to a plan lease as to any](#d92-a-plan-names-no-platform-in-v012---platform-applies-to-a-plan-lease-as-to-any): Decided
+- [D93. Contract v2 holds for v0.12: supporting two platforms and a profile, with each platform's default profile, is not a new version](#d93-contract-v2-holds-for-v012-supporting-two-platforms-and-a-profile-with-each-platforms-default-profile-is-not-a-new-version): Decided
+- [D94. `linux/amd64` on the EC2 driver: the `m8a` ladder, the same template, an image per platform](#d94-linuxamd64-on-the-ec2-driver-the-m8a-ladder-the-same-template-an-image-per-platform): Decided
+- [D95. A Windows lease logs in as the host's one local user, `agent`, by an agentspace certificate through Microsoft's OpenSSH Server](#d95-a-windows-lease-logs-in-as-the-hosts-one-local-user-agent-by-an-agentspace-certificate-through-microsofts-openssh-server): Decided
+- [D96. The Windows host agent is PowerShell under `box/windows/`, doing what `box/system` does on Linux](#d96-the-windows-host-agent-is-powershell-under-boxwindows-doing-what-boxsystem-does-on-linux): Decided
+- [D97. `agent-windows`: Windows Server 2025, with the Universal C Runtime in place of a libc](#d97-agent-windows-windows-server-2025-with-the-universal-c-runtime-in-place-of-a-libc): Decided
+- [D98. `windows/arm64` stays unsupported in v0.12](#d98-windowsarm64-stays-unsupported-in-v012): Decided
+- [D99. #0228: one walk ends a chain of any depth, and D59's further walks stay as a backstop](#d99-0228-one-walk-ends-a-chain-of-any-depth-and-d59s-further-walks-stay-as-a-backstop): Decided
+- [D100. v0.12's done-when is shown by a Windows spike first and a live check per platform, with Terry's yes for their instance hours](#d100-v012s-done-when-is-shown-by-a-windows-spike-first-and-a-live-check-per-platform-with-terrys-yes-for-their-instance-hours): Decided
 
 ## The interface
 
@@ -235,6 +245,10 @@ compute-on-demand service."
 - **Windows hosts come before 1.0, in v0.12 (#0051)** (Terry, 2026-11-18, as v0.13, #0081; folded
   into v0.12 beside `linux/amd64` on 2026-11-19, D26). The work is a lease
   model that today assumes a Linux user and an SSH certificate, and a host agent of its own.
+- **Changed for v0.12 (architect, 2026-11-26, D97 and D98):** a Windows profile states its C runtime
+  as `ucrt` with a minimum Windows build, since Windows has no libc; `glibc`, `musl` and `none` stay
+  the families of every Linux profile. `windows/arm64` stays unsupported while Amazon offers no
+  Windows image for `arm64`.
 
 ### D5. An unmet request is unsatisfiable, never quietly downgraded
 
@@ -1684,6 +1698,11 @@ big enough to run that plan.
 - **D6:** a pooled driver's host serves one project. #0012 (packing leases across a shared pool) is
   OBE and archived.
 - **Fresh hosts per lease, if ever wanted, come after 1.0** with #0009 and #0014.
+
+**Changed for v0.12 (architect, 2026-11-26, D91):** a host is a project's on one platform. A
+project MAY hold one host per platform, each made by its first lease there and kept; every
+`linux/arm64` host keeps its names, and a host of any other platform carries the platform in them.
+Leases of different projects still MUST NOT share a host.
 
 ### D26. Releases from v0.01 to v1.0, one epic each
 
@@ -3146,6 +3165,10 @@ while running at `m9g.xlarge`, so a mistyped `--project` MUST NOT make one.
   lease-api.md's note that v0 never reports `no_capacity` changes to say the EC2 driver reports it
   for such a project; no schema or code changes, so the contract does not.
 - **A missing `projects.json` lists nothing.** So a laptop without one makes no host at all.
+- **Changed for v0.12 (architect, 2026-11-26, D91):** an entry approves platforms, each with
+  Terry's yes and its date; an entry that names none approves `linux/arm64` alone. A lease for a
+  platform its project is not approved for, with no host there, is `unsatisfiable` with
+  `no_capacity`.
 
 ### D55. v0.07 is twenty stories in six turns: specs, foundations, programs, conformance, live
 
@@ -3435,6 +3458,10 @@ under it.
   - **The cleaner fix, a found client that no built tree holds taken as a top in the same walk**,
     is in `agentspace-connections`, which no v0.10-T03 story owns; it is carded for later, and the
     bounded further walks stand until then.
+- **Changed for v0.12 (architect, 2026-11-26, D99; #0228):** one walk ends a chain of any depth,
+  taking a found client that no built tree holds as a top in the same walk. The bounded further
+  walks stay as a backstop for a client that reconnects during the release, and are no longer what
+  meets #0196.
 
 **Why the laptop's end:**
 - **Every client is on the laptop today** (D8): the desktop app's connections and the holder.
@@ -4721,6 +4748,315 @@ and the story that meets it cites its number.
 |---|---|---|
 | #0244: `conformance/lease-cli/harness.ps1`'s start failure puts an exception's message into a run's stderr unmasked, and `conformance/keeper/keeper-common.ps1` re-prints a child run's non-result lines unmasked | v0.12 (#0051) | Its conformance turn, which runs the whole suite and so the 63 files that assert on a run's stderr |
 
+## v0.12: `linux/amd64` and `windows/amd64`
+
+**D91 to D100 settle v0.12's (#0051) design calls before its stories are laid out**, as
+[handoff-v0.11.md](handoff-v0.11.md#the-scope-ahead-v012) asks. Each is the architect's,
+2026-11-26, unless it says otherwise. They bind the stories, which carry each one into the spec
+that owns the fact in the same pull request that builds it (D34). v0.12 MUST NOT be broken into
+stories until Terry says so (AGENTS.md, "The board"). Five calls are his, put to him the same day
+as Q19 to Q23.
+
+**What was read first, so that none of this is assumed** (all read-only, 2026-11-26, in the stacks'
+region, which this file does not name):
+- **The instance types offered**, by `ec2 describe-instance-type-offerings`: the `m9g`, `c9g`,
+  `m8i`, `m8a`, `c8i` and `c8a` families, `large` to `4xlarge`, among others.
+- **Their on-demand prices**, by AWS's price list (shared tenancy, no software, no license
+  bought separately), per hour:
+
+  | Size's type | Linux arm64 | Linux `m8i` | Linux `m8a` | Windows `m8i` | Windows `m8a` |
+  |---|---|---|---|---|---|
+  | `large` (2 vCPUs, 8 GiB) | $0.0978 | $0.1058 | $0.1217 | $0.1978 | $0.2137 |
+  | `xlarge` (4, 16 GiB) | $0.1957 | $0.2117 | $0.2434 | $0.3957 | $0.4274 |
+  | `2xlarge` (8, 32 GiB) | $0.3914 | $0.4234 | $0.4869 | $0.7914 | $0.8549 |
+  | `4xlarge` (16, 64 GiB) | $0.7827 | $0.8467 | $0.9738 | $1.5827 | $1.7098 |
+
+  The arm64 column equals D65's table to the cent, which shows the query reads what D65 read.
+  Windows adds $0.046 per vCPU-hour to the same type, whatever its family. The C-class prices, for
+  Q19, are in that question.
+- **Windows images:** Amazon's `Windows_Server-2025-English-Full-Base` and `-2022-` images are
+  offered for `x86_64`, dated 2026-11-19, and the public parameter
+  `/aws/service/ami-windows-latest/Windows_Server-2025-English-Full-Base` resolves. **Amazon offers
+  no Windows image for `arm64`**: `ec2 describe-images --owners amazon` with `platform=windows`
+  and `architecture=arm64` counts 0.
+- **Ubuntu 26.04's public parameters resolve for both `amd64` and `arm64`**
+  (`/aws/service/canonical/ubuntu/server/26.04/stable/current/<arch>/hvm/ebs-gp3/ami-id`).
+- **The account's standard on-demand vCPU quota is 1,920**, so two more hosts at `xl` need no
+  quota change.
+- **The Claude desktop app's SSH sessions support a Windows remote**, by its documentation
+  (code.claude.com/docs/en/desktop): Microsoft's OpenSSH Server, x64 or arm64, with less testing
+  than Linux, and a default shell from a short list. That reading came through a fetch tool's
+  summary of the page's later part, not its text, so D100's spike checks it on a real host before
+  any story leans on it.
+- **Where the code assumes arm64:** the CLI's default platform and help, the EC2 driver's one
+  supported platform (`reasons.rs`), the template's pinned arm64 image, and the localswim CLI that
+  `agentspace-sync` builds with `GOARCH=arm64` for every host. `box/system` and the bootstrap name
+  no architecture.
+
+### D91. A host per project and platform
+
+**Decided, architect, 2026-11-26.** It changes D25, which gave a project one host, and settles the
+first of the handoff's calls, on which the shared turn leans. #0051 and D26 already said a project
+MAY hold one host per platform; this says how.
+- **A host is keyed by its project and its platform.** Every lease of a project on one platform
+  lands on that platform's host, and leases of different projects still MUST NOT share a host (D25).
+  So a project MAY hold up to three hosts in v0.12, one each for `linux/arm64`, `linux/amd64` and
+  `windows/amd64`, each made by its first lease on that platform and kept, as D25 keeps one.
+- **Why not one host per project:** an instance's architecture cannot change with its type, so a
+  host could serve a second platform only by being destroyed and made again, losing the checkout,
+  sign-ins and caches that D25 keeps a host for. A Windows host also keeps different sign-ins and a
+  different checkout from a Linux one. Every reason D25 gives for a kept host holds per platform.
+- **Every `linux/arm64` host keeps every name it has today**, so no file of Terry's, no stack and
+  no alias changes at the install: the box stays `agentbox` and swimcoach's (D43), and
+  `agentspace-host-agentspace` stays agentspace's.
+- **A host of any other platform carries the platform in each of its names**, written
+  `<os>-<arch>` (`linux-amd64`, `windows-amd64`):
+
+  | Name | `linux/arm64` (unchanged) | Any other platform |
+  |---|---|---|
+  | Stack (D44) | `agentspace-host-<project>` | `agentspace-<os>-<arch>-host-<project>` |
+  | Operator alias and host-key name (D47) | `agentspace-host.<project>` | `agentspace-host.<project>.<os>-<arch>` |
+  | Host folder (D48, D55) | `hosts\<project>\` | `hosts\<project>.<os>-<arch>\` |
+
+  - **No two hosts' names can be equal.** A stack name allows only letters, digits and `-`, and a
+    project MAY hold `-`, so the platform goes before `-host-`, where no `linux/arm64` stack name
+    has anything: `agentspace-linux-amd64-host-foo` can be no project's arm64 stack, since that
+    would need a project named `linux-amd64-host-foo` behind `agentspace-host-`. A project holds
+    no `.`, so the alias's and folder's last `.` always starts the platform.
+  - **Every name stays inside its limit:** a project is at most 32 characters, so the longest
+    stack name, `agentspace-windows-amd64-host-` and 32, is 62 of CloudFormation's 128.
+- **The host registry's key becomes the project and the platform**, so `hosts.json`'s records gain
+  `platform`, and a record without it is `linux/arm64`'s, which is what every record on Terry's
+  laptop is. state.md owns the member and its schema. A program before v0.12 refuses a record
+  holding it, so v0.12's programs MUST be installed together, as v0.09's and v0.10's were (D67,
+  D77).
+- **What reads a host by its project now reads it by its project and platform:**
+  - **Place and the provisioning run** (D48, D66, D68): a lease's host is its own platform's, and a
+    resize counts the project's leases on that platform alone. A `ready` `linux/arm64` host does not
+    meet a `linux/amd64` lease.
+  - **The ProxyCommand** (D49) finds a lease's host from the record's project and platform, and an
+    operator alias names both.
+  - **The keeper holds one holder per host** (D50), grouping ready leases by project and platform.
+  - **The guard explains a host by a live lease of its project on its platform** (D56), and sends
+    each host its own horizon (D57). A running Windows host with only Linux leases is unexplained.
+  - **`status -All` prints each host's platform** (D60), still as counts.
+- **The operator's commands take `-Platform <os/arch>` beside `-Host <project>`** (D49), and
+  without it act on the `linux/arm64` host, so every command line in the repository keeps its
+  meaning.
+- **The project list says which platforms each project MAY have a host made on** (D54). An entry
+  gains `platforms`, a list of platforms with their approval dates; an entry without it approves
+  `linux/arm64` alone, which is what Terry's file holds today. **Each new platform for a project
+  takes Terry's yes**, since each is a host that costs its disk while it exists (Q21). A lease for
+  a platform the project is not approved for, with no host on it, is `unsatisfiable` with
+  `no_capacity`, as D54 answers a project with no entry, and its message names the platform. state.md
+  owns the form.
+
+### D92. A plan names no platform in v0.12; `--platform` applies to a plan lease as to any
+
+**Decided, architect, 2026-11-26**, for the handoff's question whether a plan or an epic's block
+MAY name one (D74, D83).
+- **The plan document is unchanged.** A `--plan` or `--epic` lease takes its platform from
+  `--platform`, or the default, exactly as D75 already says.
+- **Why not now:** nothing in #0051's done-when needs it, and v0.12's live checks make their leases
+  by hand with `--platform`. A plan names who works and for how long; which platform a turn runs on
+  is a separate choice, and an epic MAY need two (a Windows story and a Linux one) where a plan-wide
+  member would name one.
+- **Adding it later is an input the contract refused**, which is not a new version (lease-api.md,
+  Versioning), so deferring it costs no later release a version.
+
+### D93. Contract v2 holds for v0.12: supporting two platforms and a profile, with each platform's default profile, is not a new version
+
+**Decided, architect, 2026-11-26**, against lease-api.md's Versioning section (D76, D87). It holds
+unless Terry takes Q19, whose smaller size floors would make v0.12 contract v3.
+- **What v0.12 changes in the contract's answers:**
+  - **`linux/amd64` and `windows/amd64` become supported platforms**, and `agent-windows` a supported
+    profile (D97). "Supporting a platform, profile or size that the contract answered
+    `unsatisfiable` is not a new version", and no schema forbids any of their documents: the
+    platform and profile patterns are open, and `ssh.user`'s already allows a Windows user name, by
+    a rule v0's schema wrote for that purpose.
+  - **A lease that names no profile gets its platform's default profile:** `agent-linux` for both
+    Linux platforms, and `agent-windows` for `windows/amd64`. Every command line v2 answered with a
+    lease it could serve prints what it printed, since each was `linux/arm64`. A command line naming
+    `windows/amd64` with no profile was answered `unsatisfiable`, with `profile` `agent-linux`, and
+    is now answered `pending` or `ready` with `agent-windows`. Its `state`, `reasons` and `ssh`
+    change as supporting a platform allows, and **the profile it prints is part of that support**:
+    a platform's default profile is set when the platform becomes supported. lease-api.md's
+    Versioning section MUST say so, in v0.12's spec turn.
+  - **A platform and profile that do not go together are `unsatisfiable` with
+    `unsupported_profile`**: `agent-linux` on `windows/amd64`, and `agent-windows` on either Linux
+    platform, since no host can serve either.
+  - **The reasons' messages change their wording**: `unsupported_platform`'s and
+    `unsupported_profile`'s list what is supported, and say `agentspace supports` where they said
+    `v0 supports`. A message is not a new version, and no caller parses one; v2's promise that a
+    command line without the new flags prints v1's messages is about v1's release, and v0.12's spec
+    turn writes which messages change.
+- **The lease document's shape is unchanged for Windows.** A Windows lease is reached the same way,
+  `ssh <host_alias>`, as `ssh.user`, through Microsoft's OpenSSH Server (D95). The contract never
+  promised a POSIX shell; the profile says what a host's shell is (D97).
+- **No input is added**: `--platform` and `--profile` already take every value.
+- **So D87's "v0.12's platforms are not a new version" stands**, and `schemas/` stays v2's, with no
+  copy under `schemas/v2/`.
+
+### D94. `linux/amd64` on the EC2 driver: the `m8a` ladder, the same template, an image per platform
+
+**Decided, architect, 2026-11-26.** Its prices are Terry's to accept (Q20).
+- **The EC2 driver's size map gains a column per platform** (D65, D67): `linux/amd64` maps `s` to
+  `xl` to `m8a.large`, `m8a.xlarge`, `m8a.2xlarge` and `m8a.4xlarge`. The sizes and their floors are
+  the contract's and do not change (D65).
+- **`m8a`, not `m8i`, though `m8i` costs about 13% less:** an `m8a` vCPU is a whole core, as a
+  Graviton vCPU is, and an `m8i` vCPU is one thread of a core whose other thread is another vCPU.
+  D73's half a vCPU per agent was measured on whole cores (D64), so a host of hyperthreads sized
+  by it would give each agent less than was measured, with the busiest turns short first. A
+  measured amd64 turn MAY move the map later; it is the driver's alone (D67), and changes no output.
+- **One template, as D44 requires, with the image a parameter set per platform.** The deploy passes
+  the image the platform's public parameter names (D91's reading), and the template's `ImageId`
+  default stays the pinned arm64 image, so `agentbox`'s change set stays empty, shown live as D44's
+  was. Instance family, image and the bootstrap's few per-platform steps are each a seam keyed by
+  the platform, so the Linux and Windows tracks touch different files.
+- **The `agent-linux` promise is unchanged on amd64** (D4): Ubuntu 26.04 LTS, glibc 2.43, the same
+  tools. `box/system` and `bootstrap.sh` name no architecture today; **the localswim CLI is built per
+  host for its own `GOOS` and `GOARCH`** (`agentspace-sync`), where today every host gets
+  `linux/arm64`'s.
+- **The live check shows the promise on the host**: `uname -m`, `ldd --version` and each tool's
+  version over the lease's alias (D100).
+
+### D95. A Windows lease logs in as the host's one local user, `agent`, by an agentspace certificate through Microsoft's OpenSSH Server
+
+**Decided, architect, 2026-11-26**, for #0051's first Windows call: the lease's identity. D7 carries
+over whole.
+- **The host runs Microsoft's OpenSSH Server**, installed and started by the first boot, with
+  `TrustedUserCAKeys` naming the CA's public key (D44's `CaPublicKey`) and no password login. The
+  certificate's principal is the user, its key ID the lease ID, and it expires with the lease, as on
+  Linux. Expiry is checked at login only, as D7 found for Linux.
+- **One local user, `agent`, made by the first boot, in the Administrators group.** It is the
+  Windows counterpart of `ubuntu`, which every Linux host's lease logs in as with passwordless
+  `sudo`: an agent installs its own tools on its project's dedicated host (D25), and the host has no
+  other tenant. `ssh.user` is `agent`, and the operator's own certificate names it too, with key ID
+  `operator-<project>` (D47).
+- **The account gets a long random password at first boot, which is written nowhere and never
+  read**, since Windows refuses a network logon to a local account with an empty one. Nothing logs in
+  by password.
+- **What a key-based logon cannot do is the spike's to show first** (D100): such a logon has no
+  password, so Windows gives it no network credentials and no use of the Credential Manager. Claude
+  Code keeps its sign-in in a file, and gh falls back to its own file when the Credential Manager
+  is unusable; Q23 asks Terry to accept those files, as Linux keeps them.
+- **The host's key is checked as every new host's is** (D47): accepted on the operator's first
+  connection, under `agentspace-host.<project>.windows-amd64`, in agentspace's own `known_hosts`.
+- **The board reaches the host through the keeper's holder, as on Linux** (D12, D30): Microsoft's
+  OpenSSH Server binds a `RemoteForward` on the host's loopback. The spike shows it.
+
+### D96. The Windows host agent is PowerShell under `box/windows/`, doing what `box/system` does on Linux
+
+**Decided, architect, 2026-11-26**, for #0051's second Windows call. D28 keeps the shell that runs
+on a host as shell, "since Rust would add a build per platform without making it clearer"; on
+Windows that shell is PowerShell.
+- **The files live in `box/windows/`**, embedded in the operator as `box/system` is (D37), and
+  `sync` sends them to a Windows host over the operator's alias. The first boot and the bootstrap
+  run under Windows PowerShell 5.1, which every Windows Server image has; everything after them
+  runs under PowerShell 7, which the bootstrap installs.
+- **Each Linux duty, and its Windows counterpart:**
+
+  | Duty | Linux (`box/system`) | Windows (`box/windows/`) |
+  |---|---|---|
+  | Patching (D46) | `agentspace-patch` at every boot | Windows Update at every boot, through the Windows Update Agent's own API, with no module fetched. **A patch run MUST NOT restart the host while a login session is open**; one that needs a restart restarts it only before the host's first session after its start, and the idle check holds off while it runs, as D57 does on Linux |
+  | Idle stop (D11, D57, D78) | `agentspace-idle-check` on a 5-minute timer | A scheduled task every 5 minutes, as SYSTEM: the same rules, D78's included, counting `sshd` sessions and Session Manager workers that hold a connection to `sshd` or a shell. The horizon is `C:\ProgramData\agentspace\lease-horizon`, removed by a task at every boot, as `/run` is cleared by one; the power-off is `shutdown /s`, which stops the instance |
+  | The tools (D4) | `bootstrap.sh`, `agentspace-tools` | The bootstrap, by `winget` where a package exists, and each tool's own installer otherwise; D97 lists them |
+  | The board's wrapper (D12) | `localswim`, a wrapper for the CLI | `localswim.ps1` and the localswim CLI built for `windows/amd64` |
+  | The token push (D30) | Into `ubuntu`'s home | Into `agent`'s profile, readable by `agent` and Administrators alone |
+  | The time zone (D32) | Converted to an IANA name | The laptop's Windows zone ID itself, set with `Set-TimeZone`, since both ends are Windows |
+  | `CLAUDE.md`'s copy (D50) | `~/.claude/CLAUDE.md` | `%USERPROFILE%\.claude\CLAUDE.md` of `agent` |
+  | The CA and sshd settings (D7) | `50-agentspace-ca.conf` and `51-agentspace-logins.conf` | `sshd_config` lines with the same meaning, `ClientAliveInterval 15` and `ClientAliveCountMax 5` among them, checked with `sshd -t` before a restart |
+  | The sampler (D33) | `agentspace-sample` | None in v0.12: no Windows turn is measured, and v1.0's sampler work is Linux's (D72) |
+
+- **The guard's horizon and the patch check are sent with Session Manager's PowerShell document**,
+  where Linux's use the shell one (D57). Which document a host gets is the driver's, keyed by
+  platform.
+- **Its tests run on the laptop, under PowerShell 7, in a conformance-harness home**, never on a
+  host: the idle check's rules, the horizon's parse (#0192's four cases have Windows twins) and the
+  `sshd_config` edit (#0193's twin). Each test is written from operator.md, not from the script, as
+  #0192 and #0193 require for Linux.
+
+### D97. `agent-windows`: Windows Server 2025, with the Universal C Runtime in place of a libc
+
+**Decided, architect, 2026-11-26**, for #0051's third Windows call. It extends D4's profile rules to
+a platform that has no libc.
+- **A Windows profile states its C runtime as `ucrt`**, Windows' Universal C Runtime, with a minimum
+  Windows build in place of a libc version. D4's families, `glibc`, `musl` and `none`, stay the
+  rule for every Linux profile. A profile's family is never in an output, so no schema changes.
+- **`agent-windows` promises, on `windows/amd64`:**
+
+  | Promise | `agent-windows` |
+  |---|---|
+  | C runtime | `ucrt`, Windows Server 2025's build or newer |
+  | Operating system | Windows Server 2025 Datacenter, Desktop Experience (Amazon's Full Base image), patched at each start |
+  | Git | Git for Windows, Git Bash included, which Claude Code needs on Windows |
+  | PowerShell | PowerShell 7, beside Windows PowerShell 5.1 |
+  | Node | The newest LTS, updated at each start, best effort, as `agent-linux`'s |
+  | `uv` | The latest release, updated at each start, best effort |
+  | Claude Code | The native install, which updates itself |
+  | `gh` | The GitHub CLI |
+
+- **Codex is not promised**, as D4's Windows list did not; `agent-linux` keeps promising it.
+- **The SSH login shell is one the desktop app supports**, picked by D100's spike from the app's own
+  list. PowerShell 7 is on `agent`'s `PATH` whichever it is.
+- **The root volume starts at 30 GiB, the Windows image's own minimum**, where a Linux host starts
+  at 8 (D46). It grows under Terry's standing order on disks, each host on its own, and its standing
+  cost while stopped is Q20's.
+
+### D98. `windows/arm64` stays unsupported in v0.12
+
+**Decided, architect, 2026-11-26**, for #0051's last Windows call: "`windows/arm64`, if AWS offers it
+by then". It does not: Amazon offers no Windows image for `arm64` in the stacks' region (0 images,
+2026-11-26). A `windows/arm64` request stays `unsatisfiable` with `unsupported_platform` (D5), and
+the call is made again when an image exists.
+
+### D99. #0228: one walk ends a chain of any depth, and D59's further walks stay as a backstop
+
+**Decided, architect, 2026-11-26**, for #0228's ruling, recorded in D59 and, by the story that
+builds it, in driver.md's "Release a lease".
+- **`agentspace-connections` takes a found client that no built tree holds as a top in the same
+  walk**, so one walk ends every client of a chain of exited intermediates. A test of a chain three
+  deep shows it (#0228's done-when).
+- **The further walks stay, bounded as D59's change for v0.10-T03 bounds them**: after the second
+  walk, a walk again while the last one ended a client, at most six, none starting more than 10
+  seconds after the first. They are no longer what meets #0196.
+- **Why keep them:** a walk that ends nothing stops them, so they cost nothing on a quiet release;
+  and a client can still reconnect while a release runs, through the desktop app's own copy of the
+  alias's ProxyCommand line (D59), in the moments before the record is written released and #0229's
+  refusal applies. Removing them would save no measurable time and lose that backstop.
+
+### D100. v0.12's done-when is shown by a Windows spike first and a live check per platform, with Terry's yes for their instance hours
+
+**Decided, architect, 2026-11-26** (D19, as D53, D62 and D70). The hours are Q20's.
+- **A spike on a Windows instance comes first, before any Windows story is written**, so the Windows
+  track builds on facts. It is a story of the first turn, run by hand with the AWS CLI on a
+  throwaway stack in the stacks' network and deleted at its end, at size `s`. It shows, or refutes:
+  - **A certificate login as `agent`** through a Session Manager tunnel, as D95 designs it, and that
+    an Administrators member's session has a full token.
+  - **The desktop app's SSH session on a Windows remote**, with Terry's click, and which login shell
+    it accepts (D97).
+  - **What a key-based logon can and cannot keep**: Claude Code's and gh's sign-ins (Q23).
+  - **The keeper's holder's `RemoteForward`** on the host's loopback (D95).
+  - **How long the first boot, the OpenSSH install and a patch run take**, for the Windows live
+    check's hours.
+  - A result that refutes a decision changes it before the Windows track is laid out, and goes to
+    Terry when the change is his.
+- **`linux/amd64`'s live check**, after the install: `create --platform linux/amd64 --project
+  agentspace` answers `pending`, its run makes `agentspace-linux-amd64-host-agentspace` and the lease
+  becomes `ready`; over its alias, `uname -m` prints `x86_64`, glibc is 2.43 or newer, and each
+  `agent-linux` tool answers; `--size s` and the default size each meet the host as D66 says; the
+  release lets the guard stop it within D56's bound. The arm64 host is not started.
+- **`windows/amd64`'s live check**, after the install: the same, with the Windows host made by its
+  run; then Terry's sign-ins as `agent` (D52's procedure, written for Windows); then an agent in a
+  desktop-app session on the lease works a card on the agentspace board; then the release, and the
+  guard stops the host within D56's bound.
+- **`linux/arm64` is unchanged, shown by conformance**, as D87's checks are: the whole suite,
+  including every v2 document check, at `main`'s counts or more.
+- **conformance.md's coverage table is read for every "None" these change** (architect.md,
+  Breaking an epic into stories, step 5), and each gets a case or one of these checks.
+- **The observer script lost with v0.09-T05's worktree is rebuilt by the architect** before the
+  first live check, from runs/e0.09-t05-s01.md (handoff-v0.11.md, What is open).
+
 ## Keys
 
 ### D17. The CA key lives on the laptop, owner-only and without a passphrase
@@ -4806,3 +5142,8 @@ the key from `%LOCALAPPDATA%\agentspace\ca` (in fact the Claude app's package ca
 | **Q16** | **Closed (Terry, 2026-11-24: "No to both").** ~~Does he want a plan lease shown on agentspace's real host, resized to the plan's size and back, for about 0.5 instance hours at `l` (about $0.20)? D80 shows the done-when without any instance. The architect recommends no.~~ No: v0.10 asks for no instance hours. | Closed, D80 |
 | **Q17** | **Closed (Terry, 2026-11-25: "I'll take whatever recommendation you prefer"; the architect's was (a)).** ~~With what credential does the lease CLI read his board (D86)? localswim has two tokens, Human and Bot, and neither is read-only. **(a)** The CLI reads Bot's token for each call from localswim's service receipt and `bot.json`, decrypted by DPAPI for his Windows user alone, as his board watcher does; no new secret and no file added, but agentspace's product then decrypts a token that can write, held to GETs by D86's one read-only client and its conformance case. **(b)** localswim gains a read-only token first: a change to his localswim, outside this repository, landed before v0.11's programs turn. **(c)** agentspace keeps a copy of Bot's token in its own home: a second copy of a write token, which the architect does not recommend. The architect recommends (a).~~ (a): the CLI reads Bot's token for each call from localswim's receipt, and only reads. | Closed, D86 |
 | **Q18** | **Closed (Terry, 2026-11-25: "I'll take whatever recommendation you prefer"; the architect's was (a)).** ~~What does v0.11's live check read on his board (D88)? **(a)** #0052, v0.11's own epic, once the architect writes its plan block when laying it out (D83), so the release that builds the reader is also its first input: one GET as Bot, nothing written by the check. **(b)** A throwaway epic the architect creates and archives on his board. **(c)** None: conformance against a stand-in board alone. Each starts no instance and costs nothing. The architect recommends (a).~~ (a): #0052, once its plan block is written at layout. | Closed, D88 |
+| **Q19** | **Open, Terry's (his suggestion, 2026-11-26: "as we have dropped to 0.5 vCPU and 2GB RAM per agent, the latest "C" instances may be a better fit").** Do sizes move from M class (4 GiB a vCPU) to C class (2 GiB a vCPU)? D73's 2 GiB an agent was set to M class's ratio, not from need: the measured share is 0.25 GiB (D64), so 1 GiB an agent at C class's ratio is still four times it. C class costs about 11% less on Linux at every size (`c9g` against `m9g`: $0.0869, $0.1739, $0.3478 and $0.6955 an hour for `s` to `xl`; `c8a` against `m8a` the same share), so about $0.87 a month at 40 hours of `m`. **It halves every size's memory floor, which changes what `size` promises, so v0.12 would be contract v3** (D93), with v2's schemas kept under `schemas/v2/` and a spec story's work. Windows would stay on M class even then: Windows Server needs about 2 GiB of its own, and an `s` of 4 GiB would leave its four agents half a gigabyte each. **The architect recommends not in v0.12**: revisit it at v1.0, whose first turn has the real project measure its own footprint (D72, D73), so memory per agent is measured on a second project before its headroom is halved, and one contract change carries both | v0.12's design (D93) |
+| **Q20** | **Open, Terry's.** Does he accept the new platforms' prices (D94's `m8a` ladder: $0.12, $0.24, $0.49 and $0.97 an hour for `s` to `xl` on `linux/amd64`, and $0.21, $0.43, $0.85 and $1.71 on `windows/amd64`), and say yes to D100's instance hours: the Windows spike up to 1.5 hours at `s` (about $0.32), `linux/amd64`'s live check up to 2 hours at `m` or smaller (about $0.49), and `windows/amd64`'s up to 5 hours at `m` or smaller (about $2.14), up to 8.5 hours and about $2.95 in all? Two kept hosts also cost their disks while they exist, at D54's rate: about $0.64 a month for the amd64 host's 8 GiB and $2.40 for the Windows host's 30 GiB (D97). A live turn that would pass the hours asks him again first | v0.12's design (D94, D97, D100) |
+| **Q21** | **Open, Terry's.** May the project list approve `agentspace` for `linux/amd64` and `windows/amd64` (D91), so v0.12's live checks make agentspace's two new hosts, kept after v0.12 as D25 keeps a host? No other project gets a new platform | v0.12's design (D91) |
+| **Q22** | **Open, Terry's.** Does he accept Windows licensing as Amazon's license-included images bill it, $0.046 per vCPU-hour on top of the instance (about $0.18 an hour at `m`, so a Windows host costs about 1.8 times an amd64 Linux one), bounded by the same guard as every host (D56, D57)? Its worst case is D58's backstop: a Windows host whose idle check has died, idle with the laptop away, runs up to 24 hours, about $10 at `m` against about $5 for Linux. **No AWS account setting is needed**: the images need no subscription, the vCPU quota is 1,920, and the Session Manager settings stay as Q15 left them | v0.12's design (D95 to D97) |
+| **Q23** | **Open, Terry's.** On a Windows host, are his sign-ins kept as files in `agent`'s profile, readable by `agent` and Administrators alone: Claude Code's own credentials file, and gh's token in its config file, because a key-based logon cannot use the Windows Credential Manager (D95)? That is the posture every Linux host has today (D52), signed in once per host by hand; automating sign-ins stays after 1.0 (Q2, #0009). The spike confirms what a key-based logon can keep before the Windows track is laid out | v0.12's design (D95, D100) |
