@@ -16,12 +16,19 @@ path = "src/main.rs"
 # The ProxyCommand program's search beside this program, for the checks a `plan_too_large` lease
 # still makes before it is recorded (lease-api.md, `create`, pin P32).
 agentspace-alias = { path = "../agentspace-alias" }
+# The board read of `create --board --epic` and the plan block (lease-api.md, The board read and
+# The plan block; D83, D86, D89), called and never changed.
+agentspace-board = { path = "../agentspace-board" }
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-driver-ec2 = { path = "../agentspace-driver-ec2" }
 # quiet_hard_errors, which main calls first (#0225; D81, as changed during v0.10-T02).
 agentspace-launch = { path = "../agentspace-launch" }
 # The plan of `create --plan`: its parse, its busiest turn and the size it gets (D74, D75, D81).
 agentspace-plan = { path = "../agentspace-plan" }
+# The board read's Context, and the files and decryption it reads the receipt and Bot's credential
+# through: `StdFiles` and `DpapiUnprotect` in the program (lease-api.md, The board read).
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+agentspace-push = { path = "../agentspace-push" }
 agentspace-state = { path = "../agentspace-state" }
 agentspace-values = { path = "../agentspace-values" }
 # The OS's random source, for a new lease ID (the architect's conditions on the seam, 2026-11-19).
@@ -44,6 +51,11 @@ tempfile = { version = "=3.23.0", default-features = false }
 # features agentspace-state uses, so no reference is ever fetched.
 jsonschema = { version = "=0.60.2", default-features = false }
 # For tests/pending_binary.rs (E0.07-T03-S01, the test author's): the operator's `ca`, run in
-# process to make a throwaway CA, as the EC2 driver's integration tests do.
-agentspace-operator-api = { path = "../agentspace-operator-api" }
+# process to make a throwaway CA, as the EC2 driver's integration tests do. The operator API it
+# also uses is a dependency above.
 agentspace-ca = { path = "../agentspace-ca" }
+
+# For tests/lease_board.rs (E0.11-T03-S01, the test author's): a stand-in `bot.json`'s DPAPI blob,
+# made with `CryptProtectData`. The version and features the other crates already use.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "=0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

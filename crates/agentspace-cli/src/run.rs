@@ -205,7 +205,9 @@ fn uuid_v4_from(mut b: [u8; 16]) -> String {
     out
 }
 
-fn execute_with(args: &[OsString], world: &World<'_>, runner: Runner<'_>) -> Outcome {
+/// [`execute_in`] with the runner given, which the commands' unit tests use to give `create` a
+/// stand-in board read.
+pub(crate) fn execute_with(args: &[OsString], world: &World<'_>, runner: Runner<'_>) -> Outcome {
     install_hook();
     let sub = Cell::new(None);
     let result = {

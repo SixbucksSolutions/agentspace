@@ -45,12 +45,14 @@ name = "agentspace-cli"
 version = "0.5.0"
 dependencies = [
  "agentspace-alias",
+ "agentspace-board",
  "agentspace-ca",
  "agentspace-driver-api",
  "agentspace-driver-ec2",
  "agentspace-launch",
  "agentspace-operator-api",
  "agentspace-plan",
+ "agentspace-push",
  "agentspace-state",
  "agentspace-values",
  "getrandom 0.3.4",

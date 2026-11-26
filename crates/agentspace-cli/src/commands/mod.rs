@@ -13,6 +13,7 @@
 //! - **Every document is checked against its output schema before it is printed**, and before the
 //!   change it reports is made where the document is known first.
 
+mod board;
 mod create;
 mod plan;
 mod release;
