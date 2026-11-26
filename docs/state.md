@@ -1206,7 +1206,8 @@ on](operator.md#which-host-a-command-acts-on)).
   stored platform: one that is not in the normalized form fails the schema, or matches no lease.
 - **In a name, as `<os>-<arch>`**: the normalized platform with its one `/` written `-`, such as
   `linux-amd64` and `windows-amd64`. **`linux/arm64` never appears in a name**: a `linux/arm64`
-  host keeps every name it had before v0.12 (D91).
+  host keeps every name it had before v0.12 (D91). A name whose platform part is `linux-arm64`, or
+  is not one `<os>-<arch>` of the form above, names no host.
 - **v0.12 supports exactly `linux/arm64`, `linux/amd64` and `windows/amd64`** (D98; pin P1), and a
   platform is supported only when its normalized value equals one of the three, exactly: a platform
   with a variant, such as `linux/amd64/v3`, is unsupported (architect, 2026-11-26, for v0.12-T01,
@@ -1485,7 +1486,7 @@ it:
   5. **Once the stack's deploy has succeeded, it writes the type `describe-stacks` reads back**,
      under the host registry lock alone, as every `deploy` does (above; pins P11 and P23).
 
-  **From v0.12 the project's leases in these steps are its host's: the run's project's leases on
+  **From v0.12 the project's leases in these steps and the rest of this section are its host's: the run's project's leases on
   the run's platform alone** (D91: "a resize counts the project's leases on that platform alone"),
   as [Live leases and the lease horizon](#live-leases-and-the-lease-horizon) defines a host's
   leases, so a `linux/amd64` lease neither holds nor sizes a `linux/arm64` host.
@@ -1566,6 +1567,10 @@ it:
   [README](../README.md#install-it)).
 
 ### The last success
+
+**From v0.12 a project in this section means one host: the project on one platform, its
+`provision.lock` that host's, and its leases those on that platform** (D91;
+[Live leases and the lease horizon](#live-leases-and-the-lease-horizon)).
 
 **A record's `last_success_at` says that the host's last provisioning run succeeded, and when it
 ended** (D77; architect, 2026-11-24, for v0.10-T01, pins P22 to P24). The driver reads it to decide
@@ -2837,7 +2842,9 @@ host of a project has its own, so a run on one platform's host never holds anoth
   means a provisioning run or a person's `deploy` is running, and `deploy`'s refusal names both.
   **Two older texts name a run alone, and stay byte for byte as v0.07 and v0.08 pinned them**:
   `provision`'s held-lock message,
-  `agentspace: A provisioning run for '<project>' is already running.`, with its log line, and
+  `agentspace: A provisioning run for '<project>' is already running.`, from v0.12 with
+  `'<host name>'` in place of `'<project>'`, so a `linux/arm64` host's message stays byte for byte
+  (architect, 2026-11-26, for v0.12-T01, pin P12; operator.md owns the text), with its log line, and
   the guard's `provisioning=running` field ([operator.md, guard](operator.md#guard)). Either can
   report a lock a person's `deploy` holds.
 
