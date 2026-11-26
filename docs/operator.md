@@ -1929,8 +1929,8 @@ P41). **Each row is stated as its input, its output and its failure**, so the ar
 as a method of the trait (architect, 2026-11-26, for v0.12-T02, pin P8): its input is the host's record and the
 command's own inputs that the row names; its output is the value or the programs the row names;
 and a row whose failure the cell does not name fails as the same step fails on Linux, with the same
-message. The rows below the seventh are rows the Windows column needed and T01's table did not
-have: each was a step this page stated once for "today's box", and each carries the label of the
+message. The third row and the rows below the eighth are rows the Windows column needed and T01's
+table did not have: each was a step this page stated once for "today's box", and each carries the label of the
 Windows spec's choice it rests on (N3 to N23; architect, 2026-11-26, for v0.12-T02, pin P16).
 
 | What the platform supplies | `linux/arm64` | `linux/amd64` | `windows/amd64` |
@@ -5800,11 +5800,11 @@ names the Linux toolchain, and this section is where its Windows meaning is writ
 
 **How its choices are ruled.** Each choice this section makes that no decision settled is labelled
 N1 to N23 and cites the pin that ruled it (architect, 2026-11-26, for v0.12-T02): N1 and N2 pin
-P15, N7 pin P16 with pin P12's line ending, and every other pin P16. **Four facts are unmeasured
+P15, N7 pin P16 with pin P12's line ending, and every other pin P16. **Eight facts are unmeasured
 and are T05-S02's to measure** ([What T05-S02
-measures](#what-t05-s02-measures)): the desktop app's session with Git Bash, a patch run's time on
-an image that is not current, whether an open SSH session survives a restart of sshd, and how
-Windows PowerShell 5.1 as the login shell passes on the push's stdin.
+measures](#what-t05-s02-measures)), among them the desktop app's session with Git Bash, a patch
+run's time on an image that is not current, whether an open SSH session survives a restart of sshd,
+and how Windows PowerShell 5.1 as the login shell passes on the push's stdin.
 
 ### What a Windows host is
 
@@ -5931,7 +5931,9 @@ no first-boot file** (#0260), pin P9's `first-boot.ps1` being withdrawn by pin P
    restart that Windows schedules by itself can come before the bootstrap sets the same.
 2. **Make `agent`**: a local user with a random password of at least 32 characters from a
    cryptographic random source, held in memory alone and never written or printed, set never to
-   expire, and a member of Administrators (D95). A user `agent` that already exists is left as it
+   expire, and a member of Administrators (D95). **The password MUST hold at least one uppercase
+   letter, one lowercase letter, one digit and one symbol**, so it meets Windows' default rule on
+   a password's complexity whatever the random draw gave. A user `agent` that already exists is left as it
    is but made a member.
 3. **Make OpenSSH Server ready, by one of two paths** (architect, 2026-11-26, for v0.12-T02,
    spike ruling 1). **When the `OpenSSH.Server` capability is installed**, as on the spike's image,
@@ -6250,16 +6252,16 @@ that Windows installs no update and schedules no restart by itself, and the patc
 path that restarts the host (N10; architect, 2026-11-26, for v0.12-T02, pin P16): under
 `HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU`, the DWORD values `NoAutoUpdate` 1 and
 `NoAutoRebootWithLoggedOnUsers` 1. The Windows Update Agent's API still searches and installs with
-them set. Defender's security intelligence and the Store's app updates, which the spike saw, need
-no restart and are left alone.
+them set. Defender's security intelligence update and the Windows App Runtime, which the spike saw
+Windows install by itself with no restart, are left alone.
 - **`NoAutoUpdate` 1 turns off Windows' own installs as well as its restarts**, and that is
   accepted (pin P16): every start of the host runs the patch task (D96), and a host starts with
   each lease's first connection, so the boot's patch run is the host's one updater. A host that
   ran for days with no start would get no update in that time.
 - **The restart rule, and this switch-off of Windows' own restarts, are decisions the spike did
   not test** (architect, 2026-11-26, for v0.12-T02, spike ruling 5): its one patch run found
-  nothing to install and needed no restart, no restart came in its run, and it set no policy (the
-  spike's record, Question 7). E0.12-T03-S07's test shows the restart rule against stand-ins, and
+  nothing to install and needed no restart, and no restart came in its run (the spike's record,
+  Question 7), which names no Windows Update policy set. E0.12-T03-S07's test shows the restart rule against stand-ins, and
   a real restart, and the policy at work, are first seen live, in E0.12-T05-S02.
 
 **The patch check** (`agentspace-patch-check.ps1`, N6; architect, 2026-11-26, for v0.12-T02, pin

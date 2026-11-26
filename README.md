@@ -20,7 +20,7 @@ installed programs ([Build](#build), [Install it](#install-it)).
 | Piece | What |
 |---|---|
 | Instance | m9g (Graviton, 4 GiB per vCPU), Ubuntu 26.04 LTS arm64; once v0.09 is installed, a lease's `--size` sizes its project's host on the lease's platform, `s` to `xl` (2 to 16 vCPUs), `m`, `m9g.xlarge` (4 vCPUs, 16 GiB), by default ([D65](docs/decisions.md#d65-four-sizes-s-to-xl-on-the-m9g-ladder-m-stays-the-default-and-todays-host), [D69](docs/decisions.md#d69-d39-ends-with-v009-the-architect-picks-a-turns-size-by-terrys-per-agent-rule-and-asks-for-it-through-the-lease)) |
-| Disk | gp3, encrypted, per host: the box's is 20 GiB and a new host starts at 8 GiB; each is grown on demand under the disk order ([AGENTS.md](AGENTS.md#growing-the-boxs-disk)), never shrunk |
+| Disk | gp3, encrypted, per host: the box's is 20 GiB and a new host starts at 8 GiB, or 30 GiB on `windows/amd64` ([D97](docs/decisions.md#d97-agent-windows-windows-server-2025-with-the-universal-c-runtime-in-place-of-a-libc)); each is grown on demand under the disk order ([AGENTS.md](AGENTS.md#growing-the-boxs-disk)), never shrunk |
 | Access | Session Manager only: no inbound ports, no key pair, no Elastic IP |
 | Patching | Every boot: `apt-get dist-upgrade` (phased updates included) and `snap refresh`, then one reboot if the kernel or another package needs it; then the newest Node LTS, Codex and uv |
 | Lease guard | Once v0.08 is installed: on the laptop, `agentspace-operator guard`, started by the keeper every 5 minutes, stops a host within 25 minutes of its project's last live lease's end ([D56](docs/decisions.md#d56-a-host-runs-only-while-its-project-holds-a-live-lease-the-laptops-guard-stops-it-otherwise); [A host's life](#a-hosts-life)) |
