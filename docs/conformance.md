@@ -1129,7 +1129,7 @@ works from it and from [lease-api.md, The board read](lease-api.md#the-board-rea
   - **It binds a plain TCP socket to `127.0.0.1` with exclusive use of the address**, never a `TcpListener`:
     on .NET 10 a `TcpListener` given `ExclusiveAddressUse` before it starts answers a null `Server` after
     it, which `Socket.Select` cannot take, and the stand-in's own self-test found it (23 of its first run's 46
-    results failed). (the dev lead, for v0.11-T04, pin P9)
+    results failed). (`board-standin.ps1` as built, E0.11-T04-S01, #0239)
   - **It serves its connections from one loop, one request at a time**: each request is logged and flushed,
     then answered or held, before the next is read. Every answer carries `Connection: close`, and a
     connection is closed once the client has closed its side, or 5 seconds after its answer. A connection
@@ -1152,7 +1152,7 @@ works from it and from [lease-api.md, The board read](lease-api.md#the-board-rea
   - **A method or a request target that holds the token's text, raw or percent-decoded, is logged as
     `[token-withheld]` in its place**, so that a client that put the token in a URL is caught by the line and
     the token is still never logged. The `Authorization` value is compared while the request is parsed and kept
-    in no variable past that; only `ok`, `wrong` or `none` is. (the dev lead, for v0.11-T04, pin P9)
+    in no variable past that; only `ok`, `wrong` or `none` is. (`board-standin.ps1` as built, E0.11-T04-S01, #0239)
   - **Every string of the ticket view that a client has no use for begins `STANDIN-MARKER-`**: the card's
     title, the lane, owner and priority labels of every card, each comment's text, and the title of each
     relationship, the parent and each child. **Each marker ends with a tag of the board ID's first 8
@@ -1165,7 +1165,7 @@ works from it and from [lease-api.md, The board read](lease-api.md#the-board-rea
   - **A `{"body_bytes": <n>, "chunked": <boolean>}` answer pads the document**, streamed, by lengthening the
     last comment's text when the gap is smaller than one more comment, and otherwise by adding comments of
     `x` text, each under 4,000,000 characters; an `n` smaller than any card's unpadded document is refused
-    with exit 2 at the start. (the dev lead, for v0.11-T04, pin P9)
+    with exit 2 at the start. (`board-standin.ps1` as built, E0.11-T04-S01, #0239)
 - **A stand-in's own host caches under the home are not a change to the home** (the architect, 2026-11-26,
   for v0.11-T04, pin P13). **The stand-in is a `pwsh` process started under the case's moved home, and
   PowerShell writes startup caches under `home\AppData\Local\Microsoft\PowerShell\` of the home's root when it
@@ -1778,7 +1778,7 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
       `ConvertTo-HpMasked`**, which hides the temp folder, the profile, the throwaway home, the computer name
       and the user name in every spelling it reads from the case's own environment, and
       `test-unmet-host-provision.ps1`'s reason for a log line that is not `<time> <step> <outcome>` quotes the
-      line through it too (the architect, 2026-11-25, for v0.11-T04, pin P8). **That is #0230's whole change.**
+      line through it too (the architect, 2026-11-26, for v0.11-T04, pin P8). **That is #0230's whole change.**
       **A failure reason of any other file that quotes captured program output is not masked by it**, and
       **MUST be masked before it is printed outside the run's own folder or written to a record**, as for any
       command's error text (AGENTS.md, "Terry's real files in a review"); **the places that still quote
