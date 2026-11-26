@@ -49,14 +49,20 @@ fn any_method_but_get_is_405_and_recorded() {
     for method in ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
         let (status, _) = raw(
             standin.port,
-            &format!("{method} {} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", good_path()),
+            &format!(
+                "{method} {} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                good_path()
+            ),
         );
         assert_eq!(status, 405, "{method}");
     }
     let reqs = standin.requests();
     assert_eq!(reqs.len(), 6);
     let methods: Vec<&str> = reqs.iter().map(|r| r.method.as_str()).collect();
-    assert_eq!(methods, ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+    assert_eq!(
+        methods,
+        ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    );
 }
 
 #[test]
@@ -64,7 +70,10 @@ fn the_reads_only_check_fails_on_a_planted_non_get() {
     let standin = Standin::start(Behavior::standard());
     let _ = raw(
         standin.port,
-        &format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", good_path()),
+        &format!(
+            "POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            good_path()
+        ),
     );
     let reqs = standin.requests();
     let caught = std::panic::catch_unwind(|| assert_only_gets(&reqs));
@@ -74,7 +83,12 @@ fn the_reads_only_check_fails_on_a_planted_non_get() {
 #[test]
 fn the_reads_only_check_fails_on_a_wrong_or_missing_token_and_on_other_planted_values() {
     let standin = Standin::start(Behavior::standard());
-    let head = |extra: &str| format!("GET {} HTTP/1.1\r\nHost: x\r\n{extra}Connection: close\r\n\r\n", good_path());
+    let head = |extra: &str| {
+        format!(
+            "GET {} HTTP/1.1\r\nHost: x\r\n{extra}Connection: close\r\n\r\n",
+            good_path()
+        )
+    };
     // No Authorization.
     let (status, _) = raw(standin.port, &head(""));
     assert_eq!(status, 401);
@@ -87,14 +101,26 @@ fn the_reads_only_check_fails_on_a_wrong_or_missing_token_and_on_other_planted_v
     let token_line = format!("Authorization: Bearer {}\r\n", standin.token());
     let (status, _) = raw(standin.port, &head(&format!("{token_line}Cookie: a=b\r\n")));
     assert_eq!(status, 200);
-    let (status, _) = raw(standin.port, &head(&format!("{token_line}Origin: http://x\r\n")));
+    let (status, _) = raw(
+        standin.port,
+        &head(&format!("{token_line}Origin: http://x\r\n")),
+    );
     assert_eq!(status, 200);
-    let (status, _) = raw(standin.port, &head(&format!("{token_line}If-None-Match: x\r\n")));
+    let (status, _) = raw(
+        standin.port,
+        &head(&format!("{token_line}If-None-Match: x\r\n")),
+    );
     assert_eq!(status, 200);
-    let (status, _) = raw(standin.port, &head(&format!("{token_line}Accept-Encoding: gzip\r\n")));
+    let (status, _) = raw(
+        standin.port,
+        &head(&format!("{token_line}Accept-Encoding: gzip\r\n")),
+    );
     assert_eq!(status, 200);
     // And one that is clean.
-    let (status, _) = raw(standin.port, &head(&format!("{token_line}Accept-Encoding: identity\r\n")));
+    let (status, _) = raw(
+        standin.port,
+        &head(&format!("{token_line}Accept-Encoding: identity\r\n")),
+    );
     assert_eq!(status, 200);
     let reqs = standin.requests();
     assert_eq!(reqs.len(), 8);
@@ -102,7 +128,10 @@ fn the_reads_only_check_fails_on_a_wrong_or_missing_token_and_on_other_planted_v
     for (i, r) in reqs.iter().enumerate().take(7) {
         let one = vec![r.clone()];
         let caught = std::panic::catch_unwind(|| assert_only_gets(&one));
-        assert!(caught.is_err(), "assert_only_gets passed planted request {i}");
+        assert!(
+            caught.is_err(),
+            "assert_only_gets passed planted request {i}"
+        );
     }
     assert_only_gets(&reqs[7..]);
 }
@@ -112,15 +141,22 @@ fn a_path_without_the_prefix_is_a_bare_404_before_the_token_is_looked_at() {
     let standin = Standin::start(Behavior::standard());
     let (status, text) = raw(
         standin.port,
-        &format!("GET /boards/{BOARD}?view=ticket&ticket=52 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+        &format!(
+            "GET /boards/{BOARD}?view=ticket&ticket=52 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+        ),
     );
     assert_eq!(status, 404);
-    assert!(!text.to_ascii_lowercase().contains("content-type"), "a bare 404 has no content type");
+    assert!(
+        !text.to_ascii_lowercase().contains("content-type"),
+        "a bare 404 has no content type"
+    );
     assert!(text.ends_with("\r\n\r\n"), "a bare 404 has no body");
     // POST with no prefix is 405: the method is checked first.
     let (status, _) = raw(
         standin.port,
-        &format!("POST /boards/{BOARD} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+        &format!(
+            "POST /boards/{BOARD} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ),
     );
     assert_eq!(status, 405);
 }
@@ -150,7 +186,15 @@ fn the_ticket_view_is_a_whole_inspection_with_every_part_filled_in_and_markers_i
     assert_eq!(status, 200);
     let body = text.split("\r\n\r\n").nth(1).unwrap();
     let doc: serde_json::Value = serde_json::from_str(body).unwrap();
-    for member in ["board_id", "board_revision", "card", "relationships", "parent", "children", "prose"] {
+    for member in [
+        "board_id",
+        "board_revision",
+        "card",
+        "relationships",
+        "parent",
+        "children",
+        "prose",
+    ] {
         assert!(doc.get(member).is_some(), "the inspection lacks {member}");
     }
     assert!(doc["prose"]["comments"].as_array().unwrap().len() >= 2);
@@ -174,11 +218,18 @@ fn a_404_is_the_same_document_for_an_unknown_board_and_an_unknown_ticket() {
             ),
         )
     };
-    let (s1, t1) = get(&format!("{API}boards/{BOARD}?view=ticket&ticket=99&include_prose=true"));
-    let (s2, t2) = get(&format!("{API}boards/{OTHER_BOARD}?view=ticket&ticket=52&include_prose=true"));
+    let (s1, t1) = get(&format!(
+        "{API}boards/{BOARD}?view=ticket&ticket=99&include_prose=true"
+    ));
+    let (s2, t2) = get(&format!(
+        "{API}boards/{OTHER_BOARD}?view=ticket&ticket=52&include_prose=true"
+    ));
     assert_eq!((s1, s2), (404, 404));
     for t in [&t1, &t2] {
-        assert!(t.to_ascii_lowercase().contains("content-type: application/problem+json"));
+        assert!(
+            t.to_ascii_lowercase()
+                .contains("content-type: application/problem+json")
+        );
         assert!(t.contains("\"code\":\"not_found\""));
     }
     let (s3, _) = get(&format!("{API}boards/{BOARD}?view=summary"));

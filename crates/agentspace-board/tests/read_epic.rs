@@ -53,7 +53,8 @@ fn every_part_the_client_has_no_use_for_is_ignored() {
     // The stand-in fills comments, relationships, the parent, the children and a related card,
     // each with a revision, an archived flag or a description of its own, so a client that read
     // the wrong one would answer with that value. Only three members are read.
-    let world = World::new(Behavior::standard().with_card(BOARD, 53, Card::new(9, true, "Archived one")));
+    let world =
+        World::new(Behavior::standard().with_card(BOARD, 53, Card::new(9, true, "Archived one")));
     let epic = world.ok(world.read(BOARD, 52));
     assert_eq!((epic.revision, epic.archived), (7, false));
     assert_eq!(epic.description, DESCRIPTION);
@@ -66,7 +67,8 @@ fn every_part_the_client_has_no_use_for_is_ignored() {
 #[test]
 fn each_ticket_is_asked_for_by_its_number_alone() {
     for ticket in [1u64, 52, 4_194_304, 9_007_199_254_740_991] {
-        let world = World::new(Behavior::empty().with_card(BOARD, ticket, Card::new(3, false, "x")));
+        let world =
+            World::new(Behavior::empty().with_card(BOARD, ticket, Card::new(3, false, "x")));
         let epic = world.ok(world.read(BOARD, ticket));
         assert_eq!(epic.revision, 3);
         let reqs = world.requests();
@@ -86,7 +88,8 @@ fn the_description_comes_back_exactly() {
         "  leading and trailing space  ",
     ];
     for description in cases {
-        let world = World::new(Behavior::empty().with_card(BOARD, 52, Card::new(1, false, description)));
+        let world =
+            World::new(Behavior::empty().with_card(BOARD, 52, Card::new(1, false, description)));
         let epic = world.ok(world.read(BOARD, 52));
         assert_eq!(epic.description, description);
         assert_eq!(world.requests().len(), 1);
@@ -104,7 +107,8 @@ fn a_surrogate_pair_in_the_description_is_text() {
 #[test]
 fn the_revision_bounds_are_accepted() {
     for revision in [1u64, 2, 9_007_199_254_740_990, 9_007_199_254_740_991] {
-        let world = World::new(Behavior::empty().with_card(BOARD, 52, Card::new(revision, false, "x")));
+        let world =
+            World::new(Behavior::empty().with_card(BOARD, 52, Card::new(revision, false, "x")));
         let epic = world.ok(world.read(BOARD, 52));
         assert_eq!(epic.revision, revision);
     }
@@ -113,7 +117,8 @@ fn the_revision_bounds_are_accepted() {
 #[test]
 fn an_archived_card_reads_ok_with_archived_true() {
     // The read reports it; the lease CLI is what refuses an archived epic.
-    let world = World::new(Behavior::empty().with_card(BOARD, 52, Card::new(12, true, "Archived epic")));
+    let world =
+        World::new(Behavior::empty().with_card(BOARD, 52, Card::new(12, true, "Archived epic")));
     let epic = world.ok(world.read(BOARD, 52));
     assert!(epic.archived);
     assert_eq!(epic.revision, 12);
@@ -188,7 +193,11 @@ fn an_unknown_board_is_told_by_the_summary_view() {
 fn a_known_board_with_no_cards_has_no_such_ticket() {
     let world = World::new(Behavior::empty().with_board(BOARD));
     let result = world.read(BOARD, 1);
-    assert!(matches!(result, Err(BoardError::UnknownTicket)), "got {}", name_of(&result));
+    assert!(
+        matches!(result, Err(BoardError::UnknownTicket)),
+        "got {}",
+        name_of(&result)
+    );
     assert_eq!(world.requests().len(), 2);
 }
 
@@ -202,10 +211,18 @@ fn the_media_type_of_a_not_found_is_compared_without_case_and_parameters_are_ign
     ] {
         let world = World::new(Behavior::standard().media(media));
         let result = world.read(BOARD, 99);
-        assert!(matches!(result, Err(BoardError::UnknownTicket)), "got {}", name_of(&result));
+        assert!(
+            matches!(result, Err(BoardError::UnknownTicket)),
+            "got {}",
+            name_of(&result)
+        );
         assert_eq!(world.requests().len(), 2);
         let result = world.read(OTHER_BOARD, 99);
-        assert!(matches!(result, Err(BoardError::UnknownBoard)), "got {}", name_of(&result));
+        assert!(
+            matches!(result, Err(BoardError::UnknownBoard)),
+            "got {}",
+            name_of(&result)
+        );
         assert_eq!(world.requests().len(), 4);
     }
 }
@@ -267,7 +284,8 @@ fn a_404_problem_with_another_code_or_a_body_that_is_not_one_is_not_a_not_found(
 #[test]
 fn a_404_that_is_a_not_found_with_other_members_still_counts() {
     let body = r#"{"type":"about:blank","title":"x","status":404,"code":"not_found","detail":"y","request_id":"r","outcome":"rejected","errors":[],"extra":{"a":[1,2]}}"#;
-    let behavior = Behavior::standard().answer(Answer::raw(404, Some("application/problem+json"), body));
+    let behavior =
+        Behavior::standard().answer(Answer::raw(404, Some("application/problem+json"), body));
     // The `answer` override covers the summary view too, so the second GET is also this 404.
     let world = World::new(behavior);
     let result = world.read(BOARD, 52);
@@ -282,8 +300,16 @@ fn a_404_that_is_a_not_found_with_other_members_still_counts() {
 #[test]
 fn after_a_not_found_the_summary_views_other_outcomes_are_their_own() {
     let cases: Vec<(&str, Answer, Option<String>)> = vec![
-        ("401", Answer::problem(401, "unauthorized"), Some(MSG_REFUSED.to_string())),
-        ("403", Answer::problem(403, "forbidden"), Some(MSG_REFUSED.to_string())),
+        (
+            "401",
+            Answer::problem(401, "unauthorized"),
+            Some(MSG_REFUSED.to_string()),
+        ),
+        (
+            "403",
+            Answer::problem(403, "forbidden"),
+            Some(MSG_REFUSED.to_string()),
+        ),
         ("401 bare", Answer::bare(401), Some(MSG_REFUSED.to_string())),
         ("400", Answer::problem(400, "invalid_request"), None),
         ("405", Answer::problem(405, "method_not_allowed"), None),
@@ -292,8 +318,16 @@ fn after_a_not_found_the_summary_views_other_outcomes_are_their_own() {
         ("503", Answer::bare(503), None),
         ("404 bare", Answer::bare(404), None),
         ("404 other code", Answer::problem(404, "conflict"), None),
-        ("302", Answer::redirect(302, "/api/2026-11-10/elsewhere"), None),
-        ("201", Answer::raw(201, Some("application/json"), "{}"), None),
+        (
+            "302",
+            Answer::redirect(302, "/api/2026-11-10/elsewhere"),
+            None,
+        ),
+        (
+            "201",
+            Answer::raw(201, Some("application/json"), "{}"),
+            None,
+        ),
         ("closed", Answer::Close, None),
     ];
     for (label, summary, expected) in cases {
@@ -317,7 +351,11 @@ fn a_401_or_a_403_is_a_refused_credential_and_is_not_tried_again() {
             let world = World::new(Behavior::standard().answer(answer));
             let msg = world.internal(world.read(BOARD, 52));
             assert_eq!(msg, MSG_REFUSED, "status {status}");
-            assert_eq!(world.requests().len(), 1, "status {status} is not tried again");
+            assert_eq!(
+                world.requests().len(),
+                1,
+                "status {status} is not tried again"
+            );
         }
     }
 }
@@ -328,14 +366,21 @@ fn a_token_the_board_does_not_know_is_a_refused_credential() {
     // this shows the client sends the token it decrypted, in the Authorization header.
     let world = standard();
     let other = fresh_token();
-    assert_ne!(other, world.standin.token());
+    // Compared, never shown: `assert_ne!` would print both tokens if they matched.
+    assert!(
+        other != world.standin.token(),
+        "the second token is the stand-in's"
+    );
     world.write_bot(&bot_json(&hex(&blob_for(&utf16le(&other)))));
     let msg = world.internal(world.read(BOARD, 52));
     assert_eq!(msg, MSG_REFUSED);
     let reqs = world.standin.requests();
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0].method, "GET");
-    assert!(!reqs[0].auth_ok, "the request did not carry the stand-in's token");
+    assert!(
+        !reqs[0].auth_ok,
+        "the request did not carry the stand-in's token"
+    );
 }
 
 #[test]
@@ -358,9 +403,15 @@ fn a_port_with_no_listener_does_not_answer() {
     let world = standard();
     let port = dead_port();
     assert_ne!(port, 8811);
-    world.write_receipt_base(serde_json::Value::String(format!("http://127.0.0.1:{port}")));
+    world.write_receipt_base(serde_json::Value::String(format!(
+        "http://127.0.0.1:{port}"
+    )));
     let msg = world.internal(world.read(BOARD, 52));
-    assert_eq!(msg, msg_no_answer(port), "the message names the base's port");
+    assert_eq!(
+        msg,
+        msg_no_answer(port),
+        "the message names the base's port"
+    );
     assert!(world.requests().is_empty(), "the stand-in was never asked");
 }
 
@@ -369,7 +420,11 @@ fn a_connection_closed_with_no_answer_does_not_answer() {
     let world = World::new(Behavior::standard().answer(Answer::Close));
     let msg = world.internal(world.read(BOARD, 52));
     assert_eq!(msg, msg_no_answer(world.standin.port));
-    assert_eq!(world.requests().len(), 1, "a read that fails is not tried again");
+    assert_eq!(
+        world.requests().len(),
+        1,
+        "a read that fails is not tried again"
+    );
 }
 
 #[test]
@@ -484,29 +539,68 @@ fn a_200_that_is_not_the_shape_could_not_be_read() {
         ("an empty object", "{}".to_string()),
         ("trailing text", format!("{{{good_card},{prose}}} trailing")),
         ("two documents", format!("{{{good_card},{prose}}}{{}}")),
-        ("unterminated", format!("{{{good_card},\"prose\":{{\"description\":\"x\"")),
+        (
+            "unterminated",
+            format!("{{{good_card},\"prose\":{{\"description\":\"x\""),
+        ),
         ("no card", format!("{{{prose}}}")),
         ("card null", format!("{{\"card\":null,{prose}}}")),
         ("card a number", format!("{{\"card\":5,{prose}}}")),
         ("card an array", format!("{{\"card\":[],{prose}}}")),
         ("card empty", format!("{{\"card\":{{}},{prose}}}")),
-        ("no revision", format!("{{\"card\":{{\"archived\":false}},{prose}}}")),
-        ("no archived", format!("{{\"card\":{{\"revision\":7}},{prose}}}")),
-        ("archived a string", format!("{{\"card\":{{\"revision\":7,\"archived\":\"false\"}},{prose}}}")),
-        ("archived a string true", format!("{{\"card\":{{\"revision\":7,\"archived\":\"true\"}},{prose}}}")),
-        ("archived 0", format!("{{\"card\":{{\"revision\":7,\"archived\":0}},{prose}}}")),
-        ("archived 1", format!("{{\"card\":{{\"revision\":7,\"archived\":1}},{prose}}}")),
-        ("archived null", format!("{{\"card\":{{\"revision\":7,\"archived\":null}},{prose}}}")),
+        (
+            "no revision",
+            format!("{{\"card\":{{\"archived\":false}},{prose}}}"),
+        ),
+        (
+            "no archived",
+            format!("{{\"card\":{{\"revision\":7}},{prose}}}"),
+        ),
+        (
+            "archived a string",
+            format!("{{\"card\":{{\"revision\":7,\"archived\":\"false\"}},{prose}}}"),
+        ),
+        (
+            "archived a string true",
+            format!("{{\"card\":{{\"revision\":7,\"archived\":\"true\"}},{prose}}}"),
+        ),
+        (
+            "archived 0",
+            format!("{{\"card\":{{\"revision\":7,\"archived\":0}},{prose}}}"),
+        ),
+        (
+            "archived 1",
+            format!("{{\"card\":{{\"revision\":7,\"archived\":1}},{prose}}}"),
+        ),
+        (
+            "archived null",
+            format!("{{\"card\":{{\"revision\":7,\"archived\":null}},{prose}}}"),
+        ),
         ("no prose", format!("{{{good_card}}}")),
         ("prose null", format!("{{{good_card},\"prose\":null}}")),
         ("prose a string", format!("{{{good_card},\"prose\":\"x\"}}")),
         ("prose an array", format!("{{{good_card},\"prose\":[]}}")),
         ("prose empty", format!("{{{good_card},\"prose\":{{}}}}")),
-        ("prose with only comments", format!("{{{good_card},\"prose\":{{\"comments\":[]}}}}")),
-        ("description null", format!("{{{good_card},\"prose\":{{\"description\":null,\"comments\":[]}}}}")),
-        ("description a number", format!("{{{good_card},\"prose\":{{\"description\":5,\"comments\":[]}}}}")),
-        ("description an array", format!("{{{good_card},\"prose\":{{\"description\":[\"x\"],\"comments\":[]}}}}")),
-        ("description an object", format!("{{{good_card},\"prose\":{{\"description\":{{}},\"comments\":[]}}}}")),
+        (
+            "prose with only comments",
+            format!("{{{good_card},\"prose\":{{\"comments\":[]}}}}"),
+        ),
+        (
+            "description null",
+            format!("{{{good_card},\"prose\":{{\"description\":null,\"comments\":[]}}}}"),
+        ),
+        (
+            "description a number",
+            format!("{{{good_card},\"prose\":{{\"description\":5,\"comments\":[]}}}}"),
+        ),
+        (
+            "description an array",
+            format!("{{{good_card},\"prose\":{{\"description\":[\"x\"],\"comments\":[]}}}}"),
+        ),
+        (
+            "description an object",
+            format!("{{{good_card},\"prose\":{{\"description\":{{}},\"comments\":[]}}}}"),
+        ),
         // The three are looked for where the spec puts them, never at the top level.
         (
             "members at the top level",
@@ -605,7 +699,11 @@ fn a_declared_length_over_the_bound_is_refused_before_it_is_read() {
     let world = World::new(Behavior::standard().answer(big(200, false, BOUND + 1, false, 0, true)));
     let started = Instant::now();
     let result = world.read(BOARD, 52);
-    assert!(matches!(result, Err(BoardError::TooLarge)), "got {}", name_of(&result));
+    assert!(
+        matches!(result, Err(BoardError::TooLarge)),
+        "got {}",
+        name_of(&result)
+    );
     assert!(
         started.elapsed() < Duration::from_secs(15),
         "the refusal waited for a body that was never sent"
@@ -615,9 +713,14 @@ fn a_declared_length_over_the_bound_is_refused_before_it_is_read() {
 
 #[test]
 fn a_much_larger_declared_length_is_refused_too() {
-    let world = World::new(Behavior::standard().answer(big(200, false, 10 * BOUND, false, 0, true)));
+    let world =
+        World::new(Behavior::standard().answer(big(200, false, 10 * BOUND, false, 0, true)));
     let result = world.read(BOARD, 52);
-    assert!(matches!(result, Err(BoardError::TooLarge)), "got {}", name_of(&result));
+    assert!(
+        matches!(result, Err(BoardError::TooLarge)),
+        "got {}",
+        name_of(&result)
+    );
     assert_eq!(world.requests().len(), 1);
 }
 
@@ -625,17 +728,23 @@ fn a_much_larger_declared_length_is_refused_too() {
 fn a_chunked_body_that_grows_past_the_bound_is_refused_once_the_next_byte_arrives() {
     // The stand-in sends 64 MiB and one byte in chunks, then holds the connection open with no
     // last chunk: a client that read to the end of the body would wait out the 30 seconds.
-    let world = World::new(Behavior::standard().answer(big(200, false, BOUND + 1, true, BOUND + 1, true)));
+    let world =
+        World::new(Behavior::standard().answer(big(200, false, BOUND + 1, true, BOUND + 1, true)));
     let started = Instant::now();
     let result = world.read(BOARD, 52);
-    assert!(matches!(result, Err(BoardError::TooLarge)), "got {}", name_of(&result));
+    assert!(
+        matches!(result, Err(BoardError::TooLarge)),
+        "got {}",
+        name_of(&result)
+    );
     assert!(started.elapsed() < Duration::from_secs(25));
     assert_eq!(world.requests().len(), 1);
 }
 
 #[test]
 fn a_body_of_exactly_the_bound_is_read_as_declared() {
-    let world = World::new(Behavior::standard().answer(big(200, false, BOUND, false, BOUND, false)));
+    let world =
+        World::new(Behavior::standard().answer(big(200, false, BOUND, false, BOUND, false)));
     let epic = world.ok(world.read(BOARD, 52));
     assert_eq!(epic.revision, 7);
     assert_eq!(epic.description, "A big answer's description");
@@ -671,7 +780,10 @@ fn an_unset_empty_or_blank_localappdata_is_refused() {
         world.ctx.local_app_data = value.map(std::path::PathBuf::from);
         let msg = world.internal(world.read(BOARD, 52));
         assert_eq!(msg, MSG_LOCALAPPDATA, "LOCALAPPDATA {value:?}");
-        assert!(world.requests().is_empty(), "LOCALAPPDATA {value:?} made a request");
+        assert!(
+            world.requests().is_empty(),
+            "LOCALAPPDATA {value:?} made a request"
+        );
     }
 }
 
@@ -755,7 +867,10 @@ fn a_receipt_that_cannot_be_read_or_breaks_localswims_rules_is_refused() {
         let msg = world.internal(result);
         assert_eq!(msg, MSG_RECEIPT, "receipt: {label}");
     }
-    assert!(world.requests().is_empty(), "a refused receipt made a request");
+    assert!(
+        world.requests().is_empty(),
+        "a refused receipt made a request"
+    );
 }
 
 /// lease-api.md, "The board read", says the receipt is "one JSON object in UTF-8, a leading byte
@@ -769,10 +884,17 @@ fn a_utf_16_receipt_is_not_utf_8_and_is_refused() {
     let dir_json = serde_json::to_string(&world.cred_dir().to_string_lossy()).unwrap();
     let base_json = serde_json::to_string(&world.standin.base()).unwrap();
     let text = format!("{{\"base\":{base_json},\"credential_directory\":{dir_json}}}");
-    for (label, bom, big_endian) in [("UTF-16LE", [0xFFu8, 0xFE], false), ("UTF-16BE", [0xFE, 0xFF], true)] {
+    for (label, bom, big_endian) in [
+        ("UTF-16LE", [0xFFu8, 0xFE], false),
+        ("UTF-16BE", [0xFE, 0xFF], true),
+    ] {
         let mut bytes = bom.to_vec();
         for unit in text.encode_utf16() {
-            let pair = if big_endian { unit.to_be_bytes() } else { unit.to_le_bytes() };
+            let pair = if big_endian {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            };
             bytes.extend_from_slice(&pair);
         }
         world.write_receipt(&bytes);
@@ -807,7 +929,10 @@ fn a_base_that_is_not_exactly_http_127_0_0_1_and_a_port_is_refused_before_any_re
         ("upper-case scheme", format!("HTTP://127.0.0.1:{p}")),
         ("trailing slash", format!("http://127.0.0.1:{p}/")),
         ("a path", format!("http://127.0.0.1:{p}/api")),
-        ("a path with the API", format!("http://127.0.0.1:{p}/api/2026-11-10")),
+        (
+            "a path with the API",
+            format!("http://127.0.0.1:{p}/api/2026-11-10"),
+        ),
         ("a query", format!("http://127.0.0.1:{p}?x=1")),
         ("a fragment", format!("http://127.0.0.1:{p}#x")),
         ("user information", format!("http://user@127.0.0.1:{p}")),
@@ -880,67 +1005,142 @@ fn a_missing_or_unusable_bot_json_is_refused_before_any_request() {
         ("an empty object", b"{}".to_vec()),
         (
             "a fifth member",
-            v(&format!("{fmt},{ver},{role},{},\"extra\":1", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "{fmt},{ver},{role},{},\"extra\":1",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
-        ("no token member", v(&format!("{fmt},{ver},{role}")).into_bytes()),
-        ("no role", v(&format!("{fmt},{ver},{}", hex_member(&good_blob))).into_bytes()),
+        (
+            "no token member",
+            v(&format!("{fmt},{ver},{role}")).into_bytes(),
+        ),
+        (
+            "no role",
+            v(&format!("{fmt},{ver},{}", hex_member(&good_blob))).into_bytes(),
+        ),
         (
             "role human",
-            v(&format!("{fmt},{ver},\"role\":\"human\",{}", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "{fmt},{ver},\"role\":\"human\",{}",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
         (
             "role Bot",
-            v(&format!("{fmt},{ver},\"role\":\"Bot\",{}", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "{fmt},{ver},\"role\":\"Bot\",{}",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
         (
             "wrong format",
-            v(&format!("\"format\":\"other\",{ver},{role},{}", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "\"format\":\"other\",{ver},{role},{}",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
         (
             "format_version 1.0",
-            v(&format!("{fmt},\"format_version\":1.0,{role},{}", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "{fmt},\"format_version\":1.0,{role},{}",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
         (
             "format_version \"1\"",
-            v(&format!("{fmt},\"format_version\":\"1\",{role},{}", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "{fmt},\"format_version\":\"1\",{role},{}",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
         (
             "format_version 2",
-            v(&format!("{fmt},\"format_version\":2,{role},{}", hex_member(&good_blob))).into_bytes(),
+            v(&format!(
+                "{fmt},\"format_version\":2,{role},{}",
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
         (
             "a member twice",
-            v(&format!("{fmt},{ver},{role},{},{}", hex_member(&good_blob), hex_member(&good_blob)))
-                .into_bytes(),
+            v(&format!(
+                "{fmt},{ver},{role},{},{}",
+                hex_member(&good_blob),
+                hex_member(&good_blob)
+            ))
+            .into_bytes(),
         ),
-        ("odd hex", v(&format!("{fmt},{ver},{role},{}", hex_member("abc"))).into_bytes()),
-        ("non-hex", v(&format!("{fmt},{ver},{role},{}", hex_member("zz"))).into_bytes()),
-        ("empty hex", v(&format!("{fmt},{ver},{role},{}", hex_member(""))).into_bytes()),
+        (
+            "odd hex",
+            v(&format!("{fmt},{ver},{role},{}", hex_member("abc"))).into_bytes(),
+        ),
+        (
+            "non-hex",
+            v(&format!("{fmt},{ver},{role},{}", hex_member("zz"))).into_bytes(),
+        ),
+        (
+            "empty hex",
+            v(&format!("{fmt},{ver},{role},{}", hex_member(""))).into_bytes(),
+        ),
         (
             "hex not a string",
             v(&format!("{fmt},{ver},{role},\"token_dpapi_hex\":12")).into_bytes(),
         ),
         (
             "a blob the decryption refuses",
-            v(&format!("{fmt},{ver},{role},{}", hex_member("0100000000000000"))).into_bytes(),
+            v(&format!(
+                "{fmt},{ver},{role},{}",
+                hex_member("0100000000000000")
+            ))
+            .into_bytes(),
         ),
         ("a plaintext of 5 characters", plain("short").into_bytes()),
-        ("a plaintext of 42 characters", plain(&"A".repeat(42)).into_bytes()),
-        ("a plaintext of 44 characters", plain(&"A".repeat(44)).into_bytes()),
-        ("a plus in the plaintext", plain(&format!("{}+", "A".repeat(42))).into_bytes()),
-        ("a slash in the plaintext", plain(&format!("{}/", "A".repeat(42))).into_bytes()),
-        ("padding in the plaintext", plain(&format!("{}=", "A".repeat(42))).into_bytes()),
+        (
+            "a plaintext of 42 characters",
+            plain(&"A".repeat(42)).into_bytes(),
+        ),
+        (
+            "a plaintext of 44 characters",
+            plain(&"A".repeat(44)).into_bytes(),
+        ),
+        (
+            "a plus in the plaintext",
+            plain(&format!("{}+", "A".repeat(42))).into_bytes(),
+        ),
+        (
+            "a slash in the plaintext",
+            plain(&format!("{}/", "A".repeat(42))).into_bytes(),
+        ),
+        (
+            "padding in the plaintext",
+            plain(&format!("{}=", "A".repeat(42))).into_bytes(),
+        ),
         (
             "a terminator after the plaintext",
-            bot_json(&hex(&blob_for(&[utf16le(&forty_three), vec![0, 0]].concat()))).into_bytes(),
+            bot_json(&hex(&blob_for(
+                &[utf16le(&forty_three), vec![0, 0]].concat(),
+            )))
+            .into_bytes(),
         ),
         (
             "an odd byte count",
-            bot_json(&hex(&blob_for(&[utf16le(&forty_three), vec![0x41]].concat()))).into_bytes(),
+            bot_json(&hex(&blob_for(
+                &[utf16le(&forty_three), vec![0x41]].concat(),
+            )))
+            .into_bytes(),
         ),
         (
             "an unpaired surrogate",
-            bot_json(&hex(&blob_for(&[utf16le(&"A".repeat(42)), vec![0x00, 0xD8]].concat()))).into_bytes(),
+            bot_json(&hex(&blob_for(
+                &[utf16le(&"A".repeat(42)), vec![0x00, 0xD8]].concat(),
+            )))
+            .into_bytes(),
         ),
         (
             "the plaintext as UTF-8",
@@ -991,7 +1191,8 @@ fn the_credential_directory_with_a_trailing_separator_is_read() {
     let world = standard();
     let mut dir = world.cred_dir().to_string_lossy().into_owned();
     dir.push(std::path::MAIN_SEPARATOR);
-    let text = serde_json::json!({"base": world.standin.base(), "credential_directory": dir}).to_string();
+    let text =
+        serde_json::json!({"base": world.standin.base(), "credential_directory": dir}).to_string();
     world.write_receipt(text.as_bytes());
     let epic = world.ok(world.read(BOARD, 52));
     assert_eq!(epic.revision, 7);
@@ -1000,6 +1201,9 @@ fn the_credential_directory_with_a_trailing_separator_is_read() {
 // ---------------------------------------------------------------------------------------------
 // Secrecy: no message holds the token, and nothing else the board said.
 
+/// What a scenario does to its world before the read.
+type Tweak = Box<dyn Fn(&World)>;
+
 #[test]
 fn no_message_holds_the_token_or_anything_the_board_said() {
     // Every error outcome with a message, each checked by `World::internal` for the token, any 8
@@ -1007,18 +1211,48 @@ fn no_message_holds_the_token_or_anything_the_board_said() {
     // a path, a header name and an operating system's text. The message's words are asserted as
     // well, and the two outcomes with no message carry none by their type.
     let mut seen = 0;
-    let scenarios: Vec<(&str, Behavior, Box<dyn Fn(&World)>)> = vec![
-        ("hang-free 500", Behavior::standard().answer(Answer::problem(500, "internal_error")), Box::new(|_| {})),
-        ("401", Behavior::standard().answer(Answer::problem(401, "unauthorized")), Box::new(|_| {})),
-        ("403", Behavior::standard().answer(Answer::problem(403, "forbidden")), Box::new(|_| {})),
-        ("bad shape", Behavior::standard().answer(Answer::ok_body("{\"card\":1}")), Box::new(|_| {})),
-        ("closed", Behavior::standard().answer(Answer::Close), Box::new(|_| {})),
-        ("no receipt", Behavior::standard(), Box::new(|w| w.remove_receipt())),
-        ("no credential", Behavior::standard(), Box::new(|w| w.remove_bot())),
+    let scenarios: Vec<(&str, Behavior, Tweak)> = vec![
+        (
+            "hang-free 500",
+            Behavior::standard().answer(Answer::problem(500, "internal_error")),
+            Box::new(|_| {}),
+        ),
+        (
+            "401",
+            Behavior::standard().answer(Answer::problem(401, "unauthorized")),
+            Box::new(|_| {}),
+        ),
+        (
+            "403",
+            Behavior::standard().answer(Answer::problem(403, "forbidden")),
+            Box::new(|_| {}),
+        ),
+        (
+            "bad shape",
+            Behavior::standard().answer(Answer::ok_body("{\"card\":1}")),
+            Box::new(|_| {}),
+        ),
+        (
+            "closed",
+            Behavior::standard().answer(Answer::Close),
+            Box::new(|_| {}),
+        ),
+        (
+            "no receipt",
+            Behavior::standard(),
+            Box::new(|w| w.remove_receipt()),
+        ),
+        (
+            "no credential",
+            Behavior::standard(),
+            Box::new(|w| w.remove_bot()),
+        ),
         (
             "bad base",
             Behavior::standard(),
-            Box::new(|w| w.write_receipt_base(serde_json::Value::String("http://localhost:1".into()))),
+            Box::new(|w| {
+                w.write_receipt_base(serde_json::Value::String("http://localhost:1".into()))
+            }),
         ),
     ];
     for (label, behavior, tweak) in scenarios {
@@ -1028,7 +1262,10 @@ fn no_message_holds_the_token_or_anything_the_board_said() {
         match result {
             Err(BoardError::Internal(msg)) => {
                 world.check_message(&msg);
-                assert!(!msg.ends_with('.'), "{label}: the message has a final period");
+                assert!(
+                    !msg.ends_with('.'),
+                    "{label}: the message has a final period"
+                );
                 seen += 1;
             }
             other => panic!("{label}: expected Internal, got {}", name_of(&other)),
@@ -1038,8 +1275,14 @@ fn no_message_holds_the_token_or_anything_the_board_said() {
     // The Problem documents' own words, and the answer's prose, are in no message either: a 404
     // for an unknown board and ticket carry markers, and give unit variants.
     let world = standard();
-    assert!(matches!(world.read(BOARD, 99), Err(BoardError::UnknownTicket)));
-    assert!(matches!(world.read(OTHER_BOARD, 1), Err(BoardError::UnknownBoard)));
+    assert!(matches!(
+        world.read(BOARD, 99),
+        Err(BoardError::UnknownTicket)
+    ));
+    assert!(matches!(
+        world.read(OTHER_BOARD, 1),
+        Err(BoardError::UnknownBoard)
+    ));
 }
 
 #[test]

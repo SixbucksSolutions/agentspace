@@ -33,7 +33,9 @@ fn content_is(description: &str, expected: &str) {
 #[track_caller]
 fn refused_with(description: &str, why: &str) {
     match block(description) {
-        Ok(content) => panic!("expected a refusal for {description:?}, got the content {content:?}"),
+        Ok(content) => {
+            panic!("expected a refusal for {description:?}, got the content {content:?}")
+        }
         Err(got) => assert_eq!(got, why, "the refusal of {description:?}"),
     }
 }
@@ -43,7 +45,9 @@ fn refused_with(description: &str, why: &str) {
 
 #[test]
 fn a_block_between_prose_gives_its_content() {
-    let d = format!("The epic's plan by turn.\n\n{OPEN}\n{{\"a\":1}}\n{CLOSE}\n\nMore prose, after it.\n");
+    let d = format!(
+        "The epic's plan by turn.\n\n{OPEN}\n{{\"a\":1}}\n{CLOSE}\n\nMore prose, after it.\n"
+    );
     content_is(&d, "{\"a\":1}\n");
 }
 
@@ -71,7 +75,10 @@ fn a_closing_line_straight_after_the_opening_gives_empty_content() {
 fn lines_may_end_in_lf_or_crlf_mixed_in_one_description() {
     // The carriage return of the opening line's end is no part of the content, and the content
     // keeps its own line ends as they are.
-    content_is(&format!("{OPEN}\r\n{{\r\n\"a\":1\n}}\r\n{CLOSE}\r\n"), "{\r\n\"a\":1\n}\r\n");
+    content_is(
+        &format!("{OPEN}\r\n{{\r\n\"a\":1\n}}\r\n{CLOSE}\r\n"),
+        "{\r\n\"a\":1\n}\r\n",
+    );
     content_is(&format!("prose\r\n{OPEN}\n{{}}\r\n{CLOSE}\n"), "{}\r\n");
     // A closing line that ends in CRLF.
     content_is(&format!("{OPEN}\nx\n{CLOSE}\r\nafter\r\n"), "x\n");
@@ -131,7 +138,10 @@ fn the_first_closing_line_ends_the_block() {
 
 #[test]
 fn a_line_inside_a_block_is_never_trimmed_or_folded() {
-    content_is(&format!("{OPEN}\n  indented\n\ttabbed\n\u{FEFF}bom\n{CLOSE}\n"), "  indented\n\ttabbed\n\u{FEFF}bom\n");
+    content_is(
+        &format!("{OPEN}\n  indented\n\ttabbed\n\u{FEFF}bom\n{CLOSE}\n"),
+        "  indented\n\ttabbed\n\u{FEFF}bom\n",
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -205,8 +215,11 @@ fn each_near_miss_outside_a_block_is_refused() {
         // On its own, before a block that would be fine, after one, and in the middle of prose.
         refused_with(&format!("{line}\n{{}}\n{CLOSE}\n"), NEAR_MISS);
         refused_with(&format!("{line}\n"), NEAR_MISS);
-        refused_with(&format!("{line}"), NEAR_MISS);
-        refused_with(&format!("prose\n{line}\nmore\n{OPEN}\nplan\n{CLOSE}\n"), NEAR_MISS);
+        refused_with(line, NEAR_MISS);
+        refused_with(
+            &format!("prose\n{line}\nmore\n{OPEN}\nplan\n{CLOSE}\n"),
+            NEAR_MISS,
+        );
         refused_with(&format!("{OPEN}\nplan\n{CLOSE}\n{line}\n"), NEAR_MISS);
     }
 }
@@ -221,7 +234,10 @@ fn a_carriage_return_not_just_before_the_line_feed_makes_a_near_miss() {
 
 #[test]
 fn a_near_miss_outside_a_block_after_a_block_is_the_near_miss_not_a_second_block() {
-    refused_with(&format!("{OPEN}\nx\n{CLOSE}\n```agentspace-plan json\n"), NEAR_MISS);
+    refused_with(
+        &format!("{OPEN}\nx\n{CLOSE}\n```agentspace-plan json\n"),
+        NEAR_MISS,
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -229,8 +245,14 @@ fn a_near_miss_outside_a_block_after_a_block_is_the_near_miss_not_a_second_block
 
 #[test]
 fn two_blocks_are_refused() {
-    refused_with(&format!("{OPEN}\na\n{CLOSE}\n{OPEN}\nb\n{CLOSE}\n"), MORE_THAN_ONE);
-    refused_with(&format!("{OPEN}\na\n{CLOSE}\ntext\n{OPEN}\n"), MORE_THAN_ONE);
+    refused_with(
+        &format!("{OPEN}\na\n{CLOSE}\n{OPEN}\nb\n{CLOSE}\n"),
+        MORE_THAN_ONE,
+    );
+    refused_with(
+        &format!("{OPEN}\na\n{CLOSE}\ntext\n{OPEN}\n"),
+        MORE_THAN_ONE,
+    );
 }
 
 #[test]
@@ -255,7 +277,7 @@ fn a_line_fault_wins_over_the_content_of_an_earlier_block() {
 #[test]
 fn a_block_that_runs_to_the_end_is_never_closed() {
     refused_with(&format!("{OPEN}\n{{}}\n"), NEVER_CLOSED);
-    refused_with(&format!("{OPEN}"), NEVER_CLOSED);
+    refused_with(OPEN, NEVER_CLOSED);
     refused_with(&format!("{OPEN}\n"), NEVER_CLOSED);
     refused_with(&format!("prose\n{OPEN}\nx\n````\n``` \n"), NEVER_CLOSED);
 }

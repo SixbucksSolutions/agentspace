@@ -30,8 +30,10 @@
 //!   [`SystemSsh::with_stderr`] through its `configure`, inherited by default and relayed in the
 //!   ProxyCommand's caller mode; [`StderrFilter`], the relay's line rule, which drops
 //!   [`HOST_READY_LINE`]; and [`StderrSink`], where the relayed lines go.
-//! - [`Token`] and [`Content`], the two types that hold the token; each redacts it in `Debug` and
-//!   zeroes it when dropped.
+//! - [`Token`], [`Bearer`] and [`Content`], the three types that hold the token; each redacts it in
+//!   `Debug`, has no `Display` and zeroes it when dropped. [`Token::bearer`] gives the [`Bearer`],
+//!   `Bearer <token>`, for the board read's `Authorization` header alone (docs/lease-api.md, The
+//!   board read; architect, 2026-11-25, for v0.11-T02, pin P1).
 //! - The steps, for a caller that needs one alone: [`receipt_path`], [`parse_receipt`] and
 //!   [`Receipt`]; [`credential_path`], [`parse_credential_blob`] and [`read_token`];
 //!   [`check_zone`], the zone's guard; [`content`]; [`stamp`], [`stamp_path`], [`stamp_path_for`],
@@ -51,8 +53,7 @@
 //! it to nothing but [`SshRun::run`]'s `stdin` and, through [`Token::bearer`], to the [`Bearer`]
 //! that the board read sends as that header; it puts it in no argument, environment variable,
 //! file, message or panic, and keeps it only in [`Token`], [`Bearer`] and [`Content`], which never
-//! print it. No warning quotes
-//! the failure behind it: each is a fixed text. A [`SshRun`] MUST write `stdin` to the ssh's stdin
+//! print it. No warning quotes the failure behind it: each is a fixed text. A [`SshRun`] MUST write `stdin` to the ssh's stdin
 //! pipe and nowhere else, and an [`Unprotect`] MUST hand the plaintext to nothing but its return
 //! value. The `Debug` of [`FileRead`] and [`SshResult`] gives byte counts, never the bytes, so
 //! that no file's content and nothing the box printed reaches a log through them.

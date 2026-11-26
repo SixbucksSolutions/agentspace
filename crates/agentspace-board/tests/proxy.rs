@@ -34,7 +34,10 @@ fn proxy_child_read() {
     let ctx = ctx_for(Path::new(&root));
     let result = read_epic(&ctx, &StdFiles, &FakeDpapi, BOARD, 52);
     match result {
-        Ok(epic) => println!("RESULT ok revision={} archived={}", epic.revision, epic.archived),
+        Ok(epic) => println!(
+            "RESULT ok revision={} archived={}",
+            epic.revision, epic.archived
+        ),
         Err(BoardError::UnknownBoard) => println!("RESULT UnknownBoard"),
         Err(BoardError::UnknownTicket) => println!("RESULT UnknownTicket"),
         Err(BoardError::TooLarge) => println!("RESULT TooLarge"),
@@ -101,20 +104,29 @@ fn run_child(world: &World, vars: &[(&str, &str)], remove: &[&str]) -> String {
     let tmp = world.root().join("tmp");
     std::fs::create_dir_all(&tmp).unwrap();
     let mut cmd = Command::new(exe);
-    cmd.args(["--exact", "proxy_child_read", "--nocapture", "--test-threads=1"])
-        .env(MARKER, world.root())
-        .env("USERPROFILE", world.root().join("home"))
-        .env("HOME", world.root().join("home"))
-        .env("LOCALAPPDATA", &local)
-        .env("APPDATA", world.root().join("AppData").join("Roaming"))
-        .env("TMP", &tmp)
-        .env("TEMP", &tmp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.args([
+        "--exact",
+        "proxy_child_read",
+        "--nocapture",
+        "--test-threads=1",
+    ])
+    .env(MARKER, world.root())
+    .env("USERPROFILE", world.root().join("home"))
+    .env("HOME", world.root().join("home"))
+    .env("LOCALAPPDATA", &local)
+    .env("APPDATA", world.root().join("AppData").join("Roaming"))
+    .env("TMP", &tmp)
+    .env("TEMP", &tmp)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
     // The caller's own variables of localswim's are removed by name, never read.
     for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().to_ascii_uppercase().starts_with("LOCALSWIM_") {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("LOCALSWIM_")
+        {
             cmd.env_remove(name);
         }
     }
@@ -139,7 +151,12 @@ fn run_child(world: &World, vars: &[(&str, &str)], remove: &[&str]) -> String {
         }
     }
     let mut out = String::new();
-    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut out)
+        .unwrap();
     // The child's output is checked for the token before anything in it is quoted.
     no_token(world.standin.token(), &out);
     // The libtest line `test proxy_child_read ... ` is written with no line end, so the child's
@@ -167,7 +184,10 @@ fn proxies_in_the_environment_change_nothing() {
     }
     // NO_PROXY is removed, so a client that honors proxies has no way round the trap.
     let line = run_child(&world, &vars, &["NO_PROXY", "no_proxy"]);
-    assert_eq!(line, "RESULT ok revision=7 archived=false", "the read through the environment");
+    assert_eq!(
+        line, "RESULT ok revision=7 archived=false",
+        "the read through the environment"
+    );
     assert_eq!(trap.connections(), 0, "the read connected to the proxy");
     let reqs = world.requests();
     assert_eq!(reqs.len(), 1, "the read reached the stand-in directly");

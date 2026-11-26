@@ -71,7 +71,10 @@ pub struct Seen {
 pub fn assert_only_gets(reqs: &[Seen]) {
     for (i, r) in reqs.iter().enumerate() {
         assert_eq!(r.method, "GET", "request {i}'s method");
-        assert!(r.auth_ok, "request {i} did not carry exactly the Bearer header");
+        assert!(
+            r.auth_ok,
+            "request {i} did not carry exactly the Bearer header"
+        );
         assert!(
             r.path.starts_with(&format!("{API}boards/")),
             "request {i}'s path was not under the API's boards"
@@ -525,7 +528,11 @@ fn handle(mut stream: TcpStream, shared: &Shared) {
 
     // The method, then the prefix, then the token, then the lookup (conformance.md).
     if method != "GET" {
-        reply(&mut stream, &Answer::problem(405, "method_not_allowed"), shared);
+        reply(
+            &mut stream,
+            &Answer::problem(405, "method_not_allowed"),
+            shared,
+        );
         return;
     }
     let Some(rest) = path.strip_prefix(API) else {
@@ -560,7 +567,11 @@ fn handle(mut stream: TcpStream, shared: &Shared) {
         body: problem_body(404, "not_found"),
     };
     let Some(board) = rest.strip_prefix("boards/") else {
-        reply(&mut stream, &Answer::problem(400, "invalid_request"), shared);
+        reply(
+            &mut stream,
+            &Answer::problem(400, "invalid_request"),
+            shared,
+        );
         return;
     };
     let board = board.to_ascii_lowercase();
@@ -586,7 +597,11 @@ fn handle(mut stream: TcpStream, shared: &Shared) {
                 reply(&mut stream, &not_found, shared);
             }
         }
-        _ => reply(&mut stream, &Answer::problem(400, "invalid_request"), shared),
+        _ => reply(
+            &mut stream,
+            &Answer::problem(400, "invalid_request"),
+            shared,
+        ),
     }
 }
 
@@ -675,7 +690,9 @@ fn reply(stream: &mut TcpStream, answer: &Answer, shared: &Shared) {
             chunked,
             send,
             hold,
-        } => big(stream, shared, *status, *problem, *total, *chunked, *send, *hold),
+        } => big(
+            stream, shared, *status, *problem, *total, *chunked, *send, *hold,
+        ),
     }
 }
 
@@ -691,7 +708,10 @@ fn big(
     hold: bool,
 ) {
     let (doc, ct) = if problem {
-        (problem_body(status, "not_found"), "application/problem+json")
+        (
+            problem_body(status, "not_found"),
+            "application/problem+json",
+        )
     } else {
         (
             Card::new(7, false, "A big answer's description").body(BOARD, 52, true),
@@ -699,8 +719,14 @@ fn big(
         )
     };
     let doc = doc.into_bytes();
-    assert!(doc.len() as u64 <= total, "the document does not fit the total");
-    let mut head = format!("HTTP/1.1 {status} {}\r\nContent-Type: {ct}\r\n", reason(status));
+    assert!(
+        doc.len() as u64 <= total,
+        "the document does not fit the total"
+    );
+    let mut head = format!(
+        "HTTP/1.1 {status} {}\r\nContent-Type: {ct}\r\n",
+        reason(status)
+    );
     if chunked {
         head.push_str("Transfer-Encoding: chunked\r\n");
     } else {
@@ -946,8 +972,18 @@ pub fn leak_check(token: &str, msg: &str, paths: &[&str]) {
     }
     let lower = msg.to_ascii_lowercase();
     for forbidden in [
-        "http", "/api", "bearer", "authorization", "service.json", "bot.json", "localswim-v2",
-        ".json", "\\", "problem", "not_found", "revision",
+        "http",
+        "/api",
+        "bearer",
+        "authorization",
+        "service.json",
+        "bot.json",
+        "localswim-v2",
+        ".json",
+        "\\",
+        "problem",
+        "not_found",
+        "revision",
     ] {
         assert!(
             !lower.contains(forbidden),
@@ -974,7 +1010,8 @@ pub fn no_token(token: &str, text: &str) {
 /// `agentspace lease create failed: ` and `. Nothing was recorded.`, with no final period.
 pub const MSG_LOCALAPPDATA: &str =
     "LOCALAPPDATA is unset or empty, so localswim's service receipt cannot be found";
-pub const MSG_NO_RECEIPT: &str = "localswim's service receipt was not found; localswim may not be running";
+pub const MSG_NO_RECEIPT: &str =
+    "localswim's service receipt was not found; localswim may not be running";
 pub const MSG_RECEIPT: &str = "localswim's service receipt could not be read";
 pub const MSG_CREDENTIAL: &str = "The board's credential could not be read";
 pub const MSG_ANSWER: &str = "The board's answer could not be read";
