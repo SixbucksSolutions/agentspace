@@ -45,7 +45,7 @@ this file adds only what v0.11 has changed or learned so far.
 | Turn | Stories | Started | Closed | PRs | Length used | What it left |
 |---|---|---|---|---|---|---|
 | T01, the specs | #0231 to #0233 | 12:45pm, 2026-11-25 | 3:53pm, 2026-11-25, the last merge | #163 (2:30pm), #164 (3:14pm), #165 (3:53pm) | 3:08 of 3 h | Contract v2, `schemas/` v2 with v1's kept, #0229's refusal in operator.md, the plan's source in state.md, the stand-in board in conformance.md; 27 pins ruled; 19 subagents launched |
-| T02, the foundations and #0229 | #0234 to #0237 | 4:20pm, 2026-11-25 | 7:10pm, 2026-11-25, the four merges | #166 (the architect's prep, 4:44pm); #167 to #170 (7:10pm) | 2:50 of 3.5 h | `agentspace-plan`'s budget, turn cut and TTL; `agentspace-board`, new, with `ureq` 3.5.2 and `Token::bearer`/`Bearer` in `agentspace-push`; `agentspace-state`'s `plan_source`; the ProxyCommand's refusal with its retry and clock; 6 pins ruled; 22 subagent launches, 6 stopped or pinned away before writing; Terry approved two Writes by hand |
+| T02, the foundations and #0229 | #0234 to #0237 | 4:20pm, 2026-11-25 | 7:10pm, 2026-11-25, the four merges | #166 (the architect's prep, 4:44pm); #167 to #170 (7:10pm) | 2:50 of 3.5 h | `agentspace-plan`'s budget, turn cut and TTL; `agentspace-board`, new, with `ureq` 3.5.2 and `Token::bearer`/`Bearer` in `agentspace-push`; `agentspace-state`'s `plan_source`; the ProxyCommand's refusal with its retry and clock; 6 pins ruled; 24 subagent launches (S01 5, S02 5, S03 3, S04 11), 9 of them ending blocked or stopped without writing, by the dev lead's count of its launches; Terry approved two Writes by hand |
 
 ## Rulings made during v0.11
 
