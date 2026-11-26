@@ -346,7 +346,7 @@ credential, makes the lease reachable, and says how.**
 | Lease ID | A lowercase UUIDv4, normalized | New. No record of it exists yet, and no kept lease has its host alias ([lease-api.md](lease-api.md#fields)). |
 | Project | A normalized [project](lease-api.md#project) name | The lease's project. The host alias is built from it. |
 | Platform | A normalized [platform](lease-api.md#platform) | Any well-formed one, supported or not. |
-| Profile | A normalized [profile](lease-api.md#profile) | Any well-formed one, supported or not. From v0.12, when the caller named none, it is the platform's default profile, which the CLI fills in before it asks: `agent-windows` for `windows/amd64`, and `agent-linux` for every other platform, supported or not (D93; architect's to confirm, pin P2). A driver cannot tell a profile named from one filled in, and judges both alike. |
+| Profile | A normalized [profile](lease-api.md#profile) | Any well-formed one, supported or not. From v0.12, when the caller named none, it is the platform's default profile, which the CLI fills in before it asks: `agent-windows` for `windows/amd64`, and `agent-linux` for every other platform, supported or not (D93; architect, 2026-11-26, for v0.12-T01, pin P2). A driver cannot tell a profile named from one filled in, and judges both alike. A stored record keeps the profile it was placed with, and is never re-derived (architect, 2026-11-26, for v0.12-T01, pin P25). |
 | Size | A normalized [size](lease-api.md#size) | Any well-formed one, supported or not. |
 | TTL | A whole number of seconds, from 60 to 86400 | The CLI has refused anything else. A driver MUST NOT clamp it. |
 | OpenSSH client folder | Optional text | The caller's `AGENTSPACE_SSH_DIR` when it is set and not empty, and otherwise absent. The folder whose configuration the alias is added to. For tests and worktrees ([lease-api.md](lease-api.md#environment)). |
@@ -487,7 +487,7 @@ the same ID MUST fail without changing the first one's files (the third row abov
 | Driver name | The name stored at place | Selects the driver ([The driver's name](#the-drivers-name)). |
 | Lease ID | A lowercase UUIDv4, normalized | The lease is `ready` and its `expires_at` has not passed. The CLI has checked both. |
 | Project | The project stored at place | |
-| Platform | The platform stored at place | From v0.12 (architect's to confirm, N6): a driver whose login user depends on the platform signs the new certificate for the same user as the first, as the EC2 driver does ([What it supports](#what-it-supports)). |
+| Platform | The platform stored at place | From v0.12 (D95): a driver whose login user depends on the platform signs the new certificate for the same user as the first, as the EC2 driver does ([What it supports](#what-it-supports)). The CLI passes the record's `platform`, as it passes its `project`, and never re-derives it (architect, 2026-11-26, for v0.12-T01, pin P25). |
 | TTL | A whole number of seconds, from 60 to 86400 | The CLI's own: the flag, or else the lease's current `ttl_seconds`. A driver MUST NOT clamp it. |
 
 **The result: expires at,** UTC, to the whole second, equal to the new certificate's valid-before
@@ -726,7 +726,7 @@ time a caller polls the lease with `get` (D48; card #0143).** It changes no leas
 | Driver name | The name stored at place | Selects the driver ([The driver's name](#the-drivers-name)). |
 | Lease ID | A lowercase UUIDv4, normalized | The lease's stored state is `pending`. |
 | Project | The project stored at place | |
-| Platform | The platform stored at place | From v0.12 (architect's to confirm, N5): a driver that keys its compute by platform finds the lease's host by it, as the EC2 driver does (D91). The CLI passes the record's `platform`, as it passes its `project`. |
+| Platform | The platform stored at place | From v0.12: a driver that keys its compute by platform finds the lease's host by it, as the EC2 driver does (D91). The CLI passes the record's `platform`, as it passes its `project`, and `check_pending` takes that stored platform, never a flag read again (architect, 2026-11-26, for v0.12-T01, pin P32). |
 | OpenSSH client folder | Optional text | As for place, from the same variable. Whatever the driver starts to place the lease later uses it ([Starting a provisioning run](#starting-a-provisioning-run)). |
 | Transport override | Optional text | As for place, from the same variable, and for the same reason. |
 
@@ -906,11 +906,12 @@ agree (D55):
   pins P2 and P3 records pin P2c's fact.
 - **"Architect's to confirm"** is the convention for a fact chosen by this page's writer on which
   the architect has not yet ruled. Such a fact binds as written once the architect rules on it,
-  and the ruling's citation then replaces the mark. Every fact chosen in v0.09-T01 was ruled on,
-  and carries the citation above. **v0.12-T01's facts carry it**: "architect's to confirm, pin Pn"
-  marks a fact that D91 to D101 leave open, pinned by the dev lead of v0.12-T01 so that the specs
-  of that turn agree, and "architect's to confirm, Nn" one that this page's writer chose where no
-  pin settles it. Each binds once ruled, as above.
+  and the ruling's citation then replaces the mark. **No fact on this page carries the mark**:
+  every fact chosen in v0.09-T01 was ruled on, and carries the citation above, and v0.12-T01's
+  pinned facts carry the citation below.
+- **"Architect, 2026-11-26, for v0.12-T01, pin Pn"** marks a fact that D91 to D101 left open,
+  pinned by the dev lead of v0.12-T01 so that the specs of that turn agree, which the architect has
+  ruled on. It binds as written.
 - **Every fact chosen in v0.08-T01 carries one of the citations above**, so no fact before v0.09
   waits on a ruling.
 
@@ -927,21 +928,24 @@ D93, D94, D97, D98).** Until v0.12 the driver supported `linux/arm64` and `agent
 
 **Anything else is `unsatisfiable`, with a reason for each value the driver cannot meet, each code
 once, in lease-api.md's order: the platform, then the profile, then the size**
-([lease-api.md, Fields](lease-api.md#fields); D5):
-- **Matching is exact on the normalized values.** A platform with a variant, such as
-  `linux/amd64/v3`, is not `linux/amd64`, and `windows/arm64` stays unsupported (D98): each is
-  `unsupported_platform`. Any profile with a version, `agent-linux@1` among them, and any size but
-  the four, `xxl` among them, are unsupported on every platform.
+([lease-api.md, Fields](lease-api.md#fields); D5; architect, 2026-11-26, for v0.12-T01, pin P26):
+- **Matching is exact on the normalized values** (architect, 2026-11-26, for v0.12-T01, pin
+  P21). A platform with a variant, such as `linux/amd64/v3`, is not `linux/amd64`, and
+  `windows/arm64` stays unsupported (D98): each is `unsupported_platform`. Any profile with a
+  version, `agent-linux@1` among them, and any size but the four, `xxl` among them, are unsupported
+  on every platform. An unsupported request makes no host, and so has no host name
+  ([Where it places a lease](#where-it-places-a-lease)).
 - **On a supported platform, a profile that is not that platform's own, with no version, is
-  `unsupported_profile`, whichever profile it is** (D93; architect's to confirm, pin P2): so
-  `agent-linux` on `windows/amd64` and `agent-windows` on `linux/arm64` or `linux/amd64` are each
-  `unsupported_profile`, since no host can serve either.
-- **On a platform that is not supported, the profile is `unsupported_profile` beside
-  `unsupported_platform` only when it is neither `agent-linux` nor `agent-windows` with no
-  version** (architect's to confirm, pin P2). Such a platform has no profile of its own to compare
-  with, and a lease naming no profile reaches the driver with `agent-linux` (the request's
-  Profile, [Place a lease](#place-a-lease)), so `windows/arm64` with no profile lists
-  `unsupported_platform` alone, and so does `windows/arm64` with `agent-windows`.
+  `unsupported_profile`, whichever profile it is** (D93; architect, 2026-11-26, for v0.12-T01, pin
+  P2): so `agent-linux` on `windows/amd64` and `agent-windows` on `linux/arm64` or `linux/amd64`
+  are each `unsupported_profile`, since no host can serve either.
+- **On a platform that is not supported, its default profile stays `agent-linux`, and its profile
+  is `unsupported_profile` beside `unsupported_platform` only when no supported platform supports
+  that profile** (architect, 2026-11-26, for v0.12-T01, pin P2). A lease naming no profile reaches
+  the driver with `agent-linux` (the request's Profile, [Place a lease](#place-a-lease)). So
+  `windows/arm64` with no profile, with `agent-linux` or with `agent-windows` lists
+  `unsupported_platform` alone, as v2 answered `windows/amd64` before v0.12, and `agent-linux@1` on
+  `windows/arm64` lists `unsupported_platform` then `unsupported_profile`.
 - **The size is judged on its own, whatever the platform and profile**: an unsupported size adds
   `unsupported_size`, and a supported one adds nothing (D5; architect, 2026-11-23, for v0.09-T01,
   pin P9). Until v0.09 the one supported size was `m` (D5); from v0.09 the four are, and `m` stays
@@ -949,31 +953,32 @@ once, in lease-api.md's order: the platform, then the profile, then the size**
   lists `unsupported_platform` alone, and with size `xxl` lists `unsupported_platform` then
   `unsupported_size`.
 
-**The login user is the platform's** (D95; architect's to confirm, pin P6): `ubuntu` on both Linux
-platforms, as before v0.12, and `agent`, the Windows host's one local user, on `windows/amd64`. The
-driver MUST use the lease's platform's user in all three places that name it: the certificate's
-principal, the returned user and the alias's login user
+**The login user is the platform's** (D95; architect, 2026-11-26, for v0.12-T01, pin P19): the
+driver writes `ubuntu` on both Linux platforms, as before v0.12, and `agent`, the Windows host's one
+local user, on `windows/amd64`. The driver MUST use the lease's platform's user in all three places
+that name it: the certificate's principal, the returned user and the alias's login user
 ([How it places a lease](#how-it-places-a-lease), steps 4 and 6). The lease state file's pattern
-for `ssh.user` admits both ([state.md, The lease state file](state.md#the-lease-state-file), which
-owns it).
+for `ssh.user` already admits both, and is unchanged
+([state.md, The lease state file](state.md#the-lease-state-file), which owns it).
 
 **The reasons' messages are lease-api.md's** ([lease-api.md, Fields](lease-api.md#fields)), and the
 EC2 driver MUST emit these three byte for byte (D65, D71, D93; architect, 2026-11-23, for
-v0.09-T01, pin P8, for the size's; architect's to confirm, pin P2, for the platform's and the
-profile's), as it does D66's `no_capacity` message ([On a `ready` host](#on-a-ready-host)) and,
-from v0.12, the `no_capacity` message of a platform the project is not approved for
+v0.09-T01, pin P8, for the size's; architect, 2026-11-26, for v0.12-T01, pin P2, for the
+platform's and the profile's), as it does D66's `no_capacity` message
+([On a `ready` host](#on-a-ready-host)) and, from v0.12, the `no_capacity` message of a project
+whose entry on the project list does not approve the lease's platform
 ([Where it places a lease](#where-it-places-a-lease)):
 
 ```
 Platform '<platform>' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.
-Profile '<profile>' is not supported on platform '<platform>'; agentspace supports agent-linux on linux/arm64 and linux/amd64, and agent-windows on windows/amd64, each with no version.
+Profile '<profile>' is not supported on platform '<platform>'; agentspace supports agent-linux on linux/arm64 and linux/amd64, and agent-windows on windows/amd64, each with no version only.
 Size '<size>' is not supported; v0 supports sizes s, m, l and xl.
 ```
 
 `<platform>`, `<profile>` and `<size>` are the request's normalized values, quoted as lease-api.md
 says, so `--size XXL` gives `Size 'xxl' is not supported; v0 supports sizes s, m, l and xl.`, and
 the profile's message names the request's platform whether or not it is supported. **The size's
-message keeps v0's wording** (architect's to confirm, pin P2); it replaced v0.08's `Size '<size>' is not supported; v0
+message keeps v0's wording**, unchanged (architect, 2026-11-26, for v0.12-T01, pin P2); it replaced v0.08's `Size '<size>' is not supported; v0
 supports size m only.` in v0.09. **The platform's and the profile's replace v0's**, `Platform
 '<platform>' is not supported; v0 supports linux/arm64 only.` and `Profile '<profile>' is not
 supported; v0 supports agent-linux with no version only.`: a message is not a new contract version,
@@ -1013,15 +1018,15 @@ registry, and a record without one is `linux/arm64`'s (D91, D101;
 [state.md, The host registry](state.md#the-host-registry), which owns the member). **A type is
 judged only against its host's own column**: a type that another column holds, such as
 `m9g.xlarge` recorded for a `linux/amd64` host, is a type the map does not hold for that host, and
-meets no size, as `m9g.8xlarge` meets none on `linux/arm64` (D67; architect's to confirm, N3). Only
-a hand edit, of `hosts.json` or by a person's `deploy`, can record one; a run then records the
-type its host has, as for a record with no type ([On a `ready` host](#on-a-ready-host), row 2).
+meets no size, as `m9g.8xlarge` meets none on `linux/arm64` (D67; architect, 2026-11-26, for
+v0.12-T01, pin P28: `meets` reads only the host platform's column). Only a hand edit, of
+`hosts.json` or by a person's `deploy`, can record one; a run then records the type its host has,
+as for a record with no type ([On a `ready` host](#on-a-ready-host), row 2).
 
-**The crate `agentspace-driver-ec2` exposes the map as these items, with exactly these
-signatures** (D71's pins; from v0.12, architect's to confirm, N2). A builder of v0.09-T02's story
-gave the first four these names and signatures, and a builder of v0.12's driver story MUST keep
-them and add the three that follow; every other part of agentspace that needs the map MUST call
-them, never restate the table:
+**The crate `agentspace-driver-ec2` exposes the map as these items** (D71's pins). A builder of
+v0.09-T02's story gave the first four these names and exactly these signatures, and a builder of
+v0.12's driver story MUST keep them and add the three judgments that follow; every other part of
+agentspace that needs the map MUST call the crate, never restate the table:
 
 - **`pub const SIZES: [&str; 4]`** is `["s", "m", "l", "xl"]`, in that order, smallest first. A
   size's place is its index in it.
@@ -1058,27 +1063,30 @@ them, never restate the table:
 `meets_on("linux/arm64", <type>, <size>)`, and `resize_target(<leases>, <project>)` is
 `resize_target_on(<leases>, <project>, "linux/arm64")`. **So `resize_target` now also passes over
 a record whose `platform` is not `linux/arm64`**, which before v0.12 no record could be with this
-driver's name, since such a lease was `unsatisfiable`. The three that are new:
+driver's name, since such a lease was `unsatisfiable`.
 
-- **`pub fn instance_type_on(platform: &str, size: &str) -> Option<&'static str>`** returns the
-  type in `platform`'s column for a size in `SIZES`, and `None` for a size outside `SIZES` or a
-  platform the table has no column for. Both are compared exactly, with their case, as pin P17
-  compares a size: the driver is only ever given normalized values. So
-  `instance_type_on("windows/amd64", "l")` is `m8a.2xlarge`, and
-  `instance_type_on("windows/arm64", "l")` and `instance_type_on("Linux/amd64", "l")` are `None`.
-- **`pub fn meets_on(platform: &str, instance_type: &str, size: &str) -> bool`** is true when, and
-  only when, `platform` has a column, the instance type is one that column holds, the size is in
-  `SIZES`, and the type's place in the column is at or after the size's place in `SIZES`. **A type
+**Every judgment of a type takes the host's platform** (architect, 2026-11-26, for v0.12-T01, pin
+P33). This page names the three new judgments `instance_type_on`, `meets_on` and
+`resize_target_on`, and says what each MUST answer; **their names and signatures in code are
+v0.12's driver story's to give** (E0.12-T03-S01), and this page's names stand for whatever that
+story gives them:
+
+- **`instance_type_on(<platform>, <size>)`** returns the type in the platform's column for a size
+  in `SIZES`, and none for a size outside `SIZES` or a platform the table has no column for. Both
+  are compared exactly, with their case, as pin P17 compares a size: the driver is only ever given
+  normalized values. So `instance_type_on("windows/amd64", "l")` is `m8a.2xlarge`, and
+  `instance_type_on("windows/arm64", "l")` and `instance_type_on("Linux/amd64", "l")` are none.
+- **`meets_on(<platform>, <instance type>, <size>)`** is true when, and only when, the platform
+  has a column, the instance type is one that column holds, the size is in `SIZES`, and the type's place in the column is at or after the size's place in `SIZES`. **A type
   that only another column holds meets no size**, and the comparisons are exact, as for `meets`. So
   `meets_on("linux/amd64", "m8a.2xlarge", "m")` is true, `meets_on("linux/amd64", "m9g.2xlarge",
   "m")` is false, and `meets_on("windows/amd64", "m8a.xlarge", "l")` is false.
-- **`pub fn resize_target_on(leases: &[agentspace_state::Record], project: &str, platform: &str) -> Option<&'static str>`**
-  returns the type, in `platform`'s column, of the largest size among the records that
-  `resize_target` selects whose `platform` also equals `platform`, compared exactly; and `None`
-  when there is no such record, or `platform` has no column. **It counts the project's leases on
-  that platform alone** (D91): a `pending` lease of the project on another platform never sets
-  this host's type. It reads nothing but its arguments, and looks at no member of a record but
-  `state`, `project`, `platform`, `driver` and `size`. So with `pending` records of the project at
+- **`resize_target_on(<leases>, <project>, <platform>)`** returns the type, in the platform's
+  column, of the largest size among the records that `resize_target` selects whose `platform`
+  also equals the platform, compared exactly; and none when there is no such record, or the
+  platform has no column. **It counts the project's leases on that platform alone** (D91): a
+  `pending` lease of the project on another platform never sets this host's type. It reads nothing
+  but its arguments, and looks at no member of a record but `state`, `project`, `platform`, `driver` and `size`. So with `pending` records of the project at
   `l` on `linux/amd64` and at `xl` on `linux/arm64`, `resize_target_on(<leases>, <project>,
   "linux/amd64")` gives `m8a.2xlarge`.
 
@@ -1116,8 +1124,14 @@ registry](state.md#the-host-registry)'s and [operator.md, deploy](operator.md#de
 **A supported request is placed by its project's host on its platform, found in the host registry
 ([state.md, The host registry](state.md#the-host-registry)) by its `project` and its `platform`,
 each compared exactly** (both are normalized; D45, D48; pin P1, architect, 2026-11-20, for
-v0.07-T01; from v0.12, D91 and architect's to confirm, pin P1). **A record's platform is its
-`platform` member, and a record without one is `linux/arm64`'s** (D101; state.md owns the member).
+v0.07-T01; from v0.12, D91 and architect, 2026-11-26, for v0.12-T01, pin P1). **A record's
+platform is its `platform` member, and a record without one is `linux/arm64`'s** (D101; state.md
+owns the member), as is one whose `platform` is an explicit `"linux/arm64"` (architect, 2026-11-26,
+for v0.12-T01, pin P16). **A host's name** is its project on `linux/arm64` and
+`<project>.<os>-<arch>` on any other platform, `<os>-<arch>` being the normalized platform with its
+one `/` written `-` (architect, 2026-11-26, for v0.12-T01, pins P1 and P12): `foo`,
+`foo.linux-amd64`, `foo.windows-amd64`. Every per-host name but the stack's is built from it, and
+every `linux/arm64` name is byte for byte as before v0.12.
 So the lease's host is the one record whose `project` equals the lease's project and whose
 platform equals the lease's platform; a record of the project on another platform is another
 host, and is not the lease's, whatever its state: a `ready` `linux/arm64` host does not meet a
@@ -1147,7 +1161,7 @@ cost of one run (pin P31). The box is the record whose stack is `agentbox`. The 
 nothing (D54).
 
 **From v0.12 the project list approves a project for each platform on its own** (D91; D101's
-pinned form, which state.md owns; architect's to confirm, pin P4). **The list approves the lease's
+pinned form, which state.md owns; architect, 2026-11-26, for v0.12-T01, pin P4). **The list approves the lease's
 platform for the project** when an entry's `name` equals the project and either the entry has
 `platforms` and one of its items' `platform` equals the lease's platform, compared exactly, or the
 entry has no `platforms` and the lease's platform is `linux/arm64`. Nothing else approves it: an
@@ -1158,37 +1172,40 @@ sections that follow, means that the list approves the lease's platform for the 
 
 | The project's host on the lease's platform | Place answers | Issues | Starts |
 |---|---|---|---|
-| A record in state `ready` | By the size asked for, the host's `instance_type` and the project's other live `ready` leases on the platform, as [On a `ready` host](#on-a-ready-host) says: `ready`, `pending` or `unsatisfiable`. A `ready` answer carries the host's key lines in the alias (D47): the box's lease aliases keep v0.06's bytes, `HostKeyAlias agentspace` and no `UserKnownHostsFile` ([state.md, The alias file](state.md#the-alias-file)); every other host's are [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)'s, whose host-key name is the host's own from D91's table: `agentspace-host.<project>` on `linux/arm64`, and `agentspace-host.<project>.<os>-<arch>` on any other platform (architect's to confirm, pin P7) | For `ready`, the credential and the alias, by [How it places a lease](#how-it-places-a-lease); otherwise nothing | For `pending`, a resizing run when one is due ([Starting a provisioning run](#starting-a-provisioning-run)); otherwise nothing |
+| A record in state `ready` | By the size asked for, the host's `instance_type` and the project's other live `ready` leases on the platform, as [On a `ready` host](#on-a-ready-host) says: `ready`, `pending` or `unsatisfiable`. A `ready` answer carries the host's key lines in the alias (D47): the box's lease aliases keep v0.06's bytes, `HostKeyAlias agentspace` and no `UserKnownHostsFile` ([state.md, The alias file](state.md#the-alias-file)); every other host's are [state.md, A lease alias for a host that is not the box](state.md#a-lease-alias-for-a-host-that-is-not-the-box)'s, whose host-key name is the host's own from D91's table: `agentspace-host.<project>` on `linux/arm64`, and `agentspace-host.<project>.<os>-<arch>` on any other platform, `agentspace-host.<host name>` in both cases, which `HostKeyAlias` and `UserKnownHostsFile` name, while the lease alias itself is unchanged (architect, 2026-11-26, for v0.12-T01, pins P7 and P12) | For `ready`, the credential and the alias, by [How it places a lease](#how-it-places-a-lease); otherwise nothing | For `pending`, a resizing run when one is due ([Starting a provisioning run](#starting-a-provisioning-run)); otherwise nothing |
 | A record in state `creating` or `failed` | `pending` | Nothing | A provisioning run, when one is due ([Starting a provisioning run](#starting-a-provisioning-run)) |
 | No record, and the project list approves the lease's platform for the project | `pending` | Nothing | It adds the host's record, state `creating`, and starts a provisioning run when one is due |
 | No record, and the project list does not approve the lease's platform for the project | `unsatisfiable`, with one reason, `no_capacity` (D54, D91), and one of the two messages below | Nothing | Nothing, and writes nothing to the host registry |
 
 - **A project that has a record on the lease's platform is placed by it, whatever the list says
-  of that platform** (D54; architect's to confirm, pin P3). The list governs only making a host. A
-  record of the project on another platform neither places the lease nor stands for an approval.
+  of that platform** (D54; architect, 2026-11-26, for v0.12-T01, pin P3). The list governs only
+  making a host. A record of the project on another platform neither places the lease nor stands
+  for an approval.
 - **The `no_capacity` reason's message names the project and no backend (D1), and the EC2 driver
   MUST emit it byte for byte as one of these two** (architect, 2026-11-20, for v0.07-T01, for the
-  first's wording; from v0.12, D91 and architect's to confirm, pin P3), with `<project>` the
-  normalized project and `<platform>` the normalized platform:
-  - **A `linux/arm64` lease of a project that no entry of the project list names**, which keeps
-    v0.07's message, so that every command line v2 answered so prints what it printed:
+  first's wording; from v0.12, D91 and architect, 2026-11-26, for v0.12-T01, pin P3), with
+  `<project>` the normalized project and `<platform>` the normalized platform:
+  - **A lease of a project that no entry of the project list names, on any platform**, which keeps
+    v0.07's message byte for byte, whatever platform was asked for:
 
     ```
     No capacity can be found for project '<project>': it has no host and is not on agentspace's project list.
     ```
 
-  - **Every other lease the list does not approve**: a lease on any platform of a project whose
-    entry does not approve that platform, and a lease on `linux/amd64` or `windows/amd64` of a
-    project that no entry names:
+  - **A lease of a project that has an entry on the project list, when that entry does not approve
+    the lease's platform**, and only then:
 
     ```
-    No capacity can be found for project '<project>' on platform '<platform>': it has no host on that platform, and agentspace's project list does not approve that platform for it.
+    No capacity can be found for project '<project>' on platform '<platform>': it has no host there and is not approved for that platform on agentspace's project list.
     ```
 
-  An entry that names the project and approves another platform only still gives the second, on
-  `linux/arm64` too. Neither is D66's message for a host serving smaller leases
-  ([On a `ready` host](#on-a-ready-host)), which stays as it is, its "its host" being the lease's
-  platform's host (architect's to confirm, pin P3).
+  So an entry that names the project and approves another platform only gives the second, on
+  `linux/arm64` too, and a project with no entry gets the first on `linux/amd64` and
+  `windows/amd64` as on `linux/arm64`. Only an entry with `platforms` can give the second, and v2
+  could not read such an entry (architect, 2026-11-26, for v0.12-T01, pin P22). Neither is D66's
+  message for a host serving smaller leases ([On a `ready` host](#on-a-ready-host)), which stays as
+  it is, its "its host" being the lease's platform's host (architect, 2026-11-26, for v0.12-T01,
+  pin P23).
 - **The host is looked up only for a supported request.** An unsupported one is `unsatisfiable`
   with its `unsupported_*` reasons alone, and place reads neither file; so a laptop with no CA,
   no host registry and no project list still gets that answer, as before v0.07.
@@ -1216,7 +1233,9 @@ sections that follow, means that the list approves the lease's platform for the 
   validate.** For the host registry this is pin P9 (architect, 2026-11-20, for v0.07-T01): only a
   missing `hosts.json` reads as the box's record alone, and one that exists and is not valid, by
   its bytes, its JSON, its schema or a project listed twice, from v0.12 two records with one
-  project and one platform (D91; state.md owns the rule), is never read as missing, and is
+  project and one platform, one of them with an explicit `"linux/arm64"` and the other with none
+  among them (D91; architect, 2026-11-26, for v0.12-T01, pin P16; state.md owns the rule), is
+  never read as missing, and is
   never repaired by agentspace. For the project list it is this page's choice (architect, 2026-11-20,
   for v0.07-T01). Neither file is read as empty: an unreadable list read as empty would answer a
   terminal `unsatisfiable` for a project that MAY have a host made. The message is in
@@ -1397,7 +1416,7 @@ machine, and the steps after the first are those of a lease placed `ready`, whet
 4. **Signs the key's public half with the CA's private key.** The
    certificate's principal is the lease's platform's login user, `ubuntu` on `linux/arm64` and
    `linux/amd64` and `agent` on `windows/amd64` ([What it supports](#what-it-supports); D95;
-   architect's to confirm, pin P6). Its key ID, the lease ID, validity and options are
+   architect, 2026-11-26, for v0.12-T01, pin P19). Its key ID, the lease ID, validity and options are
    [state.md](state.md#a-leases-credential)'s and [lease-api.md](lease-api.md#the-credential)'s.
    The valid-after time SHOULD be back-dated there; the prototype's is the issue time itself,
    which is not behavior to copy.
@@ -1405,7 +1424,8 @@ machine, and the steps after the first are those of a lease placed `ready`, whet
    transport the next section describes, the host's key lines
    ([Where it places a lease](#where-it-places-a-lease), D47) and, as its login user, the same
    user as step 4's principal. The alias's name is the same on every platform,
-   `agentspace-<project>-<first 8 hex digits of the lease ID>` (architect's to confirm, pin P7). If the configuration cannot take the
+   `agentspace-<project>-<first 8 hex digits of the lease ID>` (architect, 2026-11-26, for
+   v0.12-T01, pin P7). If the configuration cannot take the
    alias, or the default transport's program cannot be found, place fails here, after the key is
    made and signed, and the credential is removed as for any alias failure. **Place MUST NOT check
    for the host's instance ID**, cached or not ([How it is reached](#how-it-is-reached)).
@@ -1436,7 +1456,9 @@ project's host by D46's four steps, or runs them again on a host that is already
 step being safe to repeat, and ends by placing the project's `pending` leases with
 [`place_pending`](#place_pending) (D46, D48). **From v0.12 a run is for one host, its project's on
 one platform** (D91, D101): `-Platform <platform>` names the platform, and a run without it is
-`linux/arm64`'s, so every command line before v0.12 keeps its meaning. A run places only the
+`linux/arm64`'s, so every command line before v0.12 keeps its meaning. The operator's `-Platform`
+takes every form the lease's `--platform` takes, through the same parser, and normalizes it the
+same way (architect, 2026-11-26, for v0.12-T01, pins P9 and P38). A run places only the
 `pending` leases of its project on its platform. Its steps, its log and its own records are
 [operator.md, provision](operator.md#provision)'s. **The driver starts one from place (a `create`)
 and from [`check_pending`](#check_pending) (a `get` of a `pending` lease), always for the lease's
@@ -1475,10 +1497,11 @@ write leaves the registry as it was.
    `last_success_at` is present and at or after its `last_attempt_at`**, the two compared as
    instants, so equal seconds read as a success. A record that step 4 is about to add has neither.
    The lock is in the host's folder
-   ([state.md, A host's folder](state.md#a-hosts-folder)), `hosts\<project>\` on `linux/arm64`
-   and `hosts\<project>.<os>-<arch>\` on any other platform, `<os>-<arch>` being the normalized
-   platform with its one `/` written `-` (D91; architect's to confirm, pin P1), so each host of a
-   project has a lock of its own; the driver tries to take it once,
+   ([state.md, A host's folder](state.md#a-hosts-folder)), `hosts\<host name>\`: `hosts\<project>\`
+   on `linux/arm64` and `hosts\<project>.<os>-<arch>\` on any other platform
+   ([Where it places a lease](#where-it-places-a-lease); D91; architect, 2026-11-26, for
+   v0.12-T01, pins P1 and P12), so each host of a project has a lock of its own; the driver tries
+   to take it once,
    without waiting, as state.md says the lock is held, and releases it at once if it took it. A
    host's folder or lock file that does not exist means that no run holds it, and the try creates
    neither (architect, 2026-11-20, for v0.07-T01). The folder is made only at the start (below), and the lock
@@ -1505,9 +1528,11 @@ write leaves the registry as it was.
      platform a record holding the same members and `platform`, the normalized platform, with the
      stack name of D91's table, `agentspace-<os>-<arch>-host-<project>`: for `windows/amd64`,
      `"platform":"windows/amd64"` and `"stack":"agentspace-windows-amd64-host-<project>"` (D91,
-     D101; architect's to confirm, pins P1 and P5, and N4 for writing no `platform` on
-     `linux/arm64`'s). The order of a record's members on disk is state.md's
-     ([state.md, The host registry](state.md#the-host-registry)).
+     D101; architect, 2026-11-26, for v0.12-T01, pins P1 and P5, and pin P16 for writing no
+     `platform` on `linux/arm64`'s). The order of a record's members on disk is state.md's
+     ([state.md, The host registry](state.md#the-host-registry)). **The new record is appended at
+     the end of `hosts.json`, and the write never reorders the file** (architect, 2026-11-26, for
+     v0.12-T01, pin P46), so the file's order is the order in which its hosts were made.
      With no `hosts.json`, the file it writes holds the box's record as well, as state.md says of
      the registry's first change (pin P9, architect, 2026-11-20, for v0.07-T01). **The box's record
      it writes is the seed's, with no `instance_type`**, whatever place read for it, since the
@@ -1525,10 +1550,12 @@ write leaves the registry as it was.
 
 - **A record in state `ready` never has its `state` changed by the driver** (architect, 2026-11-20,
   for v0.07-T01; D48). Starting a run for it writes only its `last_attempt_at`, removing its
-  `last_success_at` in the same write (step 4), and a start that fails leaves it `ready`. A host that is not `ready` sends its project's `ready` leases to the box,
-  where ssh's strict key check refuses them ([How it is reached](#how-it-is-reached)), so a `ready`
-  host taken out of `ready` would cut every lease of its project. `creating` and `failed` apply
-  only to a host that was never `ready`.
+  `last_success_at` in the same write (step 4), and a start that fails leaves it `ready`. A `linux/arm64` host that is not `ready` sends its project's `ready` leases to the box,
+  where ssh's strict key check refuses them ([How it is reached](#how-it-is-reached)), and from
+  v0.12 a host of any other platform that is not `ready` leaves its project's leases there on no
+  host, which the ProxyCommand refuses (architect, 2026-11-26, for v0.12-T01, pin P13). So a
+  `ready` host taken out of `ready` would cut every lease of its project on its platform.
+  `creating` and `failed` apply only to a host that was never `ready`.
 - **So a run is started for a host at most once in any 5 minutes, unless the last run succeeded**
   (D77, changing D48), by any number of `create`s and `get`s: the 5 minutes cover a failed run, a
   run that died with its record still `creating`, a run whose placing failed or left a lease
@@ -1569,9 +1596,11 @@ v0.07-T01):
   itself at its deploy step ([A resizing run](#a-resizing-run)), so a run started by `get` and one
   started by `create` agree. **From v0.12, a run for a host off `linux/arm64` adds exactly
   `-Platform` and the normalized platform after them**, `"<program>" provision -Host <project>
-  -Platform <platform>`, and nothing else, and a run for a `linux/arm64` host is the three
-  arguments above, with no `-Platform`, as before v0.12 (D91, D101; architect's to confirm, pin
-  P9, for `-Platform`'s meaning, and N1, for its place and its absence on `linux/arm64`). **A `.cmd`
+  -Platform <platform>`, and nothing else, the platform being the lease record's, normalized,
+  never another of the forms `-Platform` takes. **A run for a `linux/arm64` host is the three
+  arguments above, with no `-Platform`, byte for byte as before v0.12** (D91, D101; architect,
+  2026-11-26, for v0.12-T01, pins P9 and P38, for `-Platform`'s meaning, and pin P30, for its
+  absence on `linux/arm64`). **A `.cmd`
   or `.bat` program**, its extension compared without regard to case, is run through Windows'
   command interpreter as a ProxyCommand line is: `<system folder>\cmd.exe /d /c "<program>"
   provision -Host <project>`, with `-Platform <platform>` after it off `linux/arm64`, with
@@ -1612,8 +1641,9 @@ of life. What the start MUST achieve, from outside:
   architect, 2026-11-20, for v0.07-T01). A run that cannot open its log exits 1 and writes nothing
   else ([operator.md, provision](operator.md#provision)).
 - **Before the start, after it has released `hosts.lock`, the driver makes the host's folder,
-  `hosts\<project>\`, or from v0.12 `hosts\<project>.<os>-<arch>\` for a host off `linux/arm64`
-  (D91; step 2), when it is missing** (pin P14.2, architect, 2026-11-20, for v0.07-T01), so
+  `hosts\<project>\`, or from v0.12 `hosts\<host name>\`, `hosts\<project>.<os>-<arch>\` for a
+  host off `linux/arm64` (D91; architect, 2026-11-26, for v0.12-T01, pin P12; step 2), when it
+  is missing** (pin P14.2, architect, 2026-11-20, for v0.07-T01), so
   that the run can open its log there.
   - **A failure to make the folder is a start that fails** (below): the lease is `pending`, and
     nothing else changes.
@@ -1646,8 +1676,9 @@ of life. What the start MUST achieve, from outside:
   answers `pending`. A record that step 4 found `ready` stays `ready`, with only its
   `last_attempt_at` changed.
 
-**From `check_pending`, the rule is the same, for the host of the request's project and platform
-(D91; architect's to confirm, N5), with these differences:**
+**From `check_pending`, the rule is the same, for the host of the request's project and the
+platform stored in the lease's record at place (D91; architect, 2026-11-26, for v0.12-T01, pin
+P32), with these differences:**
 - **It tries `hosts.lock` once, without waiting, and when another process holds it, starts nothing
   and succeeds** (pin P12, architect, 2026-11-20, for v0.07-T01). The holder is a place or a run
   acting on the registry, and `get` MUST NOT wait on it ([check_pending](#check_pending)); the
@@ -1745,7 +1776,7 @@ states what the driver's functions decide in it, and what place sees of it:
    - **Otherwise it gives the type `resize_target_on(<the records>, <project>, <platform>)`
      returns**, with the run's project and platform, the type in the platform's column of the
      largest size among the project's `pending` leases on that platform that a run would place
-     ([Sizes and instance types](#sizes-and-instance-types)), **or none when it returns `None`**.
+     ([Sizes and instance types](#sizes-and-instance-types)), **or none when it returns none**.
      For `linux/arm64` that is `resize_target(<the records>, <project>)`, which v0.09's run calls.
      This holds for a run that makes a host as for one that runs again on a `ready` host: a host
      that is `creating` or `failed` is made at the size of the project's largest `pending` lease
@@ -1760,7 +1791,10 @@ states what the driver's functions decide in it, and what place sees of it:
 4. **It releases the lease state lock, and only then calls AWS.** Giving a type means passing it
    to the stack's deploy as its `InstanceType`, and giving none means passing none, so that an
    existing stack keeps its type, as a run before v0.09 always did, and a stack the deploy creates
-   takes what [operator.md, deploy](operator.md#deploy) gives a new host's stack. A type equal to
+   takes what [operator.md, deploy](operator.md#deploy) gives a new host's stack. **From v0.12 a
+   new host's default type is its platform's `m` type in the map**, `m9g.xlarge` on `linux/arm64`,
+   unchanged, and `m8a.xlarge` on `linux/amd64` and `windows/amd64` (architect, 2026-11-26, for
+   v0.12-T01, pin P41), so giving none never puts another column's type on a host. A type equal to
    the host's own changes nothing on the stack. The run's command line never carries it.
 5. **Once the stack's deploy has succeeded, it writes the type `describe-stacks` reads back** as
    the record's `instance_type`, under `hosts.lock`, holding no lock during the AWS calls but
@@ -1833,7 +1867,7 @@ project's leases on that platform** (D91): the run that calls it passes its own 
 `pending` lease of the project on another platform is left as it was, for its own host's run.
 
 **Its inputs:** the project, normalized; from v0.12 the platform, normalized, the run's own,
-`linux/arm64` when the run had no `-Platform` (architect's to confirm, pin P9); and the home folder, state folder, OpenSSH client folder,
+`linux/arm64` when the run had no `-Platform` (architect, 2026-11-26, for v0.12-T01, pin P9); and the home folder, state folder, OpenSSH client folder,
 transport override and system folder, which the calling program reads from its own environment as
 the lease CLI reads them ([lease-api.md](lease-api.md#environment); [state.md, The home
 folder](state.md#the-home-folder)), and so, in a run the driver started, as the command that
@@ -1895,7 +1929,7 @@ from its own folder, by a `create` or `get` that names that folder.
       check fails this lease** (pin P14.1, architect, 2026-11-20, for v0.07-T01), and MUST NOT be created.
    6. **Writes the lease state file with that record `ready`**: it adds `expires_at`, the
       certificate's valid-before time, and `ssh`, the alias and the platform's login user,
-      `ubuntu`, or `agent` on `windows/amd64` (architect's to confirm, pin P6), and changes no other member, `created_at`,
+      `ubuntu`, or `agent` on `windows/amd64` (architect, 2026-11-26, for v0.12-T01, pin P19), and changes no other member, `created_at`,
       `ttl_seconds`, `platform` and `driver` included. The file is checked against
       its schema before the write, and replaced atomically, as every write of it is
       ([state.md](state.md#the-lease-state-file)). One write per lease (architect, 2026-11-20, for v0.07-T01), so
@@ -2061,9 +2095,10 @@ it tells the lease's host nothing (D59).
 reads the host registry or the project list, neither starts a run, and a lease that
 [`place_pending`](#place_pending) placed is renewed and released as one place made `ready`.
 Release needs no platform: the alias is built from the project and the lease ID alone, on every
-platform (architect's to confirm, pin P7). Renew signs the new certificate for the platform's login
-user, from the platform its request carries ([Renew a lease](#renew-a-lease); architect's to
-confirm, N6), so a Windows lease's renewed certificate names `agent`, as its first did.
+platform (architect, 2026-11-26, for v0.12-T01, pin P7). Renew signs the new certificate for the
+platform's login user, from the platform stored in the lease's record, which its request carries
+([Renew a lease](#renew-a-lease); D95; architect, 2026-11-26, for v0.12-T01, pins P19 and P25),
+so a Windows lease's renewed certificate names `agent`, as its first did.
 
 ### Ending a lease's connections
 
@@ -2355,7 +2390,8 @@ taking a holder's place:
   **one call ends every client of a chain of exited programs, whatever its depth**: with a client,
   an exited program, a client, an exited program and a client, each below the one before, the call
   builds three trees and ends all three clients. **The clients are counted by the tops**, each top
-  that the call ended counting once (architect's to confirm, N7), so a chain three deep ended in
+  that the call ended counting once, as each client with no client above it counted before v0.12,
+  so a chain three deep ended in
   one call counts 3, as the walks of v0.10 counted it across three walks. The release's own process
   and its ancestors stay spared, and so does a client whose tree holds one of them
   ([Which processes are the alias's clients](#which-processes-are-the-aliass-clients)).
@@ -2533,8 +2569,8 @@ text of the row its own outcome matches.
   has exited while the client above still holds it, released over stand-in processes, with every
   client ended when the release returns and its line counting each. Two walks leave the last of a
   chain two deep running, which that test shows on the code before E0.10-T03-S02.
-- **Through #0228's crate test of a chain three deep, built with `agentspace-connections` in
-  v0.12-T02** (D99, D101; #0228's done-when):
+- **Through #0228's crate test of a chain three deep, built as E0.12-T02's work on
+  `agentspace-connections`** (D99, D101; #0228's done-when):
   over stand-in processes, a client, an exited program, a client, an exited program and a client,
   each below the one before, with each exited program still held by the client above it, **one
   call of `end_alias_clients` ends all three clients and returns `Ok(3)`**, and a release of that
@@ -2572,8 +2608,10 @@ D71); place and `place_pending` only read it. **Its writes of the host registry 
 the seed's, with no `instance_type` (pin P31). From v0.09, place's start of a resizing run for a
 `ready` record writes that record's `last_attempt_at` alone, as `check_pending`'s start does.
 **From v0.12 a record it adds for a host off `linux/arm64` carries `platform`, and its writes keep
-every record's `platform`, or its absence, exactly as they read it** (D91, D101; architect's to confirm, pin P5), so a
-record of another of the project's hosts is never changed by a lease on this one. It adds no new
+every record's `platform`, or its absence, exactly as they read it** (D91, D101; architect,
+2026-11-26, for v0.12-T01, pins P5 and P16), so a record of another of the project's hosts is
+never changed by a lease on this one. **A record it adds is appended at the end of the file, and
+no write of it reorders the records** (architect, 2026-11-26, for v0.12-T01, pin P46). It adds no new
 writer of the registry and no new lock: the writers are those of v0.09, under `hosts.lock` as
 before, and every reader of `hosts.json` that state.md lists reads the new member, or its absence,
 by the same rule ([state.md, The host registry](state.md#the-host-registry), which owns the
@@ -2612,7 +2650,10 @@ a provisioning run, detached, and never wait for it
 **Which host a connection reaches is the ProxyCommand's to find, from the lease itself: from v0.12
 the host of the lease record's `project` on its `platform`, by the lookup
 [operator.md, The ProxyCommand](operator.md#the-proxycommand) owns** (D49, D55, D91; pin P7,
-architect, 2026-11-20, for v0.07-T01; architect's to confirm, pin P8). **From v0.11 it
+architect, 2026-11-20, for v0.07-T01; architect, 2026-11-26, for v0.12-T01, pin P8). **Its fall
+back to the box, for a lease whose host is not `ready`, is `linux/arm64`'s alone**: a lease of
+any other platform with no `ready` host is refused, with exit 1 and no tunnel, as #0229's refusal
+is (architect, 2026-11-26, for v0.12-T01, pin P13). **From v0.11 it
 refuses, before it reads the host registry, a lease alias whose record is not `ready`, and an
 argument of lease alias form while the lease state file cannot be read or is not valid**
 ([operator.md, A lease that is not ready (#0229)](operator.md#a-lease-that-is-not-ready-0229);
@@ -2675,11 +2716,14 @@ checkout are there.
 - **The box's leases keep v0.06's alias bytes**, and are checked under the key name `agentspace` in
   the user's own `known_hosts` (D47); every other host's key is checked under
   `agentspace-host.<project>`, or from v0.12 `agentspace-host.<project>.<os>-<arch>` for a host off
-  `linux/arm64` (D91, D95; architect's to confirm, pin P7), in agentspace's own known-hosts file
+  `linux/arm64` (D91, D95; architect, 2026-11-26, for v0.12-T01, pins P7 and P12), in agentspace's own known-hosts file
   ([state.md, Agentspace's host keys](state.md#agentspaces-host-keys)).
 - **Each host stops itself when idle,** and the transport starts it (D11, D51). From v0.08 the
   laptop's guard also stops a host once no live lease of its project explains it, from v0.12 a
-  live lease of its project on its platform (D56, D91; [operator.md, guard](operator.md#guard)), and a host powers
+  live lease of its project on its platform (D56, D91; [operator.md, guard](operator.md#guard)),
+  and sends each host the horizon of those leases alone ([state.md, Live leases and the lease
+  horizon](state.md#live-leases-and-the-lease-horizon); architect, 2026-11-26, for v0.12-T01, pin
+  P29), and a host powers
   itself off past its lease horizon (D56, D57); a release's part in that is to end the lease's
   connections on the laptop ([Ending a lease's connections](#ending-a-leases-connections)).
 - **Each host's size is its stack's `InstanceType`, one of the four types of
@@ -2690,7 +2734,9 @@ checkout are there.
   live checks (D70). With no `hosts.json`, the box's record reads as having `instance_type`
   `m9g.xlarge`, and a registry written from a missing file holds the box's record with no type
   (pins P2c and P31, [Where it places a lease](#where-it-places-a-lease)). From v0.12 a host off
-  `linux/arm64` takes its type from its own platform's column, the `m8a` ladder (D94).
+  `linux/arm64` takes its type from its own platform's column, the `m8a` ladder (D94), and a new
+  one's default type is `m8a.xlarge`, its column's `m` (architect, 2026-11-26, for v0.12-T01, pin
+  P41).
 
 ### Conformance cases for v0.07
 
@@ -2963,8 +3009,9 @@ v0.07's recording stand-in.
 
 **Each behavior below can be shown through the lease CLI with stand-ins, and MUST be a conformance
 case of E0.12-T04-S01**, the lease CLI's cases of v0.12's conformance turn (D91, D93, D94, D99,
-D100, D101). Their IDs are `W1` and on, continuing this page's own scheme, and no other page uses
-them (architect's to confirm, pin P11). **They are the cases of the v0.09 and v0.10 sections'
+D100, D101). Their IDs are `M1` and on, a letter of this page's own, and no other page uses
+them (architect, 2026-11-26, for v0.12-T01, pins P11 and P31; conformance.md's v0.12 cases are
+its own `W` ones, pin P45). **They are the cases of the v0.09 and v0.10 sections'
 kind**, with their seeding rules: each runs in the harness's throwaway home, writes there the
 `hosts.json` and `projects.json` it needs, a held `provision.lock` where it needs one, and any
 lease record it needs, and sets `AGENTSPACE_PROVISION_CMD` to v0.07's recording stand-in.
@@ -2986,21 +3033,21 @@ lease record it needs, and sets `AGENTSPACE_PROVISION_CMD` to v0.07's recording 
 
 | Case | What it shows | Where the rule is |
 |---|---|---|
-| W1 | For each of `linux/amd64` and `windows/amd64`, with no `--profile`, a `create` for a project whose record on that platform is `ready` at `<u:m>`, with no other lease, answers `ready`, exit 0, a document that validates, whose `platform` is the one asked for, whose `profile` is `agent-linux` and `agent-windows` respectively, and whose `ssh.user` is `ubuntu` and `agent` respectively; its alias file logs in as that user and names the host-key name `agentspace-host.<project>.linux-amd64` or `agentspace-host.<project>.windows-amd64`; it starts nothing and leaves the registry as it was | [What it supports](#what-it-supports); [Where it places a lease](#where-it-places-a-lease) |
-| W2 | An unsupported platform: `create --platform windows/arm64` answers `unsatisfiable` with exactly one reason, `unsupported_platform`, with the v0.12 message for `windows/arm64`, and prints `profile` `agent-linux`; with `--profile agent-windows` the one reason is the same; with `--profile agent-linux@1 --size xxl` the reasons are `unsupported_platform`, `unsupported_profile` (whose message names `windows/arm64`) and `unsupported_size`, in that order; `--platform linux/amd64/v3` is `unsupported_platform`. None needs a CA, reads `hosts.json` (one that does not validate gives the same answers), writes the registry or starts anything (architect's to confirm, pin P2; D98) | [What it supports](#what-it-supports) |
-| W3 | A profile that is not the platform's own: `--platform windows/amd64 --profile agent-linux`, `--platform linux/amd64 --profile agent-windows` and `--profile agent-windows` with the default platform each answer `unsatisfiable` with exactly one reason, `unsupported_profile`, whose message names the request's profile and platform byte for byte; none reads `hosts.json` or starts anything (D93; architect's to confirm, pin P2) | [What it supports](#what-it-supports) |
-| W4 | A platform the list does not approve, with a host on another: for a project whose `linux/arm64` record is `ready` at `<t:m>` and whose entry has no `platforms`, `create --platform linux/amd64` answers `unsatisfiable` with exactly one reason, `no_capacity`, whose message is the v0.12 one for `<project>` and `linux/amd64`; it makes no lease folder or alias file, starts nothing and leaves the registry as it was. The same `create` with no entry for the project answers the same. A `create` with the default platform for the same project answers `ready` (architect's to confirm, pin P3) | [Where it places a lease](#where-it-places-a-lease) |
-| W5 | An entry whose `platforms` omits `linux/arm64`: for a project with no record, whose entry approves `linux/amd64` alone, a `create` with the default platform answers `no_capacity` with the v0.12 message for `linux/arm64`, never v0.07's, and writes nothing to the registry. With no entry for the project, the same `create` answers v0.07's message, byte for byte, as C1 does (architect's to confirm, pins P3 and P4) | [Where it places a lease](#where-it-places-a-lease) |
-| W6 | A platform the list approves: for a project whose `linux/arm64` record is `ready` and whose entry approves `windows/amd64`, `create --platform windows/amd64` answers `pending`, exit 0, with no `expires_at`, `ssh` or `reasons`; adds a record with `platform` `windows/amd64`, stack `agentspace-windows-amd64-host-<project>`, state `creating` and `last_attempt_at` within the command's run, beside the `linux/arm64` record, which stays byte for byte as it was; makes `hosts\<project>.windows-amd64\` and not `hosts\<project>\`; and starts the stand-in once, with five arguments | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4, the operator program and the detached start |
-| W7 | A host's `ready` leases on another platform hold nothing here: for a project with `ready` records on `linux/arm64` at `<t:m>` and on `linux/amd64` at `<u:m>`, and a live `ready` lease on `linux/arm64` only, `create --platform linux/amd64 --size l` answers `pending` and starts the stand-in once, with five arguments, while `create --size l` answers `unsatisfiable` with D66's message. With a stored `pending` lease of the project on `linux/arm64` at `l`, and none on `linux/amd64`, `create --platform linux/amd64` with the default size answers `ready` and starts nothing (D91) | [On a `ready` host](#on-a-ready-host), rows 1, 3, 5 and 6 |
-| W8 | The `m8a` column: with a live `ready` lease of the project on `linux/amd64`, and its record there `ready` at `<u:l>`, `create --platform linux/amd64 --size m` answers `ready` and `--size xl` answers `unsatisfiable` with D66's message, each starting nothing; with no live lease and the record at `<u:xl>`, `create --platform linux/amd64` with the default size answers `pending` and starts the stand-in once, with five arguments (D94) | [On a `ready` host](#on-a-ready-host), rows 4, 5 and 6; [Sizes and instance types](#sizes-and-instance-types) |
-| W9 | A type from another column: a `linux/amd64` record `ready` at `<t:m>`, `m9g.xlarge`, meets no size: `create --platform linux/amd64` with the default size answers `pending`, never `ready` or `unsatisfiable`, with and without a live `ready` lease of the project on `linux/amd64`, and starts the stand-in when a run is due (architect's to confirm, N3) | [Sizes and instance types](#sizes-and-instance-types); [On a `ready` host](#on-a-ready-host), row 2 |
-| W10 | Each host has its own lock: with the check holding the `provision.lock` of the project's `linux/arm64` host, a `create --platform linux/amd64` for a project whose `linux/amd64` record is `creating` with no `last_attempt_at` starts the stand-in once, with five arguments; with the check holding `hosts\<project>.linux-amd64\provision.lock` instead, the same `create` starts nothing and leaves the registry as it was | [Starting a provisioning run](#starting-a-provisioning-run), step 2; [Lock order](#lock-order) |
-| W11 | `get` of a stored `pending` `windows/amd64` lease whose host's record is `ready` at `<u:m>`, with `last_attempt_at` absent, starts the stand-in once, with five arguments; sets that record's `last_attempt_at` and no other record's; and leaves the lease state file byte for byte as it was (architect's to confirm, N5) | [Starting a provisioning run](#starting-a-provisioning-run), from `check_pending` |
-| W12 | The registry by project and platform: a `hosts.json` holding two records of one project on one platform fails a supported `create` of that project with `internal`, records nothing and starts nothing; one holding the project's records on `linux/arm64` and on `linux/amd64` is valid, and a `create` on each platform is placed by its own record | [Where it places a lease](#where-it-places-a-lease) |
-| W13 | A project list that cannot be read, with a host on one platform: for a project whose `linux/arm64` record is `ready` at `<t:m>`, with a `projects.json` that does not validate, a `create` with the default platform answers `ready`, while `create --platform linux/amd64` fails with `internal`, records no lease and leaves the registry as it was | [Where it places a lease](#where-it-places-a-lease) |
-| W14 | With no `hosts.json` and no `projects.json`, `create --platform linux/amd64` for `swimcoach` answers `unsatisfiable` with the v0.12 `no_capacity` message for `swimcoach` and `linux/amd64`, and leaves `hosts.json` absent, while a `create` for `swimcoach` with the default platform answers `ready` with v0.06's alias bytes, as Z15 | [Where it places a lease](#where-it-places-a-lease) |
-| W15 | A `windows/amd64` lease made `ready` by W1's seeding: `renew` answers with a new `expires_at` and `ssh.user` still `agent`; `release` succeeds with exit 0 and its usual document, removes the alias file and the lease folder, and appends one `release.log` line, with a `hosts.json` that the check made not valid after the `create`, since neither reads it (architect's to confirm, N6) | [Renew and release](#renew-and-release) |
+| M1 | For each of `linux/amd64` and `windows/amd64`, with no `--profile`, a `create` for a project whose record on that platform is `ready` at `<u:m>`, with no other lease, answers `ready`, exit 0, a document that validates, whose `platform` is the one asked for, whose `profile` is `agent-linux` and `agent-windows` respectively, and whose `ssh.user` is `ubuntu` and `agent` respectively; its alias file logs in as that user and names the host-key name `agentspace-host.<project>.linux-amd64` or `agentspace-host.<project>.windows-amd64`; it starts nothing and leaves the registry as it was | [What it supports](#what-it-supports); [Where it places a lease](#where-it-places-a-lease) |
+| M2 | An unsupported platform: `create --platform windows/arm64` answers `unsatisfiable` with exactly one reason, `unsupported_platform`, with the v0.12 message for `windows/arm64`, and prints `profile` `agent-linux`; with `--profile agent-linux` and with `--profile agent-windows` the one reason is the same; with `--profile agent-linux@1 --size xxl` the reasons are `unsupported_platform`, `unsupported_profile` (whose message names `windows/arm64`) and `unsupported_size`, in that order; `--platform linux/amd64/v3` is `unsupported_platform`. None needs a CA, reads `hosts.json` (one that does not validate gives the same answers), writes the registry or starts anything (architect, 2026-11-26, for v0.12-T01, pins P2, P21 and P26; D98) | [What it supports](#what-it-supports) |
+| M3 | A profile that is not the platform's own: `--platform windows/amd64 --profile agent-linux`, `--platform linux/amd64 --profile agent-windows` and `--profile agent-windows` with the default platform each answer `unsatisfiable` with exactly one reason, `unsupported_profile`, whose message names the request's profile and platform byte for byte; none reads `hosts.json` or starts anything (D93; architect, 2026-11-26, for v0.12-T01, pin P2) | [What it supports](#what-it-supports) |
+| M4 | A platform the list does not approve, with a host on another: for a project whose `linux/arm64` record is `ready` at `<t:m>` and whose entry has no `platforms`, `create --platform linux/amd64` answers `unsatisfiable` with exactly one reason, `no_capacity`, whose message is the v0.12 one for `<project>` and `linux/amd64`; it makes no lease folder or alias file, starts nothing and leaves the registry as it was. The same `create` with no entry for the project answers v0.07's message, byte for byte, never the v0.12 one. A `create` with the default platform for the same project answers `ready` (architect, 2026-11-26, for v0.12-T01, pin P3) | [Where it places a lease](#where-it-places-a-lease) |
+| M5 | An entry whose `platforms` omits `linux/arm64`: for a project with no record, whose entry approves `linux/amd64` alone, a `create` with the default platform answers `no_capacity` with the v0.12 message for `linux/arm64`, never v0.07's, and writes nothing to the registry. With no entry for the project, the same `create` answers v0.07's message, byte for byte, as C1 does, and so does `create --platform windows/amd64` (architect, 2026-11-26, for v0.12-T01, pins P3 and P4) | [Where it places a lease](#where-it-places-a-lease) |
+| M6 | A platform the list approves: for a project whose `linux/arm64` record is `ready` and whose entry approves `windows/amd64`, `create --platform windows/amd64` answers `pending`, exit 0, with no `expires_at`, `ssh` or `reasons`; appends at the end of `hosts.json` a record with `platform` `windows/amd64`, stack `agentspace-windows-amd64-host-<project>`, state `creating` and `last_attempt_at` within the command's run, after the `linux/arm64` record, which stays byte for byte as it was, and with every record before it in its order (architect, 2026-11-26, for v0.12-T01, pin P46); makes `hosts\<project>.windows-amd64\` and not `hosts\<project>\`; and starts the stand-in once, with five arguments | [Starting a provisioning run](#starting-a-provisioning-run), steps 2 and 4, the operator program and the detached start |
+| M7 | A host's `ready` leases on another platform hold nothing here: for a project with `ready` records on `linux/arm64` at `<t:m>` and on `linux/amd64` at `<u:m>`, and a live `ready` lease on `linux/arm64` only, `create --platform linux/amd64 --size l` answers `pending` and starts the stand-in once, with five arguments, while `create --size l` answers `unsatisfiable` with D66's message. With a stored `pending` lease of the project on `linux/arm64` at `l`, and none on `linux/amd64`, `create --platform linux/amd64` with the default size answers `ready` and starts nothing (D91) | [On a `ready` host](#on-a-ready-host), rows 1, 3, 5 and 6 |
+| M8 | The `m8a` column: with a live `ready` lease of the project on `linux/amd64`, and its record there `ready` at `<u:l>`, `create --platform linux/amd64 --size m` answers `ready` and `--size xl` answers `unsatisfiable` with D66's message, each starting nothing; with no live lease and the record at `<u:xl>`, `create --platform linux/amd64` with the default size answers `pending` and starts the stand-in once, with five arguments (D94) | [On a `ready` host](#on-a-ready-host), rows 4, 5 and 6; [Sizes and instance types](#sizes-and-instance-types) |
+| M9 | A type from another column: a `linux/amd64` record `ready` at `<t:m>`, `m9g.xlarge`, meets no size: `create --platform linux/amd64` with the default size answers `pending`, never `ready` or `unsatisfiable`, with and without a live `ready` lease of the project on `linux/amd64`, and starts the stand-in when a run is due (architect, 2026-11-26, for v0.12-T01, pin P28) | [Sizes and instance types](#sizes-and-instance-types); [On a `ready` host](#on-a-ready-host), row 2 |
+| M10 | Each host has its own lock: with the check holding the `provision.lock` of the project's `linux/arm64` host, a `create --platform linux/amd64` for a project whose `linux/amd64` record is `creating` with no `last_attempt_at` starts the stand-in once, with five arguments; with the check holding `hosts\<project>.linux-amd64\provision.lock` instead, the same `create` starts nothing and leaves the registry as it was | [Starting a provisioning run](#starting-a-provisioning-run), step 2; [Lock order](#lock-order) |
+| M11 | `get` of a stored `pending` `windows/amd64` lease whose host's record is `ready` at `<u:m>`, with `last_attempt_at` absent, starts the stand-in once, with five arguments, the fifth `windows/amd64`, the platform stored at place; sets that record's `last_attempt_at` and no other record's; and leaves the lease state file byte for byte as it was (architect, 2026-11-26, for v0.12-T01, pin P32) | [Starting a provisioning run](#starting-a-provisioning-run), from `check_pending` |
+| M12 | The registry by project and platform: a `hosts.json` holding two records of one project on one platform, among them one with `"platform":"linux/arm64"` beside one with no `platform`, fails a supported `create` of that project with `internal`, records nothing and starts nothing (architect, 2026-11-26, for v0.12-T01, pin P16); one holding the project's records on `linux/arm64` and on `linux/amd64` is valid, and a `create` on each platform is placed by its own record | [Where it places a lease](#where-it-places-a-lease) |
+| M13 | A project list that cannot be read, with a host on one platform: for a project whose `linux/arm64` record is `ready` at `<t:m>`, with a `projects.json` that does not validate, a `create` with the default platform answers `ready`, while `create --platform linux/amd64` fails with `internal`, records no lease and leaves the registry as it was | [Where it places a lease](#where-it-places-a-lease) |
+| M14 | With no `hosts.json` and no `projects.json`, `create --platform linux/amd64` for `swimcoach` answers `unsatisfiable` with v0.07's `no_capacity` message for `swimcoach`, byte for byte, since no entry names it (architect, 2026-11-26, for v0.12-T01, pin P3), and leaves `hosts.json` absent, while a `create` for `swimcoach` with the default platform answers `ready` with v0.06's alias bytes, as Z15 | [Where it places a lease](#where-it-places-a-lease) |
+| M15 | A `windows/amd64` lease made `ready` by M1's seeding: `renew` answers with a new `expires_at` and `ssh.user` still `agent`; `release` succeeds with exit 0 and its usual document, removes the alias file and the lease folder, and appends one `release.log` line, with a `hosts.json` that the check made not valid after the `create`, since neither reads it (D95; architect, 2026-11-26, for v0.12-T01, pins P19 and P25) | [Renew and release](#renew-and-release) |
 
 **Cases of earlier releases that change with v0.12:**
 - **Every case that uses `linux/amd64` or `windows/amd64` as an unsupported platform**, among them
@@ -3203,7 +3250,8 @@ none blocks building a drop-in of contract v0.
     `ssh <host_alias>`, as a login user, `agent`, with a certificate of agentspace's CA, through
     Microsoft's OpenSSH Server, so the operations and their results are unchanged; only the user
     differs by platform ([What it supports](#what-it-supports)), and renew and `check_pending`
-    carry the lease's platform (architect's to confirm, N5 and N6). Whether a certificate stays the way in for every later
+    carry the platform stored in the lease's record (architect, 2026-11-26, for v0.12-T01, pins
+    P25 and P32). Whether a certificate stays the way in for every later
     backend is the vision's V2, not this boundary's.
     **Q10, as asked: What does a lease on a Windows host look like at this boundary?** The result carries a
     login user and an alias, which assume an SSH login. D4 says the lease model assumes a Linux
