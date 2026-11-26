@@ -531,7 +531,9 @@ and P17; localswim's `docs/openapi.yaml`, operation `readBoard`):
 - **A 200 answer's body is read to at most 67108864 bytes (64 MiB), counted as received.** A body
   that a `Content-Length` says is larger is refused before it is read, and one that grows past the
   bound as it is read is refused once the next byte arrives: a build MUST NOT read more than
-  67108865 bytes of it. A description is at most 4194304 characters (localswim's `Card`), and the
+  67108865 bytes of it. **The bound counts the body's bytes the lease CLI takes, not what its HTTP
+  client buffers below that**: a transport's read-ahead of at most 128 KiB past the bound, never
+  handed to the CLI, is not a read past it (architect, 2026-11-25, for v0.11-T02, S02's report). A description is at most 4194304 characters (localswim's `Card`), and the
   answer's comments come on top of it with no bound, so the bound is on the answer.
 - **A 404's body is read under the same bound**, only to find whether it is localswim's
   `not_found`; one larger than the bound is not. **Any other answer's body is not read beyond what
