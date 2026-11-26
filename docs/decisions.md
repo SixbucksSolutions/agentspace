@@ -138,6 +138,7 @@ line's text after `Status:`, without its full stop.
 - [D98. `windows/arm64` stays unsupported in v0.12](#d98-windowsarm64-stays-unsupported-in-v012): Decided
 - [D99. #0228: one walk ends a chain of any depth, and D59's further walks stay as a backstop](#d99-0228-one-walk-ends-a-chain-of-any-depth-and-d59s-further-walks-stay-as-a-backstop): Decided
 - [D100. v0.12's done-when is shown by a Windows spike first and a live check per platform, with Terry's yes for their instance hours](#d100-v012s-done-when-is-shown-by-a-windows-spike-first-and-a-live-check-per-platform-with-terrys-yes-for-their-instance-hours): Decided
+- [D101. v0.12 is twenty-three stories in five turns: specs and the spike, foundations, programs, conformance, install and live](#d101-v012-is-twenty-three-stories-in-five-turns-specs-and-the-spike-foundations-programs-conformance-install-and-live): Decided
 
 ## The interface
 
@@ -5061,6 +5062,90 @@ builds it, in driver.md's "Release a lease".
   Breaking an epic into stories, step 5), and each gets a case or one of these checks.
 - **The observer script lost with v0.09-T05's worktree is rebuilt by the architect** before the
   first live check, from runs/e0.09-t05-s01.md (handoff-v0.11.md, What is open).
+
+### D101. v0.12 is twenty-three stories in five turns: specs and the spike, foundations, programs, conformance, install and live
+
+**Decided, architect, 2026-11-26, when Terry had v0.12 (#0051) broken into stories:** "Lay out
+v0.12", with "make sure to print the number of turns and the peak subagents per turn from the
+staffing plan". It lays v0.12 out as D89 laid out v0.11, on the designs of D91 to D100, and the
+stories' cards carry the detail, each with its staffing plan (D31, D63).
+
+**The plan is #0051's plan block (D83), and the same bytes are committed as
+[plans/v0.12.json](plans/v0.12.json).** Where the two disagree, the block wins, and the file is
+fixed. The cards, the block and the file were written from one source, so their staffing agrees.
+
+**The pinned names.** Every story uses these, and the specs written in T01 and T02 own their exact
+forms; T01's dev lead proposes any signature this table leaves open as a pin in its first minutes.
+
+| Name | Pinned as |
+|---|---|
+| A host's key | The lease's normalized project and platform; `linux/arm64`'s names unchanged, every other platform's as D91's table gives them, with the platform written `<os>-<arch>` |
+| The registry's member | `platform` on a `hosts.json` record, the normalized platform; absent means `linux/arm64` |
+| The project list's member | `platforms` on an entry, an array of `{"platform": <normalized platform>, "approved": "YYYY-MM-DD"}`; absent means `linux/arm64`, approved on the entry's `approved` |
+| The host key in code | `agentspace_hosts::HostKey { project: String, platform: String }`, with its stack, operator alias, host-key and folder names as methods; every function other crates call today keeps its signature and means `linux/arm64` (E0.12-T02-S01) |
+| The operator's flag | `-Platform <os/arch>` on `deploy`, `up`, `sync`, `down`, `status`, `grow`, `bootstrap` and `provision` |
+| The platform seam | A trait in `agentspace-operator-api`, pinned as code by the architect before T03 from operator.md as T01 and T02 leave it: a platform's image parameter, first-boot user data, bootstrap, sync and Session Manager document |
+| The Windows crate | `crates/agentspace-windows`, new, made by the architect before T03 as a skeleton whose every method returns an error, and built by E0.12-T03-S06 |
+| The Windows host agent | `box/windows/`, each file operator.md names (E0.12-T02-S04), made by the architect before T03 as placeholders, and built by E0.12-T03-S07; its tests in `box/windows/tests/` |
+| The size map | `linux/amd64` and `windows/amd64` on `m8a.large` to `m8a.4xlarge` (D94) |
+| The records | The spike's `docs/runs/e0.12-t01-s05.md`; the whole suite's `docs/runs/e0.12-t04-s05.md`; the live checks' `docs/runs/e0.12-t05-s01.md` and `-s02.md` |
+| Branches | `v0.12/e0.12-tnn-smm` (D29) |
+
+**Pinned as code before T03, by the architect:** one pull request adds the seam's trait to
+`agentspace-operator-api`, the `agentspace-windows` skeleton, and `box/windows/`'s placeholders,
+read and written by nothing, so T03's seven stories share no folder (crates/README.md), as #166 did
+for v0.11's T02.
+
+**The turns.** Stories in a turn run in parallel, each in its own worktree; a turn starts when
+every pull request of the turn before is merged (D16). The peak is the turn's subagents at once,
+counted from the plan's starts as D74 counts them, its dev lead not counted; agents at once adds
+the dev lead. The TTL is what D85 gives a lease for that turn.
+
+| Turn | Stories | What | Peak | Agents at once | Budget | TTL | Runs on |
+|---|---|---|---|---|---|---|---|
+| T01 | S01 to S05 | **The specs and the Windows spike.** lease-api.md; state.md with schemas/state; driver.md with keeper.md; operator.md's shared parts with conformance.md; the spike (D100) | 13 | 14 | 3.5 h | 5.25 h | The laptop; S05 with one throwaway Windows instance |
+| T02 | S01 to S04 | **The foundations and the Windows spec.** `agentspace-hosts` and `agentspace-state`; #0228 in `agentspace-connections`; D78, #0192 and #0193 in `box/`; operator.md's Windows hosts and README, from the spike | 11 | 12 | 3.5 h | 5.25 h | The laptop |
+| T03 | S01 to S07 | **The programs, both tracks.** The driver and CLI; the operator's front; sync, `up` and the template; the ProxyCommand, guard, push and zone; the keeper; `agentspace-windows`; `box/windows/` | 16 | 17 | 4.5 h | 6.75 h | The laptop |
+| T04 | S01 to S05 | **Conformance and #0244.** The lease CLI's, the operator's and the keeper's cases; #0244; the whole suite with conformance.md | 9 | 10 | 4.5 h | 6.75 h | The laptop |
+| T05 | S01, S02 | **The install and the live checks.** The install, the project list and `linux/amd64`'s check; `windows/amd64`'s check | 3 | 4 | 4.5 h | 6.75 h | The laptop, with agentspace's two new hosts |
+
+**The release's budget is 20.5 hours**, the sum of its turns'. **Its instance hours are Q20's:** up
+to 1.5 for T01's spike, 2 for `linux/amd64`'s check and 5 for `windows/amd64`'s.
+
+**Where the agents run: every dev lead and subagent runs on Terry's laptop.** The instances v0.12
+starts are what it tests, never where its agents work.
+- **The build and conformance turns test Windows programs on Windows**, as every release since
+  v0.05 has, and `box/windows/`'s PowerShell is tested there too.
+- **The box tests run in WSL**, as before.
+- **If a turn did run on a host, D73 would size it:** T01, T02 and T04, with 10 to 14 agents, would
+  get `l`; T03, with 17, `xl`; and T05, with 4, `s`.
+
+**What waits on Terry, each moved to Needs Terry through the architect when only he is left:**
+the AWS sign-in before T01-S05, T03-S03's change set and T05; his yes, asked once at T01's start,
+for the spike's alias file in his ssh folder (architect.md, Running a turn, step 5); his click for
+the spike's desktop-app session; and in T05-S02 his sign-ins on the Windows host and the
+desktop-app session that works a card.
+
+**Why this shape:**
+- **The same order as v0.07's to v0.11's** (D55, D63, D71, D81, D89): specs before code, libraries
+  before the programs, the whole suite before the install.
+- **The spike is in T01, beside the specs it does not touch** (D100; Terry, 2026-11-26, for #0243:
+  "Let's pull risk early"). The Windows spec waits one turn for it, in T02, where nothing else
+  writes operator.md or README, and the architect records any decision it changes before T02
+  starts.
+- **The shared work is T02 and most of T03, and the tracks split by folder in T03:** the
+  `linux/amd64` track needs nothing a Linux host lacks beyond the image, the size map and the
+  localswim CLI's architecture, all shared work; the Windows track is S06 and S07, beside the rest,
+  with the seam pinned first so neither waits. The release ends with the Windows live check, as
+  #0051 says.
+- **D78, #0192 and #0193 ride T02 with `box/`, #0228 with the driver's foundations, and #0244 with
+  the conformance turn**, as D72, D78, D82 and D90 placed them.
+- **T03 is the widest turn, 16 subagents, and the laptop's limit is its heavy runs, not its
+  agents**: at most three at once, through `scripts\heavy-gate.ps1`. Its seven PRs are
+  merge-checked together on one local merge (architect.md, A turn that builds).
+- **T03 to T05 get 4.5 hours**: T03 for seven stories' reviews through three heavy slots, T04 for
+  the operator suite run twice, and T05 for a Windows host's first boot and patch run, Terry's
+  sign-ins, and the guard's stops.
 
 ## Keys
 

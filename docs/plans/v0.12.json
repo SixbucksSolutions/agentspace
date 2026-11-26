@@ -1,0 +1,122 @@
+{"name":"v0.12","turns":[
+{"name":"T01","budget_minutes":210,"stories":[
+ {"name":"E0.12-T01-S01","subagents":[
+  {"name":"inventory","model":"Sonnet","effort":"medium"},
+  {"name":"drafter","model":"Opus","effort":"high"},
+  {"name":"sample writer","model":"Sonnet","effort":"high"},
+  {"name":"checker runner","model":"Sonnet","effort":"medium","after":["drafter","sample writer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["inventory","checker runner"]}]},
+ {"name":"E0.12-T01-S02","subagents":[
+  {"name":"inventory","model":"Sonnet","effort":"medium"},
+  {"name":"state writer","model":"Opus","effort":"high"},
+  {"name":"schema writer","model":"Opus","effort":"high"},
+  {"name":"checker runner","model":"Sonnet","effort":"medium","after":["state writer","schema writer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["inventory","checker runner"]}]},
+ {"name":"E0.12-T01-S03","subagents":[
+  {"name":"inventory","model":"Sonnet","effort":"medium"},
+  {"name":"driver drafter","model":"Opus","effort":"high"},
+  {"name":"keeper drafter","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["inventory","driver drafter","keeper drafter"]}]},
+ {"name":"E0.12-T01-S04","subagents":[
+  {"name":"inventory","model":"Sonnet","effort":"medium"},
+  {"name":"operator drafter","model":"Opus","effort":"high"},
+  {"name":"conformance writer","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["inventory","operator drafter","conformance writer"]}]},
+ {"name":"E0.12-T01-S05","subagents":[
+  {"name":"spike runner","model":"Opus","effort":"high"},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["spike runner"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]},
+{"name":"T02","budget_minutes":210,"stories":[
+ {"name":"E0.12-T02-S01","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author"]}]},
+ {"name":"E0.12-T02-S02","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["implementer","test author"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.12-T02-S03","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"idle test author","model":"Sonnet","effort":"high"},
+  {"name":"install test author","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["implementer","idle test author","install test author"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.12-T02-S04","subagents":[
+  {"name":"spike reader","model":"Sonnet","effort":"medium"},
+  {"name":"operator writer","model":"Opus","effort":"high"},
+  {"name":"README writer","model":"Sonnet","effort":"high"},
+  {"name":"conformance writer","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["spike reader","operator writer","README writer","conformance writer"]}]}]},
+{"name":"T03","budget_minutes":270,"stories":[
+ {"name":"E0.12-T03-S01","subagents":[
+  {"name":"driver implementer","model":"Opus","effort":"high"},
+  {"name":"CLI implementer","model":"Sonnet","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["driver implementer","CLI implementer","test author"]}]},
+ {"name":"E0.12-T03-S02","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author"]}]},
+ {"name":"E0.12-T03-S03","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"change-set checker","model":"Sonnet","effort":"medium","after":["implementer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["test author","change-set checker"]}]},
+ {"name":"E0.12-T03-S04","subagents":[
+  {"name":"proxy and push implementer","model":"Opus","effort":"high"},
+  {"name":"guard and zone implementer","model":"Sonnet","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["proxy and push implementer","guard and zone implementer","test author"]}]},
+ {"name":"E0.12-T03-S05","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author"]}]},
+ {"name":"E0.12-T03-S06","subagents":[
+  {"name":"implementer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["implementer","test author"]}]},
+ {"name":"E0.12-T03-S07","subagents":[
+  {"name":"script writer","model":"Opus","effort":"high"},
+  {"name":"test author","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["script writer","test author"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]}]},
+{"name":"T04","budget_minutes":270,"stories":[
+ {"name":"E0.12-T04-S01","subagents":[
+  {"name":"case writer, platforms","model":"Sonnet","effort":"high"},
+  {"name":"case updater","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["case writer, platforms","case updater"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.12-T04-S02","subagents":[
+  {"name":"case writer, shared","model":"Sonnet","effort":"high"},
+  {"name":"case writer, Windows","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["case writer, shared","case writer, Windows"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.12-T04-S03","subagents":[
+  {"name":"case writer","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["case writer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.12-T04-S04","subagents":[
+  {"name":"implementer","model":"Sonnet","effort":"high"},
+  {"name":"runner","model":"Sonnet","effort":"medium","after":["implementer"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
+ {"name":"E0.12-T04-S05","subagents":[
+  {"name":"runner, crates and box","model":"Sonnet","effort":"medium"},
+  {"name":"runner, lease CLI, schemas and keeper","model":"Sonnet","effort":"medium","after":["runner, crates and box"]},
+  {"name":"runner, operator lane A","model":"Sonnet","effort":"medium","after":["runner, crates and box"]},
+  {"name":"runner, operator lane B and the deadline case","model":"Sonnet","effort":"medium","after":["runner, crates and box"]},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["runner, lease CLI, schemas and keeper","runner, operator lane A","runner, operator lane B and the deadline case"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]},
+{"name":"T05","budget_minutes":270,"stories":[
+ {"name":"E0.12-T05-S01","subagents":[
+  {"name":"installer","model":"Sonnet","effort":"medium"},
+  {"name":"check drafter","model":"Sonnet","effort":"high"},
+  {"name":"checks runner","model":"Sonnet","effort":"high","after":["installer","check drafter"]},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["checks runner"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]},
+ {"name":"E0.12-T05-S02","subagents":[
+  {"name":"check drafter","model":"Sonnet","effort":"high"},
+  {"name":"checks runner","model":"Opus","effort":"high","after":["check drafter"]},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["checks runner"]},
+  {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]}
+]}
