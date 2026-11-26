@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Live record, as of 10:18pm Mountain on 2026-11-25, at v0.11-T03's close.** Started at T01's
+> **Live record, as of 2:21am Mountain on 2026-11-26, at v0.11-T04's close.** Started at T01's
 > close and refreshed at each turn's close, as v0.10's was. Where this file and AGENTS.md, the
 > board or decisions.md disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -24,25 +24,29 @@ this file adds only what v0.11 has changed or learned so far.
 - **T03's lease CLI is merged** (#171): `create --board <id> --epic <ticket>`, `--turn`, the TTL
   from a turn's budget, and contract v2. Naming a board and an epic is now enough to get a sized
   lease, by the build; T05 shows it installed.
-- **`main` is green**: the architect's check of #171 on its own build ran the workspace (5,978
-  passed, 0 failed, 58 ignored), the schemas and the whole lease CLI suite with nothing red.
+- **T04's conformance is merged** (#172 to #174): the board, turn, TTL and v2 cases with a stand-in
+  board; #0230 met; and the whole suite's record,
+  [runs/e0.11-t04-s03.md](runs/e0.11-t04-s03.md): 94 conformance files, 6,208 passed, 0 failed, 0
+  skipped; the deadline case 5 of 5; the crates 5,978 passed; the box 172 OK.
+- **`main` is green**, by that record, at `bc89cdb` and after.
 - **#0052 carries the first `agentspace-plan` block (D83)**, byte-equal to
   [plans/v0.11.json](plans/v0.11.json). T05's live check reads it.
-- **Next is T04 (#0239 to #0241), on Terry's "Start T04"**: conformance, #0230, and the whole
-  suite.
+- **Next is T05 (#0242), on Terry's "Start T05"**: the install on Terry's laptop and D88's live
+  check, which reads #0052 and starts no instance. #0243 (Backlog) waits on Terry's placement.
 
 ## Where things stand
 
 | What | State |
 |---|---|
-| v0.11 (#0052) | In Progress. #0231 to #0238 in Ready For Review; #0239 to #0242 in Ready For Work |
-| `main` | 1a90916, #171's merge |
+| v0.11 (#0052) | In Progress. #0231 to #0241 in Ready For Review; #0242 in Ready For Work |
+| `main` | 395a225, after #174 (a8d872d) and the P8 citation's date |
+| #0243 | Hardening card in Backlog, found in T04 (P8): about 40 places in `conformance\` quote captured output in a failing reason without a full mask; the list is in runs/e0.11-t04-s03.md. Its placement is Terry's; the architect recommends v0.12 (#0051) |
 | Red on `main` by design | None, from #171's merge. T01's reds went green with #168 (state) and #171 (the CLI's help) |
 | The combined T02 check, on one build of #167 to #170 merged | Workspace: the six reds above only. Schemas 1,638 and 163. Keeper clean. Lease CLI: 48 files, the 13 reds above only. Operator: 39 files, 1,536 passed, 0 failed, 0 skipped, `test-unmet-proxy-not-ready.ps1` 75 of 75. The deadline case was not run; T04's whole suite runs it |
 | A gap, not a red | `conformance/lease-cli/test-v1-compatible.ps1` passes 94 of 94, comparing the top-level v2 schemas with v0's, so it no longer checks v1. #0239 points it at `schemas/v1/` |
 | Hosts, leases, AWS | Both hosts stopped; no lease asked for in v0.11; AWS not checked, since no turn before T05 needs it |
-| Swimcoach | `v0.11` (15.5 h, twelve tickets) reporting; `v0.11-T01` to `v0.11-T03` removed at their closes |
-| Sessions | T01's to T03's dev leads done; no dev lead running. `.claude\worktrees\rvmain` is an unregistered folder from 2026-11-23, one entry, not a checkout; left for a person to look at. Empty folders a session held (`t02-s04`, `rvt02`) are removed once the session holding them lets go |
+| Swimcoach | `v0.11` (15.5 h, twelve tickets) reporting; `v0.11-T01` to `v0.11-T04` removed at their closes |
+| Sessions | T01's to T04's dev leads done; no dev lead running. `.claude\worktrees\rvmain` is an unregistered folder from 2026-11-23, one entry, not a checkout; left for a person to look at. Empty folders a session held (`t02-s04`, `rvt02`) are removed once the session holding them lets go |
 
 ## v0.11 by turn
 
@@ -51,6 +55,7 @@ this file adds only what v0.11 has changed or learned so far.
 | T01, the specs | #0231 to #0233 | 12:45pm, 2026-11-25 | 3:53pm, 2026-11-25, the last merge | #163 (2:30pm), #164 (3:14pm), #165 (3:53pm) | 3:08 of 3 h | Contract v2, `schemas/` v2 with v1's kept, #0229's refusal in operator.md, the plan's source in state.md, the stand-in board in conformance.md; 27 pins ruled; 19 subagents launched |
 | T02, the foundations and #0229 | #0234 to #0237 | 4:20pm, 2026-11-25 | 7:10pm, 2026-11-25, the four merges | #166 (the architect's prep, 4:44pm); #167 to #170 (7:10pm) | 2:50 of 3.5 h | `agentspace-plan`'s budget, turn cut and TTL; `agentspace-board`, new, with `ureq` 3.5.2 and `Token::bearer`/`Bearer` in `agentspace-push`; `agentspace-state`'s `plan_source`; the ProxyCommand's refusal with its retry and clock; 6 pins ruled; 24 subagent launches (S01 5, S02 5, S03 3, S04 11), 9 of them ending blocked or stopped without writing, by the dev lead's count of its launches; Terry approved two Writes by hand |
 | T03, the lease CLI | #0238 | 7:45pm, 2026-11-25 | 10:16pm, 2026-11-25, the merge | #171 (10:16pm) | 2:32 of 3 h | `create --board`, `--epic` and `--turn`, the TTL from a plan, contract v2, `tests/lease_board.rs` (64 tests, a stand-in board); `main` green; 8 pins ruled, all as proposed; 4 subagent launches, none blocked |
+| T04, conformance | #0239 to #0241 | 11:24pm, 2026-11-25 | 2:19am, 2026-11-26, #174's merge | #173 and #172 (1:51am), #174 (2:19am) | 2:55 of 4 h | `board-standin.ps1` and three new lease CLI files, `test-v1-compatible.ps1` on `schemas/v1/`; #0230 met, with a second raw quote fixed (P8); the whole suite's record; #0243 carded; 15 pins ruled; 18 subagent launches, none blocked |
 
 ## Rulings made during v0.11
 
@@ -97,6 +102,11 @@ v0.11-T01, pin Pn". Those that changed a decision are change notes:
 | T03: a test that ran the built program twice and compared the leases' `created_at` and `expires_at` failed once under the isolation guard's load | A test that runs a program twice on the real clock MUST NOT compare clock times; it compares what the clock does not set | architect.md, "A turn that builds" |
 | T03: the implementer ended its run waiting on its own gated run, against its tasking; harmless with one worktree | Taskings keep "finish in one run"; a turn of one story is the only place it is harmless | The next brief |
 | T03: a test that accepted either of two outcomes was ruled out (P8) | A test asserts one outcome, shown to fail on the other | architect.md, "A turn that builds" |
+| T04: the architect's 11:29pm rulings reached the dev lead only at 12:13am, queued while it was busy, and the dev lead sent no status from 11:28pm to 12:12am | A ruling sent to a busy session is confirmed by its reply; a dev lead arms a 9-minute heartbeat under Monitor at its start | architect.md, "Running a turn" |
+| T04: the architect's ruling 4 named a helper's loader from its name; `grep -l` found the 10 real ones | A ruling about which files load a helper comes from `grep -l`, never from a file's name | architect.md, "Running a turn", step 2 |
+| T04: a mid-turn change to lease-api.md on `main` was shown harmless to the early runs by reading both of its runtime readers, which take the help blocks alone | A spec change on `main` during a turn that runs early on an older base names its runtime readers and what each reads | architect.md, "A turn that builds" |
+| T04: P4's final runs on one local merge of two PRs stood as the architect's merge check, the trees compared and every result file read | A conformance turn's merge check MAY be its whole-suite story's runs on the merge, under those two conditions | architect.md, "A turn that builds" |
+| T04: `scripts\live\mask.ps1` turned a word after `token: ` into `<secret>` in a case's reason (N9) | Not a defect: the token-assignment rule masks what follows `token:`, and a case named `...-token:` meets it. The mask errs toward hiding | `scripts\live\mask.ps1` |
 | T01 and T02: the architect sent four rulings with a time or interval not read from a command (P15; P26 and P27; T02 P1's "25 minutes"; P6), each corrected at once | A message that carries a time is sent only after the clock's read has returned, never in the same batch, and an interval is computed from two read times | handoff-v0.10.md, rule 1; architect.md, "Writing in the repository" |
 
 ## What is open
@@ -104,8 +114,8 @@ v0.11-T01, pin Pn". Those that changed a decision are change notes:
 | What | Who acts | Where it goes |
 |---|---|---|
 | The heavy-run gate is a committed script, `scripts\heavy-gate.ps1` (#166), proven on four runs of three slots (the fourth waited 7 seconds for a slot) and on a failing run's exit code | Every dev lead, and the architect's merge checks | `scripts\heavy-gate.ps1`; architect.md |
-| T04 starts on Terry's "Start T04" | Terry | #0239 to #0241 |
-| #0238's known gaps for conformance: only a `Content-Length` of 67108865 shows the 64 MiB bound (no such body is sent); JSON nesting depth is untested | #0239 | #171's body |
+| T05 starts on Terry's "Start T05" | Terry | #0242 |
+| #0243's placement | Terry | Backlog now; the architect recommends v0.12 (#0051) |
 | Two limits #169 and #170 accepted, each in its PR: `ureq` copies the bearer into a header value that is not zeroed on drop; a sharing violation on the lease file's second open, after a failure of another kind, is not retried | T04's whole suite and the release's handoff, to carry or card | #169, #170 |
 | The empty `.claude\worktrees\rvmain` from 2026-11-23 | A person, if wanted | Nothing depends on it |
 | Every open row of handoff-v0.10.md's "What is open" not met by v0.11 so far | As that file says | handoff-v0.10.md |

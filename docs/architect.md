@@ -159,6 +159,12 @@ first.**
     (v0.11-T02). The dev lead's session moved under it twice: it read auto again by 5:11pm, though
     no one had asked it to, and a switch at 5:34pm found Accept edits, not the default the
     architect had set at 5:30pm. A Write meant for Terry's approval checks the mode first.
+15. **A ruling sent to a busy session is confirmed by its reply, never assumed** (v0.11-T04). The
+    architect's 11:29pm rulings were queued and reached the dev lead only at 12:13am, after it had
+    asked for them again; a ruling the dev lead has not acknowledged by its next status is resent.
+16. **A ruling about which files load a helper comes from `grep -l`, never from a file's name**
+    (v0.11-T04): the architect named `test-unmet-host-deploy-size.ps1` as a loader of
+    `host-provision-common.ps1`, and it is not one.
 
 **While a question to Terry is open, the architect's turn is held, and the dev leads' messages
 queue** (v0.06-T05: an 80-minute wait). When his answer comes, read each linked session's state
@@ -384,6 +390,19 @@ deliberately red tests green.** A dev lead's brief carries these.
   under the isolation guard's moved-home rerun, and a planted 1.1-second sleep reproduced it.
 - **A test asserts one outcome, shown to fail on the other**: "either message" passed for a case the
   spec decides, and was ruled out (v0.11-T03, pin P8).
+
+**Learned in v0.11-T04, 2026-11-26, the conformance turn.**
+- **A conformance turn's merge check MAY be its whole-suite story's final runs on one local merge
+  of the code PRs**, on two conditions: the architect merges the same heads itself and compares the
+  trees (`git rev-parse <ref>^{tree}`), and reads every `.exit` and masked summary before it merges.
+  T04's two PRs merged within a minute of the last run's end, with no second check.
+- **A spec change made on `main` during a turn that runs early on an older base names its runtime
+  readers**, found by a grep for runtime reads, and what each reads: T04's two lease-api.md changes
+  sat outside the help blocks, the only part either reader (`lease-cli-common.ps1`'s and the CLI
+  tests' `help_blocks()`) takes, so the early runs stood for the final `main`.
+- **A dev lead arms a heartbeat under Monitor at its start**, about every 9 minutes, so its status
+  lines keep the 10-minute rule while it writes long taskings: T04's went quiet from 11:28pm to
+  12:12am, and none slipped after the heartbeat.
 
 ## Live checks on Terry's laptop and the box
 
