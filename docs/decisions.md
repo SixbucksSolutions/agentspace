@@ -4988,6 +4988,15 @@ Windows that shell is PowerShell.
   session is open" covers Windows' own automatic updates too: the bootstrap turns off restarts that
   Windows Update schedules by itself, and the patch run is the one path that restarts the host.
   T02-S04 writes how in operator.md.
+- **Changed for v0.12-T02 (architect, 2026-11-26, pins P9, P12 and P15):** the first-boot user
+  data is the template's own Windows branch, chosen by a new `HostOs` parameter, and not a file of
+  `box/windows/`: one template is D44's rule, and a parameter's value caps at 4,096 bytes against
+  the spike's 4,514. `HostOs` and `RootVolumeGiB` default to what `agentbox` has, so its change set
+  stays empty. The first boot sets sshd's default shell to Windows PowerShell 5.1, and the
+  bootstrap sets Git Bash once it has installed Git for Windows (D97). `install.ps1`, run by `sync`,
+  installs PowerShell 7 when it is missing, since `sync` runs before the bootstrap (D46). The
+  guard writes the horizon file as the digits and an LF, or the digits alone, never with a CR
+  (P12).
 - **The guard's horizon and the patch check are sent with Session Manager's PowerShell document**,
   where Linux's use the shell one (D57). Which document a host gets is the driver's, keyed by
   platform.
@@ -5114,6 +5123,7 @@ forms; T01's dev lead proposes any signature this table leaves open as a pin in 
 | The platform seam | A trait in `agentspace-operator-api`, pinned as code by the architect before T03 from operator.md as T01 and T02 leave it: a platform's image parameter, first-boot user data, bootstrap, sync and Session Manager document |
 | The Windows crate | `crates/agentspace-windows`, new, made by the architect before T03 as a skeleton whose every method returns an error, and built by E0.12-T03-S06 |
 | The Windows host agent | `box/windows/`, each file operator.md names (E0.12-T02-S04), made by the architect before T03 as placeholders, and built by E0.12-T03-S07; its tests in `box/windows/tests/` |
+| The Windows first boot | The template's Windows `UserData` branch in `infra/agentspace.yaml`, chosen by `HostOs`, built by E0.12-T03-S03 (architect, 2026-11-26, for v0.12-T02, pin P15); not a file of `box/windows/` |
 | The size map | `linux/amd64` and `windows/amd64` on `m8a.large` to `m8a.4xlarge` (D94) |
 | The records | The spike's `docs/runs/e0.12-t01-s05.md`; the whole suite's `docs/runs/e0.12-t04-s05.md`; the live checks' `docs/runs/e0.12-t05-s01.md` and `-s02.md` |
 | Branches | `v0.12/e0.12-tnn-smm` (D29) |
