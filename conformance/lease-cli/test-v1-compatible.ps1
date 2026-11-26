@@ -1,10 +1,11 @@
 #Requires -Version 7
 # RFC 2119 keywords in these comments; the capitals are load-bearing.
 #
-# A conformance check under D34 (E0.10-T04-S01, #0221): D76's promise, that contract v1 keeps contract v0 for a
-# command line with no `--plan` (docs/lease-api.md, Versioning, "What v1 keeps of v0", and Schemas). Every
-# document such a command line prints, on stdout or on stderr, validates against v0's schema in `schemas/v0/` as
-# well as against v1's in `schemas/`: a lease in each state it can be in (ready, pending, expired, released, unsatisfiable),
+# A conformance check under D34 (E0.10-T04-S01, #0221; its pairs moved by E0.11-T04-S01, #0239): D76's promise, that
+# contract v1 keeps contract v0 for a command line with no `--plan` (docs/lease-api.md, Versioning, "What v1 keeps of
+# v0", and Schemas). Every document such a command line prints, on stdout or on stderr, validates against v0's schema
+# in `schemas/v0/` as well as against v1's in `schemas/v1/`: a lease in each state it can be in (ready, pending,
+# expired, released, unsatisfiable),
 # each reason v0 had (unsupported_platform, unsupported_profile, unsupported_size, no_capacity), a list, and an
 # error of each code (usage, invalid_value, out_of_range, not_found, invalid_state, internal). It drives the lease
 # CLI only as a separate process, through the harness, in a throwaway home, with a stand-in driver as every other
@@ -14,10 +15,17 @@
 # - A document is checked as the contract says (compact, one line, nothing on the other stream, the exit code of its
 #   error code), against v1's schema, and then against v0's. A lease document MUST NOT hold `sized_for` or the reason
 #   `plan_too_large`, and an error MUST NOT name the field `plan`, since no plan was given.
+# - Since contract v2 (D87, D89) the schemas at the top level of `schemas/` are v2's, so this file's pairs are v1's
+#   under `schemas/v1/` for v1 and v0's under `schemas/v0/` for v0, each by its path under `schemas/`. v2's own
+#   promise, that it keeps v1 and v0, is test-v2-compatible.ps1's. A lease and a list are validated against the v1
+#   schema by Get-ConformanceSuccessProblems, and an error against it by this file itself: the helper's error test
+#   reads the top level's error schema, which is v2's, so the error's v1 pair is checked here beside it.
 # - A last group of controls makes the check show it can fail (conformance.md, "Running the suite": a check is proved
 #   able to fail): a lease made with `--plan` and an error that names the field `plan` MUST validate against v1's
 #   schema and MUST NOT validate against v0's, because v0's schemas allow no member and no field they did not have.
-#   Without them, a validator that accepted everything would pass this file.
+#   Without them, a validator that accepted everything would pass this file. A fifth control shows that the file's
+#   v1 schemas are v1's and not v2's: an error that names the field `turn`, which only v2 has, validates against
+#   `schemas/` and fails `schemas/v1/` and `schemas/v0/` (E0.11-T04-S01).
 # - A result at the end shows that every state, every reason and every error code above was seen, so a run that made
 #   too few documents cannot pass.
 # - Test-ConformanceSchema reaches a schema under schemas/ by its path under that folder, so `v0/error.output.schema.json`
@@ -68,12 +76,13 @@ function Invoke-VcCli {
   return (Invoke-AgentspaceCli -ConformanceHome $script:VcLab -Arguments $Arguments -Environment $e)
 }
 
-# The schema pairs of a kind of document: v1's under schemas/, and v0's under schemas/v0/ (lease-api.md, Schemas).
+# The schema pairs of a kind of document: v1's under schemas/v1/, and v0's under schemas/v0/ (lease-api.md, Schemas).
+# The top level of schemas/ is v2's from E0.11-T01-S02 on, and is never a pair of this file.
 function Get-VcSchemas([string]$Kind) {
   switch ($Kind) {
-    'lease' { return @{ V1 = 'lease.output.schema.json'; V0 = 'v0/lease.output.schema.json' } }
-    'list' { return @{ V1 = 'lease-list.output.schema.json'; V0 = 'v0/lease-list.output.schema.json' } }
-    'error' { return @{ V1 = 'error.output.schema.json'; V0 = 'v0/error.output.schema.json' } }
+    'lease' { return @{ V1 = 'v1/lease.output.schema.json'; V0 = 'v0/lease.output.schema.json' } }
+    'list' { return @{ V1 = 'v1/lease-list.output.schema.json'; V0 = 'v0/lease-list.output.schema.json' } }
+    'error' { return @{ V1 = 'v1/error.output.schema.json'; V0 = 'v0/error.output.schema.json' } }
   }
 }
 
@@ -91,6 +100,8 @@ function Get-VcProblems {
     foreach ($x in (Get-ConformanceErrorProblems -Run $Run -Code $Code -Field $Field -LeaseId $LeaseId -State $ErrState)) { $p.Add($x) }
     $text = [string]$Run.Stderr
     $doc = $Run.ErrorJson
+    # The helper above reads the top level's error schema, which is v2's: v1's is this file's pair, checked here.
+    if ($null -ne $Run.ErrorJson -and -not (Test-ConformanceSchema -Json $text.TrimEnd("`n") -Schema $schemas.V1)) { $p.Add("The document does not validate against $($schemas.V1), contract v1's schema") }
   } else {
     foreach ($x in (Get-ConformanceSuccessProblems -Run $Run -Schema $schemas.V1)) { $p.Add($x) }
     $text = [string]$Run.Stdout
@@ -364,6 +375,25 @@ try {
     } catch { $p.Add("It threw: $($_.Exception.Message)") }
     Complete-VcCheck -Name $name -Problems $p
   }
+  # A fifth control: the v1 schemas this file reads are v1's. A usage error for --turn without a plan names the field
+  # `turn`, which only contract v2 has (lease-api.md, Changes from v1), so it validates against schemas/ (v2's) and fails
+  # schemas/v1/ and schemas/v0/. A file whose v1 pair were v2's schemas would accept it.
+  $name = "lease-api.md#schemas: Control: an error that names the field turn, which contract v2 added, validates against v2's error schema and fails v1's and v0's, so this file's v1 schemas are v1's"
+  $p = [System.Collections.Generic.List[string]]::new()
+  try {
+    $run = Invoke-VcCli -Arguments @('lease', 'create', '--project', 'vc-nocap', '--turn', 'T1')
+    $text = [string]$run.Stderr
+    # The pair this file reads for an error, so that a pair that were v2's would fail here.
+    $pair = Get-VcSchemas 'error'
+    if ($run.ExitCode -ne 2) { $p.Add("Exit $($run.ExitCode), not 2") }
+    if ([string]::IsNullOrWhiteSpace($text)) { $p.Add('There is no document') }
+    else {
+      if (-not (Test-ConformanceSchema -Json $text.TrimEnd("`n") -Schema 'error.output.schema.json')) { $p.Add('The document does not validate against error.output.schema.json, contract v2''s schema') }
+      if (Test-ConformanceSchema -Json $text.TrimEnd("`n") -Schema $pair.V1) { $p.Add("The document validates against $($pair.V1), the schema this file reads as v1's, which has no place for the field turn") }
+      if (Test-ConformanceSchema -Json $text.TrimEnd("`n") -Schema $pair.V0) { $p.Add("The document validates against $($pair.V0), the schema this file reads as v0's, which has no place for the field turn") }
+    }
+  } catch { $p.Add("It threw: $($_.Exception.Message)") }
+  Complete-VcCheck -Name $name -Problems $p
 
   # --- Every state, reason and error code was seen, and enough documents were made ---
   $p = [System.Collections.Generic.List[string]]::new()
