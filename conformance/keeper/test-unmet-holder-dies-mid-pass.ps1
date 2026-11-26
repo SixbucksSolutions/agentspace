@@ -71,7 +71,7 @@ Initialize-KeeperRegistryMode $Registry $PSCommandPath $PSBoundParameters
 # Resolved before the first case, which strips AGENTSPACE_* from the environment.
 $keeperCmd = Resolve-KeeperProgram
 if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
-  Write-ConformanceResult -Name 'keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists' -Status FAIL -Reason $(if ($keeperCmd) { "$keeperCmd is not a file." } else { 'Neither the variable nor its default names a program.' })
+  Write-ConformanceResult -Name 'keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists' -Status FAIL -Reason $(if ($keeperCmd) { "$(ConvertTo-ConformanceMasked $keeperCmd) is not a file." } else { 'Neither the variable nor its default names a program.' })
   Exit-ConformanceRun
 }
 
@@ -84,7 +84,7 @@ $script:caseName = ''
 
 function Add-Check([bool]$Ok, [string]$Text, [string]$Why = '') {
   $name = "keeper.md#release-grace (card #0068): $($script:caseName): $Text"
-  if ($Ok) { Write-ConformanceResult -Name $name -Status PASS } else { Write-ConformanceResult -Name $name -Status FAIL -Reason $Why }
+  if ($Ok) { Write-ConformanceResult -Name $name -Status PASS } else { Write-ConformanceResult -Name $name -Status FAIL -Reason (ConvertTo-ConformanceMasked $Why) }
 }
 
 # One case: a fresh state folder and home folder, with the harness's child environment for them, the
@@ -175,7 +175,7 @@ function Test-GraceFollows($Process, [int]$Index, $After, [DateTime]$Released, [
 }
 
 function Write-Missed([int]$Attempt, [string]$What) {
-  Write-Host "Attempt $Attempt of ${attemptsAllowed}: $What"
+  Write-Host "Attempt $Attempt of ${attemptsAllowed}: $(ConvertTo-ConformanceMasked $What)"
 }
 
 try {
@@ -220,7 +220,7 @@ try {
         if (-not $concluded -and $attempt -lt $attemptsAllowed) { Reset-Attempt $p }
       }
     }
-    if (-not $concluded) { Write-ConformanceResult -Name "keeper.md#release-grace (card #0068): $($script:caseName)" -Status SKIPPED -Reason "The keeper's look and pass did not bracket the stop in $attemptsAllowed attempts, so nothing was shown either way. The last attempt: $missed" }
+    if (-not $concluded) { Write-ConformanceResult -Name "keeper.md#release-grace (card #0068): $($script:caseName)" -Status SKIPPED -Reason "The keeper's look and pass did not bracket the stop in $attemptsAllowed attempts, so nothing was shown either way. The last attempt: $(ConvertTo-ConformanceMasked $missed)" }
   }
 
   # 2. The record is gone at the pass.
@@ -256,7 +256,7 @@ try {
         if (-not $concluded -and $attempt -lt $attemptsAllowed) { Reset-Attempt $p }
       }
     }
-    if (-not $concluded) { Write-ConformanceResult -Name "keeper.md#release-grace (card #0068): $($script:caseName)" -Status SKIPPED -Reason "The record was not removed between two passes in $attemptsAllowed attempts, so nothing was shown either way. The last attempt: $missed" }
+    if (-not $concluded) { Write-ConformanceResult -Name "keeper.md#release-grace (card #0068): $($script:caseName)" -Status SKIPPED -Reason "The record was not removed between two passes in $attemptsAllowed attempts, so nothing was shown either way. The last attempt: $(ConvertTo-ConformanceMasked $missed)" }
   }
 } finally {
   Restore-CaseEnvironment
@@ -268,5 +268,5 @@ try {
 if ($leftBehind -eq 0) { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status PASS }
 else { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status FAIL -Reason "$leftBehind process(es) of this run were still running after the cleanup." }
 $lp = Get-LogLineProblems
-if ($lp.Checked -gt 0) { Write-ConformanceResult -Name "keeper.md#log-lines: The box's lines that name a holder carry host=swimcoach, and no other box line carries a host= field" -Status $(if ($lp.Problems.Count) { 'FAIL' } else { 'PASS' }) -Reason ($lp.Problems -join ' ') }
+if ($lp.Checked -gt 0) { Write-ConformanceResult -Name "keeper.md#log-lines: The box's lines that name a holder carry host=swimcoach, and no other box line carries a host= field" -Status $(if ($lp.Problems.Count) { 'FAIL' } else { 'PASS' }) -Reason (ConvertTo-ConformanceMasked ($lp.Problems -join ' ')) }
 Exit-ConformanceRun

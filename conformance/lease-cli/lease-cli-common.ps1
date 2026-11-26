@@ -9,11 +9,12 @@
 
 $script:ExitCodeOf = @{ internal = 1; usage = 2; invalid_value = 2; out_of_range = 2; not_found = 3; invalid_state = 4 }
 
-# Reports one check: PASS when it has no problems, FAIL with the problems joined otherwise.
+# Reports one check: PASS when it has no problems, FAIL with the problems joined otherwise, through the
+# suite's mask, since a problem can quote what a program printed (conformance\mask-common.ps1).
 function Complete-ConformanceCheck {
   param([Parameter(Mandatory)][string]$Name, [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems)
   if ($null -eq $Problems -or $Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # True when the text holds no whitespace outside its JSON strings (lease-api.md#output: compact).
@@ -74,15 +75,15 @@ function Get-ConformanceErrorProblems {
   elseif (-not (Test-ConformanceJsonCompact $Run.Stderr.TrimEnd("`n"))) { $p.Add('The error document is not compact JSON') }
   if (Get-ConformanceHasBom $Run.StderrBytes) { $p.Add('Stderr starts with a byte order mark') }
   $doc = $Run.ErrorJson
-  if ($null -eq $doc) { $p.Add("Stderr is not a JSON document: $($Run.Stderr.Trim())"); return , $p }
+  if ($null -eq $doc) { $p.Add("Stderr is not a JSON document: $(ConvertTo-ConformanceMasked $Run.Stderr.Trim())"); return , $p }
   if (-not (Test-ConformanceSchema -Json $Run.Stderr.TrimEnd("`n") -Schema 'error.output.schema.json')) { $p.Add('The error document does not validate against error.output.schema.json') }
-  if ($doc['code'] -cne $Code) { $p.Add("Code is '$($doc['code'])', not '$Code'") }
+  if ($doc['code'] -cne $Code) { $p.Add("Code is '$(ConvertTo-ConformanceMasked $doc['code'])', not '$Code'") }
   if ($Field) {
     if (-not $doc.ContainsKey('field')) { $p.Add("No field, wanted '$Field'") }
-    elseif ($doc['field'] -cne $Field) { $p.Add("Field is '$($doc['field'])', not '$Field'") }
-  } elseif ($doc.ContainsKey('field')) { $p.Add("An unwanted field '$($doc['field'])'") }
-  if ($LeaseId -and $doc['lease_id'] -cne $LeaseId) { $p.Add("lease_id is '$($doc['lease_id'])', not '$LeaseId'") }
-  if ($State -and $doc['state'] -cne $State) { $p.Add("state is '$($doc['state'])', not '$State'") }
+    elseif ($doc['field'] -cne $Field) { $p.Add("Field is '$(ConvertTo-ConformanceMasked $doc['field'])', not '$Field'") }
+  } elseif ($doc.ContainsKey('field')) { $p.Add("An unwanted field '$(ConvertTo-ConformanceMasked $doc['field'])'") }
+  if ($LeaseId -and $doc['lease_id'] -cne $LeaseId) { $p.Add("lease_id is '$(ConvertTo-ConformanceMasked $doc['lease_id'])', not '$LeaseId'") }
+  if ($State -and $doc['state'] -cne $State) { $p.Add("state is '$(ConvertTo-ConformanceMasked $doc['state'])', not '$State'") }
   return , $p
 }
 

@@ -162,7 +162,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-failed-create-cleanup.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   # Lift the rule first, or the throwaway home cannot be removed.

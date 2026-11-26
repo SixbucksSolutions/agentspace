@@ -106,12 +106,12 @@ function Add-HostCheck([bool]$Ok, [string]$Text, [string]$Why = '') {
       $Why = 'The check did not hold.'
       try { $l = Read-LogLines; if ($l.Count -gt 0) { $Why = 'The check did not hold. board-holder.log ends: ' + (($l | Select-Object -Last 4) -join ' | ') } } catch { }
     }
-    Write-ConformanceResult -Name $name -Status FAIL -Reason $Why
+    Write-ConformanceResult -Name $name -Status FAIL -Reason (ConvertTo-ConformanceMasked $Why)
   }
 }
 
 function Add-HostSkipped([string]$Text, [string]$Why) {
-  Write-ConformanceResult -Name "$($script:caseSpec) ($($script:caseId)): $Text" -Status SKIPPED -Reason $Why
+  Write-ConformanceResult -Name "$($script:caseSpec) ($($script:caseId)): $Text" -Status SKIPPED -Reason (ConvertTo-ConformanceMasked $Why)
 }
 
 # Writes the stand-in for ssh into the run's folder and points keeper-common.ps1's $stub at it, so that

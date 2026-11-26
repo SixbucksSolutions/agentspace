@@ -172,7 +172,7 @@ function Test-ListIgnored {
     if ($sub.Expect -ceq 'ready') {
       foreach ($x in (Get-ConformanceSuccessProblems -Run $run)) { $p.Add($x) }
       if ($run.Json -is [hashtable]) {
-        if ($run.Json['state'] -cne 'ready') { $p.Add("The lease's state is '$($run.Json['state'])', not ready") }
+        if ($run.Json['state'] -cne 'ready') { $p.Add("The lease's state is '$(ConvertTo-ConformanceMasked $run.Json['state'])', not ready") }
         elseif ($run.Json['ssh']['host_alias'] -cnotmatch "\Aagentspace-$($sub.Project)-[0-9a-f]{8}\z") { $p.Add('The host alias is not the box''s form') }
       }
     } else {

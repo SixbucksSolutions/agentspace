@@ -189,7 +189,7 @@ function Add-SequenceProblems($P, $Calls, [string[]]$Want, [string]$What) {
   if (Test-SameSeq $got $Want) { return }
   $i = 0
   while ($i -lt $got.Count -and $i -lt $Want.Count -and $got[$i] -ceq $Want[$i]) { $i++ }
-  $P.Add("The calls of $What differ at call $($i + 1) of $($Want.Count) (expected $(if ($i -lt $Want.Count) { $Want[$i] } else { 'no more' }), got $(if ($i -lt $got.Count) { $got[$i] } else { 'none' }); $($got.Count) calls were made)")
+  $P.Add("The calls of $What differ at call $($i + 1) of $($Want.Count) (expected $(if ($i -lt $Want.Count) { ConvertTo-ConformanceMasked $Want[$i] } else { 'no more' }), got $(if ($i -lt $got.Count) { ConvertTo-ConformanceMasked $got[$i] } else { 'none' }); $($got.Count) calls were made)")
 }
 # Every ssm call has the arguments of Calls by command, in its order: a send with the comment given (the nth send takes the
 # nth of $Comments, the last repeating), a poll of the command the send answered (the stand-in's command ID of zeros).
@@ -202,7 +202,7 @@ function Add-SsmArgumentProblems($P, $Calls, [string]$Id, [string[]]$Comments = 
     $n++
     $got = @($c['a'])
     $w = @($want[[string]$got[1]])
-    if ($w.Count -eq 0) { $P.Add("ssm call $n is an operation of no part of the wait: $($got[1])"); continue }
+    if ($w.Count -eq 0) { $P.Add("ssm call $n is an operation of no part of the wait: $(ConvertTo-ConformanceMasked $got[1])"); continue }
     # The shared template carries sync's comment; this check names the comment of the nth send itself.
     if ($got[1] -ceq 'send-command') {
       $ci = [Array]::IndexOf($w, '--comment')
@@ -213,7 +213,7 @@ function Add-SsmArgumentProblems($P, $Calls, [string]$Id, [string[]]$Comments = 
     for ($j = 0; $ok -and $j -lt $w.Count; $j++) {
       if ($w[$j].StartsWith('re:')) { if ($got[$j] -cnotmatch $w[$j].Substring(3)) { $ok = $false } } elseif ($got[$j] -cne $w[$j]) { $ok = $false }
     }
-    if (-not $ok) { $P.Add("ssm call $n ($($got[1])) has not the arguments of Calls by command, with the right comment for a send"); return }
+    if (-not $ok) { $P.Add("ssm call $n ($(ConvertTo-ConformanceMasked $got[1])) has not the arguments of Calls by command, with the right comment for a send"); return }
   }
 }
 # The lines of stderr that are the wait's: its four messages and a warning for a failed run.

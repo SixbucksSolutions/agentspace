@@ -138,9 +138,9 @@ Invoke-HostFile -FileName 'test-unmet-grow-zero.ps1' -Body {
     if ($run.Stderr -cmatch '(?m)^agentspace: (No command given|Unknown command|Unexpected argument|Unknown parameter|-\w+ is given more than once|-\w+ needs a value|-GiB MUST be)') { $why.Add('It was refused as a usage error') }
     if (@(Get-AwsCalls).Count -eq 0) { $why.Add('It never reached the AWS CLI, so the command line was not accepted') }
     if ($run.Stderr -match 'CategoryInfo|At line:|Exception|panicked') { $why.Add('Stderr shows a runtime error record') }
-    if ($why.Count -eq 0) { Write-ConformanceResult -Name $syncName -Status PASS } else { Write-ConformanceResult -Name $syncName -Status FAIL -Reason ($why -join '; ') }
+    if ($why.Count -eq 0) { Write-ConformanceResult -Name $syncName -Status PASS } else { Write-ConformanceResult -Name $syncName -Status FAIL -Reason (ConvertTo-ConformanceMasked ($why -join '; ')) }
   } catch {
-    $msg = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+    $msg = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name $syncName -Status FAIL -Reason "The check hit an error: $msg"
   }
 }

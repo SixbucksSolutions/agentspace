@@ -43,7 +43,7 @@ function Invoke-UnmetLease {
 function Add-UnmetResult {
   param([Parameter(Mandatory)][string]$Name, [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems)
   if ($null -eq $Problems -or $Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # The problems with a run that was meant to succeed: exit 0, nothing on stderr, and one document on
@@ -66,7 +66,7 @@ function New-UnmetReadyLease {
   if ($run.ExitCode -ne 0) { $r.Why = "create exited $($run.ExitCode), not 0"; return $r }
   $doc = $run.Json
   if ($doc -isnot [hashtable] -or -not (Test-ConformanceSchema -Json $run.Stdout.TrimEnd("`n") -Schema 'lease.output.schema.json')) { $r.Why = 'create did not print a lease document that validates'; return $r }
-  if ($doc['state'] -cne 'ready') { $r.Why = "create gave state '$($doc['state'])', not ready"; return $r }
+  if ($doc['state'] -cne 'ready') { $r.Why = "create gave state '$(ConvertTo-ConformanceMasked $doc['state'])', not ready"; return $r }
   $alias = [string]$doc['ssh']['host_alias']
   if ($doc['id'] -cnotmatch $script:UnmetUuid4 -or $alias -cnotmatch $script:UnmetAlias) { $r.Why = 'the ID or the alias does not match its pattern'; return $r }
   $r.Ok = $true; $r.Id = [string]$doc['id']; $r.Alias = $alias
@@ -99,7 +99,7 @@ try {
         # The first release: the lease is ready, so it deletes the files and records released.
         $first = Invoke-UnmetLease $lab @('release', $lease.Id)
         $p = Get-UnmetSuccessProblems $first
-        if ($p.Count -eq 0 -and $first.Json['state'] -cne 'released') { $p.Add("The state is '$($first.Json['state'])', not released") }
+        if ($p.Count -eq 0 -and $first.Json['state'] -cne 'released') { $p.Add("The state is '$(ConvertTo-ConformanceMasked $first.Json['state'])', not released") }
         if (Test-Path -LiteralPath $folder) { $p.Add('The lease folder is still there') }
         if (Test-Path -LiteralPath $aliasFile) { $p.Add('The alias file is still there') }
         Add-UnmetResult -Name "$release`: Setup, the first release succeeds and removes the alias file and the lease folder (state.md#release-and-what-it-leaves)" -Problems $p
@@ -112,7 +112,7 @@ try {
           $second = Invoke-UnmetLease $lab @('release', $lease.Id)
           $p = Get-UnmetSuccessProblems $second
           if ($p.Count -eq 0) {
-            if ($second.Json['state'] -cne 'released') { $p.Add("The state is '$($second.Json['state'])', not released") }
+            if ($second.Json['state'] -cne 'released') { $p.Add("The state is '$(ConvertTo-ConformanceMasked $second.Json['state'])', not released") }
             if ($second.Json['released_at'] -cne $first.Json['released_at']) { $p.Add('released_at is not the first one') }
           }
           Add-UnmetResult -Name "$release`: Release of a released lease exits 0 and prints the lease with its first released_at" -Problems $p
@@ -129,7 +129,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-release-released.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($lab) { Remove-ConformanceHome -ConformanceHome $lab }

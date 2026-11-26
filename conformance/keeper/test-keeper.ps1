@@ -83,14 +83,14 @@ function Write-Result([bool]$Ok, [string]$Text, [string]$Why = '') {
   if ($Ok) { Write-Output "PASS $name"; $script:passes++ }
   else {
     if (-not $Why) { $Why = Get-DefaultWhy }
-    Write-Output "FAIL ${name}: $Why"
+    Write-Output "FAIL ${name}: $(ConvertTo-ConformanceMasked $Why)"
     $script:failures++
   }
 }
 
 function Write-Skipped([string]$Text, [string]$Why) {
   if ($script:mut) { return }
-  Write-Output "SKIPPED $($script:caseSpec): ${Text}: $Why"
+  Write-Output "SKIPPED $($script:caseSpec): ${Text}: $(ConvertTo-ConformanceMasked $Why)"
   $script:skips++
 }
 
@@ -121,7 +121,7 @@ Initialize-KeeperRegistryMode $Registry $PSCommandPath $PSBoundParameters
 # names, both through the harness. Resolved before the first case, which strips AGENTSPACE_* from the environment.
 $keeperCmd = Resolve-KeeperProgram
 if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
-  Write-Output "FAIL keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists: $(if ($keeperCmd) { "$keeperCmd is not a file" } else { 'neither the variable nor its default names a program' })."
+  Write-Output "FAIL keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists: $(if ($keeperCmd) { "$(ConvertTo-ConformanceMasked $keeperCmd) is not a file" } else { 'neither the variable nor its default names a program' })."
   Write-Output '0 passed, 1 failed, 0 skipped'
   exit 1
 }

@@ -75,7 +75,7 @@ function Use-PlLab {
     if ($null -eq $many) { Write-ConformanceResult -Name $Name -Status FAIL -Reason 'The check body returned no results' }
     else { foreach ($key in $many.Keys) { Complete-ConformanceCheck -Name $key -Problems $many[$key] } }
   } catch {
-    $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+    $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name $Name -Status FAIL -Reason "It threw: $why at line $($_.InvocationInfo.ScriptLineNumber)"
   } finally {
     [Environment]::CurrentDirectory = $savedCwd
@@ -162,7 +162,7 @@ function Get-PlSizedForProblems {
   if ($null -ne $Expect.Plan) { $want += 'plan' }
   $got = @($sf.Keys | ForEach-Object { [string]$_ } | Sort-Object { $_ } -CaseSensitive)
   $want = @($want | Sort-Object { $_ } -CaseSensitive)
-  if (($got -join ',') -cne ($want -join ',')) { $p.Add("sized_for has the members [$($got -join ', ')], not [$($want -join ', ')]") }
+  if (($got -join ',') -cne ($want -join ',')) { $p.Add("sized_for has the members [$(ConvertTo-ConformanceMasked ($got -join ', '))], not [$($want -join ', ')]") }
   if ($sf.ContainsKey('turn') -and ($sf['turn'] -isnot [string] -or $sf['turn'] -cne $Expect.Turn)) { $p.Add('sized_for.turn is not the busiest turn''s name as the plan writes it') }
   if ($null -ne $Expect.Plan -and $sf.ContainsKey('plan') -and ($sf['plan'] -isnot [string] -or $sf['plan'] -cne $Expect.Plan)) { $p.Add('sized_for.plan is not the plan''s name as the plan writes it') }
   if ($sf.ContainsKey('agents')) {

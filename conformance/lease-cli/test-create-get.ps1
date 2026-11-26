@@ -242,7 +242,7 @@ try {
     $p = Get-ConformanceSuccessProblems -Run $e
     if (-not $seeded) { $p.Add('The lease''s record could not be seeded in the state file') }
     if ($e.Json) {
-      if ($e.Json['state'] -cne 'expired') { $p.Add("State is '$($e.Json['state'])', not 'expired'") }
+      if ($e.Json['state'] -cne 'expired') { $p.Add("State is '$(ConvertTo-ConformanceMasked $e.Json['state'])', not 'expired'") }
       if ($e.Json.ContainsKey('ssh')) { $p.Add('An expired lease has ssh') }
       if ($e.Json['expires_at'] -cne '2020-01-01T00:00:00Z') { $p.Add('expires_at changed') }
       if ($e.Json['ttl_seconds'] -ne 28800) { $p.Add('ttl_seconds changed') }
@@ -256,7 +256,7 @@ try {
     $e = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'get', $id)
     $p = Get-ConformanceSuccessProblems -Run $e
     if (-not $seeded) { $p.Add('The lease''s record could not be seeded in the state file') }
-    if (-not $e.Json -or $e.Json['state'] -cne 'ready' -or -not $e.Json['ssh']) { $p.Add("The lease is '$(if ($e.Json) { $e.Json['state'] })', not ready with ssh") }
+    if (-not $e.Json -or $e.Json['state'] -cne 'ready' -or -not $e.Json['ssh']) { $p.Add("The lease is '$(ConvertTo-ConformanceMasked $(if ($e.Json) { $e.Json['state'] }))', not ready with ssh") }
     Complete-ConformanceCheck -Name 'lease-api.md#states: A ready lease whose expires_at is far ahead is ready, with ssh' -Problems $p
   } else {
     Write-ConformanceResult -Name 'lease-api.md#agentspace-lease-create: Every check of a ready lease (create, get, expiry, a failed write)' -Status SKIPPED -Reason $badSkip
@@ -309,8 +309,8 @@ try {
     $made++
     $p = Get-ConformanceSuccessProblems -Run $c
     $got = if ($c.Json -and $c.Json['reasons']) { @($c.Json['reasons'] | ForEach-Object { $_['code'] }) -join ',' } else { '' }
-    if ($c.Json -and $c.Json['state'] -cne 'unsatisfiable') { $p.Add("State is '$($c.Json['state'])'") }
-    if ($got -cne $case.Codes) { $p.Add("The reasons are '$got', not '$($case.Codes)'") }
+    if ($c.Json -and $c.Json['state'] -cne 'unsatisfiable') { $p.Add("State is '$(ConvertTo-ConformanceMasked $c.Json['state'])'") }
+    if ($got -cne $case.Codes) { $p.Add("The reasons are '$(ConvertTo-ConformanceMasked $got)', not '$($case.Codes)'") }
     Complete-ConformanceCheck -Name "lease-api.md#fields: $(Format-ConformanceLine $line) is unsatisfiable with reasons $($case.Codes)" -Problems $p
   }
 
@@ -320,13 +320,13 @@ try {
     $c = Invoke-AgentspaceCli -ConformanceHome $h -Arguments $line
     $made++
     $p = Get-ConformanceSuccessProblems -Run $c
-    if ($c.Json -and $c.Json['ttl_seconds'] -ne $case[1]) { $p.Add("ttl_seconds is $($c.Json['ttl_seconds']), not $($case[1])") }
+    if ($c.Json -and $c.Json['ttl_seconds'] -ne $case[1]) { $p.Add("ttl_seconds is $(ConvertTo-ConformanceMasked $c.Json['ttl_seconds']), not $($case[1])") }
     Complete-ConformanceCheck -Name "lease-api.md#ttl: --ttl '$($case[0])' is $($case[1]) seconds" -Problems $p
   }
   $c = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64')
   $made++
   $p = Get-ConformanceSuccessProblems -Run $c
-  if ($c.Json -and $c.Json['ttl_seconds'] -ne 28800) { $p.Add("ttl_seconds is $($c.Json['ttl_seconds']), not 28800") }
+  if ($c.Json -and $c.Json['ttl_seconds'] -ne 28800) { $p.Add("ttl_seconds is $(ConvertTo-ConformanceMasked $c.Json['ttl_seconds']), not 28800") }
   Complete-ConformanceCheck -Name 'lease-api.md#ttl: With no --ttl the TTL is 8 hours' -Problems $p
 
   # A tolerant command line (lease-api.md#input-tolerance): the values come back normalized.
@@ -373,11 +373,11 @@ try {
   if (Test-Path -LiteralPath $caDir) { Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $h -Path $caDir) -Recurse -Force }
   $n = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--size', 'xxl')
   $p = Get-ConformanceSuccessProblems -Run $n
-  if ($n.Json -and $n.Json['state'] -cne 'unsatisfiable') { $p.Add("State is '$($n.Json['state'])'") }
+  if ($n.Json -and $n.Json['state'] -cne 'unsatisfiable') { $p.Add("State is '$(ConvertTo-ConformanceMasked $n.Json['state'])'") }
   if (Test-Path -LiteralPath $caDir) { $p.Add('create made a CA') }
   Complete-ConformanceCheck -Name 'state.md#creation-in-order: With no CA at all, an unsatisfiable create still answers, and makes no CA' -Problems $p
 } catch {
-  Write-ConformanceResult -Name 'test-create-get.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+  Write-ConformanceResult -Name 'test-create-get.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$(ConvertTo-ConformanceMasked $_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($h) { Remove-ConformanceHome -ConformanceHome $h }
 }

@@ -41,7 +41,7 @@ function Invoke-UnmetLease {
 function Add-UnmetResult {
   param([Parameter(Mandatory)][string]$Name, [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Problems)
   if ($null -eq $Problems -or $Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 
 # The problems with a run that was meant to fail with $Code on $Field: its exit code, nothing on
@@ -109,7 +109,7 @@ try {
     Add-UnmetResult -Name "$base makes no record, no lease folder and no alias file (lease-api.md#concurrency-and-atomicity)" -Problems $left
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-argument-line-feed.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($lab) { Remove-ConformanceHome -ConformanceHome $lab }

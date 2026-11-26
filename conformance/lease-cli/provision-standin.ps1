@@ -120,7 +120,7 @@ function Use-PvLab {
     elseif ($null -eq $problems) { Write-ConformanceResult -Name $Name -Status FAIL -Reason 'The check body returned no list of problems' }
     else { Complete-ConformanceCheck -Name $Name -Problems $problems }
   } catch {
-    $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+    $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name $Name -Status FAIL -Reason "It threw: $why at line $($_.InvocationInfo.ScriptLineNumber)"
   } finally {
     [Environment]::CurrentDirectory = $savedCwd
@@ -415,7 +415,7 @@ function Get-PvUnsatisfiableDocProblems {
     if ($doc['state'] -cne 'unsatisfiable') { $p.Add("The lease's state is '$($doc['state'])', not unsatisfiable") }
     if ($doc['project'] -cne $Project) { $p.Add('The lease is for another project') }
     $got = @($doc['reasons'] | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_['code'] })
-    if (($got -join ',') -cne ($Codes -join ',')) { $p.Add("The reason codes are [$($got -join ', ')], not [$($Codes -join ', ')]") }
+    if (($got -join ',') -cne ($Codes -join ',')) { $p.Add("The reason codes are [$(ConvertTo-ConformanceMasked ($got -join ', '))], not [$($Codes -join ', ')]") }
     foreach ($r in @($doc['reasons'] | Where-Object { $null -ne $_ })) { if (-not (Test-CcNoBackendWords ([string]$r['message']))) { $p.Add("The $($r['code']) message names a backend, a location or a machine") } }
   }
   return , $p

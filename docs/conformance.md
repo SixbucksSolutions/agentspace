@@ -905,6 +905,47 @@ reach no provisioning run**: the bullets below give the rules.
   and environment) are shown by each program's own tests, never from outside. `SystemRoot`'s are
   checked from outside, with `USERPROFILE` in the throwaway home.
 
+### The shared mask
+
+**`conformance/mask-common.ps1` is the suite's one mask** (E0.11-T05-S02, #0243). It defines
+`ConvertTo-ConformanceMasked <text>`, which returns the text with the temp folder and the profile replaced by
+`%TEMP%` and `%USERPROFILE%`, in their given, long and 8.3 short forms, in either slash direction, with doubled
+backslashes and in Git Bash's `/c/...` form, without regard to case and longest first, and then the computer
+name, the user name and the profile's last folder, long and short, replaced by `<literal>`. A null or empty
+text gives an empty one. It reads each value from the environment of the case's own process when the harness
+loads it, and writes none into a file (architect, 2026-11-26, for v0.11-T05, F1). It follows `scripts\live\mask.ps1`'s rules 1 and 2, reimplemented, since a
+conformance file MUST NOT depend on a process tool.
+
+- **It is dot-sourced once, by the harness, and every other folder reaches it through the harness**
+  (architect, 2026-11-26, for v0.11-T05, N1): `conformance/lease-cli/harness.ps1` dot-sources it, and every
+  lease CLI check dot-sources the harness; the operator's checks load `conformance/operator/helpers.ps1`,
+  which dot-sources the harness; the keeper's checks load `conformance/keeper/keeper-common.ps1`, which
+  dot-sources the harness. A check or a common file MUST NOT dot-source it a second time. The two
+  `conformance/schemas/` checks run no program, and dot-source the harness for the mask alone
+  (architect, 2026-11-26, for v0.11-T05, N3): their reasons quote `Test-Json`'s message about the
+  repository's own schema and sample files, which can name a schema file's path, and a checkout can sit
+  under the profile or the temp folder, so each `FAIL` line passes through the mask.
+- **The harness MUST be loaded before a check moves its own process's `USERPROFILE`, `HOME` or `TEMP`**
+  (architect, 2026-11-26, for v0.11-T05, F1). The mask builds its rules once, when the harness loads it, from
+  the environment of that moment; rules built after such a move would mask the throwaway home and leave the
+  real profile, its 8.3 short form included. Every common file loads the harness first, and the one check
+  that moves its own process's environment, the keeper's, does so after it: `keeper-common.ps1`'s
+  `New-CaseHome` calls `Set-CaseEnvironment`, which puts a case's child environment on the process.
+- **Every failure or skip reason that quotes captured text MUST pass that text through
+  `ConvertTo-ConformanceMasked` before it is printed**: a program's stdout or stderr, a field of a document a
+  program printed, an exception's message, a line of a log, a record or a file a program wrote, and a
+  stand-in's record of a program's calls. The mask MAY be applied where the text is quoted or where the
+  reason is written, as `Complete-ConformanceCheck`, `Test-Cc`, `Add-CcResult` and the folders' problem
+  writers do. A reason that quotes only spec text, a constant or a count needs no mask.
+- **A text that is cut to a length MUST be masked before it is cut**, so that a cut never leaves part of a
+  name unmasked (`Format-CcRun`, and each formatter below).
+- **A file's own formatter MUST call the shared mask**, and MAY hide more around it (a home's root, a
+  token, any other drive path as `<path>`): `ConvertTo-HpMasked` (`host-provision-common.ps1`),
+  `Format-PeText`, `Format-VcText`, `Format-VkText`, `Format-TtText`, `ConvertTo-BdRedacted`,
+  `Format-QuotedSpec` (`host-commands-common.ps1`), `Get-GdMasked` (`host-guard-common.ps1`), the keeper
+  guard's `Format-Masked` and `Get-CeMaskedError` keep their names and call it. A new check MUST NOT add
+  a mask of its own in its place.
+
 ### The program under test is untrusted
 
 **The suite runs against builds other than the prototype, and a build under test can be wrong, so its output is data and never a path to act on.** The architect's rule, 2026-11-18:
@@ -1779,10 +1820,9 @@ each is run as `pwsh -NoProfile -File conformance/operator/<file>.ps1`.
       and the user name in every spelling it reads from the case's own environment, and
       `test-unmet-host-provision.ps1`'s reason for a log line that is not `<time> <step> <outcome>` quotes the
       line through it too (the architect, 2026-11-26, for v0.11-T04, pin P8). **That is #0230's whole change.**
-      **A failure reason of any other file that quotes captured program output is not masked by it**, and
-      **MUST be masked before it is printed outside the run's own folder or written to a record**, as for any
-      command's error text (AGENTS.md, "Terry's real files in a review"); **the places that still quote
-      captured output unmasked are #0243's**, listed whole, file and line, in [the v0.11 run
+      **From #0243 (E0.11-T05-S02) `ConvertTo-HpMasked` is a call to [the shared
+      mask](#the-shared-mask)**, and every other reason that quotes captured output passes through it too; the
+      places #0243 fixed are listed whole, file and line, in [the v0.11 run
       record](runs/e0.11-t04-s03.md#captured-output-quoted-unmasked-0243).
     - **N8:** in a case that reports several results, an error in the check itself reports one `FAIL`
       under the case's name and not one for each result. **A file's count is therefore a count of
@@ -2750,7 +2790,7 @@ folder](#running-the-suite-against-a-builds-output-folder), step 5), and the run
 | state.md: What a plan lease adds, a board lease's `plan_source` (D86; the architect, for v0.11-T01, pin P7) | **Covered in part, and not by a lease CLI case**: no case reads a board lease's record in the lease state file, since no output prints `plan_source` (D87) and every board case reads the document the program prints. The record's form is `test-state-schemas.ps1`'s samples (`leases.state.plan-source.json` and its invalid ones), and what `create` writes is the crates' own tests (`agentspace-state`'s `tests/plan_source.rs`, `agentspace-cli`'s `tests/lease_board.rs`) |
 | lease-api.md: TTL, the factor of half again (D85) | **Covered at today's figure only**: `test-plan-turn-ttl.ps1` takes the budget and half again from lease-api.md's TTL section, and the factor is not part of the contract, so a new factor changes that file and no contract version |
 | lease-api.md: The board read, the rows that no stand-in answer reaches (the architect, 2026-11-26, for v0.11-T04, pins P10 and P11) | **No lease CLI case shows them, and a crate test owns each**: `LOCALAPPDATA` unset, empty or only whitespace (`agentspace-cli`'s `tests/lease_board.rs`, `localappdata_unset_empty_or_only_whitespace_is_an_internal_error_and_reads_no_board`), a 200 that is not the shape (`agentspace-board`'s `tests/read_epic.rs`, `a_200_that_is_not_the_shape_could_not_be_read`), a connection closed with no answer or an answer that stops short (`a_connection_closed_with_no_answer_does_not_answer` and `an_answer_that_stops_short_does_not_answer`, in the same file) and the 30 seconds after which a board that never answers is given up on (`slow_a_board_that_never_answers_is_given_up_on_after_30_seconds`, in the same file) |
-| Every file of `conformance/` that quotes captured program output in a failure's reason (#0230, #0243) | **The helper `Get-HpLogShape` and one provision reason are masked** (#0240). **Every other place that quotes program output, a stand-in's record or an exception's message unmasked is carded as #0243** (Backlog; the architect, 2026-11-26, for v0.11-T04), and is listed whole, file and line, in [the v0.11 run record](runs/e0.11-t04-s03.md#captured-output-quoted-unmasked-0243). A failure of such a file MUST be masked by whoever prints its reason outside the run's own folder |
+| Every file of `conformance/` that quotes captured program output in a failure's reason (#0230, #0243) | **Met by #0243** (E0.11-T05-S02): every reason that quotes captured output passes through [the shared mask](#the-shared-mask). **The helper `Get-HpLogShape` and one provision reason were masked first** (#0240), and the places #0243 fixed are listed whole, file and line, in [the v0.11 run record](runs/e0.11-t04-s03.md#captured-output-quoted-unmasked-0243). The harness's own `Could not start the program: <message>` is a run's stderr, not a reason, and is masked wherever a reason quotes that stderr |
 
 ## Coverage of the operator and the keeper
 
@@ -3039,7 +3079,7 @@ instance hours are asked for, and nothing costs money):
 | lease-api.md: `create`'s v2 help | `test-help.ps1`, which reads lease-api.md at run time | The installed programs: D88's live check, with E0.11-T05's install |
 | state.md: What a plan lease adds, a board lease's `plan_source` and the plan as read (D86) | `test-state-schemas.ps1`: the lease state file's `plan_source` sample and its invalid ones | **No lease CLI case reads the stored record** ([the gaps table](#the-gaps)): `agentspace-state`'s `tests/plan_source.rs` and `agentspace-cli`'s `tests/lease_board.rs` show what `create` writes |
 | operator.md: the ProxyCommand refuses a lease alias whose lease is not `ready`, and one whose lease records cannot be read (#0229; D49 as changed for v0.11-T01, pins P21 to P23) | `conformance/operator/test-unmet-proxy-not-ready.ps1` (E0.11-T02-S04, #0237) and the cases of `test-unmet-host-proxy-lookup.ps1` that #0237 changed | Nothing more is claimed: D88's live check does not include it, and the refusal is made before any call, so the case's recording stand-in `aws` and its tripwires show that nothing ran |
-| The suite's own files: a provision case's failure quoting a log line it cannot parse (#0230) | `test-unmet-host-provision.ps1`'s reason, and `Get-HpLogShape` through `ConvertTo-HpMasked` (E0.11-T04-S02, #0240); the mask's own proof is S02's planted checks under its `target\`, not committed | The rest of the captured output a failure's reason quotes: #0243 ([the gaps table](#the-gaps)) |
+| The suite's own files: a provision case's failure quoting a log line it cannot parse (#0230) | `test-unmet-host-provision.ps1`'s reason, and `Get-HpLogShape` through `ConvertTo-HpMasked` (E0.11-T04-S02, #0240); the mask's own proof is S02's planted checks under its `target\`, not committed | The rest of the captured output a failure's reason quotes: [the shared mask](#the-shared-mask) (#0243; [the gaps table](#the-gaps)) |
 
 ## The remaining work
 

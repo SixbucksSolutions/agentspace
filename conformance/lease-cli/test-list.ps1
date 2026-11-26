@@ -43,7 +43,7 @@ function Test-ListRun {
   $p = Get-ConformanceSuccessProblems -Run $r -Schema 'lease-list.output.schema.json'
   $got = Get-ListedIds $r
   if ($null -ne $got -and (($got -join ',') -cne ($ExpectIds -join ','))) {
-    $p.Add("Printed $($got.Count) leases, ids '$(($got | ForEach-Object { $_.Substring(0, 8) }) -join ',')', not '$(($ExpectIds | ForEach-Object { $_.Substring(0, 8) }) -join ',')'")
+    $p.Add("Printed $($got.Count) leases, ids '$(($got | ForEach-Object { $t = ConvertTo-ConformanceMasked $_; $t.Substring(0, [Math]::Min(8, $t.Length)) }) -join ',')', not '$(($ExpectIds | ForEach-Object { $t = ConvertTo-ConformanceMasked $_; $t.Substring(0, [Math]::Min(8, $t.Length)) }) -join ',')'")
   }
   if ($ExpectIds.Count -eq 0 -and $r.Stdout -cne "{`"leases`":[]}`n") { $p.Add('An empty list is not exactly {"leases":[]} and a line feed') }
   Complete-ConformanceCheck -Name $Name -Problems $p
@@ -218,7 +218,7 @@ try {
   if ((Get-ConformanceStateHash -ConformanceHome $h) -cne $stateHash) { $p.Add('The state file changed') }
   Complete-ConformanceCheck -Name 'lease-api.md#agentspace-lease-list: list changes nothing, so the state file is byte for byte as it was, expired leases included' -Problems $p
 } catch {
-  Write-ConformanceResult -Name 'test-list.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+  Write-ConformanceResult -Name 'test-list.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$(ConvertTo-ConformanceMasked $_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($h) { Remove-ConformanceHome -ConformanceHome $h }
 }

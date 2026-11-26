@@ -67,7 +67,7 @@ try {
   $p = Get-ConformanceErrorProblems -Run $r -Code invalid_value -Field ttl
   Complete-ConformanceCheck -Name "lease-api.md#command-lines: $(Format-ConformanceLine @('lease', 'create', '--project', 'x', '--ttl=-h')) takes -h as the value, so the TTL is refused" -Problems $p
 } catch {
-  Write-ConformanceResult -Name 'test-help.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+  Write-ConformanceResult -Name 'test-help.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$(ConvertTo-ConformanceMasked $_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($h) { Remove-ConformanceHome -ConformanceHome $h }
 }

@@ -129,10 +129,12 @@ function Test-Selected([string]$Id) { $Id -like $Case -or $Id -like "$Case[a-z]"
 # The code page that the stand-in's cmd.exe writes its files in: the console's OEM code page, not UTF-8.
 function Get-StandInEncoding { [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) }
 
-# A message without the real profile's path or this run's folder: an error's text is masked like output.
+# A message without the real profile's path or this run's folder: an error's text is masked like output. This run's
+# folder is named first, then the suite's mask (conformance\mask-common.ps1) hides the temp folder, the profile and the
+# user's and the computer's names.
 function Format-Masked([string]$Text) {
   $t = $Text.Replace($script:temp, '<run>')
-  $t = $t -replace '(?i)[A-Z]:\\Users\\[^\\\s]+', '<profile>'
+  $t = ConvertTo-ConformanceMasked $t
   $t
 }
 

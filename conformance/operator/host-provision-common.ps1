@@ -462,75 +462,9 @@ function Read-HpLog($H, [string]$Project) {
 # is in its throwaway home, which New-ConformanceHome makes under %TEMP%, so such a line MAY name the temp
 # folder or the profile, and so the Windows user name, in its long form or its 8.3 short form (card #0230).
 # Every raw line a reason quotes MUST pass through ConvertTo-HpMasked first (AGENTS.md, "Terry's real files in
-# a review"). It follows scripts\live\mask.ps1's rules 1 and 2, reimplemented here because a conformance file
-# MUST NOT depend on a process tool: rule 1, a path's prefix as the environment gives it and in its long and its
-# 8.3 short form (TEMP is often given short, so its long form is derived), longest first,
-# in either slash direction, with doubled backslashes and in Git Bash's /c/... form, without regard to case;
-# rule 2, the computer name, the user name and the profile's last folder, long and short, as <literal>. The
-# profile becomes %USERPROFILE%, as in mask.ps1, and the temp folder %TEMP%. Every value is read from the
-# environment of the case's own process when first needed, and none is written into a file.
-$script:HpMaskRules = $null
-# The 8.3 short form of a folder, or the folder itself when the volume keeps no short names.
-function Get-HpShortPath([string]$LongPath) {
-  try { [string](New-Object -ComObject Scripting.FileSystemObject).GetFolder($LongPath).ShortPath } catch { $LongPath }
-}
-# The long form of a folder written in its 8.3 short form (kernel32's GetLongPathName), or the folder itself. An
-# environment's TEMP is often written short, so its long form is a spelling a program's own error text can use.
-function Get-HpLongPath([string]$ShortPath) {
-  try {
-    if (-not ('HpConformance.PathNative' -as [type])) {
-      Add-Type -Namespace HpConformance -Name PathNative -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern uint GetLongPathName(string shortPath, System.Text.StringBuilder longPath, uint size);'
-    }
-    $sb = [Text.StringBuilder]::new(32768)
-    $n = [HpConformance.PathNative]::GetLongPathName($ShortPath, $sb, 32768)
-    if ($n -gt 0 -and $n -lt 32768) { return $sb.ToString() }
-  } catch { }
-  $ShortPath
-}
-# A regex for a path's prefix: its parts joined by any separator, and Git Bash's form.
-function Get-HpPathPattern([string]$FullPath) {
-  $parts = @($FullPath -split '[\\/]+' | Where-Object { $_ -ne '' })
-  if ($parts.Count -lt 2) { return $null }
-  $sep = '(?:\\\\|\\|/)'
-  $escaped = @($parts | ForEach-Object { [regex]::Escape($_) })
-  $windows = $escaped -join $sep
-  if ($parts[0] -match '^[A-Za-z]:$') { return '(?:' + $windows + '|/' + [regex]::Escape($parts[0].TrimEnd(':')) + '/' + (($escaped | Select-Object -Skip 1) -join '/') + ')' }
-  $windows
-}
-# The masking rules of this process: a regex and its token each, paths first and longest first, then the literals.
-function Get-HpMaskRules {
-  if ($null -ne $script:HpMaskRules) { return $script:HpMaskRules }
-  $rules = [System.Collections.Generic.List[object]]::new()
-  $paths = [System.Collections.Generic.List[object]]::new()
-  foreach ($pair in @(@($env:TEMP, '%TEMP%'), @($env:USERPROFILE, '%USERPROFILE%'))) {
-    if (-not $pair[0]) { continue }
-    foreach ($form in @($pair[0], (Get-HpShortPath $pair[0]), (Get-HpLongPath $pair[0]))) {
-      if ($form) { $paths.Add([pscustomobject]@{ Path = $form; Token = $pair[1] }) }
-    }
-  }
-  $seen = @{}
-  foreach ($e in @($paths | Sort-Object -Property @{ Expression = { $_.Path.Length }; Descending = $true })) {
-    $pat = Get-HpPathPattern $e.Path
-    if (-not $pat -or $seen.ContainsKey($pat)) { continue }
-    $seen[$pat] = $true
-    $rules.Add([pscustomobject]@{ Regex = [regex]::new($pat, 'IgnoreCase'); Token = $e.Token })
-  }
-  $literals = [System.Collections.Generic.List[string]]::new()
-  foreach ($v in @($env:COMPUTERNAME, $env:USERNAME)) { if ($v) { $literals.Add($v) } }
-  if ($env:USERPROFILE) { foreach ($p in @($env:USERPROFILE, (Get-HpShortPath $env:USERPROFILE), (Get-HpLongPath $env:USERPROFILE))) { if ($p) { $leaf = Split-Path -Leaf $p; if ($leaf) { $literals.Add($leaf) } } } }
-  foreach ($l in @($literals | Select-Object -Unique | Sort-Object -Property Length -Descending)) {
-    $rules.Add([pscustomobject]@{ Regex = [regex]::new([regex]::Escape($l), 'IgnoreCase'); Token = '<literal>' })
-  }
-  $script:HpMaskRules = $rules.ToArray()
-  $script:HpMaskRules
-}
-# Text with the temp folder, the profile, the computer name and the user name replaced by their tokens.
-function ConvertTo-HpMasked([AllowNull()][AllowEmptyString()][string]$Text) {
-  if ([string]::IsNullOrEmpty($Text)) { return '' }
-  $t = $Text
-  foreach ($r in (Get-HpMaskRules)) { $t = $r.Regex.Replace($t, $r.Token) }
-  $t
-}
+# a review"). It is the suite's one mask, ConvertTo-ConformanceMasked (conformance\mask-common.ps1, which the
+# harness dot-sources; #0243), kept under this name for the files that call it.
+function ConvertTo-HpMasked([AllowNull()][AllowEmptyString()][string]$Text) { ConvertTo-ConformanceMasked $Text }
 
 # `<step> <outcome>` of each line, joined by commas, with a `place done placed=<n>` kept whole. A line that does
 # not parse is quoted after a `?`, masked: a parsed line holds a step and an outcome of [a-z]+ and a place line's
@@ -550,7 +484,7 @@ function Get-HpLines([string]$Text) {
 function New-HpProblems { , [System.Collections.Generic.List[string]]::new() }
 function Write-HpProblems([string]$Name, $Problems) {
   if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS }
-  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 function Add-HpRunProblems($Problems, $Run, [int]$ExitCode) {
   if ($Run.TimedOut) { $Problems.Add('It timed out') }
@@ -592,7 +526,7 @@ function Invoke-HpInHome {
     if (-not (Test-HpReady -H $h -Name $Name)) { return }
     & $Body $h (New-HpStandIns $h)
   } catch {
-    $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+    $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
     Write-ConformanceResult -Name $Name -Status FAIL -Reason "The check hit an error: $why at line $($_.InvocationInfo.ScriptLineNumber)"
   } finally {
     Remove-ConformanceHome -ConformanceHome $h

@@ -52,7 +52,7 @@ Initialize-KeeperRegistryMode $Registry $PSCommandPath $PSBoundParameters
 # Resolved before the case, which strips AGENTSPACE_* from the environment.
 $keeperCmd = Resolve-KeeperProgram
 if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf)) {
-  Write-ConformanceResult -Name 'keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists' -Status FAIL -Reason $(if ($keeperCmd) { "$keeperCmd is not a file." } else { 'Neither the variable nor its default names a program.' })
+  Write-ConformanceResult -Name 'keeper.md#command-line: The program that AGENTSPACE_KEEPER_CMD names exists' -Status FAIL -Reason $(if ($keeperCmd) { "$(ConvertTo-ConformanceMasked $keeperCmd) is not a file." } else { 'Neither the variable nor its default names a program.' })
   Exit-ConformanceRun
 }
 
@@ -61,7 +61,7 @@ $prefix = 'state.md#a-holders-launch-files'
 
 function Add-Check([bool]$Ok, [string]$Text, [string]$Why = '') {
   $name = "${prefix}: $Text"
-  if ($Ok) { Write-ConformanceResult -Name $name -Status PASS } else { Write-ConformanceResult -Name $name -Status FAIL -Reason $Why }
+  if ($Ok) { Write-ConformanceResult -Name $name -Status PASS } else { Write-ConformanceResult -Name $name -Status FAIL -Reason (ConvertTo-ConformanceMasked $Why) }
 }
 
 try {
@@ -145,5 +145,5 @@ try {
 if ($leftBehind -eq 0) { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status PASS }
 else { Write-ConformanceResult -Name 'keeper.md#checking-the-keeper: The run leaves no process behind' -Status FAIL -Reason "$leftBehind process(es) of this run were still running after the cleanup." }
 $lp = Get-LogLineProblems
-if ($lp.Checked -gt 0) { Write-ConformanceResult -Name "keeper.md#log-lines: The box's lines that name a holder carry host=swimcoach, and no other box line carries a host= field" -Status $(if ($lp.Problems.Count) { 'FAIL' } else { 'PASS' }) -Reason ($lp.Problems -join ' ') }
+if ($lp.Checked -gt 0) { Write-ConformanceResult -Name "keeper.md#log-lines: The box's lines that name a holder carry host=swimcoach, and no other box line carries a host= field" -Status $(if ($lp.Problems.Count) { 'FAIL' } else { 'PASS' }) -Reason (ConvertTo-ConformanceMasked ($lp.Problems -join ' ')) }
 Exit-ConformanceRun

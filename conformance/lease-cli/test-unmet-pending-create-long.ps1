@@ -65,7 +65,7 @@ Use-PvLab -Name "$start" -Body {
   if ($first.Json -is [hashtable] -and $first.Json['id'] -is [string]) {
     $release = Invoke-PvLease -Lab $lab -Arguments @('release', [string]$first.Json['id']) -StandIn $standIn
     foreach ($x in (Get-ConformanceSuccessProblems -Run $release)) { $c29.Add("release: $x") }
-    if ($release.Json -is [hashtable] -and $release.Json['state'] -cne 'released') { $c29.Add("release: The lease's state is '$($release.Json['state'])', not released") }
+    if ($release.Json -is [hashtable] -and $release.Json['state'] -cne 'released') { $c29.Add("release: The lease's state is '$(ConvertTo-ConformanceMasked $release.Json['state'])', not released") }
     if ($release.Seconds -ge $bound) { $c29.Add("The release took $([int]$release.Seconds) seconds: it waited for a lock the run holds") }
   } else { $c29.Add('There is no first lease to release') }
   $n = @(Get-PvStartedLines $standIn).Count

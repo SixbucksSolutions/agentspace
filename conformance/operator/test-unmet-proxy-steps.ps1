@@ -51,7 +51,7 @@ function Get-Problems($Run, [int]$ExitCode) {
   , $p
 }
 function Write-Problems([string]$Name, $Problems) {
-  if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS } else { Write-ConformanceResult -Name $Name -Status FAIL -Reason ($Problems -join '; ') }
+  if ($Problems.Count -eq 0) { Write-ConformanceResult -Name $Name -Status PASS } else { Write-ConformanceResult -Name $Name -Status FAIL -Reason (ConvertTo-ConformanceMasked ($Problems -join '; ')) }
 }
 function Get-Lines([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
@@ -196,7 +196,7 @@ try {
     }
   }
 } catch {
-  $why = ($_.Exception.Message -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
+  $why = ((ConvertTo-ConformanceMasked $_.Exception.Message) -replace '[A-Za-z]:\\[^\s''"]*', '<path>' -replace '\s+', ' ')
   Write-ConformanceResult -Name 'test-unmet-proxy-steps.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$why at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   Remove-ConformanceHome -ConformanceHome $h

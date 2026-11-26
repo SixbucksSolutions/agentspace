@@ -98,7 +98,7 @@ try {
   if (Test-ConformanceSchema -Json '{"code":"usage","message":"a\nb"}' -Schema 'error.output.schema.json') { $p.Add('The error schema accepted a message with a line feed') }
   Complete-ConformanceCheck -Name 'lease-api.md#schemas: the error schema refuses a message with a line feed, and the real error of lease get not-a-uuid validates' -Problems $p
 } catch {
-  Write-ConformanceResult -Name 'test-values.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+  Write-ConformanceResult -Name 'test-values.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$(ConvertTo-ConformanceMasked $_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {
   if ($h) { Remove-ConformanceHome -ConformanceHome $h }
 }
