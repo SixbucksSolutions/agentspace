@@ -68,8 +68,7 @@ pub struct Record {
     /// adds; D74, D81). Stored last, after `driver`, and never in any output (pin P25).
     pub plan: Option<serde_json::Value>,
     /// Where a board lease's plan came from: the board, the ticket and the card's revision read
-    /// (docs/state.md; D86, D89). Pinned as code before v0.11-T02 and read and written by nothing
-    /// until E0.11-T02-S03 (#0236), which stores it last, after `plan` (pin P25).
+    /// (docs/state.md; D86, D89). Stored last, after `plan` (pin P25), and never in any output.
     pub plan_source: Option<PlanSource>,
 }
 
@@ -149,6 +148,28 @@ fn sized_for_from(v: &Value) -> Option<SizedFor> {
     })
 }
 
+/// A stored `plan_source` (state.md, What a plan lease adds): the board's ID, the ticket and the
+/// revision, all three required. The schema checks their bounds before a record is read or
+/// written; a member out of form, which it refuses, is read as nothing here rather than accepted.
+fn plan_source_from(v: &Value) -> Option<PlanSource> {
+    let o = v.as_object()?;
+    Some(PlanSource {
+        board: text(o, "board")?,
+        ticket: u64::try_from(integer(o.get("ticket")?)?).ok()?,
+        revision: u64::try_from(integer(o.get("revision")?)?).ok()?,
+    })
+}
+
+/// `plan_source` as it is stored: `board`, `ticket` and `revision`, in state.md's order, the two
+/// numbers as digits alone.
+fn plan_source_value(s: &PlanSource) -> Value {
+    let mut m = Map::new();
+    m.insert("board".into(), s.board.clone().into());
+    m.insert("ticket".into(), s.ticket.into());
+    m.insert("revision".into(), s.revision.into());
+    Value::Object(m)
+}
+
 /// `sized_for` as the lease document prints it: `plan`, `turn` and `agents`, in lease-api.md's
 /// order (Fields), with `plan` left out when the plan had no name, never written as `null`.
 fn sized_for_value(s: &SizedFor) -> Value {
@@ -197,11 +218,15 @@ fn record_from(v: &Value) -> Option<Record> {
     };
     // The schema refuses a `null` plan, so a present member is always the plan itself.
     let plan = o.get("plan").cloned();
+    // The schema refuses a `null` plan_source too, so a present member is always the source itself.
+    let plan_source = match o.get("plan_source") {
+        None => None,
+        Some(p) => Some(plan_source_from(p)?),
+    };
     Some(Record {
         sized_for,
         plan,
-        // Read by nothing until E0.11-T02-S03 (#0236); pinned as code before v0.11-T02 (D89).
-        plan_source: None,
+        plan_source,
         id: text(o, "id")?,
         project: text(o, "project")?,
         state: text(o, "state")?,
@@ -219,7 +244,8 @@ fn record_from(v: &Value) -> Option<Record> {
 }
 
 /// The members of a record that a lease document shares, as stored, in lease-api.md's order
-/// (Fields): `sized_for` right after `size`. `driver` and `plan` are never among them (D1; pin P25).
+/// (Fields): `sized_for` right after `size`. `driver`, `plan` and `plan_source` are never among
+/// them (D1; pin P25).
 fn base_members(r: &Record) -> Map<String, Value> {
     let mut o = Map::new();
     o.insert("id".into(), r.id.clone().into());
@@ -260,7 +286,8 @@ fn base_members(r: &Record) -> Map<String, Value> {
     o
 }
 
-/// A record's members as a JSON object, `driver` and `plan` included, for the schema check.
+/// A record's members as a JSON object, `driver`, `plan` and `plan_source` included, for the
+/// schema check.
 fn record_value(r: &Record) -> Value {
     let mut o = base_members(r);
     if let Some(d) = &r.driver {
@@ -268,6 +295,9 @@ fn record_value(r: &Record) -> Value {
     }
     if let Some(p) = &r.plan {
         o.insert("plan".into(), p.clone());
+    }
+    if let Some(p) = &r.plan_source {
+        o.insert("plan_source".into(), plan_source_value(p));
     }
     Value::Object(o)
 }
@@ -475,6 +505,18 @@ fn push_record(out: &mut String, r: &Record) {
     }
     if let Some(p) = &r.plan {
         push_member(out, &mut first, "plan", |o| push_value(o, p));
+    }
+    // Written last, after `plan` (state.md, What a plan lease adds; pin P25).
+    if let Some(p) = &r.plan_source {
+        push_member(out, &mut first, "plan_source", |o| {
+            o.push_str("{\"board\":");
+            push_string(o, &p.board);
+            o.push_str(",\"ticket\":");
+            o.push_str(&p.ticket.to_string());
+            o.push_str(",\"revision\":");
+            o.push_str(&p.revision.to_string());
+            o.push('}');
+        });
     }
     out.push('}');
 }
@@ -959,6 +1001,183 @@ mod tests {
                 "{to}"
             );
         }
+    }
+
+    // A board lease's plan_source (state.md, What a plan lease adds; D86, D89).
+
+    const BOARD: &str = "0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f";
+
+    /// A board lease: a plan lease that also holds where its plan was read from.
+    fn board_lease() -> Record {
+        Record {
+            plan_source: Some(PlanSource {
+                board: BOARD.to_string(),
+                ticket: 233,
+                revision: 7,
+            }),
+            ..planned()
+        }
+    }
+
+    #[test]
+    fn a_stored_plan_source_is_read_into_the_record_and_one_without_it_reads_as_before() {
+        let text = text_of(&one(board_lease()));
+        let r = parse(text.as_bytes()).unwrap().leases.remove(0);
+        assert_eq!(
+            r.plan_source,
+            Some(PlanSource {
+                board: BOARD.to_string(),
+                ticket: 233,
+                revision: 7,
+            })
+        );
+        assert_eq!(r.plan, Some(plan_doc()));
+        // A plan lease made with a file has none, and neither has a lease without a plan.
+        for before in [planned(), plain()] {
+            let text = text_of(&one(before.clone()));
+            assert!(!text.contains("plan_source"), "{text}");
+            let r = parse(text.as_bytes()).unwrap().leases.remove(0);
+            assert_eq!(r.plan_source, None);
+            assert_eq!(r, before);
+        }
+    }
+
+    /// Written last, after `plan`, with the two numbers as digits alone (state.md; pin P25).
+    #[test]
+    fn plan_source_is_written_last_after_the_plan_with_its_numbers_as_digits_alone() {
+        let text = text_of(&one(board_lease()));
+        let tail = format!(
+            "\"plan_source\":{{\"board\":\"{BOARD}\",\"ticket\":233,\"revision\":7}}}}]}}\n"
+        );
+        assert!(text.ends_with(&tail), "{text}");
+        assert!(text.find("\"plan\":").unwrap() < text.find("\"plan_source\":").unwrap());
+        // The largest number the schema allows is written whole, never as a float.
+        let mut big = board_lease();
+        big.plan_source.as_mut().unwrap().ticket = 9_007_199_254_740_991;
+        big.plan_source.as_mut().unwrap().revision = 1;
+        let text = text_of(&one(big.clone()));
+        assert!(
+            text.contains("\"ticket\":9007199254740991,\"revision\":1}"),
+            "{text}"
+        );
+        assert_eq!(parse(text.as_bytes()).unwrap().leases[0], big);
+        // A record that never held one is written as v0.10 wrote it, with no new bytes.
+        assert!(text_of(&one(planned())).ends_with("}}]}\n"));
+        assert!(!text_of(&one(planned())).contains("plan_source"));
+    }
+
+    /// The schema's rules for it, applied before anything is written.
+    #[test]
+    fn a_change_that_breaks_the_plan_source_rules_is_not_written() {
+        let change = |r: Record| serialize(&one(r)).unwrap_err();
+        let not_valid = NotValid(WHY_CHANGE.to_string());
+        let with = |f: &dyn Fn(&mut PlanSource)| {
+            let mut r = board_lease();
+            f(r.plan_source.as_mut().unwrap());
+            r
+        };
+        // Only with a plan (and so with sized_for and driver).
+        let no_plan = Record {
+            plan: None,
+            sized_for: None,
+            ..board_lease()
+        };
+        assert_eq!(change(no_plan), not_valid);
+        let plain_lease = Record {
+            plan_source: board_lease().plan_source,
+            ..plain()
+        };
+        assert_eq!(change(plain_lease), not_valid);
+        // The board is a lowercase UUID of the pattern's form, with nothing after it.
+        for board in [
+            "0A1B2C3D-0A1B-4C2D-8E3F-0A1B2C3D4E5F",
+            "0a1b2c3d0a1b4c2d8e3f0a1b2c3d4e5f",
+            "0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5",
+            "0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5f\n",
+            "0a1b2c3d-0a1b-4c2d-8e3f-0a1b2c3d4e5g",
+            "",
+        ] {
+            let b = board.to_string();
+            assert_eq!(change(with(&|p| p.board = b.clone())), not_valid, "{board}");
+        }
+        // Ticket and revision are 1 to 9007199254740991.
+        assert_eq!(change(with(&|p| p.ticket = 0)), not_valid);
+        assert_eq!(change(with(&|p| p.revision = 0)), not_valid);
+        assert_eq!(
+            change(with(&|p| p.ticket = 9_007_199_254_740_992)),
+            not_valid
+        );
+        assert_eq!(
+            change(with(&|p| p.revision = 9_007_199_254_740_992)),
+            not_valid
+        );
+        assert_eq!(change(with(&|p| p.revision = u64::MAX)), not_valid);
+    }
+
+    /// Bad input is refused as not valid, never a panic.
+    #[test]
+    fn a_malformed_plan_source_in_a_file_is_not_valid_and_never_panics() {
+        let good = text_of(&one(board_lease()));
+        let member = format!("\"board\":\"{BOARD}\",\"ticket\":233,\"revision\":7");
+        assert!(good.contains(&member), "{good}");
+        for to in [
+            "\"ticket\":233,\"revision\":7".to_string(),
+            format!("\"board\":\"{BOARD}\",\"revision\":7"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":233"),
+            "\"board\":null,\"ticket\":233,\"revision\":7".to_string(),
+            format!("\"board\":\"{BOARD}\",\"ticket\":null,\"revision\":7"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":233,\"revision\":null"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":\"233\",\"revision\":7"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":233.5,\"revision\":7"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":-1,\"revision\":7"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":233,\"revision\":1e400"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":0,\"revision\":7"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":233,\"revision\":0"),
+            format!("\"board\":\"{BOARD}\",\"ticket\":233,\"revision\":7,\"token\":\"x\""),
+        ] {
+            let bad = good.replacen(&member, &to, 1);
+            assert_ne!(bad, good, "{to}");
+            assert_eq!(
+                parse(bad.as_bytes()),
+                Err(NotValid(WHY_FILE.to_string())),
+                "{to}"
+            );
+        }
+        let not_object = good.replacen("\"plan_source\":{", "\"plan_source\":[{", 1);
+        assert_eq!(
+            parse(not_object.as_bytes()),
+            Err(NotValid(WHY_FILE.to_string()))
+        );
+        let null = good.replacen(&format!("{{{member}}}"), "null", 1);
+        assert_eq!(parse(null.as_bytes()), Err(NotValid(WHY_FILE.to_string())));
+    }
+
+    /// It reaches no output (D87): neither a lease nor a list document, in any state.
+    #[test]
+    fn plan_source_reaches_no_lease_or_list_document() {
+        let now = at(CREATED);
+        for r in [
+            board_lease(),
+            ready(board_lease()),
+            released(ready(board_lease())),
+            unsatisfiable(board_lease(), "no_capacity", "No capacity."),
+        ] {
+            let doc = lease_document(&r, now);
+            assert!(doc.get("plan_source").is_none(), "{doc}");
+            assert!(validate_output(OutputKind::Lease, &doc), "{doc}");
+            let text = doc.to_string();
+            assert!(
+                !text.contains(BOARD) && !text.contains("plan_source"),
+                "{text}"
+            );
+        }
+        let list = list_document(&one(board_lease()), None, &[], now);
+        let text = list.to_string();
+        assert!(
+            !text.contains(BOARD) && !text.contains("plan_source"),
+            "{text}"
+        );
+        assert!(validate_output(OutputKind::LeaseList, &list), "{text}");
     }
 
     // The lease document (lease-api.md, Fields).

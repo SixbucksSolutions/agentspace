@@ -114,11 +114,11 @@ mod tests {
         assert_eq!(names.len(), 15);
     }
 
-    /// The embedded contract schemas are v1's (D76): every one of the nine in `schemas/` is
-    /// embedded, under its file's name, and each carries a v1 `$id`
+    /// The embedded contract schemas are v2's (D86, D89): every one of the nine in `schemas/` is
+    /// embedded, under its file's name, and each carries a v2 `$id`
     /// (lease-api.md, Schemas). None of v0's kept schemas is embedded.
     #[test]
-    fn the_embedded_contract_schemas_are_v1s_nine() {
+    fn the_embedded_contract_schemas_are_v2s_nine() {
         let contract: Vec<&(&str, &str)> = SCHEMAS
             .iter()
             .filter(|(n, _)| !n.ends_with(".state"))
@@ -148,7 +148,7 @@ mod tests {
             assert_eq!(
                 id,
                 format!(
-                    "https://github.com/SixbucksSolutions/agentspace/schemas/v1/{name}.schema.json"
+                    "https://github.com/SixbucksSolutions/agentspace/schemas/v2/{name}.schema.json"
                 ),
                 "{name}"
             );
