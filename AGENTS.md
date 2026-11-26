@@ -115,6 +115,11 @@ guard pins a subagent to its parent session's current worktree, so an implemente
 elsewhere cannot write the story's files and has to hand back a patch for the dev lead to apply.
 With two or more stories in a turn, the dev lead enters each story's worktree in turn to launch
 its subagents.
+- **Only `EnterWorktree` pins a subagent; a `cd` does not** (found in v0.11-T02, 2026-11-25). Two
+  subagents launched while the dev lead's working folder was a story's worktree by a `cd`, where
+  `EnterWorktree` had refused it as already the current folder, followed the dev lead into the
+  next story's worktree, and every write was refused; nothing was written. A dev lead whose
+  `EnterWorktree` is refused that way enters another folder first, then the story's.
 - **A subagent cannot move itself to another worktree** (found in v0.03-T01, 2026-11-18). Its
   `EnterWorktree` is refused, because its writes are limited to the folder it was pinned to. Two
   S02 follow-ups launched from S01's worktree, each told to enter S02's first, both stopped with

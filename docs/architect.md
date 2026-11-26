@@ -155,6 +155,10 @@ first.**
 13. **A dev lead idle only on the architect's merge is not stalled**: the architect stops its
     watchdog while its own merge check runs and restarts it at the merge, as for a wait on Terry
     (v0.11-T01).
+14. **A step that MUST happen under one permission mode reads the mode right before it**
+    (v0.11-T02). The dev lead's session moved under it twice: it read auto again by 5:11pm, though
+    no one had asked it to, and a switch at 5:34pm found Accept edits, not the default the
+    architect had set at 5:30pm. A Write meant for Terry's approval checks the mode first.
 
 **While a question to Terry is open, the architect's turn is held, and the dev leads' messages
 queue** (v0.06-T05: an 80-minute wait). When his answer comes, read each linked session's state
@@ -355,6 +359,20 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **Operator lanes are balanced by seconds, not by file count**: `deploy-size` (about 680 s) and
   `sync-patch-wait` (about 440 s) in one lane made it 38 minutes against the other's 21.
 
+**Learned in v0.11-T02, 2026-11-25, the foundations turn.**
+- **A build turn's PRs are merge-checked together**: one local merge of every head onto `main`, one
+  build, and every suite against it in three gated lanes (the workspace then one operator half; the
+  schemas, keeper and lease CLI; the other operator half), then each squash merge in order with
+  `--match-head-commit`, and `main`'s final tree compared with the tested merge's by `git rev-parse
+  <ref>^{tree}`. T02's four PRs took one build and about 56 minutes of lanes, where four checks of
+  about 40 minutes each would have run in series, and the trees were equal.
+- **A test run of uncommitted work runs in a worktree of its own.** The architect's `git stash -u`,
+  made to switch branches, set aside the code a running workspace test was testing, and that run
+  was discarded and made again.
+- **Briefs give the wrapper's names as it takes them**: `-Out target\runs\<role> -Name
+  <nnn>-<what>`. `wrap.ps1` refuses a `-Name` that does not start with three digits, and the
+  brief's `<role>-<nnn>` form failed for every subagent.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
@@ -493,6 +511,10 @@ reads before it prints it").
   after two of them. Three card comments were corrected; none reached the repository.
 - **Times and SHAs come only from a command's output.** A dev lead's guessed "2:01am" was 1:58am
   by the clock (v0.06-T05).
+- **A message that carries a time is sent only after the clock's read has returned, never in the
+  same batch of calls, and an interval is computed from two read times** (v0.11-T01 and T02). The
+  architect sent four rulings whose time or interval was written before the read came back, or
+  estimated ("25 minutes" for a run 3 minutes old), and corrected each at once.
 
 ## Checking that it still works
 
