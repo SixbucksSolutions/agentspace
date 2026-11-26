@@ -30,8 +30,10 @@
 //!   [`SystemSsh::with_stderr`] through its `configure`, inherited by default and relayed in the
 //!   ProxyCommand's caller mode; [`StderrFilter`], the relay's line rule, which drops
 //!   [`HOST_READY_LINE`]; and [`StderrSink`], where the relayed lines go.
-//! - [`Token`] and [`Content`], the two types that hold the token; each redacts it in `Debug` and
-//!   zeroes it when dropped.
+//! - [`Token`], [`Bearer`] and [`Content`], the three types that hold the token; each redacts it in
+//!   `Debug`, has no `Display` and zeroes it when dropped. [`Token::bearer`] gives the [`Bearer`],
+//!   `Bearer <token>`, for the board read's `Authorization` header alone (docs/lease-api.md, The
+//!   board read; architect, 2026-11-25, for v0.11-T02, pin P1).
 //! - The steps, for a caller that needs one alone: [`receipt_path`], [`parse_receipt`] and
 //!   [`Receipt`]; [`credential_path`], [`parse_credential_blob`] and [`read_token`];
 //!   [`check_zone`], the zone's guard; [`content`]; [`stamp`], [`stamp_path`], [`stamp_path_for`],
@@ -46,10 +48,12 @@
 //!
 //! # Secrecy (operator.md, Secrecy)
 //!
-//! The token MUST travel only on the push's stdin. This crate passes it to nothing but
-//! [`SshRun::run`]'s `stdin`, puts it in no argument, environment variable, file, message or
-//! panic, and keeps it only in [`Token`] and [`Content`], which never print it. No warning quotes
-//! the failure behind it: each is a fixed text. A [`SshRun`] MUST write `stdin` to the ssh's stdin
+//! The token MUST travel only to two places: the push's stdin, and the board read's
+//! `Authorization` header (docs/lease-api.md, The board read), and nowhere else. This crate passes
+//! it to nothing but [`SshRun::run`]'s `stdin` and, through [`Token::bearer`], to the [`Bearer`]
+//! that the board read sends as that header; it puts it in no argument, environment variable,
+//! file, message or panic, and keeps it only in [`Token`], [`Bearer`] and [`Content`], which never
+//! print it. No warning quotes the failure behind it: each is a fixed text. A [`SshRun`] MUST write `stdin` to the ssh's stdin
 //! pipe and nowhere else, and an [`Unprotect`] MUST hand the plaintext to nothing but its return
 //! value. The `Debug` of [`FileRead`] and [`SshResult`] gives byte counts, never the bytes, so
 //! that no file's content and nothing the box printed reaches a log through them.
@@ -127,16 +131,51 @@ pub fn zone_not_taken(zone: &str) -> String {
 pub struct Token(pub(crate) Zeroizing<String>);
 
 impl Token {
-    /// The token's text, for [`content`] alone. It is not public: outside this crate a token can
-    /// only be handed to [`content`], whose bytes go to the push's stdin and nowhere else.
+    /// The token's text, for [`content`] and [`Token::bearer`] alone. It is not public: outside
+    /// this crate a token can only go to the two places it MUST go and nowhere else, the push's
+    /// stdin through [`content`], and the board read's `Authorization` header through
+    /// [`Token::bearer`] (docs/lease-api.md, The board read).
     pub(crate) fn expose(&self) -> &str {
         &self.0
+    }
+
+    /// The `Authorization` header's value for the board read, exactly `Bearer <token>`
+    /// (docs/lease-api.md, The board read; architect, 2026-11-25, for v0.11-T02, pin P5).
+    pub fn bearer(&self) -> Bearer {
+        let token = self.expose();
+        // Room for the whole value at once, so no reallocation leaves a copy of the token behind.
+        let mut value = Zeroizing::new(String::with_capacity(BEARER_PREFIX.len() + token.len()));
+        value.push_str(BEARER_PREFIX);
+        value.push_str(token);
+        Bearer(value)
     }
 }
 
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("Token(<redacted>)")
+    }
+}
+
+/// The scheme and space before the token in [`Bearer`].
+const BEARER_PREFIX: &str = "Bearer ";
+
+/// The board read's `Authorization` header value, `Bearer <token>` (architect, 2026-11-25, for
+/// v0.11-T02, pin P5). Its `Debug` redacts it, it has no `Display` and no `Clone`, and it is zeroed
+/// when dropped.
+pub struct Bearer(Zeroizing<String>);
+
+impl Bearer {
+    /// The header value's text, for an HTTP `Authorization` header alone, the one place besides
+    /// the push's stdin that the token MUST go (docs/lease-api.md, The board read).
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Bearer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("Bearer(<redacted>)")
     }
 }
 
@@ -546,3 +585,59 @@ pub fn push_with_host(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bearer_tests {
+    use super::*;
+
+    /// A planted token: 43 characters of unpadded base64url, drawn only from characters that
+    /// neither `Token(<redacted>)` nor `Bearer(<redacted>)` holds, so a check that the two
+    /// `Debug`s hold none of its characters can fail.
+    const PLANTED: &str = "fghijlmpqsuvwxyzACDEFGHIJKLMNOPQRS0123456_-";
+
+    fn planted() -> Token {
+        Token(Zeroizing::new(PLANTED.to_owned()))
+    }
+
+    #[test]
+    fn bearer_is_the_scheme_a_space_and_the_token() {
+        let bearer = planted().bearer();
+        // Compared without printing either value: a token is never printed, a planted one included.
+        assert!(
+            bearer.as_str() == format!("Bearer {PLANTED}"),
+            "The bearer is not `Bearer <token>`"
+        );
+    }
+
+    #[test]
+    fn neither_debug_holds_a_character_of_the_token() {
+        assert_eq!(PLANTED.len(), 43);
+        assert!(
+            PLANTED
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "The planted token is base64url"
+        );
+        // The check can fail: no character of the planted token is in either redaction.
+        for redaction in ["Token(<redacted>)", "Bearer(<redacted>)"] {
+            assert!(
+                !PLANTED.chars().any(|c| redaction.contains(c)),
+                "The planted token shares a character with {redaction}"
+            );
+        }
+        let token = planted();
+        let bearer = token.bearer();
+        for shown in [format!("{token:?}"), format!("{bearer:?}")] {
+            let leaked = PLANTED.chars().filter(|&c| shown.contains(c)).count();
+            assert_eq!(
+                leaked, 0,
+                "A Debug holds {leaked} of the token's characters"
+            );
+        }
+        assert!(format!("{token:?}") == "Token(<redacted>)", "Token's Debug");
+        assert!(
+            format!("{bearer:?}") == "Bearer(<redacted>)",
+            "Bearer's Debug"
+        );
+    }
+}

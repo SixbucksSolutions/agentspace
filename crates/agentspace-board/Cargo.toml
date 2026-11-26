@@ -1,0 +1,23 @@
+[package]
+name = "agentspace-board"
+version = "0.11.0"
+edition.workspace = true
+description = "The plan block, and the one GET that reads an epic from localswim (docs/lease-api.md, The board read; D86, D89)"
+publish = false
+
+[lib]
+name = "agentspace_board"
+path = "src/lib.rs"
+
+[dependencies]
+agentspace-operator-api = { path = "../agentspace-operator-api" }
+# The receipt, the credential and the token, re-used and never copied (lease-api.md, The board
+# read; architect, 2026-11-25, for v0.11-T02, pin P5).
+agentspace-push = { path = "../agentspace-push" }
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+# The HTTP client (architect, 2026-11-25, for v0.11-T02, pin P3): no TLS, no gzip.
+ureq = { version = "=3.5.2", default-features = false }
+
+[dev-dependencies]
+# Throwaway folders for the on-disk tests; the version agentspace-state already uses.
+tempfile = { version = "=3.23.0", default-features = false }
