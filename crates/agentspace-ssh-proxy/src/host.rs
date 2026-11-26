@@ -525,6 +525,7 @@ mod tests {
     fn host(project: &str, state: HostState) -> Host {
         Host {
             last_success_at: None,
+            platform: None,
             project: project.to_string(),
             stack: agentspace_hosts::stack_name(project),
             state,

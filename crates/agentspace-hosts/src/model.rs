@@ -2,6 +2,7 @@
 
 use crate::error::Invalid;
 use crate::json;
+use crate::key::{HostKey, LINUX_ARM64, STACK_PREFIX};
 use agentspace_state::{parse_time, validate_schema};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
@@ -10,9 +11,6 @@ use std::collections::HashSet;
 pub const BOX_PROJECT: &str = "swimcoach";
 /// The box's CloudFormation stack (D44).
 pub const BOX_STACK: &str = "agentbox";
-
-/// The prefix of every other host's stack (D44).
-const STACK_PREFIX: &str = "agentspace-host-";
 
 /// The schema's name in agentspace-state.
 const SCHEMA: &str = "hosts.state";
@@ -54,7 +52,15 @@ impl HostState {
 pub struct Host {
     /// The project the host serves, in the lease contract's normalized form.
     pub project: String,
-    /// The host's CloudFormation stack: `agentbox` or `agentspace-host-<project>`.
+    /// From v0.12, the record's `platform` member exactly as read (D91, D101; docs/state.md, "A
+    /// record's `platform`"): `None` when the member is absent, which means `linux/arm64`, and the
+    /// string as stored when it is present, so a record a person wrote with
+    /// `"platform":"linux/arm64"` keeps it through every rewrite. Every writer keeps it exactly as
+    /// it read it, and only the writer that adds a record sets it: [`Host::new`] gives `None` for a
+    /// `linux/arm64` host and the platform for any other. [`Host::platform`] reads it.
+    pub platform: Option<String>,
+    /// The host's CloudFormation stack: `agentbox`, `agentspace-host-<project>`, or from v0.12
+    /// `agentspace-<os>-<arch>-host-<project>` for a host of another platform (D44, D91).
     pub stack: String,
     pub state: HostState,
     /// The host's EC2 instance ID, cached from its stack's `InstanceId` output.
@@ -68,6 +74,43 @@ pub struct Host {
     /// The time the host's last provisioning run that succeeded ended, UTC, kept as the string it
     /// is stored as (docs/state.md, The last success; D77, D81). Written after `last_attempt_at`.
     pub last_success_at: Option<String>,
+}
+
+impl Host {
+    /// The record a writer adds for the host `key` (docs/state.md, "Who writes it"): its project, its
+    /// `platform` only when it is not `linux/arm64` (pin P16), its stack by D91's name, its state,
+    /// and no other member. A record added this way has no `instance_type` and no
+    /// `last_success_at`.
+    pub fn new(key: &HostKey, state: HostState) -> Host {
+        Host {
+            project: key.project.clone(),
+            platform: (!key.is_linux_arm64()).then(|| key.platform.clone()),
+            stack: key.stack_name(),
+            state,
+            instance_id: None,
+            instance_type: None,
+            last_attempt_at: None,
+            last_success_at: None,
+        }
+    }
+
+    /// The record's platform: its `platform` member, or `linux/arm64` when the member is absent
+    /// (D101). A stored platform is never normalized.
+    pub fn platform(&self) -> &str {
+        self.platform.as_deref().unwrap_or(LINUX_ARM64)
+    }
+
+    /// The record's key: its project and its platform, a record without `platform` being
+    /// `linux/arm64`'s.
+    pub fn key(&self) -> HostKey {
+        HostKey::new(self.project.clone(), self.platform())
+    }
+
+    /// Whether the record is the host `key`'s: its project and its platform each equal the key's,
+    /// exactly, a record without `platform` counting as `linux/arm64`.
+    pub fn is_for(&self, key: &HostKey) -> bool {
+        self.project == key.project && self.platform() == key.platform
+    }
 }
 
 /// The instance type the record that a missing file implies holds, only as it is read (docs/state.md,
@@ -89,6 +132,7 @@ impl Hosts {
         Hosts {
             hosts: vec![Host {
                 last_success_at: None,
+                platform: None,
                 project: BOX_PROJECT.to_string(),
                 stack: BOX_STACK.to_string(),
                 state: HostState::Ready,
@@ -119,19 +163,18 @@ pub enum Target<'a> {
     Host(&'a str),
 }
 
-/// The stack of `project`'s host (D44, D55's table): `BOX_STACK`, `agentbox`, for the box's
-/// project, `swimcoach`, and `agentspace-host-<project>` for every other project (architect,
-/// 2026-11-20, for v0.07-T02), so no caller can get a wrong name for the box from it.
+/// The stack of `project`'s `linux/arm64` host (D44, D55's table): `BOX_STACK`, `agentbox`, for the
+/// box's project, `swimcoach`, and `agentspace-host-<project>` for every other project (architect,
+/// 2026-11-20, for v0.07-T02), so no caller can get a wrong name for the box from it. It is
+/// [`HostKey::stack_name`] of [`HostKey::linux_arm64`].
 pub fn stack_name(project: &str) -> String {
-    if project == BOX_PROJECT {
-        return BOX_STACK.to_string();
-    }
-    format!("{STACK_PREFIX}{project}")
+    HostKey::linux_arm64(project).stack_name()
 }
 
-/// A host's operator alias, `agentspace-host.<project>` (D47, D55).
+/// A `linux/arm64` host's operator alias, `agentspace-host.<project>` (D47, D55). It is
+/// [`HostKey::operator_alias`] of [`HostKey::linux_arm64`].
 pub fn host_alias(project: &str) -> String {
-    format!("agentspace-host.{project}")
+    HostKey::linux_arm64(project).operator_alias()
 }
 
 /// Whether the record is the box's: the record whose stack is `agentbox` (D55).
@@ -139,21 +182,39 @@ pub fn is_box(host: &Host) -> bool {
     host.stack == BOX_STACK
 }
 
-/// The record of `project`, whatever its state. Projects are compared as the normalized strings
-/// they are stored as.
+/// The record of `project`'s `linux/arm64` host, whatever its state: [`host_for_keyed`] of
+/// [`HostKey::linux_arm64`]. A record of the project on another platform is never it.
 pub fn host_for<'a>(hosts: &'a Hosts, project: &str) -> Option<&'a Host> {
-    hosts.hosts.iter().find(|h| h.project == project)
+    host_for_keyed(hosts, &HostKey::linux_arm64(project))
 }
 
-/// Where a connection for `project` goes (D55): the project's host when its record is `ready` and is
-/// not the box, and the box otherwise, that is when the project has no record, when its record is
-/// not `ready`, and when its record is the box's.
+/// The record of the host `key`, whatever its state: the record whose project and platform equal
+/// the key's, compared as the strings they are stored as, a record without `platform` counting as
+/// `linux/arm64` (D91).
+pub fn host_for_keyed<'a>(hosts: &'a Hosts, key: &HostKey) -> Option<&'a Host> {
+    hosts.hosts.iter().find(|h| h.is_for(key))
+}
+
+/// Where a connection for `project`'s `linux/arm64` lease goes (D55): the project's host when its
+/// record is `ready` and is not the box, and the box otherwise, that is when the project has no
+/// record, when its record is not `ready`, and when its record is the box's. It is
+/// [`target_for_keyed`] of [`HostKey::linux_arm64`], which always has an answer.
 pub fn target_for<'a>(hosts: &'a Hosts, project: &str) -> Target<'a> {
-    match host_for(hosts, project) {
+    target_for_keyed(hosts, &HostKey::linux_arm64(project)).unwrap_or(Target::Box)
+}
+
+/// Where a connection for a `ready` lease of the host `key` goes (docs/state.md, "Which host a
+/// connection reaches"; D91, pin P13 of v0.12-T01): `Some(Target::Host(project))` when the key's
+/// record is `ready` and is not the box, the platform being the key's. Otherwise, **the fallback to
+/// the box is `linux/arm64`'s alone**: `Some(Target::Box)` for a `linux/arm64` key, and `None` for
+/// a key of any other platform, a lease that is refused with no tunnel.
+pub fn target_for_keyed<'a>(hosts: &'a Hosts, key: &HostKey) -> Option<Target<'a>> {
+    match host_for_keyed(hosts, key) {
         Some(host) if host.state == HostState::Ready && !is_box(host) => {
-            Target::Host(&host.project)
+            Some(Target::Host(&host.project))
         }
-        _ => Target::Box,
+        _ if key.is_linux_arm64() => Some(Target::Box),
+        _ => None,
     }
 }
 
@@ -186,6 +247,7 @@ fn record_from(v: &Value) -> Result<Host, Invalid> {
     let o = v.as_object().ok_or(Invalid::Schema)?;
     Ok(Host {
         project: text(o, "project")?.ok_or(Invalid::Schema)?,
+        platform: text(o, "platform")?,
         stack: text(o, "stack")?.ok_or(Invalid::Schema)?,
         state: text(o, "state")?
             .as_deref()
@@ -199,22 +261,37 @@ fn record_from(v: &Value) -> Result<Host, Invalid> {
 }
 
 /// The rules the schema cannot check (docs/state.md, "What makes a file not valid, beyond its
-/// schema"), and the times that name no real instant.
+/// schema"), and the times that name no real instant:
+/// 1. Two records share a project and a platform, a record without `platform` counting as
+///    `linux/arm64`, so an explicit `linux/arm64` and an absent one share it (pin P16).
+/// 2. A record's stack is not D91's name for its own project and platform: on `linux/arm64`,
+///    `agentspace-host-<p>` with `<p>` other than its project (`agentbox` is rule 3's), and on any
+///    other platform, anything but `agentspace-<os>-<arch>-host-<project>` of its own.
+/// 3. Not exactly one record whose stack is `agentbox`, or one whose project is not `swimcoach` or
+///    whose platform is not `linux/arm64`.
 fn check_rules(hosts: &[Host]) -> Result<(), Invalid> {
     let mut seen = HashSet::new();
-    if !hosts.iter().all(|h| seen.insert(h.project.as_str())) {
+    if !hosts
+        .iter()
+        .all(|h| seen.insert((h.project.as_str(), h.platform())))
+    {
         return Err(Invalid::RepeatedProject);
     }
     for h in hosts {
-        if let Some(p) = h.stack.strip_prefix(STACK_PREFIX)
-            && p != h.project
-        {
+        let stack_is_its_own = if h.platform() == LINUX_ARM64 {
+            h.stack
+                .strip_prefix(STACK_PREFIX)
+                .is_none_or(|p| p == h.project)
+        } else {
+            h.stack == h.key().stack_name()
+        };
+        if !stack_is_its_own {
             return Err(Invalid::StackOfAnotherProject);
         }
     }
     let mut boxes = hosts.iter().filter(|h| h.stack == BOX_STACK);
     match (boxes.next(), boxes.next()) {
-        (Some(b), None) if b.project == BOX_PROJECT => {}
+        (Some(b), None) if b.project == BOX_PROJECT && b.platform() == LINUX_ARM64 => {}
         _ => return Err(Invalid::BoxRecord),
     }
     if hosts.iter().any(|h| {
@@ -230,8 +307,9 @@ fn check_rules(hosts: &[Host]) -> Result<(), Invalid> {
 /// Reads the registry's bytes (docs/state.md, The host registry): a leading byte order mark and any
 /// JSON whitespace are accepted; bytes that are not UTF-8, a document that fails its schema (a
 /// `version` other than 0 and a `null` member among them), an object naming a member twice, two
-/// records of one project, a stack of another project's name, a missing, doubled or misplaced box
-/// record, and a time that names no real instant each make it not valid.
+/// records of one project and platform, a stack that is not D91's name for its record's project and
+/// platform, a missing, doubled or misplaced box record, and a time that names no real instant each
+/// make it not valid. A record's `platform` is read as stored and never normalized.
 pub fn parse(bytes: &[u8]) -> Result<Hosts, Invalid> {
     let doc = json::parse(bytes)?;
     if validate_schema(SCHEMA, &doc) != Some(true) {
@@ -260,6 +338,11 @@ pub fn serialize(hosts: &Hosts) -> Result<Vec<u8>, Invalid> {
         }
         out.push_str("{\"project\":");
         out.push_str(&json::quote(&h.project));
+        // The member as read: written exactly when the record holds it (pin P16).
+        if let Some(platform) = &h.platform {
+            out.push_str(",\"platform\":");
+            out.push_str(&json::quote(platform));
+        }
         out.push_str(",\"stack\":");
         out.push_str(&json::quote(&h.stack));
         out.push_str(",\"state\":");
@@ -294,6 +377,7 @@ mod tests {
     fn host(project: &str, stack: &str, state: HostState) -> Host {
         Host {
             last_success_at: None,
+            platform: None,
             project: project.to_string(),
             stack: stack.to_string(),
             state,
@@ -582,8 +666,10 @@ mod tests {
         .unwrap();
         let mut found = Vec::new();
         patterns(&schema, &mut found);
-        // project, stack, instance_id, instance_type and the time.
-        assert_eq!(found.len(), 5, "{found:?}");
+        // project, platform and its `not`, the stack's three (the member's, and the `then` and
+        // `else` of a record's platform) and the `then`'s `not`, instance_id, instance_type and the
+        // time (v0.12-T01, D91).
+        assert_eq!(found.len(), 10, "{found:?}");
         for p in found {
             assert!(p.ends_with("$(?!\\n)"), "{p}");
         }
@@ -642,6 +728,158 @@ mod tests {
         assert!(host_for(&hosts, "no-record").is_none());
     }
 
+    // The platform member and the rules keyed by it (docs/state.md, "A host's platform and names";
+    // D91, D101, pin P16).
+
+    const ARM: &str =
+        r#"{"project":"agentspace","stack":"agentspace-host-agentspace","state":"ready"}"#;
+    const WIN: &str = r#"{"project":"agentspace","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-agentspace","state":"creating"}"#;
+
+    #[test]
+    fn a_record_of_another_platform_is_read_and_written_back_byte_for_byte() {
+        let text = format!("{}\n", doc(&[BOX, ARM, WIN]));
+        let hosts = parse(text.as_bytes()).unwrap();
+        assert_eq!(hosts.hosts[1].platform, None);
+        assert_eq!(hosts.hosts[1].platform(), "linux/arm64");
+        assert_eq!(hosts.hosts[2].platform.as_deref(), Some("windows/amd64"));
+        assert_eq!(
+            hosts.hosts[2].key(),
+            HostKey::new("agentspace", "windows/amd64")
+        );
+        assert_eq!(serialize(&hosts).unwrap(), text.as_bytes());
+    }
+
+    #[test]
+    fn a_written_linux_arm64_is_kept_exactly_as_read() {
+        let written = r#"{"project":"agentspace","platform":"linux/arm64","stack":"agentspace-host-agentspace","state":"ready"}"#;
+        let text = format!("{}\n", doc(&[BOX, written]));
+        let hosts = parse(text.as_bytes()).unwrap();
+        assert_eq!(hosts.hosts[1].platform.as_deref(), Some("linux/arm64"));
+        assert_eq!(serialize(&hosts).unwrap(), text.as_bytes());
+        // It is the same host as a record without the member.
+        assert!(hosts.hosts[1].is_for(&HostKey::linux_arm64("agentspace")));
+        assert_eq!(host_for(&hosts, "agentspace"), Some(&hosts.hosts[1]));
+    }
+
+    #[test]
+    fn rule_one_is_keyed_by_project_and_platform() {
+        // Two platforms of one project are two hosts.
+        assert!(parse(doc(&[BOX, ARM, WIN]).as_bytes()).is_ok());
+        assert_eq!(refused(&doc(&[BOX, WIN, WIN])), Invalid::RepeatedProject);
+        let written = r#"{"project":"agentspace","platform":"linux/arm64","stack":"agentspace-host-agentspace","state":"ready"}"#;
+        assert_eq!(
+            refused(&doc(&[BOX, ARM, written])),
+            Invalid::RepeatedProject
+        );
+        // A second windows record of one project with another stack is still the same key.
+        let win2 = r#"{"project":"agentspace","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-agentspace","state":"failed"}"#;
+        assert_eq!(refused(&doc(&[BOX, WIN, win2])), Invalid::RepeatedProject);
+    }
+
+    #[test]
+    fn rule_two_refuses_a_stack_not_of_its_own_platform_or_project() {
+        // The schema checks the form only; the name's platform and project are the rule's.
+        for bad in [
+            r#"{"project":"agentspace","platform":"linux/amd64","stack":"agentspace-windows-amd64-host-agentspace","state":"ready"}"#,
+            r#"{"project":"agentspace","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-swimcoach","state":"ready"}"#,
+            r#"{"project":"agentspace","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-agentspac","state":"ready"}"#,
+            r#"{"project":"agentspace","platform":"windows/amd64","stack":"agentspace-windows-x86-host-agentspace","state":"ready"}"#,
+        ] {
+            assert_eq!(
+                refused(&doc(&[BOX, bad])),
+                Invalid::StackOfAnotherProject,
+                "{bad}"
+            );
+        }
+        // A platform agentspace does not support is valid when its stack is its own.
+        let other = r#"{"project":"example-one","platform":"example/one","stack":"agentspace-example-one-host-example-one","state":"failed"}"#;
+        assert!(parse(doc(&[BOX, other]).as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn rule_three_wants_the_box_on_linux_arm64() {
+        let written = r#"{"project":"swimcoach","platform":"linux/arm64","stack":"agentbox","state":"ready"}"#;
+        assert!(parse(doc(&[written]).as_bytes()).is_ok());
+        // Swimcoach on another platform is a record like any other project's.
+        let win = r#"{"project":"swimcoach","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-swimcoach","state":"ready"}"#;
+        assert!(parse(doc(&[BOX, win]).as_bytes()).is_ok());
+        assert_eq!(refused(&doc(&[win])), Invalid::BoxRecord);
+    }
+
+    #[test]
+    fn the_keyed_lookups_never_cross_platforms() {
+        let hosts = parse(doc(&[BOX, WIN]).as_bytes()).unwrap();
+        // agentspace has no linux/arm64 record: its linux/arm64 lease goes to the box.
+        assert!(host_for(&hosts, "agentspace").is_none());
+        assert_eq!(target_for(&hosts, "agentspace"), Target::Box);
+        let win = HostKey::new("agentspace", "windows/amd64");
+        assert_eq!(host_for_keyed(&hosts, &win), Some(&hosts.hosts[1]));
+        // A creating windows host is no target, and nothing falls back to the box.
+        assert_eq!(target_for_keyed(&hosts, &win), None);
+        let mut ready = hosts.clone();
+        ready.hosts[1].state = HostState::Ready;
+        assert_eq!(
+            target_for_keyed(&ready, &win),
+            Some(Target::Host("agentspace"))
+        );
+        assert_eq!(target_for(&ready, "agentspace"), Target::Box);
+        let amd = HostKey::new("agentspace", "linux/amd64");
+        assert_eq!(target_for_keyed(&ready, &amd), None);
+        assert_eq!(
+            target_for_keyed(&ready, &HostKey::linux_arm64("nothing")),
+            Some(Target::Box)
+        );
+    }
+
+    #[test]
+    fn a_record_added_for_a_key_carries_platform_only_off_linux_arm64() {
+        let arm = Host::new(&HostKey::linux_arm64("agentspace"), HostState::Creating);
+        assert_eq!(arm.platform, None);
+        assert_eq!(arm.stack, "agentspace-host-agentspace");
+        let win = Host::new(
+            &HostKey::new("agentspace", "windows/amd64"),
+            HostState::Creating,
+        );
+        assert_eq!(win.platform.as_deref(), Some("windows/amd64"));
+        assert_eq!(win.stack, "agentspace-windows-amd64-host-agentspace");
+        let mut hosts = Hosts::seed();
+        hosts.hosts.push(arm);
+        hosts.hosts.push(win);
+        assert_eq!(
+            String::from_utf8(serialize(&hosts).unwrap()).unwrap(),
+            format!(
+                "{}\n",
+                doc(&[
+                    BOX,
+                    r#"{"project":"agentspace","stack":"agentspace-host-agentspace","state":"creating"}"#,
+                    WIN
+                ])
+            )
+        );
+        assert_eq!(
+            Host::new(&HostKey::linux_arm64("swimcoach"), HostState::Ready),
+            Hosts::seed().hosts[0]
+        );
+    }
+
+    #[test]
+    fn a_platform_not_of_its_form_is_refused_by_the_schema() {
+        for p in [
+            "null",
+            r#""linux""#,
+            r#""Linux/amd64""#,
+            r#""linux/amd64/v3""#,
+            r#""linux/aarch64""#,
+            r#""linux/amd64\n""#,
+            r#""""#,
+        ] {
+            let r = format!(
+                r#"{{"project":"agentspace","platform":{p},"stack":"agentspace-linux-amd64-host-agentspace","state":"ready"}}"#
+            );
+            assert_eq!(refused(&doc(&[BOX, &r])), Invalid::Schema, "{p}");
+        }
+    }
+
     // Every sample of schemas/state/samples is embedded at compile time, so the test binary runs
     // on a machine that has no repository (a cross-built one under another system). The lists are
     // explicit, and `the_embedded_samples_cover_every_hosts_state_file` fails when a new file is
@@ -655,16 +893,18 @@ mod tests {
         };
     }
 
-    const VALID_SAMPLES: [(&str, &str); 6] = [
+    const VALID_SAMPLES: [(&str, &str); 8] = [
         sample!("hosts.state.creating-and-failed.json"),
         sample!("hosts.state.full.json"),
         sample!("hosts.state.instance-type-on-one.json"),
         sample!("hosts.state.instance-type.json"),
         sample!("hosts.state.last-success.json"),
+        sample!("hosts.state.platform-linux-arm64-written.json"),
+        sample!("hosts.state.platforms.json"),
         sample!("hosts.state.seed.json"),
     ];
 
-    const INVALID_SAMPLES: [(&str, &str); 18] = [
+    const INVALID_SAMPLES: [(&str, &str); 26] = [
         sample!("invalid/hosts.state.bad-instance-id.json"),
         sample!("invalid/hosts.state.bare-array.json"),
         sample!("invalid/hosts.state.extra-member.json"),
@@ -678,6 +918,14 @@ mod tests {
         sample!("invalid/hosts.state.null-instance-id.json"),
         sample!("invalid/hosts.state.null-instance-type.json"),
         sample!("invalid/hosts.state.null-last-success.json"),
+        sample!("invalid/hosts.state.platform-aarch64.json"),
+        sample!("invalid/hosts.state.platform-absent-with-other-stack.json"),
+        sample!("invalid/hosts.state.platform-amd64-with-arm64-stack.json"),
+        sample!("invalid/hosts.state.platform-arm64-with-other-stack.json"),
+        sample!("invalid/hosts.state.platform-null.json"),
+        sample!("invalid/hosts.state.platform-uppercase.json"),
+        sample!("invalid/hosts.state.platform-windows-agentbox.json"),
+        sample!("invalid/hosts.state.platform-with-variant.json"),
         sample!("invalid/hosts.state.stack-of-other-name.json"),
         sample!("invalid/hosts.state.time-with-offset.json"),
         sample!("invalid/hosts.state.unknown-state.json"),

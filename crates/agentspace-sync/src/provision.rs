@@ -332,6 +332,7 @@ fn record_start(home: &Path, project: &str, now: &str) -> Result<bool, Failure> 
         None => {
             hosts.hosts.push(Host {
                 last_success_at: None,
+                platform: None,
                 project: project.to_string(),
                 stack: agentspace_hosts::stack_name(project),
                 state: HostState::Creating,

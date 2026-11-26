@@ -37,6 +37,7 @@ const OTHER_ID: &str = "i-fedcba9876543210f";
 fn record(project: &str, state: HostState, instance_id: Option<&str>) -> Record {
     Record {
         last_success_at: None,
+        platform: None,
         project: project.to_string(),
         stack: agentspace_hosts::stack_name(project),
         state,

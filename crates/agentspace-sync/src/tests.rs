@@ -417,6 +417,7 @@ impl World {
         for (project, state) in others {
             hosts.hosts.push(agentspace_hosts::Host {
                 last_success_at: None,
+                platform: None,
                 project: project.to_string(),
                 stack: agentspace_hosts::stack_name(project),
                 state: *state,

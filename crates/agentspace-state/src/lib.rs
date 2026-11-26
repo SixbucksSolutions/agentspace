@@ -775,6 +775,25 @@ mod tests {
         );
     }
 
+    /// state.md, The lease state file: from v0.12 a `windows/amd64` lease's `ssh.user` is `agent`
+    /// (D95; pin P19 of v0.12-T01), which the record's pattern allows, and is kept as written.
+    #[test]
+    fn a_windows_leases_user_agent_is_written_and_read_back() {
+        let mut r = ready(plain());
+        r.platform = "windows/amd64".to_string();
+        r.profile = "agent-windows".to_string();
+        r.ssh.as_mut().unwrap().user = "agent".to_string();
+        let text = text_of(&one(r.clone()));
+        assert!(text.contains("\"user\":\"agent\""), "{text}");
+        assert_eq!(parse(text.as_bytes()).unwrap(), one(r.clone()));
+        // The record's pattern still refuses what it refused.
+        for bad in ["Agent", "agent\n", "1agent", ""] {
+            let mut b = r.clone();
+            b.ssh.as_mut().unwrap().user = bad.to_string();
+            assert!(serialize(&one(b)).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn sized_for_is_written_after_size_and_the_plan_last_after_driver() {
         let expected = format!(

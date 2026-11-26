@@ -18,13 +18,20 @@ pub enum Invalid {
     RepeatedMember,
     /// The document fails its schema, a `version` other than 0 and a `null` member included.
     Schema,
-    /// Two records of the registry share a `project`.
+    /// Two records of the registry share a `project` and a platform, a record without `platform`
+    /// counting as `linux/arm64` (D91). The name is the one it had when the key was the project
+    /// alone, so every caller that matches it keeps its meaning.
     RepeatedProject,
-    /// A record's stack is `agentspace-host-<p>` with `<p>` other than the record's own project.
+    /// A record's stack is not D91's name for its own project and platform: `agentspace-host-<p>`
+    /// with `<p>` other than a `linux/arm64` record's project, or for a record of another platform,
+    /// anything but `agentspace-<os>-<arch>-host-<project>` of its own.
     StackOfAnotherProject,
     /// The registry holds no record whose stack is `agentbox`, holds two, or holds one whose
-    /// project is not `swimcoach`.
+    /// project is not `swimcoach` or whose platform is not `linux/arm64`.
     BoxRecord,
+    /// Two approvals of one entry of the project list name one `platform` (pin P4 of v0.12-T01).
+    /// A reader treats the file as one that fails its schema.
+    RepeatedPlatform,
     /// A `last_attempt_at` that matches its pattern but names no real instant.
     TimeNamesNoInstant,
     /// Two entries of the project list share a `name`.
@@ -40,9 +47,12 @@ impl fmt::Display for Invalid {
             Invalid::NotJson => "it is not JSON",
             Invalid::RepeatedMember => "an object names one member twice",
             Invalid::Schema => "it does not match its schema",
-            Invalid::RepeatedProject => "two records share a project",
-            Invalid::StackOfAnotherProject => "a stack names a project other than its record's",
+            Invalid::RepeatedProject => "two records share a project and a platform",
+            Invalid::StackOfAnotherProject => {
+                "a stack names a project or a platform other than its record's"
+            }
             Invalid::BoxRecord => "it does not hold exactly one box record, for swimcoach",
+            Invalid::RepeatedPlatform => "two approvals of one entry share a platform",
             Invalid::TimeNamesNoInstant => "a time names no real instant",
             Invalid::RepeatedName => "two entries share a name",
             Invalid::DateNamesNoDay => "a date names no real day",

@@ -11,6 +11,11 @@
 //! its lock, the project list and a host's folder all live under `<home>\.agentspace`, and are
 //! never moved by `AGENTSPACE_STATE_DIR` (docs/state.md, What moves which files).
 //!
+//! From v0.12 a host is keyed by its project and its platform (D91; docs/state.md, "A host's
+//! platform and names"), D101's [`HostKey`], whose methods give its names. **Every function that
+//! takes a project alone keeps its v0.11 signature and means that project's `linux/arm64` host**,
+//! byte for byte as before; each has a twin named `<name>_keyed` that takes a `&HostKey`.
+//!
 //! The Windows locks are the contract's: a file opened with share mode 0. On any other system the
 //! same interface builds with an advisory lock, which is not the contract's (docs/state.md, D8).
 
@@ -20,6 +25,7 @@ mod error;
 mod folder;
 mod guardlock;
 mod json;
+mod key;
 mod model;
 mod paths;
 mod projects;
@@ -29,18 +35,23 @@ mod sys;
 
 pub use error::{Failure, HostsError, Invalid};
 pub use guardlock::{GuardLock, guard_is_running, try_guard_lock};
+pub use key::{HostKey, LINUX_ARM64, is_host_platform, platform_in_name};
 pub use model::{
     BOX_PROJECT, BOX_STACK, DEFAULT_INSTANCE_TYPE, Host, HostState, Hosts, Target, host_alias,
-    host_for, is_box, is_normalized_project, stack_name, target_for,
+    host_for, host_for_keyed, is_box, is_normalized_project, stack_name, target_for,
+    target_for_keyed,
 };
 pub use paths::{
-    agentspace_dir, guard_lock_path, guard_log_path, host_cert_path, host_dir, host_key_path,
-    host_log_path, host_run_lock_path, host_stamp_path, hosts_dir, hosts_lock_path, hosts_path,
-    known_hosts_path, projects_path,
+    agentspace_dir, guard_lock_path, guard_log_path, host_cert_path, host_cert_path_keyed,
+    host_dir, host_dir_keyed, host_key_path, host_key_path_keyed, host_log_path,
+    host_log_path_keyed, host_run_lock_path, host_run_lock_path_keyed, host_stamp_path,
+    host_stamp_path_keyed, hosts_dir, hosts_lock_path, hosts_path, known_hosts_path, projects_path,
 };
-pub use projects::{Project, Projects, is_listed, read_projects};
+pub use projects::{ApprovedPlatform, Project, Projects, is_approved, is_listed, read_projects};
 pub use registry::{
-    HostsLock, lock, read, read_for_placing, set_instance, set_instance_type, set_last_success_at,
-    try_lock, write,
+    HostsLock, lock, read, read_for_placing, set_instance, set_instance_keyed, set_instance_type,
+    set_instance_type_keyed, set_last_success_at, set_last_success_at_keyed, try_lock, write,
 };
-pub use runlock::{RunLock, run_is_running, try_run_lock};
+pub use runlock::{
+    RunLock, run_is_running, run_is_running_keyed, try_run_lock, try_run_lock_keyed,
+};

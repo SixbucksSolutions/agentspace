@@ -3,8 +3,9 @@
 
 use crate::error::{Failure, HostsError};
 use crate::folder;
+use crate::key::HostKey;
 use crate::model::is_normalized_project;
-use crate::paths::{host_dir, host_run_lock_path};
+use crate::paths::{host_dir_keyed, host_run_lock_path_keyed};
 use crate::sys::{self, OpenFailure};
 use std::fs::File;
 use std::path::Path;
@@ -38,8 +39,18 @@ pub fn try_run_lock(home: &Path, project: &str) -> Result<Option<RunLock>, Hosts
     if !is_normalized_project(project) {
         return Err(HostsError::BadProject);
     }
-    folder::ensure(&host_dir(home, project)).map_err(HostsError::CannotLockRun)?;
-    match sys::open_lock(&host_run_lock_path(home, project), true) {
+    try_run_lock_keyed(home, &HostKey::linux_arm64(project))
+}
+
+/// Tries the run lock of the host `key`, `hosts\<host name>\provision.lock`, as [`try_run_lock`]
+/// does for a `linux/arm64` host. A key that is not valid ([`HostKey::is_valid`]) is `BadProject`,
+/// and no path is made from it.
+pub fn try_run_lock_keyed(home: &Path, key: &HostKey) -> Result<Option<RunLock>, HostsError> {
+    if !key.is_valid() {
+        return Err(HostsError::BadProject);
+    }
+    folder::ensure(&host_dir_keyed(home, key)).map_err(HostsError::CannotLockRun)?;
+    match sys::open_lock(&host_run_lock_path_keyed(home, key), true) {
         Ok(file) => Ok(Some(RunLock { _file: file })),
         Err(OpenFailure::Held) => Ok(None),
         Err(OpenFailure::Missing | OpenFailure::Other) => {
@@ -55,10 +66,19 @@ pub fn run_is_running(home: &Path, project: &str) -> Result<bool, HostsError> {
     if !is_normalized_project(project) {
         return Err(HostsError::BadProject);
     }
-    if folder::is_blocked(&host_dir(home, project)) {
+    run_is_running_keyed(home, &HostKey::linux_arm64(project))
+}
+
+/// Whether a run is running for the host `key`, as [`run_is_running`] says for a `linux/arm64`
+/// host. A key that is not valid is `BadProject`.
+pub fn run_is_running_keyed(home: &Path, key: &HostKey) -> Result<bool, HostsError> {
+    if !key.is_valid() {
+        return Err(HostsError::BadProject);
+    }
+    if folder::is_blocked(&host_dir_keyed(home, key)) {
         return Err(HostsError::CannotLockRun(Failure::FolderIsAFile));
     }
-    match sys::open_lock(&host_run_lock_path(home, project), false) {
+    match sys::open_lock(&host_run_lock_path_keyed(home, key), false) {
         Ok(_free) => Ok(false),
         Err(OpenFailure::Held) => Ok(true),
         Err(OpenFailure::Missing) => Ok(false),
@@ -69,8 +89,44 @@ pub fn run_is_running(home: &Path, project: &str) -> Result<bool, HostsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paths::hosts_dir;
+    use crate::paths::{host_run_lock_path, hosts_dir};
     use std::fs;
+
+    #[test]
+    fn each_platform_of_a_project_has_its_own_lock() {
+        let t = tempfile::tempdir().unwrap();
+        let win = HostKey::new("agentspace", "windows/amd64");
+        let held = try_run_lock_keyed(t.path(), &win).unwrap().unwrap();
+        assert!(host_run_lock_path_keyed(t.path(), &win).is_file());
+        assert!(run_is_running_keyed(t.path(), &win).unwrap());
+        assert!(try_run_lock_keyed(t.path(), &win).unwrap().is_none());
+        // The linux/arm64 host's lock is another file, and the project-only calls mean it.
+        assert!(!run_is_running(t.path(), "agentspace").unwrap());
+        let arm = try_run_lock(t.path(), "agentspace").unwrap().unwrap();
+        assert!(run_is_running_keyed(t.path(), &HostKey::linux_arm64("agentspace")).unwrap());
+        drop(held);
+        drop(arm);
+        assert!(!run_is_running_keyed(t.path(), &win).unwrap());
+    }
+
+    #[test]
+    fn a_key_that_is_not_valid_makes_no_path() {
+        let t = tempfile::tempdir().unwrap();
+        for platform in ["", "../x", "linux/amd64/v3", "a\\b/c", "Linux/amd64"] {
+            let key = HostKey::new("agentspace", platform);
+            assert_eq!(
+                try_run_lock_keyed(t.path(), &key).unwrap_err(),
+                HostsError::BadProject,
+                "{platform:?}"
+            );
+            assert_eq!(
+                run_is_running_keyed(t.path(), &key).unwrap_err(),
+                HostsError::BadProject,
+                "{platform:?}"
+            );
+        }
+        assert_eq!(fs::read_dir(t.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn the_lock_is_held_until_dropped_and_a_second_try_finds_it_held() {

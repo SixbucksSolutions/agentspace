@@ -97,6 +97,7 @@ impl Drop for TempHome {
 pub fn box_host() -> Host {
     Host {
         last_success_at: None,
+        platform: None,
         project: BOX_PROJECT.to_string(),
         stack: BOX_STACK.to_string(),
         state: HostState::Ready,
@@ -109,6 +110,7 @@ pub fn box_host() -> Host {
 pub fn host(project: &str, state: HostState) -> Host {
     Host {
         last_success_at: None,
+        platform: None,
         project: project.to_string(),
         stack: stack_name(project),
         state,
@@ -121,6 +123,7 @@ pub fn host(project: &str, state: HostState) -> Host {
 pub fn full_host(project: &str, state: HostState, id: &str, at: &str) -> Host {
     Host {
         last_success_at: None,
+        platform: None,
         project: project.to_string(),
         stack: stack_name(project),
         state,
