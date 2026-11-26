@@ -2,8 +2,8 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-**The reference for the keeper: the program on the laptop that holds the board's forwards on each
-project's host for as long as a lease on that host is ready (D30, D50).** It is written so that the keeper can be rebuilt
+**The reference for the keeper: the program on the laptop that holds the board's forwards on each of a
+project's hosts, one for each platform it has (D91), for as long as a lease on that host is ready (D30, D50).** It is written so that the keeper can be rebuilt
 without reading any of its code (D20, D34). It names every argument, decision, timing, lock, log
 line and exit code, the handshake that starts a holder, when and how the keeper starts the guard
 (v0.08, D56), and the logon task that runs the keeper unattended. The reasoning behind each rule is
@@ -208,7 +208,8 @@ step 5), and a state folder that cannot be listed ([The hosts of a pass](#the-ho
 - **A missing `hosts.json` reads as the box's record alone**: project `swimcoach`, stack
   `agentbox`, state `ready` (D45; architect, 2026-11-20, for v0.07-T01). The keeper never writes
   that record; the first change by the driver or the operator does. So a laptop as v0.06 left it
-  reads as the box alone, and every ready lease is on the box.
+  reads as the box alone, and every ready `linux/arm64` lease is on the box, and a lease of any
+  other platform is on no host (architect, 2026-11-26, for v0.12-T01, pin P13).
 - **A registry that cannot be read fails the pass**, as a lease state that cannot be read does
   ([The order of a pass](#the-order-of-a-pass), step 5). It cannot be read when it is not a file
   (a folder, say) or cannot be opened, and when it is not valid by
@@ -754,8 +755,10 @@ v0.07-T01), the same answer the ProxyCommand reaches for the lease's alias
    `board-holder.<host name>.json` whose `<host name>` is a project, or a project, a `.` and a platform
    part ([A host's key and name](#a-hosts-key-and-name)). The project matches the normalized
    project's pattern `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`
-   ([lease-api.md](lease-api.md#project)), and the platform part matches
-   `^[a-z0-9]+-[a-z0-9]+$` and is not `linux-arm64`, which is never written. The name is
+   ([lease-api.md](lease-api.md#project)), and the platform part is
+   `linux-amd64` or `windows-amd64`, the two supported platforms that are not `linux/arm64`
+   (architect, 2026-11-26, for v0.12-T01, pin P21); `linux-arm64` is never written, and an
+   unsupported platform has no host name. The name is
    compared without regard to case, and `<host name>` is taken in lowercase, which gives the host's
    project and platform (the platform part's `-` read as the platform's `/`). A file named
    otherwise is not a record, and the keeper never reads, writes or removes it, which is how
@@ -2534,8 +2537,10 @@ page documents:
   [state.md](state.md#the-host-registry) places it under that folder, or writes none to have the box
   alone. A check that left `USERPROFILE` as it is would read the user's real registry. The
   conformance harness already moves it (conformance.md, The harness).
-- **It gives each host its own leases by their `project`**, and a lease of a project with no
-  `ready` record is on the box, so a check that writes no registry needs no change from v0.06.
+- **It gives each host its own leases by their `project` and `platform`**, and a `linux/arm64`
+  lease of a project with no `ready` record on that platform is on the box, one of any other
+  platform on no host (architect, 2026-11-26, for v0.12-T01, pin P13), so a check that writes no
+  registry and seeds only `linux/arm64` leases needs no change from v0.06.
 - **It stubs ssh with `-SshExe`**, naming a `.cmd` that prints a line and stays alive until it is
   stopped, connecting nowhere and touching no file. A stub receives the holder's arguments on its
   own command line, which is how a check finds it, and does not receive the keeper's environment
@@ -2636,10 +2641,10 @@ name](#a-hosts-key-and-name)). No case needs a real host: a holder's connection 
 |---|---|---|
 | H19 | Registry with the box and `<p>`'s `linux/arm64` and `windows/amd64` hosts, all `ready`; a ready `<p>` lease on each platform; one-pass run | Two `<p>` holders are started, one through each lease, never one through both: `started ... host=<p>` and `started ... host=<p>.windows-amd64`, after the box's turn; records `board-holder.<p>.json`, with no `platform` member, and `board-holder.<p>.windows-amd64.json`, with `platform` `windows/amd64`; each launch request's `log` is `board-holder-ssh.<p>.log` and `board-holder-ssh.<p>.windows-amd64.log` ([A host's key and name](#a-hosts-key-and-name)) |
 | H20 | Registry holding, after the box's record and in this file order, `<q>`'s `linux/amd64` host, `<p>`'s `linux/arm64` host, `<q>`'s `linux/arm64` host and `<p>`'s `linux/amd64` host, all `ready`, with `<p>` before `<q>` in ordinal order; a ready lease on each; one-pass run | The turns follow the registry's file order and no sorted order: after the box's, the `started` lines' `host=` fields read `<q>.linux-amd64`, `<p>`, `<q>`, `<p>.linux-amd64`, in that order ([The hosts of a pass](#the-hosts-of-a-pass); architect, 2026-11-26, for v0.12-T01, pin P46) |
-| H21 | Registry with the box and `<p>`'s `linux/arm64` host, `ready`, and a record of `<p>`'s `linux/amd64` host that is `creating`; a ready `<p>` lease for `linux/amd64` and one for `linux/arm64` | Neither `linux/amd64` lease is on the box: the `linux/arm64` host's holder goes through the `linux/arm64` lease alone, even when the `linux/amd64` lease expires later, and no line, record or log of `<p>.linux-amd64` appears ([Which host a lease is on](#which-host-a-lease-is-on); architect, 2026-11-26, for v0.12-T01, pin P13) |
+| H21 | Registry with the box and `<p>`'s `linux/arm64` host, `ready`, and a record of `<p>`'s `linux/amd64` host that is `creating`; a ready `<p>` lease for `linux/amd64` and one for `linux/arm64` | The `linux/amd64` lease is not on the box: the `linux/arm64` host's holder goes through the `linux/arm64` lease alone, even when the `linux/amd64` lease expires later, and no line, record or log of `<p>.linux-amd64` appears ([Which host a lease is on](#which-host-a-lease-is-on); architect, 2026-11-26, for v0.12-T01, pin P13) |
 | H22 | No registry; a ready lease of `<p>` on `windows/amd64`; one-pass run | The lease is on no host: no holder is started, the pass logs only the box's `idle lease=- alias=- pid=-`, and no `board-holder.<p>.windows-amd64.json` appears ([Which host a lease is on](#which-host-a-lease-is-on); architect, 2026-11-26, for v0.12-T01, pin P13) |
 | H23 | A `board-holder.<p>.windows-amd64.json` naming a running stub, in a registry where that host is `ready` and no `<p>` lease on that platform is ready | The pass stops that holder: `stopped ... host=<p>.windows-amd64`, the record removed, the stub's PID gone, then `grace seconds=<n> host=<p>.windows-amd64` in a keeper; a running stub of `<p>`'s `linux/arm64` host through a ready lease is kept in the same pass ([The hosts of a pass](#the-hosts-of-a-pass), [Stopping a holder](#stopping-a-holder)) |
-| H24 | Each in turn: a `board-holder.<p>.linux-arm64.json`, a `board-holder.<p>.windows-amd64.extra.json` and a `board-holder.<p>.-amd64.json`, each naming a running stub | None is a record: the keeper never reads, removes or stops any of them, and no line names them ([The hosts of a pass](#the-hosts-of-a-pass)) |
+| H24 | Each in turn: a `board-holder.<p>.linux-arm64.json`, a `board-holder.<p>.windows-arm64.json`, a `board-holder.<p>.windows-amd64.extra.json` and a `board-holder.<p>.-amd64.json`, each naming a running stub | None is a record: the keeper never reads, removes or stops any of them, and no line names them ([The hosts of a pass](#the-hosts-of-a-pass)) |
 | H25 | A `board-holder.<p>.windows-amd64.json` whose `platform` member is `linux/amd64`, naming a running stub, with `<p>`'s `windows/amd64` host `ready` and a ready lease of it | The record is not valid, so it is removed and the stub is left running, as for any record that fails [Trusting the record](#trusting-the-record), and the pass starts a holder through the lease |
 | H26 | `board-holder.swimcoach.windows-amd64.json` naming a running stub, with a `windows/amd64` host of `swimcoach` `ready`, and `board-holder.json` naming another | The box's turn uses `board-holder.json` alone, and the other host's turn uses `board-holder.swimcoach.windows-amd64.json`; neither is read as the other's ([The hosts of a pass](#the-hosts-of-a-pass)) |
 | H27 | `board-holder-ssh.<p>.windows-amd64.log` over 1 MiB | It is renamed to `board-holder-ssh.<p>.windows-amd64.log.1`, and `rotated lease=- alias=- pid=- host=<p>.windows-amd64` is logged after the `rotated` line of any host whose host name is before it in ordinal order ([The holder's log](#the-holders-log)) |

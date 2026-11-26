@@ -1073,7 +1073,7 @@ story gives them:
 
 - **`instance_type_on(<platform>, <size>)`** returns the type in the platform's column for a size
   in `SIZES`, and none for a size outside `SIZES` or a platform the table has no column for. Both
-  are compared exactly, with their case, as pin P17 compares a size: the driver is only ever given
+  are compared exactly, with their case, as v0.09-T01's pin P17 (architect, 2026-11-23) compares a size: the driver is only ever given
   normalized values. So `instance_type_on("windows/amd64", "l")` is `m8a.2xlarge`, and
   `instance_type_on("windows/arm64", "l")` and `instance_type_on("Linux/amd64", "l")` are none.
 - **`meets_on(<platform>, <instance type>, <size>)`** is true when, and only when, the platform
@@ -1201,8 +1201,10 @@ sections that follow, means that the list approves the lease's platform for the 
 
   So an entry that names the project and approves another platform only gives the second, on
   `linux/arm64` too, and a project with no entry gets the first on `linux/amd64` and
-  `windows/amd64` as on `linux/arm64`. Only an entry with `platforms` can give the second, and v2
-  could not read such an entry (architect, 2026-11-26, for v0.12-T01, pin P22). Neither is D66's
+  `windows/amd64` as on `linux/arm64`. For a command line that names no platform, or `linux/arm64`,
+  only an entry with `platforms` can give the second, and v2 could not read such an entry; on
+  `linux/amd64` and `windows/amd64` an entry without `platforms` gives it too (M4) (architect,
+  2026-11-26, for v0.12-T01, pin P22). Neither is D66's
   message for a host serving smaller leases ([On a `ready` host](#on-a-ready-host)), which stays as
   it is, its "its host" being the lease's platform's host (architect, 2026-11-26, for v0.12-T01,
   pin P23).
@@ -1838,8 +1840,9 @@ inside it would be cut by the resize (D68's change notes).
 - **The guard and the idle check meet a resize as they meet any provisioning run** (D68), by rules
   that are not this page's. **The guard MUST NOT stop a host while its run holds `provision.lock`**
   ([operator.md, guard](operator.md#guard); D56), which covers every step of a resize. Outside the
-  lock, the `pending` lease that started the run explains the host, and the horizon of a project
-  whose only live leases are `pending` is the reading's time
+  lock, the `pending` lease that started the run explains the host, and the horizon of a host
+  whose project's only live leases on its platform are `pending` is the reading's time (architect,
+  2026-11-26, for v0.12-T01, pin P29)
   ([state.md, Live leases and the lease horizon](state.md#live-leases-and-the-lease-horizon)), so
   neither the guard nor the horizon power-off stops a host that waits on its resize. **The stop and
   start a resize makes is the stack's, not the guard's**: a boot clears the host's lease horizon,
@@ -2394,7 +2397,9 @@ taking a holder's place:
   so a chain three deep ended in
   one call counts 3, as the walks of v0.10 counted it across three walks. The release's own process
   and its ancestors stay spared, and so does a client whose tree holds one of them
-  ([Which processes are the alias's clients](#which-processes-are-the-aliass-clients)).
+  ([Which processes are the alias's clients](#which-processes-are-the-aliass-clients)). A client
+  whose ancestors, through an exited program or not, hold a spared ancestor is never a top, and is
+  not ended.
 - **The call MUST NOT end the release's own process, or any of its ancestors**, wherever they sit,
   nor a descendant of a spared ancestor
   ([Which processes are the alias's clients](#which-processes-are-the-aliass-clients)).
@@ -2573,12 +2578,14 @@ text of the row its own outcome matches.
   `agentspace-connections`** (D99, D101; #0228's done-when):
   over stand-in processes, a client, an exited program, a client, an exited program and a client,
   each below the one before, with each exited program still held by the client above it, **one
-  call of `end_alias_clients` ends all three clients and returns `Ok(3)`**, and a release of that
-  chain makes two walks, the second ending none, and logs
-  `Ended 3 of the lease's connections.` It asserts on the one call, never on the walks a release
-  makes, since the further walks would end the chain too; on the code before #0228 the one call
-  ends the top client alone, which the test shows. The further walks' bounds stay shown by
-  E0.10-T03-S02's tests, which still hold with the chain ended in one walk.
+  call of `end_alias_clients` ends all three clients and returns `Ok(3)`**. It asserts on that one
+  call, and on the code before #0228 the one call ends the top client alone, which the test shows.
+  **E0.10-T03-S02's release test of the same chain, in `agentspace-driver-ec2`'s walk tests,
+  changes with #0228**: it asserts four walks, one client a walk, and from #0228 the release makes
+  two, the first ending all three clients and the second none, and still logs
+  `Ended 3 of the lease's connections.` The story that builds #0228 MUST change that assertion to
+  two walks. The further walks' bounds stay shown by E0.10-T03-S02's tests over stand-in walk
+  results, which no chain reaches.
 - **Live, with Terry's desktop app**, D62's "A release ends its connections" (#0064), in
   E0.08-T06-S02 on agentspace's host: a desktop-app session left open on a lease, the lease
   released, then no `ssh.exe` or `agentspace-ssh-proxy.exe` client of that alias left on the laptop,
