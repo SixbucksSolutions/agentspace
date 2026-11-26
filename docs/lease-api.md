@@ -571,7 +571,7 @@ row that applies is the outcome, and only one is reported:
 | What happens | Error | `field` | Message |
 |---|---|---|---|
 | `LOCALAPPDATA` unset, empty or only whitespace | `internal` | None | `agentspace lease create failed: LOCALAPPDATA is unset or empty, so localswim's service receipt cannot be found. Nothing was recorded.` |
-| No file at the receipt's path | `internal` | None | `agentspace lease create failed: localswim's service receipt was not found; localswim may not be running. Nothing was recorded.` |
+| Nothing at the receipt's path; a folder, a link or anything else there is the next row (architect, 2026-11-25, for v0.11-T03, pin P8) | `internal` | None | `agentspace lease create failed: localswim's service receipt was not found; localswim may not be running. Nothing was recorded.` |
 | The receipt cannot be read, breaks localswim's rules, or has its `base` missing or not of the form above (architect, 2026-11-25, for v0.11-T01, pins P19 and P26) | `internal` | None | `agentspace lease create failed: localswim's service receipt could not be read. Nothing was recorded.` |
 | `bot.json` missing, unreadable, breaking localswim's rules, or not decrypted to a token | `internal` | None | `agentspace lease create failed: The board's credential could not be read. Nothing was recorded.` |
 | No connection, a connection refused, reset or closed before the whole answer arrived, or 30 seconds passed | `internal` | None | `agentspace lease create failed: The board at 127.0.0.1:<port> did not answer. Nothing was recorded.` |
