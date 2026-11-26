@@ -373,6 +373,18 @@ deliberately red tests green.** A dev lead's brief carries these.
   <nnn>-<what>`. `wrap.ps1` refuses a `-Name` that does not start with three digits, and the
   brief's `<role>-<nnn>` form failed for every subagent.
 
+**Learned in v0.11-T03, 2026-11-25, a one-story programs turn.**
+- **A baseline beside a story is a `git archive` of `main` into the story worktree's ignored
+  `target\`**: a worktree-isolated session's guard refuses `git worktree add` outside its own
+  worktree, so a second worktree for the baseline cannot be made.
+- **A workspace run counts as final only once every owner of the story's files is done**: the
+  implementer's run compiled 19 of the test file's 64 tests.
+- **A test that runs the built program twice on the real clock MUST NOT compare clock times** such
+  as `created_at` and `expires_at`: one such comparison passed alone and in review, then failed
+  under the isolation guard's moved-home rerun, and a planted 1.1-second sleep reproduced it.
+- **A test asserts one outcome, shown to fail on the other**: "either message" passed for a case the
+  spec decides, and was ruled out (v0.11-T03, pin P8).
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
