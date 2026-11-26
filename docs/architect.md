@@ -169,6 +169,15 @@ first.**
     own folder** (v0.11-T05). A `Set-Location` into S02's worktree, made for a read, moved the
     architect's session into that worktree until it moved back, one command later; a session that
     stays there can hold the folder and block its removal at the turn's close.
+18. **While a dev lead runs, the architect MUST NOT put anything to Terry as a question that holds
+    its own session until he answers** (v0.12-T01, 2026-11-26). A request for Terry's action goes out
+    as a message and a Needs Terry card, with the step's deadline in it, and the architect keeps
+    reading the dev lead's messages. In T01 a question held the architect's session from 12:15pm to
+    about 2:25pm: pins P47 to P60, five PR heads and the spike's timing queued unread, Terry's click
+    landed after the 1:09pm teardown, and the architect first misread the failure as a missing alias.
+19. **Every commit's identity is compared with a commit the agents made, never with `main`'s head**
+    (v0.12-T01): after a squash merge, `main`'s head is committed by GitHub, so a comparison with it
+    reads a sound PR's commits as wrong.
 
 **While a question to Terry is open, the architect's turn is held, and the dev leads' messages
 queue** (v0.06-T05: an 80-minute wait). When his answer comes, read each linked session's state
@@ -251,6 +260,17 @@ names.**
   file (`ReadAllText`, `include_str!`, `Get-Content`), never by every file that cites it.
 - **The clock is read in its own call before any message carries a time.** The architect twice
   sent a ruling whose time was written beside the clock read, not after it, and corrected each.
+
+**Learned in v0.12-T01, 2026-11-26, four spec stories beside a live spike.**
+- **The dev lead's first-minutes pins read the current schema patterns and orderings before they
+  propose a change to either, and give each doc its case letter outright.** P6 narrowed a pattern
+  that already admitted the new value, and P10 added a sort that file order already settled; both
+  were withdrawn after drafters had written them (P19, P46), and the case letters M and W were
+  swapped twice (P31, P45). Pins came in four waves, and every spec story needed a fix pass.
+- **A reviewer checks its story against the turn's other branches**: S01's reviewer found S03's case
+  still using `windows/amd64` as unsupported against P20, and the five messages were compared across
+  lease-api.md and driver.md by a script.
+- **A scripted doc edit is checked byte for byte at review**, as S01's reviewer did for a Python one.
 
 ## A turn that builds
 
@@ -439,6 +459,13 @@ deliberately red tests green.** A dev lead's brief carries these.
   7:23am to 8:10am, the build story beside it from 7:27am to its PR at 10:30am, inside 4.5 hours, in
   15 subagent launches with a peak of 4 and none blocked.
 
+**Learned in v0.12-T01, 2026-11-26, from the spike's runners.**
+- **A runner's tasking names its expected wait, and requires bounded foreground checks; no
+  `Start-Job`.** S01's first checker ended its run with its build in the background, woke pinned to
+  another story's worktree, and its run died with it; a second runner's `Start-Job` died with its
+  tool call. **A dev lead waiting on a run also watches its `.out` grow, and flags a stall after 5
+  minutes**: the dead run read as slow for about 40 minutes.
+
 ## Live checks on Terry's laptop and the box
 
 **A live check runs on Terry's real setup, so it reads and writes only what its card names**
@@ -491,6 +518,17 @@ reads before it prints it").
   reads the silence as a conflict.
 - **A live check's scripts are dry-run in a conformance-harness home against the worktree's build**
   before the live run, so a script error never costs a rerun of a live command.
+
+**Learned in v0.12-T01, 2026-11-26, the Windows spike.**
+- **A live step that needs Terry's action is asked for before the instance starts**, with its
+  deadline, so his action overlaps the boot; and anything handed to him is proven first from the
+  laptop: an alias by `ssh -G <alias>` showing a ProxyCommand and one real `ssh <alias>` login.
+- **A sign-in check sends its stdout to `$null` inside the wrapped command**, so nothing reaches
+  `.out`: the spike's `sts get-caller-identity` wrote the caller's IAM unique ID into its masked
+  file, which the mask's 16-character rule missed. The mask now covers the 17-character unique IDs,
+  with proof cases (0e6f760).
+- **A zone is named only as read with the clock**: a subagent called the laptop's zone Pacific, and
+  it was Mountain.
 
 ## Reviewing a pull request
 

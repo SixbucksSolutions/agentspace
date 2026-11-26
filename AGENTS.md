@@ -22,7 +22,9 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   platforms, Windows licensing, and sign-ins as files.
 - **v0.12 is laid out** (Terry, 2026-11-26: "Lay out v0.12"): D101, twenty-three stories (#0245 to
   #0267) in five turns, whose plan is #0051's plan block and
-  [docs/plans/v0.12.json](docs/plans/v0.12.json). Each turn starts on Terry's word.
+  [docs/plans/v0.12.json](docs/plans/v0.12.json). Each turn starts on Terry's word. **Its live
+  record is [docs/handoff-v0.12.md](docs/handoff-v0.12.md)**, refreshed at each turn's close; T01
+  closed on 2026-11-26.
 - **Where v0.11 began:** v0.11's design is D83 to D88 and its layout D89 in
   [docs/decisions.md](docs/decisions.md), Terry having taken the architect's recommendation on Q17
   and Q18; its plan is in #0052's plan block and in [docs/plans/v0.11.json](docs/plans/v0.11.json).
