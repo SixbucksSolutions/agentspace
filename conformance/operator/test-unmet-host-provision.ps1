@@ -177,8 +177,9 @@ Invoke-HpInHome -Name "${sec}: a new host's first run" -NeedsLocalswim -Body {
     if ($log.Bytes -contains 13) { $p.Add('The log holds a carriage return') }
     $shape = Get-HpLogShape $log
     if ($shape -cne $startSteps) { $p.Add("The log's lines are not: $startSteps") }
+    # A raw line is masked before it is quoted (#0240), and then its non-printable characters are replaced.
     foreach ($l in $log.Lines) {
-      if (-not $l.Ok) { $p.Add("A log line is not <time> <step> <outcome>: '$($l.Raw -replace '[^\x20-\x7E]', '?')'"); break }
+      if (-not $l.Ok) { $p.Add("A log line is not <time> <step> <outcome>: '$((ConvertTo-HpMasked $l.Raw) -replace '[^\x20-\x7E]', '?')'"); break }
       if (-not (Test-HpTimeBetween $l.Time $t0 $t1)) { $p.Add("The time of a '$($l.Step) $($l.Outcome)' line is not the time it was written, in UTC"); break }
     }
     $begun = @($log.Lines | Where-Object { $_.Step -eq 'run' -and $_.Outcome -eq 'begun' })
