@@ -62,7 +62,7 @@ when Terry says so (D14).
 | **v0.08** | #0048 | **Done 2026-11-23** (twenty-one stories in six turns; [handoff-v0.08.md](handoff-v0.08.md), [the whole-suite run](runs/e0.08-t04-s04.md), 2,640 passed, [the install and host-side checks](runs/e0.08-t05-s01.md), and the lifecycle live on [the box](runs/e0.08-t06-s01.md) and [agentspace's host](runs/e0.08-t06-s02.md); findings #0195 and #0196). **Host lifecycle and cost guard.** A host runs only while its project holds a live lease | The last release stops the host, and no host can run unnoticed |
 | **v0.09** | #0049 | **Done 2026-11-24** (thirteen stories in five turns; [handoff-v0.09.md](handoff-v0.09.md), [the whole-suite run](runs/e0.09-t04-s03.md), 3,378 passed, and the install and the sizes live on [agentspace's host and the box](runs/e0.09-t05-s01.md), no finding; #0209 met by #0210). **Size classes.** `s` to `xl`, set by resizing a stopped host | `--size l` gets a bigger host, sized from v0.06-T01's whole compiling turn (D64, D65) |
 | **v0.10** | #0050 | **Done 2026-11-25** (fifteen stories in five turns; [handoff-v0.10.md](handoff-v0.10.md), [the whole-suite run](runs/e0.10-t04-s03.md), 4,599 passed, and [the install and the plan check](runs/e0.10-t05-s01.md), no finding and no instance started; #0225 and #0227 met). **Plan-sized leases; contract v1.** Peak concurrency times footprint picks the size (D27, D73): half a vCPU and 2 GiB per agent at once | Two plans of different peak concurrency get different sizes |
-| **v0.11** | #0052 | **Laid out 2026-11-25** (twelve stories in five turns, #0231 to #0242, every turn on the laptop; D83 to D89, and its plan is #0052's own plan block). **Plan from the board.** The plan is read from the project's localswim epic | Naming an epic is enough to get a sized lease |
+| **v0.11** | #0052 | **Done 2026-11-26** (thirteen stories in five turns, #0231 to #0243, every turn on the laptop and no instance started; D83 to D89, and its plan is #0052's own plan block; [handoff-v0.11.md](handoff-v0.11.md), [the whole-suite run](runs/e0.11-t04-s03.md), 6,208 passed, and [the install and the board check](runs/e0.11-t05-s01.md), a board lease equal to its `--plan` twin; #0229, #0230 and #0243 met; contract v2). **Plan from the board.** The plan is read from the project's localswim epic | Naming an epic is enough to get a sized lease |
 | **v0.12** | #0051 | **`linux/amd64` and `windows/amd64`**, the second and third platforms, in parallel (D4, D13, D26). One shared turn makes the driver serve more than one platform, with a seam per platform; then a `linux/amd64` track and a Windows track (a Windows host, its lease identity and its host agent) run side by side | `--platform linux/amd64` gives a ready lease, and `--platform windows/amd64` gives a ready lease where an agent works a card |
 | **v1.0** | #0053 | **A real project runs an epic on a plan-sized host** | A real project other than agentspace works a multi-turn epic through it |
 
@@ -104,7 +104,10 @@ when Terry says so (D14).
   in v0.10-T03, are Completed.
 - **#0243 (conformance quotes captured output without a full mask, carded in v0.11-T04) is a story
   of v0.11-T05**, E0.11-T05-S02 (Terry, 2026-11-26: "Let's pull risk early"; D89's change during
-  v0.11-T05).
+  v0.11-T05), met by #176 and Completed.
+- **#0244 (two places conformance prints captured output unmasked outside a reason: the harness's
+  start failure and the keeper's re-print of a child run; found in #0243's review, v0.11-T05) is in
+  Backlog, in no release yet.** Terry's word places it.
 - #0209 (the lease CLI's isolation guard saw its moved home created once under load, found at
   v0.09-T02's close) is carried into v0.09-T03 as #0210 (D71's change).
 - #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite
