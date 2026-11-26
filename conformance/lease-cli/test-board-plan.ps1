@@ -81,16 +81,18 @@ $script:BdToken = New-BdToken
 # The token as a UTF-16LE byte sequence seen one byte per character: each character followed by a NUL.
 $script:BdTokenWide = -join ($script:BdToken.ToCharArray() | ForEach-Object { [string]$_ + [string][char]0 })
 
-# Hides the run's token (its text and its UTF-16LE form) and every drive path, so that no reason, name or
-# message this file prints can carry either, and then passes the text through the suite's mask
-# (conformance\mask-common.ps1), which hides the rest of the temp folder's, the profile's, the user's and the
-# computer's names. Applied to every name and reason (Write-BdResult), before Write-BdResult cuts a reason.
+# Hides the run's token (its text and its UTF-16LE form), then passes the text through the suite's mask
+# (conformance\mask-common.ps1), which hides the temp folder, the profile, the user's and the computer's
+# names, and then hides every drive path that remains, so that no reason, name or message this file prints
+# can carry either. The mask runs before the drive-path step, as in every formatter, so a profile path that
+# holds a space is masked whole. Applied to every name and reason (Write-BdResult), before Write-BdResult
+# cuts a reason.
 function ConvertTo-BdRedacted {
   param([AllowNull()][AllowEmptyString()][string]$Text)
   if ([string]::IsNullOrEmpty($Text)) { return '' }
   $x = $Text.Replace($script:BdToken, '<token>').Replace($script:BdTokenWide, '<token>')
-  $x = [regex]::Replace($x, '[A-Za-z]:[\\/][^\s''"]*', '<path>')
   $x = ConvertTo-ConformanceMasked $x
+  $x = [regex]::Replace($x, '[A-Za-z]:[\\/][^\s''"]*', '<path>')
   return $x
 }
 

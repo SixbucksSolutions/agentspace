@@ -15,8 +15,11 @@
 #   backslashes and in Git Bash's /c/... form, without regard to case. The profile becomes %USERPROFILE%, as
 #   in mask.ps1, and the temp folder %TEMP%.
 # - Rule 2: the computer name, the user name and the profile's last folder, long and short, as <literal>.
-# Every value is read from the environment of the case's own process when the mask is first used, and none
-# is written into a file. A text that is null or empty gives ''.
+# Every value is read from the environment of the case's own process when the harness loads this file (the
+# last line below builds the rules then), and none is written into a file. So the harness MUST be loaded
+# before a check moves its own process's USERPROFILE, HOME or TEMP, as keeper-common.ps1's New-CaseHome does
+# through Set-CaseEnvironment: rules built after such a move would mask the throwaway home and not the real
+# profile (architect, 2026-11-26, for v0.11-T05, F1). A text that is null or empty gives ''.
 #
 # A text that is cut to a length MUST be masked before it is cut, so that a cut never leaves part of a name
 # unmasked.
@@ -88,3 +91,6 @@ function ConvertTo-ConformanceMasked([AllowNull()][AllowEmptyString()][string]$T
   foreach ($r in (Get-ConformanceMaskRules)) { $t = $r.Regex.Replace($t, $r.Token) }
   $t
 }
+
+# The rules are built now, while the process's environment is still the one the check started with.
+$null = Get-ConformanceMaskRules

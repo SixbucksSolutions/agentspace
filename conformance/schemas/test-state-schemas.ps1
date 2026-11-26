@@ -30,6 +30,10 @@
 param([string]$StateDir = '')
 
 $ErrorActionPreference = 'Stop'
+# The harness, for the suite's one mask (conformance\mask-common.ps1; docs/conformance.md, "The shared mask"):
+# a reason can quote Test-Json's message, which can name a schema file's path, and a checkout can sit under
+# the profile or the temp folder (architect, 2026-11-26, for v0.11-T05, N3). This file runs no program.
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'lease-cli\harness.ps1')
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $schemaDir = if ($StateDir) { $StateDir } else { Join-Path $repo 'schemas\state' }
 $sampleDir = Join-Path $schemaDir 'samples'
@@ -51,7 +55,7 @@ $knownWithoutSamples = @(
 
 # A check name cites the spec section it enforces.
 function Write-Result([bool]$Ok, [string]$Text, [string]$Why = 'The check did not hold.') {
-  if ($Ok) { Write-Output "PASS $Text"; $script:passes++ } else { Write-Output "FAIL ${Text}: $Why"; $script:failures++ }
+  if ($Ok) { Write-Output "PASS $Text"; $script:passes++ } else { Write-Output (ConvertTo-ConformanceMasked "FAIL ${Text}: $Why"); $script:failures++ }
 }
 
 function Exit-Run {

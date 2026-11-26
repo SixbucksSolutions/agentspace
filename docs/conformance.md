@@ -912,8 +912,8 @@ reach no provisioning run**: the bullets below give the rules.
 `%TEMP%` and `%USERPROFILE%`, in their given, long and 8.3 short forms, in either slash direction, with doubled
 backslashes and in Git Bash's `/c/...` form, without regard to case and longest first, and then the computer
 name, the user name and the profile's last folder, long and short, replaced by `<literal>`. A null or empty
-text gives an empty one. It reads each value from the environment of the case's own process when it is first
-used, and writes none into a file. It follows `scripts\live\mask.ps1`'s rules 1 and 2, reimplemented, since a
+text gives an empty one. It reads each value from the environment of the case's own process when the harness
+loads it, and writes none into a file (architect, 2026-11-26, for v0.11-T05, F1). It follows `scripts\live\mask.ps1`'s rules 1 and 2, reimplemented, since a
 conformance file MUST NOT depend on a process tool.
 
 - **It is dot-sourced once, by the harness, and every other folder reaches it through the harness**
@@ -921,8 +921,16 @@ conformance file MUST NOT depend on a process tool.
   lease CLI check dot-sources the harness; the operator's checks load `conformance/operator/helpers.ps1`,
   which dot-sources the harness; the keeper's checks load `conformance/keeper/keeper-common.ps1`, which
   dot-sources the harness. A check or a common file MUST NOT dot-source it a second time. The two
-  `conformance/schemas/` checks load neither file, run no program and hold no site that quotes captured
-  text.
+  `conformance/schemas/` checks run no program, and dot-source the harness for the mask alone
+  (architect, 2026-11-26, for v0.11-T05, N3): their reasons quote `Test-Json`'s message about the
+  repository's own schema and sample files, which can name a schema file's path, and a checkout can sit
+  under the profile or the temp folder, so each `FAIL` line passes through the mask.
+- **The harness MUST be loaded before a check moves its own process's `USERPROFILE`, `HOME` or `TEMP`**
+  (architect, 2026-11-26, for v0.11-T05, F1). The mask builds its rules once, when the harness loads it, from
+  the environment of that moment; rules built after such a move would mask the throwaway home and leave the
+  real profile, its 8.3 short form included. Every common file loads the harness first, and the one check
+  that moves its own process's environment, the keeper's, does so after it: `keeper-common.ps1`'s
+  `New-CaseHome` calls `Set-CaseEnvironment`, which puts a case's child environment on the process.
 - **Every failure or skip reason that quotes captured text MUST pass that text through
   `ConvertTo-ConformanceMasked` before it is printed**: a program's stdout or stderr, a field of a document a
   program printed, an exception's message, a line of a log, a record or a file a program wrote, and a
