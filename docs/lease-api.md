@@ -73,8 +73,8 @@ of the change.
 **agentspace's v0.12 release (#0051) keeps contract v2** (D93). It supports two more platforms and
 a second profile, which the contract answered `unsatisfiable` before, and no schema's validation,
 version or `$id` changes: `schemas/` stays v2's, with no copy under `schemas/v2/`, and the one
-schema text that changes is the create request's `profile` description. Why none of it is a new version is in
-[Versioning](#versioning). The contract's version and agentspace's release are two numbers, kept
+schema text that changes is the create request's `profile` description.
+Why none of it is a new version is in [Versioning](#versioning). The contract's version and agentspace's release are two numbers, kept
 apart (D26).
 
 | Change | Where | Could fail a v2 schema as v0.11 left it |
@@ -100,7 +100,8 @@ apart (D26).
 
 - **Nothing else changes.** No command, flag, state, exit code, error code, reason code, output
   member or `field` value is added or removed, and no schema's validation changes. A command line
-  that names none of `linux/amd64`, `windows/amd64` and `agent-windows` gets the state, profile and
+  whose normalized platform is neither `linux/amd64` nor `windows/amd64`, and whose normalized
+  profile is not `agent-windows`, gets the state, profile and
   reason codes that v0.11 gave it, and only its messages can differ: the two reworded ones, and
   the new `no_capacity` one, which only a project-list entry with `platforms` can cause
   ([Versioning](#versioning); architect, 2026-11-26, for v0.12-T01, pin P22).
@@ -109,8 +110,10 @@ apart (D26).
 
 ## Changes from v1
 
-**Contract v2 adds to contract v1, and changes no document or error a caller sees while it gives
-none of `--board`, `--epic` and `--turn`, and no plan with a `budget_minutes` member** (D87). No
+**Contract v2, as agentspace's v0.11 release made it, added to contract v1, and changed no document
+or error a caller sees while it gave none of `--board`, `--epic` and `--turn`, and no plan with a
+`budget_minutes` member** (D87); what v0.12 changes within v2 is in
+[Changes in v0.12, within v2](#changes-in-v012-within-v2). No
 lease output changes at all: every lease and list document v2 prints validates against v1's
 schemas. `create`'s
 help text changes too, which is text, not a document ([Versioning](#versioning)). It comes with
@@ -831,7 +834,7 @@ unchanged**, `unsupported_size`'s `v0 supports` included (architect, 2026-11-26,
 pin P2). agentspace's driver emits the `unsupported_size` message and the `no_capacity` message
 for a host serving smaller leases byte for byte as below, which is its own rule, not the
 contract's (D71; [docs/driver.md, What it supports](driver.md#what-it-supports); architect,
-2026-11-23, for v0.09-T01, pin P8), and **from v0.12 it emits the two reworded messages and the new
+2026-11-23, for v0.09-T01, pin P8), and **from v0.12 it MUST emit the two reworded messages and the new
 `no_capacity` message byte for byte too** (D93; architect, 2026-11-26, for v0.12-T01, pins P2 and
 P3). **The order of the reasons is unchanged in v0.12** (architect, 2026-11-26, for v0.12-T01, pin
 P26): a lease whose platform, profile and size are all unsupported lists `unsupported_platform`,
@@ -1164,7 +1167,7 @@ each supported profile promises is in [Profiles](#profiles).
     one that names no profile prints `agent-linux`, as v2 printed for every platform before v0.12
     (architect, 2026-11-26, for v0.12-T01, pin P2).
   - **The default is chosen by agentspace's lease CLI before any driver is asked, and a record
-    keeps the profile its lease printed: a stored record is never re-derived** (architect,
+    keeps the profile its lease printed: a stored record MUST NOT be re-derived** (architect,
     2026-11-26, for v0.12-T01, pin P25). `get`, `renew`, `release` and `list` print a lease's
     record as it was written, so a lease created before v0.12 with `--platform windows/amd64` and
     no `--profile` keeps `agent-linux` and stays `unsatisfiable`.
@@ -1842,7 +1845,8 @@ is left out, since it names a backend and that is the driver's (D1):
 | `gh` | The GitHub CLI |
 
 - **Codex is not promised** (D97), where `agent-linux` promises it.
-- **This promise names no SSH login shell** (architect, 2026-11-26, for v0.12-T01, pin P27). The
+- **This promise names no SSH login shell** (architect, 2026-11-26, for v0.12-T01, pin P27), and
+  PowerShell 7 is on `agent`'s `PATH`, whichever shell it is (D97). The
   shell is chosen later, by D100's spike, and recorded in the Windows spec, which
   [docs/operator.md](operator.md) gains in v0.12's second turn, T02 (D97, D101). The contract never
   promised a POSIX shell, and a lease on `windows/amd64` is reached as any lease is,
@@ -3024,8 +3028,9 @@ change v2 makes is listed in [Changes from v1](#changes-from-v1), and every chan
   such a command prints. Its help is text, not a document, and `create`'s help changed in v2
   ([`create`](#agentspace-lease-create)).
   - **From agentspace's v0.12 release, within v2** (D93; architect, 2026-11-26, for v0.12-T01,
-    pin P22): **a command line naming `linux/amd64`, `windows/amd64` or `agent-windows`, whose
-    platform or profile v2 answered unsupported before v0.12, MAY print a different document**,
+    pin P22): **a command line whose normalized platform is `linux/amd64` or
+    `windows/amd64`, or whose normalized profile is `agent-windows`, which v2 answered unsupported
+    before v0.12, MAY print a different document**,
     as supporting a platform or profile allows. **Every other command line MUST print what v2
     printed before v0.12, except in three messages:** `unsupported_platform`'s and
     `unsupported_profile`'s, which are reworded, and the new `no_capacity` message for a project
