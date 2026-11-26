@@ -916,9 +916,13 @@ text gives an empty one. It reads each value from the environment of the case's 
 used, and writes none into a file. It follows `scripts\live\mask.ps1`'s rules 1 and 2, reimplemented, since a
 conformance file MUST NOT depend on a process tool.
 
-- **The harness dot-sources it**, so every lease CLI, operator and keeper check has it: the operator's
-  `helpers.ps1` and the keeper's `keeper-common.ps1` dot-source the harness first. The two schemas checks
-  load no harness and run no program.
+- **It is dot-sourced once, by the harness, and every other folder reaches it through the harness**
+  (architect, 2026-11-26, for v0.11-T05, N1): `conformance/lease-cli/harness.ps1` dot-sources it, and every
+  lease CLI check dot-sources the harness; the operator's checks load `conformance/operator/helpers.ps1`,
+  which dot-sources the harness; the keeper's checks load `conformance/keeper/keeper-common.ps1`, which
+  dot-sources the harness. A check or a common file MUST NOT dot-source it a second time. The two
+  `conformance/schemas/` checks load neither file, run no program and hold no site that quotes captured
+  text.
 - **Every failure or skip reason that quotes captured text MUST pass that text through
   `ConvertTo-ConformanceMasked` before it is printed**: a program's stdout or stderr, a field of a document a
   program printed, an exception's message, a line of a log, a record or a file a program wrote, and a
