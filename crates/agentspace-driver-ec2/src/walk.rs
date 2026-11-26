@@ -640,7 +640,7 @@ mod tests {
         /// (D99): with two such programs in a chain, the release's first walk ends all three
         /// clients, its second ends none, and its line counts each client once.
         #[test]
-        fn a_client_below_a_program_that_has_gone_is_ended_by_a_later_walk() {
+        fn a_client_below_a_program_that_has_gone_is_ended_by_the_first_walk() {
             let mut w = World::new();
             w.start_chain(&["mid", "ssh", "mid", "ssh"]);
             w.wait("Every stand-in ssh.exe runs", || {
