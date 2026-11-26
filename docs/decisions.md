@@ -4640,6 +4640,22 @@ against localswim's `docs/openapi.yaml`, its `docs/windows-operations.md` and `a
   is withdrawn from the HTTP client row above. Any other base is `internal`, naming no URL, and the
   connection goes to 127.0.0.1 directly, never through a proxy.
 
+**Changed during v0.11-T05 (architect, 2026-11-26, on Terry's "uhhh no v0.11 please" and "Let's
+pull risk early"):** #0243, carded in T04 from #0240's review (about 40 places in `conformance\`
+that quote captured output in a failing reason without a full mask), becomes **E0.11-T05-S02**, a
+second story of T05 under its own card number, run beside S01's install and live check. Terry's
+first word, "go ahead and fold it into v0.12", was folded onto #0051 and undone within minutes on
+his second.
+- **It shares no file with S01**, and S01's live check uses the installed programs, which S02 does
+  not change. Its staffing plan is on #0243: peak 3, 2.5 hours, the whole conformance suite
+  through the gate.
+- **T05's budget goes from 2 hours to 4.5, and the release's from 15.5 to 18**, on Terry's word.
+- **#0052's plan block and [plans/v0.11.json](plans/v0.11.json) gain S02 together once S01's
+  live check is done**, not before: the check expects the answers the block gave at T05's start
+  (busiest `T02`, 11 agents, `l`, 18900 s; `--turn T05`, 3 agents, `s`, 10800 s), and S02 in T05
+  would change `T05`'s agents under it. Until then the block is a turn behind, and this note is
+  why.
+
 **Pinned as code before T02, by the architect:** one pull request adds `Record`'s `plan_source`,
 read and written by nothing, and gives every struct literal of it in the workspace `None`, as #150
 did for v0.10. So T02's four stories share no file.

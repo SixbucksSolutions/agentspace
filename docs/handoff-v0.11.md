@@ -31,16 +31,17 @@ this file adds only what v0.11 has changed or learned so far.
 - **`main` is green**, by that record, at `bc89cdb` and after.
 - **#0052 carries the first `agentspace-plan` block (D83)**, byte-equal to
   [plans/v0.11.json](plans/v0.11.json). T05's live check reads it.
-- **Next is T05 (#0242), on Terry's "Start T05"**: the install on Terry's laptop and D88's live
-  check, which reads #0052 and starts no instance. #0243 (Backlog) waits on Terry's placement.
+- **T05 is running** (started 7:23am on 2026-11-26, cap 4.5 hours): #0242, the install and D88's
+  live check, which reads #0052 and starts no instance; and #0243, E0.11-T05-S02, the shared mask
+  for conformance's reasons, added on Terry's "Let's pull risk early".
 
 ## Where things stand
 
 | What | State |
 |---|---|
-| v0.11 (#0052) | In Progress. #0231 to #0241 in Ready For Review; #0242 in Ready For Work |
+| v0.11 (#0052) | In Progress. #0231 to #0241 in Ready For Review; #0242 and #0243 In Progress |
 | `main` | 395a225, after #174 (a8d872d) and the P8 citation's date |
-| #0243 | Hardening card in Backlog, found in T04 (P8): about 40 places in `conformance\` quote captured output in a failing reason without a full mask; the list is in runs/e0.11-t04-s03.md. Its placement is Terry's; the architect recommends v0.12 (#0051) |
+| #0243 | E0.11-T05-S02 since 2026-11-26 (Terry: "Let's pull risk early"; D89's change during v0.11-T05), In Progress beside S01; the list it fixes is in runs/e0.11-t04-s03.md. T05's cap is 4.5 hours and the release's 18. #0052's plan block and plans/v0.11.json gain it once S01's live check is done |
 | Red on `main` by design | None, from #171's merge. T01's reds went green with #168 (state) and #171 (the CLI's help) |
 | The combined T02 check, on one build of #167 to #170 merged | Workspace: the six reds above only. Schemas 1,638 and 163. Keeper clean. Lease CLI: 48 files, the 13 reds above only. Operator: 39 files, 1,536 passed, 0 failed, 0 skipped, `test-unmet-proxy-not-ready.ps1` 75 of 75. The deadline case was not run; T04's whole suite runs it |
 | A gap, not a red | `conformance/lease-cli/test-v1-compatible.ps1` passes 94 of 94, comparing the top-level v2 schemas with v0's, so it no longer checks v1. #0239 points it at `schemas/v1/` |
@@ -115,7 +116,7 @@ v0.11-T01, pin Pn". Those that changed a decision are change notes:
 |---|---|---|
 | The heavy-run gate is a committed script, `scripts\heavy-gate.ps1` (#166), proven on four runs of three slots (the fourth waited 7 seconds for a slot) and on a failing run's exit code | Every dev lead, and the architect's merge checks | `scripts\heavy-gate.ps1`; architect.md |
 | T05 starts on Terry's "Start T05" | Terry | #0242 |
-| #0243's placement | Terry | Backlog now; the architect recommends v0.12 (#0051) |
+| #0052's plan block and plans/v0.11.json gain E0.11-T05-S02, together, once S01's live check is done | The architect | D89's change during v0.11-T05 |
 | Two limits #169 and #170 accepted, each in its PR: `ureq` copies the bearer into a header value that is not zeroed on drop; a sharing violation on the lease file's second open, after a failure of another kind, is not retried | T04's whole suite and the release's handoff, to carry or card | #169, #170 |
 | The empty `.claude\worktrees\rvmain` from 2026-11-23 | A person, if wanted | Nothing depends on it |
 | Every open row of handoff-v0.10.md's "What is open" not met by v0.11 so far | As that file says | handoff-v0.10.md |

@@ -102,6 +102,9 @@ when Terry says so (D14).
   connects an alias that is not ready) and #0230 (a conformance helper's unmasked log lines) into
   v0.11 (#0052); #0228 (one walk ends a chain of clients) into v0.12 (#0051). #0225 and #0227, met
   in v0.10-T03, are Completed.
+- **#0243 (conformance quotes captured output without a full mask, carded in v0.11-T04) is a story
+  of v0.11-T05**, E0.11-T05-S02 (Terry, 2026-11-26: "Let's pull risk early"; D89's change during
+  v0.11-T05).
 - #0209 (the lease CLI's isolation guard saw its moved home created once under load, found at
   v0.09-T02's close) is carried into v0.09-T03 as #0210 (D71's change).
 - #0110 (conformance hardening found in v0.05-T04: checks at the call, and the cases the suite
