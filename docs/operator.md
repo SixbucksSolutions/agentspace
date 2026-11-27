@@ -4705,6 +4705,7 @@ instance's state, so `pending` here is not backend text. **Its wording SHOULD be
 | `pending` | `agentspace: The lease for <alias> is pending, not yet ready; no connection was opened. Connect once 'agentspace lease get' answers ready.` |
 | None read: the lease state file cannot be read, or is not valid, and `<alias>` is of lease alias form (pin P21) | `agentspace: The lease records could not be read; no connection was opened for <alias>. Run 'agentspace lease list' to see the error.` |
 | `ready`, on a platform other than `linux/arm64`, and its project has no record on that platform, or one that is not `ready` (from v0.12; pin P13) | `agentspace: The lease for <alias> has no ready host on its platform; no connection was opened.` (architect, 2026-11-26, for v0.12-T01, pin P56) |
+| `ready`, and its host's record names a platform agentspace does not support, which only a person's edit of `hosts.json` can make (from v0.12; architect, 2026-11-26, for v0.12-T03, pin P10). Its caller sees the could-not-reach line, and this line goes to the diagnostic alone | `agentspace: The host registry's record for <project> names a platform agentspace does not support.`, `<project>` the bare project, since such a platform builds no host name (architect, 2026-11-26, for v0.12-T03, from #193) |
 
 **What it does not change:**
 - **An alias that is no record's alias, and a missing lease state file, reach the box**, as
