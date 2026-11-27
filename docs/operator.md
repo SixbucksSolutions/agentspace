@@ -6028,7 +6028,10 @@ messages, exit codes and failures, through the host's alias,
 - **What step 3 copies is `box/windows`**, carried in the operator as `box/system` is (D37, D96),
   written into the command's own folder as `%USERPROFILE%\.agentspace\operator\<hex>\windows`
   ([The operator's folder, one per command](#the-operators-folder-one-per-command)). `sync -All`
-  writes both `system\` and `windows\` there when its hosts need both.
+  writes both `system\` and `windows\` there when its hosts need both. **`box/windows/tests\` is
+  never carried, written or copied**: the operator holds `box/windows`' files but its `tests\`
+  folder, which runs only on the laptop ([The host agent's files](#the-host-agents-files)), so the
+  staging folder never holds a `tests` entry (architect, 2026-11-27, for v0.12-T04, pin P15).
 - **Step 7 builds the CLI with `GOOS=windows` and `GOARCH=amd64`** into
   `localswim-windows-amd64.exe`, and prints `Building the localswim CLI for windows/amd64...`
   (D96), once per `sync -All` for every Windows host, as [Every host at once](#every-host-at-once--all)
