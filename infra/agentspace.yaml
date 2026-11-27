@@ -54,9 +54,18 @@ Parameters:
       comment names the laptop. It is public. When set, the first boot
       installs it and its sshd drop-in, so the host trusts the CA before sshd first starts. Empty
       leaves the user data as it was.
+  HostOs:
+    Type: String
+    Default: linux
+    AllowedValues: [linux, windows]
+    Description: >-
+      The host's operating system, which picks its first-boot user data: linux keeps the two Linux
+      branches, and windows the Windows one. The default, linux, is the first host's, so an update
+      of that stack changes nothing. Set only when a windows/amd64 stack is created.
 
 Conditions:
   HasCaPublicKey: !Not [!Equals [!Ref CaPublicKey, ""]]
+  IsWindows: !Equals [!Ref HostOs, windows]
 
 Resources:
   Role:
@@ -108,46 +117,240 @@ Resources:
         - { Key: Name, Value: !Ref HostName }
         - { Key: project, Value: !Ref HostName }
       # Runs at first boot only. Everything else is installed by agentspace-operator sync.
+      # HostOs picks the branch: windows the Windows first boot (docs/operator.md, The template's
+      # Windows first boot), and linux, the default, the two Linux branches, whose text is as it was
+      # before the Windows branch was added.
       # With CaPublicKey set, write_files also puts the CA's key and its sshd drop-in in place before
       # sshd first starts. The drop-in is box/system/50-agentspace-ca.conf, byte for byte, and sync
       # later replaces it with the same bytes; the key is written without its comment (D44), and
       # sync replaces it with the CA's public key file as it is.
       UserData:
         Fn::If:
-          - HasCaPublicKey
+          - IsWindows
           - Fn::Base64: !Sub |
-              #cloud-config
-              package_update: true
-              package_upgrade: true
-              packages: [git, tmux, jq, ripgrep, unzip]
-              ssh_authorized_keys:
-                - ${SshPublicKey}
-              write_files:
-                - path: /etc/ssh/agentspace_ca.pub
-                  owner: root:root
-                  permissions: "0644"
-                  content: |
-                    ${CaPublicKey}
-                - path: /etc/ssh/sshd_config.d/50-agentspace-ca.conf
-                  owner: root:root
-                  permissions: "0644"
-                  content: |
-                    # Installed by scripts\agentspace.ps1 sync to /etc/ssh/sshd_config.d/ (decision D7).
-                    # sshd keeps the first value it reads for each keyword and reads this file before
-                    # 60-cloudimg-settings.conf; install.sh checks with sshd -T that both values below took effect.
-                    #
-                    # Trust user certificates signed by the agentspace SSH CA. sync replaces
-                    # /etc/ssh/agentspace_ca.pub with the laptop CA's public key, so a new CA drops the old one.
-                    TrustedUserCAKeys /etc/ssh/agentspace_ca.pub
-                    # No login as root by any means, a CA certificate naming root among them.
-                    PermitRootLogin no
-          - Fn::Base64: !Sub |
-              #cloud-config
-              package_update: true
-              package_upgrade: true
-              packages: [git, tmux, jq, ripgrep, unzip]
-              ssh_authorized_keys:
-                - ${SshPublicKey}
+              <powershell>
+              # agentspace's Windows first boot (docs/operator.md, The template's Windows first boot;
+              # D95, D96). EC2Launch runs it once, at the first boot, under Windows PowerShell 5.1 as
+              # SYSTEM. Each step's line goes to C:\ProgramData\agentspace\first-boot.log, with the
+              # time in UTC. It installs nothing but OpenSSH Server, when that is absent.
+              $ErrorActionPreference = 'Stop'
+              $agentspaceDir = 'C:\ProgramData\agentspace'
+              $firstBootLog = Join-Path $agentspaceDir 'first-boot.log'
+              $sshDir = 'C:\ProgramData\ssh'
+              $sshdExe = 'C:\Windows\System32\OpenSSH\sshd.exe'
+              $icaclsExe = 'C:\Windows\System32\icacls.exe'
+              if (-not (Test-Path -LiteralPath $agentspaceDir)) {
+                  New-Item -ItemType Directory -Path $agentspaceDir | Out-Null
+              }
+              function Write-AgentspaceFirstBootLine([string]$Line) {
+                  $stamp = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+                  Add-Content -LiteralPath $firstBootLog -Value "$stamp $Line"
+              }
+              function Get-AgentspaceRandomChar([string]$Set, $Generator) {
+                  $one = New-Object byte[] 1
+                  $limit = 256 - (256 % $Set.Length)
+                  do { $Generator.GetBytes($one) } while ($one[0] -ge $limit)
+                  return $Set[$one[0] % $Set.Length]
+              }
+              try {
+                  Write-AgentspaceFirstBootLine 'first boot begun'
+
+                  # Step 1: Windows Update installs nothing and schedules no restart by itself; the
+                  # patch run is the one path that restarts the host.
+                  $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+                  if (-not (Test-Path -LiteralPath $policy)) {
+                      New-Item -Path $policy -Force | Out-Null
+                  }
+                  New-ItemProperty -LiteralPath $policy -Name NoAutoUpdate -PropertyType DWord -Value 1 -Force | Out-Null
+                  New-ItemProperty -LiteralPath $policy -Name NoAutoRebootWithLoggedOnUsers -PropertyType DWord -Value 1 -Force | Out-Null
+                  Write-AgentspaceFirstBootLine 'step 1 done: Windows Update installs and restarts nothing by itself'
+
+                  # Step 2: agent, a member of Administrators, with a random password of 40
+                  # characters from a cryptographic source, held in memory alone and never written or
+                  # printed. An agent that exists is left as it is, and made a member.
+                  $existing = Get-LocalUser -Name agent -ErrorAction SilentlyContinue
+                  if (-not $existing) {
+                      $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+                      $upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+                      $lower = 'abcdefghijkmnopqrstuvwxyz'
+                      $digits = '23456789'
+                      $symbols = '!#*+-.:=?@^_~'
+                      $chars = New-Object System.Collections.Generic.List[char]
+                      foreach ($set in @($upper, $lower, $digits, $symbols)) {
+                          $chars.Add((Get-AgentspaceRandomChar $set $generator))
+                      }
+                      $all = $upper + $lower + $digits + $symbols
+                      while ($chars.Count -lt 40) {
+                          $chars.Add((Get-AgentspaceRandomChar $all $generator))
+                      }
+                      $secret = New-Object System.Security.SecureString
+                      foreach ($c in $chars) { $secret.AppendChar($c) }
+                      $chars.Clear()
+                      $chars = $null
+                      New-LocalUser -Name agent -Password $secret -PasswordNeverExpires -AccountNeverExpires -Description 'agentspace: the host''s one login user' | Out-Null
+                      $secret.Dispose()
+                      $generator.Dispose()
+                  }
+                  try {
+                      Add-LocalGroupMember -SID 'S-1-5-32-544' -Member agent
+                  } catch [Microsoft.PowerShell.Commands.MemberExistsException] {
+                      # Already a member: nothing to change.
+                  }
+                  Write-AgentspaceFirstBootLine 'step 2 done: agent is a member of Administrators'
+
+                  # Step 3: OpenSSH Server ready. When the capability is absent it is added first;
+                  # then sshd starts automatically, is started once, which makes its host keys and
+                  # its default sshd_config, and is stopped.
+                  if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
+                      $capability = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Server*' } | Select-Object -First 1
+                      Add-WindowsCapability -Online -Name $capability.Name | Out-Null
+                      Write-AgentspaceFirstBootLine 'step 3: OpenSSH Server added'
+                  }
+                  Set-Service -Name sshd -StartupType Automatic
+                  Start-Service -Name sshd
+                  Stop-Service -Name sshd
+                  Write-AgentspaceFirstBootLine 'step 3 done: sshd starts automatically, and has made its keys and sshd_config'
+
+                  # Step 4: the CA's public key, and one LF, with the access rules the folder gives
+                  # its files. An empty one stops the first boot here, starting no sshd.
+                  $caKey = @'
+              ${CaPublicKey}
+              '@
+                  $caKey = $caKey.Trim()
+                  if ($caKey -eq '') {
+                      Write-AgentspaceFirstBootLine 'step 4 failed: CaPublicKey is empty, so sshd was not started'
+                      exit 1
+                  }
+                  [IO.File]::WriteAllText((Join-Path $sshDir 'agentspace_ca.pub'), $caKey + "`n", (New-Object System.Text.UTF8Encoding($false)))
+                  Write-AgentspaceFirstBootLine 'step 4 done: sshd trusts the agentspace CA'
+
+                  # Step 5: the user's own key, and one LF, for an administrator's logins, with
+                  # inheritance off and full control for SYSTEM and Administrators alone.
+                  $userKey = @'
+              ${SshPublicKey}
+              '@
+                  $userKey = $userKey.Trim()
+                  $authorized = Join-Path $sshDir 'administrators_authorized_keys'
+                  [IO.File]::WriteAllText($authorized, $userKey + "`n", (New-Object System.Text.UTF8Encoding($false)))
+                  # A program's stderr MUST NOT end the script under 'Stop', so each program runs
+                  # under 'Continue' and is judged by its exit code.
+                  $ErrorActionPreference = 'Continue'
+                  & $icaclsExe $authorized /inheritance:r /grant '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+                  $icaclsExit = $LASTEXITCODE
+                  $ErrorActionPreference = 'Stop'
+                  if ($icaclsExit -ne 0) { throw "icacls exited $icaclsExit" }
+                  Write-AgentspaceFirstBootLine 'step 5 done: administrators_authorized_keys holds the user''s key'
+
+                  # Step 6: the agentspace lines at the top of sshd_config, byte for byte
+                  # box/windows/sshd_config.agentspace's, each ending in CR LF, by the install's
+                  # edit, then sshd -t on the new file before it replaces the old one.
+                  $agentspaceLines = @'
+              # agentspace begin: installed by agentspace-operator sync from box/windows/sshd_config.agentspace; every sync replaces these lines (D7, D95, D96)
+              TrustedUserCAKeys __PROGRAMDATA__/ssh/agentspace_ca.pub
+              PubkeyAuthentication yes
+              PasswordAuthentication no
+              KbdInteractiveAuthentication no
+              AllowUsers agent
+              LoginGraceTime 30
+              ClientAliveInterval 15
+              ClientAliveCountMax 5
+              # agentspace end
+              '@
+                  $wanted = @($agentspaceLines -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne '' })
+                  $ErrorActionPreference = 'Continue'
+                  $probe = (& $sshdExe -T 2>$null) -join "`n"
+                  $ErrorActionPreference = 'Stop'
+                  if ($probe -match '(?m)^persourcepenaltyexemptlist ') {
+                      $wanted = @($wanted[0..($wanted.Count - 2)]) + 'PerSourcePenaltyExemptList 127.0.0.1,::1' + $wanted[-1]
+                  }
+                  $latin = [Text.Encoding]::GetEncoding(28591)
+                  $config = Join-Path $sshDir 'sshd_config'
+                  $old = $latin.GetString([IO.File]::ReadAllBytes($config))
+                  $lines = @([regex]::Split($old, '(?<=\n)') | Where-Object { $_ -ne '' })
+                  $kept = New-Object System.Collections.Generic.List[string]
+                  for ($i = 0; $i -lt $lines.Count; $i++) {
+                      if ($lines[$i].TrimEnd("`r", "`n").StartsWith('# agentspace begin:')) {
+                          $end = -1
+                          for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+                              if ($lines[$j].TrimEnd("`r", "`n") -ceq '# agentspace end') { $end = $j; break }
+                          }
+                          if ($end -lt 0) {
+                              Write-AgentspaceFirstBootLine "step 6 failed: line $($i + 1) of sshd_config starts agentspace's lines with no end line after it, so sshd was not started"
+                              exit 1
+                          }
+                          $i = $end
+                          continue
+                      }
+                      $kept.Add($lines[$i])
+                  }
+                  $new = (($wanted | ForEach-Object { $_ + "`r`n" }) -join '') + ($kept -join '')
+                  $temporary = Join-Path $sshDir 'sshd_config.agentspace-new'
+                  [IO.File]::WriteAllBytes($temporary, $latin.GetBytes($new))
+                  $ErrorActionPreference = 'Continue'
+                  & $sshdExe -t -f $temporary
+                  $testExit = $LASTEXITCODE
+                  $ErrorActionPreference = 'Stop'
+                  Remove-Item -LiteralPath $temporary -Force
+                  if ($testExit -ne 0) {
+                      Write-AgentspaceFirstBootLine 'step 6 failed: sshd -t rejected the new sshd_config, so sshd was not started'
+                      exit 1
+                  }
+                  # Written over the old file, which keeps sshd_config's own access rules.
+                  [IO.File]::WriteAllBytes($config, $latin.GetBytes($new))
+                  Write-AgentspaceFirstBootLine 'step 6 done: sshd_config holds the agentspace lines'
+
+                  # Step 7: sshd's default shell is Windows PowerShell 5.1, since Git is not
+                  # installed yet; the bootstrap sets Git Bash once it has installed Git for Windows.
+                  $openSsh = 'HKLM:\SOFTWARE\OpenSSH'
+                  if (-not (Test-Path -LiteralPath $openSsh)) {
+                      New-Item -Path $openSsh -Force | Out-Null
+                  }
+                  New-ItemProperty -LiteralPath $openSsh -Name DefaultShell -PropertyType String -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Force | Out-Null
+                  Write-AgentspaceFirstBootLine 'step 7 done: the login shell is Windows PowerShell 5.1'
+
+                  # Step 8: sshd started.
+                  Start-Service -Name sshd
+                  Write-AgentspaceFirstBootLine 'step 8 done: sshd started; first boot done'
+              } catch {
+                  Write-AgentspaceFirstBootLine "first boot failed: $($_.Exception.Message)"
+                  exit 1
+              }
+              </powershell>
+          - Fn::If:
+              - HasCaPublicKey
+              - Fn::Base64: !Sub |
+                  #cloud-config
+                  package_update: true
+                  package_upgrade: true
+                  packages: [git, tmux, jq, ripgrep, unzip]
+                  ssh_authorized_keys:
+                    - ${SshPublicKey}
+                  write_files:
+                    - path: /etc/ssh/agentspace_ca.pub
+                      owner: root:root
+                      permissions: "0644"
+                      content: |
+                        ${CaPublicKey}
+                    - path: /etc/ssh/sshd_config.d/50-agentspace-ca.conf
+                      owner: root:root
+                      permissions: "0644"
+                      content: |
+                        # Installed by scripts\agentspace.ps1 sync to /etc/ssh/sshd_config.d/ (decision D7).
+                        # sshd keeps the first value it reads for each keyword and reads this file before
+                        # 60-cloudimg-settings.conf; install.sh checks with sshd -T that both values below took effect.
+                        #
+                        # Trust user certificates signed by the agentspace SSH CA. sync replaces
+                        # /etc/ssh/agentspace_ca.pub with the laptop CA's public key, so a new CA drops the old one.
+                        TrustedUserCAKeys /etc/ssh/agentspace_ca.pub
+                        # No login as root by any means, a CA certificate naming root among them.
+                        PermitRootLogin no
+              - Fn::Base64: !Sub |
+                  #cloud-config
+                  package_update: true
+                  package_upgrade: true
+                  packages: [git, tmux, jq, ripgrep, unzip]
+                  ssh_authorized_keys:
+                    - ${SshPublicKey}
 
   # Backstop for a host whose on-box idle check has died: stop after 24 hours averaging under 1% CPU
   # (D58). Three hours stopped hosts under quiet held leases (#0043).
