@@ -209,14 +209,21 @@ pub(crate) struct FakeReach {
     pub(crate) seam: Option<StandinSeam>,
 }
 
-/// A stand-in for one platform's seam: its online grow and its remote command form are text a test
-/// can find, and every other row fails.
+/// A stand-in for one platform's seam: its online grow, its remote command form and, when
+/// `patch_check` is set, its patch check's question are text a test can find, and every other row
+/// fails. It stands in for a Windows row whose text `agentspace-windows` does not give yet.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StandinSeam {
     pub(crate) platform: &'static str,
     /// Whether `grow_script` fails, with [`STANDIN_GROW_FAILS`].
     pub(crate) grow_fails: bool,
+    /// Whether `patch_check_command` gives [`STANDIN_PATCH_CHECK`]; otherwise it fails, with
+    /// [`STANDIN_UNUSED`].
+    pub(crate) patch_check: bool,
 }
+
+/// The stand-in's patch check's question, when it gives one.
+pub(crate) const STANDIN_PATCH_CHECK: &str = "patch-check-of-the-stand-in";
 
 /// The failure of the stand-in's rows that a test does not use.
 pub(crate) const STANDIN_UNUSED: &str = "agentspace: The stand-in seam has no such row.";
@@ -259,7 +266,11 @@ impl HostPlatform for StandinSeam {
         Err(unused())
     }
     fn patch_check_command(&self) -> Result<String, Failure> {
-        Err(unused())
+        if self.patch_check {
+            Ok(STANDIN_PATCH_CHECK.to_string())
+        } else {
+            Err(unused())
+        }
     }
     fn patch_messages(&self) -> PatchMessages {
         PatchMessages {

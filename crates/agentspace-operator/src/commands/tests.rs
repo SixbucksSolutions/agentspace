@@ -609,6 +609,15 @@ fn status_fails_for_a_volume_with_no_size() {
 
 // ---- grow ----
 
+/// Both Linux platforms' online grow in its remote command form, as ssh is given it: the literal of
+/// the operator's `GROW_REMOTE_COMMAND`, unchanged, which E0.12-T03-S02 deleted when `grow` took
+/// every platform's remote step from its seam. Each test below that compares with it runs `grow`
+/// over the real seam (`agentspace_platforms::for_platform`), so it shows the seam's row is today's
+/// text, byte for byte.
+const LINUX_GROW_REMOTE_COMMAND: &str = "sudo -n sh -c 'dev=$(findmnt -n -o SOURCE /); \
+disk=/dev/$(lsblk -n -o PKNAME $dev); part=$(cat /sys/class/block/${dev##*/}/partition); \
+growpart $disk $part; resize2fs $dev && df -h /'";
+
 #[test]
 fn grow_of_a_running_box_changes_the_volume_waits_and_grows_the_filesystem_over_ssh() {
     let home = home_with_cache("grow-running");
@@ -643,7 +652,7 @@ fn grow_of_a_running_box_changes_the_volume_waits_and_grows_the_filesystem_over_
         calls[0].0,
         vec!["-o", "ClearAllForwardings=yes", "agentspace"]
     );
-    assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+    assert_eq!(calls[0].1.as_deref(), Some(LINUX_GROW_REMOTE_COMMAND));
 }
 
 #[test]
@@ -779,23 +788,6 @@ fn grow_does_not_read_the_instance_type() {
         vec![ok(answer), ok(volume(8)), ok(json!({}))],
     );
     rig.run(&request(Command::Grow)).unwrap();
-}
-
-#[test]
-fn the_remote_command_obeys_fa15s_rule_and_installs_nothing() {
-    let command = GROW_REMOTE_COMMAND;
-    assert!(!command.contains('%'));
-    assert!(!command.contains('"'));
-    assert!(!command.chars().any(char::is_control));
-    assert!(!command.ends_with('\\'));
-    assert!(!command.contains("apt") && !command.contains("install"));
-    // Root, never prompting; the three tools the spec names.
-    assert!(command.starts_with("sudo -n "));
-    for tool in ["growpart", "resize2fs", "df -h"] {
-        assert!(command.contains(tool), "{tool}");
-    }
-    // The size is printed only if the filesystem's grow succeeded.
-    assert!(command.contains("resize2fs $dev && df -h /"));
 }
 
 // ---- ca, sync, deploy ----
@@ -1078,7 +1070,7 @@ fn grow_of_another_host_signs_before_its_ssh_and_names_the_hosts_alias() {
         calls[0].0,
         vec!["-o", "ClearAllForwardings=yes", HOST_ALIAS]
     );
-    assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+    assert_eq!(calls[0].1.as_deref(), Some(LINUX_GROW_REMOTE_COMMAND));
 }
 
 #[test]
@@ -2248,6 +2240,7 @@ fn grow_of_a_windows_host_runs_its_seams_online_grow_in_its_remote_form_over_its
     rig.reach = FakeReach::default().with_seam(StandinSeam {
         platform: "windows/amd64",
         grow_fails: false,
+        patch_check: false,
     });
     rig.run(&on(Command::Grow, "agentspace", "windows/amd64"))
         .unwrap();
@@ -2286,6 +2279,7 @@ fn a_windows_seams_failed_online_grow_fails_grow_after_the_volume_change() {
     rig.reach = FakeReach::default().with_seam(StandinSeam {
         platform: "windows/amd64",
         grow_fails: true,
+        patch_check: false,
     });
     let failure = rig
         .run(&on(Command::Grow, "agentspace", "windows/amd64"))
@@ -2296,18 +2290,15 @@ fn a_windows_seams_failed_online_grow_fails_grow_after_the_volume_change() {
 }
 
 #[test]
-fn grow_of_a_linux_amd64_host_keeps_todays_remote_step_whatever_its_seam_says() {
+fn grow_of_a_linux_amd64_host_takes_todays_remote_step_from_its_seam() {
+    // The real seam's row: today's text, byte for byte (agentspace-platforms).
     let home = home_with_two_platforms("grow-amd64");
-    let mut rig = Rig::new(
+    let rig = Rig::new(
         &home,
         false,
         false,
         vec![ok(instance("running")), ok(volume(8)), ok(json!({}))],
     );
-    rig.reach = FakeReach::default().with_seam(StandinSeam {
-        platform: "linux/amd64",
-        grow_fails: true,
-    });
     rig.run(&on(Command::Grow, "agentspace", "linux/amd64"))
         .unwrap();
     let calls = rig.remote.calls.borrow();
@@ -2319,19 +2310,110 @@ fn grow_of_a_linux_amd64_host_keeps_todays_remote_step_whatever_its_seam_says() 
             "agentspace-host.agentspace.linux-amd64"
         ]
     );
-    assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+    assert_eq!(calls[0].1.as_deref(), Some(LINUX_GROW_REMOTE_COMMAND));
 }
 
 #[test]
-fn up_of_a_windows_host_fails_as_not_built_before_any_aws_call() {
+fn grow_of_a_linux_host_runs_whatever_its_seam_gives_and_keeps_no_copy_of_its_own() {
+    // A stand-in seam on each Linux platform: the remote step is the stand-in's, so no Linux text
+    // of the operator's own stands in for the seam's row (D101).
+    for (platform, alias) in [
+        ("linux/amd64", "agentspace-host.agentspace.linux-amd64"),
+        ("linux/arm64", "agentspace-host.agentspace"),
+    ] {
+        let home = home_with_two_platforms("grow-linux-standin");
+        let mut rig = Rig::new(
+            &home,
+            false,
+            false,
+            vec![ok(instance("running")), ok(volume(8)), ok(json!({}))],
+        );
+        rig.reach = FakeReach::default().with_seam(StandinSeam {
+            platform,
+            grow_fails: false,
+            patch_check: false,
+        });
+        rig.run(&on(Command::Grow, "agentspace", platform)).unwrap();
+        let calls = rig.remote.calls.borrow();
+        assert_eq!(
+            calls[0].0,
+            vec!["-o", "ClearAllForwardings=yes", alias],
+            "{platform}"
+        );
+        assert_eq!(
+            calls[0].1.as_deref(),
+            Some(format!("remote-form[grow-script-of-{platform}]").as_str()),
+            "{platform}"
+        );
+    }
+}
+
+#[test]
+fn up_of_a_windows_host_starts_and_waits_through_its_seam_then_signs_and_pushes() {
+    // The stand-in's patch check stands in for the Windows row that agentspace-windows does not
+    // give yet (E0.12-T03-S06). A host running a long time is not asked it, so the calls are
+    // today's two reads, of the Windows host's own instance.
     let home = home_with_a_windows_host("up-windows");
-    let rig = Rig::new(&home, false, false, vec![]);
-    let failure = rig
-        .run(&on(Command::Up, "agentspace", "windows/amd64"))
-        .unwrap_err();
-    assert_eq!(failure.message, agentspace_platforms::NOT_BUILT);
-    assert!(rig.aws.calls().is_empty());
-    assert!(rig.reach.calls().is_empty(), "Nothing signed or pushed");
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(instance("running"))],
+    );
+    rig.reach = FakeReach::default().with_seam(StandinSeam {
+        platform: "windows/amd64",
+        grow_fails: false,
+        patch_check: true,
+    });
+    rig.run(&on(Command::Up, "agentspace", "windows/amd64"))
+        .unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![
+            format!("ec2 describe-instances --instance-ids {WIN_ID}"),
+            format!("ec2 describe-instances --instance-ids {WIN_ID}"),
+        ]
+    );
+    assert_eq!(rig.say.lines(), vec![format!("Ready: {WIN_ID}")]);
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "access key:agentspace.windows-amd64".to_string(),
+            format!(
+                "push {WIN_ID} agentspace-host.agentspace.windows-amd64 agentspace.windows-amd64"
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_seams_failed_patch_check_ends_up_before_any_aws_call_and_nothing_is_signed_or_pushed() {
+    for platform in ["windows/amd64", "linux/amd64"] {
+        let home = if platform == "windows/amd64" {
+            home_with_a_windows_host("up-seam-fails")
+        } else {
+            home_with_two_platforms("up-seam-fails")
+        };
+        let mut rig = Rig::new(&home, false, false, vec![]);
+        rig.reach = FakeReach::default().with_seam(StandinSeam {
+            platform,
+            grow_fails: false,
+            patch_check: false,
+        });
+        let failure = rig
+            .run(&on(Command::Up, "agentspace", platform))
+            .unwrap_err();
+        assert_eq!(
+            failure.message,
+            crate::testing::STANDIN_UNUSED,
+            "{platform}"
+        );
+        assert!(rig.aws.calls().is_empty(), "{platform}");
+        assert!(
+            rig.reach.calls().is_empty(),
+            "{platform}: nothing signed or pushed"
+        );
+    }
 }
 
 #[test]

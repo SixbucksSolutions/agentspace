@@ -109,6 +109,9 @@ pub fn sign_in_keyed(
     let key_path = host_key_path_keyed(&ctx.home, key);
     if !key_path.is_file() {
         let held = agentspace_hosts::lock(&ctx.home).map_err(|e| registry_failure(&ctx.home, e))?;
+        // Pin P12 of v0.12-T03: once E0.12-T03-S03's second part gives agentspace-credential its
+        // pair by host name, this one call becomes
+        // `ensure_operator_key_for(&ctx.home, &key.host_name())`.
         let made = ensure_operator_key(&ctx.home, project);
         drop(held);
         made.map_err(|f| {
@@ -121,6 +124,11 @@ pub fn sign_in_keyed(
     }
 
     // Step 3: a fresh certificate, replacing the last one.
+    // Pin P12 of v0.12-T03: once E0.12-T03-S03's second part gives agentspace-credential its pair
+    // by host name, this one call becomes
+    // `sign_operator_certificate_for(&ctx.home, &key.host_name(), principal, unix_now())`, with
+    // `principal` the host's seam's login user (operator.md, The platform seam, the login user
+    // row), `seam.login_user()`, the seam from `agentspace_platforms::for_platform(&key.platform)`.
     sign_operator_certificate(&ctx.home, project, unix_now()).map_err(|f| {
         could_not_reach(format!(
             "agentspace: Could not sign the operator's certificate for '{project}': {}",

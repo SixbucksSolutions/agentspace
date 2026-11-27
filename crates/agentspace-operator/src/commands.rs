@@ -265,16 +265,6 @@ pub(crate) fn linux_arm64_target(key: &HostKey) -> Option<Target<'_>> {
     }
 }
 
-/// Whether the host's own steps are today's Linux steps: both Linux platforms share every step the
-/// operator runs itself (operator.md, The platform seam: "the two Linux columns share every row but
-/// the image, a new stack's instance type and `GOARCH`").
-// Phase A of E0.12-T03-S02: until agentspace-platforms' Linux rows are built (E0.12-T03-S03), a
-// Linux host keeps today's code byte for byte, and only another platform takes its rows from the
-// seam. Phase B takes every platform's rows from the seam and removes this.
-fn on_linux(key: &HostKey) -> bool {
-    key.platform.starts_with("linux/")
-}
-
 /// A host as a command sees it: its record, and what a command takes from it (operator.md, From
 /// the command line, "What a command takes from its host").
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -604,17 +594,15 @@ pub fn up(parts: &Parts, host: &HostRef, alias: Option<&str>) -> Result<(), Fail
 }
 
 /// `up`'s start and wait (operator.md, Starting the box and waiting for it), for the host's stack
-/// and its record's instance ID.
-// Phase A of E0.12-T03-S02: a Linux host keeps today's `agentspace_box::start_and_wait`, whose
-// patch check is both Linux platforms' (operator.md, The platform seam). A host of another
-// platform fails as not built before any AWS call, since today's check would ask it Linux's
-// question. Phase B calls `agentspace_box::start_and_wait_on(aws, say, clock, cache, stack,
-// platform)` with the host's seam for every platform.
+/// and its record's instance ID, on every platform through the host's seam: its patch check's
+/// question, its Session Manager document and its patch messages are the seam's rows (operator.md,
+/// The platform seam), and both Linux platforms' rows are today's, byte for byte. A row that fails
+/// ends the step with its own message before any AWS call (agentspace-box, `start_and_wait_on`).
+/// A record whose platform has no seam fails as not built, before any AWS call: no command line
+/// names one, since `-Platform` takes only a supported platform.
 fn start_and_wait(parts: &Parts, host: &HostRef, cache: &HostCache) -> Result<String, Failure> {
-    if !on_linux(&host.key) {
-        return Err(not_built());
-    }
-    agentspace_box::start_and_wait(parts.aws, parts.say, parts.clock, cache, &host.stack)
+    let seam = parts.reach.seam(&host.key.platform).ok_or_else(not_built)?;
+    agentspace_box::start_and_wait_on(parts.aws, parts.say, parts.clock, cache, &host.stack, seam)
 }
 
 /// The host's instance ID: from its record, or from its stack's output when the record has none,
@@ -884,29 +872,12 @@ fn report_status(parts: &Parts, host: &HostRef, leases: Option<&LeaseView>) -> R
 /// How long `grow` waits before the online grow's ssh (operator.md, grow, step 3).
 const GROW_WAIT: Duration = Duration::from_secs(10);
 
-/// What the box runs to grow its root filesystem online, as root and never prompting: the
-/// partition to the end of the disk (a failure, such as a partition with nothing to grow, does not
-/// stop the next step), then the filesystem to fill the partition, and, only if that succeeded,
-/// the root filesystem's size and use in units a person reads. It exits non-zero when the
-/// filesystem's grow or the table failed, and 0 otherwise.
-///
-/// The root filesystem's device is found, so the command does not name today's NVMe device. It
-/// installs nothing, holds no `%` or double quote and no control character, and does not end in a
-/// backslash (gap FA-15), so it reaches ssh whole.
-const GROW_REMOTE_COMMAND: &str = "sudo -n sh -c 'dev=$(findmnt -n -o SOURCE /); \
-disk=/dev/$(lsblk -n -o PKNAME $dev); part=$(cat /sys/class/block/${dev##*/}/partition); \
-growpart $disk $part; resize2fs $dev && df -h /'";
-
-/// `grow`'s remote step for the host: the platform's online grow (operator.md, The platform seam,
-/// the online grow row), in its remote command form.
-// Phase A of E0.12-T03-S02: both Linux platforms keep today's `GROW_REMOTE_COMMAND`, byte for byte;
-// any other platform takes its rows from its seam, `grow_script` wrapped by `remote_command`, and
-// a row's failure fails `grow` with the row's message, after the volume's change, which stands.
-// Phase B takes every platform's from its seam and deletes `GROW_REMOTE_COMMAND`.
+/// `grow`'s remote step for the host, on every platform: the seam's online grow, in the seam's
+/// remote command form (operator.md, The platform seam, the online grow and remote command form
+/// rows; grow, step 3). Both Linux platforms' text is today's, byte for byte, from
+/// agentspace-platforms. A row's failure fails `grow` with the row's message, after the volume's
+/// change, which stands; a record whose platform has no seam fails as not built.
 fn grow_remote_command(parts: &Parts, host: &HostRef) -> Result<String, Failure> {
-    if on_linux(&host.key) {
-        return Ok(GROW_REMOTE_COMMAND.to_string());
-    }
     let seam = parts.reach.seam(&host.key.platform).ok_or_else(not_built)?;
     seam.remote_command(&seam.grow_script()?)
 }

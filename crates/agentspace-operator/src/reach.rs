@@ -14,7 +14,6 @@ use agentspace_sync::Target;
 
 use crate::Reach;
 use crate::access::Access;
-use crate::commands::{linux_arm64_target as arm64_target, not_built};
 
 /// Every variable the program reads, by name. The context's, `ca`'s, the seam's four, `PATH`
 /// (the AWS CLI's fallback), `AGENTSPACE_DIAGNOSTIC`, `AGENTSPACE_SSH_DIR` (the ssh folder, where
@@ -155,12 +154,11 @@ impl Reach for SystemReach {
         crate::access::sign_in_keyed(ctx, env, &self.access, key)
     }
 
-    // Phase A of E0.12-T03-S02: each keyed step below keeps today's call for a `linux/arm64` host,
-    // byte for byte, and fails as not built for any other platform, since today's step names a
-    // project alone and would reach that project's `linux/arm64` host. Phase B replaces each body
-    // with one call of agentspace-sync's keyed entry point, named on each.
+    // Each keyed step is one call of agentspace-sync's entry point by host key, which carries the
+    // whole key, never a bare project, to every step that names the host's folder, alias, stack or
+    // record (#183's review). Whatever a platform's step answers, its refusal included, is
+    // agentspace-sync's own.
 
-    // Phase B: `agentspace_sync::sync_keyed(ctx, env, key, say, aws, remote)`.
     fn sync_keyed(
         &self,
         ctx: &Context,
@@ -170,13 +168,9 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        match arm64_target(key) {
-            Some(target) => agentspace_sync::sync(ctx, env, target, say, aws, remote),
-            None => Err(not_built()),
-        }
+        agentspace_sync::sync_keyed(ctx, env, key, say, aws, remote)
     }
 
-    // Phase B: `agentspace_sync::deploy_keyed(ctx, env, key, instance_type, say, aws, remote)`.
     fn deploy_keyed(
         &self,
         ctx: &Context,
@@ -187,21 +181,10 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        match arm64_target(key) {
-            Some(target) => agentspace_sync::deploy_with_instance_type(
-                ctx,
-                env,
-                target,
-                instance_type,
-                say,
-                aws,
-                remote,
-            ),
-            None => Err(not_built()),
-        }
+        // `-InstanceType` reaches the host's stack through agentspace-sync's `deploy_keyed`.
+        agentspace_sync::deploy_keyed(ctx, env, key, instance_type, say, aws, remote)
     }
 
-    // Phase B: `agentspace_sync::bootstrap_keyed(ctx, env, key, say, aws, remote)`.
     fn bootstrap_keyed(
         &self,
         ctx: &Context,
@@ -211,13 +194,9 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        match arm64_target(key) {
-            Some(target) => agentspace_sync::bootstrap(ctx, env, target, say, aws, remote),
-            None => Err(not_built()),
-        }
+        agentspace_sync::bootstrap_keyed(ctx, env, key, say, aws, remote)
     }
 
-    // Phase B: `agentspace_sync::provision_keyed(ctx, env, key, say, aws, remote)`.
     fn provision_keyed(
         &self,
         ctx: &Context,
@@ -227,11 +206,7 @@ impl Reach for SystemReach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure> {
-        if key.is_linux_arm64() {
-            agentspace_sync::provision(ctx, env, &key.project, say, aws, remote)
-        } else {
-            Err(not_built())
-        }
+        agentspace_sync::provision_keyed(ctx, env, key, say, aws, remote)
     }
 
     fn sync(
