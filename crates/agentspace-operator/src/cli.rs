@@ -4,7 +4,11 @@
 //!
 //! [`parse`] checks, in this order, and the first failure ends the command: help; the arguments
 //! read from left to right, the first usage error found among them reported (a missing command is
-//! found only once the whole line is read); then the two `-Alias` checks; then the five host checks.
+//! found only once the whole line is read); then the two `-Alias` checks; then the five host checks,
+//! with v0.12's checks 1a, 3a and 4a each right after the check it mirrors (D91; pin P39 and P55 of
+//! v0.12-T01).
+
+use agentspace_hosts::{BOX_PROJECT, HostKey, LINUX_ARM64};
 
 use crate::help_text;
 
@@ -107,7 +111,26 @@ pub struct Request {
     /// `-InstanceType`. Only `deploy` takes it, for every host, the box included.
     pub instance_type: Option<String>,
     pub quiet: bool,
+    /// `-Platform`, normalized by the lease CLI's own parser, and one of [`PLATFORMS`];
+    /// `linux/arm64` without it (D91). It is given only with `-Host`, so with no `-Host` it is
+    /// always `linux/arm64`, and with `-Host`, `-Platform linux/arm64` is the same as none.
+    pub platform: String,
 }
+
+impl Request {
+    /// The host the line names, as its key: `-Host`'s project, or the box's without it, on
+    /// [`Request::platform`]. `-All`, `ca` and `guard` name no one host, and ignore it.
+    pub fn host_key(&self) -> HostKey {
+        HostKey::new(
+            self.host.as_deref().unwrap_or(BOX_PROJECT),
+            self.platform.as_str(),
+        )
+    }
+}
+
+/// The platforms agentspace supports, as `-Platform` normalizes them (D91, D98; pin P21 of
+/// v0.12-T01).
+pub const PLATFORMS: [&str; 3] = [LINUX_ARM64, "linux/amd64", "windows/amd64"];
 
 /// What a command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +156,8 @@ const ALL_APPLIES: &str = "agentspace: -All applies to status, down and sync alo
 const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given together.";
 const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
 const INSTANCE_TYPE_APPLIES: &str = "agentspace: -InstanceType applies to deploy alone.";
+const PLATFORM_AND_ALL: &str = "agentspace: -Platform and -All cannot be given together.";
+const PLATFORM_NEEDS_HOST: &str = "agentspace: -Platform needs -Host <project>.";
 const ALIAS_INVALID: &str = "agentspace: -Alias MUST be an SSH host alias of letters, digits, '.', '_' and '-' that does not start with '-'.";
 
 /// Which parameter an argument names, matched without regard to case.
@@ -142,6 +167,7 @@ enum Param {
     Alias,
     Host,
     InstanceType,
+    Platform,
     Quiet,
     All,
 }
@@ -156,6 +182,8 @@ impl Param {
             Some(Param::Host)
         } else if arg.eq_ignore_ascii_case("-InstanceType") {
             Some(Param::InstanceType)
+        } else if arg.eq_ignore_ascii_case("-Platform") {
+            Some(Param::Platform)
         } else if arg.eq_ignore_ascii_case("-Quiet") {
             Some(Param::Quiet)
         } else if arg.eq_ignore_ascii_case("-All") {
@@ -172,6 +200,7 @@ impl Param {
             Param::Alias => "-Alias",
             Param::Host => "-Host",
             Param::InstanceType => "-InstanceType",
+            Param::Platform => "-Platform",
             Param::Quiet => "-Quiet",
             Param::All => "-All",
         }
@@ -195,8 +224,8 @@ fn shown(arg: &str) -> String {
 }
 
 /// Which help a line that holds a help argument gets (gap FB-11): the line is read from left to
-/// right, the argument after `-GiB`, `-Alias`, `-Host` or `-InstanceType` is that parameter's value
-/// unless it is help, an
+/// right, the argument after `-GiB`, `-Alias`, `-Host`, `-InstanceType` or `-Platform` is that
+/// parameter's value unless it is help, an
 /// argument that starts with `-` and is not a value counts as a parameter, known or not, and the
 /// command is the first argument that is none of a parameter, a parameter's value and help.
 fn help_level(args: &[String]) -> HelpLevel {
@@ -289,12 +318,14 @@ pub fn parse(args: &[String]) -> Parsed {
     let mut alias: Option<String> = None;
     let mut host: Option<String> = None;
     let mut instance_type: Option<String> = None;
+    let mut platform: Option<String> = None;
     let mut quiet = false;
     let mut all = false;
     let mut seen_gib = false;
     let mut seen_alias = false;
     let mut seen_host = false;
     let mut seen_instance_type = false;
+    let mut seen_platform = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -306,6 +337,7 @@ pub fn parse(args: &[String]) -> Parsed {
                 Param::Alias => &mut seen_alias,
                 Param::Host => &mut seen_host,
                 Param::InstanceType => &mut seen_instance_type,
+                Param::Platform => &mut seen_platform,
                 Param::Quiet => &mut quiet,
                 Param::All => &mut all,
             };
@@ -354,6 +386,10 @@ pub fn parse(args: &[String]) -> Parsed {
                         }
                         instance_type = Some(value.clone());
                     }
+                    Param::Platform => match parse_platform(value) {
+                        Ok(normalized) => platform = Some(normalized),
+                        Err(message) => return Parsed::Failure(message),
+                    },
                     _ => alias = Some(value.clone()),
                 }
             }
@@ -388,10 +424,19 @@ pub fn parse(args: &[String]) -> Parsed {
         return Parsed::Failure(ALIAS_INVALID.to_string());
     }
 
-    // The five host checks, in their order (D49, D55; v0.09 deleted the sixth, D67, D71).
+    // The five host checks, in their order (D49, D55; v0.09 deleted the sixth, D67, D71), with
+    // v0.12's checks 1a, 3a and 4a each right after the check it mirrors (D91; pin P39 and P55 of
+    // v0.12-T01), so no line refused before v0.12 changes its message.
     if host.is_some() && matches!(command, Command::Ca | Command::Guard) {
         return Parsed::Failure(format!(
             "agentspace: -Host does not apply to {}.",
+            command.name()
+        ));
+    }
+    // Check 1a.
+    if platform.is_some() && matches!(command, Command::Ca | Command::Guard) {
+        return Parsed::Failure(format!(
+            "agentspace: -Platform does not apply to {}.",
             command.name()
         ));
     }
@@ -401,8 +446,16 @@ pub fn parse(args: &[String]) -> Parsed {
     if host.is_some() && all {
         return Parsed::Failure(HOST_AND_ALL.to_string());
     }
+    // Check 3a.
+    if platform.is_some() && all {
+        return Parsed::Failure(PLATFORM_AND_ALL.to_string());
+    }
     if command == Command::Provision && host.is_none() {
         return Parsed::Failure(PROVISION_NEEDS_HOST.to_string());
+    }
+    // Check 4a.
+    if platform.is_some() && host.is_none() {
+        return Parsed::Failure(PLATFORM_NEEDS_HOST.to_string());
     }
     if instance_type.is_some() && command != Command::Deploy {
         return Parsed::Failure(INSTANCE_TYPE_APPLIES.to_string());
@@ -430,7 +483,27 @@ pub fn parse(args: &[String]) -> Parsed {
         all,
         instance_type,
         quiet,
+        platform: platform.unwrap_or_else(|| LINUX_ARM64.to_string()),
     })
+}
+
+/// `-Platform`'s value, read through the lease CLI's own parser (pin P38 of v0.12-T01) and
+/// normalized by it, then held to the three supported platforms (pin P21). `Err` is the whole
+/// usage error: a value the parser accepts and that is not supported names the normalized value
+/// (pins P2 and P9); a value it refuses as no `os/arch` pair names the argument as given, each
+/// control character written `?`, as every other row does (pin P54).
+fn parse_platform(value: &str) -> Result<String, String> {
+    match agentspace_values::platform(value) {
+        Ok(normalized) if PLATFORMS.contains(&normalized.as_str()) => Ok(normalized),
+        Ok(normalized) => Err(format!(
+            "agentspace: Platform '{}' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.",
+            shown(&normalized)
+        )),
+        Err(_) => Err(format!(
+            "agentspace: Platform '{}' is not an os/arch pair. Give one as in 'linux/arm64'.",
+            shown(value)
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -979,6 +1052,238 @@ mod tests {
         assert_eq!(
             fails(&["grow", "-Host", "nobody", "-GiB", "0"]),
             "agentspace: -GiB MUST be 1 or more for grow, not '0'."
+        );
+    }
+
+    const NOT_SUPPORTED: &str =
+        "is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.";
+
+    #[test]
+    fn platform_is_normalized_by_the_lease_clis_parser_and_defaults_to_linux_arm64() {
+        for (given, normalized) in [
+            ("linux/arm64", "linux/arm64"),
+            (" Linux/AMD64 ", "linux/amd64"),
+            ("linux/x86_64", "linux/amd64"),
+            ("linux/x86-64", "linux/amd64"),
+            ("linux/aarch64", "linux/arm64"),
+            ("linux/arm64/v8", "linux/arm64"),
+            ("WINDOWS/AMD64", "windows/amd64"),
+        ] {
+            let r = run(&["status", "-Host", "p", "-platform", given]);
+            assert_eq!(r.platform, normalized, "{given:?}");
+            assert_eq!(r.host_key().platform, normalized, "{given:?}");
+            assert_eq!(r.host_key().project, "p");
+        }
+        for command in [
+            "deploy",
+            "up",
+            "sync",
+            "bootstrap",
+            "provision",
+            "down",
+            "status",
+            "grow",
+        ] {
+            let r = run(&[command, "-Host", "p", "-Platform", "windows/amd64"]);
+            assert_eq!(r.platform, "windows/amd64", "{command}");
+            let r = run(&[command, "-Host", "p"]);
+            assert_eq!(r.platform, "linux/arm64", "{command}");
+        }
+        // Without -Host, the box: swimcoach's linux/arm64 host.
+        let r = run(&["status"]);
+        assert_eq!(r.platform, "linux/arm64");
+        assert!(r.host_key().is_box());
+        // -Platform linux/arm64 is the same as none.
+        assert_eq!(
+            run(&["up", "-Host", "p", "-Platform", "linux/arm64"]),
+            run(&["up", "-Host", "p"])
+        );
+    }
+
+    #[test]
+    fn a_platform_the_parser_accepts_and_agentspace_does_not_support_names_the_normalized_value() {
+        for (given, normalized) in [
+            ("windows/arm64", "windows/arm64"),
+            ("Windows/AArch64", "windows/arm64"),
+            ("linux/amd64/v3", "linux/amd64/v3"),
+            ("darwin/arm64", "darwin/arm64"),
+            (" linux/riscv64", "linux/riscv64"),
+        ] {
+            assert_eq!(
+                fails(&["status", "-Host", "p", "-Platform", given]),
+                format!("agentspace: Platform '{normalized}' {NOT_SUPPORTED}"),
+                "{given:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_platform_the_parser_refuses_names_the_argument_as_given() {
+        for given in [
+            "linux",
+            "linux-amd64",
+            "",
+            " Linux ",
+            "a/b/c/d",
+            "linux/",
+            "/amd64",
+        ] {
+            assert_eq!(
+                fails(&["status", "-Host", "p", "-Platform", given]),
+                format!(
+                    "agentspace: Platform '{given}' is not an os/arch pair. Give one as in 'linux/arm64'."
+                ),
+                "{given:?}"
+            );
+        }
+        assert_eq!(
+            fails(&["status", "-Host", "p", "-Platform", "linux\n/amd64"]),
+            "agentspace: Platform 'linux?/amd64' is not an os/arch pair. Give one as in 'linux/arm64'."
+        );
+    }
+
+    #[test]
+    fn platform_takes_the_next_argument_whatever_it_looks_like_and_is_checked_from_the_left() {
+        assert_eq!(
+            fails(&["status", "-Host", "p", "-Platform", "-All"]),
+            "agentspace: Platform '-All' is not an os/arch pair. Give one as in 'linux/arm64'."
+        );
+        assert_eq!(
+            fails(&["status", "-Platform"]),
+            "agentspace: -Platform needs a value."
+        );
+        assert_eq!(
+            fails(&["status", "-Platform", "linux/amd64", "-PLATFORM"]),
+            "agentspace: -Platform is given more than once."
+        );
+        assert_eq!(
+            fails(&["status", "-Platform", "linux", "-GiB", "abc"]),
+            "agentspace: Platform 'linux' is not an os/arch pair. Give one as in 'linux/arm64'."
+        );
+        assert_eq!(
+            fails(&["status", "-GiB", "abc", "-Platform", "linux"]),
+            "agentspace: -GiB MUST be a whole number, not 'abc'."
+        );
+        // A value's check comes before every host check.
+        assert_eq!(
+            fails(&["ca", "-Platform", "windows/arm64"]),
+            format!("agentspace: Platform 'windows/arm64' {NOT_SUPPORTED}")
+        );
+    }
+
+    #[test]
+    fn checks_1a_3a_and_4a_run_right_after_the_checks_they_mirror() {
+        for command in ["ca", "guard"] {
+            assert_eq!(
+                fails(&[command, "-Platform", "linux/amd64"]),
+                format!("agentspace: -Platform does not apply to {command}."),
+                "{command}"
+            );
+        }
+        // Check 1 before 1a, and 1a before 2.
+        assert_eq!(
+            fails(&["guard", "-Host", "x", "-Platform", "linux/amd64"]),
+            "agentspace: -Host does not apply to guard."
+        );
+        assert_eq!(
+            fails(&["ca", "-Platform", "linux/amd64", "-All"]),
+            "agentspace: -Platform does not apply to ca."
+        );
+        // The -Alias checks come before every host check.
+        assert_eq!(
+            fails(&["ca", "-Alias", "x", "-Platform", "linux/amd64"]),
+            ALIAS_APPLIES
+        );
+        for command in ["status", "down", "sync"] {
+            assert_eq!(
+                fails(&[command, "-All", "-Platform", "linux/amd64"]),
+                PLATFORM_AND_ALL,
+                "{command}"
+            );
+        }
+        // Check 2 before 3a, check 3 before 3a, and 3a before 5.
+        assert_eq!(
+            fails(&["up", "-All", "-Platform", "linux/amd64"]),
+            ALL_APPLIES
+        );
+        assert_eq!(
+            fails(&["status", "-Host", "p", "-All", "-Platform", "linux/amd64"]),
+            HOST_AND_ALL
+        );
+        assert_eq!(
+            fails(&[
+                "status",
+                "-All",
+                "-Platform",
+                "linux/amd64",
+                "-InstanceType",
+                "m8a.large"
+            ]),
+            PLATFORM_AND_ALL
+        );
+        // Check 4 before 4a, and 4a before 5.
+        assert_eq!(
+            fails(&["provision", "-Platform", "linux/amd64"]),
+            PROVISION_NEEDS_HOST
+        );
+        assert_eq!(
+            fails(&[
+                "status",
+                "-Platform",
+                "linux/amd64",
+                "-InstanceType",
+                "m8a.large"
+            ]),
+            PLATFORM_NEEDS_HOST
+        );
+        assert_eq!(
+            PLATFORM_NEEDS_HOST,
+            "agentspace: -Platform needs -Host <project>."
+        );
+        for command in [
+            "deploy",
+            "up",
+            "sync",
+            "bootstrap",
+            "down",
+            "status",
+            "grow",
+        ] {
+            assert_eq!(
+                fails(&[command, "-Platform", "linux/arm64"]),
+                PLATFORM_NEEDS_HOST,
+                "{command}"
+            );
+        }
+        // Then grow's -GiB check.
+        assert_eq!(
+            fails(&["grow", "-Platform", "linux/amd64", "-GiB", "0"]),
+            PLATFORM_NEEDS_HOST
+        );
+        assert_eq!(
+            fails(&[
+                "grow",
+                "-Host",
+                "p",
+                "-Platform",
+                "linux/amd64",
+                "-GiB",
+                "0"
+            ]),
+            "agentspace: -GiB MUST be 1 or more for grow, not '0'."
+        );
+    }
+
+    #[test]
+    fn help_reads_a_platform_value_as_a_value() {
+        assert_eq!(p(&["-Platform", "up", "-h"]), Parsed::Help(HelpLevel::Top));
+        assert_eq!(
+            p(&["-Platform", "-h", "grow"]),
+            Parsed::Help(HelpLevel::Command(Command::Grow))
+        );
+        assert_eq!(
+            p(&["status", "-Platform", "nonsense", "--help"]),
+            Parsed::Help(HelpLevel::Command(Command::Status))
         );
     }
 

@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use agentspace_ca::CaEnv;
+use agentspace_hosts::HostKey;
 use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
 use agentspace_sync::Target;
 
@@ -147,6 +148,65 @@ impl Reach for SystemReach {
 
     fn access(&self, ctx: &Context, env: &CaEnv, project: &str) -> Result<(), Failure> {
         crate::access::sign_in(ctx, env, &self.access, project)
+    }
+
+    fn access_keyed(&self, ctx: &Context, env: &CaEnv, key: &HostKey) -> Result<(), Failure> {
+        crate::access::sign_in_keyed(ctx, env, &self.access, key)
+    }
+
+    // Each keyed step is one call of agentspace-sync's entry point by host key, which carries the
+    // whole key, never a bare project, to every step that names the host's folder, alias, stack or
+    // record (#183's review). Whatever a platform's step answers, its refusal included, is
+    // agentspace-sync's own.
+
+    fn sync_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::sync_keyed(ctx, env, key, say, aws, remote)
+    }
+
+    fn deploy_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        instance_type: Option<&str>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        // `-InstanceType` reaches the host's stack through agentspace-sync's `deploy_keyed`.
+        agentspace_sync::deploy_keyed(ctx, env, key, instance_type, say, aws, remote)
+    }
+
+    fn bootstrap_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::bootstrap_keyed(ctx, env, key, say, aws, remote)
+    }
+
+    fn provision_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        agentspace_sync::provision_keyed(ctx, env, key, say, aws, remote)
     }
 
     fn sync(

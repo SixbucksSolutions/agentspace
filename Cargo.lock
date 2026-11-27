@@ -216,6 +216,7 @@ dependencies = [
  "agentspace-hosts",
  "agentspace-launch",
  "agentspace-operator-api",
+ "agentspace-platforms",
  "agentspace-push",
  "agentspace-run",
  "agentspace-state",

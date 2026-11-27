@@ -9,8 +9,10 @@ use std::time::{Duration, SystemTime};
 
 use agentspace_box::Clock;
 use agentspace_ca::CaEnv;
+use agentspace_hosts::HostKey;
 use agentspace_operator_api::{
-    Aws, AwsError, Call, CallerFailure, CallerLine, Context, Failure, Mode, Output, Remote, Say,
+    Aws, AwsError, Bootstrap, Call, CallerFailure, CallerLine, Context, Failure, HostPlatform,
+    Mode, Output, PatchMessages, Remote, Say, SyncPlan,
 };
 use serde_json::Value;
 
@@ -203,6 +205,102 @@ pub(crate) struct FakeReach {
     pub(crate) calls: RefCell<Vec<String>>,
     /// The commands (by their recorded name) that fail, and the message each fails with.
     pub(crate) fail: Vec<(String, String)>,
+    /// The seam every platform gets, in place of `agentspace_platforms::for_platform`'s.
+    pub(crate) seam: Option<StandinSeam>,
+}
+
+/// A stand-in for one platform's seam: its online grow, its remote command form and, when
+/// `patch_check` is set, its patch check's question are text a test can find, and every other row
+/// fails. It stands in for a Windows row whose text `agentspace-windows` does not give yet.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StandinSeam {
+    pub(crate) platform: &'static str,
+    /// Whether `grow_script` fails, with [`STANDIN_GROW_FAILS`].
+    pub(crate) grow_fails: bool,
+    /// Whether `patch_check_command` gives [`STANDIN_PATCH_CHECK`]; otherwise it fails, with
+    /// [`STANDIN_UNUSED`].
+    pub(crate) patch_check: bool,
+}
+
+/// The stand-in's patch check's question, when it gives one.
+pub(crate) const STANDIN_PATCH_CHECK: &str = "patch-check-of-the-stand-in";
+
+/// The command the stand-in's patch messages name in the deadline's message: not `journalctl`, as
+/// `windows/amd64`'s is not.
+pub(crate) const STANDIN_PATCH_LOG: &str = "cat C:/stand-in/patch.log";
+
+/// The failure of the stand-in's rows that a test does not use.
+pub(crate) const STANDIN_UNUSED: &str = "agentspace: The stand-in seam has no such row.";
+/// The failure of the stand-in's `grow_script`, when it fails.
+pub(crate) const STANDIN_GROW_FAILS: &str = "agentspace: The stand-in seam's grow failed.";
+
+fn unused() -> Failure {
+    Failure {
+        message: STANDIN_UNUSED.to_string(),
+        caller: CallerFailure::Same,
+    }
+}
+
+impl HostPlatform for StandinSeam {
+    fn platform(&self) -> &'static str {
+        self.platform
+    }
+    fn image_parameter(&self) -> Option<&'static str> {
+        None
+    }
+    fn new_stack_instance_type(&self) -> Option<&'static str> {
+        None
+    }
+    fn new_stack_extra_parameters(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn login_user(&self) -> &'static str {
+        "agent"
+    }
+    fn ssm_document(&self) -> &'static str {
+        "AWS-RunPowerShellScript"
+    }
+    fn remote_command(&self, script: &str) -> Result<String, Failure> {
+        Ok(format!("remote-form[{script}]"))
+    }
+    fn bootstrap(&self) -> Result<Bootstrap, Failure> {
+        Err(unused())
+    }
+    fn sync_plan(&self) -> Result<SyncPlan, Failure> {
+        Err(unused())
+    }
+    fn patch_check_command(&self) -> Result<String, Failure> {
+        if self.patch_check {
+            Ok(STANDIN_PATCH_CHECK.to_string())
+        } else {
+            Err(unused())
+        }
+    }
+    fn patch_messages(&self) -> PatchMessages {
+        PatchMessages {
+            phase: String::new(),
+            log_command: STANDIN_PATCH_LOG.to_string(),
+        }
+    }
+    fn horizon_command(&self, _horizon: u64) -> Result<String, Failure> {
+        Err(unused())
+    }
+    fn grow_script(&self) -> Result<String, Failure> {
+        if self.grow_fails {
+            Err(Failure {
+                message: STANDIN_GROW_FAILS.to_string(),
+                caller: CallerFailure::Same,
+            })
+        } else {
+            Ok(format!("grow-script-of-{}", self.platform))
+        }
+    }
+    fn push_zone(&self, _windows_zone_id: &str, _iana: &str) -> Result<String, Failure> {
+        Err(unused())
+    }
+    fn push_script(&self, _zone: &str) -> Result<String, Failure> {
+        Err(unused())
+    }
 }
 
 impl FakeReach {
@@ -226,6 +324,16 @@ impl FakeReach {
     pub(crate) fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
     }
+
+    pub(crate) fn with_seam(mut self, seam: StandinSeam) -> Self {
+        self.seam = Some(seam);
+        self
+    }
+}
+
+/// A host of another platform than `linux/arm64`, as a keyed call records it: `key:<host name>`.
+fn key_text(key: &HostKey) -> String {
+    format!("key:{}", key.host_name())
 }
 
 fn target_text(target: Target<'_>) -> String {
@@ -254,6 +362,84 @@ impl Reach for FakeReach {
     }
     fn access(&self, _ctx: &Context, _env: &CaEnv, project: &str) -> Result<(), Failure> {
         self.record(&format!("access {project}"))
+    }
+    fn seam(&self, platform: &str) -> Option<&dyn HostPlatform> {
+        match &self.seam {
+            Some(seam) => Some(seam),
+            None => agentspace_platforms::for_platform(platform),
+        }
+    }
+    // Each keyed call of a `linux/arm64` host goes to the project's call, as the trait's default
+    // does, so every test before v0.12 keeps its calls; a host of another platform is recorded by
+    // its key.
+    fn access_keyed(&self, ctx: &Context, env: &CaEnv, key: &HostKey) -> Result<(), Failure> {
+        if key.is_linux_arm64() {
+            self.access(ctx, env, &key.project)
+        } else {
+            self.record(&format!("access {}", key_text(key)))
+        }
+    }
+    fn sync_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        match crate::commands::linux_arm64_target(key) {
+            Some(target) => self.sync(ctx, env, target, say, aws, remote),
+            None => self.record(&format!("sync {}", key_text(key))),
+        }
+    }
+    fn deploy_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        instance_type: Option<&str>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        match crate::commands::linux_arm64_target(key) {
+            Some(target) => self.deploy(ctx, env, target, instance_type, say, aws, remote),
+            None => self.record(&format!(
+                "deploy {} {}",
+                key_text(key),
+                instance_type.unwrap_or("-")
+            )),
+        }
+    }
+    fn bootstrap_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        match crate::commands::linux_arm64_target(key) {
+            Some(target) => self.bootstrap(ctx, env, target, say, aws, remote),
+            None => self.record(&format!("bootstrap {}", key_text(key))),
+        }
+    }
+    fn provision_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        if key.is_linux_arm64() {
+            self.provision(ctx, env, &key.project, say, aws, remote)
+        } else {
+            self.record(&format!("provision {}", key_text(key)))
+        }
     }
     fn sync(
         &self,

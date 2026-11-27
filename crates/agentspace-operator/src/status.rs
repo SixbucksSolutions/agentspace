@@ -13,6 +13,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentspace_guard::GRACE_SECONDS;
+use agentspace_hosts::HostKey;
 use agentspace_state::{Record, StoreError, last_lease_end, live_count, parse_time, read};
 
 /// The lease state file's name in the state folder (docs/state.md, The lease state file).
@@ -94,16 +95,27 @@ impl LeaseView {
         self.now
     }
 
-    /// How many of the project's leases are live at the report's time.
-    pub(crate) fn live(&self, project: &str) -> usize {
-        live_count(&self.leases, project, self.now)
+    /// The host's leases: its project's on its platform alone, a lease's stored `platform` compared
+    /// exactly with the host's, never normalized (D91; operator.md, status -All; docs/state.md, "A
+    /// reader MUST NOT normalize a stored platform").
+    fn host_leases(&self, host: &HostKey) -> Vec<Record> {
+        self.leases
+            .iter()
+            .filter(|l| l.project == host.project && l.platform == host.platform)
+            .cloned()
+            .collect()
+    }
+
+    /// How many of the host's leases are live at the report's time.
+    pub(crate) fn live(&self, host: &HostKey) -> usize {
+        live_count(&self.host_leases(host), &host.project, self.now)
     }
 
     /// Whether the host's `Guard` line needs its `LaunchTime`: it is running, and no live lease of
-    /// its project explains it. `LaunchTime` is read for such a host alone (operator.md, status
-    /// -All).
-    pub(crate) fn needs_launch_time(&self, project: &str, state: &str) -> bool {
-        state == "running" && self.live(project) == 0
+    /// its project on its platform explains it. `LaunchTime` is read for such a host alone
+    /// (operator.md, status -All).
+    pub(crate) fn needs_launch_time(&self, host: &HostKey, state: &str) -> bool {
+        state == "running" && self.live(host) == 0
     }
 
     /// The lines after a host's report, in their order: `Leases    <n> live`, and for a running
@@ -114,23 +126,23 @@ impl LeaseView {
     /// which is `agentspace_zone`'s alone (D63): this module never converts a time.
     pub(crate) fn lines(
         &self,
-        project: &str,
+        host: &HostKey,
         state: &str,
         launch_time: Option<i64>,
         clock_time: &dyn Fn(i64) -> String,
     ) -> Vec<String> {
-        let mut lines = vec![self.leases_line(project)];
-        if self.needs_launch_time(project, state)
+        let mut lines = vec![self.leases_line(host)];
+        if self.needs_launch_time(host, state)
             && let Some(launch) = launch_time
         {
-            lines.push(guard_line(&clock_time(self.stop_time(project, launch))));
+            lines.push(guard_line(&clock_time(self.stop_time(host, launch))));
         }
         lines
     }
 
     /// `Leases    <n> live`: a count, never a lease's ID or any other member of one (D60).
-    pub(crate) fn leases_line(&self, project: &str) -> String {
-        format!("Leases    {} live", self.live(project))
+    pub(crate) fn leases_line(&self, host: &HostKey) -> String {
+        format!("Leases    {} live", self.live(host))
     }
 
     /// What prints as the guard's stop time, in Unix seconds: the later of the stop time and the
@@ -138,8 +150,8 @@ impl LeaseView {
     /// the launch time and the project's last lease end, or the launch time alone with no end. A
     /// time already past, perhaps by days with the laptop asleep, would read as one still to come,
     /// so the guard's next run, which stops that host, is shown as the report's own time.
-    fn stop_time(&self, project: &str, launch_time: i64) -> i64 {
-        let since = match last_lease_end(&self.leases, project, self.now) {
+    fn stop_time(&self, host: &HostKey, launch_time: i64) -> i64 {
+        let since = match last_lease_end(&self.host_leases(host), &host.project, self.now) {
             Some(end) => end.max(launch_time),
             None => launch_time,
         };
@@ -221,6 +233,11 @@ mod tests {
     /// An arbitrary report time: 2026-11-22T20:34:10Z.
     const NOW: i64 = 1_795_379_650;
 
+    /// The `linux/arm64` host of `project`.
+    fn k(project: &str) -> HostKey {
+        HostKey::linux_arm64(project)
+    }
+
     fn at(text: &str) -> i64 {
         parse_time(text).unwrap()
     }
@@ -233,7 +250,7 @@ mod tests {
             id: "00000000-0000-4000-8000-000000000000".into(),
             project: project.into(),
             state: state.into(),
-            platform: "linux-arm64".into(),
+            platform: "linux/arm64".into(),
             profile: "default".into(),
             size: "small".into(),
             ttl_seconds: 3600,
@@ -257,12 +274,12 @@ mod tests {
     #[test]
     fn the_leases_line_counts_live_leases_with_no_leading_zero() {
         let view = LeaseView::new(Vec::new(), NOW);
-        assert_eq!(view.leases_line("swimcoach"), "Leases    0 live");
+        assert_eq!(view.leases_line(&k("swimcoach")), "Leases    0 live");
         let one = LeaseView::new(
             vec![lease("swimcoach", "ready", Some(NOW + 600), None)],
             NOW,
         );
-        assert_eq!(one.leases_line("swimcoach"), "Leases    1 live");
+        assert_eq!(one.leases_line(&k("swimcoach")), "Leases    1 live");
         let two = LeaseView::new(
             vec![
                 lease("swimcoach", "ready", Some(NOW + 600), None),
@@ -270,22 +287,22 @@ mod tests {
             ],
             NOW,
         );
-        assert_eq!(two.leases_line("swimcoach"), "Leases    2 live");
+        assert_eq!(two.leases_line(&k("swimcoach")), "Leases    2 live");
     }
 
     #[test]
     fn the_label_is_padded_to_ten_characters() {
         let view = LeaseView::new(Vec::new(), NOW);
-        assert!(view.leases_line("p").starts_with("Leases    0"));
-        assert_eq!(&view.leases_line("p")[..10], "Leases    ");
-        let lines = view.lines("p", "running", Some(NOW), &pacific);
+        assert!(view.leases_line(&k("p")).starts_with("Leases    0"));
+        assert_eq!(&view.leases_line(&k("p"))[..10], "Leases    ");
+        let lines = view.lines(&k("p"), "running", Some(NOW), &pacific);
         assert_eq!(&lines[1][..10], "Guard     ");
     }
 
     #[test]
     fn a_pending_lease_counts_live_and_so_explains_a_running_host() {
         let view = LeaseView::new(vec![lease("example", "pending", None, None)], NOW);
-        let lines = view.lines("example", "running", Some(NOW - 100_000), &pacific);
+        let lines = view.lines(&k("example"), "running", Some(NOW - 100_000), &pacific);
         assert_eq!(lines, vec!["Leases    1 live".to_string()]);
     }
 
@@ -298,9 +315,9 @@ mod tests {
             ],
             NOW,
         );
-        assert_eq!(view.live("swimcoach"), 1);
-        assert_eq!(view.live("agentspace"), 0);
-        assert_eq!(view.live("swim"), 0);
+        assert_eq!(view.live(&k("swimcoach")), 1);
+        assert_eq!(view.live(&k("agentspace")), 0);
+        assert_eq!(view.live(&k("swim")), 0);
     }
 
     #[test]
@@ -313,13 +330,13 @@ mod tests {
             ],
             NOW,
         );
-        assert_eq!(view.leases_line("p"), "Leases    0 live");
+        assert_eq!(view.leases_line(&k("p")), "Leases    0 live");
     }
 
     #[test]
     fn a_lease_ending_at_the_report_time_is_not_live() {
         let view = LeaseView::new(vec![lease("p", "ready", Some(NOW), None)], NOW);
-        assert_eq!(view.live("p"), 0);
+        assert_eq!(view.live(&k("p")), 0);
     }
 
     // ---- the Guard line ----
@@ -329,7 +346,7 @@ mod tests {
         // Launched 5 minutes before the report: it stops 10 minutes after it, at 12:44:10pm
         // Pacific, which rounds up to 12:45pm.
         let view = LeaseView::new(Vec::new(), NOW);
-        let lines = view.lines("agentspace", "running", Some(NOW - 300), &pacific);
+        let lines = view.lines(&k("agentspace"), "running", Some(NOW - 300), &pacific);
         assert_eq!(
             lines,
             vec![
@@ -349,24 +366,24 @@ mod tests {
             "shutting-down",
             "terminated",
         ] {
-            let lines = view.lines("p", state, None, &pacific);
+            let lines = view.lines(&k("p"), state, None, &pacific);
             assert_eq!(lines, vec!["Leases    0 live".to_string()], "{state}");
-            assert!(!view.needs_launch_time("p", state), "{state}");
+            assert!(!view.needs_launch_time(&k("p"), state), "{state}");
         }
-        assert!(view.needs_launch_time("p", "running"));
+        assert!(view.needs_launch_time(&k("p"), "running"));
     }
 
     #[test]
     fn a_host_with_no_instance_gets_its_count_alone() {
         // `Instance  none recorded` has no state and no launch time.
         let view = LeaseView::new(vec![lease("example", "pending", None, None)], NOW);
-        assert_eq!(view.leases_line("example"), "Leases    1 live");
+        assert_eq!(view.leases_line(&k("example")), "Leases    1 live");
     }
 
     #[test]
     fn a_running_host_with_a_live_lease_never_needs_its_launch_time() {
         let view = LeaseView::new(vec![lease("p", "ready", Some(NOW + 60), None)], NOW);
-        assert!(!view.needs_launch_time("p", "running"));
+        assert!(!view.needs_launch_time(&k("p"), "running"));
     }
 
     #[test]
@@ -375,27 +392,33 @@ mod tests {
         // the end is later, so the host stops 13 minutes from now, at 20:47:10Z, 12:48pm Pacific.
         let ended = lease("p", "released", Some(NOW + 3000), Some(NOW - 120));
         let view = LeaseView::new(vec![ended], NOW);
-        assert_eq!(view.stop_time("p", NOW - 6000), NOW - 120 + GRACE_SECONDS);
+        assert_eq!(
+            view.stop_time(&k("p"), NOW - 6000),
+            NOW - 120 + GRACE_SECONDS
+        );
         // A lease that ended before the launch adds nothing: the launch is later.
         let view = LeaseView::new(
             vec![lease("p", "released", Some(NOW - 7000), Some(NOW - 7000))],
             NOW,
         );
-        assert_eq!(view.stop_time("p", NOW - 60), NOW - 60 + GRACE_SECONDS);
+        assert_eq!(view.stop_time(&k("p"), NOW - 60), NOW - 60 + GRACE_SECONDS);
         // An expired lease ends at its `expires_at`.
         let view = LeaseView::new(vec![lease("p", "ready", Some(NOW - 30), None)], NOW);
-        assert_eq!(view.stop_time("p", NOW - 5000), NOW - 30 + GRACE_SECONDS);
+        assert_eq!(
+            view.stop_time(&k("p"), NOW - 5000),
+            NOW - 30 + GRACE_SECONDS
+        );
         // An `unsatisfiable` lease has no end, so the launch time stands alone.
         let view = LeaseView::new(vec![lease("p", "unsatisfiable", None, None)], NOW);
-        assert_eq!(view.stop_time("p", NOW - 60), NOW - 60 + GRACE_SECONDS);
+        assert_eq!(view.stop_time(&k("p"), NOW - 60), NOW - 60 + GRACE_SECONDS);
     }
 
     #[test]
     fn a_stop_time_already_past_shows_the_report_time() {
         // Launched two days ago, with the laptop asleep: it prints the report's own minute.
         let view = LeaseView::new(Vec::new(), NOW);
-        assert_eq!(view.stop_time("p", NOW - 2 * 86_400), NOW);
-        let lines = view.lines("p", "running", Some(NOW - 2 * 86_400), &pacific);
+        assert_eq!(view.stop_time(&k("p"), NOW - 2 * 86_400), NOW);
+        let lines = view.lines(&k("p"), "running", Some(NOW - 2 * 86_400), &pacific);
         // 20:34:10Z is 12:34:10pm Pacific, rounded up to 12:35pm.
         assert_eq!(lines[1], "Guard     unexplained; stops at 12:35pm");
     }
@@ -406,7 +429,7 @@ mod tests {
         // A launch time no later than the report's: a future one (a skewed clock) is not shown
         // clipped, since operator.md gives no rule for it.
         for launch in [NOW, NOW - 899, NOW - 900, NOW - 901, NOW - 100_000] {
-            let shown = view.stop_time("p", launch);
+            let shown = view.stop_time(&k("p"), launch);
             assert!((NOW..=NOW + GRACE_SECONDS).contains(&shown), "{launch}");
         }
     }
@@ -421,7 +444,7 @@ mod tests {
             asked.borrow_mut().push(unix);
             "text".to_string()
         };
-        let lines = view.lines("p", "running", Some(NOW - 300), &ask);
+        let lines = view.lines(&k("p"), "running", Some(NOW - 300), &ask);
         assert_eq!(lines[1], "Guard     unexplained; stops at text");
         assert_eq!(asked.into_inner(), vec![NOW - 300 + GRACE_SECONDS]);
         // No `Guard` line, so no text is asked for.
@@ -430,7 +453,7 @@ mod tests {
             asked.borrow_mut().push(unix);
             String::new()
         };
-        view.lines("p", "stopped", None, &ask);
+        view.lines(&k("p"), "stopped", None, &ask);
         assert!(asked.into_inner().is_empty());
     }
 
@@ -439,7 +462,7 @@ mod tests {
         let mut one = lease("p", "released", Some(NOW + 3000), Some(NOW - 120));
         one.id = "11111111-2222-4333-8444-555555555555".into();
         let view = LeaseView::new(vec![one], NOW);
-        for line in view.lines("p", "running", Some(NOW - 6000), &pacific) {
+        for line in view.lines(&k("p"), "running", Some(NOW - 6000), &pacific) {
             assert!(!line.contains("11111111"), "{line}");
         }
     }
@@ -517,7 +540,7 @@ mod tests {
         )
         .unwrap();
         let view = read_leases(&folder.0, NOW).unwrap();
-        assert_eq!(view.leases_line("p"), "Leases    0 live");
+        assert_eq!(view.leases_line(&k("p")), "Leases    0 live");
         assert_eq!(view.now(), NOW);
     }
 

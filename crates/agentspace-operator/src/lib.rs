@@ -26,6 +26,11 @@
 //!   [`down`], [`status`] and [`grow`] are the commands themselves.
 //! - [`Env`] is the program's environment as it started, copied once from a lookup; [`run`]
 //!   builds the [`Context`], the [`CaEnv`] and every program's seam variables from it.
+//! - From v0.12 a host is its project's on one platform (D91): [`Request::platform`] is
+//!   `-Platform`, one of [`PLATFORMS`], `linux/arm64` without it, and [`Request::host_key`] the
+//!   [`HostKey`] the line names. Every step that names a host's folder, alias, stack or record
+//!   carries that key, never a bare [`Target`]; [`Reach::seam`] gives a platform's
+//!   [`HostPlatform`] rows, through `agentspace_platforms::for_platform` alone (D101).
 //!
 //! The library reads no environment variable but through the lookup [`run`] is given, once, and
 //! never mutates the process environment (the "environment at start" rule is agentspace-run's,
@@ -53,12 +58,15 @@ use std::path::PathBuf;
 pub use access::Access;
 pub use agentspace_box::{Clock, InstanceIdCache, SystemClock};
 pub use agentspace_ca::CaEnv;
+pub use agentspace_hosts::HostKey;
 pub use agentspace_operator_api::{
-    Aws, CallerFailure, CallerLine, Context, Failure, Mode, Remote, Say,
+    Aws, CallerFailure, CallerLine, Context, Failure, HostPlatform, Mode, Remote, Say,
 };
 pub use agentspace_sync::Target;
 pub use cache::HostCache;
-pub use cli::{Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, Parsed, Request, help, parse};
+pub use cli::{
+    Command, DEFAULT_ALIAS, DEFAULT_GIB, HelpLevel, PLATFORMS, Parsed, Request, help, parse,
+};
 pub use commands::{HostRef, Outcome, Parts, Reach, Report, dispatch, down, grow, status, up};
 pub use guard::{GuardRun, GuardSay, guard, guard_with};
 pub use reach::{Env, SystemReach};

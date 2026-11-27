@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::cli::{DEFAULT_ALIAS, DEFAULT_GIB};
-use crate::testing::{FakeAws, FakeClock, FakeReach, FakeRemote, FakeSay, TempHome};
+use crate::testing::{FakeAws, FakeClock, FakeReach, FakeRemote, FakeSay, StandinSeam, TempHome};
 use agentspace_hosts::hosts_path;
 use agentspace_operator_api::AwsError;
 use serde_json::json;
@@ -160,6 +160,7 @@ fn request(command: Command) -> Request {
         all: false,
         instance_type: None,
         quiet: false,
+        platform: agentspace_hosts::LINUX_ARM64.to_string(),
     }
 }
 
@@ -608,6 +609,15 @@ fn status_fails_for_a_volume_with_no_size() {
 
 // ---- grow ----
 
+/// Both Linux platforms' online grow in its remote command form, as ssh is given it: the literal of
+/// the operator's `GROW_REMOTE_COMMAND`, unchanged, which E0.12-T03-S02 deleted when `grow` took
+/// every platform's remote step from its seam. Each test below that compares with it runs `grow`
+/// over the real seam (`agentspace_platforms::for_platform`), so it shows the seam's row is today's
+/// text, byte for byte.
+const LINUX_GROW_REMOTE_COMMAND: &str = "sudo -n sh -c 'dev=$(findmnt -n -o SOURCE /); \
+disk=/dev/$(lsblk -n -o PKNAME $dev); part=$(cat /sys/class/block/${dev##*/}/partition); \
+growpart $disk $part; resize2fs $dev && df -h /'";
+
 #[test]
 fn grow_of_a_running_box_changes_the_volume_waits_and_grows_the_filesystem_over_ssh() {
     let home = home_with_cache("grow-running");
@@ -642,7 +652,7 @@ fn grow_of_a_running_box_changes_the_volume_waits_and_grows_the_filesystem_over_
         calls[0].0,
         vec!["-o", "ClearAllForwardings=yes", "agentspace"]
     );
-    assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+    assert_eq!(calls[0].1.as_deref(), Some(LINUX_GROW_REMOTE_COMMAND));
 }
 
 #[test]
@@ -778,23 +788,6 @@ fn grow_does_not_read_the_instance_type() {
         vec![ok(answer), ok(volume(8)), ok(json!({}))],
     );
     rig.run(&request(Command::Grow)).unwrap();
-}
-
-#[test]
-fn the_remote_command_obeys_fa15s_rule_and_installs_nothing() {
-    let command = GROW_REMOTE_COMMAND;
-    assert!(!command.contains('%'));
-    assert!(!command.contains('"'));
-    assert!(!command.chars().any(char::is_control));
-    assert!(!command.ends_with('\\'));
-    assert!(!command.contains("apt") && !command.contains("install"));
-    // Root, never prompting; the three tools the spec names.
-    assert!(command.starts_with("sudo -n "));
-    for tool in ["growpart", "resize2fs", "df -h"] {
-        assert!(command.contains(tool), "{tool}");
-    }
-    // The size is printed only if the filesystem's grow succeeded.
-    assert!(command.contains("resize2fs $dev && df -h /"));
 }
 
 // ---- ca, sync, deploy ----
@@ -1077,7 +1070,7 @@ fn grow_of_another_host_signs_before_its_ssh_and_names_the_hosts_alias() {
         calls[0].0,
         vec!["-o", "ClearAllForwardings=yes", HOST_ALIAS]
     );
-    assert_eq!(calls[0].1.as_deref(), Some(GROW_REMOTE_COMMAND));
+    assert_eq!(calls[0].1.as_deref(), Some(LINUX_GROW_REMOTE_COMMAND));
 }
 
 #[test]
@@ -1929,5 +1922,668 @@ fn down_all_never_reads_the_lease_state_file() {
             .lines()
             .iter()
             .any(|l| l.contains("lease state file"))
+    );
+}
+
+// ---- -Platform (D91): a host is its project's on one platform ----
+
+const AMD_ID: &str = "i-0aaaabbbbccccdddd";
+const WIN_ID: &str = "i-0eeeeffff00001111";
+
+/// A record of `project`'s host on `platform`, with that platform's stack (D91).
+fn record_on(project: &str, platform: &str, state: HostState, instance_id: Option<&str>) -> Record {
+    let key = HostKey::new(project, platform);
+    Record {
+        platform: (!key.is_linux_arm64()).then(|| platform.to_string()),
+        stack: key.stack_name(),
+        ..record(project, state, instance_id)
+    }
+}
+
+/// The box, `agentspace`'s `linux/arm64` host and its `linux/amd64` host, in that order, each with
+/// an instance ID of its own.
+fn home_with_two_platforms(name: &str) -> TempHome {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    hosts.hosts.push(record_on(
+        "agentspace",
+        "linux/amd64",
+        HostState::Ready,
+        Some(AMD_ID),
+    ));
+    home_with_registry(name, &hosts)
+}
+
+fn on(command: Command, project: &str, platform: &str) -> Request {
+    Request {
+        platform: platform.to_string(),
+        ..host_request(command, project)
+    }
+}
+
+#[test]
+fn two_hosts_of_one_project_on_two_platforms_are_each_reached_by_their_own_platform() {
+    for (platform, id, access) in [
+        (None, OTHER_ID, "access agentspace"),
+        (Some("linux/arm64"), OTHER_ID, "access agentspace"),
+        (
+            Some("linux/amd64"),
+            AMD_ID,
+            "access key:agentspace.linux-amd64",
+        ),
+    ] {
+        let home = home_with_two_platforms("two-platforms-status");
+        let rig = Rig::new(
+            &home,
+            false,
+            false,
+            vec![ok(instance("stopped")), ok(volume(8))],
+        );
+        let request = match platform {
+            Some(p) => on(Command::Status, "agentspace", p),
+            None => host_request(Command::Status, "agentspace"),
+        };
+        rig.run(&request).unwrap();
+        assert_eq!(
+            rig.aws.calls()[0],
+            format!("ec2 describe-instances --instance-ids {id}"),
+            "{platform:?}"
+        );
+        assert_eq!(rig.reach.calls(), vec![access.to_string()], "{platform:?}");
+        // A host off linux/arm64 gets its platform first; a linux/arm64 host's report is v0.11's.
+        let lines = rig.say.lines();
+        if platform == Some("linux/amd64") {
+            assert_eq!(lines[0], "Platform  linux/amd64");
+            assert_eq!(lines[1], format!("Instance  {AMD_ID}"));
+            assert_eq!(lines.len(), 6);
+        } else {
+            assert_eq!(lines[0], format!("Instance  {OTHER_ID}"), "{platform:?}");
+            assert_eq!(lines.len(), 5, "{platform:?}");
+        }
+
+        let home = home_with_two_platforms("two-platforms-down");
+        let rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
+        let request = Request {
+            command: Command::Down,
+            ..request
+        };
+        rig.run(&request).unwrap();
+        assert_eq!(
+            rig.aws.calls(),
+            vec![format!("ec2 stop-instances --instance-ids {id}")],
+            "{platform:?}"
+        );
+        assert_eq!(rig.reach.calls(), vec![access.to_string()], "{platform:?}");
+    }
+}
+
+#[test]
+fn up_of_a_linux_amd64_host_uses_its_stack_its_record_its_alias_and_its_stamp() {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    hosts.hosts.push(record_on(
+        "agentspace",
+        "linux/amd64",
+        HostState::Creating,
+        None,
+    ));
+    let home = home_with_registry("up-amd64", &hosts);
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            ok(
+                json!({"Stacks": [{"Outputs": [{"OutputKey": "InstanceId", "OutputValue": AMD_ID}]}]}),
+            ),
+            ok(instance("running")),
+            ok(instance("running")),
+        ],
+    );
+    rig.run(&on(Command::Up, "agentspace", "linux/amd64"))
+        .unwrap();
+    assert_eq!(
+        rig.aws.calls()[0],
+        "cloudformation describe-stacks --stack-name agentspace-linux-amd64-host-agentspace"
+    );
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "access key:agentspace.linux-amd64".to_string(),
+            format!("push {AMD_ID} agentspace-host.agentspace.linux-amd64 agentspace.linux-amd64"),
+        ]
+    );
+    // The ID is written into that platform's record alone.
+    let read = agentspace_hosts::read(&rig.ctx.home).unwrap();
+    assert_eq!(read.hosts[1].instance_id.as_deref(), Some(OTHER_ID));
+    assert_eq!(read.hosts[2].instance_id.as_deref(), Some(AMD_ID));
+    assert_eq!(read.hosts[2].platform.as_deref(), Some("linux/amd64"));
+}
+
+#[test]
+fn a_host_with_no_record_on_the_commands_platform_fails_naming_it_by_its_host_name() {
+    for (project, platform, message) in [
+        (
+            "agentspace",
+            "windows/amd64",
+            "agentspace: Project 'agentspace.windows-amd64' has no host; provision -Host agentspace -Platform windows/amd64 makes one.",
+        ),
+        (
+            "swimcoach",
+            "linux/amd64",
+            "agentspace: Project 'swimcoach.linux-amd64' has no host; provision -Host swimcoach -Platform linux/amd64 makes one.",
+        ),
+        (
+            "nobody",
+            "linux/arm64",
+            "agentspace: Project 'nobody' has no host; provision -Host nobody makes one.",
+        ),
+    ] {
+        for command in [
+            Command::Up,
+            Command::Down,
+            Command::Status,
+            Command::Grow,
+            Command::Sync,
+            Command::Deploy,
+            Command::Bootstrap,
+        ] {
+            let home = home_with_two_hosts("no-record-on-platform", HostState::Ready);
+            let rig = Rig::new(&home, false, false, vec![]);
+            let failure = rig.run(&on(command, project, platform)).unwrap_err();
+            assert_eq!(failure.message, message, "{command:?} {platform}");
+            assert!(rig.aws.calls().is_empty(), "{command:?}");
+            assert!(rig.reach.calls().is_empty(), "{command:?}");
+            assert!(rig.remote.calls.borrow().is_empty(), "{command:?}");
+        }
+    }
+}
+
+#[test]
+fn host_swimcoach_on_linux_arm64_is_the_box_and_on_another_platform_is_not() {
+    let home = home_with_cache("swimcoach-arm64");
+    let rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
+    rig.run(&on(Command::Down, "swimcoach", "linux/arm64"))
+        .unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![format!("ec2 stop-instances --instance-ids {ID}")]
+    );
+    assert!(rig.reach.calls().is_empty(), "The box signs nothing");
+
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts.hosts.push(record_on(
+        "swimcoach",
+        "linux/amd64",
+        HostState::Ready,
+        Some(AMD_ID),
+    ));
+    let home = home_with_registry("swimcoach-amd64", &hosts);
+    let rig = Rig::new(&home, false, false, vec![ok(json!({}))]);
+    rig.run(&on(Command::Down, "swimcoach", "linux/amd64"))
+        .unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![format!("ec2 stop-instances --instance-ids {AMD_ID}")]
+    );
+    assert_eq!(
+        rig.reach.calls(),
+        vec!["access key:swimcoach.linux-amd64".to_string()]
+    );
+}
+
+#[test]
+fn sync_deploy_bootstrap_and_provision_carry_the_hosts_key() {
+    let home = home_with_two_platforms("keyed-targets");
+    let rig = Rig::new(&home, false, false, vec![]);
+    rig.run(&on(Command::Sync, "agentspace", "linux/amd64"))
+        .unwrap();
+    rig.run(&on(Command::Bootstrap, "agentspace", "linux/amd64"))
+        .unwrap();
+    let mut with_type = on(Command::Deploy, "agentspace", "linux/amd64");
+    with_type.instance_type = Some("m8a.2xlarge".to_string());
+    rig.run(&with_type).unwrap();
+    // provision finds its own record, so a platform with none reaches it too.
+    rig.run(&on(Command::Provision, "agentspace", "windows/amd64"))
+        .unwrap();
+    // linux/arm64 named or not keeps the project's calls.
+    rig.run(&on(Command::Sync, "agentspace", "linux/arm64"))
+        .unwrap();
+    rig.run(&on(Command::Provision, "agentspace", "linux/arm64"))
+        .unwrap();
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "sync key:agentspace.linux-amd64",
+            "bootstrap key:agentspace.linux-amd64",
+            "deploy key:agentspace.linux-amd64 m8a.2xlarge",
+            "provision key:agentspace.windows-amd64",
+            "sync host:agentspace",
+            "provision agentspace",
+        ]
+    );
+    assert!(rig.aws.calls().is_empty());
+}
+
+#[test]
+fn a_reach_with_only_the_projects_methods_keeps_them_for_linux_arm64_and_reaches_no_other_platforms_host()
+ {
+    let home = home_with_two_platforms("keyed-defaults");
+    let rig = Rig::new(&home, false, false, vec![]);
+    let reach = zoned(utc);
+    for command in [
+        Command::Sync,
+        Command::Deploy,
+        Command::Bootstrap,
+        Command::Provision,
+    ] {
+        let failure = rig
+            .run_in(&on(command, "agentspace", "linux/amd64"), &reach)
+            .unwrap_err();
+        assert_eq!(
+            failure.message,
+            agentspace_platforms::NOT_BUILT,
+            "{command:?}"
+        );
+    }
+    assert!(reach.inner.calls().is_empty(), "No linux/arm64 step ran");
+    rig.run_in(&on(Command::Sync, "agentspace", "linux/arm64"), &reach)
+        .unwrap();
+    rig.run_in(&on(Command::Provision, "agentspace", "linux/arm64"), &reach)
+        .unwrap();
+    assert_eq!(
+        reach.inner.calls(),
+        vec!["sync host:agentspace", "provision agentspace"]
+    );
+    // The default access of another platform's host fails too: status reports, then fails.
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("stopped")), ok(volume(8))],
+    );
+    let failure = rig
+        .run_in(&on(Command::Status, "agentspace", "linux/amd64"), &reach)
+        .unwrap_err();
+    assert_eq!(failure.message, agentspace_platforms::NOT_BUILT);
+}
+
+/// The box and `agentspace`'s `windows/amd64` host, running.
+fn home_with_a_windows_host(name: &str) -> TempHome {
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts.hosts.push(record_on(
+        "agentspace",
+        "windows/amd64",
+        HostState::Ready,
+        Some(WIN_ID),
+    ));
+    home_with_registry(name, &hosts)
+}
+
+#[test]
+fn grow_of_a_windows_host_runs_its_seams_online_grow_in_its_remote_form_over_its_alias() {
+    let home = home_with_a_windows_host("grow-windows");
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(volume(30)), ok(json!({}))],
+    );
+    rig.reach = FakeReach::default().with_seam(StandinSeam {
+        platform: "windows/amd64",
+        grow_fails: false,
+        patch_check: false,
+    });
+    rig.run(&on(Command::Grow, "agentspace", "windows/amd64"))
+        .unwrap();
+    assert_eq!(
+        rig.aws.calls()[0],
+        format!("ec2 describe-instances --instance-ids {WIN_ID}")
+    );
+    assert_eq!(
+        rig.reach.calls(),
+        vec!["access key:agentspace.windows-amd64".to_string()]
+    );
+    let calls = rig.remote.calls.borrow();
+    assert_eq!(
+        calls[0].0,
+        vec![
+            "-o",
+            "ClearAllForwardings=yes",
+            "agentspace-host.agentspace.windows-amd64"
+        ]
+    );
+    assert_eq!(
+        calls[0].1.as_deref(),
+        Some("remote-form[grow-script-of-windows/amd64]")
+    );
+}
+
+#[test]
+fn a_windows_seams_failed_online_grow_fails_grow_after_the_volume_change() {
+    let home = home_with_a_windows_host("grow-windows-fails");
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(volume(30)), ok(json!({}))],
+    );
+    rig.reach = FakeReach::default().with_seam(StandinSeam {
+        platform: "windows/amd64",
+        grow_fails: true,
+        patch_check: false,
+    });
+    let failure = rig
+        .run(&on(Command::Grow, "agentspace", "windows/amd64"))
+        .unwrap_err();
+    assert_eq!(failure.message, crate::testing::STANDIN_GROW_FAILS);
+    assert!(rig.aws.calls()[2].starts_with("ec2 modify-volume"));
+    assert!(rig.remote.calls.borrow().is_empty(), "No ssh");
+}
+
+#[test]
+fn grow_of_a_linux_amd64_host_takes_todays_remote_step_from_its_seam() {
+    // The real seam's row: today's text, byte for byte (agentspace-platforms).
+    let home = home_with_two_platforms("grow-amd64");
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(volume(8)), ok(json!({}))],
+    );
+    rig.run(&on(Command::Grow, "agentspace", "linux/amd64"))
+        .unwrap();
+    let calls = rig.remote.calls.borrow();
+    assert_eq!(
+        calls[0].0,
+        vec![
+            "-o",
+            "ClearAllForwardings=yes",
+            "agentspace-host.agentspace.linux-amd64"
+        ]
+    );
+    assert_eq!(calls[0].1.as_deref(), Some(LINUX_GROW_REMOTE_COMMAND));
+}
+
+#[test]
+fn grow_of_a_linux_host_runs_whatever_its_seam_gives_and_keeps_no_copy_of_its_own() {
+    // A stand-in seam on each Linux platform: the remote step is the stand-in's, so no Linux text
+    // of the operator's own stands in for the seam's row (D101).
+    for (platform, alias) in [
+        ("linux/amd64", "agentspace-host.agentspace.linux-amd64"),
+        ("linux/arm64", "agentspace-host.agentspace"),
+    ] {
+        let home = home_with_two_platforms("grow-linux-standin");
+        let mut rig = Rig::new(
+            &home,
+            false,
+            false,
+            vec![ok(instance("running")), ok(volume(8)), ok(json!({}))],
+        );
+        rig.reach = FakeReach::default().with_seam(StandinSeam {
+            platform,
+            grow_fails: false,
+            patch_check: false,
+        });
+        rig.run(&on(Command::Grow, "agentspace", platform)).unwrap();
+        let calls = rig.remote.calls.borrow();
+        assert_eq!(
+            calls[0].0,
+            vec!["-o", "ClearAllForwardings=yes", alias],
+            "{platform}"
+        );
+        assert_eq!(
+            calls[0].1.as_deref(),
+            Some(format!("remote-form[grow-script-of-{platform}]").as_str()),
+            "{platform}"
+        );
+    }
+}
+
+#[test]
+fn up_of_a_windows_host_starts_and_waits_through_its_seam_then_signs_and_pushes() {
+    // The stand-in's patch check stands in for the Windows row that agentspace-windows does not
+    // give yet (E0.12-T03-S06). A host running a long time is not asked it, so the calls are
+    // today's two reads, of the Windows host's own instance.
+    let home = home_with_a_windows_host("up-windows");
+    let mut rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![ok(instance("running")), ok(instance("running"))],
+    );
+    rig.reach = FakeReach::default().with_seam(StandinSeam {
+        platform: "windows/amd64",
+        grow_fails: false,
+        patch_check: true,
+    });
+    rig.run(&on(Command::Up, "agentspace", "windows/amd64"))
+        .unwrap();
+    assert_eq!(
+        rig.aws.calls(),
+        vec![
+            format!("ec2 describe-instances --instance-ids {WIN_ID}"),
+            format!("ec2 describe-instances --instance-ids {WIN_ID}"),
+        ]
+    );
+    assert_eq!(rig.say.lines(), vec![format!("Ready: {WIN_ID}")]);
+    assert_eq!(
+        rig.reach.calls(),
+        vec![
+            "access key:agentspace.windows-amd64".to_string(),
+            format!(
+                "push {WIN_ID} agentspace-host.agentspace.windows-amd64 agentspace.windows-amd64"
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_deadline_message_of_a_windows_host_names_its_alias_before_its_seams_log_command() {
+    // operator.md, Starting the box and waiting for it: off linux/arm64, `agentspace` in the
+    // deadline's message is the host's alias, whatever command the seam's patch messages name.
+    let home = home_with_a_windows_host("deadline-windows");
+    let mut answers = vec![ok(instance("pending"))];
+    answers.extend((0..300).map(|_| ok(json!({"InstanceInformationList": []}))));
+    let mut rig = Rig::new(&home, false, false, answers);
+    rig.reach = FakeReach::default().with_seam(StandinSeam {
+        platform: "windows/amd64",
+        grow_fails: false,
+        patch_check: true,
+    });
+    let failure = rig
+        .run(&on(Command::Up, "agentspace", "windows/amd64"))
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        format!(
+            "agentspace: {WIN_ID} was not ready within 15 minutes; check: ssh agentspace-host.agentspace.windows-amd64 {}",
+            crate::testing::STANDIN_PATCH_LOG
+        )
+    );
+    assert!(rig.reach.calls().is_empty());
+}
+
+#[test]
+fn a_seams_failed_patch_check_ends_up_before_any_aws_call_and_nothing_is_signed_or_pushed() {
+    for platform in ["windows/amd64", "linux/amd64"] {
+        let home = if platform == "windows/amd64" {
+            home_with_a_windows_host("up-seam-fails")
+        } else {
+            home_with_two_platforms("up-seam-fails")
+        };
+        let mut rig = Rig::new(&home, false, false, vec![]);
+        rig.reach = FakeReach::default().with_seam(StandinSeam {
+            platform,
+            grow_fails: false,
+            patch_check: false,
+        });
+        let failure = rig
+            .run(&on(Command::Up, "agentspace", platform))
+            .unwrap_err();
+        assert_eq!(
+            failure.message,
+            crate::testing::STANDIN_UNUSED,
+            "{platform}"
+        );
+        assert!(rig.aws.calls().is_empty(), "{platform}");
+        assert!(
+            rig.reach.calls().is_empty(),
+            "{platform}: nothing signed or pushed"
+        );
+    }
+}
+
+#[test]
+fn status_all_names_each_host_by_its_host_name_and_prints_its_platform_off_linux_arm64() {
+    let now = now_unix();
+    let mut hosts = Hosts::seed();
+    hosts.hosts[0].instance_id = Some(ID.to_string());
+    hosts
+        .hosts
+        .push(record("agentspace", HostState::Ready, Some(OTHER_ID)));
+    hosts.hosts.push(record_on(
+        "agentspace",
+        "linux/amd64",
+        HostState::Ready,
+        Some(AMD_ID),
+    ));
+    hosts.hosts.push(record_on(
+        "example",
+        "windows/amd64",
+        HostState::Creating,
+        None,
+    ));
+    let home = home_with_registry("status-all-platforms", &hosts);
+    // One live lease of agentspace on linux/arm64: it explains that host alone.
+    // A released lease of agentspace on linux/amd64, which is not live.
+    let mut amd = lease(
+        3,
+        "agentspace",
+        "released",
+        Some(now - 7200),
+        Some(now - 7200),
+    );
+    amd["platform"] = json!("linux/amd64");
+    let mut windows = lease(4, "example", "pending", None, None);
+    windows["platform"] = json!("windows/amd64");
+    write_leases(
+        &home,
+        vec![
+            lease(1, "agentspace", "ready", Some(now + 3600), None),
+            amd,
+            windows,
+        ],
+    );
+    let rig = Rig::new(
+        &home,
+        true,
+        false,
+        vec![
+            ok(instance("stopped")),
+            ok(volume(8)),
+            ok(instance("running")),
+            ok(volume(8)),
+            ok(ping("Online")),
+            ok(instance_launched("running", now - 300)),
+            ok(volume(8)),
+            ok(ping("Online")),
+        ],
+    );
+    rig.run_in(&all_request(Command::Status), &zoned(utc))
+        .unwrap();
+    let stop = agentspace_zone::clock_time_at(now - 300 + 900, 0);
+    let lines = rig.say.lines();
+    assert_eq!(
+        lines,
+        vec![
+            "Host      swimcoach (agentbox), ready".to_string(),
+            format!("Instance  {ID}"),
+            "State     stopped".to_string(),
+            "Type      m9g.xlarge".to_string(),
+            format!("Disk      8 GiB gp3 ({VOLUME})"),
+            "SSM       -".to_string(),
+            "Leases    0 live".to_string(),
+            format!("Host      agentspace ({HOST_STACK}), ready"),
+            format!("Instance  {OTHER_ID}"),
+            "State     running".to_string(),
+            "Type      m9g.xlarge".to_string(),
+            format!("Disk      8 GiB gp3 ({VOLUME})"),
+            "SSM       online".to_string(),
+            "Leases    1 live".to_string(),
+            "Host      agentspace.linux-amd64 (agentspace-linux-amd64-host-agentspace), ready"
+                .to_string(),
+            "Platform  linux/amd64".to_string(),
+            format!("Instance  {AMD_ID}"),
+            "State     running".to_string(),
+            "Type      m9g.xlarge".to_string(),
+            format!("Disk      8 GiB gp3 ({VOLUME})"),
+            "SSM       online".to_string(),
+            "Leases    0 live".to_string(),
+            format!("Guard     unexplained; stops at {stop}"),
+            "Host      example.windows-amd64 (agentspace-windows-amd64-host-example), creating"
+                .to_string(),
+            "Platform  windows/amd64".to_string(),
+            "Instance  none recorded".to_string(),
+            "Leases    1 live".to_string(),
+        ]
+    );
+    assert!(rig.reach.calls().is_empty(), "status -All signs nothing");
+}
+
+#[test]
+fn status_all_prints_a_platform_line_before_a_failed_hosts_failure() {
+    let home = home_with_a_windows_host("status-all-platform-fails");
+    let rig = Rig::new(
+        &home,
+        false,
+        false,
+        vec![
+            ok(instance("stopped")),
+            ok(volume(8)),
+            Err(AwsError::Failed("the call failed".to_string())),
+        ],
+    );
+    let failure = rig.run(&all_request(Command::Status)).unwrap_err();
+    assert_eq!(failure.message, "agentspace: 1 of 2 hosts failed.");
+    let lines = rig.say.lines();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("Host      agentspace.windows-amd64"))
+        .unwrap();
+    assert_eq!(lines[at + 1], "Platform  windows/amd64");
+    assert!(lines[at + 2].starts_with("agentspace: "), "{lines:?}");
+}
+
+#[test]
+fn down_all_names_each_host_by_its_host_name_and_prints_no_platform_line() {
+    let home = home_with_two_platforms("down-all-platforms");
+    let rig = Rig::new(
+        &home,
+        true,
+        false,
+        vec![ok(json!({})), ok(json!({})), ok(json!({}))],
+    );
+    rig.run(&all_request(Command::Down)).unwrap();
+    assert_eq!(
+        rig.say.lines(),
+        vec![
+            "Host      swimcoach (agentbox), ready".to_string(),
+            format!("Host      agentspace ({HOST_STACK}), ready"),
+            "Host      agentspace.linux-amd64 (agentspace-linux-amd64-host-agentspace), ready"
+                .to_string(),
+        ]
+    );
+    assert_eq!(
+        rig.aws.calls()[2],
+        format!("ec2 stop-instances --instance-ids {AMD_ID}")
     );
 }
