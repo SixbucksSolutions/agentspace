@@ -37,7 +37,9 @@ and this file adds only what v0.12 has changed or learned.
   `conformance/lease-cli/harness.ps1:171` and `conformance/keeper/keeper-common.ps1:644`, each now
   through `ConvertTo-ConformanceMasked`. Its plants failed on `ff0356e` and passed on `415c9eb`.
   **Its runs were stopped unfinished at 7:14am**, when Terry turned the computer off. The session is
-  archived, and #0264 is back in Ready For Work.
+  archived, and #0264 is back in Ready For Work. The branch also holds `b8146e0`, the run record's
+  draft (`docs/runs/e0.12-t04-s04.md`): its change, plants and runner list are written, and it has no
+  lane numbers.
 - **What S04 still needs, on Terry's word:** a fresh dev lead in auto mode, started from the pushed
   branch.
   - It MUST NOT write either file again: auto mode refused those edits.
