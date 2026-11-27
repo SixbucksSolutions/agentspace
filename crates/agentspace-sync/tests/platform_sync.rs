@@ -795,9 +795,15 @@ fn a_windows_sync_makes_operator_mds_rows_in_order_each_remote_command_encoded()
             &resolve(rig, &c1.args[4], Folder::PerCommand, "Row 2's source"),
             &operator.join("windows"),
         );
+        // operator.md, The host agent's files: sync carries box/windows but its top-level `tests`
+        // folder, which is never installed.
+        let carried: Vec<_> = listing(&repo_root().join("box").join("windows"))
+            .into_iter()
+            .filter(|(rel, _, _)| !rel.starts_with("tests/"))
+            .collect();
         rig.check(
-            matches!(log.dir_snap("scp", 1), Some((_, entries)) if entries == listing(&repo_root().join("box").join("windows"))),
-            "The staging copy MUST hold exactly the repository's box/windows files, byte for byte",
+            matches!(log.dir_snap("scp", 1), Some((_, entries)) if entries == carried),
+            "The staging copy MUST hold exactly the repository's box/windows files but its tests, byte for byte",
         );
         // Row 3: the CA's public key.
         rig.same_list(
