@@ -225,6 +225,10 @@ pub(crate) struct StandinSeam {
 /// The stand-in's patch check's question, when it gives one.
 pub(crate) const STANDIN_PATCH_CHECK: &str = "patch-check-of-the-stand-in";
 
+/// The command the stand-in's patch messages name in the deadline's message: not `journalctl`, as
+/// `windows/amd64`'s is not.
+pub(crate) const STANDIN_PATCH_LOG: &str = "cat C:/stand-in/patch.log";
+
 /// The failure of the stand-in's rows that a test does not use.
 pub(crate) const STANDIN_UNUSED: &str = "agentspace: The stand-in seam has no such row.";
 /// The failure of the stand-in's `grow_script`, when it fails.
@@ -275,7 +279,7 @@ impl HostPlatform for StandinSeam {
     fn patch_messages(&self) -> PatchMessages {
         PatchMessages {
             phase: String::new(),
-            log_command: String::new(),
+            log_command: STANDIN_PATCH_LOG.to_string(),
         }
     }
     fn horizon_command(&self, _horizon: u64) -> Result<String, Failure> {

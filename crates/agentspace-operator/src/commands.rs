@@ -539,15 +539,16 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
     Ok(())
 }
 
-/// The deadline message's `ssh agentspace` is the box's alias; for another host it is the host's
-/// (operator.md, Starting the box and waiting for it, step 3).
-// Architect's to confirm: the deadline text is rewritten for a host by replacing its `ssh agentspace
-// journalctl` with the host's alias, since operator.md gives no separate text for a host.
+/// The deadline message's `ssh agentspace` is the box's alias; for another host it is the host's,
+/// `agentspace-host.<host name>`, whatever log command the host's seam names after it
+/// (operator.md, Starting the box and waiting for it, "At the deadline"; D91). The command after
+/// the alias is the seam's patch messages row, `journalctl -u agentspace-patch` on both Linux
+/// platforms and another on `windows/amd64`, so the match MUST NOT name it.
 fn for_host(mut failure: Failure, host: &HostRef) -> Failure {
     if !host.is_box {
         failure.message = failure.message.replace(
-            "ssh agentspace journalctl",
-            &format!("ssh {} journalctl", host.alias),
+            "; check: ssh agentspace ",
+            &format!("; check: ssh {} ", host.alias),
         );
     }
     failure

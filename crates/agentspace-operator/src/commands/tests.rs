@@ -2387,6 +2387,32 @@ fn up_of_a_windows_host_starts_and_waits_through_its_seam_then_signs_and_pushes(
 }
 
 #[test]
+fn the_deadline_message_of_a_windows_host_names_its_alias_before_its_seams_log_command() {
+    // operator.md, Starting the box and waiting for it: off linux/arm64, `agentspace` in the
+    // deadline's message is the host's alias, whatever command the seam's patch messages name.
+    let home = home_with_a_windows_host("deadline-windows");
+    let mut answers = vec![ok(instance("pending"))];
+    answers.extend((0..300).map(|_| ok(json!({"InstanceInformationList": []}))));
+    let mut rig = Rig::new(&home, false, false, answers);
+    rig.reach = FakeReach::default().with_seam(StandinSeam {
+        platform: "windows/amd64",
+        grow_fails: false,
+        patch_check: true,
+    });
+    let failure = rig
+        .run(&on(Command::Up, "agentspace", "windows/amd64"))
+        .unwrap_err();
+    assert_eq!(
+        failure.message,
+        format!(
+            "agentspace: {WIN_ID} was not ready within 15 minutes; check: ssh agentspace-host.agentspace.windows-amd64 {}",
+            crate::testing::STANDIN_PATCH_LOG
+        )
+    );
+    assert!(rig.reach.calls().is_empty());
+}
+
+#[test]
 fn a_seams_failed_patch_check_ends_up_before_any_aws_call_and_nothing_is_signed_or_pushed() {
     for platform in ["windows/amd64", "linux/amd64"] {
         let home = if platform == "windows/amd64" {
