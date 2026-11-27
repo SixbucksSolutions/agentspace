@@ -3343,6 +3343,10 @@ failure logged in `provision.log` and the leases `pending` for the next run. The
     lease (D56), so the sign-ins are made under a lease, as the README's procedure says. The procedure is written in the README (D52); the heading named here is
     confirmed by the architect, 2026-11-20, for v0.07-T01. E0.08-T03-S05 (#0181) builds the new
     line in `agentspace-sync`. It logs `run done`, releases `provision.lock`, and exits 0.
+    **For a `windows/amd64` host the line names the README's Windows procedure, and is exactly**
+    `Sign in on this host once, by hand, under a lease: see "Signing in on a new Windows host" in the agentspace README.`
+    (architect, 2026-11-26, for v0.12-T02, pin P14, worded for v0.12-T03). Both Linux platforms keep
+    the line above, byte for byte.
 
 **A host is `ready` for leases before the sign-ins** (D52): `ready` means a connection is expected
 to succeed (lease-api.md, States), not that an agent can work there yet.
