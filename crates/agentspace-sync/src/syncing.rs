@@ -301,19 +301,22 @@ fn run(
     shared: &Shared,
 ) -> Result<PatchOutcome, Failure> {
     let alias = plan.alias.as_str();
-    // The platform's rows are read first: a row that fails ends the part before anything is run.
     let platform = plan.platform()?;
-    let rows = platform.sync_plan()?;
 
     // Step 1: the CA, before the host is touched. A missing, half-made, mismatched or loosened CA
     // never becomes a host's trusted CA (D17).
     let fingerprint = (seams.ca_check)(ctx, ca_env)?;
 
     // Between steps 1 and 2, for a host that is not the box: the operator's key, certificate and
-    // alias (operator.md, How the operator reaches a host).
+    // alias (operator.md, sync and How the operator reaches a host), whatever the platform's rows
+    // then give.
     if !plan.is_box {
         host::prepare_keyed(ctx, places, &plan.key, platform, seams)?;
     }
+
+    // The platform's rows are read before the host is started: a row that fails ends the part
+    // before any AWS call, ssh or scp.
+    let rows = platform.sync_plan()?;
 
     // Step 2: start the host and wait for it, ending with `Ready: <id>`.
     let instance_id = start_and_wait_on(
