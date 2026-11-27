@@ -10,6 +10,11 @@
 
 use std::path::PathBuf;
 
+mod platform;
+pub use platform::{
+    Bootstrap, HostPlatform, LocalswimTarget, PatchMessages, ScriptDelivery, SyncPlan,
+};
+
 /// What the program reads from its environment once, as it starts, so that a library reads none
 /// but the test seam's (operator.md, The test seam).
 #[derive(Debug, Clone, PartialEq, Eq)]
