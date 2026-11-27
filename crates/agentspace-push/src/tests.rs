@@ -13,6 +13,20 @@ const URL: &str = "http://127.0.0.1:8811";
 const ID: &str = "i-0123456789abcdef0";
 const ZONE: &str = "America/New_York";
 
+/// The push's remote half for `zone` on today's box: the `linux/arm64` row of the seam,
+/// `remote_command(push_script(zone))`, which the push sends on both Linux platforms (operator.md,
+/// The platform seam). The tests below keep their assertions as they were before the push's own
+/// copy went (pin P1 of v0.12-T03).
+fn remote_command(zone: &str) -> String {
+    let platform = agentspace_platforms::for_platform("linux/arm64").expect("linux/arm64");
+    let script = platform
+        .push_script(zone)
+        .expect("the Linux row gives a script");
+    platform
+        .remote_command(&script)
+        .expect("the Linux row gives a command")
+}
+
 /// A `Say` that records what a real one would print, rewriting warnings in caller mode as the pin
 /// says.
 struct Recorder {
@@ -1255,4 +1269,446 @@ fn a_whole_push_on_disk_with_std_files() {
         Outcome::NotDue
     );
     assert_eq!(say.lines(), [SENDING]);
+}
+
+// A host's platform (D91, D101): the host name, the stamp per host, and the push's zone and remote
+// half from the host's rows of the platform seam (operator.md, The platform seam, the push's zone
+// and remote half row; The token push to a Windows host).
+
+use agentspace_operator_api::{Bootstrap, CallerFailure, Failure, PatchMessages, SyncPlan};
+use std::sync::Mutex;
+
+/// The laptop's Windows zone ID in these tests, as `GetDynamicTimeZoneInformation` gives one.
+const WINDOWS_ZONE: &str = "Mountain Standard Time";
+
+/// A stand-in `windows/amd64` row set: its zone is the Windows zone ID it is given, its remote half
+/// and remote command are marked texts, and every other row fails. It records each zone call.
+#[derive(Default)]
+struct StandInWindows {
+    refuse_script: bool,
+    zone_calls: Mutex<Vec<(String, String)>>,
+}
+
+fn stand_in_failure() -> Failure {
+    Failure {
+        message: "agentspace: The stand-in has no such row.".to_string(),
+        caller: CallerFailure::NotAvailable,
+    }
+}
+
+/// The stand-in's remote command for the push half of `zone`.
+fn stand_in_command(zone: &str) -> String {
+    format!("stand-in-powershell [push-half zone={zone}]")
+}
+
+impl HostPlatform for StandInWindows {
+    fn platform(&self) -> &'static str {
+        "windows/amd64"
+    }
+    fn image_parameter(&self) -> Option<&'static str> {
+        None
+    }
+    fn new_stack_instance_type(&self) -> Option<&'static str> {
+        None
+    }
+    fn new_stack_extra_parameters(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn login_user(&self) -> &'static str {
+        "agent"
+    }
+    fn ssm_document(&self) -> &'static str {
+        "AWS-RunPowerShellScript"
+    }
+    fn remote_command(&self, script: &str) -> Result<String, Failure> {
+        Ok(format!("stand-in-powershell [{script}]"))
+    }
+    fn bootstrap(&self) -> Result<Bootstrap, Failure> {
+        Err(stand_in_failure())
+    }
+    fn sync_plan(&self) -> Result<SyncPlan, Failure> {
+        Err(stand_in_failure())
+    }
+    fn patch_check_command(&self) -> Result<String, Failure> {
+        Err(stand_in_failure())
+    }
+    fn patch_messages(&self) -> PatchMessages {
+        PatchMessages {
+            phase: String::new(),
+            log_command: String::new(),
+        }
+    }
+    fn horizon_command(&self, _horizon: u64) -> Result<String, Failure> {
+        Err(stand_in_failure())
+    }
+    fn grow_script(&self) -> Result<String, Failure> {
+        Err(stand_in_failure())
+    }
+    fn push_zone(&self, windows_zone_id: &str, iana: &str) -> Result<String, Failure> {
+        self.zone_calls
+            .lock()
+            .unwrap()
+            .push((windows_zone_id.to_owned(), iana.to_owned()));
+        if windows_zone_id.is_empty() {
+            Err(stand_in_failure())
+        } else {
+            Ok(windows_zone_id.to_owned())
+        }
+    }
+    fn push_script(&self, zone: &str) -> Result<String, Failure> {
+        if self.refuse_script {
+            Err(stand_in_failure())
+        } else {
+            Ok(format!("push-half zone={zone}"))
+        }
+    }
+}
+
+/// A stand-in Windows host's ssh: the hash of what it was sent and, when `zone` is given, the zone
+/// line, each ending in CR LF as Windows PowerShell's lines MAY (operator.md, The token push to a
+/// Windows host).
+struct WindowsSsh {
+    zone: Option<String>,
+    calls: RefCell<Vec<Vec<String>>>,
+}
+
+impl WindowsSsh {
+    fn new(zone: Option<&str>) -> Self {
+        WindowsSsh {
+            zone: zone.map(str::to_owned),
+            calls: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl SshRun for WindowsSsh {
+    fn run(&self, args: &[&str], stdin: &[u8]) -> SshResult {
+        self.calls
+            .borrow_mut()
+            .push(args.iter().map(|s| s.to_string()).collect());
+        let hash = stamp::box_hash(&Content(Zeroizing::new(stdin.to_vec())));
+        let mut out = format!("{hash}  -\r\n");
+        if let Some(zone) = &self.zone {
+            out.push_str(&format!("zone {zone}\r\n"));
+        }
+        SshResult::Exited {
+            code: 0,
+            stdout: out.into_bytes(),
+        }
+    }
+}
+
+/// One push to `host` on `platform` with these stand-ins: the IANA zone [`ZONE`], and the Windows
+/// zone ID `windows_zone`, counted each time it is asked. Returns the outcome, what was said, and
+/// how many times the Windows zone ID was asked.
+fn push_to(
+    disk: &Disk,
+    ssh: &dyn SshRun,
+    host: Option<&str>,
+    platform: &dyn HostPlatform,
+    windows_zone: Option<&str>,
+) -> (Outcome, Vec<String>, usize) {
+    let say = Recorder::new(Mode::Person);
+    let zone_fn = || Some(ZONE.to_owned());
+    let asked = std::cell::Cell::new(0);
+    let windows_zone_fn = || {
+        asked.set(asked.get() + 1);
+        windows_zone.map(str::to_owned)
+    };
+    let seams = Seams {
+        files: disk,
+        unprotect: &FakeDpapi,
+        ssh,
+        zone: &zone_fn,
+    };
+    let outcome = push_on(
+        &ctx(),
+        &say,
+        ID,
+        "agentspace-host.p.windows-amd64",
+        false,
+        &seams,
+        host,
+        platform,
+        &windows_zone_fn,
+    );
+    (outcome, say.lines(), asked.get())
+}
+
+fn stamp_of(zone: &str) -> Vec<u8> {
+    stamp_file_bytes(&expected_stamp(zone))
+}
+
+#[test]
+fn a_host_name_is_a_project_or_a_project_and_a_supported_name_part() {
+    for (name, project, platform) in [
+        ("p", "p", "linux/arm64"),
+        ("agentspace", "agentspace", "linux/arm64"),
+        ("p.linux-amd64", "p", "linux/amd64"),
+        ("p.windows-amd64", "p", "windows/amd64"),
+        ("a-b.windows-amd64", "a-b", "windows/amd64"),
+    ] {
+        assert_eq!(parse_host_name(name), Some((project, platform)), "{name}");
+        assert!(host_name_is_valid(name), "{name}");
+        assert_eq!(host_platform(Some(name)), Some(platform), "{name}");
+    }
+    // `linux/arm64` never appears in a name, and a name part is compared exactly.
+    for bad in [
+        "p.linux-arm64",
+        "p.windows-arm64",
+        "p.Windows-amd64",
+        "p.windows/amd64",
+        "p.windows-amd64 ",
+        "p.windows-amd64\n",
+        "p.",
+        ".windows-amd64",
+        "P.windows-amd64",
+        "-p.windows-amd64",
+        "a.b.windows-amd64",
+        "p..windows-amd64",
+        "p.linux",
+        "p.example-one",
+        "",
+        "..",
+    ] {
+        assert_eq!(parse_host_name(bad), None, "{bad:?}");
+        assert!(!host_name_is_valid(bad), "{bad:?}");
+        assert_eq!(host_platform(Some(bad)), None, "{bad:?}");
+    }
+    let longest = "a".repeat(32);
+    assert!(host_name_is_valid(&format!("{longest}.windows-amd64")));
+    assert!(!host_name_is_valid(&format!("{longest}a.windows-amd64")));
+    assert_eq!(host_platform(None), Some("linux/arm64"));
+}
+
+#[test]
+fn two_hosts_of_one_project_on_two_platforms_keep_two_stamps() {
+    let disk = laptop(DUMMY_TOKEN);
+    let linux = FakeSsh::new(Reply::Honest);
+    let (outcome, _, _) = push_to(
+        &disk,
+        &linux,
+        Some("p"),
+        &agentspace_platforms::LINUX_ARM64,
+        None,
+    );
+    assert_eq!(outcome, Outcome::Pushed);
+    let windows = WindowsSsh::new(Some(WINDOWS_ZONE));
+    let (outcome, _, _) = push_to(
+        &disk,
+        &windows,
+        Some("p.windows-amd64"),
+        &StandInWindows::default(),
+        Some(WINDOWS_ZONE),
+    );
+    assert_eq!(outcome, Outcome::Pushed);
+    let hosts = ctx().home.join(".agentspace").join("hosts");
+    assert_eq!(
+        *disk.writes.borrow(),
+        [
+            (
+                hosts.join("p").join("localswim-pushed.json"),
+                stamp_of(ZONE)
+            ),
+            (
+                hosts.join("p.windows-amd64").join("localswim-pushed.json"),
+                stamp_of(WINDOWS_ZONE)
+            ),
+        ]
+    );
+    // Each is due by its own stamp alone: the second push did not make the first's due.
+    let (again, _, _) = push_to(
+        &disk,
+        &FakeSsh::new(Reply::Honest),
+        Some("p"),
+        &agentspace_platforms::LINUX_ARM64,
+        None,
+    );
+    assert_eq!(again, Outcome::NotDue);
+}
+
+#[test]
+fn a_windows_host_takes_its_rows_zone_and_remote_half() {
+    let disk = laptop(DUMMY_TOKEN);
+    let ssh = WindowsSsh::new(Some(WINDOWS_ZONE));
+    let platform = StandInWindows::default();
+    let (outcome, said, asked) = push_to(
+        &disk,
+        &ssh,
+        Some("p.windows-amd64"),
+        &platform,
+        Some(WINDOWS_ZONE),
+    );
+    assert_eq!(outcome, Outcome::Pushed);
+    assert_eq!(said, [SENDING]);
+    assert_eq!(asked, 1, "The Windows zone ID is asked once");
+    // The row is given the Windows zone ID and the IANA name, and its zone is the one sent.
+    assert_eq!(
+        *platform.zone_calls.lock().unwrap(),
+        [(WINDOWS_ZONE.to_owned(), ZONE.to_owned())]
+    );
+    let calls = ssh.calls.borrow();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0][4], "agentspace-host.p.windows-amd64");
+    assert_eq!(calls[0][5], stand_in_command(WINDOWS_ZONE));
+    // The stamp covers the zone as sent: the Windows zone ID.
+    assert_eq!(
+        *disk.writes.borrow(),
+        [(
+            stamp_path_for(&ctx(), Some("p.windows-amd64")),
+            stamp_of(WINDOWS_ZONE)
+        )]
+    );
+}
+
+#[test]
+fn a_linux_host_of_the_same_project_keeps_todays_command_and_its_iana_zone() {
+    for (host, platform) in [
+        ("p", &agentspace_platforms::LINUX_ARM64),
+        ("p.linux-amd64", &agentspace_platforms::LINUX_AMD64),
+    ] {
+        let disk = laptop(DUMMY_TOKEN);
+        let ssh = FakeSsh::new(Reply::Honest);
+        let (outcome, said, asked) = push_to(&disk, &ssh, Some(host), platform, Some(WINDOWS_ZONE));
+        assert_eq!(outcome, Outcome::Pushed, "{host}");
+        assert_eq!(said, [SENDING], "{host}");
+        assert_eq!(
+            asked, 0,
+            "A Linux host never asks the Windows zone ID: {host}"
+        );
+        assert_eq!(ssh.calls.borrow()[0].0[5], remote_command(ZONE), "{host}");
+        assert_eq!(
+            *disk.writes.borrow(),
+            [(stamp_path_for(&ctx(), Some(host)), stamp_of(ZONE))],
+            "{host}"
+        );
+    }
+}
+
+#[test]
+fn a_windows_zone_the_row_refuses_is_the_empty_zone() {
+    let disk = laptop(DUMMY_TOKEN);
+    let ssh = WindowsSsh::new(None);
+    let (outcome, said, _) = push_to(
+        &disk,
+        &ssh,
+        Some("p.windows-amd64"),
+        &StandInWindows::default(),
+        None,
+    );
+    assert_eq!(outcome, Outcome::Pushed);
+    assert_eq!(said, [SENDING, NO_ZONE]);
+    assert_eq!(ssh.calls.borrow()[0][5], stand_in_command(""));
+    assert_eq!(
+        *disk.writes.borrow(),
+        [(
+            stamp_path_for(&ctx(), Some("p.windows-amd64")),
+            stamp_of("")
+        )]
+    );
+}
+
+#[test]
+fn a_windows_remote_half_that_cannot_be_made_warns_could_not_send() {
+    let disk = laptop(DUMMY_TOKEN);
+    let ssh = WindowsSsh::new(Some(WINDOWS_ZONE));
+    let platform = StandInWindows {
+        refuse_script: true,
+        ..StandInWindows::default()
+    };
+    let (outcome, said, _) = push_to(
+        &disk,
+        &ssh,
+        Some("p.windows-amd64"),
+        &platform,
+        Some(WINDOWS_ZONE),
+    );
+    assert_eq!(outcome, Outcome::CouldNotSend);
+    assert_eq!(said, [SENDING, COULD_NOT_SEND]);
+    assert!(ssh.calls.borrow().is_empty(), "No ssh was started");
+    assert!(disk.writes.borrow().is_empty(), "Nothing was recorded");
+}
+
+#[test]
+fn a_platform_that_is_not_the_hosts_own_is_refused_before_anything_is_read() {
+    let windows = StandInWindows::default();
+    let cases: [(Option<&str>, &dyn HostPlatform); 4] = [
+        (Some("p.windows-amd64"), &agentspace_platforms::LINUX_ARM64),
+        (Some("p"), &windows),
+        (None, &windows),
+        (Some("p.linux-amd64"), &agentspace_platforms::LINUX_ARM64),
+    ];
+    for (host, platform) in cases {
+        let disk = laptop(DUMMY_TOKEN);
+        let ssh = FakeSsh::new(Reply::Honest);
+        let (outcome, said, _) = push_to(&disk, &ssh, host, platform, Some(WINDOWS_ZONE));
+        assert_eq!(outcome, Outcome::BadAlias, "{host:?}");
+        assert_eq!(said, [BAD_HOST], "{host:?}");
+        assert!(disk.reads.borrow().is_empty(), "{host:?}");
+        assert!(ssh.calls.borrow().is_empty(), "{host:?}");
+    }
+}
+
+#[test]
+fn the_named_hosts_platform_decides_whether_the_windows_zone_is_asked() {
+    for (host, asks) in [
+        (None, false),
+        (Some("p"), false),
+        (Some("p.linux-amd64"), false),
+        (Some("p.windows-amd64"), true),
+    ] {
+        let disk = laptop(DUMMY_TOKEN);
+        let ssh = FakeSsh::new(Reply::Honest);
+        let say = Recorder::new(Mode::Person);
+        let zone_fn = || Some(ZONE.to_owned());
+        let asked = std::cell::Cell::new(false);
+        let windows_zone_fn = || {
+            asked.set(true);
+            Some(WINDOWS_ZONE.to_owned())
+        };
+        let seams = Seams {
+            files: &disk,
+            unprotect: &FakeDpapi,
+            ssh: &ssh,
+            zone: &zone_fn,
+        };
+        push_with_host_zone(
+            &ctx(),
+            &say,
+            ID,
+            "agentspace",
+            false,
+            &seams,
+            host,
+            &windows_zone_fn,
+        );
+        assert_eq!(asked.get(), asks, "{host:?}");
+        if !asks {
+            // A Linux host's push is today's, byte for byte.
+            assert_eq!(ssh.calls.borrow()[0].0[5], remote_command(ZONE), "{host:?}");
+        }
+    }
+    // A name that is no host's is refused by the entry that picks the platform, too.
+    let disk = laptop(DUMMY_TOKEN);
+    let ssh = FakeSsh::new(Reply::Honest);
+    let say = Recorder::new(Mode::Person);
+    let zone_fn = || Some(ZONE.to_owned());
+    let seams = Seams {
+        files: &disk,
+        unprotect: &FakeDpapi,
+        ssh: &ssh,
+        zone: &zone_fn,
+    };
+    let outcome = push_with_host(
+        &ctx(),
+        &say,
+        ID,
+        "agentspace",
+        false,
+        &seams,
+        Some("p.linux-arm64"),
+    );
+    assert_eq!(outcome, Outcome::BadAlias);
+    assert_eq!(say.lines(), [BAD_HOST]);
+    assert!(disk.reads.borrow().is_empty());
 }

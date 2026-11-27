@@ -1,5 +1,6 @@
-//! The ssh's arguments, the box's half as a remote command, and what the laptop checks in the
-//! box's answer (operator.md, What the laptop sends, What the box does, What the laptop checks).
+//! The ssh's arguments and what the laptop checks in the box's answer (operator.md, What the
+//! laptop sends, What the laptop checks). The box's half as a remote command is the host's platform's
+//! row of the seam on every platform (operator.md, The platform seam; D101), never a copy here.
 
 /// `-Alias`'s rule: `^[A-Za-z0-9._-]+\z`, case-sensitively, not starting with `-`.
 pub fn alias_is_valid(alias: &str) -> bool {
@@ -8,52 +9,6 @@ pub fn alias_is_valid(alias: &str) -> bool {
         && alias
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-}
-
-/// The remote command that makes the login user's POSIX shell on today's box carry out the box's
-/// half of the protocol (What the box does), naming `zone` when it is not empty. `zone` MUST be a
-/// zone [`crate::check_zone`] returned; one that fails that check is never put into the command,
-/// which is then the command for the empty zone. The command carries no part of the content, and
-/// holds no `%`, no double quote and no control character, and does not end in a backslash.
-///
-/// Step by step:
-/// - `umask 077`, so the folders `mkdir -p` creates are 0700 and every file 0600 from the moment
-///   it exists; a folder that already exists keeps its mode. The folder is entered by a tilde
-///   path, which the shell does not split, so a home with a space in it works without quotes.
-/// - `mktemp` makes the temporary file with a name no other run uses, and the `EXIT` trap removes
-///   it on every exit but the rename, which consumes it; a hang-up, an interrupt, a termination or
-///   a broken pipe exits through that trap.
-/// - `timeout 30 head -n 2` reads at most two lines and at most 30 seconds; then the CRs go, then
-///   a UTF-8 BOM at the start of the first line, then every empty line.
-/// - Exactly two lines (each ending in LF), one starting `LOCALSWIM_URL=` and one
-///   `LOCALSWIM_TOKEN=`, each with at least one character after it, or exit 1.
-/// - The rename over `bot.env`, then `sha256sum` of the installed file, `<hash>  -`.
-/// - With a zone, `timedatectl` through `sudo -n`, given up after 5 seconds and killed 1 second
-///   later, with no input and its output discarded; then `zone <zone>` or `zone-failed`, and
-///   exit 0 whatever the zone did.
-pub fn remote_command(zone: &str) -> String {
-    let mut cmd = String::from(
-        "umask 077; export LC_ALL=C; t=; trap 'rm -f -- $t' EXIT; trap 'exit 1' HUP INT TERM PIPE; \
-         mkdir -p ~/.config/localswim && cd ~/.config/localswim || exit 1; \
-         t=$(mktemp bot.env.XXXXXXXXXX) || exit 1; \
-         timeout 30 head -n 2 | tr -d '\\r' | sed '1s/^\\xEF\\xBB\\xBF//' | sed '/^$/d' >$t || exit 1; \
-         test $(wc -l <$t) -eq 2 || exit 1; \
-         grep -q '^LOCALSWIM_URL=.' $t || exit 1; \
-         grep -q '^LOCALSWIM_TOKEN=.' $t || exit 1; \
-         mv -f -- $t bot.env || exit 1; t=; \
-         sha256sum <bot.env || exit 1;",
-    );
-    // The last guard: only a zone that passes step 3's check is ever put on the box's command
-    // line (operator.md, The time zone), whoever calls this.
-    if !agentspace_zone::is_valid_zone(zone) {
-        cmd.push_str(" exit 0");
-    } else {
-        cmd.push_str(&format!(
-            " if timeout -k 1 5 sudo -n timedatectl set-timezone {zone} </dev/null >/dev/null 2>&1; \
-             then echo zone {zone}; else echo zone-failed; fi; exit 0"
-        ));
-    }
-    cmd
 }
 
 /// The push's ssh arguments: `-o ClearAllForwardings=yes -o BatchMode=yes <alias> <remote
@@ -148,6 +103,20 @@ pub(crate) fn check_answer(code: i32, stdout: &[u8], expected_hash: &str, zone: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The push's remote half for `zone` on today's box: the `linux/arm64` row of the seam,
+    /// `remote_command(push_script(zone))`, which the push sends (operator.md, The platform seam).
+    /// The tests below keep their assertions as they were before the push's own copy went (pin P1
+    /// of v0.12-T03).
+    pub(super) fn remote_command(zone: &str) -> String {
+        let platform = agentspace_platforms::for_platform("linux/arm64").expect("linux/arm64");
+        let script = platform
+            .push_script(zone)
+            .expect("the Linux row gives a script");
+        platform
+            .remote_command(&script)
+            .expect("the Linux row gives a command")
+    }
 
     const H: &str = "1d171cf9f0a8d9965c97eb40f0ae2d7ee8b8afdd5486b25857521a4958f3666c";
 
@@ -266,7 +235,7 @@ mod tests {
     /// `APPDATA` point into the throwaway folder, and every value is a dummy.
     #[cfg(target_os = "linux")]
     mod on_a_shell {
-        use super::super::remote_command;
+        use super::remote_command;
         use crate::Content;
         use crate::stamp::box_hash;
         use std::io::Write;

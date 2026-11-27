@@ -14,6 +14,9 @@ agentspace-operator-api = { path = "../agentspace-operator-api" }
 # The zone's check, as the guard before the zone goes on a command line (operator.md, What the
 # laptop checks, the architect's 2026-11-19 push rulings).
 agentspace-zone = { path = "../agentspace-zone" }
+# A host's rows of the platform seam, picked by its platform and nothing else (D101's change before
+# T03): the zone and the remote half of the push to a host that is not on Linux.
+agentspace-platforms = { path = "../agentspace-platforms" }
 # The Windows half (v0.06-T02): the ssh's program and environment rules, and the stamp's atomic
 # replace.
 agentspace-run = { path = "../agentspace-run" }

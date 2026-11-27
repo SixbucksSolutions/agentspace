@@ -27,6 +27,9 @@ agentspace-run = { path = "../agentspace-run" }
 agentspace-state = { path = "../agentspace-state" }
 # The host registry: the host a connection reaches, and its instance ID (D45, D55).
 agentspace-hosts = { path = "../agentspace-hosts" }
+# A host's rows of the platform seam, picked by its record's platform and nothing else (D101's change
+# before T03).
+agentspace-platforms = { path = "../agentspace-platforms" }
 # The program's main sets its process error mode first (#0225, #0226; D81).
 agentspace-launch = { path = "../agentspace-launch" }
 

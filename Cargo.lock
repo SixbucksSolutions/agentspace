@@ -117,6 +117,7 @@ dependencies = [
  "agentspace-box",
  "agentspace-hosts",
  "agentspace-operator-api",
+ "agentspace-platforms",
  "agentspace-state",
  "agentspace-zone",
  "serde_json",
@@ -257,6 +258,7 @@ name = "agentspace-push"
 version = "0.6.0"
 dependencies = [
  "agentspace-operator-api",
+ "agentspace-platforms",
  "agentspace-run",
  "agentspace-state",
  "agentspace-zone",
@@ -287,6 +289,7 @@ dependencies = [
  "agentspace-launch",
  "agentspace-operator",
  "agentspace-operator-api",
+ "agentspace-platforms",
  "agentspace-push",
  "agentspace-run",
  "agentspace-state",

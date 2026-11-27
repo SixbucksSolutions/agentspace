@@ -581,6 +581,47 @@ impl Rig {
         )
     }
 
+    /// Runs the push for `host` through `push_on`, with `platform` as the host's platform rows
+    /// (a test passes a stand-in) and `windows_zone` as the laptop's Windows zone ID, which the
+    /// push asks for only when the platform takes it. The seams are the system's own, as
+    /// `push_to_host_using` builds them: the stand-in ssh, the real DPAPI and the stamp's files.
+    pub fn push_on_platform(
+        &self,
+        say: &FakeSay,
+        alias: &str,
+        forced: bool,
+        host: Option<&str>,
+        platform: &dyn agentspace_operator_api::HostPlatform,
+        windows_zone: Option<&str>,
+    ) -> agentspace_push::Outcome {
+        let ctx = self.context();
+        let (lookup, setup) = self.lookup_and_setup();
+        let ssh = agentspace_push::SystemSsh::with_lookup(&ctx, Arc::clone(&lookup))
+            .with_command_setup(setup.clone());
+        let zone = move || {
+            let value = lookup("AGENTSPACE_TIMEZONE").map(|v| v.to_string_lossy().into_owned());
+            agentspace_zone::laptop_zone(value.as_deref())
+        };
+        let seams = agentspace_push::Seams {
+            files: &agentspace_push::SystemFiles,
+            unprotect: &agentspace_push::DpapiUnprotect,
+            ssh: &ssh,
+            zone: &zone,
+        };
+        let windows_zone = windows_zone.map(str::to_string);
+        agentspace_push::push_on(
+            &ctx,
+            say,
+            INSTANCE,
+            alias,
+            forced,
+            &seams,
+            host,
+            platform,
+            &|| windows_zone.clone(),
+        )
+    }
+
     /// The push's look-up of the environment, answering from this rig's variables, and the setup
     /// that starts the stand-in with them in the rig's working folder.
     fn lookup_and_setup(
@@ -653,6 +694,12 @@ impl Rig {
     pub fn write_stamp_for(&self, zone: &str) {
         fs::create_dir_all(self.agentspace_dir()).expect("the state folder");
         fs::write(self.stamp_path(), self.expected_stamp_file(zone)).expect("the stamp");
+    }
+
+    /// Whether the stamp file at `path`, which a host's own folder holds, is exactly the stamp
+    /// this rig's content and `zone` give.
+    pub fn stamp_matches_at(&self, path: &Path, zone: &str) -> bool {
+        fs::read(path).ok().as_deref() == Some(self.expected_stamp_file(zone).as_slice())
     }
 
     pub fn stamp_matches(&self, zone: &str) -> bool {

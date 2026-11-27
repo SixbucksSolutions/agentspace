@@ -9,7 +9,7 @@
 use crate::relay::{Relay, SshStderr};
 use crate::{
     COULD_NOT_SEND, Context, FileRead, Files, Outcome, Say, Seams, SshResult, SshRun, Unprotect,
-    push_with_host, read_file,
+    push_with_host_zone, read_file,
 };
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -324,9 +324,12 @@ pub fn push_using_with(
     )
 }
 
-/// [`push_using_with`] for one host: `host` is `None` for the box, or `Some(project)` for another
-/// host, which keeps its own stamp ([`crate::stamp_path_for`]) and never reads or writes the box's
-/// (architect, 2026-11-20, for v0.07-T02).
+/// [`push_using_with`] for one host: `host` is `None` for the box, or `Some(host name)` for another
+/// host ([`crate::parse_host_name`]: `<project>` on `linux/arm64`, `<project>.<os>-<arch>` on any
+/// other platform), which keeps its own stamp ([`crate::stamp_path_for`]) and never reads or writes
+/// the box's (architect, 2026-11-20, for v0.07-T02). A host not on Linux is given the laptop's
+/// Windows zone ID, or `AGENTSPACE_TIMEZONE`'s value in its place, read only for it
+/// ([`crate::push_with_host_zone`]).
 #[allow(clippy::too_many_arguments)]
 pub fn push_using_with_host(
     ctx: &Context,
@@ -339,17 +342,30 @@ pub fn push_using_with_host(
     host: Option<&str>,
 ) -> Outcome {
     let ssh = configure(SystemSsh::with_lookup(ctx, Arc::clone(&lookup)));
-    let zone = move || {
-        let value = lookup(TIMEZONE_VAR).map(|v| v.to_string_lossy().into_owned());
-        agentspace_zone::laptop_zone(value.as_deref())
+    let override_value = {
+        let lookup = Arc::clone(&lookup);
+        move || lookup(TIMEZONE_VAR).map(|v| v.to_string_lossy().into_owned())
     };
+    let zone = || agentspace_zone::laptop_zone(override_value().as_deref());
+    // A Windows host's zone (operator.md, The token push to a Windows host): the zone crate's rule,
+    // its one copy, read afresh each time it is asked.
+    let windows_zone = || agentspace_zone::laptop_windows_zone(override_value().as_deref());
     let seams = Seams {
         files: &SystemFiles,
         unprotect: &DpapiUnprotect,
         ssh: &ssh,
         zone: &zone,
     };
-    push_with_host(ctx, say, instance_id, alias, forced, &seams, host)
+    push_with_host_zone(
+        ctx,
+        say,
+        instance_id,
+        alias,
+        forced,
+        &seams,
+        host,
+        &windows_zone,
+    )
 }
 
 /// One token push (operator.md, The token push), as `up` and `sync` run it. **It never fails a
@@ -367,7 +383,7 @@ pub fn push(ctx: &Context, say: &dyn Say, instance_id: &str, alias: &str, forced
     push_to_host(ctx, say, instance_id, alias, forced, None);
 }
 
-/// [`push`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or `Some(project)`
+/// [`push`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or `Some(host name)`
 /// for another host, whose own stamp ([`crate::stamp_path_for`]) is the only one the push reads and
 /// writes, its folder created if missing (architect, 2026-11-20, for v0.07-T02). It never fails a
 /// command either.
