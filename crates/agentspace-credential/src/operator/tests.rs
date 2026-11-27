@@ -560,3 +560,192 @@ fn a_certificate_in_flight_is_never_part_of_one() {
     assert_eq!(fs::read(dir.join(CERT_FILE)).unwrap(), before);
     assert!(files_of(&dir).iter().all(|n| !n.starts_with("sign-")));
 }
+
+// The pair by host name (E0.12-T03-S03 part 2; pin P12 of v0.12-T03).
+
+/// Every field of a certificate but its nonce and its signature, which are random at each signing.
+fn fields(cert: &Certificate) -> String {
+    format!(
+        "{:?} {} {:?} {} {} {:?} {:?} {:?} {} {:?}",
+        cert.cert_type(),
+        cert.key_id(),
+        cert.valid_principals(),
+        cert.valid_after(),
+        cert.valid_before(),
+        cert.critical_options(),
+        cert.extensions(),
+        cert.public_key(),
+        cert.comment(),
+        cert.signature_key(),
+    )
+}
+
+#[test]
+fn a_host_name_is_exactly_one_of_d91s() {
+    for ok in [
+        "swimcoach",
+        "a",
+        "a-b",
+        "a.linux-amd64",
+        "agentspace.windows-amd64",
+        &format!("{}.windows-amd64", "a".repeat(32)),
+    ] {
+        assert!(valid_host_name(ok), "{ok}");
+    }
+    for bad in [
+        "",
+        "a.linux-arm64",
+        "a.windows-arm64",
+        "a.linux-amd64.linux-amd64",
+        "a.linux-amd64\n",
+        "a.Linux-amd64",
+        "a.linux/amd64",
+        "a.example-one",
+        "A.linux-amd64",
+        "-a.linux-amd64",
+        ".linux-amd64",
+        "a.",
+        "a..linux-amd64",
+        "a/b",
+        "a\\b",
+        "..",
+        &format!("{}.linux-amd64", "a".repeat(33)),
+    ] {
+        assert!(!valid_host_name(bad), "{bad:?}");
+    }
+}
+
+#[test]
+fn a_host_name_that_is_not_one_is_refused_writing_nothing() {
+    let home = throwaway();
+    make_ca(home.path());
+    let before = files_of(&home.path().join(".agentspace"));
+    for bad in ["a.linux-arm64", "a.windows-arm64", "..", "a/b", "A", ""] {
+        let failure = ensure_operator_key_for(home.path(), bad).unwrap_err();
+        assert_eq!(failure.message, BAD_HOST_NAME, "{bad:?}");
+        let failure =
+            sign_operator_certificate_for(home.path(), bad, "agent", 1_800_000_000).unwrap_err();
+        assert_eq!(failure.message, BAD_HOST_NAME, "{bad:?}");
+    }
+    assert_eq!(files_of(&home.path().join(".agentspace")), before);
+    assert!(!home.path().join(".agentspace").join("hosts").exists());
+}
+
+#[test]
+fn a_principal_that_is_not_a_login_user_is_refused_writing_nothing() {
+    let home = throwaway();
+    make_ca(home.path());
+    let host = "agentspace.windows-amd64";
+    ensure_operator_key_for(home.path(), host).unwrap();
+    let dir = host_dir(home.path(), host);
+    let before = files_of(&dir);
+    for bad in ["", "Agent", "a b", "a\n", "1agent", &"a".repeat(33)] {
+        let failure =
+            sign_operator_certificate_for(home.path(), host, bad, 1_800_000_000).unwrap_err();
+        assert_eq!(failure.message, BAD_PRINCIPAL, "{bad:?}");
+    }
+    assert_eq!(files_of(&dir), before);
+    for ok in ["ubuntu", "agent", "_x", "a-1"] {
+        assert!(valid_principal(ok), "{ok}");
+    }
+}
+
+#[test]
+fn a_windows_hosts_key_and_certificate_carry_its_host_name_and_principal() {
+    let home = throwaway();
+    make_ca(home.path());
+    let host = "agentspace.windows-amd64";
+    assert_eq!(ensure_operator_key_for(home.path(), host), Ok(true));
+    let dir = home
+        .path()
+        .join(".agentspace")
+        .join("hosts")
+        .join("agentspace.windows-amd64");
+    assert_eq!(files_of(&dir), ["id_ed25519", "id_ed25519.pub"]);
+    assert!(platform::verify_private_key(&dir.join(KEY_FILE)));
+    let key = PrivateKey::from_openssh(fs::read(dir.join(KEY_FILE)).unwrap()).unwrap();
+    assert_eq!(key.comment(), "agentspace host agentspace.windows-amd64");
+    assert_eq!(ensure_operator_key_for(home.path(), host), Ok(false));
+
+    let now = 1_800_000_000;
+    assert_eq!(
+        sign_operator_certificate_for(home.path(), host, "agent", now),
+        Ok(now + 3600)
+    );
+    let cert = read_cert(&dir);
+    assert_eq!(cert.key_id(), "operator-agentspace.windows-amd64");
+    assert_eq!(cert.valid_principals(), ["agent"]);
+    assert_eq!(cert.comment(), "agentspace host agentspace.windows-amd64");
+    assert_eq!(cert.valid_before(), (now + 3600) as u64);
+    // No other host's folder was made: the project's linux/arm64 folder stays absent.
+    assert!(!host_dir(home.path(), "agentspace").exists());
+
+    // A linux/amd64 host's: its own folder, key ID and principal.
+    let amd = "agentspace.linux-amd64";
+    ensure_operator_key_for(home.path(), amd).unwrap();
+    sign_operator_certificate_for(home.path(), amd, "ubuntu", now).unwrap();
+    let cert = read_cert(&host_dir(home.path(), amd));
+    assert_eq!(cert.key_id(), "operator-agentspace.linux-amd64");
+    assert_eq!(cert.valid_principals(), ["ubuntu"]);
+}
+
+/// A `linux/arm64` host's key and certificate from the pair by host name are the project-only
+/// pair's, in every byte that is not random: the same files, the same comments, and the same
+/// certificate fields for one key and one time. The key's own bytes and a certificate's nonce and
+/// signature are random at each call, so two calls never share them.
+#[test]
+fn a_linux_arm64_hosts_files_are_the_old_pairs() {
+    let old = throwaway();
+    let new = throwaway();
+    make_ca(old.path());
+    make_ca(new.path());
+    assert_eq!(ensure_operator_key(old.path(), PROJECT), Ok(true));
+    assert_eq!(ensure_operator_key_for(new.path(), PROJECT), Ok(true));
+    let (old_dir, new_dir) = (dir_of(old.path()), dir_of(new.path()));
+    assert_eq!(files_of(&old_dir), files_of(&new_dir));
+    let comment = |dir: &Path| {
+        PrivateKey::from_openssh(fs::read(dir.join(KEY_FILE)).unwrap())
+            .unwrap()
+            .comment()
+            .to_string()
+    };
+    assert_eq!(comment(&old_dir), comment(&new_dir));
+    let public_shape = |dir: &Path| {
+        let text = fs::read_to_string(dir.join(PUB_FILE)).unwrap();
+        let words: Vec<String> = text.split(' ').map(str::to_string).collect();
+        (words[0].clone(), words[2..].join(" "), text.ends_with('\n'))
+    };
+    assert_eq!(public_shape(&old_dir), public_shape(&new_dir));
+    assert!(platform::verify_private_key(&new_dir.join(KEY_FILE)));
+
+    // One key, one time, one CA: the old pair's certificate, then the new pair's over it.
+    let now = 1_800_000_000;
+    assert_eq!(
+        sign_operator_certificate(old.path(), PROJECT, now),
+        Ok(now + 3600)
+    );
+    let by_old = fs::read_to_string(old_dir.join(CERT_FILE)).unwrap();
+    assert_eq!(
+        sign_operator_certificate_for(old.path(), PROJECT, "ubuntu", now),
+        Ok(now + 3600)
+    );
+    let by_new = fs::read_to_string(old_dir.join(CERT_FILE)).unwrap();
+    let old_cert = Certificate::from_openssh(by_old.trim()).unwrap();
+    let new_cert = Certificate::from_openssh(by_new.trim()).unwrap();
+    assert_eq!(fields(&old_cert), fields(&new_cert));
+    assert_eq!(new_cert.key_id(), "operator-swimcoach");
+    assert_eq!(new_cert.valid_principals(), ["ubuntu"]);
+    new_cert.verify_signature().unwrap();
+    // The line's form: its type, then the base64, then the comment, and one LF.
+    let shape = |text: &str| {
+        let words: Vec<&str> = text.trim_end().split(' ').collect();
+        (
+            words[0].to_string(),
+            words[2..].join(" "),
+            text.ends_with('\n'),
+            text.matches('\n').count(),
+        )
+    };
+    assert_eq!(shape(&by_old), shape(&by_new));
+    assert!(files_of(&old_dir).iter().all(|n| !n.starts_with("sign-")));
+}
