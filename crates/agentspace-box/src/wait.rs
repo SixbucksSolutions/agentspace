@@ -4,7 +4,9 @@
 
 use std::time::Duration;
 
-use agentspace_operator_api::{Aws, Call, CallerFailure, CallerLine, Failure, Output, Say};
+use agentspace_operator_api::{
+    Aws, Call, CallerFailure, CallerLine, Failure, HostPlatform, Output, PatchMessages, Say,
+};
 use serde_json::Value;
 
 use crate::answer::{
@@ -12,6 +14,7 @@ use crate::answer::{
 };
 use crate::clock::Clock;
 use crate::launch_time;
+use crate::run_command;
 
 /// The comment the patch question is sent with (operator.md, What up waits for).
 pub const PATCH_COMMENT: &str = "agentspace up: patch check";
@@ -52,6 +55,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const POLL_LIMIT: usize = 20;
 
 const WAITING_FOR_SESSION_MANAGER: &str = "Waiting for Session Manager...";
+/// Today's `linux/arm64` phase message, which the platform's patch messages now give (the seam's
+/// patch messages row); the tests still name it.
+#[cfg_attr(not(test), allow(dead_code))]
 const PATCHING: &str = "Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...";
 
 const DESCRIBE_INSTANCES: &str = "ec2 describe-instances";
@@ -75,11 +81,71 @@ const SEND_COMMAND: &str = "ssm send-command";
 ///
 /// In caller mode [`Say`] prints the caller's lines in place of these, and each [`Failure`]
 /// carries the caller's line in place of its message.
+///
+/// It is `linux/arm64`'s: this crate's `start_and_wait_for_on` on `LINUX_ARM64`.
 pub fn start_and_wait_for(
     aws: &dyn Aws,
     say: &dyn Say,
     clock: &dyn Clock,
     instance_id: &str,
+) -> Result<(), Failure> {
+    start_and_wait_for_on(
+        aws,
+        say,
+        clock,
+        instance_id,
+        &agentspace_platforms::LINUX_ARM64,
+    )
+}
+
+/// A platform's patch check, read from its rows before the step makes any call, so a row that
+/// fails ends the step with nothing sent (operator.md, The platform seam).
+pub(crate) struct PatchCheck {
+    /// The Session Manager document the question is sent through.
+    document: &'static str,
+    /// The `--parameters` value that carries the question.
+    parameters: String,
+    /// The phase message and the deadline's log command.
+    messages: PatchMessages,
+}
+
+impl PatchCheck {
+    /// The patch check of `platform`: [`HostPlatform::patch_check_command`] through
+    /// [`HostPlatform::ssm_document`], in the parameters [`run_command::parameters`] gives (on
+    /// Linux, `commands=<question>`, as before v0.12), and [`HostPlatform::patch_messages`].
+    pub(crate) fn of(platform: &dyn HostPlatform) -> Result<PatchCheck, Failure> {
+        let question = platform.patch_check_command()?;
+        Ok(PatchCheck {
+            document: platform.ssm_document(),
+            parameters: run_command::parameters(platform, &question),
+            messages: platform.patch_messages(),
+        })
+    }
+}
+
+/// [`start_and_wait_for`] on the host's `platform`: its patch check sends
+/// [`HostPlatform::patch_check_command`] through [`HostPlatform::ssm_document`], and its phase
+/// message and deadline are worded with [`HostPlatform::patch_messages`] (operator.md, The
+/// platform seam). On both Linux platforms every call and message is today's, byte for byte. A
+/// platform whose patch check fails ends the step with that failure before any call.
+pub(crate) fn start_and_wait_for_on(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    instance_id: &str,
+    platform: &dyn HostPlatform,
+) -> Result<(), Failure> {
+    let check = PatchCheck::of(platform)?;
+    start_and_wait_with(aws, say, clock, instance_id, &check)
+}
+
+/// [`start_and_wait_for_on`] with the platform's patch check already read.
+pub(crate) fn start_and_wait_with(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    instance_id: &str,
+    check: &PatchCheck,
 ) -> Result<(), Failure> {
     let id = instance_id;
     let state = describe_instance(aws, id, STATE_NAME)?;
@@ -113,7 +179,7 @@ pub fn start_and_wait_for(
     }
 
     if state != "running" || !running_long_enough(aws, clock, id)? {
-        wait(aws, say, clock, id)?;
+        wait(aws, say, clock, id, check)?;
     }
 
     say.progress(&format!("Ready: {id}"), Some(CallerLine::Ready));
@@ -160,14 +226,21 @@ fn running_long_enough(aws: &dyn Aws, clock: &dyn Clock, id: &str) -> Result<boo
 /// deadline is tested after each check that was not ready, so a check that began before it and
 /// found the box ready still ends the wait; and the last pause is cut short to end on the
 /// deadline, so the last check begins at it.
-fn wait(aws: &dyn Aws, say: &dyn Say, clock: &dyn Clock, id: &str) -> Result<(), Failure> {
+fn wait(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    id: &str,
+    check: &PatchCheck,
+) -> Result<(), Failure> {
+    let messages = &check.messages;
     let started = clock.now();
     let mut last: Option<&str> = None;
     loop {
         let message = if !session_manager_online(aws, id)? {
             WAITING_FOR_SESSION_MANAGER
-        } else if patch_pending(aws, clock, id)? {
-            PATCHING
+        } else if patch_pending(aws, clock, id, check)? {
+            messages.phase.as_str()
         } else {
             return Ok(());
         };
@@ -177,9 +250,10 @@ fn wait(aws: &dyn Aws, say: &dyn Say, clock: &dyn Clock, id: &str) -> Result<(),
         }
         let elapsed = clock.now().saturating_sub(started);
         if elapsed >= WAIT_LIMIT {
+            let log_command = &messages.log_command;
             return Err(Failure {
                 message: format!(
-                    "agentspace: {id} was not ready within 15 minutes; check: ssh agentspace journalctl -u agentspace-patch"
+                    "agentspace: {id} was not ready within 15 minutes; check: ssh agentspace {log_command}"
                 ),
                 caller: CallerFailure::NotReady,
             });
@@ -225,8 +299,15 @@ fn session_manager_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 /// architect's rulings of 2026-11-19 for E0.06-T01-S03): an answer with no string `Status` is not
 /// readable yet, and is polled again; one that has ended with no `StandardOutputContent` is the
 /// empty answer, which counts as ready (Q6).
-fn patch_pending(aws: &dyn Aws, clock: &dyn Clock, id: &str) -> Result<bool, Failure> {
-    let parameters = format!("commands={PATCH_QUESTION}");
+///
+/// The question is the platform's, as [`PatchCheck::of`] read it: on Linux,
+/// `commands=<question>` through `AWS-RunShellScript`, as before v0.12.
+fn patch_pending(
+    aws: &dyn Aws,
+    clock: &dyn Clock,
+    id: &str,
+    check: &PatchCheck,
+) -> Result<bool, Failure> {
     let sent = aws.call(&Call {
         service: "ssm",
         operation: "send-command",
@@ -234,11 +315,11 @@ fn patch_pending(aws: &dyn Aws, clock: &dyn Clock, id: &str) -> Result<bool, Fai
             "--instance-ids",
             id,
             "--document-name",
-            "AWS-RunShellScript",
+            check.document,
             "--comment",
             PATCH_COMMENT,
             "--parameters",
-            &parameters,
+            &check.parameters,
         ],
         output: Output::Json,
     })?;
@@ -1058,5 +1139,106 @@ esac\n";
                 format!("ssm get-command-invocation --command-id c-0123 --instance-id {ID}"),
             ]
         );
+    }
+
+    // The platform seam (E0.12-T03-S03, part 1): the wait on a host's platform.
+
+    use crate::run_command::fake::{self, TestPlatform};
+
+    fn patched_once() -> Script {
+        Script::new(vec![
+            state("pending"),
+            ping(Some("Online")),
+            sent(),
+            invocation("Success", "pending"),
+            ping(Some("Online")),
+            sent(),
+            invocation("Success", "patched"),
+        ])
+    }
+
+    /// Both Linux platforms make today's calls and print today's lines, byte for byte, with
+    /// `commands=<question>` through `AWS-RunShellScript`.
+    #[test]
+    fn both_linux_platforms_wait_with_todays_calls_and_lines() {
+        let today = patched_once();
+        let f = fake();
+        start_and_wait_for(&today, &f, &f, ID).unwrap();
+        let today_lines = f.lines.borrow().clone();
+        assert_eq!(
+            today_lines,
+            vec![PATCHING.to_string(), format!("Ready: {ID}")]
+        );
+        for platform in [
+            &agentspace_platforms::LINUX_ARM64,
+            &agentspace_platforms::LINUX_AMD64,
+        ] {
+            let aws = patched_once();
+            let f = fake();
+            start_and_wait_for_on(&aws, &f, &f, ID, platform).unwrap();
+            assert_eq!(*aws.calls.borrow(), *today.calls.borrow());
+            assert_eq!(*f.lines.borrow(), today_lines);
+        }
+        assert!(today.calls.borrow().contains(&format!(
+            "ssm send-command --instance-ids {ID} --document-name AWS-RunShellScript --comment agentspace up: patch check --parameters commands={PATCH_QUESTION}"
+        )));
+    }
+
+    /// A platform whose document is `AWS-RunPowerShellScript` gets its own question as the JSON
+    /// value, never the shorthand, and its own phase message.
+    #[test]
+    fn a_powershell_platform_gets_its_question_as_json_and_its_own_phase() {
+        let aws = patched_once();
+        let f = fake();
+        start_and_wait_for_on(&aws, &f, &f, ID, &TestPlatform::powershell()).unwrap();
+        let json = serde_json::json!({ "commands": [fake::QUESTION] }).to_string();
+        let send = format!(
+            "ssm send-command --instance-ids {ID} --document-name AWS-RunPowerShellScript --comment agentspace up: patch check --parameters {json}"
+        );
+        let calls = aws.calls.borrow();
+        assert_eq!(calls.iter().filter(|c| **c == send).count(), 2, "{calls:?}");
+        assert!(!calls.iter().any(|c| c.contains("commands=")));
+        assert_eq!(
+            *f.lines.borrow(),
+            vec![fake::PHASE.to_string(), format!("Ready: {ID}")]
+        );
+    }
+
+    /// The deadline names the platform's log command.
+    #[test]
+    fn the_deadline_names_the_platforms_log_command() {
+        let mut answers = vec![state("pending")];
+        for _ in 0..181 {
+            answers.push(ping(None));
+        }
+        let aws = Script::new(answers);
+        let f = fake();
+        let failure =
+            start_and_wait_for_on(&aws, &f, &f, ID, &TestPlatform::powershell()).unwrap_err();
+        assert_eq!(failure.caller, CallerFailure::NotReady);
+        assert_eq!(
+            failure.message,
+            format!(
+                "agentspace: {ID} was not ready within 15 minutes; check: ssh agentspace {}",
+                fake::LOG
+            )
+        );
+    }
+
+    /// A platform whose patch check fails ends the step with that failure before any call: the
+    /// instance is neither read nor started, and nothing is printed.
+    #[test]
+    fn a_failed_patch_check_command_ends_the_step_before_any_call() {
+        let aws = Script::new(vec![state("stopped")]);
+        let f = fake();
+        let platform = TestPlatform {
+            document: "AWS-RunPowerShellScript",
+            fails: true,
+        };
+        let failure = start_and_wait_for_on(&aws, &f, &f, ID, &platform).unwrap_err();
+        assert_eq!(failure.message, fake::FAILED);
+        assert!(aws.calls.borrow().is_empty(), "{:?}", aws.calls.borrow());
+        assert_eq!(aws.answers.borrow().len(), 1);
+        assert!(f.lines.borrow().is_empty());
     }
 }

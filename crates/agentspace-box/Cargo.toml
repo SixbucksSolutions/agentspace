@@ -11,6 +11,10 @@ path = "src/lib.rs"
 
 [dependencies]
 agentspace-operator-api = { path = "../agentspace-operator-api" }
+# The platform seam's Linux rows, for the patch check and the horizon on `linux/arm64`, which the
+# entry points without a platform mean (operator.md, The platform seam; D101). It depends on no
+# crate that depends on this one.
+agentspace-platforms = { path = "../agentspace-platforms" }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 
 [dev-dependencies]

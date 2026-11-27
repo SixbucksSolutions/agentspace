@@ -20,6 +20,9 @@
 //! The entry points:
 //! - [`start_and_wait`]: `up`'s steps 1 and 2. Reads the instance ID (from the cache, or rebuilt
 //!   from the host's `stack`, a parameter: `agentbox` for the box), starts the box and waits for it, ending with `Ready: <id>`. Returns the ID.
+//! - [`start_and_wait_on`]: [`start_and_wait`] on a host's platform, whose patch check and its
+//!   messages are the platform's (operator.md, The platform seam). [`start_and_wait`] is it on
+//!   `linux/arm64`.
 //! - [`start_and_wait_for`]: the shared start-and-wait step alone, for an ID already read.
 //! - [`instance_id`]: the instance ID from the cache, or from the given stack's output when the cache
 //!   counts as missing, handing the cache's new bytes to [`InstanceIdCache::write`].
@@ -39,7 +42,8 @@
 //!   `Running` with its launch time, `Other`, or `Unexpected` for a member missing.
 //! - [`stop_host`]: one `ec2 stop-instances`, asking EC2 to stop the instance and not waiting.
 //! - [`send_horizon`]: one `ssm send-command`, with the comment [`HORIZON_COMMENT`], that writes
-//!   the lease horizon to `/run/agentspace/lease-horizon` on the host.
+//!   the lease horizon to `/run/agentspace/lease-horizon` on the host; [`send_horizon_on`], the
+//!   same to a host of any platform, with the platform's horizon command and document.
 //!
 //! The seams and helpers:
 //! - [`Clock`], with [`SystemClock`] the real one.
@@ -55,6 +59,7 @@ mod clock;
 mod failure;
 mod guard;
 mod launch_time;
+mod run_command;
 mod wait;
 
 pub use cache::{
@@ -64,11 +69,12 @@ pub use cache::{
 pub use clock::{Clock, SystemClock};
 pub use failure::failure_line;
 pub use guard::{
-    Described, DescribedState, HORIZON_COMMENT, describe_hosts, send_horizon, stop_host,
+    Described, DescribedState, HORIZON_COMMENT, describe_hosts, send_horizon, send_horizon_on,
+    stop_host,
 };
 pub use wait::{PATCH_COMMENT, PATCH_QUESTION, start_and_wait_for};
 
-use agentspace_operator_api::{Aws, Failure, Say};
+use agentspace_operator_api::{Aws, Failure, HostPlatform, Say};
 
 #[cfg(doc)]
 use agentspace_operator_api::Mode;
@@ -80,6 +86,8 @@ use agentspace_operator_api::Mode;
 ///
 /// Returns the instance ID once the box is ready. Every failure ends the step at once, with
 /// nothing after it run.
+///
+/// It is `linux/arm64`'s: [`start_and_wait_on`] with `agentspace_platforms::LINUX_ARM64`.
 pub fn start_and_wait(
     aws: &dyn Aws,
     say: &dyn Say,
@@ -87,7 +95,128 @@ pub fn start_and_wait(
     cache: &dyn InstanceIdCache,
     stack: &str,
 ) -> Result<String, Failure> {
+    start_and_wait_on(
+        aws,
+        say,
+        clock,
+        cache,
+        stack,
+        &agentspace_platforms::LINUX_ARM64,
+    )
+}
+
+/// [`start_and_wait`] for a host of `platform` (operator.md, The platform seam): its patch check
+/// sends [`HostPlatform::patch_check_command`] through [`HostPlatform::ssm_document`], and its
+/// phase message and deadline are worded with [`HostPlatform::patch_messages`]. On both Linux
+/// platforms every call and line is [`start_and_wait`]'s, byte for byte (`--parameters
+/// commands=<question>`); on a platform whose document is not `AWS-RunShellScript`, such as
+/// `AWS-RunPowerShellScript`, the parameters are the JSON value `{"commands":["<question>"]}`,
+/// never the shorthand (pins P17 and P18 of v0.12-T02). A platform whose patch check fails ends
+/// the step with that failure before any call, the instance ID's read included.
+pub fn start_and_wait_on(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    cache: &dyn InstanceIdCache,
+    stack: &str,
+    platform: &dyn HostPlatform,
+) -> Result<String, Failure> {
+    // The platform's patch check is read first: a row that fails ends the step before any call.
+    let check = wait::PatchCheck::of(platform)?;
     let id = instance_id(aws, cache, stack)?;
-    start_and_wait_for(aws, say, clock, &id)?;
+    wait::start_and_wait_with(aws, say, clock, &id, &check)?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::path::Path;
+
+    use agentspace_operator_api::{AwsError, Call, CallerLine, Mode};
+
+    use super::*;
+    use crate::run_command::fake::{self, TestPlatform};
+
+    /// An AWS CLI that records each call and refuses it.
+    #[derive(Default)]
+    struct Refusing(RefCell<Vec<String>>);
+
+    impl Aws for Refusing {
+        fn call(&self, call: &Call) -> Result<serde_json::Value, AwsError> {
+            self.0
+                .borrow_mut()
+                .push(format!("{} {}", call.service, call.operation));
+            Err(AwsError::Failed("refused by the test".to_string()))
+        }
+    }
+
+    /// A cache that counts its reads and writes, and is missing.
+    #[derive(Default)]
+    struct Counted(Cell<usize>);
+
+    impl InstanceIdCache for Counted {
+        fn path(&self) -> &Path {
+            Path::new("instance-id.json")
+        }
+        fn read(&self) -> CacheRead {
+            self.0.set(self.0.get() + 1);
+            CacheRead::Missing
+        }
+        fn write(&self, _: &[u8]) -> Result<(), Failure> {
+            self.0.set(self.0.get() + 1);
+            Ok(())
+        }
+    }
+
+    /// Records every line.
+    #[derive(Default)]
+    struct Lines(RefCell<Vec<String>>);
+
+    impl Say for Lines {
+        fn mode(&self) -> Mode {
+            Mode::Person
+        }
+        fn progress(&self, person: &str, _: Option<CallerLine>) {
+            self.0.borrow_mut().push(person.to_string());
+        }
+        fn warning(&self, person: &str) {
+            self.0.borrow_mut().push(person.to_string());
+        }
+        fn detail(&self, text: &str) {
+            self.0.borrow_mut().push(text.to_string());
+        }
+    }
+
+    /// A platform whose patch check fails ends `start_and_wait_on` with that failure before the
+    /// cache is read or any call is made; a platform whose check succeeds goes on to read the
+    /// cache and the stack, which this test's AWS refuses.
+    #[test]
+    fn a_failed_patch_check_ends_start_and_wait_on_before_the_cache_or_any_call() {
+        let (aws, cache, say) = (Refusing::default(), Counted::default(), Lines::default());
+        let clock = SystemClock::new();
+        let failing = TestPlatform {
+            document: "AWS-RunPowerShellScript",
+            fails: true,
+        };
+        let failure =
+            start_and_wait_on(&aws, &say, &clock, &cache, "agentbox", &failing).unwrap_err();
+        assert_eq!(failure.message, fake::FAILED);
+        assert_eq!(cache.0.get(), 0);
+        assert!(aws.0.borrow().is_empty());
+        assert!(say.0.borrow().is_empty());
+
+        let failure = start_and_wait_on(
+            &aws,
+            &say,
+            &clock,
+            &cache,
+            "agentbox",
+            &TestPlatform::powershell(),
+        )
+        .unwrap_err();
+        assert_ne!(failure.message, fake::FAILED);
+        assert!(cache.0.get() > 0);
+        assert!(!aws.0.borrow().is_empty());
+    }
 }
