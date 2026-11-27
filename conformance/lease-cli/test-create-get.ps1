@@ -271,7 +271,9 @@ try {
   }
 
   # --- An unsatisfiable lease: no CA is needed, and no credential is issued -------------------------
-  $u =Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64', '--size', 'xxl')
+  # v0.12 (lease-api.md#platform, D98): linux/amd64 is a supported platform now, where xxl alone would be unsupported, so the
+  # platform no backend supports here is windows/arm64, which lists unsupported_platform then unsupported_size (driver.md#what-it-supports).
+  $u =Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'windows/arm64', '--size', 'xxl')
   $made++
   $ua = $u.Json
   $p = Get-ConformanceSuccessProblems -Run $u
@@ -280,7 +282,7 @@ try {
   $p = [System.Collections.Generic.List[string]]::new()
   $codes = if ($ua -and $ua['reasons']) { @($ua['reasons'] | ForEach-Object { $_['code'] }) } else { @() }
   if (($codes -join ',') -cne 'unsupported_platform,unsupported_size') { $p.Add("The reasons are '$($codes -join ',')'") }
-  elseif (-not ([string]$ua['reasons'][0]['message']).Contains('linux/amd64') -or -not ([string]$ua['reasons'][1]['message']).Contains('xxl')) { $p.Add('A reason''s message does not name the value that cannot be met') }
+  elseif (-not ([string]$ua['reasons'][0]['message']).Contains('windows/arm64') -or -not ([string]$ua['reasons'][1]['message']).Contains('xxl')) { $p.Add('A reason''s message does not name the value that cannot be met') }
   if ($u.Stdout -match '(?i)\b(ec2|aws)\b') { $p.Add('The output names a backend') }
   Complete-ConformanceCheck -Name 'lease-api.md#fields: Its reasons are unsupported_platform then unsupported_size, in table order, each message naming its value' -Problems $p
   $p = [System.Collections.Generic.List[string]]::new()
@@ -298,10 +300,11 @@ try {
 
   # Each reason alone, and all three; a request is never met with a substitute (lease-api.md#agentspace-lease-create).
   $reasonCases = @(
-    @{ Args = @('--platform', 'windows/amd64'); Codes = 'unsupported_platform' }
+    # windows/arm64 stays unsupported (lease-api.md#platform, D98), and lists unsupported_platform alone (lease-api.md#profile, pin P2).
+    @{ Args = @('--platform', 'windows/arm64'); Codes = 'unsupported_platform' }
     @{ Args = @('--profile', 'agent-linux@1'); Codes = 'unsupported_profile' }
     @{ Args = @('--size', 'xxl'); Codes = 'unsupported_size' }
-    @{ Args = @('--size', 'xxl', '--profile', 'agent-linux@1', '--platform', 'linux/amd64'); Codes = 'unsupported_platform,unsupported_profile,unsupported_size' }
+    @{ Args = @('--size', 'xxl', '--profile', 'agent-linux@1', '--platform', 'windows/arm64'); Codes = 'unsupported_platform,unsupported_profile,unsupported_size' }
   )
   foreach ($case in $reasonCases) {
     $line = @('lease', 'create', '--project', 'test-create') + $case.Args
@@ -316,14 +319,15 @@ try {
 
   # TTL as the lease records it, on an unsatisfiable lease so that no CA is needed (lease-api.md#ttl).
   foreach ($case in @(@('1m', 60), @('24h', 86400), @('1d', 86400), @('PT8H', 28800), @('1h 30m', 5400), @(' 90 MIN ', 5400))) {
-    $line = @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64', '--ttl', $case[0])
+    # windows/arm64 is unsupported (lease-api.md#platform, D98), so the lease is unsatisfiable and needs no CA.
+    $line = @('lease', 'create', '--project', 'test-create', '--platform', 'windows/arm64', '--ttl', $case[0])
     $c = Invoke-AgentspaceCli -ConformanceHome $h -Arguments $line
     $made++
     $p = Get-ConformanceSuccessProblems -Run $c
     if ($c.Json -and $c.Json['ttl_seconds'] -ne $case[1]) { $p.Add("ttl_seconds is $(ConvertTo-ConformanceMasked $c.Json['ttl_seconds']), not $($case[1])") }
     Complete-ConformanceCheck -Name "lease-api.md#ttl: --ttl '$($case[0])' is $($case[1]) seconds" -Problems $p
   }
-  $c = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'linux/amd64')
+  $c = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'test-create', '--platform', 'windows/arm64')
   $made++
   $p = Get-ConformanceSuccessProblems -Run $c
   if ($c.Json -and $c.Json['ttl_seconds'] -ne 28800) { $p.Add("ttl_seconds is $(ConvertTo-ConformanceMasked $c.Json['ttl_seconds']), not 28800") }

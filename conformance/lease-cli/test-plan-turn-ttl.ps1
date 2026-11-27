@@ -592,7 +592,7 @@ function Invoke-TtSourceCases {
     & $same ('main|' + $c.K) $d $c.K
   }
   # --turn with a platform no backend has: the reasons are the platform's alone, and sized_for names the turn.
-  $d = Test-TtLease -Section 'turn' -Desc '--turn T01 with a platform no backend has: unsupported_platform alone, sized for T01' -Key 'main' -Extra @('--turn', 'T01', '--platform', 'windows/amd64') -Turn 'T01' -Agents 4 -Size 's' -Ttl 4080 -Reasons @('unsupported_platform') @t
+  $d = Test-TtLease -Section 'turn' -Desc '--turn T01 with a platform no backend has: unsupported_platform alone, sized for T01' -Key 'main' -Extra @('--turn', 'T01', '--platform', 'windows/arm64') -Turn 'T01' -Agents 4 -Size 's' -Ttl 4080 -Reasons @('unsupported_platform') @t
   & $keep 'main|t01-platform' $d
   & $same 'main|t01-platform' $d 't01-platform'
 
@@ -642,7 +642,7 @@ function Invoke-TtSourceCases {
   & $keep 'large|small' $d; & $same 'large|small' $d 'large small'
   $d = Test-TtLease -Section 'turn' -Desc '--turn Edge, 32 agents, the most xl holds: size xl, no_capacity, not plan_too_large, and its budget of 10 gives 900' -Key 'large' -Extra @('--turn', 'Edge') -Turn 'Edge' -Agents 32 -Size 'xl' -Ttl 900 @t
   & $keep 'large|edge' $d; & $same 'large|edge' $d 'large edge'
-  $d = Test-TtLease -Section 'turn' -Desc '--turn Huge with a platform no backend has: plan_too_large is the only reason' -Key 'large' -Extra @('--turn', 'Huge', '--platform', 'windows/amd64') -Turn 'Huge' -Agents 33 -Size 'xl' -Ttl 18000 -Reasons @('plan_too_large') -TooLarge turn @t
+  $d = Test-TtLease -Section 'turn' -Desc '--turn Huge with a platform no backend has: plan_too_large is the only reason' -Key 'large' -Extra @('--turn', 'Huge', '--platform', 'windows/arm64') -Turn 'Huge' -Agents 33 -Size 'xl' -Ttl 18000 -Reasons @('plan_too_large') -TooLarge turn @t
   & $keep 'large|huge-platform' $d; & $same 'large|huge-platform' $d 'large huge platform'
   $d = Test-TtLease -Section 'turn' -Desc '--turn Huge with --ttl 1h: plan_too_large carries the TTL asked for' -Key 'large' -Extra @('--turn', 'Huge', '--ttl', '1h') -Turn 'Huge' -Agents 33 -Size 'xl' -Ttl 3600 -Reasons @('plan_too_large') -TooLarge turn @t
   & $keep 'large|huge-ttl' $d; & $same 'large|huge-ttl' $d 'large huge ttl'

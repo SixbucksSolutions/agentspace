@@ -436,6 +436,118 @@ fn create_records_the_driver_name_and_never_prints_it() {
     assert_eq!(records[0].driver.as_deref(), Some("secretname"));
 }
 
+/// Runs `create --project demo` with `extra` flags against a fake driver, and gives the platform and
+/// profile the driver was asked for and the printed document's own (lease-api.md, Profile; D93).
+fn platform_and_profile_of(extra: &[&str]) -> (String, String, String, String) {
+    let env = Env::new();
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    let mut args = vec!["lease", "create", "--project", "demo"];
+    args.extend_from_slice(extra);
+    let out = env.run(&args, &drivers, &[ID_A]);
+    let d = doc(&out);
+    let placed = log_of(&log);
+    assert_eq!(placed.len(), 1, "{placed:?}");
+    let words: Vec<&str> = placed[0].split(' ').collect();
+    (
+        words[3].to_owned(),
+        words[4].to_owned(),
+        d["platform"].as_str().unwrap().to_owned(),
+        d["profile"].as_str().unwrap().to_owned(),
+    )
+}
+
+#[test]
+fn create_on_windows_amd64_with_no_profile_asks_for_agent_windows() {
+    let (asked_platform, asked_profile, printed_platform, printed_profile) =
+        platform_and_profile_of(&["--platform", "windows/amd64"]);
+    assert_eq!(asked_platform, "windows/amd64");
+    assert_eq!(asked_profile, "agent-windows");
+    assert_eq!(printed_platform, "windows/amd64");
+    assert_eq!(printed_profile, "agent-windows");
+}
+
+#[test]
+fn create_on_a_spelling_of_windows_amd64_with_no_profile_asks_for_agent_windows() {
+    let (asked_platform, asked_profile, _, printed_profile) =
+        platform_and_profile_of(&["--platform", " Windows/X86_64 "]);
+    assert_eq!(asked_platform, "windows/amd64");
+    assert_eq!(asked_profile, "agent-windows");
+    assert_eq!(printed_profile, "agent-windows");
+}
+
+#[test]
+fn create_on_either_linux_platform_with_no_profile_asks_for_agent_linux() {
+    for platform in ["linux/arm64", "linux/amd64"] {
+        let (_, asked_profile, _, printed_profile) =
+            platform_and_profile_of(&["--platform", platform]);
+        assert_eq!(asked_profile, "agent-linux", "{platform}");
+        assert_eq!(printed_profile, "agent-linux", "{platform}");
+    }
+}
+
+#[test]
+fn create_with_no_platform_and_no_profile_is_linux_arm64_with_agent_linux() {
+    let (asked_platform, asked_profile, _, printed_profile) = platform_and_profile_of(&[]);
+    assert_eq!(asked_platform, "linux/arm64");
+    assert_eq!(asked_profile, "agent-linux");
+    assert_eq!(printed_profile, "agent-linux");
+}
+
+#[test]
+fn create_on_a_platform_agentspace_does_not_support_with_no_profile_prints_agent_linux() {
+    // No default profile of its own (lease-api.md, Profile; pin P2): `windows/arm64` prints what v2
+    // printed for every platform.
+    for platform in ["windows/arm64", "linux/arm64/v8", "freebsd/amd64"] {
+        let (_, asked_profile, _, printed_profile) =
+            platform_and_profile_of(&["--platform", platform]);
+        assert_eq!(asked_profile, "agent-linux", "{platform}");
+        assert_eq!(printed_profile, "agent-linux", "{platform}");
+    }
+}
+
+#[test]
+fn create_names_the_profile_it_was_given_whatever_the_platform() {
+    // The default never overrides a profile asked for: `agent-linux` on windows/amd64 and
+    // `agent-windows` on linux/amd64 stay as asked, for the driver to refuse (D93).
+    let (_, asked_profile, _, printed_profile) =
+        platform_and_profile_of(&["--platform", "windows/amd64", "--profile", "Agent-Linux"]);
+    assert_eq!(asked_profile, "agent-linux");
+    assert_eq!(printed_profile, "agent-linux");
+    let (_, asked_profile, _, printed_profile) =
+        platform_and_profile_of(&["--platform", "linux/amd64", "--profile", "agent-windows"]);
+    assert_eq!(asked_profile, "agent-windows");
+    assert_eq!(printed_profile, "agent-windows");
+}
+
+#[test]
+fn create_on_windows_amd64_with_a_plan_and_no_profile_asks_for_agent_windows() {
+    let env = Env::new();
+    std::fs::write(
+        env.dir.path().join("plan.json"),
+        r#"{"turns":[{"name":"T01","stories":[{"name":"S01","subagents":[{"name":"a","model":"Opus","effort":"high"}]}]}]}"#,
+    )
+    .unwrap();
+    let log = Log::default();
+    let drivers: Vec<Box<dyn Driver>> = vec![Box::new(Fake::new("fake", &log))];
+    let out = env.run(
+        &[
+            "lease",
+            "create",
+            "--project",
+            "demo",
+            "--platform",
+            "windows/amd64",
+            "--plan",
+            "plan.json",
+        ],
+        &drivers,
+        &[ID_A],
+    );
+    assert_eq!(doc(&out)["profile"], "agent-windows");
+    assert!(log_of(&log)[0].contains(" windows/amd64 agent-windows "));
+}
+
 #[test]
 fn create_draws_again_while_a_kept_leases_alias_is_the_same() {
     let env = Env::new();

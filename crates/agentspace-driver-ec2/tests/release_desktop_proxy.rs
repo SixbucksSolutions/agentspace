@@ -111,6 +111,7 @@ impl Rel {
         LeaseRef {
             id: &self.id,
             project: PROJECT,
+            platform: "linux/arm64",
         }
     }
 

@@ -281,16 +281,19 @@ try {
   } else { foreach ($n in 'get', 'list', 'renew', 'release') { Write-ConformanceResult -Name "lease-api.md#versioning: $n of a pending lease validates against v0's schema, v1's and v2's" -Status FAIL -Reason 'The create printed no pending lease that validates, so there was nothing to read back' } }
 
   # --- An unsatisfiable lease, with each reason v0 had alone and together ---
+  # v0.12 (lease-api.md#versioning, "What v2 keeps of v1", pin P22; D93, D98): a command line naming linux/amd64 or windows/amd64
+  # is supported now and MAY print a different document, so each line that stands for an unsupported platform uses windows/arm64,
+  # which stays unsupported and keeps v0's, v1's and v2's document. linux/amd64/v3 is not linux/amd64 (pin P21) and stays as it was.
   $unsat = @(
-    @{ Why = 'an unsupported platform'; A = @('--platform', 'windows/amd64'); R = @('unsupported_platform') }
+    @{ Why = 'an unsupported platform'; A = @('--platform', 'windows/arm64'); R = @('unsupported_platform') }
     @{ Why = 'an unsupported platform in the OCI form with a variant'; A = @('--platform=linux/amd64/v3'); R = @('unsupported_platform') }
     @{ Why = 'an unsupported profile'; A = @('--profile', 'agent-linux@1'); R = @('unsupported_profile') }
     @{ Why = 'an unsupported size'; A = @('--size', 'xxl'); R = @('unsupported_size') }
     @{ Why = 'an unsupported size in upper case, with spaces'; A = @('--size', ' XXL '); R = @('unsupported_size') }
-    @{ Why = 'an unsupported platform and profile'; A = @('--platform', 'linux/amd64', '--profile', 'agent-linux@2'); R = @('unsupported_platform', 'unsupported_profile') }
-    @{ Why = 'an unsupported platform and size'; A = @('--platform', 'linux/amd64', '--size', 'xxl'); R = @('unsupported_platform', 'unsupported_size') }
+    @{ Why = 'an unsupported platform and profile'; A = @('--platform', 'windows/arm64', '--profile', 'agent-linux@2'); R = @('unsupported_platform', 'unsupported_profile') }
+    @{ Why = 'an unsupported platform and size'; A = @('--platform', 'windows/arm64', '--size', 'xxl'); R = @('unsupported_platform', 'unsupported_size') }
     @{ Why = 'an unsupported profile and size'; A = @('--profile', 'other', '--size', 'xxl'); R = @('unsupported_profile', 'unsupported_size') }
-    @{ Why = 'an unsupported platform, profile and size'; A = @('--platform', 'windows/amd64', '--profile', 'agent-linux@1', '--size', 'xxl', '--ttl', '1h'); R = @('unsupported_platform', 'unsupported_profile', 'unsupported_size') }
+    @{ Why = 'an unsupported platform, profile and size'; A = @('--platform', 'windows/arm64', '--profile', 'agent-linux@1', '--size', 'xxl', '--ttl', '1h'); R = @('unsupported_platform', 'unsupported_profile', 'unsupported_size') }
   )
   $idu = ''
   foreach ($u in $unsat) {
@@ -300,7 +303,7 @@ try {
   # no_capacity: a project with no host that is not on the list (D54), and a project whose host serves a smaller lease (D66).
   $d = Test-VkLine -Why 'no capacity: the project has no host and is not on the project list' -Arguments @('lease', 'create', '--project', 'v2c-nocap') -Kind lease -State unsatisfiable -Reasons @('no_capacity')
   $idn = Get-VkId $d
-  [void](Test-VkLine -Why 'no capacity: with an unsupported platform it is the platform alone' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--platform', 'windows/amd64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform'))
+  [void](Test-VkLine -Why 'no capacity: with an unsupported platform it is the platform alone' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--platform', 'windows/arm64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform'))
   if ($lab.CaReady) {
     # A live ready lease at m's type holds the host, so a larger size is refused at once with no_capacity (D66).
     $d = Test-VkLine -Why 'a ready lease that holds the host at size m' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--size', 'm') -Kind lease -State ready
@@ -375,11 +378,11 @@ try {
   # A plan with no budget gives the TTL of 8 hours (lease-api.md, TTL, "When that turn has none").
   [void](Test-VkLine -Plan -Why 'a plan with no budget: the TTL is the default' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--plan', $midPlan) -Kind lease -State unsatisfiable -Reasons @('no_capacity') -Ttl 28800)
   [void](Test-VkLine -Plan -Why 'a plan with no name: sized_for has no plan' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--plan', $nonamePlan) -Kind lease -State unsatisfiable -Reasons @('no_capacity') -Ttl 28800)
-  [void](Test-VkLine -Plan -Why 'a plan with an unsupported platform' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $midPlan, '--platform', 'windows/amd64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform') -Ttl 28800)
+  [void](Test-VkLine -Plan -Why 'a plan with an unsupported platform' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $midPlan, '--platform', 'windows/arm64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform') -Ttl 28800)
   [void](Test-VkLine -Plan -Why 'a plan with a TTL' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--plan', $midPlan, '--ttl', '2h') -Kind lease -State unsatisfiable -Reasons @('no_capacity') -Ttl 7200)
   $d = Test-VkLine -Plan -Why 'a plan no size holds' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $bigPlan) -Kind lease -State unsatisfiable -Reasons @('plan_too_large') -Ttl 28800
   $idt = Get-VkId $d
-  [void](Test-VkLine -Plan -Why 'a plan no size holds, with a platform no backend has' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $bigPlan, '--platform', 'windows/amd64') -Kind lease -State unsatisfiable -Reasons @('plan_too_large'))
+  [void](Test-VkLine -Plan -Why 'a plan no size holds, with a platform no backend has' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $bigPlan, '--platform', 'windows/arm64') -Kind lease -State unsatisfiable -Reasons @('plan_too_large'))
   if ($idt) {
     [void](Test-VkLine -Plan -Why 'a plan no size holds, read back' -Arguments @('lease', 'get', $idt) -Kind lease -State unsatisfiable -Reasons @('plan_too_large'))
     [void](Test-VkLine -Plan -Why 'a plan no size holds, released' -Arguments @('lease', 'release', $idt) -Kind lease -State unsatisfiable -Reasons @('plan_too_large'))
@@ -427,7 +430,7 @@ try {
   [void](Test-VkLine -Plan -Why '--turn on a plan with no budgets' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--plan', $midPlan, '--turn', 'T1') -Kind lease -State unsatisfiable -Reasons @('no_capacity') -Ttl 28800)
   [void](Test-VkLine -Plan -Why '--turn naming a turn that no size holds' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--plan', $budgetBigPlan, '--turn', 'T2') -Kind lease -State unsatisfiable -Reasons @('plan_too_large') -Ttl 2700)
   [void](Test-VkLine -Plan -Why '--turn naming a turn that fits, though another turn is too large' -Arguments @('lease', 'create', '--project', 'v2c-nocap', '--plan', $budgetBigPlan, '--turn', 'T1') -Kind lease -State unsatisfiable -Reasons @('no_capacity') -Ttl 4080)
-  [void](Test-VkLine -Plan -Why 'a plan with budgets and an unsupported platform' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $budgetPlan, '--turn', 'T2', '--platform', 'windows/amd64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform') -Ttl 10800)
+  [void](Test-VkLine -Plan -Why 'a plan with budgets and an unsupported platform' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $budgetPlan, '--turn', 'T2', '--platform', 'windows/arm64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform') -Ttl 10800)
   if ($lab.CaReady) {
     $d = Test-VkLine -Plan -Why 'a plan with budgets and --turn T1, on a project with a ready host' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $budgetPlan, '--turn', 'T1') -Kind lease -State ready -Ttl 4080
     $idb = Get-VkId $d
@@ -462,8 +465,8 @@ try {
   [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $lab -Path $statePath), [Text.UTF8Encoding]::new($false).GetBytes("this is not a lease state file`n"))
   [void](Test-VkLine -Why 'the lease records cannot be read: a get' -Arguments @('lease', 'get', $notFound) -Kind error -Code internal)
   [void](Test-VkLine -Why 'the lease records cannot be read: a list' -Arguments @('lease', 'list') -Kind error -Code internal)
-  [void](Test-VkLine -Why 'the lease records cannot be read: a create' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--platform', 'windows/amd64') -Kind error -Code internal)
-  [void](Test-VkLine -Plan -Why 'the lease records cannot be read: a create from a plan' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $midPlan, '--platform', 'windows/amd64') -Kind error -Code internal)
+  [void](Test-VkLine -Why 'the lease records cannot be read: a create' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--platform', 'windows/arm64') -Kind error -Code internal)
+  [void](Test-VkLine -Plan -Why 'the lease records cannot be read: a create from a plan' -Arguments @('lease', 'create', '--project', 'v2c-ready', '--plan', $midPlan, '--platform', 'windows/arm64') -Kind error -Code internal)
   Remove-Item -LiteralPath (Assert-ConformancePath -ConformanceHome $lab -Path $statePath) -Force
 
   # ===== Controls: what v1 and v2 added MUST fail the schemas that lack it, so the checks above are not vacuous =====

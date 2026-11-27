@@ -234,16 +234,19 @@ try {
   } else { foreach ($n in 'get', 'list', 'renew', 'release') { Write-ConformanceResult -Name "lease-api.md#versioning: $n of a pending lease validates against v0's schema and v1's" -Status FAIL -Reason 'The create printed no pending lease that validates, so there was nothing to read back' } }
 
   # --- An unsatisfiable lease, with each reason v0 had alone and together ---
+  # v0.12 (lease-api.md#versioning, "What v2 keeps of v1", pin P22; D93, D98): a command line naming linux/amd64 or windows/amd64
+  # is supported now and MAY print a different document, so each line that stands for an unsupported platform uses windows/arm64,
+  # which stays unsupported and keeps v0's and v1's document. linux/amd64/v3 is not linux/amd64 (pin P21) and stays as it was.
   $unsat = @(
-    @{ Why = 'an unsupported platform'; A = @('--platform', 'windows/amd64'); R = @('unsupported_platform') }
+    @{ Why = 'an unsupported platform'; A = @('--platform', 'windows/arm64'); R = @('unsupported_platform') }
     @{ Why = 'an unsupported platform in the OCI form with a variant'; A = @('--platform=linux/amd64/v3'); R = @('unsupported_platform') }
     @{ Why = 'an unsupported profile'; A = @('--profile', 'agent-linux@1'); R = @('unsupported_profile') }
     @{ Why = 'an unsupported size'; A = @('--size', 'xxl'); R = @('unsupported_size') }
     @{ Why = 'an unsupported size in upper case, with spaces'; A = @('--size', ' XXL '); R = @('unsupported_size') }
-    @{ Why = 'an unsupported platform and profile'; A = @('--platform', 'linux/amd64', '--profile', 'agent-linux@2'); R = @('unsupported_platform', 'unsupported_profile') }
-    @{ Why = 'an unsupported platform and size'; A = @('--platform', 'linux/amd64', '--size', 'xxl'); R = @('unsupported_platform', 'unsupported_size') }
+    @{ Why = 'an unsupported platform and profile'; A = @('--platform', 'windows/arm64', '--profile', 'agent-linux@2'); R = @('unsupported_platform', 'unsupported_profile') }
+    @{ Why = 'an unsupported platform and size'; A = @('--platform', 'windows/arm64', '--size', 'xxl'); R = @('unsupported_platform', 'unsupported_size') }
     @{ Why = 'an unsupported profile and size'; A = @('--profile', 'other', '--size', 'xxl'); R = @('unsupported_profile', 'unsupported_size') }
-    @{ Why = 'an unsupported platform, profile and size'; A = @('--platform', 'windows/amd64', '--profile', 'agent-linux@1', '--size', 'xxl', '--ttl', '1h'); R = @('unsupported_platform', 'unsupported_profile', 'unsupported_size') }
+    @{ Why = 'an unsupported platform, profile and size'; A = @('--platform', 'windows/arm64', '--profile', 'agent-linux@1', '--size', 'xxl', '--ttl', '1h'); R = @('unsupported_platform', 'unsupported_profile', 'unsupported_size') }
   )
   $idu = ''
   foreach ($u in $unsat) {
@@ -253,7 +256,7 @@ try {
   # no_capacity: a project with no host that is not on the list (D54), and a project whose host serves a smaller lease (D66).
   $d = Test-VcLine -Why 'no capacity: the project has no host and is not on the project list' -Arguments @('lease', 'create', '--project', 'vc-nocap') -Kind lease -State unsatisfiable -Reasons @('no_capacity')
   $idn = Get-VcId $d
-  $d = Test-VcLine -Why 'no capacity: with an unsupported platform it is the platform alone' -Arguments @('lease', 'create', '--project', 'vc-nocap', '--platform', 'windows/amd64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform')
+  $d = Test-VcLine -Why 'no capacity: with an unsupported platform it is the platform alone' -Arguments @('lease', 'create', '--project', 'vc-nocap', '--platform', 'windows/arm64') -Kind lease -State unsatisfiable -Reasons @('unsupported_platform')
   if ($lab.CaReady) {
     # A live ready lease at m's type holds the host, so a larger size is refused at once with no_capacity (D66).
     $d = Test-VcLine -Why 'a ready lease that holds the host at size m' -Arguments @('lease', 'create', '--project', 'vc-ready', '--size', 'm') -Kind lease -State ready
@@ -342,7 +345,7 @@ try {
   [IO.File]::WriteAllBytes((Assert-ConformancePath -ConformanceHome $lab -Path $statePath), [Text.UTF8Encoding]::new($false).GetBytes("this is not a lease state file`n"))
   [void](Test-VcLine -Why 'the lease records cannot be read: a get' -Arguments @('lease', 'get', $notFound) -Kind error -Code internal)
   [void](Test-VcLine -Why 'the lease records cannot be read: a list' -Arguments @('lease', 'list') -Kind error -Code internal)
-  [void](Test-VcLine -Why 'the lease records cannot be read: a create' -Arguments @('lease', 'create', '--project', 'vc-ready', '--platform', 'windows/amd64') -Kind error -Code internal)
+  [void](Test-VcLine -Why 'the lease records cannot be read: a create' -Arguments @('lease', 'create', '--project', 'vc-ready', '--platform', 'windows/arm64') -Kind error -Code internal)
 
   # --- Controls: what v1 adds MUST fail v0's schema, so the checks above are not vacuous ---
   $plansDir = Assert-ConformancePath -ConformanceHome $lab -Path (Join-Path $lab.Root 'plans')

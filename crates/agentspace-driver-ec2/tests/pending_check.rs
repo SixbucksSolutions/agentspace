@@ -28,7 +28,14 @@ fn world(project: &str) -> (Fx, Arc<FakeDetach>) {
 }
 
 fn check(fx: &Fx, d: &impl Driver, project: &str) -> Result<(), Failure> {
-    d.check_pending(&fx.ctx, &LeaseRef { id: ID, project })
+    d.check_pending(
+        &fx.ctx,
+        &LeaseRef {
+            id: ID,
+            project,
+            platform: "linux/arm64",
+        },
+    )
 }
 
 fn record(state: &str) -> H {

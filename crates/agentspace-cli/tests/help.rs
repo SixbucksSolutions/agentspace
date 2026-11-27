@@ -316,3 +316,47 @@ fn help_prints_lf_line_endings_only() {
         assert!(std::str::from_utf8(&run.stdout).is_ok(), "{level}: UTF-8");
     }
 }
+
+/// The three parts of `create`'s help that changed in v0.12, written out from lease-api.md's
+/// "Three parts of this help changed in v0.12" (D93; pin P24), not read from the doc, so that a
+/// doc and a program that drifted together would still be caught. Each is its lines, joined with
+/// a line feed.
+const V0_12_CREATE_HELP_PARTS: [&[&str]; 3] = [
+    &[
+        "  --platform <os/arch>  Default linux/arm64. Also accepts aarch64 for arm64,",
+        "                        and x86_64 for amd64.",
+    ],
+    &[
+        "  --profile <name>      Default agent-linux, or agent-windows on windows/amd64.",
+        "                        Accepts name or name@version.",
+    ],
+    &[
+        "In v2 only these can be met: linux/arm64 and linux/amd64 with agent-linux,",
+        "windows/amd64 with agent-windows, and the sizes s, m, l and xl on each.",
+        "Any other well-formed value gives an unsatisfiable lease, never a substitute.",
+        "So does a plan whose busiest turn, or the turn --turn names, no size holds.",
+    ],
+];
+
+#[test]
+fn create_help_holds_the_v0_12_parts_byte_for_byte() {
+    let run = run_str(&["lease", "create", "--help"]);
+    assert_eq!(run.status, Some(0));
+    let text = String::from_utf8(run.stdout).expect("Help is UTF-8");
+    for part in V0_12_CREATE_HELP_PARTS {
+        let want = format!("{}\n", part.join("\n"));
+        assert!(
+            text.contains(&want),
+            "The help lacks this part, byte for byte: {want:?}"
+        );
+    }
+    // The parts that were replaced are gone.
+    for old in [
+        "Default linux/arm64. Also accepts aarch64 for arm64.\n",
+        "Default agent-linux. Accepts name or name@version.\n",
+        "In v2 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.",
+    ] {
+        assert!(!text.contains(old), "The help still holds {old:?}");
+    }
+    assert!(text.ends_with("no size holds.\n"));
+}

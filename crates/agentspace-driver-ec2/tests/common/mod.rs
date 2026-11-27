@@ -228,6 +228,7 @@ impl Fx {
         LeaseRef {
             id: ID,
             project: PROJECT,
+            platform: "linux/arm64",
         }
     }
     pub fn ca_dir(&self) -> PathBuf {

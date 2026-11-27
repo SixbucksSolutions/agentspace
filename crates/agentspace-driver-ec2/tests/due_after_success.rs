@@ -92,6 +92,7 @@ fn enter(fx: &Fx, d: &Ec2Driver, via: Via) {
                 &LeaseRef {
                     id: ID,
                     project: PROJECT,
+                    platform: "linux/arm64",
                 },
             )
             .expect("check_pending succeeds"),

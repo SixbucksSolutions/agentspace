@@ -260,7 +260,7 @@ Use-PlLab -Name 'lease-api.md#plan: With a platform no backend has, the size a p
     param([string]$Key, [string]$PlanText, [string]$Size, $Expect)
     $script:PlN++
     $path = Write-PlPlan -Lab $lab -File ("case-$($script:PlN)") -Text $PlanText
-    $run = Invoke-PlCreate -Lab $lab -PlanPath $path -StandIn $standIn -Extra @('--platform', 'windows/amd64')
+    $run = Invoke-PlCreate -Lab $lab -PlanPath $path -StandIn $standIn -Extra @('--platform', 'windows/arm64')   # v0.12: windows/amd64 is supported; windows/arm64 stays unsupported (lease-api.md#platform, D98)
     if ($run.Json -is [hashtable]) { $script:PlDocs++ }
     $results[$Key] = Get-PlPlatformProblems -Run $run -Size $Size -Expect $Expect
   }

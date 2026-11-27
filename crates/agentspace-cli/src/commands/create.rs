@@ -149,7 +149,7 @@ fn request(
     };
     let profile = match flag(cmd, "profile") {
         Some(v) => check_value(v, "profile", agentspace_values::profile)?,
-        None => "agent-linux".to_owned(),
+        None => default_profile(&platform).to_owned(),
     };
     let file_plan = flag(cmd, "plan").map(|v| read_plan(v, world)).transpose()?;
     let board = flag(cmd, "board")
@@ -207,6 +207,17 @@ fn request(
         ttl_seconds,
         plan: planned,
     })
+}
+
+/// The profile a lease that names none gets: `agent-windows` on `windows/amd64`, and `agent-linux`
+/// on every other platform, a platform agentspace does not support included, as v2 printed for
+/// every platform before v0.12 (lease-api.md, Profile; D93; pins P2 and P25). It is chosen from the
+/// normalized platform before any driver is asked, and a stored record is never re-derived.
+fn default_profile(platform: &str) -> &'static str {
+    match platform {
+        "windows/amd64" => "agent-windows",
+        _ => "agent-linux",
+    }
 }
 
 /// The default TTL, 8 hours (lease-api.md, TTL; D24).
@@ -363,6 +374,7 @@ pub(crate) fn create_with(
         ctx: &ctx,
         id: &id,
         project: &req.project,
+        platform: &req.platform,
         ready,
     };
     let mut next = file;
@@ -414,6 +426,7 @@ struct Undo<'a> {
     ctx: &'a Context,
     id: &'a str,
     project: &'a str,
+    platform: &'a str,
     ready: bool,
 }
 
@@ -432,6 +445,7 @@ impl Undo<'_> {
         let lease = LeaseRef {
             id: self.id,
             project: self.project,
+            platform: self.platform,
         };
         let tail = match self.driver.release(self.ctx, &lease) {
             // lease-api.md's "Records unwritable after a ready place (`create`), its undo leaving

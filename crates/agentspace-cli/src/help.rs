@@ -58,8 +58,10 @@ An unsatisfiable lease lists its reasons. Nothing was issued, and the exit code 
 
 Options:
   --project <name>      Required. Letters, digits and '-', up to 32; lowercased.
-  --platform <os/arch>  Default linux/arm64. Also accepts aarch64 for arm64.
-  --profile <name>      Default agent-linux. Accepts name or name@version.
+  --platform <os/arch>  Default linux/arm64. Also accepts aarch64 for arm64,
+                        and x86_64 for amd64.
+  --profile <name>      Default agent-linux, or agent-windows on windows/amd64.
+                        Accepts name or name@version.
   --size <size>         Default m. One of s, m, l or xl: at least 2, 4, 8 or 16 vCPUs,
                         with 4 GiB of memory for each.
   --plan <file>         Size the lease for a plan: a JSON file of turns, stories and
@@ -77,7 +79,8 @@ Options:
                         A bare number is refused: give a unit.
   -h, --help            Print this help and exit
 
-In v2 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.
+In v2 only these can be met: linux/arm64 and linux/amd64 with agent-linux,
+windows/amd64 with agent-windows, and the sizes s, m, l and xl on each.
 Any other well-formed value gives an unsatisfiable lease, never a substitute.
 So does a plan whose busiest turn, or the turn --turn names, no size holds.
 "##;

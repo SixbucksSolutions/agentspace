@@ -85,7 +85,9 @@ try {
   }
   $u1 = New-Seed 'alpha' @('--size', 'xxl')
   $u2 = New-Seed 'beta' @('--size', 'xxl')
-  $u3 = New-Seed 'alpha' @('--platform', 'linux/amd64')
+  # v0.12 (lease-api.md#platform, D98): linux/amd64 is supported, so with no host it would be no_capacity from the registry, not an
+  # unsupported request; windows/arm64 stays unsupported, and is unsatisfiable without reading the registry (driver.md#what-it-supports).
+  $u3 = New-Seed 'alpha' @('--platform', 'windows/arm64')
 
   $doc = Read-ConformanceStateFile -ConformanceHome $h
   $byId = @{}

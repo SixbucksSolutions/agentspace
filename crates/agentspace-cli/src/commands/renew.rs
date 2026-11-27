@@ -74,6 +74,7 @@ pub fn renew(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseError
     let lease = LeaseRef {
         id: &id,
         project: &record.project,
+        platform: &record.platform,
     };
     // The renewal is bound to a name and held, under the lock, until it is committed or rolled
     // back: dropped without either, it puts the previous certificate back (card #0106's ruling).

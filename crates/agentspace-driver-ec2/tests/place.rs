@@ -154,19 +154,34 @@ fn the_alias_may_live_outside_the_home() {
     assert_eq!(values(&fx.ssh_g(ALIAS), "user"), ["ubuntu"]);
 }
 
+/// The reasons driver.md's "What it supports" gives a request, written from its rules and not from
+/// the program: three platforms, each with its own profile and no version; on a platform that is
+/// not supported, `unsupported_profile` only for a profile no supported platform supports (pin P2);
+/// the size on its own. Every message is the page's, byte for byte.
 fn reasons_for(platform: &str, profile: &str, size: &str) -> Vec<(String, String)> {
+    let own = match platform {
+        "linux/arm64" | "linux/amd64" => Some("agent-linux"),
+        "windows/amd64" => Some("agent-windows"),
+        _ => None,
+    };
     let mut v = Vec::new();
-    if platform != "linux/arm64" {
+    if own.is_none() {
         v.push((
             "unsupported_platform".to_string(),
-            format!("Platform '{platform}' is not supported; v0 supports linux/arm64 only."),
+            format!(
+                "Platform '{platform}' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64."
+            ),
         ));
     }
-    if profile != "agent-linux" {
+    let profile_is_unsupported = match own {
+        Some(own) => profile != own,
+        None => profile != "agent-linux" && profile != "agent-windows",
+    };
+    if profile_is_unsupported {
         v.push((
             "unsupported_profile".to_string(),
             format!(
-                "Profile '{profile}' is not supported; v0 supports agent-linux with no version only."
+                "Profile '{profile}' is not supported on platform '{platform}'; agentspace supports agent-linux on linux/arm64 and linux/amd64, and agent-windows on windows/amd64, each with no version only."
             ),
         ));
     }
@@ -182,8 +197,20 @@ fn reasons_for(platform: &str, profile: &str, size: &str) -> Vec<(String, String
 fn run_combinations(fx: &Fx) {
     let before = fx.snapshot();
     let mut checked = 0;
-    for platform in ["linux/arm64", "windows/amd64", "linux/amd64"] {
-        for profile in ["agent-linux", "agent-linux@1", "agent-linux@12", "other"] {
+    for platform in [
+        "linux/arm64",
+        "windows/amd64",
+        "linux/amd64",
+        "windows/arm64",
+        "linux/amd64/v3",
+    ] {
+        for profile in [
+            "agent-linux",
+            "agent-windows",
+            "agent-linux@1",
+            "agent-windows@12",
+            "other",
+        ] {
             for size in ["s", "m", "l", "xl", "xxl"] {
                 let want = reasons_for(platform, profile, size);
                 if want.is_empty() {
@@ -208,7 +235,9 @@ fn run_combinations(fx: &Fx) {
             }
         }
     }
-    assert_eq!(checked, 3 * 4 * 5 - 4);
+    // 5 platforms, 5 profiles and 5 sizes, less the 12 requests that ask for nothing unsupported:
+    // each supported platform with its own profile and each of the four sizes.
+    assert_eq!(checked, 5 * 5 * 5 - 12);
     assert_eq!(fx.snapshot(), before, "An unsupported place left a file");
 }
 

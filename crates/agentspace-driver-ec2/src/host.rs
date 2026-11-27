@@ -1,16 +1,25 @@
-//! Where a lease is placed, by its project's host, and the start of a provisioning run
-//! (docs/driver.md, "Where it places a lease", "Starting a provisioning run" and "check_pending";
-//! docs/state.md, "The host registry", "The project list" and "The provisioning run's start"; D48,
-//! D54, D55).
+//! Where a lease is placed, by its project's host on its platform, and the start of a provisioning
+//! run (docs/driver.md, "Where it places a lease", "Starting a provisioning run" and
+//! "check_pending"; docs/state.md, "The host registry", "The project list" and "The provisioning
+//! run's start"; D48, D54, D55, D91).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
 //! - **Place MUST decide support before it reads any file**, and an unsupported request reads
 //!   neither the host registry nor the project list.
+//! - **From v0.12 a lease's host MUST be the record of its project on its platform** (D91): a
+//!   record of the project on another platform is another host, whatever its state, and the
+//!   project's leases that count are its leases on the lease's platform alone.
+//! - **A record the driver adds MUST be `agentspace_hosts::Host::new`'s, appended at the end**, and
+//!   its writes MUST keep every record's `platform`, or its absence, as they read it (pins P5, P16
+//!   and P46).
+//! - **A run for a host off `linux/arm64` MUST add exactly `-Platform <platform>` to the three
+//!   arguments, and one for a `linux/arm64` host MUST NOT** (pins P9, P30 and P38).
 //! - **The registry MUST be read under `hosts.lock`, and the lock MUST be released before a run is
 //!   started.** The reads that decide come first, then the program, then the one write, so a
 //!   failure before the write leaves the registry as it was.
-//! - **The project list MUST be read only for a project with no record.**
+//! - **The project list MUST be read only for a project with no record on the lease's platform**,
+//!   and it approves that platform alone (pins P3 and P4).
 //! - **A `pending` answer from place MUST check the CA first**, and `check_pending` runs no CA check.
 //! - **The driver MUST NOT change the `state` of a `ready` record.**
 //! - **A run MUST NOT be started while the host's `provision.lock` is held, or when the record's
@@ -40,15 +49,15 @@ use std::time::{Duration, Instant};
 use agentspace_credential::{ca_failure_message, check_ca};
 use agentspace_detach::Detach;
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed, Reason};
-use agentspace_hosts::{self as hosts, Host, HostState, Hosts, HostsError, HostsLock};
+use agentspace_hosts::{self as hosts, Host, HostKey, HostState, Hosts, HostsError, HostsLock};
 use agentspace_state::{Record as Lease, format_time, is_live, now, parse_time};
 
-use crate::ops::{self, HostKey};
-use crate::reasons::reasons;
-use crate::sizes::{SIZES, instance_type_for, meets, resize_target};
+use crate::ops::{self, HostLines};
+use crate::reasons::{reasons, supported};
+use crate::sizes::{instance_type_on, is_mapped_on, meets_on, resize_target_keyed};
 use crate::text::{
     OPERATOR_NAMED_MISSING, OPERATOR_NO_INTERPRETER, OPERATOR_NOT_BESIDE, failure,
-    host_lookup_failed, no_capacity, no_capacity_at_size,
+    host_lookup_failed, no_capacity, no_capacity_at_size, no_capacity_on_platform,
 };
 
 /// The detached start the driver holds, shared with the thread that bounds a start.
@@ -124,47 +133,49 @@ enum OnReady {
 /// The `<why>` of a lease state file that place cannot read, or that does not validate (pin P19).
 const LEASES_WHY: &str = "agentspace's lease records could not be read";
 
-/// Whether a live `ready` lease of `project` holds its host as of `now` (driver.md, "On a `ready`
-/// host"; state.md, "Live leases and the lease horizon"; D56, D66): a record stored `ready`, of the
-/// project, compared exactly, whose `expires_at` is after `now`. A lease that is only `pending`
-/// holds no host's size, and an expired, `released` or `unsatisfiable` one holds nothing.
-pub(crate) fn holds_host(leases: &[Lease], project: &str, now: i64) -> bool {
-    leases
-        .iter()
-        .any(|l| l.state == "ready" && l.project == project && is_live(l, now))
-}
-
-/// Whether the map holds `instance_type`: a type outside it meets no size (D67; pin P14).
-pub(crate) fn is_mapped(instance_type: &str) -> bool {
-    SIZES
-        .iter()
-        .any(|s| instance_type_for(s) == Some(instance_type))
+/// Whether a live `ready` lease of the host `key` holds it as of `now` (driver.md, "On a `ready`
+/// host"; state.md, "Live leases and the lease horizon"; D56, D66, D91): a record stored `ready`,
+/// whose `project` and `platform` equal the key's, compared exactly, whose `expires_at` is after
+/// `now`. A lease of the project on another platform is on another host and holds nothing here. A
+/// lease that is only `pending` holds no host's size, and an expired, `released` or `unsatisfiable`
+/// one holds nothing.
+pub(crate) fn holds_host(leases: &[Lease], key: &HostKey, now: i64) -> bool {
+    leases.iter().any(|l| {
+        l.state == "ready"
+            && l.project == key.project
+            && l.platform == key.platform
+            && is_live(l, now)
+    })
 }
 
 /// D66's table, as driver.md's "On a `ready` host" gives it: the first row that applies, and
 /// nothing else. `size` is the request's normalized size, one of `SIZES`; `instance_type` is the
-/// record's; `leases` are the records of the lease state file, read at `now`.
+/// record's; `leases` are the records of the lease state file, read at `now`; `key` is the
+/// lease's host, its project on its platform, whose column alone judges the type (pin P28).
 fn on_ready(
     size: &str,
     instance_type: Option<&str>,
     leases: &[Lease],
-    project: &str,
+    key: &HostKey,
     now: i64,
 ) -> OnReady {
-    // Row 1: a `pending` lease a run would place is `resize_target`'s selection (pins P2, P18 and
-    // P20), so the project's every new lease is `pending` while one exists.
-    if resize_target(leases, project).is_some() {
+    let platform = key.platform.as_str();
+    // Row 1: a `pending` lease a run would place is `resize_target_keyed`'s selection (pins P2,
+    // P18 and P20; D91), so the project's every new lease on the platform is `pending` while one
+    // exists.
+    if resize_target_keyed(leases, key).is_some() {
         return OnReady::Pending;
     }
-    // Row 2: no type, or one the map does not hold, whatever other leases hold the host.
-    let Some(have) = instance_type.filter(|t| is_mapped(t)) else {
+    // Row 2: no type, or one the platform's column does not hold, whatever other leases hold the
+    // host.
+    let Some(have) = instance_type.filter(|t| is_mapped_on(platform, t)) else {
         return OnReady::Pending;
     };
     // Row 3: exactly, whatever other leases hold the host.
-    if instance_type_for(size) == Some(have) {
+    if instance_type_on(platform, size) == Some(have) {
         return OnReady::Ready;
     }
-    match (meets(have, size), holds_host(leases, project, now)) {
+    match (meets_on(platform, have, size), holds_host(leases, key, now)) {
         // Row 4: larger, and another live `ready` lease holds the host.
         (true, true) => OnReady::Ready,
         // Row 5: smaller, and another live `ready` lease holds the host.
@@ -179,13 +190,18 @@ fn on_ready(
 /// state lock (driver.md, "On a `ready` host", the last bullet; Lock order). A missing file is no
 /// leases; one that cannot be read or does not validate fails the place with `internal`, before
 /// anything is written or started.
-fn decide_on_ready(ctx: &Context, req: &PlaceRequest, host: &Host) -> Result<OnReady, Failure> {
+fn decide_on_ready(
+    ctx: &Context,
+    req: &PlaceRequest,
+    host: &Host,
+    key: &HostKey,
+) -> Result<OnReady, Failure> {
     let file = agentspace_state::read(&ctx.state_dir).map_err(|_| lookup(LEASES_WHY))?;
     Ok(on_ready(
         req.size,
         host.instance_type.as_deref(),
         &file.leases,
-        req.project,
+        key,
         now(),
     ))
 }
@@ -201,16 +217,35 @@ fn refused(req: &PlaceRequest) -> Placed {
     }
 }
 
-/// Which host key lines a lease on `host` carries in its alias (D47).
-fn host_key<'a>(host: &Host, project: &'a str) -> HostKey<'a> {
+/// Which host key lines a lease on `host` carries in its alias (D47, D91): the box's, or the host's
+/// own key name, `name`, which is `HostKey::host_key_name` of the lease's host.
+pub(crate) fn host_lines<'a>(host: &Host, name: &'a str) -> HostLines<'a> {
     if hosts::is_box(host) {
-        HostKey::Box
+        HostLines::Box
     } else {
-        HostKey::Other(project)
+        HostLines::Other(name)
     }
 }
 
-/// Place, by the project's host (driver.md, Where it places a lease).
+/// The `no_capacity` answer for a project with no host on the lease's platform that the project
+/// list does not approve for it (driver.md, "Where it places a lease"; D54, D91; pin P3): v0.07's
+/// message when no entry names the project, on any platform, and v0.12's, naming the platform,
+/// when an entry names it and does not approve the platform.
+fn not_approved(list: &hosts::Projects, req: &PlaceRequest) -> Placed {
+    let message = if hosts::is_listed(list, req.project) {
+        no_capacity_on_platform(req.project, req.platform)
+    } else {
+        no_capacity(req.project)
+    };
+    Placed::Unsatisfiable {
+        reasons: vec![Reason {
+            code: "no_capacity",
+            message,
+        }],
+    }
+}
+
+/// Place, by the project's host on the lease's platform (driver.md, Where it places a lease).
 pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result<Placed, Failure> {
     let unmet = reasons(req.platform, req.profile, req.size);
     if !unmet.is_empty() {
@@ -219,6 +254,10 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
     if !hosts::is_normalized_project(req.project) {
         return Err(lookup(registry_why(HostsError::BadProject)));
     }
+    // The lease's host: its project on its platform (D91). A supported platform is always a
+    // registry record's form, so the key is valid.
+    let key = HostKey::new(req.project, req.platform);
+    let key_name = key.host_key_name();
 
     // With no `hosts.json`, an answer that writes nothing to the registry, `ready` or row 5's
     // refusal by the box's implied record, MAY be made without `hosts.lock`, as before v0.09, so a
@@ -228,14 +267,17 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
     // record is `ready`, and a writer that makes the file meanwhile keeps that record first and
     // `ready` (state.md, The seed; nothing moves a record out of `ready`), so the answer is the one
     // the lock would give. A `pending` answer goes on to the locked path, which decides again and
-    // records the run.
-    if req.project == hosts::BOX_PROJECT && registry_is_missing(&ctx.home) {
+    // records the run. Only the box's own key, swimcoach's `linux/arm64` host, is the seed's
+    // record: a swimcoach lease on another platform has no record in a missing file (D91).
+    if key.is_box() && registry_is_missing(&ctx.home) {
         let placing = hosts::read_for_placing(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
         if let Some(host) =
-            hosts::host_for(&placing, req.project).filter(|h| h.state == HostState::Ready)
+            hosts::host_for_keyed(&placing, &key).filter(|h| h.state == HostState::Ready)
         {
-            match decide_on_ready(ctx, req, host)? {
-                OnReady::Ready => return ops::issue_ready(ctx, req, host_key(host, req.project)),
+            match decide_on_ready(ctx, req, host, &key)? {
+                OnReady::Ready => {
+                    return ops::issue_ready(ctx, req, host_lines(host, &key_name));
+                }
                 OnReady::Refused => return Ok(refused(req)),
                 OnReady::Pending => {}
             }
@@ -247,27 +289,26 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
     // P2c); that value MUST NOT be the start of a write (pin P31).
     let held = hosts::lock(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
     let placing = hosts::read_for_placing(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
-    let record = match hosts::host_for(&placing, req.project) {
-        Some(host) if host.state == HostState::Ready => match decide_on_ready(ctx, req, host)? {
-            OnReady::Ready => {
-                // A `ready` answer writes nothing to the registry.
-                let key = host_key(host, req.project);
-                drop(held);
-                return ops::issue_ready(ctx, req, key);
+    let record = match hosts::host_for_keyed(&placing, &key) {
+        Some(host) if host.state == HostState::Ready => {
+            match decide_on_ready(ctx, req, host, &key)? {
+                OnReady::Ready => {
+                    // A `ready` answer writes nothing to the registry.
+                    let lines = host_lines(host, &key_name);
+                    drop(held);
+                    return ops::issue_ready(ctx, req, lines);
+                }
+                OnReady::Refused => return Ok(refused(req)),
+                OnReady::Pending => Record::Existing,
             }
-            OnReady::Refused => return Ok(refused(req)),
-            OnReady::Pending => Record::Existing,
-        },
+        }
         Some(_) => Record::Existing,
         None => {
+            // Read for a lease on a platform where the project has no host, even when it has a
+            // host on another platform (pin P14.3; D91).
             let list = hosts::read_projects(&ctx.home).map_err(|e| lookup(projects_why(e)))?;
-            if !hosts::is_listed(&list, req.project) {
-                return Ok(Placed::Unsatisfiable {
-                    reasons: vec![Reason {
-                        code: "no_capacity",
-                        message: no_capacity(req.project),
-                    }],
-                });
+            if !hosts::is_approved(&list, req.project, req.platform) {
+                return Ok(not_approved(&list, req));
             }
             Record::New
         }
@@ -280,10 +321,10 @@ pub fn place(ctx: &Context, req: &PlaceRequest, detach: &SharedDetach) -> Result
     // from a fresh plain read under the same hold, so a missing file is written as the seed
     // document, whose box record has no `instance_type` (pins P31 and P38).
     let mut registry = hosts::read(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
-    let run = record_run(ctx, req.project, &mut registry, record, &held)?;
+    let run = record_run(ctx, &key, &mut registry, record, &held)?;
     drop(held);
     if let Some(run) = run {
-        start_run(ctx, req.project, run, detach, PLACE_START_BOUND);
+        start_run(ctx, &key, run, detach, PLACE_START_BOUND);
     }
     Ok(Placed::Pending)
 }
@@ -314,29 +355,40 @@ pub fn check_pending(
     if !hosts::is_normalized_project(lease.project) {
         return Err(lookup(registry_why(HostsError::BadProject)));
     }
+    // The host of the lease's project on the platform stored in its record at place, which the CLI
+    // passes in `lease.platform` and which is never read again from the lease state file (pins
+    // P32 and, for v0.12-T03, P11).
+    let platform = lease.platform;
+    // A `pending` record on a platform the driver does not support, which only a hand edit makes,
+    // has no host a run could make or size, so it starts nothing. For the dev lead: driver.md does
+    // not name this case; this reading starts no run, as for any lease no run would place.
+    if supported(platform).is_none() {
+        return Ok(());
+    }
+    let key = HostKey::new(lease.project, platform);
     // One try, never a wait: a held lock starts nothing, and the next `get` checks again.
     let Some(held) = hosts::try_lock(&ctx.home).map_err(|e| lookup(registry_why(e)))? else {
         return Ok(());
     };
     let mut registry = hosts::read(&ctx.home).map_err(|e| lookup(registry_why(e)))?;
     // A record in any state is treated by steps 2 to 5; a `ready` one keeps its `state` (pin P3).
-    let record = if hosts::host_for(&registry, lease.project).is_some() {
+    let record = if hosts::host_for_keyed(&registry, &key).is_some() {
         Record::Existing
     } else {
         let list = hosts::read_projects(&ctx.home).map_err(|e| lookup(projects_why(e)))?;
-        if !hosts::is_listed(&list, lease.project) {
-            // A registry changed by hand since the `create`: nothing at all, and `get` never makes
-            // a lease `unsatisfiable`.
+        if !hosts::is_approved(&list, &key.project, &key.platform) {
+            // A registry or list changed by hand since the `create`: nothing at all, and `get`
+            // never makes a lease `unsatisfiable`.
             return Ok(());
         }
         Record::New
     };
-    let run = record_run(ctx, lease.project, &mut registry, record, &held)?;
+    let run = record_run(ctx, &key, &mut registry, record, &held)?;
     drop(held);
     if let Some(run) = run {
         start_run(
             ctx,
-            lease.project,
+            &key,
             run,
             detach,
             CHECK_BOUND.saturating_sub(begun.elapsed()),
@@ -350,7 +402,7 @@ pub fn check_pending(
 /// Returns the run to start once `hosts.lock` is released.
 fn record_run(
     ctx: &Context,
-    project: &str,
+    key: &HostKey,
     registry: &mut Hosts,
     record: Record,
     held: &HostsLock,
@@ -359,20 +411,14 @@ fn record_run(
     // A record that step 4 is about to add has neither time.
     let (attempt, success) = match record {
         Record::New => (None, None),
-        Record::Existing => hosts::host_for(registry, project).map_or((None, None), |h| {
+        Record::Existing => hosts::host_for_keyed(registry, key).map_or((None, None), |h| {
             (h.last_attempt_at.clone(), h.last_success_at.clone())
         }),
     };
-    let due = run_is_due(
-        &ctx.home,
-        project,
-        attempt.as_deref(),
-        success.as_deref(),
-        now,
-    );
+    let due = run_is_due(&ctx.home, key, attempt.as_deref(), success.as_deref(), now);
     // Step 3: a program that cannot be found fails before anything is written.
     let run = if due {
-        Some(operator_run(ctx, project)?)
+        Some(operator_run(ctx, key)?)
     } else {
         None
     };
@@ -381,20 +427,16 @@ fn record_run(
     let stamp = format_time(now);
     let changed = match record {
         Record::New => {
-            registry.hosts.push(Host {
-                last_success_at: None,
-                platform: None,
-                project: project.to_string(),
-                stack: hosts::stack_name(project),
-                state: HostState::Creating,
-                instance_id: None,
-                instance_type: None,
-                last_attempt_at: due.then(|| stamp.clone()),
-            });
+            // The host's record: its project, its `platform` only off `linux/arm64`, and its stack
+            // by D91's table (pins P1, P5 and P16), appended at the end, so the file's order is the
+            // order its hosts were made in (pin P46).
+            let mut host = Host::new(key, HostState::Creating);
+            host.last_attempt_at = due.then(|| stamp.clone());
+            registry.hosts.push(host);
             true
         }
         Record::Existing if due => {
-            if let Some(host) = registry.hosts.iter_mut().find(|h| h.project == project) {
+            if let Some(host) = registry.hosts.iter_mut().find(|h| h.is_for(key)) {
                 host.last_attempt_at = Some(stamp);
                 // The same write removes `last_success_at`, so a start in the second the run
                 // before it succeeded never reads as a run that has succeeded (pin P24).
@@ -416,11 +458,12 @@ fn record_run(
 
 /// Step 2 (D77): a run is due when no run holds the host's `provision.lock`, and the record's
 /// `last_attempt_at` is absent or at least 5 minutes before `now`, or the run that started at
-/// `last_attempt_at` succeeded. The lock is tried once and let go at once; a missing folder or
-/// lock file is a lock nobody holds, and the try makes neither.
+/// `last_attempt_at` succeeded. The lock is the host's own, in `hosts\<host name>\` (D91; pins P1
+/// and P12), tried once and let go at once; a missing folder or lock file is a lock nobody holds,
+/// and the try makes neither.
 fn run_is_due(
     home: &Path,
-    project: &str,
+    key: &HostKey,
     attempt: Option<&str>,
     success: Option<&str>,
     now: i64,
@@ -431,7 +474,7 @@ fn run_is_due(
     // QUESTION: driver.md does not say what place does when the run lock cannot be opened for a
     // reason other than its being held (state.md: "not a free lock ... starts or runs nothing").
     // Interim: no run is due, so nothing is started and the lease is `pending`.
-    matches!(hosts::run_is_running(home, project), Ok(false))
+    matches!(hosts::run_is_running_keyed(home, key), Ok(false))
 }
 
 /// Step 2's reads of the record alone, by reads and `now` and nothing else (D77): `last_attempt_at`
@@ -469,9 +512,23 @@ fn needs_interpreter(program: &Path) -> bool {
     })
 }
 
-/// Step 3 and the operator program (driver.md, The operator program): the run's command line, or
-/// the failure of a program that cannot be found.
-fn operator_run(ctx: &Context, project: &str) -> Result<Run, Failure> {
+/// The run's arguments after the program (driver.md, The operator program): exactly `provision`,
+/// `-Host` and the project for a `linux/arm64` host, byte for byte as before v0.12 (pin P30), and
+/// exactly those, then `-Platform` and the normalized platform, for a host of any other platform
+/// (D91; pins P9 and P38).
+fn provision_args(key: &HostKey) -> Vec<String> {
+    let mut args: Vec<String> = ["provision", "-Host", key.project.as_str()]
+        .map(str::to_string)
+        .to_vec();
+    if !key.is_linux_arm64() {
+        args.extend(["-Platform".to_string(), key.platform.clone()]);
+    }
+    args
+}
+
+/// Step 3 and the operator program (driver.md, The operator program): the run's command line for
+/// the host `key`, or the failure of a program that cannot be found.
+fn operator_run(ctx: &Context, key: &HostKey) -> Result<Run, Failure> {
     let missing = |message: &str| failure(message.to_string(), Vec::new());
     // Architect's to confirm: a context with no operator program (the CLI could not make the path
     // full) is read as agentspace's own operator not being installed beside the CLI.
@@ -487,11 +544,11 @@ fn operator_run(ctx: &Context, project: &str) -> Result<Run, Failure> {
             OPERATOR_NAMED_MISSING
         }));
     }
-    let tail = ["provision", "-Host", project].map(str::to_string);
+    let tail = provision_args(key);
     if !needs_interpreter(program) {
         return Ok(Run {
             program: program.to_path_buf(),
-            args: tail.to_vec(),
+            args: tail,
         });
     }
     let root = ctx
@@ -554,11 +611,12 @@ fn run_environment(ctx: &Context, home: &Path) -> Vec<(&'static str, OsString)> 
 /// say a run was started when none was, and none would start for 5 minutes (driver.md, a start
 /// counts as made because it was begun). So a `bound` already used up waits a floor of one second
 /// rather than skipping the start; check_pending's whole call still ends within its 20 seconds.
-fn start_run(ctx: &Context, project: &str, run: Run, detach: &SharedDetach, bound: Duration) {
+fn start_run(ctx: &Context, key: &HostKey, run: Run, detach: &SharedDetach, bound: Duration) {
     let bound = bound.max(Duration::from_secs(1));
     let home = full(&ctx.home);
-    // A failure to make the folder is a start that fails.
-    if fs::create_dir_all(hosts::host_dir(&home, project)).is_err() {
+    // The host's own folder, `hosts\<host name>\` (D91; pin P12). A failure to make it is a start
+    // that fails.
+    if fs::create_dir_all(hosts::host_dir_keyed(&home, key)).is_err() {
         return;
     }
     let env = run_environment(ctx, &home);
@@ -581,6 +639,7 @@ fn start_run(ctx: &Context, project: &str, run: Run, detach: &SharedDetach, boun
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sizes::{SIZES, instance_type_for};
     use std::sync::Mutex;
 
     /// One start a fake detach was asked for. The environment is kept by name, and a test
@@ -701,9 +760,14 @@ mod tests {
             );
         }
         fn check(&self, project: &str) -> Result<(), Failure> {
+            self.check_on(project, "linux/arm64")
+        }
+        /// `check_pending` for a lease whose stored platform, which the CLI passes, is `platform`.
+        fn check_on(&self, project: &str, platform: &str) -> Result<(), Failure> {
             let lease = LeaseRef {
                 id: "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90",
                 project,
+                platform,
             };
             check_pending(&self.ctx, &lease, &self.detach)
         }
@@ -731,14 +795,38 @@ mod tests {
     fn an_unsupported_request_answers_before_any_file_is_read_or_made() {
         let f = fx();
         f.write("hosts.json", "not json");
-        let mut r = request("other");
-        r.platform = "windows/amd64";
-        r.size = "xxl";
-        let Placed::Unsatisfiable { reasons } = place(&f.ctx, &r, &f.detach).unwrap() else {
-            panic!("Not unsatisfiable");
-        };
-        let codes: Vec<&str> = reasons.iter().map(|r| r.code).collect();
-        assert_eq!(codes, ["unsupported_platform", "unsupported_size"]);
+        // From v0.12 windows/amd64 is supported; windows/arm64 stays unsupported (D98), and a
+        // profile that is not the platform's own is unsupported too (D93).
+        for (platform, profile, size, want) in [
+            (
+                "windows/arm64",
+                "agent-linux",
+                "xxl",
+                &["unsupported_platform", "unsupported_size"][..],
+            ),
+            (
+                "windows/amd64",
+                "agent-linux",
+                "m",
+                &["unsupported_profile"][..],
+            ),
+            (
+                "linux/amd64",
+                "agent-windows",
+                "m",
+                &["unsupported_profile"][..],
+            ),
+        ] {
+            let mut r = request("other");
+            r.platform = platform;
+            r.profile = profile;
+            r.size = size;
+            let Placed::Unsatisfiable { reasons } = place(&f.ctx, &r, &f.detach).unwrap() else {
+                panic!("Not unsatisfiable");
+            };
+            let codes: Vec<&str> = reasons.iter().map(|r| r.code).collect();
+            assert_eq!(codes, want, "{platform} {profile} {size}");
+        }
         assert!(!f.ctx.home.join(".agentspace").join("hosts.lock").exists());
         assert!(f.starts().is_empty());
     }
@@ -1212,11 +1300,17 @@ mod tests {
         f.list("other");
         let home = f.ctx.home.clone();
         let detach = f.detach.clone();
-        let run = operator_run(&f.ctx, "other").unwrap();
+        let run = operator_run(&f.ctx, &HostKey::linux_arm64("other")).unwrap();
         // The host's folder's place holds a file: the start makes nothing and starts nothing.
         fs::create_dir_all(hosts::hosts_dir(&home)).unwrap();
         fs::write(hosts::host_dir(&home, "other"), b"x").unwrap();
-        start_run(&f.ctx, "other", run, &detach, Duration::from_secs(5));
+        start_run(
+            &f.ctx,
+            &HostKey::linux_arm64("other"),
+            run,
+            &detach,
+            Duration::from_secs(5),
+        );
         assert!(f.starts().is_empty());
     }
 
@@ -1227,8 +1321,14 @@ mod tests {
         let f = fx();
         f.list("other");
         let detach = f.detach.clone();
-        let run = operator_run(&f.ctx, "other").unwrap();
-        start_run(&f.ctx, "other", run, &detach, Duration::ZERO);
+        let run = operator_run(&f.ctx, &HostKey::linux_arm64("other")).unwrap();
+        start_run(
+            &f.ctx,
+            &HostKey::linux_arm64("other"),
+            run,
+            &detach,
+            Duration::ZERO,
+        );
         assert_eq!(f.starts().len(), 1);
     }
 
@@ -1279,7 +1379,7 @@ mod tests {
     }
 
     fn decide(size: &str, instance_type: Option<&str>, leases: &[Lease]) -> OnReady {
-        on_ready(size, instance_type, leases, "p", NOW)
+        on_ready(size, instance_type, leases, &HostKey::linux_arm64("p"), NOW)
     }
 
     #[test]
@@ -1583,5 +1683,440 @@ mod tests {
         assert!(host.last_attempt_at.is_some());
         assert_eq!(f.starts().len(), 1);
         assert_eq!(f.starts()[0].args, ["provision", "-Host", "swimcoach"]);
+    }
+
+    // ---- v0.12: a host per project and platform (D91, D93, D94, D95) -------------------------
+
+    const AMD: &str = "linux/amd64";
+    const WIN: &str = "windows/amd64";
+    const ID2: &str = "4f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90";
+
+    /// A record of `other`'s host on `platform`, off `linux/arm64`, in `state`, with `extra`
+    /// members after its state.
+    fn rec(platform: &str, state: &str, extra: &str) -> String {
+        format!(
+            r#"{{"project":"other","platform":"{platform}","stack":"agentspace-{}-host-other","state":"{state}"{extra}}}"#,
+            platform.replace('/', "-")
+        )
+    }
+
+    const ARM_READY_XLARGE: &str = r#"{"project":"other","stack":"agentspace-host-other","state":"ready","instance_type":"m9g.xlarge"}"#;
+
+    fn the_profile(platform: &str) -> &'static str {
+        if platform == WIN {
+            "agent-windows"
+        } else {
+            "agent-linux"
+        }
+    }
+
+    /// A lease of `other` on `platform`, with that platform's profile.
+    fn lease_on(platform: &str, l: Lease) -> Lease {
+        let mut l = l;
+        l.platform = platform.to_string();
+        l.profile = the_profile(platform).to_string();
+        l
+    }
+
+    impl Fx {
+        fn place_on(&self, platform: &str, size: &str) -> Result<Placed, Failure> {
+            self.place_as(ID2, platform, size)
+        }
+        fn place_as(&self, id: &str, platform: &str, size: &str) -> Result<Placed, Failure> {
+            let mut r = request("other");
+            r.id = id;
+            r.platform = platform;
+            r.profile = the_profile(platform);
+            r.size = size;
+            place(&self.ctx, &r, &self.detach)
+        }
+        fn hosts_with(&self, records: &[&str]) {
+            let mut all = vec![r#"{"project":"swimcoach","stack":"agentbox","state":"ready"}"#];
+            all.extend_from_slice(records);
+            self.write(
+                "hosts.json",
+                &format!(r#"{{"version":0,"hosts":[{}]}}"#, all.join(",")),
+            );
+        }
+        fn list_platforms(&self, platforms: &[&str]) {
+            let items: Vec<String> = platforms
+                .iter()
+                .map(|p| format!(r#"{{"platform":"{p}","approved":"2026-11-26"}}"#))
+                .collect();
+            self.write(
+                "projects.json",
+                &format!(
+                    r#"{{"version":0,"projects":[{{"name":"other","approved":"2026-11-20","platforms":[{}]}}]}}"#,
+                    items.join(",")
+                ),
+            );
+        }
+        fn host_on(&self, platform: &str) -> Option<Host> {
+            hosts::host_for_keyed(
+                &hosts::read(&self.ctx.home).unwrap(),
+                &HostKey::new("other", platform),
+            )
+            .cloned()
+        }
+        fn alias_text(&self, id: &str) -> String {
+            let alias = format!("agentspace-other-{}", &id[..8]);
+            fs::read_to_string(self.ctx.ssh_dir.join("agentspace.d").join(alias)).unwrap()
+        }
+    }
+
+    fn no_capacity_message(placed: Placed) -> String {
+        let Placed::Unsatisfiable { reasons } = placed else {
+            panic!("Not unsatisfiable");
+        };
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].code, "no_capacity");
+        reasons[0].message.clone()
+    }
+
+    fn five(platform: &str) -> [String; 5] {
+        ["provision", "-Host", "other", "-Platform", platform].map(str::to_string)
+    }
+
+    #[test]
+    fn m1_a_ready_host_on_each_new_platform_places_with_its_user_and_its_host_key_name() {
+        let mut f = fx_ca();
+        f.ctx.proxy_override = Some("proxy %h".to_string());
+        f.hosts_with(&[
+            &rec(AMD, "ready", r#","instance_type":"m8a.xlarge""#),
+            &rec(WIN, "ready", r#","instance_type":"m8a.xlarge""#),
+        ]);
+        let before = f.registry();
+        for (id, platform, user, name) in [
+            (ID2, WIN, "agent", "agentspace-host.other.windows-amd64"),
+            (
+                "5f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90",
+                AMD,
+                "ubuntu",
+                "agentspace-host.other.linux-amd64",
+            ),
+        ] {
+            let Placed::Ready { user: got, .. } = f.place_as(id, platform, "m").unwrap() else {
+                panic!("Not ready: {platform}");
+            };
+            assert_eq!(got, user, "{platform}");
+            let text = f.alias_text(id);
+            assert!(text.contains(&format!("\n  User {user}\n")), "{platform}");
+            assert!(
+                text.contains(&format!("\n  HostKeyAlias {name}\n  UserKnownHostsFile ")),
+                "{platform}"
+            );
+        }
+        assert_eq!(f.registry(), before);
+        assert!(f.starts().is_empty());
+    }
+
+    #[test]
+    fn m4_a_platform_the_entry_does_not_approve_with_a_host_on_another_is_the_v012_message() {
+        let f = fx();
+        f.seed_with(ARM_READY_XLARGE);
+        f.list("other");
+        let before = f.registry();
+        assert_eq!(
+            no_capacity_message(f.place_on(AMD, "m").unwrap()),
+            "No capacity can be found for project 'other' on platform 'linux/amd64': it has no host there and is not approved for that platform on agentspace's project list."
+        );
+        assert_eq!(f.registry(), before);
+        assert!(f.starts().is_empty());
+        assert!(!f.ctx.home.join(".agentspace").join("leases").exists());
+        // With no entry for the project, v0.07's message, byte for byte.
+        fs::remove_file(f.ctx.home.join(".agentspace").join("projects.json")).unwrap();
+        assert_eq!(
+            no_capacity_message(f.place_on(AMD, "m").unwrap()),
+            no_capacity("other")
+        );
+        assert_eq!(f.registry(), before);
+    }
+
+    #[test]
+    fn m5_an_entry_whose_platforms_omit_linux_arm64_does_not_approve_it() {
+        let f = fx();
+        f.list_platforms(&[AMD]);
+        assert_eq!(
+            no_capacity_message(f.place("other").unwrap()),
+            "No capacity can be found for project 'other' on platform 'linux/arm64': it has no host there and is not approved for that platform on agentspace's project list."
+        );
+        assert_eq!(f.registry(), None);
+        // No entry: v0.07's message on every platform.
+        fs::remove_file(f.ctx.home.join(".agentspace").join("projects.json")).unwrap();
+        assert_eq!(
+            no_capacity_message(f.place("other").unwrap()),
+            no_capacity("other")
+        );
+        assert_eq!(
+            no_capacity_message(f.place_on(WIN, "m").unwrap()),
+            no_capacity("other")
+        );
+        assert_eq!(f.registry(), None);
+        assert!(f.starts().is_empty());
+    }
+
+    #[test]
+    fn m6_a_platform_the_list_approves_appends_its_record_and_starts_a_run_with_five_arguments() {
+        let f = fx_ca();
+        f.seed_with(ARM_READY_XLARGE);
+        f.list_platforms(&[WIN]);
+        let before = hosts::read(&f.ctx.home).unwrap();
+        let t0 = now();
+        assert_eq!(f.place_on(WIN, "m").unwrap(), Placed::Pending);
+        let t1 = now();
+        let after = hosts::read(&f.ctx.home).unwrap();
+        assert_eq!(after.hosts.len(), 3);
+        assert_eq!(after.hosts[..2], before.hosts[..]);
+        let added = &after.hosts[2];
+        assert_eq!(added.project, "other");
+        assert_eq!(added.platform.as_deref(), Some(WIN));
+        assert_eq!(added.stack, "agentspace-windows-amd64-host-other");
+        assert_eq!(added.state, HostState::Creating);
+        assert_eq!(added.instance_type, None);
+        let at = parse_time(added.last_attempt_at.as_deref().unwrap()).unwrap();
+        assert!(t0 <= at && at <= t1);
+        let bytes = String::from_utf8(f.registry().unwrap()).unwrap();
+        assert!(
+            bytes.contains(r#""project":"other","stack":"agentspace-host-other""#),
+            "The linux/arm64 record keeps no platform: {bytes}"
+        );
+        let hosts_dir = hosts::hosts_dir(&f.ctx.home);
+        assert!(hosts_dir.join("other.windows-amd64").is_dir());
+        assert!(!hosts_dir.join("other").exists());
+        let starts = f.starts();
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].args, five(WIN));
+    }
+
+    #[test]
+    fn m7_leases_on_another_platform_hold_nothing_and_hold_no_lease_pending() {
+        let f = fx_ca();
+        f.hosts_with(&[
+            ARM_READY_XLARGE,
+            &rec(AMD, "ready", r#","instance_type":"m8a.xlarge""#),
+        ]);
+        f.leases(&[live(holding("other"))]);
+        assert_eq!(f.place_on(AMD, "l").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.starts()[0].args, five(AMD));
+        assert_eq!(
+            no_capacity_message(f.place_size("other", "l").unwrap()),
+            no_capacity_at_size("other", "l")
+        );
+        assert_eq!(f.starts().len(), 1);
+
+        let mut f = fx_ca();
+        f.ctx.proxy_override = Some("proxy %h".to_string());
+        f.hosts_with(&[
+            ARM_READY_XLARGE,
+            &rec(AMD, "ready", r#","instance_type":"m8a.xlarge""#),
+        ]);
+        f.leases(&[live(waiting("other", "l"))]);
+        assert!(matches!(
+            f.place_on(AMD, "m").unwrap(),
+            Placed::Ready { .. }
+        ));
+        assert!(f.starts().is_empty());
+        // The linux/arm64 host's own new lease is still held `pending` by it.
+        assert_eq!(f.place_size("other", "m").unwrap(), Placed::Pending);
+    }
+
+    #[test]
+    fn m8_the_m8a_column_decides_a_linux_amd64_host() {
+        let mut f = fx_ca();
+        f.ctx.proxy_override = Some("proxy %h".to_string());
+        f.hosts_with(&[&rec(AMD, "ready", r#","instance_type":"m8a.2xlarge""#)]);
+        f.leases(&[live(lease_on(AMD, holding("other")))]);
+        assert!(matches!(
+            f.place_on(AMD, "m").unwrap(),
+            Placed::Ready { .. }
+        ));
+        assert_eq!(
+            no_capacity_message(
+                f.place_as("6f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90", AMD, "xl")
+                    .unwrap()
+            ),
+            no_capacity_at_size("other", "xl")
+        );
+        assert!(f.starts().is_empty());
+
+        let f = fx_ca();
+        f.hosts_with(&[&rec(AMD, "ready", r#","instance_type":"m8a.4xlarge""#)]);
+        assert_eq!(f.place_on(AMD, "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.starts()[0].args, five(AMD));
+    }
+
+    #[test]
+    fn m9_a_type_of_another_column_meets_no_size() {
+        for held in [false, true] {
+            let f = fx_ca();
+            f.hosts_with(&[&rec(AMD, "ready", r#","instance_type":"m9g.xlarge""#)]);
+            if held {
+                f.leases(&[live(lease_on(AMD, holding("other")))]);
+            }
+            assert_eq!(
+                f.place_on(AMD, "m").unwrap(),
+                Placed::Pending,
+                "held {held}"
+            );
+            assert_eq!(f.starts().len(), 1, "held {held}");
+        }
+    }
+
+    #[test]
+    fn m10_each_host_has_its_own_run_lock() {
+        let f = fx_ca();
+        f.hosts_with(&[ARM_READY_XLARGE, &rec(AMD, "creating", "")]);
+        let arm = hosts::try_run_lock(&f.ctx.home, "other").unwrap().unwrap();
+        assert_eq!(f.place_on(AMD, "m").unwrap(), Placed::Pending);
+        assert_eq!(f.starts().len(), 1);
+        assert_eq!(f.starts()[0].args, five(AMD));
+        drop(arm);
+
+        let f = fx_ca();
+        f.hosts_with(&[ARM_READY_XLARGE, &rec(AMD, "creating", "")]);
+        let amd = hosts::try_run_lock_keyed(&f.ctx.home, &HostKey::new("other", AMD))
+            .unwrap()
+            .unwrap();
+        let before = f.registry();
+        assert_eq!(f.place_on(AMD, "m").unwrap(), Placed::Pending);
+        assert!(f.starts().is_empty());
+        assert_eq!(f.registry(), before);
+        drop(amd);
+    }
+
+    #[test]
+    fn m11_check_pending_starts_the_run_of_the_platform_stored_at_place() {
+        let f = fx();
+        f.hosts_with(&[
+            ARM_READY_XLARGE,
+            &rec(WIN, "ready", r#","instance_type":"m8a.xlarge""#),
+        ]);
+        let mut stored = lease_on(WIN, waiting("other", "m"));
+        stored.id = "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90".to_string();
+        f.leases(&[live(stored)]);
+        let leases_before = fs::read(f.ctx.state_dir.join("leases.json")).unwrap();
+        f.check_on("other", WIN).unwrap();
+        let starts = f.starts();
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].args, five(WIN));
+        assert!(f.host_on(WIN).unwrap().last_attempt_at.is_some());
+        assert_eq!(f.host_on("linux/arm64").unwrap().last_attempt_at, None);
+        assert_eq!(
+            fs::read(f.ctx.state_dir.join("leases.json")).unwrap(),
+            leases_before
+        );
+        assert!(
+            hosts::hosts_dir(&f.ctx.home)
+                .join("other.windows-amd64")
+                .is_dir()
+        );
+    }
+
+    #[test]
+    fn check_pending_on_an_unsupported_platform_starts_nothing_even_when_the_list_approves_it() {
+        // Pin P11 (architect, 2026-11-26, for v0.12-T03): a `pending` record of a platform the
+        // driver does not support starts nothing. The project list MAY approve such a platform, and
+        // approving it has no effect (state.md, The project list), so the list here approves it.
+        for platform in ["windows/arm64", "linux/amd64/v3"] {
+            let f = fx();
+            f.list_platforms(&[platform]);
+            f.check_on("other", platform).unwrap();
+            assert!(f.starts().is_empty(), "{platform}");
+            assert_eq!(f.registry(), None, "{platform}");
+            assert!(!hosts::hosts_dir(&f.ctx.home).exists(), "{platform}");
+        }
+    }
+
+    #[test]
+    fn m13_a_list_that_cannot_be_read_fails_only_the_platform_with_no_host() {
+        let mut f = fx_ca();
+        f.ctx.proxy_override = Some("proxy %h".to_string());
+        f.seed_with(ARM_READY_XLARGE);
+        f.write("projects.json", "{}");
+        let before = f.registry();
+        assert!(matches!(
+            f.place_size("other", "m").unwrap(),
+            Placed::Ready { .. }
+        ));
+        let e = f.place_on(AMD, "m").unwrap_err();
+        assert_eq!(
+            e.message,
+            "The lease's host could not be looked up: agentspace's project list is not valid. Nothing was recorded."
+        );
+        assert_eq!(f.registry(), before);
+    }
+
+    #[test]
+    fn m14_swimcoach_off_linux_arm64_with_no_files_is_v007s_no_capacity() {
+        let f = fx();
+        let mut r = request("swimcoach");
+        r.platform = AMD;
+        let message = no_capacity_message(place(&f.ctx, &r, &f.detach).unwrap());
+        assert_eq!(message, no_capacity("swimcoach"));
+        assert_eq!(f.registry(), None);
+        assert!(f.starts().is_empty());
+    }
+
+    #[test]
+    fn a_cmd_program_off_linux_arm64_gets_the_platform_after_the_three() {
+        let mut f = fx();
+        let cmd = f.ctx.home.join("stand-in.cmd");
+        fs::write(&cmd, b"").unwrap();
+        f.ctx.operator_program = Some(cmd.clone());
+        let run = operator_run(&f.ctx, &HostKey::new("other", WIN)).unwrap();
+        assert_eq!(
+            run.args,
+            [
+                "/d",
+                "/c",
+                cmd.to_str().unwrap(),
+                "provision",
+                "-Host",
+                "other",
+                "-Platform",
+                WIN
+            ]
+        );
+        let run = operator_run(&f.ctx, &HostKey::linux_arm64("other")).unwrap();
+        assert_eq!(run.args.len(), 6);
+    }
+
+    #[test]
+    fn a_resize_counts_the_projects_leases_on_its_platform_alone() {
+        // Row 1 for linux/amd64 sees only linux/amd64's pending leases, and row 4 to 6 only its
+        // `ready` ones.
+        let key = HostKey::new("p", AMD);
+        let arm_pending = waiting("p", "l");
+        let amd_holding = lease_on(AMD, holding("p"));
+        assert_eq!(
+            on_ready(
+                "m",
+                Some("m8a.xlarge"),
+                std::slice::from_ref(&arm_pending),
+                &key,
+                NOW
+            ),
+            OnReady::Ready
+        );
+        assert_eq!(
+            on_ready(
+                "m",
+                Some("m8a.xlarge"),
+                &[lease_on(AMD, arm_pending)],
+                &key,
+                NOW
+            ),
+            OnReady::Pending
+        );
+        assert_eq!(
+            on_ready("l", Some("m8a.xlarge"), &[holding("p")], &key, NOW),
+            OnReady::Pending
+        );
+        assert_eq!(
+            on_ready("l", Some("m8a.xlarge"), &[amd_holding], &key, NOW),
+            OnReady::Refused
+        );
     }
 }

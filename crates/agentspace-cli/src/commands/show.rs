@@ -55,6 +55,7 @@ fn check_pending(world: &World<'_>, paths: &Paths, record: &Record) {
     let lease = LeaseRef {
         id: &record.id,
         project: &record.project,
+        platform: &record.platform,
     };
     let _ = catch_unwind(AssertUnwindSafe(|| driver.check_pending(&ctx, &lease)));
 }

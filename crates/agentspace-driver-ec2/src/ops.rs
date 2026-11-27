@@ -29,17 +29,14 @@ use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
 };
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
-use agentspace_hosts::host_alias;
 
+use crate::reasons::login_user;
 use crate::text::{
     FOREIGN_ALIAS, TRANSPORT_MISSING, alias_check_failed, alias_leftover, alias_setup_failed,
     capitalize, delete_failed, failure, lease_file_name, lease_folder_name, still_there,
     transport_failed,
 };
 use crate::walk::{Walker, append_release_line, further_walk_due, release_line_text};
-
-/// The certificate's one principal, the returned user and the alias's login user (D3).
-pub const USER: &str = "ubuntu";
 
 /// The comment of an alias file's owner mark line (state.md, "The alias file").
 const COMMENT: &str = "written by agentspace. Do not edit.";
@@ -89,14 +86,16 @@ fn proxy_command(ctx: &Context, alias: &str, system_root: Option<&str>) -> Resul
 }
 
 /// Which host a lease is placed on, for the host key lines of its alias (docs/state.md, "The alias
-/// file" and "A lease alias for a host that is not the box"; D47).
+/// file" and "A lease alias for a host that is not the box"; D47, D91).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostKey<'a> {
+pub enum HostLines<'a> {
     /// The box: `HostKeyAlias agentspace` and no `UserKnownHostsFile` line, so its lease aliases
     /// keep v0.06's bytes exactly.
     Box,
-    /// Another project's host: `HostKeyAlias agentspace-host.<project>`, then `UserKnownHostsFile`
-    /// naming agentspace's own `known_hosts` by its full path.
+    /// Any other host: `HostKeyAlias <host-key name>`, then `UserKnownHostsFile` naming
+    /// agentspace's own `known_hosts` by its full path. The name is the host's own, from
+    /// `agentspace_hosts::HostKey::host_key_name`: `agentspace-host.<project>` on `linux/arm64`, and
+    /// `agentspace-host.<project>.<os>-<arch>` on any other platform (pins P7 and P12).
     Other(&'a str),
 }
 
@@ -106,7 +105,7 @@ fn alias_bytes(
     req: &PlaceRequest,
     alias: &str,
     system_root: Option<&str>,
-    host: HostKey,
+    host: HostLines,
 ) -> Result<Vec<u8>, String> {
     let proxy = proxy_command(ctx, alias, system_root)?;
     let home = std::path::absolute(&ctx.home).unwrap_or_else(|_| ctx.home.clone());
@@ -114,17 +113,18 @@ fn alias_bytes(
     let key_path = lease_file_text(&home, req.id, "id_ed25519");
     let cert_path = lease_file_text(&home, req.id, "id_ed25519-cert.pub");
     let (host_key_alias, known_hosts) = match host {
-        HostKey::Box => ("agentspace".to_string(), None),
-        HostKey::Other(project) => (host_alias(project), Some(known_hosts_text(&home))),
+        HostLines::Box => ("agentspace", None),
+        HostLines::Other(name) => (name, Some(known_hosts_text(&home))),
     };
     alias_file_bytes(&AliasFile {
         id: req.id,
         comment: COMMENT,
         alias,
-        user: USER,
+        // The same user as the certificate's principal (driver.md, How it places a lease, step 5).
+        user: login_user(req.platform),
         key_path: &key_path,
         cert_path: &cert_path,
-        host_key_alias: &host_key_alias,
+        host_key_alias,
         known_hosts: known_hosts.as_deref(),
         proxy_command: &proxy,
     })
@@ -191,12 +191,15 @@ fn alias_step_message(f: &AliasFailure) -> String {
 /// Steps 2 to 6 of driver.md's "How it places a lease", for a supported request whose host is
 /// `ready`: the CA check, the credential, the `Include` line and the alias with `host`'s key
 /// lines, then `ready`. `place` and `place_pending` both place a lease through it, so a lease
-/// `place_pending` places is like one `place` made `ready`.
-pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostKey) -> Result<Placed, Failure> {
+/// `place_pending` places is like one `place` made `ready`. The certificate's principal, the
+/// alias's `User` and the returned user are all the request's platform's login user (driver.md,
+/// "What it supports"; D95; pin P19).
+pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostLines) -> Result<Placed, Failure> {
+    let user = login_user(req.platform);
     // Steps 1 to 4: the CA is checked and never made, an existing key is refused, and the key is
     // made, checked and signed. The credential crate removes what it made when it fails.
     let folder_existed = fs::symlink_metadata(lease_dir(&ctx.home, req.id)).is_ok();
-    let issued = issue(&ctx.home, req.id, USER, req.ttl_seconds).map_err(cred_failure)?;
+    let issued = issue(&ctx.home, req.id, user, req.ttl_seconds).map_err(cred_failure)?;
 
     let alias = alias_name(req.project, req.id);
 
@@ -219,7 +222,7 @@ pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostKey) -> Result<P
 
     Ok(Placed::Ready {
         host_alias: alias,
-        user: USER.to_string(),
+        user: user.to_string(),
         expires_at: issued.expires_at,
     })
 }
@@ -246,12 +249,18 @@ impl Renewal for Held {
     }
 }
 
+/// Renew (driver.md, Renew a lease; Renew and release): the new certificate is signed for the
+/// login user of the platform stored in the lease's record, so a Windows lease's renewed
+/// certificate names `agent`, as its first did (D95; pins P19 and P25). The platform is
+/// `lease.platform`, which the CLI passes and which is never read again from the lease state file
+/// (architect, 2026-11-26, for v0.12-T03, pin P11).
 pub fn renew(
     ctx: &Context,
     lease: &LeaseRef,
     ttl_seconds: u32,
 ) -> Result<Box<dyn Renewal>, Failure> {
-    let guard = renew_guard(&ctx.home, lease.id, USER, ttl_seconds).map_err(cred_failure)?;
+    let guard = renew_guard(&ctx.home, lease.id, login_user(lease.platform), ttl_seconds)
+        .map_err(cred_failure)?;
     Ok(Box::new(Held { guard }))
 }
 
@@ -489,8 +498,14 @@ mod tests {
     fn an_override_with_a_line_break_is_refused_in_the_alias_words() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("a\nb"));
-        let e =
-            alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None, HostKey::Box).unwrap_err();
+        let e = alias_bytes(
+            &c,
+            &req(ID),
+            "agentspace-swim-3f2a9c1e",
+            None,
+            HostLines::Box,
+        )
+        .unwrap_err();
         assert_eq!(
             e,
             "The host alias could not be added to the OpenSSH client configuration: the ProxyCommand holds a line break. No lease was recorded."
@@ -501,8 +516,14 @@ mod tests {
     fn the_alias_bytes_carry_the_user_the_paths_and_the_owner_mark() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("proxy 100%"));
-        let bytes =
-            alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None, HostKey::Box).unwrap();
+        let bytes = alias_bytes(
+            &c,
+            &req(ID),
+            "agentspace-swim-3f2a9c1e",
+            None,
+            HostLines::Box,
+        )
+        .unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with(&format!("# agentspace lease {ID}; ")));
         assert!(text.contains("\n  User ubuntu\n"));
@@ -521,7 +542,7 @@ mod tests {
             &req(ID),
             "agentspace-swim-3f2a9c1e",
             None,
-            HostKey::Other("swim"),
+            HostLines::Other("agentspace-host.swim"),
         )
         .unwrap();
         let text = String::from_utf8(bytes).unwrap();
@@ -530,11 +551,35 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_leases_alias_logs_in_as_agent_and_a_linux_amd64_ones_as_ubuntu() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path(), Some("proxy"));
+        for (platform, user) in [("windows/amd64", "agent"), ("linux/amd64", "ubuntu")] {
+            let mut r = req(ID);
+            r.platform = platform;
+            let bytes = alias_bytes(
+                &c,
+                &r,
+                "agentspace-swim-3f2a9c1e",
+                None,
+                HostLines::Other("agentspace-host.swim.windows-amd64"),
+            )
+            .unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.contains(&format!("\n  User {user}\n")), "{platform}");
+            assert!(
+                text.contains("\n  HostKeyAlias agentspace-host.swim.windows-amd64\n"),
+                "{platform}"
+            );
+        }
+    }
+
+    #[test]
     fn no_ca_fails_with_the_no_ca_wording_and_leaves_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("p"));
         fs::create_dir_all(&c.home).unwrap();
-        let f = issue_ready(&c, &req(ID), HostKey::Box).unwrap_err();
+        let f = issue_ready(&c, &req(ID), HostLines::Box).unwrap_err();
         assert_eq!(
             f.message,
             "agentspace's certificate authority has not been set up, so no certificate can be issued. Nothing was changed; the operator sets it up."
@@ -599,6 +644,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         assert!(check_release(&c, &lease).is_ok());
         assert!(scoped_release(&c, &lease).is_ok());
@@ -623,6 +669,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         let folder = lease_dir(&c.home, ID);
         fs::create_dir_all(&folder).unwrap();
@@ -642,6 +689,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         fs::create_dir_all(
             c.ssh_dir
@@ -660,6 +708,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         fs::create_dir_all(&c.ssh_dir).unwrap();
         fs::write(c.ssh_dir.join("agentspace.d"), b"x").unwrap();
@@ -677,6 +726,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         fs::create_dir_all(c.home.join(".agentspace")).unwrap();
         fs::write(c.home.join(".agentspace").join("leases"), b"x").unwrap();

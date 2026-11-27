@@ -255,7 +255,8 @@ fn an_unsupported_request_lists_its_unsupported_reasons_alone_and_reads_neither_
     fx.write_projects_raw(b"not json");
     let hosts_before = fx.hosts_bytes();
     let d = fx.driver_with(&detach);
-    let req = fx.request_for("unlisted", ID, "windows/amd64", "agent-linux", "m", 600);
+    // windows/arm64 stays unsupported (D98); windows/amd64 is supported from v0.12.
+    let req = fx.request_for("unlisted", ID, "windows/arm64", "agent-linux", "m", 600);
     match d.place(&fx.ctx, &req) {
         Ok(Placed::Unsatisfiable { reasons }) => {
             let codes: Vec<&str> = reasons.iter().map(|r| r.code).collect();
