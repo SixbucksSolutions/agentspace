@@ -6631,7 +6631,9 @@ keeper's test
 - **With its seam unset, a script refuses to run as anyone but the account it runs as on a host**
   (architect, 2026-11-26, for v0.12-T03, pin P13): `agentspace-idle-check.ps1`,
   `agentspace-patch.ps1` and `agentspace-boot.ps1` only as SYSTEM (`S-1-5-18`), and `install.ps1`
-  only as `agent`. Otherwise each writes
+  only as the machine's own `agent`, the whole account compared, `<machine name>\agent`, ignoring
+  case, never any account named `agent` (pin P17). **`agentspace-tools.ps1`, which has no seam,
+  refuses unless it runs as SYSTEM, always** (pin P17): the patch run is what starts it. Otherwise each writes
   `<script>: without its test seam it runs only as <account>; nothing was done` and exits 1, having
   done nothing. So a test that forgot its seam cannot patch, restart or power off the laptop, and
   on a host the guard costs nothing.
