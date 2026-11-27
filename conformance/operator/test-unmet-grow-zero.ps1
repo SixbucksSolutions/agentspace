@@ -112,7 +112,7 @@ Invoke-HostFile -FileName 'test-unmet-grow-zero.ps1' -Body {
   Test-HostCase "${c}: help is checked first: grow -GiB 0 -h prints grow's help to stdout and exits 0, with no AWS call" @('grow', '-GiB', '0', '-h') @{
     Exit = 0; StdoutAny = $true; Calls = @()
     Check = { param($run, $started)
-      if (-not $run.Stdout.StartsWith("Usage: agentspace-operator grow [-Host <project>] [-GiB <n>] [-Quiet]`n")) { 'Stdout is not grow''s help' }
+      if (-not $run.Stdout.StartsWith("Usage: agentspace-operator grow [-Host <project>] [-Platform <os/arch>] [-GiB <n>] [-Quiet]`n")) { 'Stdout is not grow''s help' }
       if ($run.Stderr.Trim().Length -gt 0) { 'Stderr is not empty' }
       Test-HomeUnchanged
     } } -Setup { Set-TwoHosts }

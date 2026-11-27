@@ -327,15 +327,15 @@ Invoke-HostFile -FileName 'test-unmet-host-commands-line.ps1' -Body {
   # The help cases compare stdout through their own check: the first line of the block the spec names.
   # (test-unmet-usage-help.ps1 compares every block byte for byte.)
   foreach ($case in @(
-      @('where a value is expected: status -Host --help names status', @('status', '-Host', '--help'), 'Usage: agentspace-operator status [-Host <project> | -All] [-Quiet]'),
-      @('where a value is expected: -Host -h up names up', @('-Host', '-h', 'up'), 'Usage: agentspace-operator up [-Host <project>] [-Alias <alias>] [-Quiet]'),
-      @('a value never names a command: -Host up -h prints the top level''s help', @('-Host', 'up', '-h'), 'Usage: agentspace-operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]'),
-      @('a value never names a command: -InstanceType deploy -h prints the top level''s help', @('-InstanceType', 'deploy', '-h'), 'Usage: agentspace-operator <command> [-Host <project> | -All] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]'),
-      @('where a value is expected: deploy -Host x -InstanceType -h names deploy', @('deploy', '-Host', 'x', '-InstanceType', '-h'), 'Usage: agentspace-operator deploy [-Host <project>] [-InstanceType <type>] [-Quiet]'),
-      @('help hides a bad -Host: sync -Host bad! --help', @('sync', '-Host', 'bad!', '--help'), 'Usage: agentspace-operator sync [-Host <project> | -All] [-Quiet]'),
+      @('where a value is expected: status -Host --help names status', @('status', '-Host', '--help'), 'Usage: agentspace-operator status [-Host <project> | -All] [-Platform <os/arch>] [-Quiet]'),
+      @('where a value is expected: -Host -h up names up', @('-Host', '-h', 'up'), 'Usage: agentspace-operator up [-Host <project>] [-Platform <os/arch>] [-Alias <alias>] [-Quiet]'),
+      @('a value never names a command: -Host up -h prints the top level''s help', @('-Host', 'up', '-h'), 'Usage: agentspace-operator <command> [-Host <project> | -All] [-Platform <os/arch>] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]'),
+      @('a value never names a command: -InstanceType deploy -h prints the top level''s help', @('-InstanceType', 'deploy', '-h'), 'Usage: agentspace-operator <command> [-Host <project> | -All] [-Platform <os/arch>] [-GiB <n>] [-Alias <alias>] [-InstanceType <type>] [-Quiet] [--help]'),
+      @('where a value is expected: deploy -Host x -InstanceType -h names deploy', @('deploy', '-Host', 'x', '-InstanceType', '-h'), 'Usage: agentspace-operator deploy [-Host <project>] [-Platform <os/arch>] [-InstanceType <type>] [-Quiet]'),
+      @('help hides a bad -Host: sync -Host bad! --help', @('sync', '-Host', 'bad!', '--help'), 'Usage: agentspace-operator sync [-Host <project> | -All] [-Platform <os/arch>] [-Quiet]'),
       @('help hides the host checks: ca -Host x --help', @('ca', '-Host', 'x', '--help'), 'Usage: agentspace-operator ca [-Quiet]'),
-      @('help hides -All with -Host: down -Host x -All -h', @('down', '-Host', 'x', '-All', '-h'), 'Usage: agentspace-operator down [-Host <project> | -All] [-Quiet]'),
-      @('help hides a project with no record: grow -Host nobody -h', @('grow', '-Host', 'nobody', '-h'), 'Usage: agentspace-operator grow [-Host <project>] [-GiB <n>] [-Quiet]')
+      @('help hides -All with -Host: down -Host x -All -h', @('down', '-Host', 'x', '-All', '-h'), 'Usage: agentspace-operator down [-Host <project> | -All] [-Platform <os/arch>] [-Quiet]'),
+      @('help hides a project with no record: grow -Host nobody -h', @('grow', '-Host', 'nobody', '-h'), 'Usage: agentspace-operator grow [-Host <project>] [-Platform <os/arch>] [-GiB <n>] [-Quiet]')
     )) {
     $first = $case[2]
     Test-HostCase "${hp}: $($case[0])" ([string[]]$case[1]) @{
