@@ -453,10 +453,11 @@ mod tests {
         );
     }
 
-    /// `deploy` sets `HostName` and `CaPublicKey` itself for a host, and on the box either would
-    /// change its change set, so a file that names either is refused.
+    /// `deploy` sets `HostName`, `CaPublicKey` and, for a `windows/amd64` stack it creates,
+    /// `HostOs` itself for a host, and on the box any would change its change set, so a file that
+    /// names any of them is refused.
     #[test]
-    fn a_file_that_names_host_name_or_ca_public_key_is_refused() {
+    fn a_file_that_names_host_name_ca_public_key_or_host_os_is_refused() {
         for name in ["HostName", "CaPublicKey", "HostOs"] {
             let text = format!(r#"{{"version":0,"parameters":{{"VpcId":"v","{name}":"x"}}}}"#);
             assert_eq!(
