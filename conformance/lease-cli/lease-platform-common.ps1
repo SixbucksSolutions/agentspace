@@ -204,7 +204,7 @@ function Get-LpStoredProblems {
   $p = [System.Collections.Generic.List[string]]::new()
   $rec = Get-CcRecord $Lab $Id
   if ($null -eq $rec) { $p.Add('The lease is not in the lease state file'); return , $p }
-  if ($rec['state'] -cne $State) { $p.Add("The stored lease is '$($rec['state'])', not $State") }
+  if ($rec['state'] -cne $State) { $p.Add("The stored lease is '$(ConvertTo-ConformanceMasked $rec['state'])', not $State") }
   if ($rec['platform'] -cne $Platform) { $p.Add("The stored lease's platform is '$(ConvertTo-ConformanceMasked $rec['platform'])', not $Platform") }
   if ($rec['profile'] -cne $ProfileName) { $p.Add("The stored lease's profile is '$(ConvertTo-ConformanceMasked $rec['profile'])', not $ProfileName") }
   if ($rec['size'] -cne $Size) { $p.Add('The stored lease''s size is not the size asked for') }
