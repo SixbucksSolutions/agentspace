@@ -5158,7 +5158,10 @@ the dev lead. The TTL is what D85 gives a lease for that turn.
 | T04 | S01 to S05 | **Conformance and #0244.** The lease CLI's, the operator's and the keeper's cases; #0244; the whole suite with conformance.md | 9 | 10 | 4.5 h | 6.75 h | The laptop |
 | T05 | S01, S02 | **The install and the live checks.** The install, the project list and `linux/amd64`'s check; `windows/amd64`'s check | 3 | 4 | 4.5 h | 6.75 h | The laptop, with agentspace's two new hosts |
 
-**The release's budget is 20.5 hours**, the sum of its turns'. **Its instance hours are Q20's:** up
+**The release's budget is 20.5 hours**, the sum of its turns'. **Changed during v0.12-T03 (Terry,
+2026-11-26: "Yes extend"):** T03's budget goes from 4.5 hours to 5.5, ending at 10:37pm Mountain,
+and the release's from 20.5 to 21.5. S02's review could end only after S03's second part merged,
+which the dev lead expected near 8:30pm. **Its instance hours are Q20's:** up
 to 1.5 for T01's spike, 2 for `linux/amd64`'s check and 5 for `windows/amd64`'s.
 
 **Where the agents run: every dev lead and subagent runs on Terry's laptop.** The instances v0.12
