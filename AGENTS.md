@@ -24,8 +24,8 @@ lease API: projects ask for compute and get a way to SSH in, without knowing wha
   #0267) in five turns, whose plan is #0051's plan block and
   [docs/plans/v0.12.json](docs/plans/v0.12.json). Each turn starts on Terry's word. **Its live
   record is [docs/handoff-v0.12.md](docs/handoff-v0.12.md)**, refreshed at each turn's close; T01
-  to T03 closed on 2026-11-26, and T04 on 2026-11-27, with its S04 (#0264) carried and waiting on
-  Terry.
+  to T03 closed on 2026-11-26, and T04 on 2026-11-27, with its S04 (#0264) carried: its edits are
+  pushed at `415c9eb`, and its runs, review and PR remain.
 - **Where v0.11 began:** v0.11's design is D83 to D88 and its layout D89 in
   [docs/decisions.md](docs/decisions.md), Terry having taken the architect's recommendation on Q17
   and Q18; its plan is in #0052's plan block and in [docs/plans/v0.11.json](docs/plans/v0.11.json).

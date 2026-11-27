@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Live, as of v0.12-T04's close, 4:01am Mountain on 2026-11-27.** Started at T01's close and
+> **Live, as of 7:14am Mountain on 2026-11-27, after T04's close and S04's start.** Started at T01's close and
 > refreshed at each turn's close, as v0.11's was. Where this file and AGENTS.md, the board or
 > decisions.md disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -31,10 +31,22 @@ and this file adds only what v0.12 has changed or learned.
   makes all 50 lease CLI files exit 1; the crates (6,857 passed), fmt, clippy, the box's 259 and
   `box\windows`' 308 pass ([runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md)). **#0268 is met**: two real
   races fixed in test lines alone, each 20 of 20 under load.
-- **S04 (#0264), #0244's conformance masking, is carried out of T04 by pin P21** and is in Needs
-  Terry. Both of its one-line edits were refused by auto mode as "don't retry", so they need Terry
-  to approve each write in a default-mode session, or to say "hold". It runs on his word, with its
-  own pull request and run record, and its runner list is P19's (below).
+- **S04 (#0264), #0244's conformance masking, was carried out of T04 by pin P21, and its edits are
+  made.** On Terry's "Approve per write" a default-mode dev lead made both one-line edits, each
+  approved by him, and pushed them as `415c9eb` on `v0.12/e0.12-t04-s04`. The commit changes exactly
+  `conformance/lease-cli/harness.ps1:171` and `conformance/keeper/keeper-common.ps1:644`, each now
+  through `ConvertTo-ConformanceMasked`. Its plants failed on `ff0356e` and passed on `415c9eb`.
+  **Its runs were stopped unfinished at 7:14am**, when Terry turned the computer off. The session is
+  archived, and #0264 is back in Ready For Work.
+- **What S04 still needs, on Terry's word:** a fresh dev lead in auto mode, started from the pushed
+  branch.
+  - It MUST NOT write either file again: auto mode refused those edits.
+  - It reruns P19's list, which is the whole suite, since the operator's 49 files load the harness
+    through `helpers.ps1`: the 109 files and the deadline case, gated, from the one build. That is
+    about 50 minutes.
+  - Then a reviewer, `docs/runs/e0.12-t04-s04.md`, and one PR.
+  - Start a session like this in auto mode, not default: default asked Terry about every git and
+    shell command, about 20 prompts, where only the two edits needed him.
 - **Next is T05, the install and the live checks, on Terry's word**, and S04 when he answers. No turn
   starts without his word.
 - **Nothing is running but the architect's duties**: the board watcher, the swimcoach reporter with
@@ -116,6 +128,9 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 | "Yes, fold into T04", for #0268 | 2026-11-26 | D102 |
 | "Start T04" | 2026-11-26 | This file |
 | No answer on S04's two masking edits by T04's cap, 3:55am | 2026-11-27 | P21: S04 carried, in Needs Terry |
+| "Approve per write", for S04's two edits | 2026-11-27 | `415c9eb` |
+| "can we go back to aurto? i've had to approve like 20 things", for S04's session after its edits | 2026-11-27 | The short version: S04 in auto from then |
+| "land all work, need to turn computer off" | 2026-11-27 | S04's runs stopped at 7:14am; this file |
 
 ## Lessons from v0.12 so far
 
@@ -152,7 +167,7 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| S04 (#0264), #0244's masking: approve the two one-line edits per write in a default-mode session, or "hold" | Terry, then the architect | #0264, in Needs Terry; P19's runner list above |
+| S04 (#0264): its edits are pushed at `415c9eb`; its runs, review, record and PR remain | Terry's word, then the architect | #0264, in Ready For Work; branch `v0.12/e0.12-t04-s04`; the short version above |
 | T05 starts on Terry's word | Terry, then the architect | #0266, #0267 |
 | #0269, the keeper's handshake step 7 race #0268 found, to be placed | Terry; the architect suggests v1.0 (#0053) | Backlog |
 | Done in T04: #0268 (E0.12-T04-S05); T03's dev lead archived and its folders removed | | |
