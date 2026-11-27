@@ -1,1 +1,8 @@
-# Placeholder (D101): the architect's, before v0.12-T03. E0.12-T03-S07 (#0260) builds this file from docs/operator.md, Windows hosts.
+#!/bin/bash
+# Runs the board's wrapper, localswim.ps1, from Git Bash, which cannot run a .ps1 file by its name
+# (docs/operator.md, Windows hosts, The board's wrapper). MSYS2_ARG_CONV_EXCL='*' keeps Git Bash
+# from converting any argument that looks like a path. PowerShell 7 is named by its full path,
+# never pwsh by name, since a service started before the install keeps its old PATH.
+export MSYS2_ARG_CONV_EXCL='*'
+'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -NonInteractive -File C:/ProgramData/agentspace/bin/localswim.ps1 "$@"
+exit $?
