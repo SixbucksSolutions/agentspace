@@ -8,15 +8,17 @@
 #
 #   W28  A running Windows host is explained by its project's live leases on `windows/amd64` alone; the guard
 #        sends it its horizon, computed from those leases alone, by `ssm send-command` with
-#        `AWS-RunPowerShellScript`, the comment `agentspace guard: lease horizon` and one command that names
-#        `C:\ProgramData\agentspace` and `lease-horizon` and `[IO.File]::WriteAllText` and holds the horizon's digits
+#        `AWS-RunPowerShellScript`, the comment `agentspace guard: lease horizon` and one command that builds the
+#        path `C:\ProgramData\agentspace\lease-horizon` exactly once its parts are put together, every path it builds
+#        to `lease-horizon` in that folder, and that names `[IO.File]::WriteAllText` and holds the horizon's digits
 #        as one word, passed as one `--parameters` argument that parses as JSON, `{"commands":["<command>"]}`,
 #        never the shorthand `commands=`; in one pass the Linux hosts get the shell document and the same rule,
 #        and the pass visits the hosts, and the describe filter names their IDs, in the file's order; the
 #        Windows host's log lines and messages name `<project>.windows-amd64`.
 #
 # The bytes the command writes and the JSON the guard builds are the crate tests' (docs/conformance.md, W28), so
-# this file reads the command from the parsed JSON and asserts what the spec requires of it, never its text.
+# this file reads the command from the parsed JSON and asserts what the spec requires of it, never its text. The
+# path is found by parsing the command as PowerShell and folding each value from its parts, never by running it.
 #
 # EXPECTED TO FAIL AGAINST v0.11's OPERATOR, which refuses a registry record holding `platform`: every case
 # reports a FAIL there, each by its own assertion. A v0.12 build MUST pass every result.
@@ -40,6 +42,106 @@
 
 $ErrorActionPreference = 'Stop'
 
+# The file operator.md's "The horizon on a Windows host" moves the horizon over, in step 3, in the folder of step 1.
+$script:WnHorizonFile = 'C:\ProgramData\agentspace\lease-horizon'
+$script:WnHorizonFolder = 'C:\ProgramData\agentspace'
+
+# The text an expression of the command evaluates to, folded from its parts without running anything, or $null when
+# a part is not a string this can follow: a quoted string, a variable an earlier assignment folded, `+` of two such,
+# [string] of one, a double-quoted string whose variables are known, Join-Path of two, and [IO.Path]::Combine.
+function Get-WnFoldedText($Node, [hashtable]$Known) {
+  if ($null -eq $Node) { return $null }
+  if ($Node -is [Management.Automation.Language.PipelineAst]) {
+    if ($Node.PipelineElements.Count -ne 1) { return $null }
+    return Get-WnFoldedText $Node.PipelineElements[0] $Known
+  }
+  if ($Node -is [Management.Automation.Language.CommandExpressionAst]) { return Get-WnFoldedText $Node.Expression $Known }
+  if ($Node -is [Management.Automation.Language.ParenExpressionAst]) { return Get-WnFoldedText $Node.Pipeline $Known }
+  if ($Node -is [Management.Automation.Language.StringConstantExpressionAst]) { return $Node.Value }
+  if ($Node -is [Management.Automation.Language.ExpandableStringExpressionAst]) {
+    $text = $Node.Value
+    foreach ($e in $Node.NestedExpressions) {
+      if ($e -isnot [Management.Automation.Language.VariableExpressionAst] -or -not $Known.ContainsKey($e.VariablePath.UserPath)) { return $null }
+      $text = $text.Replace($e.Extent.Text, $Known[$e.VariablePath.UserPath])
+    }
+    return $text
+  }
+  if ($Node -is [Management.Automation.Language.VariableExpressionAst]) {
+    if ($Known.ContainsKey($Node.VariablePath.UserPath)) { return $Known[$Node.VariablePath.UserPath] }
+    return $null
+  }
+  if ($Node -is [Management.Automation.Language.ConvertExpressionAst]) {
+    if ($Node.Type.TypeName.Name -notin @('string', 'System.String')) { return $null }
+    return Get-WnFoldedText $Node.Child $Known
+  }
+  if ($Node -is [Management.Automation.Language.BinaryExpressionAst]) {
+    if ($Node.Operator -ne [Management.Automation.Language.TokenKind]::Plus) { return $null }
+    $l = Get-WnFoldedText $Node.Left $Known; $r = Get-WnFoldedText $Node.Right $Known
+    if ($null -eq $l -or $null -eq $r) { return $null }
+    return $l + $r
+  }
+  if ($Node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $Node.Static -and
+      $Node.Expression.TypeName.FullName -in @('IO.Path', 'System.IO.Path') -and $Node.Member.Value -ieq 'Combine') {
+    $parts = @(foreach ($x in $Node.Arguments) { Get-WnFoldedText $x $Known })
+    if ($parts.Count -lt 2 -or $parts -contains $null) { return $null }
+    return [IO.Path]::Combine([string[]]$parts)
+  }
+  if ($Node -is [Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -ieq 'Join-Path') {
+    $parts = [System.Collections.Generic.List[object]]::new()
+    foreach ($x in @($Node.CommandElements | Select-Object -Skip 1)) {
+      if ($x -is [Management.Automation.Language.CommandParameterAst]) {
+        if ($x.ParameterName -notin @('Path', 'ChildPath')) { return $null }
+        if ($null -ne $x.Argument) { $parts.Add((Get-WnFoldedText $x.Argument $Known)) }
+      } else { $parts.Add((Get-WnFoldedText $x $Known)) }
+    }
+    if ($parts.Count -ne 2 -or $parts.Contains($null)) { return $null }
+    return ([string]$parts[0]).TrimEnd('\') + '\' + ([string]$parts[1]).TrimStart('\')
+  }
+  $null
+}
+# Problems: the path the Windows horizon command writes is not C:\ProgramData\agentspace\lease-horizon once its parts
+# are put together (docs/operator.md, "The horizon on a Windows host", steps 1 to 3). The command is parsed as
+# PowerShell, never run, and each assignment's value and each argument of a call is folded from its parts in the
+# order they come: some value MUST be the file's path exactly, and every value that names lease-horizon MUST be in
+# step 1's folder (the file, or step 2's temporary file in that folder). Two words found anywhere in the text are
+# not enough, since a command that held both and wrote the file elsewhere would pass.
+function Get-WnHorizonPathProblems([string]$Command) {
+  $p = [System.Collections.Generic.List[string]]::new()
+  $tokens = $null; $errs = $null
+  $ast = [Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errs)
+  if (@($errs).Count -gt 0) { $p.Add('The Windows command does not parse as PowerShell'); return $p.ToArray() }
+  $known = @{}
+  $values = [System.Collections.Generic.List[string]]::new()
+  $nodes = $ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -or $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -or $n -is [Management.Automation.Language.CommandAst] }, $true)
+  foreach ($n in @($nodes | Sort-Object { $_.Extent.StartOffset })) {
+    if ($n -is [Management.Automation.Language.AssignmentStatementAst]) {
+      if ($n.Left -isnot [Management.Automation.Language.VariableExpressionAst]) { continue }
+      $name = $n.Left.VariablePath.UserPath
+      $v = Get-WnFoldedText $n.Right $known
+      if ($null -eq $v) { $known.Remove($name) } else { $known[$name] = $v; $values.Add($v) }
+    } elseif ($n -is [Management.Automation.Language.InvokeMemberExpressionAst]) {
+      # A Combine's arguments are the parts of a path, which the folding of the whole puts together; a part is no path.
+      if ($n.Static -and $n.Expression.TypeName.FullName -in @('IO.Path', 'System.IO.Path') -and $n.Member.Value -ieq 'Combine') { continue }
+      foreach ($x in @($n.Arguments)) { $v = Get-WnFoldedText $x $known; if ($null -ne $v) { $values.Add($v) } }
+    } else {
+      if ($n.GetCommandName() -ieq 'Join-Path') { continue }
+      foreach ($x in @($n.CommandElements | Select-Object -Skip 1)) {
+        $y = if ($x -is [Management.Automation.Language.CommandParameterAst]) { $x.Argument } else { $x }
+        $v = Get-WnFoldedText $y $known; if ($null -ne $v) { $values.Add($v) }
+      }
+    }
+  }
+  $named = @($values | Where-Object { $_.IndexOf('lease-horizon', [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -Unique)
+  if (@($named | Where-Object { $_ -ieq $script:WnHorizonFile }).Count -eq 0) {
+    $p.Add("The Windows command builds no path that is $($script:WnHorizonFile) once its parts are put together")
+  }
+  foreach ($v in $named) {
+    $i = $v.LastIndexOf('\')
+    if ($i -lt 0 -or $v.Substring(0, $i) -ine $script:WnHorizonFolder) { $p.Add("The Windows command builds a path to lease-horizon outside $($script:WnHorizonFolder)"); break }
+  }
+  $p.ToArray()
+}
+
 # Problems of the horizon sends of a run. -Expected maps an instance ID to @{ Platform; Time }: one send to each, and
 # to no other host; for a Windows host the PowerShell document, the comment and one JSON argument, the command
 # naming the horizon file and WriteAllText; for a Linux host the shell document and commands=; and the horizon, the
@@ -57,9 +159,7 @@ function Get-WnHorizonProblems([hashtable]$Expected) {
       foreach ($m in (Get-WnSendProblems $c "The send to the Windows host $id")) { $p.Add($m) }
       $cmd = Get-WnSendCommand $c
       if ($null -eq $cmd) { continue }
-      # operator.md's steps 1 and 3 name the folder C:\ProgramData\agentspace and the file lease-horizon in it, and do not
-      # say how the command joins them, so the command MAY hold the path whole or the folder and the file name apart.
-      if (-not $cmd.Contains('C:\ProgramData\agentspace') -or -not $cmd.Contains('lease-horizon')) { $p.Add('The Windows command does not name C:\ProgramData\agentspace and lease-horizon') }
+      foreach ($m in (Get-WnHorizonPathProblems $cmd)) { $p.Add($m) }
       if (-not $cmd.Contains('[IO.File]::WriteAllText')) { $p.Add('The Windows command does not write with [IO.File]::WriteAllText') }
     } else {
       if ((Get-WnFlag $c '--document-name') -cne 'AWS-RunShellScript') { $p.Add("The Linux host $id was not sent AWS-RunShellScript") }
