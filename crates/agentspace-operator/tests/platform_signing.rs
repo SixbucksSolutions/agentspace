@@ -71,7 +71,6 @@ impl Signing {
     fn alias(&self, host: &str) -> PathBuf {
         self.rig.host_alias_path(host)
     }
-
 }
 
 fn ssh_keygen() -> PathBuf {
