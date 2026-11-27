@@ -6,9 +6,9 @@
 //! left it (D101). Each method is one row of that table: its input is the row's input, and what it
 //! returns is the row's output. A method returns data or text only: the operator and
 //! `agentspace-sync` run every program and every AWS call, and a platform never does. The two
-//! Linux platforms' implementation is `agentspace-sync`'s (E0.12-T03-S03), and `windows/amd64`'s
-//! is `agentspace-windows`' (E0.12-T03-S06); the operator's front picks one by the host's platform
-//! (E0.12-T03-S02). A change to this trait is the architect's, on a dev lead's pin.
+//! Linux platforms' implementation is `agentspace-platforms`' (E0.12-T03-S03), and
+//! `windows/amd64`'s is `agentspace-windows`' (E0.12-T03-S06); every caller picks one by the host's
+//! platform through `agentspace_platforms::for_platform`. A change to this trait is the architect's, on a dev lead's pin.
 
 use crate::Failure;
 
