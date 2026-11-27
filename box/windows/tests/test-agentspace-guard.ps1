@@ -26,9 +26,12 @@
 #    the system programs among them, has a tripwire in the throwaway home: a .cmd under that name that
 #    records its own start beside itself and exits 97, put first on the child's PATH. The child pwsh
 #    is always started by its full path, so no tripwire shadows the PowerShell that runs a script or
-#    this test. Two cases show the tripwires work before any refusal relies on them: each name
-#    resolves first to its tripwire on the child's PATH (by Get-Command in the child, which runs
-#    nothing it finds), and a stand-alone probe that is no box/windows script, run through the same
+#    this test. pwsh is the one name no tripwire can catch in a PowerShell 7 child: PowerShell 7 puts
+#    $PSHOME ahead of every PATH entry at its start, so a bare pwsh there is that same PowerShell 7.
+#    Two cases show the tripwires work before any refusal relies on them: each name but pwsh
+#    resolves first to its tripwire on the child's PATH, and pwsh to $PSHOME's own pwsh.exe (by
+#    Get-Command in the child, which runs nothing it finds), and a stand-alone probe that is no
+#    box/windows script, run through the same
 #    function as the refusals, starts git by bare name (harmless if a tripwire missed it), and the
 #    tripwire check fails on that run. -TripwireProbe names another probe for a plant proof.
 # 3. Refusal: each guarded script is run once, as a separate pwsh 7 process, as the laptop's own user,
@@ -293,8 +296,9 @@ function Get-WtMachineNames {
 # lines or through a script they start (the patch run starts agentspace-tools.ps1, which starts
 # winget), the PowerShells and the system programs that change a machine among them. Each is a .cmd in
 # the throwaway home that appends its own name to fired.txt beside itself and exits 97; a folder's
-# .cmd is found before a later folder's .exe, which the resolution case shows in every run. cmd itself
-# is left out, since the tripwires run under it.
+# .cmd is found before a later folder's .exe, which the resolution case shows in every run, for every
+# name but pwsh, which PowerShell 7 resolves to $PSHOME first. cmd itself is left out, since the
+# tripwires run under it.
 $script:WtTripNames = @(
   'pwsh', 'powershell', 'shutdown', 'sshd', 'ssh-keygen', 'winget', 'schtasks', 'reg', 'netsh', 'msiexec', 'git',
   'ssh', 'scp', 'bash', 'sc', 'net', 'tzutil', 'icacls', 'bcdedit', 'wusa', 'usoclient', 'dism', 'taskkill', 'wmic',
@@ -356,16 +360,22 @@ try {
   # --- 2. Tripwire (pin P15): shown to work before any refusal relies on it -------------------------------------
   Test-WtCase 'Tripwire: each program name resolves first to its tripwire on the child''s PATH' {
     # The child resolves each name with Get-Command, which runs nothing it finds, and prints the name
-    # and 1 or 0, never a path. A name that is not found anywhere is no tripwire, so it fails too. The
-    # names go into the snippet itself, since a -Command run takes no $args.
+    # and 1, pshome or 0, never a path. A name that is not found anywhere is no tripwire, so it fails
+    # too. The names go into the snippet itself, since a -Command run takes no $args.
+    # pwsh is the one exception, by PowerShell 7's own design: at its start it puts $PSHOME ahead of
+    # every PATH entry, so in a PowerShell 7 child a bare pwsh is that same PowerShell 7, which no
+    # tripwire MAY shadow (pin P15). The case requires exactly that, $PSHOME's pwsh.exe, for it.
     $nameList = "@('" + ($script:WtTripNames -join "', '") + "')"
-    $snippet = 'foreach ($n in ' + $nameList + ') { $first = Get-Command -Name $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; $hit = ($null -ne $first -and $first.Source.StartsWith($env:WT_TRIPBIN + ''\'', [StringComparison]::OrdinalIgnoreCase)); ''{0}|{1}'' -f $n, [int]$hit }; exit 0'
+    $snippet = 'foreach ($n in ' + $nameList + ') { $first = Get-Command -Name $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; $hit = ''0''; if ($null -ne $first -and $first.Source.StartsWith($env:WT_TRIPBIN + ''\'', [StringComparison]::OrdinalIgnoreCase)) { $hit = ''1'' } elseif ($null -ne $first -and [string]::Equals($first.Source, (Join-Path $PSHOME ''pwsh.exe''), [StringComparison]::OrdinalIgnoreCase)) { $hit = ''pshome'' }; ''{0}|{1}'' -f $n, $hit }; exit 0'
     $r = Invoke-WtTripwired -Arguments @('-Command', $snippet) -Extra @{ WT_TRIPBIN = $script:WtTripBin }
     Assert-WtEqual $r.ExitCode 0 'Exit code of the resolution check'
     $resolvedLines = @(Get-WtLines -Text $r.Stdout)
     $missed = @()
-    foreach ($tripName in $script:WtTripNames) { if ($resolvedLines -cnotcontains ($tripName + '|1')) { $missed += $tripName } }
-    Assert-Wt ($missed.Count -eq 0) ('These names do not resolve first to their tripwire: {0}' -f ($missed -join ', '))
+    foreach ($tripName in $script:WtTripNames) {
+      $wantLine = if ($tripName -ceq 'pwsh') { 'pwsh|pshome' } else { $tripName + '|1' }
+      if ($resolvedLines -cnotcontains $wantLine) { $missed += $tripName }
+    }
+    Assert-Wt ($missed.Count -eq 0) ('These names do not resolve first to their tripwire (pwsh: to $PSHOME''s own pwsh.exe): {0}' -f ($missed -join ', '))
     Assert-Wt (@($r.Fired).Count -eq 0) 'The resolution check MUST start no tripwire'
     $script:WtTripwireResolved = $true
   }
