@@ -441,8 +441,10 @@ try {
   $pCreating = New-PgPending 'beta'
   $released = [ordered]@{ id = [guid]::NewGuid().ToString(); project = 'agentspace'; state = 'released'; platform = 'linux/arm64'; profile = 'agent-linux'; size = 'm'; ttl_seconds = 28800
     created_at = (Get-PgTime -30); released_at = (Get-PgTime -20); driver = 'ec2' }
-  $unsat = [ordered]@{ id = [guid]::NewGuid().ToString(); project = 'gamma'; state = 'unsatisfiable'; platform = 'linux/amd64'; profile = 'agent-linux'; size = 'm'; ttl_seconds = 28800
-    created_at = (Get-PgTime -30); reasons = @([ordered]@{ code = 'unsupported_platform'; message = "Platform 'linux/amd64' is not supported; v0 supports linux/arm64 only." }); driver = 'ec2' }
+  $unsat = [ordered]@{ id = [guid]::NewGuid().ToString(); project = 'gamma'; state = 'unsatisfiable'; platform = 'windows/arm64'; profile = 'agent-linux'; size = 'm'; ttl_seconds = 28800
+    # v0.12 (lease-api.md#fields, D93, D98): windows/arm64 is the unsupported platform, with its default profile agent-linux (lease-api.md#profile),
+    # and the platform's message is the v0.12 one, byte for byte.
+    created_at = (Get-PgTime -30); reasons = @([ordered]@{ code = 'unsupported_platform'; message = "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64." }); driver = 'ec2' }
   $readyId = [guid]::NewGuid().ToString()
   $readyRec = [ordered]@{ id = $readyId; project = 'swimcoach'; state = 'ready'; platform = 'linux/arm64'; profile = 'agent-linux'; size = 'm'; ttl_seconds = 28800
     created_at = (Get-PgTime -30); expires_at = (Get-PgTime 600); ssh = [ordered]@{ host_alias = "agentspace-swimcoach-$($readyId.Substring(0, 8))"; user = 'ubuntu' }; driver = 'ec2' }

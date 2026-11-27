@@ -423,7 +423,7 @@ Use-PlLab -Name 'lease-api.md#fields: A lease made with --plan prints sized_for 
   # Each case: the arguments, the reason codes, the size, and the sized_for expected.
   $cases = @(
     @{ Key = 'no_capacity'; Extra = @('--plan', $capPath); Codes = @('no_capacity'); Size = 'l'; Expect = $script:PlE3; Words = 'the host is held by a live ready lease at a smaller size' }
-    @{ Key = 'unsupported_platform'; Extra = @('--plan', $platPath, '--platform', 'windows/amd64'); Codes = @('unsupported_platform'); Size = 's'; Expect = $script:PlE4; Words = 'the platform is one no backend has' }
+    @{ Key = 'unsupported_platform'; Extra = @('--plan', $platPath, '--platform', 'windows/arm64'); Codes = @('unsupported_platform'); Size = 's'; Expect = $script:PlE4; Words = 'the platform is one no backend has' }
   )
   foreach ($c in $cases) {
     $a = Invoke-PlLease -Lab $lab -Arguments (@('create', '--project', $project) + $c.Extra) -StandIn $standIn -Outputs $outputs
@@ -437,8 +437,9 @@ Use-PlLab -Name 'lease-api.md#fields: A lease made with --plan prints sized_for 
     $results["lease-api.md#agentspace-lease-release: release prints a lease unsatisfiable with $($c.Key) unchanged, with the sized_for create printed"] = Get-PlStepProblems @step -Id $id -Command 'release' -State 'unsatisfiable' -Size $c.Size -Expect $c.Expect -SameAs $same -Whole $whole
   }
 
-  # A lease made without --plan that is unsatisfiable has none, in each command.
-  $n = Invoke-PlLease -Lab $lab -Arguments @('create', '--project', $project, '--platform', 'windows/amd64') -StandIn $standIn -Outputs $outputs
+  # A lease made without --plan that is unsatisfiable has none, in each command. v0.12 (lease-api.md#platform, D98): the platform
+  # no backend supports is windows/arm64; windows/amd64 is supported, so it would be met or no_capacity, not unsupported_platform.
+  $n = Invoke-PlLease -Lab $lab -Arguments @('create', '--project', $project, '--platform', 'windows/arm64') -StandIn $standIn -Outputs $outputs
   $runs.Add($n)
   $idN = Get-PlLeaseId -Run $n -State 'unsatisfiable'
   $results['lease-api.md#fields: An unsatisfiable lease made without --plan has no sized_for in the document create prints'] = Get-PlUnsatisfiableProblems -Run $n -Codes @('unsupported_platform') -Size 'm' -Expect $null
@@ -477,7 +478,7 @@ Use-PlLab -Name 'lease-api.md#fields: sized_for names' -Body {
   )
   foreach ($c in $cases) {
     $path = Write-PlPlan -Lab $lab -File $c.File -Text $c.Text
-    $a = Invoke-PvLease -Lab $lab -Arguments @('create', '--project', $project, '--plan', $path, '--platform', 'windows/amd64') -StandIn $standIn
+    $a = Invoke-PvLease -Lab $lab -Arguments @('create', '--project', $project, '--plan', $path, '--platform', 'windows/arm64') -StandIn $standIn
     $runs.Add($a)
     $p = Get-PlUnsatisfiableProblems -Run $a -Codes @('unsupported_platform') -Size 's' -Expect $c.Expect
     if ($c.NoPlanMember -and $a.Stdout -match '"plan"\s*:') { $p.Add('create printed a plan member in sized_for') }

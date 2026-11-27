@@ -49,13 +49,15 @@ try {
   # ---- Unsatisfiable requests (driver.md#unsatisfiable-requests) -----------------------------------
   # No credential is needed, so these run whether or not the throwaway CA could be made.
   $cases = @(
-    @{ Name = 'An unsupported platform'; Args = @('--platform', 'linux/amd64'); Codes = @('unsupported_platform'); Values = @("'linux/amd64'") }
-    @{ Name = 'A Windows platform'; Args = @('--platform', 'windows/amd64'); Codes = @('unsupported_platform'); Values = @("'windows/amd64'") }
+    # v0.12 (lease-api.md#platform, D98; driver.md#what-it-supports): linux/amd64 and windows/amd64 are supported platforms now, and
+    # windows/arm64 and a platform such as darwin/arm64 are not, each unsupported_platform alone with no profile asked for.
+    @{ Name = 'An unsupported platform'; Args = @('--platform', 'darwin/arm64'); Codes = @('unsupported_platform'); Values = @("'darwin/arm64'") }
+    @{ Name = 'A Windows platform on arm64'; Args = @('--platform', 'windows/arm64'); Codes = @('unsupported_platform'); Values = @("'windows/arm64'") }
     @{ Name = 'A versioned profile'; Args = @('--profile', 'agent-linux@1'); Codes = @('unsupported_profile'); Values = @("'agent-linux@1'") }
     @{ Name = 'A size no profile has'; Args = @('--size', 'xxl'); Codes = @('unsupported_size'); Values = @("'xxl'") }
-    @{ Name = 'A platform and a size'; Args = @('--platform', 'linux/amd64', '--size', 'xxl'); Codes = @('unsupported_platform', 'unsupported_size'); Values = @("'linux/amd64'", "'xxl'") }
-    @{ Name = 'All three, given in upper case and with a padded version'; Args = @('--size', 'XXL', '--profile', 'Agent-Linux@03', '--platform', 'Linux/AMD64')
-      Codes = @('unsupported_platform', 'unsupported_profile', 'unsupported_size'); Values = @("'linux/amd64'", "'agent-linux@3'", "'xxl'") }
+    @{ Name = 'A platform and a size'; Args = @('--platform', 'windows/arm64', '--size', 'xxl'); Codes = @('unsupported_platform', 'unsupported_size'); Values = @("'windows/arm64'", "'xxl'") }
+    @{ Name = 'All three, given in upper case and with a padded version'; Args = @('--size', 'XXL', '--profile', 'Agent-Linux@03', '--platform', 'Windows/ARM64')
+      Codes = @('unsupported_platform', 'unsupported_profile', 'unsupported_size'); Values = @("'windows/arm64'", "'agent-linux@3'", "'xxl'") }
   )
   foreach ($case in $cases) {
     $issuedBefore = Get-CcIssued $lab

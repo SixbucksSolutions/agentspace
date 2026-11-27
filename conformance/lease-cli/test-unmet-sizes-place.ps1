@@ -10,7 +10,7 @@
 #   Z1   For each of s, m, l and xl, with no other lease of the project: a create for a record ready at that
 #        size's type answers ready, with the size asked for and no type, starts nothing, and leaves the registry.
 #   Z2   create --size xxl and --size XXL: unsatisfiable with exactly unsupported_size, its message byte for
-#        byte, with no CA and a registry that does not validate as with a good one; with --platform windows/amd64
+#        byte, with no CA and a registry that does not validate as with a good one; with --platform windows/arm64
 #        the reasons are unsupported_platform then unsupported_size, and with --size l the one is the platform's.
 #        With a live ready lease on a host smaller than l, no_capacity is never listed beside them (lease-api.md,
 #        "Fields").
@@ -304,8 +304,9 @@ function Test-SpUnsupportedSize {
     $cases = @(
       @{ Key = 'create --size xxl answers unsatisfiable with exactly one reason, unsupported_size, its message byte for byte, and writes nothing'; Extra = @('--size', 'xxl'); Codes = @('unsupported_size'); Size = 'xxl' }
       @{ Key = 'create --size XXL answers the same, quoting the size normalized'; Extra = @('--size', 'XXL'); Codes = @('unsupported_size'); Size = 'xxl' }
-      @{ Key = 'create --size xxl --platform windows/amd64 lists unsupported_platform then unsupported_size, in the contract''s order'; Extra = @('--size', 'xxl', '--platform', 'windows/amd64'); Codes = @('unsupported_platform', 'unsupported_size'); Size = 'xxl' }
-      @{ Key = 'create --size l --platform windows/amd64 lists unsupported_platform alone (pin P9), never no_capacity beside it';Extra = @('--size', 'l', '--platform', 'windows/amd64'); Codes = @('unsupported_platform'); Size = 'l' }
+      # v0.12 (lease-api.md#size, D98): windows/amd64 is supported, so the platform no backend supports is windows/arm64.
+      @{ Key = 'create --size xxl --platform windows/arm64 lists unsupported_platform then unsupported_size, in the contract''s order'; Extra = @('--size', 'xxl', '--platform', 'windows/arm64'); Codes = @('unsupported_platform', 'unsupported_size'); Size = 'xxl' }
+      @{ Key = 'create --size l --platform windows/arm64 lists unsupported_platform alone (pin P9), never no_capacity beside it';Extra = @('--size', 'l', '--platform', 'windows/arm64'); Codes = @('unsupported_platform'); Size = 'l' }
     )
     $results = [ordered]@{}
     foreach ($c in $cases) {
