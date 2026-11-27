@@ -18,11 +18,12 @@
 
 #![cfg(windows)]
 
+use agentspace_connections::line::release_text;
 use agentspace_connections::{EndError, end_alias_clients_under};
 use std::collections::hash_map::RandomState;
 use std::fs;
 use std::hash::{BuildHasher, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
@@ -35,6 +36,12 @@ const ENV_DEPTH: &str = "AGENTSPACE_CONN_STUB_DEPTH";
 const ENV_PIDS: &str = "AGENTSPACE_CONN_STUB_PIDS";
 const ENV_CHILD_EXE: &str = "AGENTSPACE_CONN_STUB_CHILD_EXE";
 const ENV_CHILD_ARGS: &str = "AGENTSPACE_CONN_STUB_CHILD_ARGS";
+const ENV_CHAIN: &str = "AGENTSPACE_CONN_STUB_CHAIN";
+const ENV_LABEL: &str = "AGENTSPACE_CONN_STUB_LABEL";
+const ENV_MARKS: &str = "AGENTSPACE_CONN_STUB_MARKS";
+const ENV_EXIT: &str = "AGENTSPACE_CONN_STUB_EXIT";
+const UNIT: char = '\x1f';
+const RECORD: char = '\x1e';
 
 /// How long a test waits for a stub's descendants to appear.
 const APPEAR: Duration = Duration::from_secs(30);
@@ -169,6 +176,8 @@ struct Started {
     root: Child,
     desc: Vec<Held>,
     pidfile: PathBuf,
+    /// The folder where the stub's labelled processes write their own process IDs.
+    marks: PathBuf,
 }
 
 /// A test's throwaway folder, its two aliases and every process it started.
@@ -187,6 +196,20 @@ struct Spec<'a> {
     args: &'a [&'a str],
     depth: u32,
     child: Option<(&'a str, &'a [&'a str])>,
+    /// The programs started one below the other after the plain levels, each below the one before.
+    chain: Vec<Node<'a>>,
+    /// Variables the stub's whole tree inherits, besides the stub's own.
+    env: Vec<(String, String)>,
+}
+
+/// One program of a chain: its label, whether it exits as soon as it has started what it starts,
+/// how many plain levels of descendants it starts below itself, its image and its arguments.
+struct Node<'a> {
+    label: &'a str,
+    exits: bool,
+    depth: u32,
+    image: &'a str,
+    args: &'a [&'a str],
 }
 
 fn spec<'a>(image: &'a str, args: &'a [&'a str]) -> Spec<'a> {
@@ -195,6 +218,8 @@ fn spec<'a>(image: &'a str, args: &'a [&'a str]) -> Spec<'a> {
         args,
         depth: 1,
         child: None,
+        chain: Vec::new(),
+        env: Vec::new(),
     }
 }
 
@@ -256,6 +281,8 @@ impl Lab {
         let exe = self.copy_of(spec.image);
         let index = self.started.len();
         let pidfile = self.dir.join(format!("pids-{index}.txt"));
+        let marks = self.dir.join(format!("marks-{index}"));
+        fs::create_dir_all(&marks).expect("The marks folder");
         let args: Vec<String> = spec.args.iter().map(|a| self.fill(a)).collect();
         let mut command = Command::new(&exe);
         command
@@ -263,6 +290,9 @@ impl Lab {
             .env_remove(ENV_CHILD)
             .env(ENV_DEPTH, spec.depth.to_string())
             .env(ENV_PIDS, &pidfile)
+            .env(ENV_MARKS, &marks)
+            .env_remove(ENV_LABEL)
+            .env_remove(ENV_EXIT)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -274,14 +304,43 @@ impl Lab {
         } else {
             command.env_remove(ENV_CHILD_EXE).env_remove(ENV_CHILD_ARGS);
         }
+        let mut expected = spec.depth as usize;
+        if spec.chain.is_empty() {
+            command.env_remove(ENV_CHAIN);
+        } else {
+            let records: Vec<String> = spec
+                .chain
+                .iter()
+                .map(|node| {
+                    let mut fields = vec![
+                        node.label.to_string(),
+                        if node.exits { "1" } else { "0" }.to_string(),
+                        node.depth.to_string(),
+                        self.copy_of(node.image).to_string_lossy().into_owned(),
+                    ];
+                    fields.extend(node.args.iter().map(|a| self.fill(a)));
+                    fields.join(&UNIT.to_string())
+                })
+                .collect();
+            command.env(ENV_CHAIN, records.join(&RECORD.to_string()));
+            expected += spec
+                .chain
+                .iter()
+                .map(|n| 1 + n.depth as usize)
+                .sum::<usize>();
+        }
+        for (name, value) in &spec.env {
+            command.env(name, value);
+        }
         let root = command.spawn().expect("The stub starts");
         self.started.push(Started {
             label: format!("#{index} {} with {} arguments", spec.image, args.len()),
             root,
             desc: Vec::new(),
             pidfile,
+            marks,
         });
-        self.hold_descendants(index, spec.depth as usize);
+        self.hold_descendants(index, expected);
         index
     }
 
@@ -363,6 +422,60 @@ impl Lab {
             sleep(Duration::from_millis(25));
         }
         true
+    }
+
+    /// The place in `desc` of the process of this label, which the stub wrote its own process ID
+    /// for. Waits for the mark, which a process writes as it starts.
+    fn mark(&self, index: usize, label: &str) -> usize {
+        let path = self.started[index].marks.join(format!("{label}.pid"));
+        let begun = Instant::now();
+        loop {
+            if let Ok(text) = fs::read_to_string(&path)
+                && let Ok(pid) = text.trim().parse::<u32>()
+                && let Some(at) = self.started[index].desc.iter().position(|h| h.pid == pid)
+            {
+                return at;
+            }
+            assert!(
+                begun.elapsed() < APPEAR,
+                "The mark {label} of {} did not appear",
+                self.started[index].label
+            );
+            sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// Waits until the descendant at `at` has exited by itself.
+    fn wait_exited(&self, index: usize, at: usize) {
+        let begun = Instant::now();
+        while self.started[index].desc[at].alive() {
+            assert!(
+                begun.elapsed() < APPEAR,
+                "A descendant of {} did not exit",
+                self.started[index].label
+            );
+            sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// Each descendant at these places is gone within the grace, and was given exit code 1.
+    fn assert_held_ended(&self, index: usize, places: &[usize], what: &str) {
+        let begun = Instant::now();
+        for &at in places {
+            let held = &self.started[index].desc[at];
+            while held.alive() && begun.elapsed() <= GRACE {
+                sleep(Duration::from_millis(25));
+            }
+            assert!(!held.alive(), "{what} is still running");
+            assert_eq!(held.exit_code(), Some(1), "The exit code of {what}");
+        }
+    }
+
+    /// Each descendant at these places still runs.
+    fn assert_held_alive(&self, index: usize, places: &[usize], what: &str) {
+        for &at in places {
+            assert!(self.started[index].desc[at].alive(), "{what} was ended");
+        }
     }
 
     fn assert_ended(&mut self, indexes: &[usize]) {
@@ -751,5 +864,341 @@ fn no_client_gives_zero() {
     ];
     assert_eq!(lab.run(), Ok(0));
     lab.assert_alive(&no);
+    lab.finish();
+}
+
+// ---- One walk ends a chain of exited programs (driver.md, "Each with its tree"; D99; #0228) -----
+
+/// A chain of clients and exited programs, as driver.md's "Each with its tree" describes it: a top
+/// client, and below it, one below the other, an exited program and a client, as many times as the
+/// case asks. Each exited program is still held by the process above it, and has started the
+/// process below it before it exited, so that process has a parent that has gone while the process
+/// above still holds it.
+struct Chain {
+    /// The started stub: the top client.
+    top: usize,
+    /// The places in the top's descendants of the clients below it, from the highest down.
+    clients: Vec<usize>,
+    /// The places of the exited programs, from the highest down.
+    exited: Vec<usize>,
+    /// The places of every other descendant: the plain levels below the lower clients.
+    below: Vec<usize>,
+}
+
+/// Starts a chain. The top client's command line is `ssh.exe aliases[0]`, and each later entry is
+/// the argument of one more `ssh.exe`, below an exited program. `below[k]` is how many plain levels
+/// of descendants the client at `aliases[k + 1]` starts below itself. Waits until every program
+/// of the chain runs or has exited, as it should.
+fn start_chain(lab: &mut Lab, aliases: &[&str], below: &[u32]) -> Chain {
+    let lower = aliases.len() - 1;
+    assert_eq!(
+        below.len(),
+        lower,
+        "One entry of `below` for each lower client"
+    );
+    let x_labels: Vec<String> = (1..=lower).map(|k| format!("x{k}")).collect();
+    let c_labels: Vec<String> = (1..=lower).map(|k| format!("c{k}")).collect();
+    let c_args: Vec<[&str; 1]> = aliases[1..].iter().map(|a| [*a]).collect();
+    let mut nodes = Vec::new();
+    for k in 0..lower {
+        nodes.push(Node {
+            label: &x_labels[k],
+            exits: true,
+            depth: 0,
+            image: "claude-ssh-proxy.exe",
+            args: &[],
+        });
+        nodes.push(Node {
+            label: &c_labels[k],
+            exits: false,
+            depth: below[k],
+            image: "ssh.exe",
+            args: &c_args[k],
+        });
+    }
+    let top = lab.start(Spec {
+        depth: 0,
+        chain: nodes,
+        ..spec("ssh.exe", &[aliases[0]])
+    });
+    let clients: Vec<usize> = c_labels.iter().map(|l| lab.mark(top, l)).collect();
+    let exited: Vec<usize> = x_labels.iter().map(|l| lab.mark(top, l)).collect();
+    for &at in &exited {
+        lab.wait_exited(top, at);
+    }
+    let total = lab.started[top].desc.len();
+    let below: Vec<usize> = (0..total)
+        .filter(|at| !clients.contains(at) && !exited.contains(at))
+        .collect();
+    assert!(lab.root_alive(top), "The top client runs before the walk");
+    lab.assert_held_alive(top, &clients, "A lower client before the walk");
+    lab.assert_held_alive(
+        top,
+        &below,
+        "A process below a lower client before the walk",
+    );
+    Chain {
+        top,
+        clients,
+        exited,
+        below,
+    }
+}
+
+/// Every client of the chain, with what runs below it, is gone and was given exit code 1. The
+/// exited programs ended by themselves, with no code to check.
+fn assert_chain_ended(lab: &mut Lab, chain: &Chain) {
+    for (k, &at) in chain.clients.iter().enumerate() {
+        lab.assert_held_ended(
+            chain.top,
+            &[at],
+            &format!("The client {} below the top", k + 1),
+        );
+    }
+    lab.assert_held_ended(chain.top, &chain.below, "A process below a lower client");
+    assert_top_ended(lab, chain);
+}
+
+fn assert_top_ended(lab: &mut Lab, chain: &Chain) {
+    let begun = Instant::now();
+    while lab.root_alive(chain.top) && begun.elapsed() <= GRACE {
+        sleep(Duration::from_millis(25));
+    }
+    let status = lab.started[chain.top]
+        .root
+        .try_wait()
+        .expect("The top client's status");
+    assert_eq!(
+        status.and_then(|s| s.code()),
+        Some(1),
+        "The exit code of the top client"
+    );
+}
+
+#[test]
+fn the_exited_programs_of_a_chain_have_exited_and_the_clients_run_before_the_walk() {
+    // The set-up the tests below rest on: with no walk, every client runs and each exited program
+    // has exited, so a client below it has a parent that has gone.
+    let mut lab = Lab::new();
+    let chain = start_chain(&mut lab, &["<a>", "<a>", "<a>"], &[0, 0]);
+    assert_eq!(chain.clients.len(), 2);
+    assert_eq!(chain.exited.len(), 2);
+    for &at in &chain.exited {
+        assert!(!lab.started[chain.top].desc[at].alive());
+    }
+    lab.finish();
+}
+
+#[test]
+fn one_walk_ends_every_client_of_a_chain_three_deep() {
+    // "With a client, an exited program, a client, an exited program and a client, each below the
+    // one before, the call builds three trees and ends all three clients."
+    let mut lab = Lab::new();
+    let chain = start_chain(&mut lab, &["<a>", "<a>", "<a>"], &[0, 0]);
+    let _ = lab.run();
+    assert_chain_ended(&mut lab, &chain);
+    lab.finish();
+}
+
+#[test]
+fn the_one_walk_counts_each_top_of_a_chain_three_deep_once() {
+    // "A chain three deep ended in one call counts 3."
+    let mut lab = Lab::new();
+    let _chain = start_chain(&mut lab, &["<a>", "<a>", "<a>"], &[0, 0]);
+    assert_eq!(lab.run(), Ok(3));
+    lab.finish();
+}
+
+#[test]
+fn the_release_line_of_a_chain_three_deep_ended_by_one_walk_reads_ended_3() {
+    // D99's change for v0.12-T01: the release's line reads "Ended 3 of the lease's connections."
+    // for the chain. The release's two walks are the two calls here: the first ends the chain,
+    // the second ends none.
+    let mut lab = Lab::new();
+    let _chain = start_chain(&mut lab, &["<a>", "<a>", "<a>"], &[0, 0]);
+    let first = lab.run();
+    let second = lab.run();
+    assert_eq!(
+        release_text(&first, &second),
+        "Ended 3 of the lease's connections."
+    );
+    lab.finish();
+}
+
+#[test]
+fn a_second_walk_after_the_one_that_ended_a_chain_ends_none() {
+    // "A release whose clients are all running when its first ending reads the process list ends
+    // them all in that ending": nothing is left for the second.
+    let mut lab = Lab::new();
+    let _chain = start_chain(&mut lab, &["<a>", "<a>", "<a>"], &[0, 0]);
+    let _ = lab.run();
+    assert_eq!(lab.run(), Ok(0));
+    lab.finish();
+}
+
+#[test]
+fn one_walk_ends_every_client_of_a_chain_two_deep() {
+    let mut lab = Lab::new();
+    let chain = start_chain(&mut lab, &["<a>", "<a>"], &[0]);
+    assert_eq!(lab.run(), Ok(2));
+    assert_chain_ended(&mut lab, &chain);
+    lab.finish();
+}
+
+#[test]
+fn one_walk_ends_every_client_of_a_chain_five_deep() {
+    // "Whatever its depth."
+    let mut lab = Lab::new();
+    let chain = start_chain(
+        &mut lab,
+        &["<a>", "<a>", "<a>", "<a>", "<a>"],
+        &[0, 0, 0, 0],
+    );
+    assert_eq!(lab.run(), Ok(5));
+    assert_chain_ended(&mut lab, &chain);
+    lab.finish();
+}
+
+#[test]
+fn a_lower_clients_own_tree_is_ended_with_it_and_not_counted() {
+    // "Each top's tree is built by the same walk and checks": what runs below a client that is a
+    // top in the same call is ended with it, and the count is the tops.
+    let mut lab = Lab::new();
+    let chain = start_chain(&mut lab, &["<a>", "<a>", "<a>"], &[1, 2]);
+    assert_eq!(chain.below.len(), 3);
+    assert_eq!(lab.run(), Ok(3));
+    assert_chain_ended(&mut lab, &chain);
+    lab.finish();
+}
+
+#[test]
+fn a_client_of_another_alias_in_a_chain_is_left_running_while_the_clients_around_it_are_ended() {
+    // The top and the lowest client of the alias are ended, and the one between them, of another
+    // alias, is not (driver.md, "Each with its tree": "the call MUST NOT end any other process"
+    // and a found client that no built tree holds is a top, so the count is 2).
+    let mut lab = Lab::new();
+    let chain = start_chain(&mut lab, &["<a>", "<b>", "<a>"], &[0, 0]);
+    assert_eq!(lab.run(), Ok(2));
+    lab.assert_held_ended(chain.top, &[chain.clients[1]], "The lowest client");
+    assert_top_ended(&mut lab, &chain);
+    lab.assert_held_alive(
+        chain.top,
+        &[chain.clients[0]],
+        "The client of another alias",
+    );
+    lab.finish();
+}
+
+// ---- A spared ancestor's tree, through an exited program (driver.md, "Each with its tree") ------
+
+const REL_ALIAS: &str = "ASCONN_REL_ALIAS";
+const REL_DIR: &str = "ASCONN_REL_DIR";
+const REL_OUT: &str = "ASCONN_REL_OUT";
+const REL_GO: &str = "ASCONN_REL_GO";
+const RELEASER: &str = "releaser_is_not_a_test";
+
+/// Not a test of its own: the release's own process for the case below. A copy of this test
+/// program, started below a client, waits for the file the case writes, makes the one call for
+/// the alias and the folder it is given, and writes what the call returned. It passes at once when
+/// it is not given them, as in every ordinary run.
+#[test]
+fn releaser_is_not_a_test() {
+    let var = |name: &str| std::env::var(name).ok();
+    let (Some(alias), Some(dir), Some(out), Some(go)) =
+        (var(REL_ALIAS), var(REL_DIR), var(REL_OUT), var(REL_GO))
+    else {
+        return;
+    };
+    let go = PathBuf::from(go);
+    let begun = Instant::now();
+    while !go.exists() && begun.elapsed() < APPEAR {
+        sleep(Duration::from_millis(10));
+    }
+    let text = match end_alias_clients_under(&alias, Path::new(&dir)) {
+        Ok(n) => format!("ended {n} not_ended 0"),
+        Err(EndError::NotAllEnded { ended, not_ended }) => {
+            format!("ended {ended} not_ended {}", not_ended.len())
+        }
+        Err(_) => "unreadable".to_string(),
+    };
+    let part = PathBuf::from(format!("{out}.part"));
+    fs::write(&part, text).expect("The result is written");
+    fs::rename(&part, &out).expect("The result is named");
+}
+
+#[test]
+fn a_client_below_an_exited_program_that_a_spared_ancestor_holds_is_not_ended() {
+    // Guard, not a change: "A client whose ancestors, through an exited program or not, hold a
+    // spared ancestor is never a top, and is not ended." The top client starts the release's own
+    // process, so it is a spared ancestor, and holds an exited program with a client below it.
+    let mut lab = Lab::new();
+    let releaser = lab.dir.join("releaser.exe");
+    fs::copy(
+        std::env::current_exe().expect("This test program's path"),
+        &releaser,
+    )
+    .expect("The releaser's copy");
+    let out = lab.dir.join("releaser-out.txt");
+    let go = lab.dir.join("releaser-go.txt");
+    let home = lab.dir.join("home");
+    fs::create_dir_all(&home).expect("The throwaway home");
+    let text = |p: &Path| p.to_string_lossy().into_owned();
+    let mut env = vec![
+        (REL_ALIAS.to_string(), lab.alias.clone()),
+        (REL_DIR.to_string(), text(&lab.dir)),
+        (REL_OUT.to_string(), text(&out)),
+        (REL_GO.to_string(), text(&go)),
+    ];
+    for name in ["USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA"] {
+        env.push((name.to_string(), text(&home)));
+    }
+    let nodes = vec![
+        Node {
+            label: "x1",
+            exits: true,
+            depth: 0,
+            image: "claude-ssh-proxy.exe",
+            args: &[],
+        },
+        Node {
+            label: "c2",
+            exits: false,
+            depth: 0,
+            image: "ssh.exe",
+            args: &["<a>"],
+        },
+    ];
+    let top = lab.start(Spec {
+        depth: 1,
+        child: Some(("releaser.exe", &["--exact", RELEASER, "--test-threads=1"])),
+        chain: nodes,
+        env,
+        ..spec("ssh.exe", &["<a>"])
+    });
+    let lower = lab.mark(top, "c2");
+    let proxy = lab.mark(top, "x1");
+    lab.wait_exited(top, proxy);
+    lab.assert_held_alive(top, &[lower], "The lower client before the walk");
+
+    fs::write(&go, b"").expect("The go file");
+    let begun = Instant::now();
+    let result = loop {
+        if let Ok(text) = fs::read_to_string(&out) {
+            break text;
+        }
+        assert!(
+            begun.elapsed() < APPEAR,
+            "The release's own process did not finish its call"
+        );
+        sleep(Duration::from_millis(25));
+    };
+    // The spared ancestor is counted once as a client that could not be ended, and the client
+    // below the exited program is neither ended nor counted.
+    assert_eq!(
+        result, "ended 0 not_ended 1",
+        "The call's result for a spared ancestor's tree"
+    );
+    assert!(lab.root_alive(top), "The spared ancestor was ended");
+    lab.assert_held_alive(top, &[lower], "The client below the exited program");
     lab.finish();
 }

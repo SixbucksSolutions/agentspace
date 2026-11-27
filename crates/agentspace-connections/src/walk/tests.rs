@@ -48,6 +48,11 @@ struct Proc {
     dies: bool,
     /// A process it starts as it is terminated, before it dies.
     spawns: Option<(u32, Box<Proc>)>,
+    /// Once it has exited, a handle the process above it holds keeps it: it can still be opened,
+    /// and its creation time and parent read.
+    held: bool,
+    /// Once it has exited, the list still gives it.
+    listed_after_exit: bool,
 }
 
 fn proc(parent: u32, created: u64) -> Proc {
@@ -68,6 +73,8 @@ fn proc(parent: u32, created: u64) -> Proc {
         cmd_on_terminate_handle: None,
         dies: true,
         spawns: None,
+        held: false,
+        listed_after_exit: false,
     }
 }
 
@@ -195,7 +202,7 @@ impl ProcessTable for Fake {
         let pids: Vec<u32> = s.procs.keys().copied().collect();
         Ok(pids
             .into_iter()
-            .filter(|pid| s.alive(*pid))
+            .filter(|pid| s.alive(*pid) || s.procs[pid].listed_after_exit)
             .map(|pid| Entry {
                 pid,
                 parent: s.procs[&pid].listed_parent,
@@ -210,13 +217,13 @@ impl ProcessTable for Fake {
     fn open(&self, pid: u32, access: Access) -> std::result::Result<FakeHandle, u32> {
         let mut s = self.0.borrow_mut();
         s.events.push(Event::Open(pid, access));
-        if !s.alive(pid) {
+        let alive = s.alive(pid);
+        let Some(p) = s.procs.get_mut(&pid) else {
+            return Err(ERROR_INVALID_PARAMETER);
+        };
+        if !alive && !p.held {
             return Err(ERROR_INVALID_PARAMETER);
         }
-        let p = s
-            .procs
-            .get_mut(&pid)
-            .expect("a process that is alive is in the table");
         if let Some(e) = p.open_error {
             return Err(e);
         }
@@ -933,4 +940,184 @@ fn a_client_scope_refuses_a_path_outside_it() {
     });
     assert_eq!(r, Ok(1));
     assert_eq!(fake.terminated(), vec![200]);
+}
+
+/// A program that has exited while the process above it still holds its handle, as a desktop
+/// app's proxy program that has gone can be held by the `ssh.exe` that started it (#0196).
+fn gone(parent: u32, created: u64) -> Proc {
+    Proc {
+        image: Some("C:\\Tools\\claude-ssh-proxy.exe".to_string()),
+        cmd: Some(format!("claude-ssh-proxy.exe {ALIAS}")),
+        alive: false,
+        held: true,
+        ..proc(parent, created)
+    }
+}
+
+/// #0228's chain three deep: a client, an exited program, a client, an exited program and a
+/// client, each below the one before, with each exited program still held by the client above it.
+/// Each client runs its ProxyCommand, a client inside its tree.
+fn chain_three_deep(listed_after_exit: bool) -> Vec<(u32, Proc)> {
+    let gone_listed = |parent, created| Proc {
+        listed_after_exit,
+        ..gone(parent, created)
+    };
+    vec![
+        (100, client(8000, 1000)),
+        (104, proxy(100, 1050, ALIAS)),
+        (110, gone_listed(100, 1100)),
+        (120, client(110, 1200)),
+        (124, proxy(120, 1250, ALIAS)),
+        (130, gone_listed(120, 1300)),
+        (140, client(130, 1400)),
+        (144, proxy(140, 1450, ALIAS)),
+    ]
+}
+
+#[test]
+fn one_call_ends_every_client_of_a_chain_three_deep_and_counts_each_top_once() {
+    // Whether or not the list still gives the exited programs (D99; #0228; driver.md, Each with
+    // its tree): one call ends all three clients, each with its tree, and returns Ok(3).
+    for listed_after_exit in [false, true] {
+        let fake = Fake::new(chain_three_deep(listed_after_exit));
+        assert_eq!(fake.run(), Ok(3), "listed_after_exit={listed_after_exit}");
+        let ends = fake.terminated();
+        let mut sorted = ends.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, vec![100, 104, 120, 124, 140, 144]);
+        // Each tree leaves first, its top last.
+        let at = |pid: u32| ends.iter().position(|p| *p == pid).unwrap();
+        assert!(at(104) < at(100) && at(124) < at(120) && at(144) < at(140));
+        assert_handles_held(&fake);
+        assert_eq!(fake.0.borrow().live_handles, 0);
+    }
+}
+
+#[test]
+fn a_top_below_an_exited_program_that_cannot_be_opened_to_end_it_is_counted_once() {
+    let mut procs = chain_three_deep(false);
+    for (pid, p) in &mut procs {
+        if *pid == 140 {
+            p.terminate_open_error = Some(ACCESS_DENIED);
+        }
+    }
+    let fake = Fake::new(procs);
+    assert_eq!(
+        fake.run(),
+        Err(EndError::NotAllEnded {
+            ended: 2,
+            not_ended: vec![id(140, 1400)],
+        })
+    );
+    assert!(!fake.terminated().contains(&140));
+}
+
+#[test]
+fn a_client_below_an_exited_program_held_by_a_spared_client_is_never_a_top() {
+    // 7000 is a client above the walking process's parent 8000, so it is spared. It also holds
+    // 7100, a program that has exited, below which 7200 is a client: never ended, and not counted.
+    for listed_after_exit in [false, true] {
+        let fake = Fake::new(vec![
+            (7000, client(4, 50)),
+            (8000, proc(7000, 100)),
+            (
+                7100,
+                Proc {
+                    listed_after_exit,
+                    ..gone(7000, 60)
+                },
+            ),
+            (7200, client(7100, 70)),
+            (200, client(4, 2000)),
+        ]);
+        assert_eq!(
+            fake.run(),
+            Err(EndError::NotAllEnded {
+                ended: 1,
+                not_ended: vec![id(7000, 50)],
+            }),
+            "listed_after_exit={listed_after_exit}"
+        );
+        assert_eq!(fake.terminated(), vec![200]);
+        // Never even opened to end it.
+        assert!(
+            !fake
+                .events()
+                .contains(&Event::Open(7200, Access::Terminate))
+        );
+    }
+}
+
+#[test]
+fn a_client_below_an_exited_program_held_by_a_client_whose_tree_holds_a_spared_one_is_never_a_top()
+{
+    // 8000, the walking process's parent, cannot be opened, so the walk up stops there. 7000 is a
+    // client above it, found to be an ancestor only by its tree. 7000 also holds 7100, a program
+    // that has exited, below which 7200 is a client: never ended, and not counted.
+    let fake = Fake::new(vec![
+        (7000, client(4, 50)),
+        (
+            8000,
+            Proc {
+                open_error: Some(ACCESS_DENIED),
+                ..proc(7000, 100)
+            },
+        ),
+        (7100, gone(7000, 60)),
+        (7200, client(7100, 70)),
+        (200, client(4, 2000)),
+    ]);
+    assert_eq!(
+        fake.run(),
+        Err(EndError::NotAllEnded {
+            ended: 1,
+            not_ended: vec![id(7000, 50)],
+        })
+    );
+    assert_eq!(fake.terminated(), vec![200]);
+}
+
+#[test]
+fn a_client_that_cannot_be_opened_below_an_exited_program_held_by_a_sparing_tree_is_not_counted() {
+    // As above, but 7200 cannot be opened to end it: it is still never a top, so it is not
+    // counted as a client that could not be ended. Only 7000 is.
+    let fake = Fake::new(vec![
+        (7000, client(4, 50)),
+        (
+            8000,
+            Proc {
+                open_error: Some(ACCESS_DENIED),
+                ..proc(7000, 100)
+            },
+        ),
+        (7100, gone(7000, 60)),
+        (
+            7200,
+            Proc {
+                terminate_open_error: Some(ACCESS_DENIED),
+                ..client(7100, 70)
+            },
+        ),
+        (200, client(4, 2000)),
+    ]);
+    assert_eq!(
+        fake.run(),
+        Err(EndError::NotAllEnded {
+            ended: 1,
+            not_ended: vec![id(7000, 50)],
+        })
+    );
+    assert_eq!(fake.terminated(), vec![200]);
+}
+
+#[test]
+fn a_client_below_a_running_program_of_another_client_is_not_a_top() {
+    // 110 runs, so 120 is in 100's tree: ended there, once, and not counted on its own.
+    let fake = Fake::new(vec![
+        (100, client(8000, 1000)),
+        (110, proc(100, 1100)),
+        (120, client(110, 1200)),
+    ]);
+    assert_eq!(fake.run(), Ok(1));
+    assert_eq!(fake.terminated(), vec![120, 110, 100]);
 }

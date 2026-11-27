@@ -634,15 +634,13 @@ mod tests {
             }
         }
 
-        /// #0196: a client below a program that has exited, while the client above it still
-        /// holds that program's handle, is no node of the upper client's tree, and is not
-        /// counted on its own while the upper client runs. A walk that ends the upper client
-        /// leaves it running; only a later walk finds it with no client above it. With two such
-        /// programs in a chain, the release's first two walks end the first two clients, and a
-        /// third is needed for the last: a release MUST NOT stop walking while the walk before it
-        /// ended a client.
+        /// #0196 and #0228: a client below a program that has exited, while the client above it
+        /// still holds that program's handle, is no node of the upper client's tree. From v0.12
+        /// the walk that ends the upper client takes it as a top of its own and ends it too
+        /// (D99): with two such programs in a chain, the release's first walk ends all three
+        /// clients, its second ends none, and its line counts each client once.
         #[test]
-        fn a_client_below_a_program_that_has_gone_is_ended_by_a_later_walk() {
+        fn a_client_below_a_program_that_has_gone_is_ended_by_the_first_walk() {
             let mut w = World::new();
             w.start_chain(&["mid", "ssh", "mid", "ssh"]);
             w.wait("Every stand-in ssh.exe runs", || {
@@ -663,8 +661,8 @@ mod tests {
                     "The client {level} deep is still running when the release returned"
                 );
             }
-            // One client a walk, and a last walk that ends none.
-            assert_eq!(*walks.lock().unwrap(), 4);
+            // The first walk ends all three clients, and the second ends none.
+            assert_eq!(*walks.lock().unwrap(), 2);
             assert_eq!(w.texts(), vec!["Ended 3 of the lease's connections."]);
         }
     }

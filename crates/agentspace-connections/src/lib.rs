@@ -60,9 +60,11 @@ pub type Result<T> = std::result::Result<T, EndError>;
 /// Ends every client of `alias` on the laptop, each with its tree, and returns how many clients
 /// it ended (driver.md, Ending a lease's connections).
 ///
-/// `Ok(n)` counts clients, never descendants. A client gone already is neither a failure nor
-/// counted. The call returns within 10 seconds of its start. On a platform that is not Windows it
-/// returns `Ok(0)`.
+/// `Ok(n)` counts the tops it ended, never descendants: a top is a client that no other client's
+/// tree holds, so one call ends a chain of clients below programs that have exited, whatever its
+/// depth, and counts each of its clients once (D99; #0228). A client gone already is neither a
+/// failure nor counted. The call returns within 10 seconds of its start. On a platform that is not
+/// Windows it returns `Ok(0)`.
 pub fn end_alias_clients(alias: &str) -> Result<usize> {
     end_matching(alias, &|_| true)
 }
