@@ -272,6 +272,15 @@ names.**
   lease-api.md and driver.md by a script.
 - **A scripted doc edit is checked byte for byte at review**, as S01's reviewer did for a Python one.
 
+**Learned in v0.12-T02, 2026-11-26.**
+- **A spec story's brief names every runtime reader of `docs/`**, and a docs-only story's reviewer
+  runs the workspace: operator.md's help blocks (the operator's help tests), the keeper's
+  whole-docs scan for `AGENTSPACE_*_CMD` names (`guard::tests::the_known_seams_are_every_agentspace_cmd_name_the_specs_give`),
+  and the CLI's help blocks. A box/windows test seam named `*_CMD` turned the keeper's scan red
+  (pin P18), and was renamed.
+- **A spec written from a spike plans writers, a fix pass, a reviewer and a fix pass**: S04's writers
+  started on draft pins, and needed two passes.
+
 ## A turn that builds
 
 **Learned in v0.09-T02, where three stories built libraries in parallel and turned `main`'s 26
@@ -458,6 +467,26 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **Two stories in one turn fit its budget when they share no file**: the install and live check ran
   7:23am to 8:10am, the build story beside it from 7:27am to its PR at 10:30am, inside 4.5 hours, in
   15 subagent launches with a peak of 4 and none blocked.
+
+**Learned in v0.12-T02, 2026-11-26, a foundations turn beside a spec story.**
+- **A change to a type other crates build is not additive while it adds a public field**: `Host`'s
+  `platform` broke eight struct literals in five crates (pin P2). Before ruling a change additive,
+  grep the other crates for struct literals of every type it extends, and name those lines, and
+  their owner, in the brief.
+- **A brief's by-design red list comes from a `--no-fail-fast` run, by name and assertion, as a file
+  every reviewer compares against**: the architect's brief named guard's help block, and the
+  baseline found every operator help block red, 23 tests.
+- **An archive or planted build uses its own `CARGO_TARGET_DIR` under `target\<role>\`**: one that
+  shared the worktree's target overwrote its artifacts, and two subagents saw spurious failures.
+  Plants are named by absolute path under `target\<role>\planted-*`.
+- **`Copy-Item -Recurse -Exclude` copies whole build trees**; copy a tree with `robocopy /E /XD
+  target debug release`. `cargo fmt --all --check` fails with os error 206 in a deep folder; run
+  `cargo fmt -p <package> --check` per package.
+- **"Owns those test lines" includes the test's name and doc comment**: S02's walk-count test kept
+  a name and comment its new count contradicted, until review.
+- **A ruling pending on a story holds its reviewer when the wait is shorter than a fix pass** (P17
+  landed while S04's reviewer ran, and cost a pass after it); and a writer sends its settled lists
+  mid-run, as S04's operator writer did, so the rulings land before its fix pass.
 
 **Learned in v0.12-T01, 2026-11-26, from the spike's runners.**
 - **A runner's tasking names its expected wait, and requires bounded foreground checks; no
