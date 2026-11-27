@@ -4,7 +4,9 @@
 //! trait. From v0.07 it places a lease by its project's host, through agentspace-hosts, answers
 //! `pending` or `no_capacity` for a project whose host is not `ready`, starts a provisioning run
 //! through agentspace-detach, and places the `pending` leases once a run has made the host
-//! ([`place_pending`]).
+//! ([`place_pending`]). From v0.12 it supports three platforms, `linux/arm64`, `linux/amd64` and
+//! `windows/amd64`, each with its own profile, login user and column of the size map, and keys a
+//! host by its project and its platform (D91, D93, D94, D95).
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
@@ -35,7 +37,11 @@ use agentspace_driver_api::{Context, Driver, Failure, LeaseRef, PlaceRequest, Pl
 
 use crate::walk::Walker;
 
-pub use crate::sizes::{SIZES, instance_type_for, meets, resize_target};
+pub use crate::sizes::{
+    SIZES, instance_type_for, instance_type_on, meets, meets_on, resize_target, resize_target_keyed,
+};
+
+use agentspace_hosts::HostKey;
 
 /// The driver's name, which the CLI stores with every lease it places (driver.md, The driver's
 /// name). `place_pending` places only the records that carry it.
@@ -207,6 +213,19 @@ pub struct PendingFailure {
 /// only when the host record, the lease state lock or the lease state file cannot be had; what it
 /// placed or answered before stays as it was written. A lease that cannot be placed stays
 /// `pending`, with every file this call made for it removed. It starts nothing.
+///
+/// From v0.12 it means `project`'s `linux/arm64` host, and keeps its signature (D101; the dev
+/// lead's pin P7): it is [`place_pending_keyed`] of `HostKey::linux_arm64(project)`, so a `pending`
+/// lease of the project on another platform is left as it was.
 pub fn place_pending(ctx: &Context, project: &str) -> Result<PendingPlaced, Failure> {
-    pending::place_pending(ctx, project)
+    place_pending_keyed(ctx, &HostKey::linux_arm64(project))
+}
+
+/// [`place_pending`] for the host `key`, its project on its platform (driver.md, place_pending;
+/// D91): it reads that host's record, places and answers only the project's `pending` leases on
+/// the key's platform, judges each type in the platform's column alone, and counts only the
+/// project's live `ready` leases on that platform as holding the host. The run that calls it passes
+/// its own platform, `linux/arm64` when it had no `-Platform` (pin P9).
+pub fn place_pending_keyed(ctx: &Context, key: &HostKey) -> Result<PendingPlaced, Failure> {
+    pending::place_pending(ctx, key)
 }

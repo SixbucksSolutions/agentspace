@@ -29,8 +29,9 @@ use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
 };
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
-use agentspace_hosts::host_alias;
+use agentspace_hosts::LINUX_ARM64;
 
+use crate::reasons::login_user;
 use crate::text::{
     FOREIGN_ALIAS, TRANSPORT_MISSING, alias_check_failed, alias_leftover, alias_setup_failed,
     capitalize, delete_failed, failure, lease_file_name, lease_folder_name, still_there,
@@ -38,8 +39,31 @@ use crate::text::{
 };
 use crate::walk::{Walker, append_release_line, further_walk_due, release_line_text};
 
-/// The certificate's one principal, the returned user and the alias's login user (D3).
-pub const USER: &str = "ubuntu";
+/// The message of a renew whose lease's stored platform cannot be read, in the credential crate's
+/// words for a renew that failed.
+const RENEW_RECORDS_UNREAD: &str = "The lease's certificate could not be renewed: agentspace's lease records could not be read. Nothing was changed; try again.";
+
+/// The platform stored in the lease's record, read from the lease state file of the context's state
+/// folder, read-only and taking no lock: `Some` of the record's `platform` when a record of the
+/// lease's ID and project is there, `Some("linux/arm64")` when none is, a missing file among
+/// those, and `None` when the file cannot be read or does not validate.
+///
+/// For the dev lead (proposed pin): driver.md has the CLI pass the platform stored at place to
+/// renew and `check_pending` (pins P25 and P32), but the pinned `LeaseRef` carries only `id` and
+/// `project`, and a field on it is a change to `agentspace-driver-api` that every crate building
+/// one has to follow. Until it is pinned, the driver reads the same stored platform itself: renew
+/// runs under the lease state lock the CLI holds, and `get` takes none, so either reads what its
+/// CLI read, and neither writes. A lease with no record, which the CLI never asks either for, keeps
+/// the meaning every `LeaseRef` had before v0.12, `linux/arm64`.
+pub fn stored_platform(ctx: &Context, lease: &LeaseRef) -> Option<String> {
+    let file = agentspace_state::read(&ctx.state_dir).ok()?;
+    Some(
+        file.leases
+            .iter()
+            .find(|r| r.id == lease.id && r.project == lease.project)
+            .map_or_else(|| LINUX_ARM64.to_string(), |r| r.platform.clone()),
+    )
+}
 
 /// The comment of an alias file's owner mark line (state.md, "The alias file").
 const COMMENT: &str = "written by agentspace. Do not edit.";
@@ -89,14 +113,16 @@ fn proxy_command(ctx: &Context, alias: &str, system_root: Option<&str>) -> Resul
 }
 
 /// Which host a lease is placed on, for the host key lines of its alias (docs/state.md, "The alias
-/// file" and "A lease alias for a host that is not the box"; D47).
+/// file" and "A lease alias for a host that is not the box"; D47, D91).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostKey<'a> {
+pub enum HostLines<'a> {
     /// The box: `HostKeyAlias agentspace` and no `UserKnownHostsFile` line, so its lease aliases
     /// keep v0.06's bytes exactly.
     Box,
-    /// Another project's host: `HostKeyAlias agentspace-host.<project>`, then `UserKnownHostsFile`
-    /// naming agentspace's own `known_hosts` by its full path.
+    /// Any other host: `HostKeyAlias <host-key name>`, then `UserKnownHostsFile` naming
+    /// agentspace's own `known_hosts` by its full path. The name is the host's own, from
+    /// `agentspace_hosts::HostKey::host_key_name`: `agentspace-host.<project>` on `linux/arm64`, and
+    /// `agentspace-host.<project>.<os>-<arch>` on any other platform (pins P7 and P12).
     Other(&'a str),
 }
 
@@ -106,7 +132,7 @@ fn alias_bytes(
     req: &PlaceRequest,
     alias: &str,
     system_root: Option<&str>,
-    host: HostKey,
+    host: HostLines,
 ) -> Result<Vec<u8>, String> {
     let proxy = proxy_command(ctx, alias, system_root)?;
     let home = std::path::absolute(&ctx.home).unwrap_or_else(|_| ctx.home.clone());
@@ -114,17 +140,18 @@ fn alias_bytes(
     let key_path = lease_file_text(&home, req.id, "id_ed25519");
     let cert_path = lease_file_text(&home, req.id, "id_ed25519-cert.pub");
     let (host_key_alias, known_hosts) = match host {
-        HostKey::Box => ("agentspace".to_string(), None),
-        HostKey::Other(project) => (host_alias(project), Some(known_hosts_text(&home))),
+        HostLines::Box => ("agentspace", None),
+        HostLines::Other(name) => (name, Some(known_hosts_text(&home))),
     };
     alias_file_bytes(&AliasFile {
         id: req.id,
         comment: COMMENT,
         alias,
-        user: USER,
+        // The same user as the certificate's principal (driver.md, How it places a lease, step 5).
+        user: login_user(req.platform),
         key_path: &key_path,
         cert_path: &cert_path,
-        host_key_alias: &host_key_alias,
+        host_key_alias,
         known_hosts: known_hosts.as_deref(),
         proxy_command: &proxy,
     })
@@ -191,12 +218,15 @@ fn alias_step_message(f: &AliasFailure) -> String {
 /// Steps 2 to 6 of driver.md's "How it places a lease", for a supported request whose host is
 /// `ready`: the CA check, the credential, the `Include` line and the alias with `host`'s key
 /// lines, then `ready`. `place` and `place_pending` both place a lease through it, so a lease
-/// `place_pending` places is like one `place` made `ready`.
-pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostKey) -> Result<Placed, Failure> {
+/// `place_pending` places is like one `place` made `ready`. The certificate's principal, the
+/// alias's `User` and the returned user are all the request's platform's login user (driver.md,
+/// "What it supports"; D95; pin P19).
+pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostLines) -> Result<Placed, Failure> {
+    let user = login_user(req.platform);
     // Steps 1 to 4: the CA is checked and never made, an existing key is refused, and the key is
     // made, checked and signed. The credential crate removes what it made when it fails.
     let folder_existed = fs::symlink_metadata(lease_dir(&ctx.home, req.id)).is_ok();
-    let issued = issue(&ctx.home, req.id, USER, req.ttl_seconds).map_err(cred_failure)?;
+    let issued = issue(&ctx.home, req.id, user, req.ttl_seconds).map_err(cred_failure)?;
 
     let alias = alias_name(req.project, req.id);
 
@@ -219,7 +249,7 @@ pub fn issue_ready(ctx: &Context, req: &PlaceRequest, host: HostKey) -> Result<P
 
     Ok(Placed::Ready {
         host_alias: alias,
-        user: USER.to_string(),
+        user: user.to_string(),
         expires_at: issued.expires_at,
     })
 }
@@ -246,12 +276,19 @@ impl Renewal for Held {
     }
 }
 
+/// Renew (driver.md, Renew a lease; Renew and release): the new certificate is signed for the
+/// login user of the platform stored in the lease's record, so a Windows lease's renewed
+/// certificate names `agent`, as its first did (D95; pins P19 and P25). How the stored platform is
+/// had is [`stored_platform`]'s.
 pub fn renew(
     ctx: &Context,
     lease: &LeaseRef,
     ttl_seconds: u32,
 ) -> Result<Box<dyn Renewal>, Failure> {
-    let guard = renew_guard(&ctx.home, lease.id, USER, ttl_seconds).map_err(cred_failure)?;
+    let platform = stored_platform(ctx, lease)
+        .ok_or_else(|| failure(RENEW_RECORDS_UNREAD.to_string(), Vec::new()))?;
+    let guard = renew_guard(&ctx.home, lease.id, login_user(&platform), ttl_seconds)
+        .map_err(cred_failure)?;
     Ok(Box::new(Held { guard }))
 }
 
@@ -489,8 +526,14 @@ mod tests {
     fn an_override_with_a_line_break_is_refused_in_the_alias_words() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("a\nb"));
-        let e =
-            alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None, HostKey::Box).unwrap_err();
+        let e = alias_bytes(
+            &c,
+            &req(ID),
+            "agentspace-swim-3f2a9c1e",
+            None,
+            HostLines::Box,
+        )
+        .unwrap_err();
         assert_eq!(
             e,
             "The host alias could not be added to the OpenSSH client configuration: the ProxyCommand holds a line break. No lease was recorded."
@@ -501,8 +544,14 @@ mod tests {
     fn the_alias_bytes_carry_the_user_the_paths_and_the_owner_mark() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("proxy 100%"));
-        let bytes =
-            alias_bytes(&c, &req(ID), "agentspace-swim-3f2a9c1e", None, HostKey::Box).unwrap();
+        let bytes = alias_bytes(
+            &c,
+            &req(ID),
+            "agentspace-swim-3f2a9c1e",
+            None,
+            HostLines::Box,
+        )
+        .unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with(&format!("# agentspace lease {ID}; ")));
         assert!(text.contains("\n  User ubuntu\n"));
@@ -521,7 +570,7 @@ mod tests {
             &req(ID),
             "agentspace-swim-3f2a9c1e",
             None,
-            HostKey::Other("swim"),
+            HostLines::Other("agentspace-host.swim"),
         )
         .unwrap();
         let text = String::from_utf8(bytes).unwrap();
@@ -530,11 +579,100 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_leases_alias_logs_in_as_agent_and_a_linux_amd64_ones_as_ubuntu() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path(), Some("proxy"));
+        for (platform, user) in [("windows/amd64", "agent"), ("linux/amd64", "ubuntu")] {
+            let mut r = req(ID);
+            r.platform = platform;
+            let bytes = alias_bytes(
+                &c,
+                &r,
+                "agentspace-swim-3f2a9c1e",
+                None,
+                HostLines::Other("agentspace-host.swim.windows-amd64"),
+            )
+            .unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.contains(&format!("\n  User {user}\n")), "{platform}");
+            assert!(
+                text.contains("\n  HostKeyAlias agentspace-host.swim.windows-amd64\n"),
+                "{platform}"
+            );
+        }
+    }
+
+    fn write_leases(c: &Context, records: &str) {
+        fs::create_dir_all(&c.state_dir).unwrap();
+        fs::write(
+            c.state_dir.join("leases.json"),
+            format!(r#"{{"version":0,"leases":[{records}]}}"#),
+        )
+        .unwrap();
+    }
+
+    fn pending_record(id: &str, project: &str, platform: &str) -> String {
+        format!(
+            r#"{{"id":"{id}","project":"{project}","state":"pending","platform":"{platform}","profile":"agent-windows","size":"m","ttl_seconds":3600,"created_at":"2026-11-26T00:00:00Z","driver":"ec2"}}"#
+        )
+    }
+
+    #[test]
+    fn the_stored_platform_is_the_records_and_linux_arm64_with_no_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path(), None);
+        let lease = LeaseRef {
+            id: ID,
+            project: "swim",
+        };
+        // No file: no record, so linux/arm64, the meaning every LeaseRef had before v0.12.
+        assert_eq!(stored_platform(&c, &lease).as_deref(), Some("linux/arm64"));
+        write_leases(
+            &c,
+            &[
+                pending_record(OTHER, "swim", "linux/amd64"),
+                pending_record(ID, "swim", "windows/amd64"),
+            ]
+            .join(","),
+        );
+        assert_eq!(
+            stored_platform(&c, &lease).as_deref(),
+            Some("windows/amd64")
+        );
+        let unknown = LeaseRef {
+            id: "bbbbbbbb-5b7d-4a60-8c11-0d2e4f6a8b90",
+            project: "swim",
+        };
+        assert_eq!(
+            stored_platform(&c, &unknown).as_deref(),
+            Some("linux/arm64")
+        );
+        fs::write(c.state_dir.join("leases.json"), "{").unwrap();
+        assert_eq!(stored_platform(&c, &lease), None);
+    }
+
+    #[test]
+    fn a_renew_whose_records_cannot_be_read_fails_before_anything_and_names_no_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path(), None);
+        write_leases(&c, "");
+        fs::write(c.state_dir.join("leases.json"), "{").unwrap();
+        let lease = LeaseRef {
+            id: ID,
+            project: "swim",
+        };
+        let f = renew(&c, &lease, 3600).err().unwrap();
+        assert_eq!(f.message, RENEW_RECORDS_UNREAD);
+        assert!(f.leftovers.is_empty());
+        assert!(!lease_dir(&c.home, ID).exists());
+    }
+
+    #[test]
     fn no_ca_fails_with_the_no_ca_wording_and_leaves_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let c = ctx(dir.path(), Some("p"));
         fs::create_dir_all(&c.home).unwrap();
-        let f = issue_ready(&c, &req(ID), HostKey::Box).unwrap_err();
+        let f = issue_ready(&c, &req(ID), HostLines::Box).unwrap_err();
         assert_eq!(
             f.message,
             "agentspace's certificate authority has not been set up, so no certificate can be issued. Nothing was changed; the operator sets it up."

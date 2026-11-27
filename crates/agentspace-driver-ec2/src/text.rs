@@ -160,12 +160,26 @@ pub fn host_lookup_failed(why: &str) -> String {
     format!("The lease's host could not be looked up: {why}. Nothing was recorded.")
 }
 
-/// driver.md's `no_capacity` message (Where it places a lease), for a project with no host that is
-/// not on the project list. `project` is the normalized project, quoted as every reason quotes.
+/// driver.md's `no_capacity` message (Where it places a lease), for a project with no host on the
+/// lease's platform that no entry of the project list names, on any platform: v0.07's message,
+/// byte for byte, whatever platform was asked for (pin P3). `project` is the normalized project,
+/// quoted as every reason quotes.
 pub fn no_capacity(project: &str) -> String {
     format!(
         "No capacity can be found for project '{}': it has no host and is not on agentspace's project list.",
         quote(project)
+    )
+}
+
+/// driver.md's `no_capacity` message from v0.12 (Where it places a lease; D91; pin P3), for a
+/// project with no host on the lease's platform whose entry on the project list does not approve
+/// that platform, and for no other lease. **It MUST be emitted byte for byte.** `project` and
+/// `platform` are the normalized values, quoted as every reason quotes.
+pub fn no_capacity_on_platform(project: &str, platform: &str) -> String {
+    format!(
+        "No capacity can be found for project '{}' on platform '{}': it has no host there and is not approved for that platform on agentspace's project list.",
+        quote(project),
+        quote(platform)
     )
 }
 
@@ -270,6 +284,18 @@ mod tests {
         );
         // v0.07's message for a project with no host is a different one, and stays as it was.
         assert_ne!(no_capacity_at_size("other", "m"), no_capacity("other"));
+    }
+
+    #[test]
+    fn the_two_no_capacity_messages_for_a_project_with_no_host_are_driver_mds_byte_for_byte() {
+        assert_eq!(
+            no_capacity("other"),
+            "No capacity can be found for project 'other': it has no host and is not on agentspace's project list."
+        );
+        assert_eq!(
+            no_capacity_on_platform("other", "linux/amd64"),
+            "No capacity can be found for project 'other' on platform 'linux/amd64': it has no host there and is not approved for that platform on agentspace's project list."
+        );
     }
 
     #[test]
