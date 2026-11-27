@@ -6624,6 +6624,17 @@ keeper's test
 - **A facts file that is missing or not valid JSON** makes it write
   `<script>: <file> cannot be read as the test's facts; nothing was done` and exit 1, changing
   nothing.
+- **With its seam unset, a script refuses to run as anyone but the account it runs as on a host**
+  (architect, 2026-11-26, for v0.12-T03, pin P13): `agentspace-idle-check.ps1`,
+  `agentspace-patch.ps1` and `agentspace-boot.ps1` only as SYSTEM (`S-1-5-18`), and `install.ps1`
+  only as `agent`. Otherwise each writes
+  `<script>: without its test seam it runs only as <account>; nothing was done` and exits 1, having
+  done nothing. So a test that forgot its seam cannot patch, restart or power off the laptop, and
+  on a host the guard costs nothing.
+- **On a host, `shutdown` and `sshd` are named by full path**, `C:\Windows\System32\shutdown.exe`
+  and `C:\Windows\System32\OpenSSH\sshd.exe`, as PowerShell 7 is (pin P18 of v0.12-T02), never
+  by bare name (pin P13): a SYSTEM task's `PATH` is the machine's, which the install extends with
+  `agent`'s own folders. The tests reach neither, through their seams.
 - **The clock is the real one**, as for Linux's check: a test sets its horizon and its `boot`
   relative to the time of its run.
 - **Its cases**, D96's list: the idle check's rules, D78's worker rules and the horizon's parse,
