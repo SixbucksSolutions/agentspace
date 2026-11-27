@@ -224,11 +224,25 @@ mod run {
         child.wait_with_output().unwrap()
     }
 
+    /// Refuses, before anything runs, a script that still names the laptop's real `ProgramData`
+    /// or can change its time zone, so a replacement that missed its text fails the test instead
+    /// of reaching the laptop.
+    fn isolated(script: &str) -> &str {
+        let folded = script.to_lowercase();
+        for risk in ["programdata", "set-timezone", "$home"] {
+            assert!(
+                !folded.contains(risk),
+                "the script still names {risk}; not run"
+            );
+        }
+        script
+    }
+
     /// A script with `$HOME` replaced by the throwaway home, run through the encoded form.
     fn run_at_home(dir: &Path, script: &str, stdin: &[u8]) -> Output {
         let home = plain(&dir.join("home"));
         let script = script.replace("$HOME", &format!("'{home}'"));
-        let line = WINDOWS.remote_command(&script).unwrap();
+        let line = WINDOWS.remote_command(isolated(&script)).unwrap();
         run_line(dir, &line, stdin)
     }
 
@@ -289,7 +303,7 @@ mod run {
                 .unwrap()
                 .replace(PROGRAM_DATA, &plain(&folder));
             command(&dir)
-                .args(["-NoProfile", "-NonInteractive", "-Command", &text])
+                .args(["-NoProfile", "-NonInteractive", "-Command", isolated(&text)])
                 .stdin(Stdio::null())
                 .output()
                 .unwrap()
@@ -321,7 +335,7 @@ mod run {
             .unwrap()
             .replace(PROGRAM_DATA, &plain(&blocker.join("agentspace")));
         let output = command(&dir)
-            .args(["-NoProfile", "-NonInteractive", "-Command", &text])
+            .args(["-NoProfile", "-NonInteractive", "-Command", isolated(&text)])
             .stdin(Stdio::null())
             .output()
             .unwrap();
@@ -531,6 +545,73 @@ mod run {
         assert_eq!(
             std::fs::read(credential(&dir)).unwrap(),
             format!("{TOKEN}\n{URL}\n").as_bytes()
+        );
+    }
+
+    /// The push with a zone, its setter replaced by `stand_in` so no test can change the laptop's
+    /// time zone ([`isolated`] refuses any script that still holds `Set-TimeZone`), and how long
+    /// the one run took.
+    fn push_with_setter(dir: &Path, stand_in: &str) -> (Output, std::time::Duration) {
+        let script = WINDOWS
+            .push_script(SAMPLE_ZONE)
+            .unwrap()
+            .replace("Set-TimeZone -Id $n -ErrorAction Stop", stand_in);
+        let started = std::time::Instant::now();
+        let output = run_at_home(dir, &script, format!("{URL}\n{TOKEN}\n").as_bytes());
+        (output, started.elapsed())
+    }
+
+    /// The hash line's place and the zone answer's place in the push's stdout.
+    fn hash_then(printed: &str, answer: &str) -> bool {
+        let lines: Vec<&str> = printed.lines().collect();
+        let hash = lines.iter().position(|line| {
+            line.len() == 67
+                && line.ends_with("  -")
+                && line[..64]
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        });
+        let zone = lines.iter().position(|line| *line == answer);
+        matches!((hash, zone), (Some(h), Some(z)) if h < z)
+    }
+
+    #[test]
+    fn the_push_prints_zone_and_the_zone_after_the_hash_when_the_setter_succeeds() {
+        let dir = scratch("push-zone-set");
+        let (output, _) = push_with_setter(&dir, "$null = $n");
+        assert_eq!(code(&output), Some(0));
+        let printed = stdout(&output);
+        assert!(
+            hash_then(&printed, &format!("zone {SAMPLE_ZONE}")),
+            "{printed}"
+        );
+        assert!(!printed.contains("zone-failed"));
+    }
+
+    #[test]
+    fn the_push_answers_zone_failed_and_exits_zero_when_the_setter_fails() {
+        let dir = scratch("push-zone-failed");
+        let (output, _) = push_with_setter(&dir, "Write-Error x");
+        assert_eq!(code(&output), Some(0));
+        let printed = stdout(&output);
+        assert!(hash_then(&printed, "zone-failed"), "{printed}");
+        assert!(!printed.contains(&format!("zone {SAMPLE_ZONE}")));
+    }
+
+    /// What the box does, step 7: given up after 5 seconds, and a setter still running 1 second
+    /// later is killed. The stand-in sleeps in a call no stop can interrupt, so only the kill ends
+    /// the run before the stand-in's 60 seconds.
+    #[test]
+    fn the_push_kills_a_setter_still_running_a_second_after_its_5_seconds() {
+        let dir = scratch("push-zone-hung");
+        let (output, took) = push_with_setter(&dir, "[Threading.Thread]::Sleep(60000)");
+        assert_eq!(code(&output), Some(0));
+        let printed = stdout(&output);
+        assert!(hash_then(&printed, "zone-failed"), "{printed}");
+        assert!(
+            took < std::time::Duration::from_secs(30),
+            "the run took {} seconds",
+            took.as_secs()
         );
     }
 

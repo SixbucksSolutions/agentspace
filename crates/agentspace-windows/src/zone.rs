@@ -9,10 +9,10 @@
 
 use agentspace_operator_api::{CallerFailure, Failure};
 
-/// The failure for a zone outside the pattern. For the dev lead: operator.md names no message
-/// for this row, and on Linux a zone that fails its check becomes the empty zone, whose warning
-/// is this one (operator.md, What the laptop sends, step 1); so the push that
-/// gets this failure sends no zone, and MAY print the message as that warning.
+/// The failure for a zone outside the pattern. operator.md names no message for this row, and on
+/// Linux a zone that fails its check becomes the empty zone, whose warning is this one (operator.md,
+/// What the laptop sends, step 1); so the push that gets this failure goes on with the empty zone,
+/// sends none, and prints this message as that step's warning.
 pub const NO_ZONE: &str =
     "agentspace: Could not work out the laptop's time zone; times on the box stay in its own zone.";
 

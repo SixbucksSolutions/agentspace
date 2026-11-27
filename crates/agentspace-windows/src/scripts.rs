@@ -159,15 +159,18 @@ exit 0\n";
 /// 5. Replaces `bot.env` with the temporary file in one step. An old `bot.env` is given the two
 ///    rules first, since the replace keeps the replaced file's access rules.
 /// 6. Prints the SHA-256 of `bot.env`'s bytes: 64 lowercase hex digits, two spaces and `-`.
-/// 7. With a zone, sets it with `Set-TimeZone -Id`, giving up after 5 seconds, then prints
-///    `zone <zone>` or `zone-failed`, and exits 0 whatever the zone did.
+/// 7. With a zone, sets it with `Set-TimeZone -Id`, giving up after 5 seconds and killing a
+///    setter still running 1 second later, then prints `zone <zone>` or `zone-failed`, and exits
+///    0 whatever the zone did.
 /// 8. Without a zone, exits 0 once the hash is printed. Every failure before step 6 removes the
 ///    temporary file, leaves the old credential file, prints nothing and exits 1; a failed step 6
 ///    prints no hash line and exits 1.
 ///
-/// For the dev lead: a setter still running at 5 seconds is asked to stop and the script exits at
-/// once, which ends it with the process; whether Windows PowerShell 5.1 as the login shell passes
-/// the push's stdin on is T05-S02's to measure (operator.md, What T05-S02 measures).
+/// A setter still running at 5 seconds is asked to stop, and one still running 1 second later is
+/// killed: the script prints `zone-failed` and ends its own process with `[Environment]::Exit(0)`,
+/// since a plain `exit` waits for the setter's thread to end. Whether Windows PowerShell 5.1 as
+/// the login shell passes the push's stdin on is T05-S02's to measure (operator.md, What T05-S02
+/// measures).
 pub fn push(zone: &str) -> String {
     let zone_part = if zone.is_empty() {
         String::new()
@@ -225,10 +228,12 @@ try{$y=[Security.Cryptography.SHA256]::Create().ComputeHash([File]::ReadAllBytes
 "#;
 
 /// The push's step 7, appended only when a zone is given, `<ZONE>` standing for the checked zone:
-/// `Set-TimeZone -Id <zone>` in a runspace of its own, given up after 5 seconds, then `zone <zone>`
-/// or `zone-failed`. With no zone the script holds no `Set-TimeZone` at all.
-const PUSH_ZONE: &str = r#"$ok=$false
+/// `Set-TimeZone -Id <zone>` in a runspace of its own, given up after 5 seconds and killed with the
+/// process 1 second later, then `zone <zone>` or `zone-failed`. With no zone the script holds no
+/// `Set-TimeZone` at all.
+const PUSH_ZONE: &str = r#"$ok=$false;$z=$false
 try{$p=[PowerShell]::Create().AddScript('param($n) Set-TimeZone -Id $n -ErrorAction Stop').AddArgument('<ZONE>');$a=$p.BeginInvoke()
-if($a.AsyncWaitHandle.WaitOne(5000)){[void]$p.EndInvoke($a);$ok=!$p.HadErrors}else{[void]$p.BeginStop($null,$null)}}catch{}
+if($a.AsyncWaitHandle.WaitOne(5000)){[void]$p.EndInvoke($a);$ok=!$p.HadErrors}else{[void]$p.BeginStop($null,$null);$z=!$a.AsyncWaitHandle.WaitOne(1000)}}catch{}
 if($ok){[Console]::Out.Write("zone <ZONE>`n")}else{[Console]::Out.Write("zone-failed`n")}
+if($z){[Console]::Out.Flush();[Environment]::Exit(0)}
 "#;
