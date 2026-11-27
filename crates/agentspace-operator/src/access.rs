@@ -17,7 +17,7 @@ use agentspace_alias::{
     host_alias_name, host_file_text, known_hosts_text, write_host_alias,
 };
 use agentspace_ca::CaEnv;
-use agentspace_credential::{ensure_operator_key, sign_operator_certificate};
+use agentspace_credential::{ensure_operator_key_for, sign_operator_certificate_for};
 use agentspace_hosts::{HostKey, host_key_path_keyed};
 use agentspace_operator_api::{CallerFailure, Context, Failure};
 
@@ -101,18 +101,21 @@ pub fn sign_in_keyed(
     // The host's name names its folder, its certificate and its alias (D91).
     let host_name = key.folder_name();
     let project = host_name.as_str();
+    // The certificate's principal is the seam's login user (operator.md, The platform seam, the
+    // login user row; pin P12 of v0.12-T03). A host whose platform has no seam fails as not built,
+    // before its key is made.
+    let principal = agentspace_platforms::for_platform(&key.platform)
+        .ok_or_else(crate::commands::not_built)?
+        .login_user();
 
     // Step 2: the key. It is looked for without the lock, so that a command whose key exists never
     // waits on a provisioning run's `hosts.lock` (architect, 2026-11-21, for v0.07-T03). Only when it
-    // is missing is `hosts.lock` taken, and `ensure_operator_key`, which looks for the key again,
+    // is missing is `hosts.lock` taken, and `ensure_operator_key_for`, which looks for the key again,
     // called while it is held, so two commands never make two keys. The lock is held for that alone.
     let key_path = host_key_path_keyed(&ctx.home, key);
     if !key_path.is_file() {
         let held = agentspace_hosts::lock(&ctx.home).map_err(|e| registry_failure(&ctx.home, e))?;
-        // Pin P12 of v0.12-T03: once E0.12-T03-S03's second part gives agentspace-credential its
-        // pair by host name, this one call becomes
-        // `ensure_operator_key_for(&ctx.home, &key.host_name())`.
-        let made = ensure_operator_key(&ctx.home, project);
+        let made = ensure_operator_key_for(&ctx.home, &key.host_name());
         drop(held);
         made.map_err(|f| {
             could_not_reach(format!(
@@ -124,17 +127,14 @@ pub fn sign_in_keyed(
     }
 
     // Step 3: a fresh certificate, replacing the last one.
-    // Pin P12 of v0.12-T03: once E0.12-T03-S03's second part gives agentspace-credential its pair
-    // by host name, this one call becomes
-    // `sign_operator_certificate_for(&ctx.home, &key.host_name(), principal, unix_now())`, with
-    // `principal` the host's seam's login user (operator.md, The platform seam, the login user
-    // row), `seam.login_user()`, the seam from `agentspace_platforms::for_platform(&key.platform)`.
-    sign_operator_certificate(&ctx.home, project, unix_now()).map_err(|f| {
-        could_not_reach(format!(
-            "agentspace: Could not sign the operator's certificate for '{project}': {}",
-            f.message
-        ))
-    })?;
+    sign_operator_certificate_for(&ctx.home, &key.host_name(), principal, unix_now()).map_err(
+        |f| {
+            could_not_reach(format!(
+                "agentspace: Could not sign the operator's certificate for '{project}': {}",
+                f.message
+            ))
+        },
+    )?;
 
     // Step 4: the alias, and the `Include` line before it.
     write_alias(ctx, access, project)
