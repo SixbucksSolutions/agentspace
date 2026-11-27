@@ -22,24 +22,36 @@
 #    it redirects nothing to a file, uses no & or dot-source, and assigns only plain variables. So
 #    nothing before the guard writes a file, makes a folder, starts a program, logs a line, or calls
 #    the registry or Task Scheduler.
-# 2. Refusal: each guarded script is run once, as a separate pwsh 7 process, as the laptop's own user,
-#    with every one of its seam variables removed, in a throwaway home. It runs a script ONLY when that
-#    script's static case passed earlier in the same run; otherwise it reports FAIL and runs nothing.
-#    It asserts exit 1, the page's exact message as the whole of stderr, nothing on stdout, the
-#    throwaway home unchanged byte for byte (but for PowerShell 7's own startup cache, whose name is
-#    kept and whose bytes PowerShell rewrites at each start), and C:\ProgramData\agentspace unchanged
-#    by its names and their count, never its contents.
-# 3. Bare name: each box/windows script, parsed so comments are left out, starts neither program by
+# 2. Tripwire (pin P15): every program the guarded scripts could start by bare name, PowerShell 7 and
+#    the system programs among them, has a tripwire in the throwaway home: a .cmd under that name that
+#    records its own start beside itself and exits 97, put first on the child's PATH. The child pwsh
+#    is always started by its full path, so no tripwire shadows the PowerShell that runs a script or
+#    this test. Two cases show the tripwires work before any refusal relies on them: each name
+#    resolves first to its tripwire on the child's PATH (by Get-Command in the child, which runs
+#    nothing it finds), and a stand-alone probe that is no box/windows script, run through the same
+#    function as the refusals, starts git by bare name (harmless if a tripwire missed it), and the
+#    tripwire check fails on that run. -TripwireProbe names another probe for a plant proof.
+# 3. Refusal: each guarded script is run once, as a separate pwsh 7 process, as the laptop's own user,
+#    with every one of its seam variables removed, in a throwaway home, behind the tripwires. It runs a
+#    script ONLY when that script's static case and both tripwire cases passed earlier in the same
+#    run; otherwise it reports FAIL and runs nothing. It asserts exit 1, the page's exact message as
+#    the whole of stderr, nothing on stdout, no tripwire started, the throwaway home unchanged byte
+#    for byte (but for PowerShell 7's own startup cache, whose name is kept and whose bytes PowerShell
+#    rewrites at each start), and C:\ProgramData\agentspace unchanged by its names and their count,
+#    never its contents. The full paths are the main defence and the tripwires belt and braces: a
+#    guard broken on a bare call is caught too.
+# 4. Bare name: each box/windows script, parsed so comments are left out, starts neither program by
 #    bare name: no command, and no string whose first word is shutdown, shutdown.exe, sshd or sshd.exe
 #    unless it is the full path. The one string kept is a *-Service cmdlet's argument, which names the
 #    sshd service and starts no program.
-# 4. Full path: the scripts that start shutdown or sshd on a host name each by its full path.
+# 5. Full path: the scripts that start shutdown or sshd on a host name each by its full path.
 #
-# The PATH stand-in for shutdown.exe that windows-test-common.ps1 puts first on a child's PATH stays as
-# a second net; no case's verdict relies on it. The script's folder is -ScriptDir (default: box/windows
-# beside this folder), and -Only runs the cases whose names match it; a plant proof names a planted
-# copy under target\s07fix\planted-*, and the static plant's proof MUST run with -Only '^Static'.
-param([string]$ScriptDir = '', [string]$Only = '')
+# The PATH stand-in for shutdown.exe that windows-test-common.ps1 puts on a child's PATH stays as a
+# third net, behind the tripwires; no case's verdict relies on it. The script's folder is -ScriptDir
+# (default: box/windows beside this folder), and -Only runs the cases whose names match it; a plant
+# proof names a planted copy under target\<role>\planted-*, the static plant's proof MUST run with
+# -Only '^Static', and a tripwire probe's proof with -Only '^Tripwire'.
+param([string]$ScriptDir = '', [string]$Only = '', [string]$TripwireProbe = '')
 
 . (Join-Path $PSScriptRoot 'windows-test-common.ps1')
 $global:WtOnly = $Only
@@ -277,8 +289,57 @@ function Get-WtMachineNames {
   return ('{0}|{1}' -f $names.Count, ($names -join '/'))
 }
 
+# Pin P15's tripwires: every program the four guarded scripts could start by bare name, by their own
+# lines or through a script they start (the patch run starts agentspace-tools.ps1, which starts
+# winget), the PowerShells and the system programs that change a machine among them. Each is a .cmd in
+# the throwaway home that appends its own name to fired.txt beside itself and exits 97; a folder's
+# .cmd is found before a later folder's .exe, which the resolution case shows in every run. cmd itself
+# is left out, since the tripwires run under it.
+$script:WtTripNames = @(
+  'pwsh', 'powershell', 'shutdown', 'sshd', 'ssh-keygen', 'winget', 'schtasks', 'reg', 'netsh', 'msiexec', 'git',
+  'ssh', 'scp', 'bash', 'sc', 'net', 'tzutil', 'icacls', 'bcdedit', 'wusa', 'usoclient', 'dism', 'taskkill', 'wmic',
+  'node', 'npm', 'gh', 'uv', 'claude'
+)
+$script:WtTripBin = Join-Path $testHome.Root 'p15-tripwires'
+$script:WtTripwireShown = $false
+$script:WtTripwireResolved = $false
+
+function Get-WtTripwireFired {
+  $f = Join-Path $script:WtTripBin 'fired.txt'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return @() }
+  return @([IO.File]::ReadAllLines($f) | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+}
+
+# Runs pwsh 7, by its full path, with the arguments given, in the throwaway home, with the tripwires
+# first on its PATH: the one harness function every live refusal and every tripwire probe goes
+# through. $Seam maps variable names to values, a null value leaving the variable unset. The result is
+# Start-ConformanceProcess's, with Fired, the names of the tripwires started, added.
+function Invoke-WtTripwired {
+  param([Parameter(Mandatory)][string[]]$Arguments, [hashtable]$Seam = @{}, [hashtable]$Extra = @{}, [int]$TimeoutSeconds = 60)
+  $override = @{}
+  foreach ($k in $Seam.Keys) { $override[$k] = $Seam[$k] }
+  foreach ($k in $Extra.Keys) { $override[$k] = $Extra[$k] }
+  $override['PATH'] = $script:WtTripBin + ';' + $testHome.GuardBin + ';' + $env:PATH
+  $childEnv = Get-ConformanceChildEnvironment -ConformanceHome $testHome -Override $override
+  $argList = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass') + $Arguments
+  $r = Start-ConformanceProcess -FilePath $script:WtPwsh -Arguments $argList -ChildEnvironment $childEnv -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $testHome.UserProfile
+  $r | Add-Member -NotePropertyName Fired -NotePropertyValue @(Get-WtTripwireFired)
+  return $r
+}
+
+# The tripwire check every live refusal makes: no program behind a tripwire was started.
+function Assert-WtNoTripwire {
+  param([Parameter(Mandatory)]$Result)
+  Assert-Wt (@($Result.Fired).Count -eq 0) ('No program behind a tripwire MAY be started, and these were: {0}' -f (@($Result.Fired) -join ', '))
+}
+
 try {
   $realBefore = Get-WtRealMark
+  New-WtFolder -TestHome $testHome -Path $script:WtTripBin | Out-Null
+  foreach ($tripName in $script:WtTripNames) {
+    $tripText = "@echo off`r`n>>`"%~dp0fired.txt`" echo %~n0`r`nexit /b 97`r`n"
+    Write-WtText -TestHome $testHome -Path (Join-Path $script:WtTripBin ($tripName + '.cmd')) -Text $tripText
+  }
 
   # --- 1. Static, first: the guard before any statement that can have an effect -----------------------------
   foreach ($scriptBase in $guarded.Keys) {
@@ -292,7 +353,43 @@ try {
     }
   }
 
-  # --- 2. Refusal: run without its seam as the laptop's own user, only after its static case passed --------------
+  # --- 2. Tripwire (pin P15): shown to work before any refusal relies on it -------------------------------------
+  Test-WtCase 'Tripwire: each program name resolves first to its tripwire on the child''s PATH' {
+    # The child resolves each name with Get-Command, which runs nothing it finds, and prints the name
+    # and 1 or 0, never a path. A name that is not found anywhere is no tripwire, so it fails too. The
+    # names go into the snippet itself, since a -Command run takes no $args.
+    $nameList = "@('" + ($script:WtTripNames -join "', '") + "')"
+    $snippet = 'foreach ($n in ' + $nameList + ') { $first = Get-Command -Name $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; $hit = ($null -ne $first -and $first.Source.StartsWith($env:WT_TRIPBIN + ''\'', [StringComparison]::OrdinalIgnoreCase)); ''{0}|{1}'' -f $n, [int]$hit }; exit 0'
+    $r = Invoke-WtTripwired -Arguments @('-Command', $snippet) -Extra @{ WT_TRIPBIN = $script:WtTripBin }
+    Assert-WtEqual $r.ExitCode 0 'Exit code of the resolution check'
+    $resolvedLines = @(Get-WtLines -Text $r.Stdout)
+    $missed = @()
+    foreach ($tripName in $script:WtTripNames) { if ($resolvedLines -cnotcontains ($tripName + '|1')) { $missed += $tripName } }
+    Assert-Wt ($missed.Count -eq 0) ('These names do not resolve first to their tripwire: {0}' -f ($missed -join ', '))
+    Assert-Wt (@($r.Fired).Count -eq 0) 'The resolution check MUST start no tripwire'
+    $script:WtTripwireResolved = $true
+  }
+  Test-WtCase 'Tripwire: a probe that starts git by bare name, through the refusals'' own function, is caught' {
+    $probe = $TripwireProbe
+    if ([string]::IsNullOrWhiteSpace($probe)) {
+      # A stand-alone probe, no box/windows script: git --version is harmless if a tripwire missed it.
+      $probe = Join-Path $testHome.Root 'p15-probe.ps1'
+      Write-WtText -TestHome $testHome -Path $probe -Text ("# P15's probe: starts git by bare name.`r`ngit --version | Out-Null`r`nexit 0`r`n")
+    }
+    try {
+      $r = Invoke-WtTripwired -Arguments @('-File', $probe)
+      Assert-Wt (-not $r.TimedOut) 'The probe MUST end at once, and it timed out'
+      Assert-Wt (@($r.Fired) -ccontains 'git') ('The probe''s bare git MUST start its tripwire; started: {0}' -f (@($r.Fired) -join ', '))
+      $caught = $false
+      try { Assert-WtNoTripwire -Result $r } catch { $caught = $true }
+      Assert-Wt $caught 'The tripwire check MUST fail on a run that started a tripwire'
+      $script:WtTripwireShown = $true
+    } finally {
+      Remove-WtFile -TestHome $testHome -Path (Join-Path $script:WtTripBin 'fired.txt')
+    }
+  }
+
+  # --- 3. Refusal: run without its seam as the laptop's own user, only after its static case passed --------------
   # The laptop's own user is neither SYSTEM nor agent, by SID and by name; were it either, a run would
   # not show the refusal, so each live case is SKIPPED with the reason, and the name is never printed.
   $me = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -313,23 +410,27 @@ try {
     if (-not $warmed -and $script:WtStaticPassed[$baseCopy] -eq $true) {
       # PowerShell 7 writes its startup cache into a fresh home at its first start: one start that runs
       # nothing puts it there before the first before-and-after.
-      $warm = Start-ConformanceProcess -FilePath $script:WtPwsh -Arguments @('-NoProfile', '-NonInteractive', '-Command', 'exit 0') -ChildEnvironment (Get-ConformanceChildEnvironment -ConformanceHome $testHome -Override @{}) -TimeoutSeconds 60 -WorkingDirectory $testHome.UserProfile
-      $warmed = ($warm.ExitCode -eq 0)
+      $warm = Invoke-WtTripwired -Arguments @('-Command', 'exit 0')
+      $warmed = ($warm.ExitCode -eq 0 -and @($warm.Fired).Count -eq 0)
     }
     Test-WtCase $caseName {
-      # The gate: a script whose static case did not pass in this run is never run.
+      # The gate: a script whose static case did not pass in this run is never run, and none is run
+      # before the tripwires were shown to resolve first and to catch a bare call in this run.
       Assert-Wt ($script:WtStaticPassed[$baseCopy] -eq $true) 'Not run: its static case did not pass in this run, so the script is not known to test its account first'
-      Assert-Wt $warmed 'Not run: PowerShell 7 could not be started once in the throwaway home'
+      Assert-Wt ($script:WtTripwireResolved -and $script:WtTripwireShown) 'Not run: the tripwires were not shown to work in this run'
+      Assert-Wt $warmed 'Not run: PowerShell 7 could not be started once in the throwaway home behind the tripwires'
+      Assert-Wt (@(Get-WtTripwireFired).Count -eq 0) 'Not run: a tripwire had already been started in this run'
       $p = Join-Path $resolvedDir ($baseCopy + '.ps1')
       $seam = @{}
       foreach ($row in $guarded.Values) { foreach ($v in $row.Seam) { $seam[$v] = $null } }
       $want = '{0}: without its test seam it runs only as {1}; nothing was done' -f $baseCopy, $guarded[$baseCopy].Account
       $homeBefore = Get-WtHomeMark
       $machineBefore = Get-WtMachineNames
-      $r = Invoke-WtScript -TestHome $testHome -ScriptPath $p -Seam $seam -TimeoutSeconds 60
+      $r = Invoke-WtTripwired -Arguments @('-File', $p) -Seam $seam -TimeoutSeconds 60
       $homeAfter = Get-WtHomeMark
       $machineAfter = Get-WtMachineNames
       Assert-Wt (-not $r.TimedOut) 'The run MUST end at once, and it timed out'
+      Assert-WtNoTripwire -Result $r
       Assert-WtEqual $r.ExitCode 1 'Exit code'
       Assert-Wt ($r.StdoutBytes.Length -eq 0) ('stdout MUST be empty: {0}' -f (Format-WtBytes $r.StdoutBytes))
       Assert-WtEqual ($r.Stderr.TrimEnd("`r", "`n")) $want 'stderr, the whole of it'
@@ -338,7 +439,7 @@ try {
     }
   }
 
-  # --- 3. Bare name: no call of shutdown or sshd by bare name ----------------------------------------------------
+  # --- 4. Bare name: no call of shutdown or sshd by bare name ----------------------------------------------------
   foreach ($scriptFile in $allScripts) {
     $fileCopy = $scriptFile
     Test-WtCase ("Bare name: {0} starts neither shutdown nor sshd by bare name" -f $fileCopy) {
@@ -349,7 +450,7 @@ try {
     }
   }
 
-  # --- 4. Full path: what a host starts, it names by full path ----------------------------------------------------
+  # --- 5. Full path: what a host starts, it names by full path ----------------------------------------------------
   foreach ($pair in @(@('agentspace-idle-check.ps1', $fullShutdown), @('agentspace-patch.ps1', $fullShutdown), @('install.ps1', $fullSshd))) {
     $pairCopy = $pair
     Test-WtCase ("Full path: {0} names {1}" -f $pairCopy[0], $pairCopy[1]) {
