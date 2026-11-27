@@ -39,6 +39,13 @@ pub const HOST_AND_ALL: &str = "agentspace: -Host and -All cannot be given toget
 pub const PROVISION_NEEDS_HOST: &str = "agentspace: provision needs -Host <project>.";
 pub const INSTANCE_TYPE_APPLIES: &str = "agentspace: -InstanceType applies to deploy alone.";
 
+/// The checks v0.12 adds, each right after the `-Host` check it mirrors (docs/operator.md, Command
+/// line, checks 1a, 3a and 4a; architect, 2026-11-26, for v0.12-T01, pin P55).
+pub const PLATFORM_NOT_FOR_CA: &str = "agentspace: -Platform does not apply to ca.";
+pub const PLATFORM_NOT_FOR_GUARD: &str = "agentspace: -Platform does not apply to guard.";
+pub const PLATFORM_AND_ALL: &str = "agentspace: -Platform and -All cannot be given together.";
+pub const PLATFORM_NEEDS_HOST: &str = "agentspace: -Platform needs -Host <project>.";
+
 /// A command line that names `command` and holds nothing else that its checks need: `provision`
 /// requires `-Host`, so it gets one (operator.md, the host checks, check 4).
 pub fn command_args(command: &str) -> Vec<&str> {
@@ -87,6 +94,27 @@ pub fn not_an_instance_type(arg: &str) -> String {
 pub fn no_host(project: &str) -> String {
     format!("agentspace: Project '{project}' has no host; provision -Host {project} makes one.")
 }
+/// A `-Platform` value that the lease CLI's parser accepts and that is not supported: the lease
+/// CLI's `unsupported_platform` message with `agentspace: ` before it (docs/operator.md, Command
+/// line; `<platform>` is the value as the parser normalizes it).
+pub fn platform_unsupported(platform: &str) -> String {
+    format!(
+        "agentspace: Platform '{platform}' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64."
+    )
+}
+/// A `-Platform` value that the parser refuses, reported as given (control characters as `?`).
+pub fn platform_not_a_pair(arg: &str) -> String {
+    format!("agentspace: Platform '{arg}' is not an os/arch pair. Give one as in 'linux/arm64'.")
+}
+/// The no-record message for a host on `platform` (normalized, not `linux/arm64`): the host is
+/// named by its host name, and the command it suggests holds `-Platform` (docs/operator.md, From
+/// the command line; Messages; pins P12 and P44).
+pub fn no_host_on(project: &str, platform: &str) -> String {
+    format!(
+        "agentspace: Project '{project}.{}' has no host; provision -Host {project} -Platform {platform} makes one.",
+        platform.replace('/', "-")
+    )
+}
 
 /// What one run of the program gave.
 #[derive(Debug)]
@@ -111,15 +139,19 @@ pub struct Run {
 pub fn deploy_lock_paths(args: &[String]) -> Vec<String> {
     let mut command: Option<&str> = None;
     let mut host: Option<String> = None;
+    let mut platform: Option<String> = None;
     let mut words = args.iter();
     while let Some(word) = words.next() {
-        let valued = ["-GiB", "-Alias", "-Host", "-InstanceType"]
+        let valued = ["-GiB", "-Alias", "-Host", "-InstanceType", "-Platform"]
             .iter()
             .any(|p| word.eq_ignore_ascii_case(p));
         if valued {
             let value = words.next();
             if word.eq_ignore_ascii_case("-Host") {
                 host = value.map(|v| v.trim().to_lowercase());
+            }
+            if word.eq_ignore_ascii_case("-Platform") {
+                platform = value.map(|v| v.trim().to_lowercase());
             }
         } else if !word.starts_with('-') && command.is_none() {
             command = Some(word);
@@ -128,7 +160,13 @@ pub fn deploy_lock_paths(args: &[String]) -> Vec<String> {
     if !command.is_some_and(|c| c.eq_ignore_ascii_case("deploy")) {
         return Vec::new();
     }
-    let project = host.unwrap_or_else(|| "swimcoach".to_string());
+    let mut project = host.unwrap_or_else(|| "swimcoach".to_string());
+    // A host off `linux/arm64` has its own folder, `<project>.<os>-<arch>` (operator.md, A host's
+    // platform and its names). A line this helper is given never names a form but the three
+    // supported platforms' normalized ones, since a refused value writes nothing.
+    if let Some(p) = platform.filter(|p| p != "linux/arm64" && p.matches('/').count() == 1) {
+        project = format!("{project}.{}", p.replace('/', "-"));
+    }
     let hosts = "profile/.agentspace/hosts";
     vec![
         "profile/.agentspace".to_string(),

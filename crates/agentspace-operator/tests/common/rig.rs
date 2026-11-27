@@ -272,6 +272,67 @@ pub fn host_rec(project: &str, state: &str, id: Option<&str>) -> String {
     rec(project, &format!("agentspace-host-{project}"), state, id)
 }
 
+/// A made-up instance ID for a project's `windows/amd64` host, in the form the registry accepts.
+pub const WINDOWS_ID: &str = "i-0abcdef1234567890";
+
+/// A host's name (docs/operator.md, A host's platform and its names): `<project>` on
+/// `linux/arm64`, `<project>.<os>-<arch>` on every other platform.
+pub fn host_name(project: &str, platform: &str) -> String {
+    if platform == "linux/arm64" {
+        project.to_string()
+    } else {
+        format!("{project}.{}", platform.replace('/', "-"))
+    }
+}
+
+/// A host's stack, by the same page: `agentspace-host-<project>` on `linux/arm64`, and
+/// `agentspace-<os>-<arch>-host-<project>` on every other platform (the box's `agentbox` is
+/// [`box_rec`]'s).
+pub fn stack_of(project: &str, platform: &str) -> String {
+    if platform == "linux/arm64" {
+        format!("agentspace-host-{project}")
+    } else {
+        format!("agentspace-{}-host-{project}", platform.replace('/', "-"))
+    }
+}
+
+/// A record of a host on `platform` (docs/state.md, The host registry): the `platform` member
+/// follows `project` and is written for every platform but `linux/arm64`, whose record holds none,
+/// and the stack is the platform's own.
+pub fn host_rec_on(project: &str, platform: &str, state: &str, id: Option<&str>) -> String {
+    let stack = stack_of(project, platform);
+    let mut r = format!("{{\"project\":\"{project}\"");
+    if platform != "linux/arm64" {
+        r.push_str(&format!(",\"platform\":\"{platform}\""));
+    }
+    r.push_str(&format!(",\"stack\":\"{stack}\",\"state\":\"{state}\""));
+    if let Some(id) = id {
+        r.push_str(&format!(",\"instance_id\":\"{id}\""));
+    }
+    r.push('}');
+    r
+}
+
+/// A live `ready` lease of `project` on `platform`: [`ready_lease`] with its platform changed, and
+/// the profile and login user that platform's leases hold.
+pub fn ready_lease_on(n: u32, project: &str, platform: &str) -> String {
+    let (profile, user) = if platform == "windows/amd64" {
+        ("agent-windows", "agent")
+    } else {
+        ("agent-linux", "ubuntu")
+    };
+    ready_lease(n, project)
+        .replace(
+            "\"platform\":\"linux/arm64\"",
+            &format!("\"platform\":\"{platform}\""),
+        )
+        .replace(
+            "\"profile\":\"agent-linux\"",
+            &format!("\"profile\":\"{profile}\""),
+        )
+        .replace("\"user\":\"ubuntu\"", &format!("\"user\":\"{user}\""))
+}
+
 /// The registry's document: `{"version":0,"hosts":[...]}` and one LF.
 pub fn hosts_doc(records: &[String]) -> Vec<u8> {
     format!("{{\"version\":0,\"hosts\":[{}]}}\n", records.join(",")).into_bytes()
