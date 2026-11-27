@@ -102,10 +102,11 @@
   {"name":"reviewer","model":"Opus","effort":"high","after":["runner"]}]},
  {"name":"E0.12-T04-S05","subagents":[
   {"name":"runner, crates and box","model":"Sonnet","effort":"medium"},
+  {"name":"investigator, #0268","model":"Opus","effort":"high"},
   {"name":"runner, lease CLI, schemas and keeper","model":"Sonnet","effort":"medium","after":["runner, crates and box"]},
   {"name":"runner, operator lane A","model":"Sonnet","effort":"medium","after":["runner, crates and box"]},
   {"name":"runner, operator lane B and the deadline case","model":"Sonnet","effort":"medium","after":["runner, crates and box"]},
-  {"name":"record writer","model":"Sonnet","effort":"high","after":["runner, lease CLI, schemas and keeper","runner, operator lane A","runner, operator lane B and the deadline case"]},
+  {"name":"record writer","model":"Sonnet","effort":"high","after":["runner, lease CLI, schemas and keeper","runner, operator lane A","runner, operator lane B and the deadline case","investigator, #0268"]},
   {"name":"reviewer","model":"Opus","effort":"high","after":["record writer"]}]}]},
 {"name":"T05","budget_minutes":270,"stories":[
  {"name":"E0.12-T05-S01","subagents":[

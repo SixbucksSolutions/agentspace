@@ -27,7 +27,7 @@ and this file adds only what v0.12 has changed or learned.
   `agentspace-platforms` with `for_platform` (#187), went in at its start.
 - **`main` has no red test by design**: S02's workspace run on #195's head exited 0, and the 30
   help-block reds T01 left are green (S01's 7, S02's 23). Two tests fail only under load, carded as
-  #0268 in Backlog for Terry to place.
+  #0268 and folded into T04-S05 (D102).
 - **Next is T04, conformance and #0244, on Terry's word.** No turn starts without it.
 - **Nothing is running but the architect's duties**: the board watcher, the swimcoach reporter with
   the `v0.12` milestone, and no dev lead, host or lease.
@@ -118,7 +118,7 @@ test seams.
 |---|---|---|
 | T04 starts on Terry's word | Terry, then the architect | #0261 to #0265 |
 | Archive T03's dev lead, then remove the held empty folder `.claude\worktrees\v0.12-t03-s01` | The architect | `.claude\worktrees\` |
-| #0268, two tests flaky under load | Terry places it; the architect recommends T04-S05, the whole-suite story, which runs every suite under the gate's load anyway | Backlog |
+| #0268, two tests flaky under load | E0.12-T04-S05 (#0265), folded on Terry's word (D102) | #0051, archived |
 | Before T05: the observer script, rebuilt from runs/e0.09-t05-s01.md | The architect | `scripts\live\` |
 | The desktop app's session on Windows, with Git Bash; and the rest of operator.md's "What T05-S02 measures": patch time on an older image, sessions across an sshd restart, the push's stdin under Windows PowerShell 5.1, winget over SSH, `PATH` in new sessions, Windows' background CPU against the 6 CPU-second idle limit, that Windows Update schedules no restart, and that sync's patch wait on a first boot answers within its wait | E0.12-T05-S02 | operator.md, What T05-S02 measures |
 | Done in T02: the archive of T01's dev lead and its folders; D7's `::1` note, now in operator.md's Windows section (#184) | | |

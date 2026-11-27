@@ -139,6 +139,7 @@ line's text after `Status:`, without its full stop.
 - [D99. #0228: one walk ends a chain of any depth, and D59's further walks stay as a backstop](#d99-0228-one-walk-ends-a-chain-of-any-depth-and-d59s-further-walks-stay-as-a-backstop): Decided
 - [D100. v0.12's done-when is shown by a Windows spike first and a live check per platform, with Terry's yes for their instance hours](#d100-v012s-done-when-is-shown-by-a-windows-spike-first-and-a-live-check-per-platform-with-terrys-yes-for-their-instance-hours): Decided
 - [D101. v0.12 is twenty-three stories in five turns: specs and the spike, foundations, programs, conformance, install and live](#d101-v012-is-twenty-three-stories-in-five-turns-specs-and-the-spike-foundations-programs-conformance-install-and-live): Decided
+- [D102. #0268 is folded into v0.12's T04](#d102-0268-is-folded-into-v012s-t04): Decided
 
 ## The interface
 
@@ -5155,7 +5156,7 @@ the dev lead. The TTL is what D85 gives a lease for that turn.
 | T01 | S01 to S05 | **The specs and the Windows spike.** lease-api.md; state.md with schemas/state; driver.md with keeper.md; operator.md's shared parts with conformance.md; the spike (D100) | 13 | 14 | 3.5 h | 5.25 h | The laptop; S05 with one throwaway Windows instance |
 | T02 | S01 to S04 | **The foundations and the Windows spec.** `agentspace-hosts` and `agentspace-state`; #0228 in `agentspace-connections`; D78, #0192 and #0193 in `box/`; operator.md's Windows hosts and README, from the spike | 11 | 12 | 3.5 h | 5.25 h | The laptop |
 | T03 | S01 to S07 | **The programs, both tracks.** The driver and CLI; the operator's front; sync, `up` and the template; the ProxyCommand, guard, push and zone; the keeper; `agentspace-windows`; `box/windows/` | 16 | 17 | 4.5 h | 6.75 h | The laptop |
-| T04 | S01 to S05 | **Conformance and #0244.** The lease CLI's, the operator's and the keeper's cases; #0244; the whole suite with conformance.md | 9 | 10 | 4.5 h | 6.75 h | The laptop |
+| T04 | S01 to S05 | **Conformance and #0244.** The lease CLI's, the operator's and the keeper's cases; #0244; the whole suite with conformance.md, and #0268 (D102) | 10 | 11 | 4.5 h | 6.75 h | The laptop |
 | T05 | S01, S02 | **The install and the live checks.** The install, the project list and `linux/amd64`'s check; `windows/amd64`'s check | 3 | 4 | 4.5 h | 6.75 h | The laptop, with agentspace's two new hosts |
 
 **The release's budget is 20.5 hours**, the sum of its turns'. **Changed during v0.12-T03 (Terry,
@@ -5198,6 +5199,23 @@ desktop-app session that works a card.
 - **T03 to T05 get 4.5 hours**: T03 for seven stories' reviews through three heavy slots, T04 for
   the operator suite run twice, and T05 for a Windows host's first boot and patch run, Terry's
   sign-ins, and the guard's stops.
+
+### D102. #0268 is folded into v0.12's T04
+
+**Decided, Terry, 2026-11-26**: "Yes, fold into T04", on the architect's placement at v0.12-T03's
+close. v0.12-T03's runs found two tests that fail only under load and pass alone, in crates v0.12
+did not change: `agentspace-launch`'s `spec_log_handle` test and `agentspace-keeper-win`'s
+whole-tree stop. The architect carded them as #0268, which no release held. As D72, D82 and D90 did,
+the card is folded whole into its epic's description and archived; #0051 and E0.12-T04-S05 (#0265)
+`references` it.
+
+| Card | Epic | Where in it |
+|---|---|---|
+| #0268: two tests flaky under load | v0.12 (#0051) | E0.12-T04-S05, the whole-suite story, which runs every suite under the gate's load anyway; it owns those two crates' test lines for it, and gains one Opus/high investigator |
+
+- **D101's plan changes with it**: T04-S05's peak goes from 3 to 4, so T04's from 9 to 10, with 11
+  agents at once; its budget is unchanged. `docs/plans/v0.12.json` and #0051's plan block change
+  together.
 
 ## Keys
 
