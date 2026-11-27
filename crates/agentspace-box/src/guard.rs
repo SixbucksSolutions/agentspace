@@ -8,10 +8,11 @@
 //! [`stop_host`] asks it to stop one, and [`send_horizon`] sends one running host its lease
 //! horizon. **None of them prints or logs**: the guard does, with the failure text each returns.
 
-use agentspace_operator_api::{Aws, Call, CallerFailure, Failure, Output};
+use agentspace_operator_api::{Aws, Call, CallerFailure, Failure, HostPlatform, Output};
 use serde_json::Value;
 
 use crate::launch_time;
+use crate::run_command;
 
 /// The comment the lease horizon is sent with (operator.md, guard, step 7; D63).
 pub const HORIZON_COMMENT: &str = "agentspace guard: lease horizon";
@@ -152,6 +153,10 @@ pub fn stop_host(aws: &dyn Aws, id: &str) -> Result<(), Failure> {
 /// shorthand for `--parameters` does not split it (operator.md, guard, step 7; FA-15). The
 /// temporary file's name is fixed, which two runs never contend for: `guard.lock` admits one guard
 /// at a time, and a run that failed midway leaves a file the next run replaces.
+///
+/// Today's `linux/arm64` text, which the platform's horizon command now gives (the seam's horizon
+/// row, `agentspace-platforms`); kept, and named by the tests, until the guard's story switches.
+#[cfg_attr(not(test), allow(dead_code))]
 fn horizon_command(horizon: i64) -> String {
     format!(
         "umask 022; mkdir -p -m 755 /run/agentspace \
@@ -170,14 +175,33 @@ fn horizon_command(horizon: i64) -> String {
 ///
 /// `horizon` is Unix seconds and MUST NOT be negative: a negative one makes no call and returns a
 /// failure, since the file holds a decimal integer with no sign.
+///
+/// It is `linux/arm64`'s: [`send_horizon_on`] with `agentspace_platforms::LINUX_ARM64`.
 pub fn send_horizon(aws: &dyn Aws, id: &str, horizon: i64) -> Result<(), Failure> {
-    if horizon < 0 {
+    send_horizon_on(aws, id, &agentspace_platforms::LINUX_ARM64, horizon)
+}
+
+/// [`send_horizon`] to a host of `platform` (operator.md, The platform seam, the horizon row): one
+/// `ssm send-command` through [`HostPlatform::ssm_document`] with the comment [`HORIZON_COMMENT`],
+/// whose command is [`HostPlatform::horizon_command`]. Its `--parameters` is `commands=<command>`
+/// on both Linux platforms, byte for byte as before v0.12, and the JSON value
+/// `{"commands":["<command>"]}` on every other document, never the shorthand (pins P17 and P18 of
+/// v0.12-T02). A negative `horizon` makes no call and fails as [`send_horizon`]'s does; a platform
+/// whose horizon command fails makes no call and returns that failure.
+pub fn send_horizon_on(
+    aws: &dyn Aws,
+    id: &str,
+    platform: &dyn HostPlatform,
+    horizon: i64,
+) -> Result<(), Failure> {
+    let Ok(horizon) = u64::try_from(horizon) else {
         return Err(Failure {
             message: "agentspace: The lease horizon cannot be negative.".to_string(),
             caller: CallerFailure::Same,
         });
-    }
-    let parameters = format!("commands={}", horizon_command(horizon));
+    };
+    let command = platform.horizon_command(horizon)?;
+    let parameters = run_command::parameters(platform, &command);
     aws.call(&Call {
         service: "ssm",
         operation: "send-command",
@@ -185,7 +209,7 @@ pub fn send_horizon(aws: &dyn Aws, id: &str, horizon: i64) -> Result<(), Failure
             "--instance-ids",
             id,
             "--document-name",
-            "AWS-RunShellScript",
+            platform.ssm_document(),
             "--comment",
             HORIZON_COMMENT,
             "--parameters",
@@ -601,6 +625,86 @@ mod tests {
     fn a_negative_horizon_makes_no_call() {
         let aws = Recorder::new(Ok(Value::Null));
         assert!(send_horizon(&aws, A, -1).is_err());
+        assert!(aws.lines().is_empty());
+    }
+
+    // The platform seam (E0.12-T03-S03, part 1): the horizon sent to a host's platform.
+
+    use crate::run_command::fake::{self, TestPlatform};
+
+    /// Today's horizon command and the seam's Linux row are the same text, for every horizon both
+    /// types hold.
+    #[test]
+    fn todays_horizon_command_is_the_linux_rows() {
+        for horizon in [0_i64, 7, 1_795_075_954, i64::MAX] {
+            let row = u64::try_from(horizon).unwrap();
+            for platform in [
+                &agentspace_platforms::LINUX_ARM64,
+                &agentspace_platforms::LINUX_AMD64,
+            ] {
+                assert_eq!(
+                    platform.horizon_command(row).unwrap(),
+                    horizon_command(horizon)
+                );
+            }
+        }
+    }
+
+    /// Both Linux platforms send today's call, byte for byte.
+    #[test]
+    fn both_linux_platforms_send_todays_call() {
+        for platform in [
+            &agentspace_platforms::LINUX_ARM64,
+            &agentspace_platforms::LINUX_AMD64,
+        ] {
+            let aws = Recorder::new(Ok(Value::Null));
+            send_horizon_on(&aws, A, platform, 1_795_075_954).unwrap();
+            assert_eq!(
+                aws.lines(),
+                [format!(
+                    "ssm send-command --instance-ids {A} --document-name AWS-RunShellScript --comment agentspace guard: lease horizon --parameters commands={COMMAND}"
+                )]
+            );
+            assert_eq!(aws.calls.borrow()[0].1, Output::Checked);
+        }
+    }
+
+    /// A platform whose document is `AWS-RunPowerShellScript` gets its own horizon command as the
+    /// JSON value, never the shorthand.
+    #[test]
+    fn a_powershell_platform_gets_its_horizon_command_as_json() {
+        let aws = Recorder::new(Ok(Value::Null));
+        let platform = TestPlatform::powershell();
+        send_horizon_on(&aws, A, &platform, 1_795_075_954).unwrap();
+        let command = platform.horizon_command(1_795_075_954).unwrap();
+        let json = json!({ "commands": [command] }).to_string();
+        assert_eq!(
+            aws.lines(),
+            [format!(
+                "ssm send-command --instance-ids {A} --document-name AWS-RunPowerShellScript --comment agentspace guard: lease horizon --parameters {json}"
+            )]
+        );
+        assert!(!aws.lines()[0].contains("commands="));
+    }
+
+    /// A negative horizon, or a platform whose horizon command fails, makes no call.
+    #[test]
+    fn a_negative_horizon_or_a_failed_command_makes_no_call_on_any_platform() {
+        let aws = Recorder::new(Ok(Value::Null));
+        let failure = send_horizon_on(&aws, A, &TestPlatform::powershell(), -1).unwrap_err();
+        assert_eq!(
+            failure.message,
+            "agentspace: The lease horizon cannot be negative."
+        );
+        assert_eq!(failure.caller, CallerFailure::Same);
+        let failing = TestPlatform {
+            document: "AWS-RunPowerShellScript",
+            fails: true,
+        };
+        assert_eq!(
+            send_horizon_on(&aws, A, &failing, 5).unwrap_err().message,
+            fake::FAILED
+        );
         assert!(aws.lines().is_empty());
     }
 }

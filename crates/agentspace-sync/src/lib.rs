@@ -9,6 +9,12 @@
 //!   v0.07-T03, D55), and [`bootstrap`] and [`provision`], stubs pinned the same day for
 //!   E0.07-T03-S03 to build. Their signatures are the pin, and a change to them is the
 //!   architect's.
+//! - [`sync_keyed`], [`deploy_keyed`], [`bootstrap_keyed`] and [`provision_keyed`]: the same four
+//!   commands for a host named by its [`HostKey`] (D101; the dev lead's pin P2 for E0.12-T03-S03).
+//!   A `linux/arm64` key is today's command, the box's key [`Target::Box`] and any other
+//!   project's `Target::Host`; every other platform answers `agentspace_platforms::NOT_BUILT`
+//!   until E0.12-T03-S03's second part builds it. Each has a hidden `<name>_using` twin over
+//!   `Seams`.
 //! - `sync_using` and `deploy_using`, the same over `Seams`, and `Seams::real_except_go`, which
 //!   gives them the operator's own clock, CA check and push with a `go` finder and a localswim
 //!   folder of the test's: hidden from the docs, for tests alone, since `go`, the localswim
@@ -80,6 +86,8 @@ use folder::CommandFolder;
 
 /// The host a command acts on (D49, D55), re-exported so the operator names it through this crate.
 pub use agentspace_hosts::Target;
+
+use agentspace_hosts::HostKey;
 
 /// The ssh host alias every connection of `sync` goes through (operator.md, The `agentspace` SSH
 /// entry).
@@ -404,6 +412,152 @@ pub fn provision_using(
     provision::run(ctx, ca_env, project, say, aws, remote, seams, &none)
 }
 
+/// The answer of a `_keyed` entry point for a key whose platform is not built yet: a host that is
+/// not `linux/arm64` (E0.12-T03-S03, part 1).
+fn not_built() -> Failure {
+    Failure {
+        message: agentspace_platforms::NOT_BUILT.to_string(),
+        caller: CallerFailure::NotAvailable,
+    }
+}
+
+/// The [`Target`] of a `linux/arm64` key: the box's key is [`Target::Box`], and any other
+/// project's is `Target::Host(<project>)`. `None` for a key on any other platform.
+fn linux_arm64_target(key: &HostKey) -> Option<Target<'_>> {
+    if key.is_box() {
+        Some(Target::Box)
+    } else if key.is_linux_arm64() {
+        Some(Target::Host(&key.project))
+    } else {
+        None
+    }
+}
+
+/// [`sync`] for the host `key` names (D101). A `linux/arm64` key is [`sync`] of its [`Target`];
+/// a key on any other platform answers `agentspace_platforms::NOT_BUILT` with
+/// [`CallerFailure::NotAvailable`], before anything is read or run.
+pub fn sync_keyed(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+) -> Result<(), Failure> {
+    let target = linux_arm64_target(key).ok_or_else(not_built)?;
+    // [`sync`]'s own body, since the pinned pair is called by the integration rig alone (tests.rs,
+    // `no_test_calls_the_pinned_pair_but_the_rigs_guarded_two`).
+    with_real_seams(|seams| sync_target_using(ctx, ca_env, target, say, aws, remote, seams))
+}
+
+/// [`sync_keyed`] over [`Seams`].
+#[doc(hidden)]
+pub fn sync_keyed_using(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+    seams: &Seams,
+) -> Result<(), Failure> {
+    let target = linux_arm64_target(key).ok_or_else(not_built)?;
+    sync_target_using(ctx, ca_env, target, say, aws, remote, seams)
+}
+
+/// [`deploy_with_instance_type`] for the host `key` names (D101), as [`sync_keyed`] picks it.
+pub fn deploy_keyed(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    instance_type: Option<&str>,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+) -> Result<(), Failure> {
+    let target = linux_arm64_target(key).ok_or_else(not_built)?;
+    deploy_with_instance_type(ctx, ca_env, target, instance_type, say, aws, remote)
+}
+
+/// [`deploy_keyed`] over [`Seams`].
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn deploy_keyed_using(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    instance_type: Option<&str>,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+    seams: &Seams,
+) -> Result<(), Failure> {
+    let target = linux_arm64_target(key).ok_or_else(not_built)?;
+    deploy_target_sized_using(ctx, ca_env, target, instance_type, say, aws, remote, seams)
+}
+
+/// [`bootstrap`] for the host `key` names (D101), as [`sync_keyed`] picks it.
+pub fn bootstrap_keyed(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+) -> Result<(), Failure> {
+    let target = linux_arm64_target(key).ok_or_else(not_built)?;
+    bootstrap(ctx, ca_env, target, say, aws, remote)
+}
+
+/// [`bootstrap_keyed`] over [`Seams`].
+#[doc(hidden)]
+pub fn bootstrap_keyed_using(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+    seams: &Seams,
+) -> Result<(), Failure> {
+    let target = linux_arm64_target(key).ok_or_else(not_built)?;
+    bootstrap_using(ctx, ca_env, target, say, aws, remote, seams)
+}
+
+/// [`provision`] for the host `key` names (D101): a `linux/arm64` key is [`provision`] of its
+/// project, and a key on any other platform answers `agentspace_platforms::NOT_BUILT` with
+/// [`CallerFailure::NotAvailable`], before anything is read or run.
+pub fn provision_keyed(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+) -> Result<(), Failure> {
+    if !key.is_linux_arm64() {
+        return Err(not_built());
+    }
+    provision(ctx, ca_env, &key.project, say, aws, remote)
+}
+
+/// [`provision_keyed`] over [`Seams`].
+#[doc(hidden)]
+pub fn provision_keyed_using(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+    seams: &Seams,
+) -> Result<(), Failure> {
+    if !key.is_linux_arm64() {
+        return Err(not_built());
+    }
+    provision_using(ctx, ca_env, &key.project, say, aws, remote, seams)
+}
+
 /// A failure of one of `sync`'s or `deploy`'s own steps, with its exact message.
 fn step_failed(message: &str) -> Failure {
     Failure {
@@ -495,4 +649,234 @@ pub fn deploy_using(
     seams: &Seams,
 ) -> Result<(), Failure> {
     deploy_target_sized_using(ctx, ca_env, Target::Box, None, say, aws, remote, seams)
+}
+
+#[cfg(test)]
+mod keyed_tests {
+    //! The `_keyed` entry points of E0.12-T03-S03's part 1: a `linux/arm64` key is today's
+    //! command for its target, and a key on any other platform is not built yet.
+
+    use std::cell::RefCell;
+
+    use agentspace_box::SystemClock;
+    use agentspace_operator_api::{AwsError, Call, CallerLine, Mode};
+    use serde_json::Value;
+
+    use super::*;
+    use crate::tests::{Scratch, ctx_in};
+
+    /// An AWS CLI whose every call fails, recording each. Since nothing can succeed, no run here
+    /// can reach `sync`'s localswim step or `provision`'s step 9.
+    #[derive(Default)]
+    struct FailingAws(RefCell<Vec<String>>);
+
+    impl Aws for FailingAws {
+        fn call(&self, call: &Call) -> Result<Value, AwsError> {
+            let mut line = vec![call.service, call.operation];
+            line.extend(call.args);
+            self.0.borrow_mut().push(line.join(" "));
+            Err(AwsError::Failed("refused by the test".to_string()))
+        }
+    }
+
+    /// An ssh and scp whose every start exits 255, recording each.
+    #[derive(Default)]
+    struct FailingRemote(RefCell<Vec<String>>);
+
+    impl Remote for FailingRemote {
+        fn ssh(&self, options: &[&str], remote_command: Option<&str>) -> Result<i32, Failure> {
+            self.0
+                .borrow_mut()
+                .push(format!("ssh {} | {remote_command:?}", options.join(" ")));
+            Ok(255)
+        }
+        fn scp(&self, args: &[&str]) -> Result<i32, Failure> {
+            self.0.borrow_mut().push(format!("scp {}", args.join(" ")));
+            Ok(255)
+        }
+    }
+
+    /// Records every line.
+    #[derive(Default)]
+    struct Lines(RefCell<Vec<String>>);
+
+    impl Say for Lines {
+        fn mode(&self) -> Mode {
+            Mode::Person
+        }
+        fn progress(&self, person: &str, _caller: Option<CallerLine>) {
+            self.0.borrow_mut().push(format!("progress: {person}"));
+        }
+        fn warning(&self, person: &str) {
+            self.0.borrow_mut().push(format!("warning: {person}"));
+        }
+        fn detail(&self, text: &str) {
+            self.0.borrow_mut().push(format!("detail: {text}"));
+        }
+    }
+
+    /// What one run did: its failure's message and caller, its AWS calls, its ssh and scp, and
+    /// its lines.
+    type Outcome = (
+        Option<(String, CallerFailure)>,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+    );
+
+    /// Runs `run` in a fresh throwaway home at `dir`, with seams that find no `go`, and returns
+    /// what it did. The home is emptied first, so two runs in the same `dir` start alike.
+    fn outcome(
+        dir: &Path,
+        run: impl FnOnce(&Context, &dyn Say, &dyn Aws, &dyn Remote, &Seams) -> Result<(), Failure>,
+    ) -> Outcome {
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        let ctx = ctx_in(dir);
+        let (say, aws, remote) = (
+            Lines::default(),
+            FailingAws::default(),
+            FailingRemote::default(),
+        );
+        let clock = SystemClock::new();
+        let result =
+            Seams::real_except_go_and_clock(&|| None, dir.join("no-localswim"), &clock, |seams| {
+                run(&ctx, &say, &aws, &remote, seams)
+            });
+        (
+            result.err().map(|f| (f.message, f.caller)),
+            aws.0.take(),
+            remote.0.take(),
+            say.0.take(),
+        )
+    }
+
+    fn not_built_failure() -> Option<(String, CallerFailure)> {
+        Some((
+            agentspace_platforms::NOT_BUILT.to_string(),
+            CallerFailure::NotAvailable,
+        ))
+    }
+
+    #[test]
+    fn a_linux_arm64_key_names_todays_target() {
+        assert_eq!(
+            linux_arm64_target(&HostKey::linux_arm64("swimcoach")),
+            Some(Target::Box)
+        );
+        assert_eq!(
+            linux_arm64_target(&HostKey::linux_arm64("demo")),
+            Some(Target::Host("demo"))
+        );
+        for platform in ["linux/amd64", "windows/amd64"] {
+            assert_eq!(
+                linux_arm64_target(&HostKey::new("swimcoach", platform)),
+                None
+            );
+            assert_eq!(linux_arm64_target(&HostKey::new("demo", platform)), None);
+        }
+    }
+
+    /// Each `_keyed` twin of a `linux/arm64` key does what today's function does for its target,
+    /// and the box's key and another project's do different things, so the comparison tells them
+    /// apart.
+    #[test]
+    fn a_linux_arm64_key_runs_todays_command_for_its_target() {
+        let scratch = Scratch::new("keyed-today");
+        let dir = scratch.path().join("home-run");
+        let ca = CaEnv::default();
+        let keys = [
+            (HostKey::linux_arm64("swimcoach"), Target::Box),
+            (HostKey::linux_arm64("demo"), Target::Host("demo")),
+        ];
+        for (key, target) in &keys {
+            let target = *target;
+            assert_eq!(
+                outcome(&dir, |c, s, a, r, seams| {
+                    sync_keyed_using(c, &ca, key, s, a, r, seams)
+                }),
+                outcome(&dir, |c, s, a, r, seams| {
+                    sync_target_using(c, &ca, target, s, a, r, seams)
+                }),
+                "sync {target:?}"
+            );
+            assert_eq!(
+                outcome(&dir, |c, s, a, r, seams| {
+                    deploy_keyed_using(c, &ca, key, Some("m9g.large"), s, a, r, seams)
+                }),
+                outcome(&dir, |c, s, a, r, seams| {
+                    deploy_target_sized_using(c, &ca, target, Some("m9g.large"), s, a, r, seams)
+                }),
+                "deploy {target:?}"
+            );
+            assert_eq!(
+                outcome(&dir, |c, s, a, r, seams| {
+                    bootstrap_keyed_using(c, &ca, key, s, a, r, seams)
+                }),
+                outcome(&dir, |c, s, a, r, seams| {
+                    bootstrap_using(c, &ca, target, s, a, r, seams)
+                }),
+                "bootstrap {target:?}"
+            );
+        }
+        let demo = HostKey::linux_arm64("demo");
+        let today = outcome(&dir, |c, s, a, r, seams| {
+            provision_using(c, &ca, "demo", s, a, r, seams)
+        });
+        let keyed = outcome(&dir, |c, s, a, r, seams| {
+            provision_keyed_using(c, &ca, &demo, s, a, r, seams)
+        });
+        assert_eq!(keyed.0, today.0, "provision's failure");
+        assert_eq!(keyed.1, today.1, "provision's AWS calls");
+        assert!(keyed.0.is_some(), "provision with no registry fails");
+        assert_ne!(keyed.0, not_built_failure());
+
+        // The box and another project differ, so each comparison above names its own target.
+        let the_box = outcome(&dir, |c, s, a, r, seams| {
+            sync_target_using(c, &ca, Target::Box, s, a, r, seams)
+        });
+        let other = outcome(&dir, |c, s, a, r, seams| {
+            sync_target_using(c, &ca, Target::Host("demo"), s, a, r, seams)
+        });
+        assert_ne!(the_box, other);
+    }
+
+    /// Every `_keyed` entry point, public and hidden, answers `NOT_BUILT` for a key on another
+    /// platform, before any call, ssh, scp or line. The public four refuse before they reach the
+    /// real seams; with every AWS call failing, none could reach `go` or step 9's environment.
+    #[test]
+    fn a_key_on_another_platform_is_not_built_yet() {
+        let scratch = Scratch::new("keyed-not-built");
+        let dir = scratch.path().join("home-run");
+        let ca = CaEnv::default();
+        for platform in ["linux/amd64", "windows/amd64"] {
+            for project in ["swimcoach", "demo"] {
+                let key = HostKey::new(project, platform);
+                let want: Outcome = (not_built_failure(), vec![], vec![], vec![]);
+                let runs: Vec<Outcome> = vec![
+                    outcome(&dir, |c, s, a, r, seams| {
+                        sync_keyed_using(c, &ca, &key, s, a, r, seams)
+                    }),
+                    outcome(&dir, |c, s, a, r, seams| {
+                        deploy_keyed_using(c, &ca, &key, None, s, a, r, seams)
+                    }),
+                    outcome(&dir, |c, s, a, r, seams| {
+                        bootstrap_keyed_using(c, &ca, &key, s, a, r, seams)
+                    }),
+                    outcome(&dir, |c, s, a, r, seams| {
+                        provision_keyed_using(c, &ca, &key, s, a, r, seams)
+                    }),
+                    outcome(&dir, |c, s, a, r, _| sync_keyed(c, &ca, &key, s, a, r)),
+                    outcome(&dir, |c, s, a, r, _| {
+                        deploy_keyed(c, &ca, &key, Some("m8a.large"), s, a, r)
+                    }),
+                    outcome(&dir, |c, s, a, r, _| bootstrap_keyed(c, &ca, &key, s, a, r)),
+                    outcome(&dir, |c, s, a, r, _| provision_keyed(c, &ca, &key, s, a, r)),
+                ];
+                for (n, run) in runs.into_iter().enumerate() {
+                    assert_eq!(run, want, "{project} on {platform}, entry {n}");
+                }
+            }
+        }
+    }
 }

@@ -20,6 +20,9 @@
 //! The entry points:
 //! - [`start_and_wait`]: `up`'s steps 1 and 2. Reads the instance ID (from the cache, or rebuilt
 //!   from the host's `stack`, a parameter: `agentbox` for the box), starts the box and waits for it, ending with `Ready: <id>`. Returns the ID.
+//! - [`start_and_wait_on`]: [`start_and_wait`] on a host's platform, whose patch check and its
+//!   messages are the platform's (operator.md, The platform seam). [`start_and_wait`] is it on
+//!   `linux/arm64`.
 //! - [`start_and_wait_for`]: the shared start-and-wait step alone, for an ID already read.
 //! - [`instance_id`]: the instance ID from the cache, or from the given stack's output when the cache
 //!   counts as missing, handing the cache's new bytes to [`InstanceIdCache::write`].
@@ -39,7 +42,8 @@
 //!   `Running` with its launch time, `Other`, or `Unexpected` for a member missing.
 //! - [`stop_host`]: one `ec2 stop-instances`, asking EC2 to stop the instance and not waiting.
 //! - [`send_horizon`]: one `ssm send-command`, with the comment [`HORIZON_COMMENT`], that writes
-//!   the lease horizon to `/run/agentspace/lease-horizon` on the host.
+//!   the lease horizon to `/run/agentspace/lease-horizon` on the host; [`send_horizon_on`], the
+//!   same to a host of any platform, with the platform's horizon command and document.
 //!
 //! The seams and helpers:
 //! - [`Clock`], with [`SystemClock`] the real one.
@@ -55,6 +59,7 @@ mod clock;
 mod failure;
 mod guard;
 mod launch_time;
+mod run_command;
 mod wait;
 
 pub use cache::{
@@ -64,11 +69,12 @@ pub use cache::{
 pub use clock::{Clock, SystemClock};
 pub use failure::failure_line;
 pub use guard::{
-    Described, DescribedState, HORIZON_COMMENT, describe_hosts, send_horizon, stop_host,
+    Described, DescribedState, HORIZON_COMMENT, describe_hosts, send_horizon, send_horizon_on,
+    stop_host,
 };
 pub use wait::{PATCH_COMMENT, PATCH_QUESTION, start_and_wait_for};
 
-use agentspace_operator_api::{Aws, Failure, Say};
+use agentspace_operator_api::{Aws, Failure, HostPlatform, Say};
 
 #[cfg(doc)]
 use agentspace_operator_api::Mode;
@@ -80,6 +86,8 @@ use agentspace_operator_api::Mode;
 ///
 /// Returns the instance ID once the box is ready. Every failure ends the step at once, with
 /// nothing after it run.
+///
+/// It is `linux/arm64`'s: [`start_and_wait_on`] with `agentspace_platforms::LINUX_ARM64`.
 pub fn start_and_wait(
     aws: &dyn Aws,
     say: &dyn Say,
@@ -87,7 +95,32 @@ pub fn start_and_wait(
     cache: &dyn InstanceIdCache,
     stack: &str,
 ) -> Result<String, Failure> {
+    start_and_wait_on(
+        aws,
+        say,
+        clock,
+        cache,
+        stack,
+        &agentspace_platforms::LINUX_ARM64,
+    )
+}
+
+/// [`start_and_wait`] for a host of `platform` (operator.md, The platform seam): its patch check
+/// sends [`HostPlatform::patch_check_command`] through [`HostPlatform::ssm_document`], and its
+/// phase message and deadline are worded with [`HostPlatform::patch_messages`]. On both Linux
+/// platforms every call and line is [`start_and_wait`]'s, byte for byte (`--parameters
+/// commands=<question>`); on a platform whose document is not `AWS-RunShellScript`, such as
+/// `AWS-RunPowerShellScript`, the parameters are the JSON value `{"commands":["<question>"]}`,
+/// never the shorthand (pins P17 and P18 of v0.12-T02).
+pub fn start_and_wait_on(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    cache: &dyn InstanceIdCache,
+    stack: &str,
+    platform: &dyn HostPlatform,
+) -> Result<String, Failure> {
     let id = instance_id(aws, cache, stack)?;
-    start_and_wait_for(aws, say, clock, &id)?;
+    wait::start_and_wait_for_on(aws, say, clock, &id, platform)?;
     Ok(id)
 }

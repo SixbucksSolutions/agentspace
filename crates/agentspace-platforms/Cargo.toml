@@ -4,14 +4,20 @@ version = "0.12.0"
 edition.workspace = true
 description = "The platform seam's implementations for both Linux platforms, and the one function that picks a host's platform (docs/operator.md, The platform seam; D94, D101)"
 publish = false
+build = "build.rs"
 
 [lib]
 name = "agentspace_platforms"
 path = "src/lib.rs"
 
 # The architect's skeleton (D101's change before v0.12-T03), committed before v0.12-T03: E0.12-T03-S03
-# (#0256) builds its Linux rows. It depends on no agentspace crate but the seam and the Windows one,
-# so the push, the guard, the ProxyCommand, sync and the operator can each depend on it.
+# (#0256) builds its Linux rows. It depends on no agentspace crate but the seam, the Windows one and
+# the zone check, so the push, the guard, the ProxyCommand, sync and the operator can each depend on
+# it. It MUST NOT depend, nor dev-depend, on sync, box, push, the operator or any crate that depends
+# on it.
 [dependencies]
 agentspace-operator-api = { path = "../agentspace-operator-api" }
 agentspace-windows = { path = "../agentspace-windows" }
+# The push's zone check, `is_valid_zone`, the last guard of the Linux push script, as the push's
+# own remote command has it today (operator.md, The time zone). A leaf crate.
+agentspace-zone = { path = "../agentspace-zone" }

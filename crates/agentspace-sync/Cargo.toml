@@ -32,6 +32,9 @@ agentspace-credential = { path = "../agentspace-credential" }
 # provision; D48, D55).
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-driver-ec2 = { path = "../agentspace-driver-ec2" }
+# The platform seam's "not built" answer, for the entry points that take a host key (operator.md,
+# The platform seam; D101). It depends on no crate that depends on this one.
+agentspace-platforms = { path = "../agentspace-platforms" }
 # The versions already in Cargo.lock. serde: only DeserializeSeed and Visitor, for the
 # repeated-member check of the stack parameters file. jsonschema: the stack parameters schema,
 # carried inside the operator, with no remote reference fetched (D38).
