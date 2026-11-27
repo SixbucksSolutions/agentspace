@@ -16,7 +16,6 @@ use std::io::Write;
 use std::os::windows::fs::OpenOptionsExt;
 use std::time::Duration;
 
-use agentspace_keeper_api::Started;
 use common::{
     FakeMatcher, Fixture, holder_of, read_text, running, start_stub, start_with, stub_exe,
     testhost, wait_for,
@@ -127,6 +126,9 @@ fn the_log_can_be_read_appended_to_and_rotated_while_the_holder_runs() {
     );
 }
 
+/// The later holder is a stand-in that stays running, so its start MUST give a holder. One that
+/// exited at once raced step 7 of the handshake (keeper.md): caught while it exited, its command
+/// line could not be read back, and the start failed saying it runs unrecorded (#0268).
 #[test]
 fn a_later_holder_is_not_refused_while_an_earlier_one_still_has_the_log() {
     let fx = Fixture::new("log-later");
@@ -144,29 +146,21 @@ fn a_later_holder_is_not_refused_while_an_earlier_one_still_has_the_log() {
 
     // A later holder starts into the same log while the first still has it open.
     let exe = stub_exe();
-    let matcher = FakeMatcher::stub("stub_exit");
-    let second_started = start_with(
+    let matcher = FakeMatcher::stub("stub_sleep");
+    let second = holder_of(start_with(
         &fx,
         &testhost(),
         &exe,
         &matcher,
         "0a1b2c3d-0000-4000-8000-000000000002",
         "agentspace-spec-second",
-    );
-    // The second holder is a stand-in that exits at once; the start may report that, which is a
-    // result of item 7, never a refusal of the log.
-    match &second_started {
-        Started::Holder(_) => {}
-        Started::Failed(why) => assert!(
-            why.contains("exited at once"),
-            "A later holder was refused for a reason other than its own exit: {why}"
-        ),
-    }
-    let text = wait_for(Duration::from_secs(10), || {
+    ));
+    let text = wait_for(Duration::from_secs(30), || {
         let t = read_text(&fx.log());
-        (t.matches("stub-start pid=").count() >= 2).then_some(t)
+        t.contains(&format!("stub-start pid={}", second.pid))
+            .then_some(t)
     })
-    .expect("Both holders' first lines reached the one log.");
+    .expect("The later holder's first line reached the one log.");
     assert!(
         text.contains(&format!("stub-start pid={}", first.pid)),
         "The first holder's line is in the log."

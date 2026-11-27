@@ -292,14 +292,75 @@ fn a_command_line_longer_than_the_first_buffer_is_read_whole() {
 
 // The stop.
 
+/// The tree under `root` by keeper.md's own rule (Stopping a holder), with each process's creation
+/// time and depth: a process listed under a parent of the tree belongs to it only when, on its own
+/// handle, it still runs, gives that parent's PID, and was created no earlier than that parent.
+/// Parent PID alone is not enough on a busy laptop: a process whose parent died lists that PID
+/// still, and once Windows gives the PID to a holder, the process looks like the holder's child
+/// (#0268). Every handle is held until the walk ends, so no PID in the tree is reused during it.
+fn tree_by_the_stops_rule(root: u32) -> Vec<(u32, String, usize)> {
+    let Ok(root_handle) = Windows.open(root, false) else {
+        return Vec::new();
+    };
+    let Ok(root_created) = Windows.created(&root_handle) else {
+        return Vec::new();
+    };
+    let list = Windows.processes().unwrap();
+    let mut held = vec![root_handle];
+    let mut found: Vec<(u32, u64, usize)> = Vec::new();
+    let mut frontier = vec![(root, root_created, 0usize)];
+    while let Some((parent, parent_created, depth)) = frontier.pop() {
+        for e in list.iter().filter(|e| e.parent == parent && e.pid != root) {
+            if found.iter().any(|&(pid, _, _)| pid == e.pid) {
+                continue;
+            }
+            let Ok(h) = Windows.open(e.pid, false) else {
+                continue;
+            };
+            let Ok(created) = Windows.created(&h) else {
+                continue;
+            };
+            if Windows.exited(&h) == Ok(false)
+                && Windows.parent_pid(&h) == Ok(parent)
+                && created >= parent_created
+            {
+                found.push((e.pid, created, depth + 1));
+                frontier.push((e.pid, created, depth + 1));
+                held.push(h);
+            }
+        }
+    }
+    drop(held);
+    found
+        .into_iter()
+        .map(|(pid, created, depth)| (pid, filetime_text(created), depth))
+        .collect()
+}
+
+/// Waits, up to 30 seconds, until the tree under `root` by the stop's rule is three deep (cmd,
+/// cmd, ping), and gives its processes' PIDs with their creation times.
+fn wait_for_tree_by_the_stops_rule(root: u32) -> Vec<(u32, String)> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let tree = tree_by_the_stops_rule(root);
+        if tree.iter().any(|&(_, _, depth)| depth >= 2) {
+            return tree.into_iter().map(|(pid, at, _)| (pid, at)).collect();
+        }
+        assert!(Instant::now() < deadline, "The stub's tree never grew");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The trees checked are found by keeper.md's rule for a holder's tree, never by parent PID alone,
+/// which under load can take in a process that only lists a reused PID as its parent (#0268).
 #[test]
 fn a_stop_ends_the_whole_tree_and_leaves_another_holder_with_the_same_command() {
     let (dir, home) = scratch();
     let holder = Holder::start(dir.path(), &home, "tree");
     // Another holder with the very same command line, which is not in the first one's tree.
     let other = Holder::start(dir.path(), &home, "tree");
-    let tree = holder.wait_for_tree();
-    let other_tree = other.wait_for_tree();
+    let tree = wait_for_tree_by_the_stops_rule(holder.pid());
+    let other_tree = wait_for_tree_by_the_stops_rule(other.pid());
     let record = holder.record();
     let other_record = other.record();
 
