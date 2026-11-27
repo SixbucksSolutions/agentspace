@@ -351,8 +351,26 @@ fn wait_for_tree_by_the_stops_rule(root: u32) -> Vec<(u32, String)> {
     }
 }
 
+/// Whether the process that ran at `pid` and was created at `at` still runs at `deadline`, asked
+/// every 20 ms until it has ended or the deadline has passed. A stop waits a bounded time for each
+/// process and then returns, so it does not promise that every process of the tree has ended by
+/// then (keeper.md, Stopping a holder).
+fn still_runs_at_the_deadline(deadline: Instant, pid: u32, at: &str) -> bool {
+    loop {
+        if !still_runs(pid, at) {
+            return false;
+        }
+        if Instant::now() >= deadline {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// The trees checked are found by keeper.md's rule for a holder's tree, never by parent PID alone,
-/// which under load can take in a process that only lists a reused PID as its parent (#0268).
+/// which under load can take in a process that only lists a reused PID as its parent (#0268). The
+/// stopped tree is checked by a poll of up to 30 seconds in all, since a stop's return does not
+/// promise that every process of it has ended (keeper.md, Stopping a holder).
 #[test]
 fn a_stop_ends_the_whole_tree_and_leaves_another_holder_with_the_same_command() {
     let (dir, home) = scratch();
@@ -366,9 +384,17 @@ fn a_stop_ends_the_whole_tree_and_leaves_another_holder_with_the_same_command() 
 
     assert_eq!(holder.stop(), Stopped::All);
 
-    assert!(!still_runs(record.pid, &record.process_started_at));
+    let ended_by = Instant::now() + Duration::from_secs(30);
+    assert!(!still_runs_at_the_deadline(
+        ended_by,
+        record.pid,
+        &record.process_started_at
+    ));
     for (pid, at) in &tree {
-        assert!(!still_runs(*pid, at), "A process of its tree still runs");
+        assert!(
+            !still_runs_at_the_deadline(ended_by, *pid, at),
+            "A process of its tree still runs"
+        );
     }
     assert!(still_runs(
         other_record.pid,
