@@ -2,9 +2,14 @@
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
-//! - **The script is the repository's `box\bootstrap.sh`, embedded byte for byte**, and MUST be sent
-//!   to the host on an ssh's stdin exactly as it is carried, and never written to a file on the
-//!   laptop.
+//! - **The script and how it reaches the host are the platform seam's bootstrap row** (operator.md,
+//!   The platform seam; D101). On both Linux platforms it is the repository's `box\bootstrap.sh`,
+//!   embedded byte for byte, and MUST be sent to the host on an ssh's stdin exactly as it is
+//!   carried, and never written to a file on the laptop ([`ScriptDelivery::Stdin`]). On
+//!   `windows/amd64` it is `box\windows\bootstrap.ps1`, written into the command's own folder,
+//!   copied with one `scp` into the login user's home under the row's name, then run by one ssh
+//!   whose stdin is empty and closed ([`ScriptDelivery::CopyThenRun`]; operator.md, bootstrap on a
+//!   Windows host). A failed copy fails as a failed run does.
 //! - **The ssh gets a pipe for its stdin**, to which the operator writes the script's bytes and then
 //!   closes it, so `bootstrap` reads nothing from a person. Its stdout and stderr are the
 //!   operator's, so the script's output passes through. There is no time limit of the operator's
@@ -21,28 +26,25 @@
 //!   AGENTSPACE_SSH_CMD names <value>, which cannot be run.` for an ssh the seam variable names,
 //!   since a file the system cannot start is one that names nothing runnable (operator.md, The test
 //!   seam), and `agentspace: Could not run <path>.` for the default (Programs it starts).
-//! - **The remote command is the operator's own words** (D34), one argument, the last, and holds no
-//!   `%`, no double quote and no control character and does not end in a backslash (gap FA-15). It
-//!   runs the script it reads from its stdin with bash as the login user, and exits with the
-//!   script's status.
+//! - **The remote command is the seam's** (D34), one argument, the last. On Linux it holds no `%`,
+//!   no double quote and no control character and does not end in a backslash (gap FA-15), runs
+//!   the script it reads from its stdin with bash as the login user, and exits with the script's
+//!   status.
 //! - **A non-zero exit, 255 for an ssh that could not connect included, fails** with `agentspace:
 //!   The toolchain bootstrap failed on the instance.`
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use agentspace_box::start_and_wait;
+use agentspace_box::start_and_wait_on;
 use agentspace_ca::CaEnv;
-use agentspace_hosts::Target;
-use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Remote, Say};
+use agentspace_hosts::{HostKey, Target};
+use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Remote, Say, ScriptDelivery};
 use agentspace_run::Program;
 
-use crate::files::Places;
-use crate::syncing::plan;
-use crate::{Seams, embedded, host, steps};
-
-/// The remote command: bash reads the script from stdin, to its end, and exits with its status.
-pub(crate) const REMOTE_COMMAND: &str = "bash -s";
+use crate::files::{Places, cannot_write};
+use crate::syncing::plan_keyed;
+use crate::{Seams, host, scp, steps, text};
 
 const FAILED: &str = "agentspace: The toolchain bootstrap failed on the instance.";
 
@@ -53,7 +55,7 @@ fn failure(message: String) -> Failure {
     }
 }
 
-/// [`crate::bootstrap`] over [`Seams`].
+/// [`crate::bootstrap`] over [`Seams`]: [`run_key`] of the target's `linux/arm64` key.
 pub(crate) fn run(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -63,30 +65,74 @@ pub(crate) fn run(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    // The pinned `Remote` has no stdin, so the bootstrap's own ssh is started below.
-    let _ = remote;
+    run_key(ctx, ca_env, &crate::key_of(target), say, aws, remote, seams)
+}
+
+/// `bootstrap` for the host `key` over [`Seams`] (operator.md, bootstrap; bootstrap on a Windows
+/// host).
+pub(crate) fn run_key(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+    seams: &Seams,
+) -> Result<(), Failure> {
     let places = Places::new(ctx);
     // The host is looked up once, as the command starts, before any program starts.
-    let plan = plan(&places, target)?;
+    let plan = plan_keyed(&places, key)?;
+    let platform = plan.platform()?;
+    // The platform's row is read before anything runs.
+    let bootstrap = platform.bootstrap()?;
 
     // Step 1: start the host and wait for it.
-    let instance_id = start_and_wait(aws, say, seams.clock, &plan.cache, &plan.host.stack)
-        .map_err(|failure| plan.hint(failure))?;
+    let instance_id = start_and_wait_on(
+        aws,
+        say,
+        seams.clock,
+        &plan.cache,
+        &plan.host.stack,
+        platform,
+    )
+    .map_err(|failure| plan.hint(failure))?;
 
     // Step 2: for a host that is not the box, the CA check, then its key, certificate and alias.
     if !plan.is_box {
         (seams.ca_check)(ctx, ca_env)?;
-        host::prepare(ctx, &places, &plan.host.project, seams)?;
+        host::prepare_keyed(ctx, &places, &plan.key, platform, seams)?;
     }
 
-    // Step 3: the ssh, with the script on its stdin.
+    // Step 3: the platform's delivery. On Linux, the ssh with the script on its stdin (the pinned
+    // `Remote` has no stdin, so it is started here); on Windows, the script written into the
+    // command's folder, one scp, then one ssh with an empty stdin.
     say.progress("Running the toolchain bootstrap on the instance...", None);
-    let code = ssh_with_stdin(
-        || agentspace_run::ssh_found(ctx),
-        &plan.alias,
-        REMOTE_COMMAND,
-        embedded::BOOTSTRAP,
-    )?;
+    let code = match &bootstrap.delivery {
+        ScriptDelivery::Stdin { remote_command } => ssh_with_stdin(
+            || agentspace_run::ssh_found(ctx),
+            &plan.alias,
+            remote_command,
+            bootstrap.script,
+        )?,
+        ScriptDelivery::CopyThenRun {
+            remote_name,
+            remote_command,
+        } => {
+            let folder = seams.folder.path(&places)?;
+            let local = folder.join(local_name(remote_name));
+            std::fs::write(&local, bootstrap.script).map_err(|_| cannot_write(&local))?;
+            let target = format!("{}:{remote_name}", plan.alias);
+            if !scp(remote, &[&text(&local), &target])? {
+                return Err(failure(FAILED.to_string()));
+            }
+            ssh_with_stdin(
+                || agentspace_run::ssh_found(ctx),
+                &plan.alias,
+                remote_command,
+                &[],
+            )?
+        }
+    };
 
     // Step 4: any non-zero exit fails.
     if code != 0 {
@@ -96,6 +142,19 @@ pub(crate) fn run(
     // Step 5.
     say.progress(&format!("Bootstrapped: {instance_id}"), None);
     Ok(())
+}
+
+/// The copy's name in the command's folder for a script the host gets as `remote_name`:
+/// `bootstrap` and the remote name's extension, `bootstrap.ps1` for `.agentspace-bootstrap.ps1`
+/// (operator.md, bootstrap on a Windows host, step 1).
+fn local_name(remote_name: &str) -> String {
+    match std::path::Path::new(remote_name)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some(extension) => format!("bootstrap.{extension}"),
+        None => "bootstrap".to_string(),
+    }
 }
 
 /// One ssh with forwards cleared, `alias`, and `remote_command` as its last argument, whose stdin is
@@ -150,8 +209,25 @@ fn run_ssh(
 mod tests {
     use super::*;
     use crate::tests::{Scratch, ctx_in, raw_stand_in};
+    use agentspace_operator_api::HostPlatform;
     use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
+
+    /// The seam's `linux/arm64` bootstrap row: its remote command, today's `bash -s`, and
+    /// `box\bootstrap.sh` (E0.12-T03-S03 part 2 deleted this crate's own copies; pin P1).
+    fn linux_bootstrap() -> (String, &'static [u8]) {
+        let row = agentspace_platforms::LINUX_ARM64.bootstrap().unwrap();
+        let ScriptDelivery::Stdin { remote_command } = row.delivery else {
+            panic!("A Linux bootstrap goes on stdin");
+        };
+        (remote_command, row.script)
+    }
+
+    #[test]
+    fn the_copys_local_name_is_bootstrap_with_the_remote_names_extension() {
+        assert_eq!(local_name(".agentspace-bootstrap.ps1"), "bootstrap.ps1");
+        assert_eq!(local_name("x"), "bootstrap");
+    }
 
     const SSH_VAR: &str = "AGENTSPACE_SSH_CMD";
 
@@ -161,11 +237,12 @@ mod tests {
     fn bootstrap_ssh(ctx: &Context, seam: Option<&OsStr>) -> Result<i32, Failure> {
         let seam = seam.map(OsStr::to_os_string);
         let lookup = move |name: &str| if name == SSH_VAR { seam.clone() } else { None };
+        let (remote_command, script) = linux_bootstrap();
         ssh_with_stdin(
             || agentspace_run::ssh_found_with(ctx, &lookup),
             "agentspace-host.demo",
-            REMOTE_COMMAND,
-            embedded::BOOTSTRAP,
+            &remote_command,
+            script,
         )
     }
 
@@ -198,7 +275,8 @@ mod tests {
 
     #[test]
     fn the_remote_command_keeps_fa15s_rule() {
-        let command = REMOTE_COMMAND;
+        let (command, _) = linux_bootstrap();
+        let command = command.as_str();
         assert!(!command.contains('%'));
         assert!(!command.contains('"'));
         assert!(!command.chars().any(char::is_control));
@@ -225,7 +303,7 @@ mod tests {
         );
         let stdin = std::fs::read_to_string(dir.path().join("stdin.txt")).unwrap();
         let sent: Vec<&str> = stdin.lines().collect();
-        let script = std::str::from_utf8(embedded::BOOTSTRAP).unwrap();
+        let script = std::str::from_utf8(linux_bootstrap().1).unwrap();
         let want: Vec<&str> = script.lines().collect();
         assert_eq!(sent, want);
     }
@@ -290,13 +368,9 @@ mod tests {
         std::fs::write(&path, b"").unwrap();
         let found = agentspace_run::ssh_found_with(&ctx, &|_| None).unwrap();
         std::fs::remove_file(&path).unwrap();
-        let failure = ssh_with_stdin(
-            || Ok(found),
-            "agentspace",
-            REMOTE_COMMAND,
-            embedded::BOOTSTRAP,
-        )
-        .unwrap_err();
+        let (remote_command, script) = linux_bootstrap();
+        let failure =
+            ssh_with_stdin(|| Ok(found), "agentspace", &remote_command, script).unwrap_err();
         assert_eq!(
             failure.message,
             format!("agentspace: Could not run {}.", path.display())
@@ -358,7 +432,8 @@ mod tests {
 
     #[test]
     fn the_script_is_carried_whole() {
-        assert!(embedded::BOOTSTRAP.starts_with(b"#!/bin/bash\n"));
-        assert!(!embedded::BOOTSTRAP.contains(&b'\r'));
+        let (_, script) = linux_bootstrap();
+        assert!(script.starts_with(b"#!/bin/bash\n"));
+        assert!(!script.contains(&b'\r'));
     }
 }

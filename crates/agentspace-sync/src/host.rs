@@ -15,6 +15,10 @@
 //!   alias is left as it is and fails the command.
 //! - **The private key is never printed, logged or put in a message.** A message names a path, and
 //!   no program gets more of the key than its path.
+//! - **Every name is the host's** (D91): its folder `hosts\<host name>\`, its alias and host-key
+//!   name `agentspace-host.<host name>`, its certificate's key ID `operator-<host name>`, and its
+//!   certificate's principal the platform seam's login user (pin P12 of v0.12-T03). A
+//!   `linux/arm64` host's name is its project, so every one of its names is as before v0.12.
 //! - **The alias's ProxyCommand names `agentspace-ssh-proxy.exe` in the operator's own folder**,
 //!   and a program that is not there fails the command before any ssh starts.
 
@@ -25,9 +29,9 @@ use agentspace_alias::{
     AliasFailureKind, HostAliasFile, default_proxy_command, ensure_include, host_alias_file_bytes,
     host_alias_name, host_file_text, known_hosts_text, write_host_alias,
 };
-use agentspace_credential::{ensure_operator_key, sign_operator_certificate};
-use agentspace_hosts::host_key_path;
-use agentspace_operator_api::{CallerFailure, Context, Failure};
+use agentspace_credential::{ensure_operator_key_for, sign_operator_certificate_for};
+use agentspace_hosts::{HostKey, host_key_path_keyed};
+use agentspace_operator_api::{CallerFailure, Context, Failure, HostPlatform};
 
 use crate::Seams;
 use crate::files::{Places, cannot_write};
@@ -60,16 +64,37 @@ fn ssh_dir(places: &Places, seams: &Seams) -> PathBuf {
     }
 }
 
-/// Makes the operator's key, certificate and alias for `project`'s host (operator.md, How the
-/// operator reaches a host, steps 2 to 4). The CA check, step 1, is the caller's.
+/// [`prepare_keyed`] for `project`'s `linux/arm64` host.
+#[cfg(test)]
 pub(crate) fn prepare(
     ctx: &Context,
     places: &Places,
     project: &str,
     seams: &Seams,
 ) -> Result<(), Failure> {
+    prepare_keyed(
+        ctx,
+        places,
+        &HostKey::linux_arm64(project),
+        &agentspace_platforms::LINUX_ARM64,
+        seams,
+    )
+}
+
+/// Makes the operator's key, certificate and alias for the host `key` of `platform` (operator.md,
+/// How the operator reaches a host, steps 2 to 4), each by its host name, the certificate's
+/// principal the platform's login user. The CA check, step 1, is the caller's.
+pub(crate) fn prepare_keyed(
+    ctx: &Context,
+    places: &Places,
+    key: &HostKey,
+    platform: &dyn HostPlatform,
+    seams: &Seams,
+) -> Result<(), Failure> {
     let home = places.home();
-    let key_path = host_key_path(home, project);
+    let host_name = key.host_name();
+    let project = host_name.as_str();
+    let key_path = host_key_path_keyed(home, key);
 
     // Step 2: the key. It is looked for without the lock, so that a command that writes no registry
     // never waits on a provisioning run's `hosts.lock` (architect, 2026-11-21, for v0.07-T03, on
@@ -78,7 +103,7 @@ pub(crate) fn prepare(
     // keys. The lock is never held across anything else.
     if !key_path.is_file() {
         let _held = crate::registry::lock(home)?;
-        ensure_operator_key(home, project).map_err(|e| {
+        ensure_operator_key_for(home, project).map_err(|e| {
             failure(format!(
                 "agentspace: Could not make the operator's key {}: {}",
                 key_path.display(),
@@ -88,12 +113,14 @@ pub(crate) fn prepare(
     }
 
     // Step 3: a fresh certificate, replacing the last in one rename.
-    sign_operator_certificate(home, project, unix_now()).map_err(|e| {
-        failure(format!(
-            "agentspace: Could not sign the operator's certificate for '{project}': {}",
-            e.message
-        ))
-    })?;
+    sign_operator_certificate_for(home, project, platform.login_user(), unix_now()).map_err(
+        |e| {
+            failure(format!(
+                "agentspace: Could not sign the operator's certificate for '{project}': {}",
+                e.message
+            ))
+        },
+    )?;
 
     // Step 4: the alias, after the program it names is known to be there.
     write_alias(ctx, places, project, seams)
@@ -413,6 +440,48 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&alias_path).unwrap(),
             "# a person's own file\n"
+        );
+    }
+
+    /// A host of another platform gets everything under its host name, and the certificate's
+    /// principal is its platform's login user (D91, D95; pin P12 of v0.12-T03): `agent` on
+    /// `windows/amd64`, whose alias's `User` is `agent` too.
+    #[test]
+    fn a_windows_host_gets_its_key_certificate_and_alias_by_its_host_name() {
+        let dir = Scratch::new("host-prepare-windows");
+        let Some(ctx) = lab(&dir) else { return };
+        let places = Places::new(&ctx);
+        let key = HostKey::new("demo", "windows/amd64");
+        let windows = agentspace_platforms::for_platform("windows/amd64").unwrap();
+        with_seams(&dir, true, |seams| {
+            prepare_keyed(&ctx, &places, &key, windows, seams).unwrap()
+        });
+        let host_dir = agentspace_hosts::host_dir_keyed(places.home(), &key);
+        assert!(host_dir.ends_with("demo.windows-amd64"));
+        assert!(host_dir.join("id_ed25519").is_file());
+        let cert = std::fs::read_to_string(host_dir.join("id_ed25519-cert.pub")).unwrap();
+        let cert = ssh_key::Certificate::from_openssh(cert.trim()).unwrap();
+        assert_eq!(cert.key_id(), "operator-demo.windows-amd64");
+        assert_eq!(cert.valid_principals(), ["agent"]);
+        let alias = std::fs::read_to_string(
+            dir.path()
+                .join("ssh")
+                .join("agentspace.d")
+                .join("agentspace-host.demo.windows-amd64"),
+        )
+        .unwrap();
+        assert!(alias.starts_with("# agentspace host demo.windows-amd64; "));
+        assert!(alias.contains("Host agentspace-host.demo.windows-amd64\n"));
+        assert!(alias.contains("  User agent\n"));
+        assert!(alias.contains("  HostKeyAlias agentspace-host.demo.windows-amd64\n"));
+        // The project's linux/arm64 host has no folder and no alias from it.
+        assert!(!agentspace_hosts::host_dir(places.home(), "demo").exists());
+        assert!(
+            !dir.path()
+                .join("ssh")
+                .join("agentspace.d")
+                .join("agentspace-host.demo")
+                .exists()
         );
     }
 }

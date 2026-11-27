@@ -5,8 +5,13 @@
 //!
 //! - **It runs right after the install (row 4) exited 0, and before row 5.** It starts no ssh or
 //!   scp: its calls are the AWS CLI's, through Session Manager's Run Command.
-//! - **It asks `up`'s question, [`agentspace_box::PATCH_QUESTION`]**, with its own comment,
-//!   [`PATCH_COMMENT`], so Run Command's history tells `sync`'s questions from `up`'s.
+//! - **It asks `up`'s question, the platform seam's patch check row**
+//!   (`HostPlatform::patch_check_command`), through the seam's Session Manager document, with its
+//!   own comment, [`PATCH_COMMENT`], so Run Command's history tells `sync`'s questions from `up`'s.
+//!   Its `--parameters` is `commands=<question>` on `AWS-RunShellScript`, as before v0.12, and the
+//!   JSON value `{"commands":["<question>"]}` on every other document (pins P17 and P18 of
+//!   v0.12-T02), as `up`'s is. Its phase message and the command its deadline and warning name
+//!   are the seam's patch messages; on both Linux platforms each is today's, byte for byte.
 //! - **Only `patched` and `failed` end it**, each from an invocation that ended in `Success`.
 //!   Every other outcome is a check that was not ready: `pending`, `unknown`, an empty or
 //!   unexpected answer, an invocation that ended in another status, 20 polls without an end, a
@@ -15,7 +20,7 @@
 //!   `up`'s wait.
 //! - **A `failed` answer MUST NOT fail `sync`**: it ends the wait at once with one warning, and
 //!   `sync` goes on (P21).
-//! - **It fails at its 30-minute deadline**, with the host's alias in its `journalctl` hint, and
+//! - **It fails at its 30-minute deadline**, with the host's alias in its log hint, and
 //!   on #0034's sign-in failure or a failed `ssm describe-instance-information` at once.
 //! - **Its timing is `up`'s wait's**: the first check at once, a pause of 5 seconds after each
 //!   check that was not ready, the deadline tested after each such check, and the last pause cut
@@ -23,8 +28,8 @@
 
 use std::time::Duration;
 
-use agentspace_box::{Clock, PATCH_QUESTION};
-use agentspace_operator_api::{Aws, AwsError, Call, Failure, Output, Say};
+use agentspace_box::Clock;
+use agentspace_operator_api::{Aws, AwsError, Call, Failure, HostPlatform, Output, Say};
 use serde_json::Value;
 
 use crate::step_failed;
@@ -42,7 +47,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const POLL_LIMIT: usize = 20;
 
 const WAITING_FOR_SESSION_MANAGER: &str = "Waiting for Session Manager...";
-const PATCHING: &str = "Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...";
 
 /// How the wait ended, when it did not fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,8 +65,17 @@ enum Check {
     Failed,
 }
 
-/// The wait, for the host `id`, whose alias `alias` the deadline's and the warning's `journalctl`
-/// hint names (`agentspace` for the box, `agentspace-host.<project>` for every other host).
+/// What one platform's checks send and say: the document, the `--parameters` value, the phase
+/// message and the command the hints name, read from its seam before any call.
+struct Question {
+    document: &'static str,
+    parameters: String,
+    phase: String,
+    log_command: String,
+}
+
+/// The wait on a `linux/arm64` host: [`wait_on`] with its seam.
+#[cfg(test)]
 pub(crate) fn wait(
     aws: &dyn Aws,
     say: &dyn Say,
@@ -70,6 +83,37 @@ pub(crate) fn wait(
     id: &str,
     alias: &str,
 ) -> Result<PatchOutcome, Failure> {
+    wait_on(
+        aws,
+        say,
+        clock,
+        id,
+        alias,
+        &agentspace_platforms::LINUX_ARM64,
+    )
+}
+
+/// The wait, for the host `id` of `platform`, whose alias `alias` the deadline's and the warning's
+/// hint names (`agentspace` for the box, `agentspace-host.<host name>` for every other host), with
+/// the platform's log command (`journalctl -u agentspace-patch` on Linux). A platform whose patch
+/// check fails ends the wait with that failure before any line or call.
+pub(crate) fn wait_on(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    id: &str,
+    alias: &str,
+    platform: &dyn HostPlatform,
+) -> Result<PatchOutcome, Failure> {
+    let command = platform.patch_check_command()?;
+    let messages = platform.patch_messages();
+    let question = Question {
+        document: platform.ssm_document(),
+        parameters: agentspace_box::run_command_parameters(platform, &command),
+        phase: messages.phase,
+        log_command: messages.log_command,
+    };
+    let log_command = question.log_command.as_str();
     say.progress(
         &format!("Checking that {id} has finished this boot's patch run..."),
         None,
@@ -77,19 +121,19 @@ pub(crate) fn wait(
     let started = clock.now();
     let mut last: Option<&str> = None;
     loop {
-        let message = match check(aws, clock, id)? {
+        let message = match check(aws, clock, id, &question)? {
             Check::Patched => {
                 say.progress(&format!("Patched: {id}"), None);
                 return Ok(PatchOutcome::Patched);
             }
             Check::Failed => {
                 say.warning(&format!(
-                    "agentspace: The patch run on {id} failed; sync goes on without it. Check: ssh {alias} journalctl -u agentspace-patch"
+                    "agentspace: The patch run on {id} failed; sync goes on without it. Check: ssh {alias} {log_command}"
                 ));
                 return Ok(PatchOutcome::Failed);
             }
             Check::NotOnline => WAITING_FOR_SESSION_MANAGER,
-            Check::NotReady => PATCHING,
+            Check::NotReady => question.phase.as_str(),
         };
         if last != Some(message) {
             say.progress(message, None);
@@ -98,7 +142,7 @@ pub(crate) fn wait(
         let elapsed = clock.now().saturating_sub(started);
         if elapsed >= WAIT_LIMIT {
             return Err(step_failed(&format!(
-                "agentspace: {id} did not finish its patch run within 30 minutes; check: ssh {alias} journalctl -u agentspace-patch"
+                "agentspace: {id} did not finish its patch run within 30 minutes; check: ssh {alias} {log_command}"
             )));
         }
         // The last pause never runs past the deadline, so the last check is made at it.
@@ -107,11 +151,15 @@ pub(crate) fn wait(
 }
 
 /// One check: Session Manager's agent, then, when it is `Online`, the question.
-fn check(aws: &dyn Aws, clock: &dyn Clock, id: &str) -> Result<Check, Failure> {
+fn check(
+    aws: &dyn Aws,
+    clock: &dyn Clock,
+    id: &str,
+    question: &Question,
+) -> Result<Check, Failure> {
     if !session_manager_online(aws, id)? {
         return Ok(Check::NotOnline);
     }
-    let parameters = format!("commands={PATCH_QUESTION}");
     let sent = aws.call(&Call {
         service: "ssm",
         operation: "send-command",
@@ -119,11 +167,11 @@ fn check(aws: &dyn Aws, clock: &dyn Clock, id: &str) -> Result<Check, Failure> {
             "--instance-ids",
             id,
             "--document-name",
-            "AWS-RunShellScript",
+            question.document,
             "--comment",
             PATCH_COMMENT,
             "--parameters",
-            &parameters,
+            &question.parameters,
         ],
         output: Output::Json,
     });
@@ -214,6 +262,17 @@ fn session_manager_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 mod tests {
     use super::*;
     use agentspace_operator_api::{CallerLine, Mode, SIGN_IN_MESSAGE};
+
+    /// Today's `linux/arm64` phase message, byte for byte (E0.12-T03-S03 part 2 moved its producer
+    /// to the seam's patch messages row; pin P1).
+    const PATCHING: &str = "Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...";
+
+    /// The patch question a `linux/arm64` host is asked: the seam's row.
+    fn patch_question() -> String {
+        agentspace_platforms::LINUX_ARM64
+            .patch_check_command()
+            .unwrap()
+    }
     use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
@@ -362,12 +421,13 @@ mod tests {
         let aws = Script::new(asked(invocation("Success", "patched")));
         let f = fake();
         wait(&aws, &f, &f, ID, "agentspace").unwrap();
+        let question = patch_question();
         assert_eq!(
             *aws.calls.borrow(),
             vec![
                 format!("ssm describe-instance-information --filters Key=InstanceIds,Values={ID}"),
                 format!(
-                    "ssm send-command --instance-ids {ID} --document-name AWS-RunShellScript --comment agentspace sync: patch check --parameters commands={PATCH_QUESTION}"
+                    "ssm send-command --instance-ids {ID} --document-name AWS-RunShellScript --comment agentspace sync: patch check --parameters commands={question}"
                 ),
                 format!("ssm get-command-invocation --command-id c-0123 --instance-id {ID}"),
             ]
@@ -725,5 +785,132 @@ mod tests {
             PatchOutcome::Patched
         );
         assert_eq!(f.now.get(), WAIT_LIMIT);
+    }
+
+    /// A platform of the test's own on PowerShell's document, with a question that holds quotes,
+    /// brackets and commas, and patch messages of its own.
+    struct PowerShellPlatform;
+
+    const PS_QUESTION: &str =
+        r#"& 'C:\Program Files\PowerShell\7\pwsh.exe' -File "C:\x\check.ps1", [y]"#;
+
+    impl HostPlatform for PowerShellPlatform {
+        fn platform(&self) -> &'static str {
+            "windows/amd64"
+        }
+        fn image_parameter(&self) -> Option<&'static str> {
+            None
+        }
+        fn new_stack_instance_type(&self) -> Option<&'static str> {
+            None
+        }
+        fn new_stack_extra_parameters(&self) -> &'static [&'static str] {
+            &[]
+        }
+        fn login_user(&self) -> &'static str {
+            "agent"
+        }
+        fn ssm_document(&self) -> &'static str {
+            "AWS-RunPowerShellScript"
+        }
+        fn remote_command(&self, script: &str) -> Result<String, Failure> {
+            Ok(script.to_string())
+        }
+        fn bootstrap(&self) -> Result<agentspace_operator_api::Bootstrap, Failure> {
+            Err(step_failed("agentspace: not in this test."))
+        }
+        fn sync_plan(&self) -> Result<agentspace_operator_api::SyncPlan, Failure> {
+            Err(step_failed("agentspace: not in this test."))
+        }
+        fn patch_check_command(&self) -> Result<String, Failure> {
+            Ok(PS_QUESTION.to_string())
+        }
+        fn patch_messages(&self) -> agentspace_operator_api::PatchMessages {
+            agentspace_operator_api::PatchMessages {
+                phase: "Patching Windows (Windows Update, restart if an update needs one)..."
+                    .to_string(),
+                log_command: "cat C:/ProgramData/agentspace/patch.log".to_string(),
+            }
+        }
+        fn horizon_command(&self, _: u64) -> Result<String, Failure> {
+            Err(step_failed("agentspace: not in this test."))
+        }
+        fn grow_script(&self) -> Result<String, Failure> {
+            Err(step_failed("agentspace: not in this test."))
+        }
+        fn push_zone(&self, _: &str, _: &str) -> Result<String, Failure> {
+            Err(step_failed("agentspace: not in this test."))
+        }
+        fn push_script(&self, _: &str) -> Result<String, Failure> {
+            Err(step_failed("agentspace: not in this test."))
+        }
+    }
+
+    /// On a PowerShell document the question goes as the JSON value of `--parameters`, never the
+    /// shorthand, and the phase, the warning and the deadline are the platform's (operator.md, sync
+    /// on a Windows host; pins P17 and P18 of v0.12-T02).
+    #[test]
+    fn a_powershell_platform_is_asked_by_json_with_its_own_messages() {
+        let alias = "agentspace-host.demo.windows-amd64";
+        let mut answers = asked(invocation("Success", "pending"));
+        answers.extend(asked(invocation("Success", "failed")));
+        let aws = Script::new(answers);
+        let f = fake();
+        assert_eq!(
+            wait_on(&aws, &f, &f, ID, alias, &PowerShellPlatform).unwrap(),
+            PatchOutcome::Failed
+        );
+        let json = serde_json::json!({ "commands": [PS_QUESTION] }).to_string();
+        assert!(json.starts_with("{\"commands\":[\""));
+        assert_eq!(
+            aws.calls.borrow()[1],
+            format!(
+                "ssm send-command --instance-ids {ID} --document-name AWS-RunPowerShellScript --comment agentspace sync: patch check --parameters {json}"
+            )
+        );
+        assert!(aws.calls.borrow().iter().all(|c| !c.contains("commands=")));
+        assert_eq!(
+            *f.lines.borrow(),
+            vec![
+                checking(),
+                "Patching Windows (Windows Update, restart if an update needs one)...".to_string(),
+                format!(
+                    "warning: agentspace: The patch run on {ID} failed; sync goes on without it. Check: ssh {alias} cat C:/ProgramData/agentspace/patch.log"
+                ),
+            ]
+        );
+
+        let mut aws = Script::new(Vec::new());
+        aws.then = Some(asked(invocation("Success", "pending")));
+        let f = fake();
+        assert_eq!(
+            wait_on(&aws, &f, &f, ID, alias, &PowerShellPlatform)
+                .unwrap_err()
+                .message,
+            format!(
+                "agentspace: {ID} did not finish its patch run within 30 minutes; check: ssh {alias} cat C:/ProgramData/agentspace/patch.log"
+            )
+        );
+    }
+
+    /// Both Linux platforms are asked today's question with today's calls and lines.
+    #[test]
+    fn both_linux_platforms_are_asked_todays_question() {
+        for platform in [
+            &agentspace_platforms::LINUX_ARM64,
+            &agentspace_platforms::LINUX_AMD64,
+        ] {
+            let aws = Script::new(asked(invocation("Success", "patched")));
+            let f = fake();
+            wait_on(&aws, &f, &f, ID, "agentspace", platform).unwrap();
+            assert_eq!(
+                aws.calls.borrow()[1],
+                format!(
+                    "ssm send-command --instance-ids {ID} --document-name AWS-RunShellScript --comment agentspace sync: patch check --parameters commands={}",
+                    patch_question()
+                )
+            );
+            assert_eq!(*f.lines.borrow(), vec![checking(), patched()]);
+        }
     }
 }

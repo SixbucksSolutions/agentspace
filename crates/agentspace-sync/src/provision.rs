@@ -39,7 +39,7 @@ use std::time::Duration;
 
 use agentspace_ca::CaEnv;
 use agentspace_driver_ec2::{PendingPlaced, Unplaced};
-use agentspace_hosts::{BOX_PROJECT, Host, HostState, RunLock, Target};
+use agentspace_hosts::{Host, HostKey, HostState, RunLock};
 use agentspace_operator_api::{Aws, Context, Failure, Remote, Say};
 
 use crate::deploy::{self, full_home, read_hosts};
@@ -48,6 +48,11 @@ use crate::{Seams, step_failed};
 
 /// Step 10's line, the run's last, exactly (operator.md, provision, step 10; pin P20).
 pub(crate) const SIGN_IN_LINE: &str = "Sign in on this host once, by hand, under a lease: see \"Signing in on a new host\" in the agentspace README.";
+
+/// Step 10's line for a `windows/amd64` host, which names README's own procedure for a Windows host
+/// (pin P14 of v0.12-T02). For the dev lead: operator.md gives no wording for it yet; this is
+/// [`SIGN_IN_LINE`] with that heading in place of the Linux one.
+pub(crate) const SIGN_IN_LINE_WINDOWS: &str = "Sign in on this host once, by hand, under a lease: see \"Signing in on a new Windows host\" in the agentspace README.";
 
 /// How many times a log line is tried, and the pause between tries (keeper.md, Log lines).
 const LOG_TRIES: u32 = 5;
@@ -172,17 +177,31 @@ fn without_os_error(text: &str) -> &str {
     text
 }
 
+/// A host's name as the run's messages name it (operator.md, Messages): its project on
+/// `linux/arm64`, and `<project>.<os>-<arch>` on every other platform.
+fn shown_host(key: &HostKey) -> String {
+    key.host_name()
+}
+
 /// Step 2's lock, taken without waiting; a held lock and any other failure are each logged as
 /// `run failed`.
+#[cfg(test)]
 fn take_run_lock(home: &Path, project: &str, log: &Log) -> Result<RunLock, Failure> {
-    let failure = match agentspace_hosts::try_run_lock(home, project) {
+    take_run_lock_for(home, &HostKey::linux_arm64(project), log)
+}
+
+/// [`take_run_lock`] for the host `key`: its own folder's `provision.lock`, and its host name in
+/// the message.
+fn take_run_lock_for(home: &Path, key: &HostKey, log: &Log) -> Result<RunLock, Failure> {
+    let failure = match agentspace_hosts::try_run_lock_keyed(home, key) {
         Ok(Some(lock)) => return Ok(lock),
         Ok(None) => step_failed(&format!(
-            "agentspace: A provisioning run for '{project}' is already running."
+            "agentspace: A provisioning run for '{}' is already running.",
+            shown_host(key)
         )),
         Err(e) => step_failed(&format!(
             "agentspace: Cannot take {}: {}.",
-            agentspace_hosts::host_run_lock_path(home, project).display(),
+            agentspace_hosts::host_run_lock_path_keyed(home, key).display(),
             error_text(&e)
         )),
     };
@@ -193,18 +212,20 @@ fn take_run_lock(home: &Path, project: &str, log: &Log) -> Result<RunLock, Failu
 /// A person's `deploy` takes its host's `provision.lock` the way the run's step 2 does, without
 /// waiting, and holds it for its whole life (operator.md, deploy; D67's change note; pins P34 and
 /// P36). A lock another program holds refuses the `deploy` with
-/// `agentspace: A provisioning run or deploy for '<project>' is already running; the deploy did not run.`;
+/// `agentspace: A provisioning run or deploy for '<host name>' is already running; the deploy did not run.`;
 /// one that cannot be taken for any other reason fails it with `agentspace: Cannot take <path>:
-/// <error>.`. Neither writes a line to `provision.log`, which is the run's alone.
-pub(crate) fn take_person_lock(home: &Path, project: &str) -> Result<RunLock, Failure> {
-    match agentspace_hosts::try_run_lock(home, project) {
+/// <error>.`. Neither writes a line to `provision.log`, which is the run's alone. The lock is the
+/// host `key`'s, in its own folder (D91).
+pub(crate) fn take_person_lock_keyed(home: &Path, key: &HostKey) -> Result<RunLock, Failure> {
+    match agentspace_hosts::try_run_lock_keyed(home, key) {
         Ok(Some(lock)) => Ok(lock),
         Ok(None) => Err(step_failed(&format!(
-            "agentspace: A provisioning run or deploy for '{project}' is already running; the deploy did not run."
+            "agentspace: A provisioning run or deploy for '{}' is already running; the deploy did not run.",
+            shown_host(key)
         ))),
         Err(e) => Err(step_failed(&format!(
             "agentspace: Cannot take {}: {}.",
-            agentspace_hosts::host_run_lock_path(home, project).display(),
+            agentspace_hosts::host_run_lock_path_keyed(home, key).display(),
             error_text(&e)
         ))),
     }
@@ -278,68 +299,109 @@ fn read_leases(state_dir: &Path) -> Result<Vec<agentspace_state::Record>, Failur
         })
 }
 
-/// What the run's deploy step decides from the leases at one reading's time (step 4.3): **no type**
-/// when the project holds a live `ready` lease, an unexpired stored `ready` record of the project,
-/// so the host keeps its size while a lease holds it (D66, D68's change note; pin P2(a)); otherwise
-/// the EC2 driver's `resize_target`, which the run never restates (D67).
+/// What the run's deploy step decides from the leases at one reading's time (step 4.3), for
+/// `project`'s `linux/arm64` host: [`decide_type_for`] of its key.
+#[cfg(test)]
 pub(crate) fn decide_type(
     leases: &[agentspace_state::Record],
     project: &str,
     now: i64,
 ) -> Option<&'static str> {
-    let held = leases
-        .iter()
-        .any(|l| l.project == project && l.state == "ready" && agentspace_state::is_live(l, now));
+    decide_type_for(leases, &HostKey::linux_arm64(project), now)
+        .expect("A linux/arm64 host's type is decided")
+}
+
+/// What the run's deploy step decides from the leases at one reading's time (step 4.3) for the
+/// host `key`: **no type** when the project holds a live `ready` lease on the host's platform, an
+/// unexpired stored `ready` record of the project and platform, so the host keeps its size while a
+/// lease holds it (D66, D68's change note; pin P2(a); D91); otherwise the EC2 driver's
+/// `resize_target`, which the run never restates (D67).
+pub(crate) fn decide_type_for(
+    leases: &[agentspace_state::Record],
+    key: &HostKey,
+    now: i64,
+) -> Result<Option<&'static str>, Failure> {
+    let held = leases.iter().any(|l| {
+        l.project == key.project
+            && l.platform == key.platform
+            && l.state == "ready"
+            && agentspace_state::is_live(l, now)
+    });
     if held {
-        None
+        return Ok(None);
+    }
+    if key.is_linux_arm64() {
+        Ok(agentspace_driver_ec2::resize_target(leases, &key.project))
     } else {
-        agentspace_driver_ec2::resize_target(leases, project)
+        // P7: resize_target_keyed after E0.12-T03-S01 merges
+        Err(not_built())
     }
 }
 
-/// Step 4's first three steps, in the order of the locks (docs/state.md, The order of the locks;
-/// operator.md, provision, step 4; pin P26): takes the lease state lock, then `hosts.lock` for the
-/// removal of the record's `instance_type`, releases `hosts.lock`, reads the lease state file under
-/// the lease state lock still held, decides the type, and releases that lock before any call to
-/// AWS. **The type is removed whether a type is then passed or none**, so a run whose deploy step
-/// fails or is killed leaves none (pin P30). Each failure comes before any call to AWS; the type
-/// found, or none, is `Ok`'s.
+/// The answer of a step this crate cannot build yet for a host not on `linux/arm64`: the EC2
+/// driver's keyed calls of pin P7, which E0.12-T03-S01 adds.
+fn not_built() -> Failure {
+    Failure {
+        message: agentspace_platforms::NOT_BUILT.to_string(),
+        caller: agentspace_operator_api::CallerFailure::NotAvailable,
+    }
+}
+
+/// Step 4's first three steps for `project`'s `linux/arm64` host: [`find_type_for`] of its key.
+#[cfg(test)]
 pub(crate) fn find_type(
     ctx: &Context,
     env: Env<'_>,
     home: &Path,
     project: &str,
 ) -> Result<Option<&'static str>, Failure> {
+    find_type_for(ctx, env, home, &HostKey::linux_arm64(project))
+}
+
+/// Step 4's first three steps, in the order of the locks (docs/state.md, The order of the locks;
+/// operator.md, provision, step 4; pin P26), for the host `key`: takes the lease state lock, then
+/// `hosts.lock` for the removal of the record's `instance_type`, releases `hosts.lock`, reads the
+/// lease state file under the lease state lock still held, decides the type, and releases that
+/// lock before any call to AWS. **The type is removed whether a type is then passed or none**, so
+/// a run whose deploy step fails or is killed leaves none (pin P30). Each failure comes before any
+/// call to AWS; the type found, or none, is `Ok`'s.
+pub(crate) fn find_type_for(
+    ctx: &Context,
+    env: Env<'_>,
+    home: &Path,
+    key: &HostKey,
+) -> Result<Option<&'static str>, Failure> {
     let state_dir = state_dir_for(ctx, env)?;
     // 4.1: the lease state lock, then (inside the removal) hosts.lock.
     let lease_lock = take_lease_lock(&state_dir)?;
     // 4.2: removes the type and writes the registry, then releases hosts.lock.
-    crate::registry::set_instance_type(home, project, None)?;
+    crate::registry::set_instance_type_keyed(home, key, None)?;
     // 4.3: the leases, one reading's time.
     let leases = read_leases(&state_dir)?;
-    let found = decide_type(&leases, project, agentspace_state::now());
+    let found = decide_type_for(&leases, key, agentspace_state::now())?;
     // 4.4: released before any call to AWS.
     drop(lease_lock);
     Ok(found)
 }
 
-/// Step 3: the run's start, under `hosts.lock`, re-reading the registry. Returns whether the
-/// record was `ready` as the run began.
+/// Step 3 for `project`'s `linux/arm64` host: [`record_start_for`] of its key.
+#[cfg(test)]
 fn record_start(home: &Path, project: &str, now: &str) -> Result<bool, Failure> {
+    record_start_for(home, &HostKey::linux_arm64(project), now)
+}
+
+/// Step 3: the run's start, under `hosts.lock`, re-reading the registry, for the host `key`.
+/// Returns whether the record was `ready` as the run began. A host with no record is added at the
+/// end of the file, its record holding `platform` only off `linux/arm64`, with its own stack's name
+/// (D91; pins P16 and P46 of v0.12-T01).
+fn record_start_for(home: &Path, key: &HostKey, now: &str) -> Result<bool, Failure> {
     let held = crate::registry::lock(home)?;
     let mut hosts = read_hosts(home)?;
-    let was_ready = match hosts.hosts.iter_mut().find(|h| h.project == project) {
+    let was_ready = match hosts.hosts.iter_mut().find(|h| h.is_for(key)) {
         None => {
-            hosts.hosts.push(Host {
-                last_success_at: None,
-                platform: None,
-                project: project.to_string(),
-                stack: agentspace_hosts::stack_name(project),
-                state: HostState::Creating,
-                instance_id: None,
-                instance_type: None,
-                last_attempt_at: Some(now.to_string()),
-            });
+            let mut record = Host::new(key, HostState::Creating);
+            record.last_attempt_at = Some(now.to_string());
+            hosts.hosts.push(record);
             false
         }
         Some(record) => {
@@ -359,13 +421,19 @@ fn record_start(home: &Path, project: &str, now: &str) -> Result<bool, Failure> 
     Ok(was_ready)
 }
 
+/// [`record_failure_for`] for `project`'s `linux/arm64` host.
+#[cfg(test)]
+fn record_failure(home: &Path, project: &str, was_ready: bool, log: &Log) {
+    record_failure_for(home, &HostKey::linux_arm64(project), was_ready, log);
+}
+
 /// The failure of step 4, 5, 6 or 7: logged, and recorded `failed` for a host that was never
 /// `ready`, with its `instance_id` kept. A `ready` record is not written at all.
-fn record_failure(home: &Path, project: &str, was_ready: bool, log: &Log) {
+fn record_failure_for(home: &Path, key: &HostKey, was_ready: bool, log: &Log) {
     if was_ready {
         return;
     }
-    let result = deploy::change_record(home, project, |record| {
+    let result = deploy::change_record(home, key, |record| {
         // A record that another writer made `ready` meanwhile is never taken out of it.
         if record.state == HostState::Ready || record.state == HostState::Failed {
             return false;
@@ -378,9 +446,15 @@ fn record_failure(home: &Path, project: &str, was_ready: bool, log: &Log) {
     }
 }
 
-/// Step 8: the host recorded `ready`, with the instance ID step 4 read.
+/// [`record_ready_for`] for `project`'s `linux/arm64` host.
+#[cfg(test)]
 fn record_ready(home: &Path, project: &str, instance_id: &str) -> Result<(), Failure> {
-    deploy::change_record(home, project, |record| {
+    record_ready_for(home, &HostKey::linux_arm64(project), instance_id)
+}
+
+/// Step 8: the host recorded `ready`, with the instance ID step 4 read.
+fn record_ready_for(home: &Path, key: &HostKey, instance_id: &str) -> Result<(), Failure> {
+    deploy::change_record(home, key, |record| {
         let mut changed = false;
         if record.state != HostState::Ready {
             record.state = HostState::Ready;
@@ -450,13 +524,17 @@ pub(crate) fn driver_context(
     })
 }
 
-/// The pinned name of the driver's step, the only one this crate calls. `Err` is a failure of the
-/// whole call; one lease's failure is in the result's `failed`.
+/// The pinned name of the driver's step, the only one this crate calls, for the host `key`. `Err`
+/// is a failure of the whole call; one lease's failure is in the result's `failed`.
 fn place_pending(
     driver_ctx: &agentspace_driver_api::Context,
-    project: &str,
+    key: &HostKey,
 ) -> Result<PendingPlaced, Failure> {
-    agentspace_driver_ec2::place_pending(driver_ctx, project).map_err(|f| Failure {
+    if !key.is_linux_arm64() {
+        // P7: place_pending_keyed after E0.12-T03-S01 merges
+        return Err(not_built());
+    }
+    agentspace_driver_ec2::place_pending(driver_ctx, &key.project).map_err(|f| Failure {
         message: format!("agentspace: {}", f.message),
         caller: agentspace_operator_api::CallerFailure::Same,
     })
@@ -484,10 +562,8 @@ fn log_placed(log: &Log, placed: &PendingPlaced) {
     }
 }
 
-/// Step 9 and its end, called by the run with `provision.lock` held: places the project's pending
-/// leases and logs the result; a failure of the call as a whole leaves the host ready and the
-/// leases pending, warns, and the run still exits 0. Then, when the run succeeded, it records the
-/// success (D77; pins P22, P23 and P24), and otherwise writes nothing.
+/// [`place_and_record_for`] for `project`'s `linux/arm64` host.
+#[cfg(test)]
 fn place_and_record(
     ctx: &Context,
     env: Env<'_>,
@@ -496,19 +572,36 @@ fn place_and_record(
     say: &dyn Say,
     log: &Log,
 ) {
-    let placed = driver_context(ctx, env).and_then(|d| place_pending(&d, project));
+    place_and_record_for(ctx, env, home, &HostKey::linux_arm64(project), say, log);
+}
+
+/// Step 9 and its end, called by the run with `provision.lock` held: places the host `key`'s
+/// project's pending leases on its platform and logs the result; a failure of the call as a whole
+/// leaves the host ready and the leases pending, warns, and the run still exits 0. Then, when the
+/// run succeeded, it records the success (D77; pins P22, P23 and P24), and otherwise writes
+/// nothing.
+fn place_and_record_for(
+    ctx: &Context,
+    env: Env<'_>,
+    home: &Path,
+    key: &HostKey,
+    say: &dyn Say,
+    log: &Log,
+) {
+    let placed = driver_context(ctx, env).and_then(|d| place_pending(&d, key));
     match &placed {
         Ok(placed) => log_placed(log, placed),
         Err(f) => {
             log.failed("place", f);
             say.warning(&format!(
-                "agentspace: The pending leases of '{project}' could not be placed: {}; the next run places them.",
+                "agentspace: The pending leases of '{}' could not be placed: {}; the next run places them.",
+                shown_host(key),
                 log_reason(&f.message).trim_end_matches('.')
             ));
         }
     }
     if succeeded(&placed) {
-        record_success(home, project, log);
+        record_success_for(home, key, log);
     }
 }
 
@@ -523,13 +616,19 @@ fn succeeded(placed: &Result<PendingPlaced, Failure>) -> bool {
     })
 }
 
+/// [`record_success_for`] for `project`'s `linux/arm64` host.
+#[cfg(test)]
+fn record_success(home: &Path, project: &str, log: &Log) {
+    record_success_for(home, &HostKey::linux_arm64(project), log);
+}
+
 /// Step 9's end for a run that succeeded (D77; pins P23 and P24): `last_success_at` set to the
 /// time the run ended, in UTC in state.md's timestamp form, under `hosts.lock` alone, and nothing
 /// else. A write that fails is logged as `success failed` with the registry's message, and changes
 /// nothing else: no warning, no change to the run's exit.
-fn record_success(home: &Path, project: &str, log: &Log) {
+fn record_success_for(home: &Path, key: &HostKey, log: &Log) {
     let ended = agentspace_state::format_time(agentspace_state::now());
-    if let Err(f) = crate::registry::set_last_success_at(home, project, &ended) {
+    if let Err(f) = crate::registry::set_last_success_at_keyed(home, key, &ended) {
         log.failed("success", &f);
     }
 }
@@ -548,7 +647,7 @@ fn log_sync_done(log: &Log, outcome: PatchOutcome) {
     }
 }
 
-/// The run, steps 1 to 10.
+/// The run, steps 1 to 10, for `project`'s `linux/arm64` host: [`run_keyed`] of its key.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
     ctx: &Context,
@@ -560,7 +659,34 @@ pub(crate) fn run(
     seams: &Seams,
     env: Env<'_>,
 ) -> Result<(), Failure> {
+    run_keyed(
+        ctx,
+        ca_env,
+        &HostKey::linux_arm64(project),
+        say,
+        aws,
+        remote,
+        seams,
+        env,
+    )
+}
+
+/// The run, steps 1 to 10, for the host `key` (operator.md, provision; D91): every step acts on
+/// that host alone, its record, its folder's log and lock, its stack, its leases on its platform,
+/// and the steps its platform's seam supplies.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_keyed(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    remote: &dyn Remote,
+    seams: &Seams,
+    env: Env<'_>,
+) -> Result<(), Failure> {
     let home = full_home(ctx);
+    let project = key.project.as_str();
     // The operator gives a normalized project; anything else makes no path (state.md).
     if !agentspace_hosts::is_normalized_project(project) {
         return Err(step_failed(&format!(
@@ -568,10 +694,13 @@ pub(crate) fn run(
             log_reason(project)
         )));
     }
+    // A platform agentspace has no seam for makes no host, and is refused before anything.
+    let platform = crate::seam_for(&key.platform)?;
 
-    // Step 1: the record, and the project list only for a project with no record.
+    // Step 1: the record, and the project list only for a host with no record, which the list
+    // MUST approve on the host's platform (D54, D91).
     let hosts = read_hosts(&home)?;
-    if agentspace_hosts::host_for(&hosts, project).is_none() {
+    if agentspace_hosts::host_for_keyed(&hosts, key).is_none() {
         let list_path = agentspace_hosts::projects_path(&home);
         let projects = agentspace_hosts::read_projects(&home).map_err(|e| {
             step_failed(&format!(
@@ -588,54 +717,60 @@ pub(crate) fn run(
                 list_path.display()
             )));
         }
+        if !agentspace_hosts::is_approved(&projects, project, &key.platform) {
+            return Err(step_failed(&format!(
+                "agentspace: Project '{project}' has no host on {}, and {} does not approve that platform for it, so no host is made for it.",
+                key.platform,
+                list_path.display()
+            )));
+        }
     }
 
-    // Step 2: the log, then the lock.
-    let log = open_log(&agentspace_hosts::host_log_path(&home, project))?;
-    let _run_lock = take_run_lock(&home, project, &log)?;
+    // Step 2: the log, then the lock, both in the host's own folder.
+    let log = open_log(&agentspace_hosts::host_log_path_keyed(&home, key))?;
+    let _run_lock = take_run_lock_for(&home, key, &log)?;
 
     // Step 3.
     let now = agentspace_state::format_time(agentspace_state::now());
-    let was_ready = record_start(&home, project, &now).inspect_err(|f| log.failed("run", f))?;
+    let was_ready = record_start_for(&home, key, &now).inspect_err(|f| log.failed("run", f))?;
     log.line("run", "begun", None);
-    say.progress(&format!("Provisioning the host of '{project}'..."), None);
+    say.progress(
+        &format!("Provisioning the host of '{}'...", shown_host(key)),
+        None,
+    );
 
-    let is_box = project == BOX_PROJECT;
-    let target = if is_box {
-        Target::Box
-    } else {
-        Target::Host(project)
-    };
+    let is_box = key.is_box();
     let fail = |step: &str, f: Failure| -> Failure {
         log.failed(step, &f);
-        record_failure(&home, project, was_ready, &log);
+        record_failure_for(&home, key, was_ready, &log);
         f
     };
 
     // Step 4: its type found in steps 4.1 to 4.4, then deploy's existence check and steps 1 to 5
     // (never its `sync`) with `-InstanceType` when a type was found, and none otherwise (D68, D71;
     // pin P26). A step 4 that failed before it found a type logs no `type` field (pin P24).
-    let found = find_type(ctx, env, &home, project).map_err(|f| fail("deploy", f))?;
+    let found = find_type_for(ctx, env, &home, key).map_err(|f| fail("deploy", f))?;
     let type_field = found.map(|t| format!("type={}", log_field(t)));
     let deployed = if is_box {
         deploy::box_stack(ctx, found, say, aws, seams)
     } else {
-        deploy::host_stack(ctx, ca_env, project, found, say, aws, seams)
+        deploy::host_stack_keyed(ctx, ca_env, key, platform, found, say, aws, seams)
     };
     let instance_id = deployed.inspect_err(|f| {
         log.line_with("deploy", "failed", type_field.as_deref(), Some(&f.message));
-        record_failure(&home, project, was_ready, &log);
+        record_failure_for(&home, key, was_ready, &log);
     })?;
     log.line_with("deploy", "done", type_field.as_deref(), None);
 
-    // Step 5: start and wait, with no push. A host's deadline hint names its own alias, never the
-    // box's (operator.md, From the command line, "What a command takes from its host").
-    agentspace_box::start_and_wait_for(aws, say, seams.clock, &instance_id)
+    // Step 5: start and wait, with no push, on the host's platform. A host's deadline hint names
+    // its own alias, never the box's (operator.md, From the command line, "What a command takes
+    // from its host").
+    agentspace_box::start_and_wait_for_on(aws, say, seams.clock, &instance_id, platform)
         .map_err(|f| {
             if is_box {
                 f
             } else {
-                crate::syncing::hint_for(&agentspace_hosts::host_alias(project), f)
+                crate::syncing::hint_for(&key.operator_alias(), platform, f)
             }
         })
         .map_err(|f| fail("start", f))?;
@@ -643,31 +778,44 @@ pub(crate) fn run(
 
     // Step 6: sync, its patch wait and its forced push included. A wait that ended on `failed` is
     // recorded in the step's line, since a detached run's warning reaches no one (pin P27).
-    let outcome = crate::syncing::sync_target(ctx, ca_env, target, say, aws, remote, seams)
+    let outcome = crate::syncing::sync_key(ctx, ca_env, key, say, aws, remote, seams)
         .map_err(|f| fail("sync", f))?;
     log_sync_done(&log, outcome);
 
     // Step 7: bootstrap.
-    crate::bootstrap_using(ctx, ca_env, target, say, aws, remote, seams)
+    crate::bootstrap_keyed_using(ctx, ca_env, key, say, aws, remote, seams)
         .map_err(|f| fail("bootstrap", f))?;
     log.line("bootstrap", "done", None);
 
     // Step 8.
-    record_ready(&home, project, &instance_id).inspect_err(|f| log.failed("record", f))?;
+    record_ready_for(&home, key, &instance_id).inspect_err(|f| log.failed("record", f))?;
     log.line("record", "done", None);
-    say.progress(&format!("Recorded the host of '{project}' as ready."), None);
+    say.progress(
+        &format!("Recorded the host of '{}' as ready.", shown_host(key)),
+        None,
+    );
 
     // Step 9, and the run's success when it succeeded.
-    place_and_record(ctx, env, &home, project, say, &log);
+    place_and_record_for(ctx, env, &home, key, say, &log);
 
     // Step 10: the sign-in line, only for a host that was not ready, and never for the box. From
     // v0.08 a host runs only while its project holds a live lease (D56), so the sign-ins are made
-    // under one (pin P20).
+    // under one (pin P20). A Windows host's names its own procedure (pin P14 of v0.12-T02).
     if !was_ready && !is_box {
-        say.progress(SIGN_IN_LINE, None);
+        say.progress(sign_in_line(&key.platform), None);
     }
     log.line("run", "done", None);
     Ok(())
+}
+
+/// Step 10's line for a host of `platform`: [`SIGN_IN_LINE`] on both Linux platforms, byte for
+/// byte, and [`SIGN_IN_LINE_WINDOWS`] on `windows/amd64` (pin P14 of v0.12-T02).
+pub(crate) fn sign_in_line(platform: &str) -> &'static str {
+    if platform == "windows/amd64" {
+        SIGN_IN_LINE_WINDOWS
+    } else {
+        SIGN_IN_LINE
+    }
 }
 
 /// A path's text, for the tests.
@@ -680,6 +828,122 @@ fn shown(path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::tests::Scratch;
+    use agentspace_hosts::BOX_PROJECT;
+
+    /// Step 10's line is today's, byte for byte, on both Linux platforms, and names README's
+    /// Windows procedure on `windows/amd64` (pin P14 of v0.12-T02).
+    #[test]
+    fn the_sign_in_line_names_the_windows_procedure_for_a_windows_host_alone() {
+        for platform in ["linux/arm64", "linux/amd64"] {
+            assert_eq!(sign_in_line(platform), SIGN_IN_LINE, "{platform}");
+        }
+        assert_eq!(
+            sign_in_line("windows/amd64"),
+            "Sign in on this host once, by hand, under a lease: see \"Signing in on a new Windows host\" in the agentspace README."
+        );
+        assert_ne!(SIGN_IN_LINE_WINDOWS, SIGN_IN_LINE);
+    }
+
+    /// A host's records are its own: a run's start for `linux/amd64` adds a record of its own at
+    /// the end of the file, with `platform` and its own stack, and leaves the project's
+    /// `linux/arm64` record as it was (D91; pins P16 and P46 of v0.12-T01).
+    #[test]
+    fn a_runs_start_on_another_platform_adds_that_hosts_own_record() {
+        let dir = Scratch::new("provision-records-keyed");
+        let home = dir.path().to_path_buf();
+        assert!(!record_start(&home, "example", "2026-11-21T10:00:00Z").unwrap());
+        let amd = HostKey::new("example", "linux/amd64");
+        assert!(!record_start_for(&home, &amd, "2026-11-21T10:05:00Z").unwrap());
+        let hosts = read_hosts(&home).unwrap();
+        assert_eq!(hosts.hosts.len(), 3);
+        let arm = &hosts.hosts[1];
+        assert_eq!(arm.platform, None);
+        assert_eq!(arm.stack, "agentspace-host-example");
+        assert_eq!(arm.last_attempt_at.as_deref(), Some("2026-11-21T10:00:00Z"));
+        let last = &hosts.hosts[2];
+        assert_eq!(last.platform.as_deref(), Some("linux/amd64"));
+        assert_eq!(last.stack, "agentspace-linux-amd64-host-example");
+        assert_eq!(last.state, HostState::Creating);
+        // Step 8 on the amd64 host changes its record alone.
+        record_ready_for(&home, &amd, "i-1234567890abcdef0").unwrap();
+        let after = read_hosts(&home).unwrap();
+        assert_eq!(after.hosts[1], hosts.hosts[1]);
+        assert_eq!(after.hosts[2].state, HostState::Ready);
+    }
+
+    /// A held run lock names the host by its host name off `linux/arm64` (Messages).
+    #[test]
+    fn a_held_lock_names_the_host_by_its_host_name() {
+        let dir = Scratch::new("provision-lock-keyed");
+        let home = dir.path().to_path_buf();
+        let amd = HostKey::new("example", "linux/amd64");
+        let held = agentspace_hosts::try_run_lock_keyed(&home, &amd)
+            .unwrap()
+            .unwrap();
+        let log = open_log(&home.join("log")).unwrap();
+        assert_eq!(
+            take_run_lock_for(&home, &amd, &log).unwrap_err().message,
+            "agentspace: A provisioning run for 'example.linux-amd64' is already running."
+        );
+        assert_eq!(
+            take_person_lock_keyed(&home, &amd).unwrap_err().message,
+            "agentspace: A provisioning run or deploy for 'example.linux-amd64' is already running; the deploy did not run."
+        );
+        drop(held);
+        // The project's linux/arm64 host's lock is another file, free all along.
+        assert!(take_person_lock_keyed(&home, &HostKey::linux_arm64("example")).is_ok());
+    }
+
+    /// The decision counts the leases of the host's own platform alone, and a host not on
+    /// `linux/arm64` answers `NOT_BUILT` until E0.12-T03-S01's keyed `resize_target` (pin P7).
+    #[test]
+    fn the_type_decision_counts_the_hosts_own_platform() {
+        let lease = |platform: &str, state: &str| agentspace_state::Record {
+            sized_for: None,
+            plan: None,
+            plan_source: None,
+            id: "8d41b6a2-0c3e-4f57-a1d9-2e6b7c8f9a01".to_string(),
+            project: "example".to_string(),
+            state: state.to_string(),
+            platform: platform.to_string(),
+            profile: "agent-linux".to_string(),
+            size: "l".to_string(),
+            ttl_seconds: 3600,
+            created_at: "2026-11-24T10:00:00Z".to_string(),
+            expires_at: Some("2099-01-01T00:00:00Z".to_string()),
+            released_at: None,
+            ssh: Some(agentspace_state::Ssh {
+                host_alias: "agentspace-example-8d41b6a2".to_string(),
+                user: "ubuntu".to_string(),
+            }),
+            reasons: None,
+            driver: Some("ec2".to_string()),
+        };
+        let now = agentspace_state::now();
+        let arm = HostKey::linux_arm64("example");
+        // A ready lease on linux/amd64 does not hold the linux/arm64 host, so its pending lease
+        // sizes it; a ready lease on linux/arm64 does.
+        let other = [
+            lease("linux/amd64", "ready"),
+            lease("linux/arm64", "pending"),
+        ];
+        let sized = decide_type_for(&other, &arm, now).unwrap();
+        assert!(sized.is_some());
+        assert_eq!(
+            sized,
+            agentspace_driver_ec2::resize_target(&other, "example")
+        );
+        let held = [
+            lease("linux/arm64", "ready"),
+            lease("linux/arm64", "pending"),
+        ];
+        assert_eq!(decide_type_for(&held, &arm, now).unwrap(), None);
+        let amd = HostKey::new("example", "linux/amd64");
+        assert_eq!(
+            decide_type_for(&[], &amd, now).unwrap_err().message,
+            agentspace_platforms::NOT_BUILT
+        );
+    }
 
     #[test]
     fn a_reason_loses_its_prefix_and_control_characters() {

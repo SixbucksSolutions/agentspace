@@ -15,9 +15,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use agentspace_operator_api::{CallerFailure, Context, Failure};
+use agentspace_operator_api::{CallerFailure, Context, Failure, LocalswimTarget};
 
-use crate::embedded::{BOX_SYSTEM, TEMPLATE};
+use crate::embedded::TEMPLATE;
 
 /// The places under the home folder.
 pub(crate) struct Places {
@@ -72,9 +72,10 @@ pub(crate) fn cannot_write(path: &Path) -> Failure {
 }
 
 /// The localswim CLI's build output in the command's folder (operator.md, The operator's folder,
-/// one per command): `<folder>\localswim-linux-arm64`.
-pub(crate) fn localswim_build(folder: &Path) -> PathBuf {
-    folder.join("localswim-linux-arm64")
+/// one per command): `<folder>\<file name>`, the platform's, `localswim-linux-arm64`,
+/// `localswim-linux-amd64` or `localswim-windows-amd64.exe` (the seam's sync row; D94).
+pub(crate) fn localswim_build(folder: &Path, target: &LocalswimTarget) -> PathBuf {
+    folder.join(target.file_name)
 }
 
 /// Writes the carried template to `<folder>\agentspace.yaml`, the command's own folder
@@ -85,14 +86,18 @@ pub(crate) fn write_template(_places: &Places, folder: &Path) -> Result<PathBuf,
     Ok(path)
 }
 
-/// Writes the carried `box\system` to `<folder>\system\`, in the command's own folder, after
-/// removing whatever that held, so it holds exactly the carried files. Returns the system
-/// folder's path.
-pub(crate) fn write_system(_places: &Places, folder: &Path) -> Result<PathBuf, Failure> {
-    let folder = folder.join("system");
+/// Writes a platform's carried host files, the seam's sync row's `files` (`box\system` on Linux,
+/// `box\windows` on Windows), to `<folder>\<name>\`, in the command's own folder, after removing
+/// whatever that held, so it holds exactly the carried files. Returns that folder's path.
+pub(crate) fn write_system(
+    folder: &Path,
+    name: &str,
+    files: &[(&str, &[u8])],
+) -> Result<PathBuf, Failure> {
+    let folder = folder.join(name);
     remove_any(&folder).map_err(|_| cannot_write(&folder))?;
     std::fs::create_dir(&folder).map_err(|_| cannot_write(&folder))?;
-    for (relative, bytes) in BOX_SYSTEM {
+    for (relative, bytes) in files {
         let mut path = folder.clone();
         path.extend(relative.split('/'));
         if let Some(parent) = path.parent() {
@@ -118,26 +123,33 @@ fn remove_any(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::tests::{Scratch, ctx_in};
+    use agentspace_operator_api::HostPlatform;
+
+    /// `box\system`'s files, as the seam's `linux/arm64` sync row carries them (E0.12-T03-S03
+    /// part 2 deleted this crate's own copy; pin P1).
+    fn box_system() -> &'static [(&'static str, &'static [u8])] {
+        agentspace_platforms::LINUX_ARM64.sync_plan().unwrap().files
+    }
 
     #[test]
     fn the_system_folder_holds_exactly_the_carried_files() {
         let dir = Scratch::new("files-system");
         let ctx = ctx_in(dir.path());
-        let places = Places::new(&ctx);
+        let _places = Places::new(&ctx);
         let command = dir.path().join("command");
         let stale = command.join("system").join("stale.txt");
         std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
         std::fs::write(&stale, "old").unwrap();
-        let folder = write_system(&places, &command).unwrap();
+        let folder = write_system(&command, "system", box_system()).unwrap();
         assert!(!stale.exists());
         let mut names: Vec<String> = std::fs::read_dir(&folder)
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         names.sort();
-        let want: Vec<&str> = BOX_SYSTEM.iter().map(|(n, _)| *n).collect();
+        let want: Vec<&str> = box_system().iter().map(|(n, _)| *n).collect();
         assert_eq!(names, want);
-        for (name, bytes) in BOX_SYSTEM {
+        for (name, bytes) in box_system() {
             assert!(std::fs::read(folder.join(name)).unwrap() == *bytes);
         }
     }
@@ -145,17 +157,19 @@ mod tests {
     #[test]
     fn a_system_folder_that_is_a_file_is_replaced() {
         let dir = Scratch::new("files-system-file");
-        let places = Places::new(&ctx_in(dir.path()));
         let command = dir.path().join("command");
         std::fs::create_dir_all(&command).unwrap();
         std::fs::write(command.join("system"), "x").unwrap();
-        assert!(write_system(&places, &command).unwrap().is_dir());
+        assert!(
+            write_system(&command, "system", box_system())
+                .unwrap()
+                .is_dir()
+        );
     }
 
     #[test]
     fn a_system_folder_that_cannot_be_made_fails_with_fa16() {
         let dir = Scratch::new("files-fa16");
-        let places = Places::new(&ctx_in(dir.path()));
         // A file where the command's folder belongs.
         let command = dir.path().join("command");
         std::fs::write(&command, "x").unwrap();
@@ -163,7 +177,12 @@ mod tests {
             "agentspace: Cannot write {}.",
             command.join("system").display()
         );
-        assert_eq!(write_system(&places, &command).unwrap_err().message, want);
+        assert_eq!(
+            write_system(&command, "system", box_system())
+                .unwrap_err()
+                .message,
+            want
+        );
     }
 
     #[test]

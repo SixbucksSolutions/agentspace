@@ -142,29 +142,13 @@ pub fn stop_host(aws: &dyn Aws, id: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The remote command that writes the horizon, for `horizon` Unix seconds (operator.md, guard,
-/// step 7). As root, it makes `/run/agentspace` if it is missing (mode 0755), writes the horizon
-/// and one line feed to a temporary file beside the target, makes it mode 0644 and renames it over
-/// `/run/agentspace/lease-horizon`, so a reader finds the old file or the new one whole. Its exit
-/// status is that of the chain, so it is 0 only when every step succeeded.
-///
-/// It holds the horizon's decimal digits as a word of its own, and no comma, bracket, equals sign,
-/// `%`, double quote or control character, and does not end in a backslash, so that the AWS CLI's
-/// shorthand for `--parameters` does not split it (operator.md, guard, step 7; FA-15). The
-/// temporary file's name is fixed, which two runs never contend for: `guard.lock` admits one guard
-/// at a time, and a run that failed midway leaves a file the next run replaces.
-///
-/// Today's `linux/arm64` text, which the platform's horizon command now gives (the seam's horizon
-/// row, `agentspace-platforms`); kept, and named by the tests, until the guard's story switches.
-#[cfg_attr(not(test), allow(dead_code))]
-fn horizon_command(horizon: i64) -> String {
-    format!(
-        "umask 022; mkdir -p -m 755 /run/agentspace \
-&& echo {horizon} > /run/agentspace/lease-horizon.new \
-&& chmod 644 /run/agentspace/lease-horizon.new \
-&& mv -f /run/agentspace/lease-horizon.new /run/agentspace/lease-horizon"
-    )
-}
+// The remote command that writes the horizon on a Linux host (operator.md, guard, step 7) is the
+// platform seam's horizon row (`HostPlatform::horizon_command`, `agentspace-platforms` for both
+// Linux platforms; E0.12-T03-S03): this crate keeps no copy of its text. As root, it makes
+// `/run/agentspace` if it is missing (mode 0755), writes the horizon and one line feed to a
+// temporary file beside the target, makes it mode 0644 and renames it over
+// `/run/agentspace/lease-horizon`; it holds the horizon's digits as a word of its own and nothing
+// the AWS CLI's shorthand splits on (FA-15). The tests below check the row's text.
 
 /// One `ssm send-command --instance-ids <id> --document-name AWS-RunShellScript --comment
 /// "agentspace guard: lease horizon" --parameters commands=<command>`, which runs `<command>` as
@@ -557,6 +541,14 @@ mod tests {
 && chmod 644 /run/agentspace/lease-horizon.new \
 && mv -f /run/agentspace/lease-horizon.new /run/agentspace/lease-horizon";
 
+    /// The horizon command a `linux/arm64` host is sent for `horizon`: the seam's row, which the
+    /// code sends (E0.12-T03-S03 part 2 deleted this crate's own copy; pin P1).
+    fn horizon_command(horizon: i64) -> String {
+        agentspace_platforms::LINUX_ARM64
+            .horizon_command(u64::try_from(horizon).unwrap())
+            .unwrap()
+    }
+
     #[test]
     fn a_send_is_the_one_call_with_the_commands_text() {
         let aws = Recorder::new(Ok(Value::Null));
@@ -632,21 +624,25 @@ mod tests {
 
     use crate::run_command::fake::{self, TestPlatform};
 
-    /// Today's horizon command and the seam's Linux row are the same text, for every horizon both
-    /// types hold.
+    /// Today's horizon command, as its text was before the seam, and the seam's Linux rows are the
+    /// same text, for every horizon both types hold.
     #[test]
     fn todays_horizon_command_is_the_linux_rows() {
         for horizon in [0_i64, 7, 1_795_075_954, i64::MAX] {
             let row = u64::try_from(horizon).unwrap();
+            let today = format!(
+                "umask 022; mkdir -p -m 755 /run/agentspace \
+&& echo {horizon} > /run/agentspace/lease-horizon.new \
+&& chmod 644 /run/agentspace/lease-horizon.new \
+&& mv -f /run/agentspace/lease-horizon.new /run/agentspace/lease-horizon"
+            );
             for platform in [
                 &agentspace_platforms::LINUX_ARM64,
                 &agentspace_platforms::LINUX_AMD64,
             ] {
-                assert_eq!(
-                    platform.horizon_command(row).unwrap(),
-                    horizon_command(horizon)
-                );
+                assert_eq!(platform.horizon_command(row).unwrap(), today);
             }
+            assert_eq!(horizon_command(horizon), today);
         }
     }
 

@@ -36,9 +36,10 @@ mod fixtures;
 #[cfg(test)]
 mod tests;
 
-/// The skeleton's answer for a step a platform does not build yet. No Linux row gives it; the
-/// entry points of `agentspace-sync` that take a host key give it for a platform other than
-/// `linux/arm64` until E0.12-T03-S03's second part builds them.
+/// The skeleton's answer for a step a platform does not build yet. No Linux row gives it; from
+/// E0.12-T03-S03's second part, `agentspace-sync`'s provisioning run gives it, for a host not on
+/// `linux/arm64`, at the two steps that wait on the EC2 driver's keyed calls (the dev lead's pin
+/// P7 of v0.12-T03), until E0.12-T03-S01 adds them.
 pub const NOT_BUILT: &str = "agentspace: this platform's step is not built yet.";
 
 /// A Linux platform: `linux/arm64` or `linux/amd64`. The two share every row but the image, a new

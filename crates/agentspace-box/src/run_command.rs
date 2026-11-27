@@ -14,8 +14,10 @@ use agentspace_operator_api::HostPlatform;
 /// The document whose commands go as the shorthand.
 const SHELL_DOCUMENT: &str = "AWS-RunShellScript";
 
-/// The `--parameters` value that runs `command` on a host of `platform`.
-pub(crate) fn parameters(platform: &dyn HostPlatform, command: &str) -> String {
+/// The `--parameters` value that runs `command` on a host of `platform`: `commands=<command>` on
+/// `AWS-RunShellScript`, and `{"commands":["<command>"]}` on every other document. Public as
+/// `run_command_parameters`, so `agentspace-sync`'s patch wait sends what `up`'s does.
+pub fn parameters(platform: &dyn HostPlatform, command: &str) -> String {
     if platform.ssm_document() == SHELL_DOCUMENT {
         format!("commands={command}")
     } else {

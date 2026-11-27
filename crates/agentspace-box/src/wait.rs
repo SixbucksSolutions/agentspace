@@ -19,29 +19,13 @@ use crate::run_command;
 /// The comment the patch question is sent with (operator.md, What up waits for).
 pub const PATCH_COMMENT: &str = "agentspace up: patch check";
 
-/// The patch question, run as root by `AWS-RunShellScript` on today's box, and asked by `up` and by
-/// `sync`'s patch wait alike (operator.md, What up waits for; P21, P24): `patched` when this boot's
-/// marker exists; otherwise, for a unit in systemd's `failed` state, `pending` when a job that
-/// will run it is queued for it and `failed` when none is; otherwise `pending` when the patch unit
-/// is enabled, and `unknown` when it is not. It reads the marker, the unit's state, whether such a
-/// job is queued and whether the unit is enabled, in that order.
-///
-/// A queued job that will run the unit is a line of `systemctl list-jobs` for the unit that holds
-/// the word `start` or the word `restart`, so a check made between the install's `systemctl start
-/// --no-block` and the run's start never reads the earlier run's failure as this run's (pin P24),
-/// and a queued `restart` counts as a start (architect, 2026-11-22, for v0.08-T03). A job of
-/// another type, such as `stop` or `reload`, does not.
-///
-/// It MUST hold no `,`, `[`, `]` or `=`, on which the AWS CLI's shorthand syntax for
-/// `--parameters` splits, and none of what FA-15 forbids: no `%`, no double quote, no control
-/// character, and no backslash at its end (operator.md, What the laptop sends). A test checks it,
-/// and another runs it under bash with a stand-in `systemctl`.
-pub const PATCH_QUESTION: &str = "if test -e /run/agentspace/patched; then echo patched; \
-elif systemctl is-failed --quiet agentspace-patch.service; then \
-if systemctl list-jobs --no-legend agentspace-patch.service | grep -qw -e start -e restart; \
-then echo pending; else echo failed; fi; \
-elif systemctl is-enabled --quiet agentspace-patch.service; then echo pending; \
-else echo unknown; fi";
+// The patch question, run as root by `AWS-RunShellScript` on a Linux host and asked by `up` and by
+// `sync`'s patch wait alike (operator.md, What up waits for; P21, P24), is the platform seam's
+// patch check row (`HostPlatform::patch_check_command`, `agentspace-platforms` for both Linux
+// platforms; E0.12-T03-S03): this crate keeps no copy of its text. It MUST hold no `,`, `[`, `]`
+// or `=`, on which the AWS CLI's shorthand syntax for `--parameters` splits, and none of what
+// FA-15 forbids; a test here checks the row's text, and another runs it under bash with a
+// stand-in `systemctl`.
 
 /// The wait's limit, from its start (step 3).
 const WAIT_LIMIT: Duration = Duration::from_secs(15 * 60);
@@ -55,10 +39,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const POLL_LIMIT: usize = 20;
 
 const WAITING_FOR_SESSION_MANAGER: &str = "Waiting for Session Manager...";
-/// Today's `linux/arm64` phase message, which the platform's patch messages now give (the seam's
-/// patch messages row); the tests still name it.
-#[cfg_attr(not(test), allow(dead_code))]
-const PATCHING: &str = "Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...";
 
 const DESCRIBE_INSTANCES: &str = "ec2 describe-instances";
 const DESCRIBE_INSTANCE_INFORMATION: &str = "ssm describe-instance-information";
@@ -128,7 +108,7 @@ impl PatchCheck {
 /// message and deadline are worded with [`HostPlatform::patch_messages`] (operator.md, The
 /// platform seam). On both Linux platforms every call and message is today's, byte for byte. A
 /// platform whose patch check fails ends the step with that failure before any call.
-pub(crate) fn start_and_wait_for_on(
+pub fn start_and_wait_for_on(
     aws: &dyn Aws,
     say: &dyn Say,
     clock: &dyn Clock,
@@ -365,14 +345,42 @@ mod tests {
 
     const ID: &str = "i-0123456789abcdef0";
 
+    /// Today's patch question, byte for byte, as the calls below expect it. The code sends the
+    /// seam's `linux/arm64` row, which `the_patch_question_holds_nothing_forbidden` shows is this
+    /// text (E0.12-T03-S03 part 2 moved the producer to `agentspace-platforms`; pin P1).
+    const PATCH_QUESTION: &str = "if test -e /run/agentspace/patched; then echo patched; \
+elif systemctl is-failed --quiet agentspace-patch.service; then \
+if systemctl list-jobs --no-legend agentspace-patch.service | grep -qw -e start -e restart; \
+then echo pending; else echo failed; fi; \
+elif systemctl is-enabled --quiet agentspace-patch.service; then echo pending; \
+else echo unknown; fi";
+
+    /// Today's `linux/arm64` phase message, which the seam's patch messages row gives.
+    const PATCHING: &str = "Patching Ubuntu (dist-upgrade, reboot if the kernel changed)...";
+
+    /// The patch question the code sends to a `linux/arm64` host: the seam's row.
+    fn seam_question() -> String {
+        agentspace_platforms::LINUX_ARM64
+            .patch_check_command()
+            .unwrap()
+    }
+
     #[test]
     fn the_patch_question_holds_nothing_forbidden() {
-        for c in PATCH_QUESTION.chars() {
+        for platform in [
+            &agentspace_platforms::LINUX_ARM64,
+            &agentspace_platforms::LINUX_AMD64,
+        ] {
+            assert_eq!(platform.patch_check_command().unwrap(), PATCH_QUESTION);
+            assert_eq!(platform.patch_messages().phase, PATCHING);
+        }
+        let question = seam_question();
+        for c in question.chars() {
             assert!(!matches!(c, ',' | '[' | ']' | '=' | '%' | '"'), "{c:?}");
             assert!(!c.is_control(), "{c:?}");
         }
-        assert!(!PATCH_QUESTION.ends_with('\\'));
-        assert!(PATCH_QUESTION.is_ascii());
+        assert!(!question.ends_with('\\'));
+        assert!(question.is_ascii());
     }
 
     /// A throwaway folder under the temp folder, removed when it drops.
@@ -540,8 +548,9 @@ esac\n";
             );
             return;
         }
-        assert_eq!(PATCH_QUESTION.matches(MARKER).count(), 1);
-        let question = PATCH_QUESTION.replace(MARKER, "marker");
+        let question = seam_question();
+        assert_eq!(question.matches(MARKER).count(), 1);
+        let question = question.replace(MARKER, "marker");
         let stub = dir.0.join("stub");
         std::fs::create_dir_all(&stub).unwrap();
         let systemctl = stub.join("systemctl");

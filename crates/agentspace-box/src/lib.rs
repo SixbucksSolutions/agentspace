@@ -23,7 +23,10 @@
 //! - [`start_and_wait_on`]: [`start_and_wait`] on a host's platform, whose patch check and its
 //!   messages are the platform's (operator.md, The platform seam). [`start_and_wait`] is it on
 //!   `linux/arm64`.
-//! - [`start_and_wait_for`]: the shared start-and-wait step alone, for an ID already read.
+//! - [`start_and_wait_for`]: the shared start-and-wait step alone, for an ID already read;
+//!   [`start_and_wait_for_on`], the same on a host's platform.
+//! - [`run_command_parameters`]: the `--parameters` value of a Run Command to a host of a
+//!   platform, the shorthand on `AWS-RunShellScript` and the JSON value on every other document.
 //! - [`instance_id`]: the instance ID from the cache, or from the given stack's output when the cache
 //!   counts as missing, handing the cache's new bytes to [`InstanceIdCache::write`].
 //!
@@ -49,7 +52,8 @@
 //! - [`Clock`], with [`SystemClock`] the real one.
 //! - [`InstanceIdCache`] and [`CacheRead`]: the cache file, as the program reads and writes it.
 //! - [`failure_line`]: the one line a [`Failure`] prints in a [`Mode`].
-//! - [`PATCH_QUESTION`] and [`PATCH_COMMENT`]: what the patch check sends.
+//! - [`PATCH_COMMENT`]: the comment the patch check is sent with. Its question is the platform's
+//!   (`HostPlatform::patch_check_command`), and this crate keeps no copy of it.
 
 #![forbid(unsafe_code)]
 
@@ -72,7 +76,8 @@ pub use guard::{
     Described, DescribedState, HORIZON_COMMENT, describe_hosts, send_horizon, send_horizon_on,
     stop_host,
 };
-pub use wait::{PATCH_COMMENT, PATCH_QUESTION, start_and_wait_for};
+pub use run_command::parameters as run_command_parameters;
+pub use wait::{PATCH_COMMENT, start_and_wait_for, start_and_wait_for_on};
 
 use agentspace_operator_api::{Aws, Failure, HostPlatform, Say};
 
