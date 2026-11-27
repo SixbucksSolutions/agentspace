@@ -23,9 +23,16 @@ pub(crate) const REMOVE_STAGING: &str =
 pub(crate) const INSTALL: &str =
     r"sudo -n bash /tmp/agentspace-system/install.sh && sudo -n rm -rf -- /tmp/agentspace-system";
 
+/// `agentspace-sync` `steps.rs`, `MAKE_CLAUDE_FOLDER` (pin P9 of v0.12-T03).
+pub(crate) const MAKE_CLAUDE_FOLDER: &str = "mkdir -p -- ~/.claude";
+
 /// `agentspace-sync` `syncing.rs`, step 6's scp target `{alias}:.claude/CLAUDE.md`, after the
 /// alias and its colon.
 pub(crate) const CLAUDE_MD_PATH: &str = ".claude/CLAUDE.md";
+
+/// `agentspace-sync` `steps.rs`, `LOCALSWIM_STAGING`, step 7's scp target after the alias and its
+/// colon (pin P9 of v0.12-T03).
+pub(crate) const LOCALSWIM_STAGING: &str = "/tmp/localswim";
 
 /// `agentspace-sync` `steps.rs`, `INSTALL_LOCALSWIM`.
 pub(crate) const INSTALL_LOCALSWIM: &str = r"sudo -n install -d -o root -g root -m 0755 /usr/local/lib/localswim && sudo -n install -o root -g root -m 0755 /tmp/localswim /usr/local/lib/localswim/localswim && sudo -n rm -f -- /tmp/localswim";

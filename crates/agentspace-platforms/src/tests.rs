@@ -106,7 +106,12 @@ fn the_sync_plans_steps_are_todays() {
             plan.clear_command.as_deref(),
             Some(remote(platform, fixtures::REMOVE_STAGING).as_str())
         );
+        assert_eq!(
+            plan.claude_folder_command,
+            remote(platform, fixtures::MAKE_CLAUDE_FOLDER)
+        );
         assert_eq!(plan.claude_md_path, fixtures::CLAUDE_MD_PATH);
+        assert_eq!(plan.localswim_staging, fixtures::LOCALSWIM_STAGING);
         assert_eq!(
             plan.localswim_install_command,
             remote(platform, fixtures::INSTALL_LOCALSWIM)
@@ -217,6 +222,7 @@ fn every_linux_remote_command_keeps_fa15s_rule() {
             remote_command,
             plan.install_command,
             plan.clear_command.unwrap(),
+            plan.claude_folder_command,
             plan.localswim_install_command,
             platform.grow_script().unwrap(),
             platform.push_script("").unwrap(),

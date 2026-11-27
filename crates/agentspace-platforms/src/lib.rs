@@ -104,9 +104,17 @@ const REMOVE_STAGING: &str =
 const INSTALL: &str = "sudo -n bash /tmp/agentspace-system/install.sh \
 && sudo -n rm -rf -- /tmp/agentspace-system";
 
+/// Sync's row 5: as the login user, make sure `~/.claude` exists, with its parents. Today's
+/// `agentspace-sync` `steps.rs`, `MAKE_CLAUDE_FOLDER` (pin P9 of v0.12-T03).
+const MAKE_CLAUDE_FOLDER: &str = "mkdir -p -- ~/.claude";
+
 /// Where `CLAUDE.md` is copied to, as scp names it after `<alias>:`, relative to the login user's
 /// home. Today's `agentspace-sync` `syncing.rs`, step 6's target, `{alias}:.claude/CLAUDE.md`.
 const CLAUDE_MD_PATH: &str = ".claude/CLAUDE.md";
+
+/// Where scp puts the built localswim CLI, after `<alias>:`, before row 8 installs it. Today's
+/// `agentspace-sync` `steps.rs`, `LOCALSWIM_STAGING` (pin P9 of v0.12-T03).
+const LOCALSWIM_STAGING: &str = "/tmp/localswim";
 
 /// Sync's row 8: as root, the staged localswim CLI installed at
 /// `/usr/local/lib/localswim/localswim`, then its staged copy removed. Today's `agentspace-sync`
@@ -218,8 +226,10 @@ impl HostPlatform for Linux {
             staging: STAGING.to_string(),
             install_command: self.remote_command(INSTALL)?,
             clear_command: Some(self.remote_command(REMOVE_STAGING)?),
+            claude_folder_command: self.remote_command(MAKE_CLAUDE_FOLDER)?,
             claude_md_path: CLAUDE_MD_PATH.to_string(),
             localswim: self.localswim,
+            localswim_staging: LOCALSWIM_STAGING.to_string(),
             localswim_install_command: self.remote_command(INSTALL_LOCALSWIM)?,
         })
     }
