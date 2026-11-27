@@ -22,9 +22,9 @@ mod impl_support;
 use agentspace_operator_api::{CallerLine, Mode};
 use agentspace_push::{
     Context, Outcome, Say, SshResult, SshRun, SshStderr, StderrSink, SystemSsh, push_to_host_using,
-    push_using_with, remote_command, ssh_args,
+    push_using_with, ssh_args,
 };
-use impl_support::{ALIAS, CONTENT, INSTANCE, Lines, Sandbox};
+use impl_support::{ALIAS, CONTENT, INSTANCE, Lines, Sandbox, remote_command};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs;

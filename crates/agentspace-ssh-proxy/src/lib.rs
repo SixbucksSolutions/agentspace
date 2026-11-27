@@ -67,7 +67,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use agentspace_box::{SystemClock, start_and_wait};
+use agentspace_box::{SystemClock, start_and_wait_on};
 use agentspace_hosts::{Host, host_for_keyed, is_box};
 use agentspace_operator::{DEFAULT_ALIAS, Parsed, Printer, context_from, diagnostic_from, parse};
 use agentspace_operator_api::{CallerFailure, Context, Failure, HostPlatform, Mode, Say};
@@ -241,11 +241,20 @@ fn up(
     env: &Arc<Env>,
     push_stderr: &SshStderr,
 ) -> Result<String, Failure> {
-    check_start_is_built(platform)?;
     let lookup_env = Arc::clone(env);
     let runner = Runner::with_lookup(ctx.clone(), move |name| lookup_env.get(name));
     let cache = HostCache::new(&ctx.home, host);
-    let id = start_and_wait(&runner, say, &SystemClock::new(), &cache, &host.stack)?;
+    // The start-and-wait step on the host's own platform: its patch check, sent through its own
+    // Session Manager document, and its phase message and deadline (operator.md, The platform
+    // seam). A platform whose patch check fails ends the step before any call.
+    let id = start_and_wait_on(
+        &runner,
+        say,
+        &SystemClock::new(),
+        &cache,
+        &host.stack,
+        platform,
+    )?;
     if !ctx.nested {
         let lookup_env = Arc::clone(env);
         let lookup: Arc<Lookup> = Arc::new(move |name| lookup_env.get(name));
@@ -302,27 +311,6 @@ pub fn platform_of(host: &Host) -> Result<&'static dyn HostPlatform, Failure> {
         ),
         caller: CallerFailure::CouldNotReach,
     })
-}
-
-/// The detail of a connection to a host whose platform's start-and-wait is not built yet.
-pub const START_NOT_BUILT: &str =
-    "agentspace: Starting and waiting for a host on this platform is not built yet.";
-
-/// Whether `up`'s start-and-wait step can run on `platform` today: `agentspace_box`'s
-/// `start_and_wait`, whose patch check is the Linux question sent with `AWS-RunShellScript`, the
-/// rows both Linux platforms share (operator.md, The platform seam). **For the dev lead, phase B of
-/// E0.12-T03-S04:** once E0.12-T03-S03's first pull request adds the platform-aware
-/// `start_and_wait_on`, every platform starts through it with its own patch check and document,
-/// and this goes. Until then a host of any other platform fails as a failed `up` does, before
-/// anything is started.
-pub fn check_start_is_built(platform: &dyn HostPlatform) -> Result<(), Failure> {
-    match platform.platform() {
-        "linux/arm64" | "linux/amd64" => Ok(()),
-        _ => Err(Failure {
-            message: START_NOT_BUILT.to_string(),
-            caller: CallerFailure::CouldNotReach,
-        }),
-    }
 }
 
 /// The host name the push to `host` keeps its stamp under: `None` for the box, whose stamp is
@@ -824,16 +812,182 @@ mod tests {
         assert_eq!(key, None);
     }
 
-    #[test]
-    fn the_start_is_built_for_both_linux_platforms_alone() {
-        for platform in ["linux/arm64", "linux/amd64"] {
-            let seam = agentspace_platforms::for_platform(platform).unwrap();
-            assert_eq!(check_start_is_built(seam), Ok(()), "{platform}");
+    /// A stand-in `windows/amd64` row set for `up`'s start-and-wait: a patch check that is given,
+    /// or that fails with [`STAND_IN_REFUSES`]. Every other row fails. The real Windows rows are
+    /// `agentspace-windows`' (E0.12-T03-S06), so `up` is shown on the platform it is handed.
+    #[cfg(windows)]
+    struct StandInWindows {
+        refuses: bool,
+    }
+
+    #[cfg(windows)]
+    const STAND_IN_REFUSES: &str = "agentspace: The stand-in's patch check cannot be made.";
+
+    #[cfg(windows)]
+    fn stand_in_failure(message: &str) -> Failure {
+        Failure {
+            message: message.to_string(),
+            caller: CallerFailure::CouldNotReach,
         }
-        let windows = agentspace_platforms::for_platform("windows/amd64").unwrap();
-        let failure = check_start_is_built(windows).unwrap_err();
-        assert_eq!(failure.caller, CallerFailure::CouldNotReach);
-        assert_eq!(failure.message, START_NOT_BUILT);
+    }
+
+    #[cfg(windows)]
+    impl HostPlatform for StandInWindows {
+        fn platform(&self) -> &'static str {
+            "windows/amd64"
+        }
+        fn image_parameter(&self) -> Option<&'static str> {
+            None
+        }
+        fn new_stack_instance_type(&self) -> Option<&'static str> {
+            None
+        }
+        fn new_stack_extra_parameters(&self) -> &'static [&'static str] {
+            &[]
+        }
+        fn login_user(&self) -> &'static str {
+            "agent"
+        }
+        fn ssm_document(&self) -> &'static str {
+            "AWS-RunPowerShellScript"
+        }
+        fn remote_command(&self, _script: &str) -> Result<String, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+        fn bootstrap(&self) -> Result<agentspace_operator_api::Bootstrap, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+        fn sync_plan(&self) -> Result<agentspace_operator_api::SyncPlan, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+        fn patch_check_command(&self) -> Result<String, Failure> {
+            if self.refuses {
+                Err(stand_in_failure(STAND_IN_REFUSES))
+            } else {
+                Ok("stand-in patch question".to_string())
+            }
+        }
+        fn patch_messages(&self) -> agentspace_operator_api::PatchMessages {
+            agentspace_operator_api::PatchMessages {
+                phase: "Patching the stand-in...".to_string(),
+                log_command: "stand-in log".to_string(),
+            }
+        }
+        fn horizon_command(&self, _horizon: u64) -> Result<String, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+        fn grow_script(&self) -> Result<String, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+        fn push_zone(&self, _windows_zone_id: &str, _iana: &str) -> Result<String, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+        fn push_script(&self, _zone: &str) -> Result<String, Failure> {
+            Err(stand_in_failure("not used"))
+        }
+    }
+
+    /// `up` on a Windows host's record, in process, with `platform` as its rows: a throwaway home,
+    /// and a stand-in `aws` that logs every call and answers `ec2 describe-instances` with a host
+    /// that has run for long, so no patch call is made. Returns what `up` gave and the calls.
+    #[cfg(windows)]
+    fn up_on(name: &str, platform: &dyn HostPlatform) -> (Result<String, Failure>, Vec<String>) {
+        const WIN_ID: &str = "i-11112222333344445";
+        let root = std::env::temp_dir().join(format!(
+            "agentspace-ssh-proxy-up-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let tmp = root.join("tmp");
+        for folder in [&home, &tmp] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        let aws = root.join("aws.cmd");
+        let describe = r#"echo {"Reservations":[{"Instances":[{"State":{"Name":"running"},"LaunchTime":"2020-01-01T00:00:00+00:00"}]}]}"#;
+        let script = [
+            "@echo off",
+            ">>\"%~dp0calls.log\" echo aws %*",
+            "if \"%~1\"==\"ec2\" if \"%~2\"==\"describe-instances\" goto describe",
+            "exit /b 9",
+            ":describe",
+            describe,
+            "exit /b 0",
+        ]
+        .map(|line| format!("{line}\r\n"))
+        .concat();
+        std::fs::write(&aws, script).unwrap();
+        let missing = root.join("no-such-program.cmd");
+        let system = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let system32 = system.join("System32");
+        let env = Env::from_pairs([
+            ("USERPROFILE", home.clone().into_os_string()),
+            ("HOME", home.clone().into_os_string()),
+            ("LOCALAPPDATA", root.join("localapp").into_os_string()),
+            ("APPDATA", root.join("roaming").into_os_string()),
+            ("TEMP", tmp.clone().into_os_string()),
+            ("TMP", tmp.into_os_string()),
+            ("SystemRoot", system.clone().into_os_string()),
+            ("windir", system.clone().into_os_string()),
+            ("ComSpec", system32.join("cmd.exe").into_os_string()),
+            (
+                "PATH",
+                OsString::from(format!("{};{}", system32.display(), system.display())),
+            ),
+            ("AGENTSPACE_AWS_CMD", aws.into_os_string()),
+            ("AGENTSPACE_SSH_CMD", missing.clone().into_os_string()),
+            ("AGENTSPACE_SCP_CMD", missing.into_os_string()),
+            ("AGENTSPACE_TIMEZONE", OsString::from("America/New_York")),
+        ]);
+        let ctx = context_from(&|name| env.get(name)).unwrap();
+        let mut host = agentspace_hosts::Host::new(
+            &HostKey::new("orchard", "windows/amd64"),
+            HostState::Ready,
+        );
+        host.instance_id = Some(WIN_ID.to_string());
+        let cap = Capture::default();
+        let say = Printer::new(Mode::Caller, false, true, Box::new(cap.clone()));
+        let env = Arc::new(env);
+        let result = up(
+            &ctx,
+            &say,
+            "agentspace-host.orchard.windows-amd64",
+            &host,
+            platform,
+            &env,
+            &SshStderr::Inherit,
+        );
+        let calls = std::fs::read_to_string(root.join("calls.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.trim().to_string())
+            .collect();
+        let _ = std::fs::remove_dir_all(&root);
+        (result, calls)
+    }
+
+    /// `up` starts and waits for a host through the platform it is handed (operator.md, The
+    /// platform seam; `agentspace_box::start_and_wait_on`), a Windows host's included: its rows'
+    /// patch check is read before any call, so one that fails ends the step with nothing called,
+    /// and one that is given lets a host that has run for long be ready with its two describes,
+    /// its state and then its launch time, and no patch call.
+    #[cfg(windows)]
+    #[test]
+    fn up_starts_a_host_through_the_platform_it_is_handed() {
+        let (result, calls) = up_on("given", &StandInWindows { refuses: false });
+        assert_eq!(result, Ok("i-11112222333344445".to_string()));
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        for call in &calls {
+            assert!(
+                call.starts_with("aws ec2 describe-instances ")
+                    && call.ends_with(" --instance-ids i-11112222333344445"),
+                "{calls:?}"
+            );
+        }
+        let (result, calls) = up_on("refused", &StandInWindows { refuses: true });
+        let failure = result.unwrap_err();
+        assert_eq!(failure.message, STAND_IN_REFUSES);
+        assert!(calls.is_empty(), "No call is made: {calls:?}");
     }
 
     #[test]

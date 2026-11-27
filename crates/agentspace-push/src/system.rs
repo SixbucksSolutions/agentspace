@@ -347,7 +347,9 @@ pub fn push_using_with_host(
         move || lookup(TIMEZONE_VAR).map(|v| v.to_string_lossy().into_owned())
     };
     let zone = || agentspace_zone::laptop_zone(override_value().as_deref());
-    let windows_zone = || laptop_windows_zone(override_value());
+    // A Windows host's zone (operator.md, The token push to a Windows host): the zone crate's rule,
+    // its one copy, read afresh each time it is asked.
+    let windows_zone = || agentspace_zone::laptop_windows_zone(override_value().as_deref());
     let seams = Seams {
         files: &SystemFiles,
         unprotect: &DpapiUnprotect,
@@ -364,19 +366,6 @@ pub fn push_using_with_host(
         host,
         &windows_zone,
     )
-}
-
-/// The zone a host not on Linux is given, before its platform's row checks it (operator.md, The
-/// token push to a Windows host): `AGENTSPACE_TIMEZONE`'s value when it is set and not empty, and
-/// otherwise the Windows ID of the zone the laptop is set to at this moment, read afresh, never
-/// converted to an IANA name. `None` when neither gives one. **For the dev lead:** should
-/// `agentspace-zone` gain this rule as a function of its own (E0.12-T03-S04's zone half), the push
-/// SHOULD call that instead.
-fn laptop_windows_zone(override_value: Option<String>) -> Option<String> {
-    match override_value {
-        Some(value) if !value.is_empty() => Some(value),
-        _ => agentspace_zone::windows_zone_id(),
-    }
 }
 
 /// One token push (operator.md, The token push), as `up` and `sync` run it. **It never fails a

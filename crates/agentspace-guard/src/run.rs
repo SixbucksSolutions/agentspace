@@ -21,7 +21,9 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use agentspace_box::{Described, describe_hosts, instance_id_from_stack, send_horizon, stop_host};
+use agentspace_box::{
+    Described, describe_hosts, instance_id_from_stack, send_horizon_on, stop_host,
+};
 use agentspace_hosts::{
     HostKey, HostState, Hosts, HostsError, guard_lock_path, host_run_lock_path_keyed, hosts_path,
     run_is_running_keyed, try_guard_lock,
@@ -95,37 +97,38 @@ fn stop_time(unix: i64) -> String {
     agentspace_zone::local_clock_time_or_utc(unix)
 }
 
-/// The Session Manager document of both Linux platforms' rows, `AWS-RunShellScript` (operator.md,
-/// The platform seam, the Session Manager document row).
-const SHELL_DOCUMENT: &str = "AWS-RunShellScript";
+/// The `<error>` of the failed-send line for a host whose record names a platform agentspace has no
+/// seam for (operator.md, guard, step 7; architect, 2026-11-26, for v0.12-T03, pin P10): no
+/// document or command exists for it, so nothing is sent. `platform` is the record's own platform.
+fn no_seam(platform: &str) -> Failure {
+    failure(format!(
+        "agentspace: No Session Manager document or horizon command exists for the platform {platform}."
+    ))
+}
 
 /// Sends one running host its horizon through its platform's rows (operator.md, guard, step 7; The
-/// platform seam, the Session Manager document and horizon command rows). `platform` is the seam of
-/// the host's platform from [`agentspace_platforms::for_platform`], or `None` for a platform
-/// agentspace does not support, which has no rows to send with.
-///
-/// **Phase B's one site** (E0.12-T03-S04): once E0.12-T03-S03's first pull request is merged, this
-/// whole body is the one call `agentspace_box::send_horizon_on(aws, id, platform, horizon)`, which
-/// sends the platform's document and horizon command. Until then:
-/// - **A platform whose document is the shell one, `linux/arm64` and `linux/amd64`**, is sent
-///   today's [`send_horizon`], byte for byte: both Linux platforms' command and document are the
-///   same (operator.md, The platform seam).
-/// - **Any other platform, and a platform with no rows, is not sent anything**: its command is
-///   `agentspace-windows`' to build and is not built yet, so the horizon is not sent (phase B).
+/// platform seam, the Session Manager document and horizon command rows): one
+/// `agentspace_box::send_horizon_on`, on every platform, both Linux ones included, whose
+/// `--parameters` is `commands=<command>` on `AWS-RunShellScript`, byte for byte as before v0.12,
+/// and the JSON value `{"commands":["<command>"]}` on every other document. `platform` is the seam
+/// of the host's platform, or `None` for a record whose platform, `record_platform`, agentspace has
+/// no seam for: that send makes no call and fails with [`no_seam`] (pin P10).
 fn send_horizon_for(
     aws: &dyn Aws,
     platform: Option<&dyn HostPlatform>,
+    record_platform: &str,
     instance_id: &str,
     horizon: i64,
 ) -> Result<(), Failure> {
     match platform {
-        Some(platform) if platform.ssm_document() == SHELL_DOCUMENT => {
-            send_horizon(aws, instance_id, horizon)
-        }
-        // PHASE B: not sent until `agentspace_box::send_horizon_on` exists.
-        Some(_) | None => Ok(()),
+        Some(platform) => send_horizon_on(aws, instance_id, platform, horizon),
+        None => Err(no_seam(record_platform)),
     }
 }
+
+/// How a run picks a host's rows of the seam from its record's platform: in a release build,
+/// `agentspace_platforms::for_platform` and nothing else (D101). A test MAY pass a stand-in.
+type Pick<'a> = &'a dyn Fn(&str) -> Option<&'static dyn HostPlatform>;
 
 /// The run's state: its streams, its log, and the hosts whose part failed.
 struct Run<'a> {
@@ -188,6 +191,16 @@ impl Run<'_> {
 
 /// One run of the guard (operator.md, guard, steps 1 to 8). See [`crate::run`].
 pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Report, Failure> {
+    execute_with(input, say, aws, &agentspace_platforms::for_platform)
+}
+
+/// [`execute`], with each host's rows of the seam picked by `pick`.
+fn execute_with(
+    input: &Input,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    pick: Pick<'_>,
+) -> Result<Report, Failure> {
     let home = &input.ctx.home;
     let mut run = Run {
         say,
@@ -431,8 +444,14 @@ pub(crate) fn execute(input: &Input, say: &dyn Say, aws: &dyn Aws) -> Result<Rep
     // Step 7: every running host the run did not stop is sent its horizon, in the registry's
     // order, through its own platform's rows. A horizon sent is not logged and prints nothing.
     for (index, instance_id, horizon) in sends {
-        let platform = agentspace_platforms::for_platform(hosts.hosts[index].platform());
-        match send_horizon_for(aws, platform, &instance_id, horizon) {
+        let record_platform = hosts.hosts[index].platform();
+        match send_horizon_for(
+            aws,
+            pick(record_platform),
+            record_platform,
+            &instance_id,
+            horizon,
+        ) {
             Ok(()) => {}
             Err(f) if is_sign_in(&f) => return Err(run.sign_in("horizon", f)),
             Err(f) => {
@@ -644,9 +663,16 @@ mod flow_tests {
                 .collect()
         }
 
+        /// One run, with each host's rows from [`stand_in_pick`]: both Linux platforms' real rows,
+        /// and a stand-in for `windows/amd64`, so a Windows host's send is shown whatever
+        /// `agentspace-windows` builds.
         fn run(&self, say: &FakeSay, aws: &FakeAws) -> Result<Report, Failure> {
+            self.run_picking(say, aws, &stand_in_pick)
+        }
+
+        fn run_picking(&self, say: &FakeSay, aws: &FakeAws, pick: Pick) -> Result<Report, Failure> {
             let state_dir = self.state_dir();
-            execute(
+            execute_with(
                 &Input {
                     ctx: &self.ctx,
                     state_dir: &state_dir,
@@ -654,6 +680,7 @@ mod flow_tests {
                 },
                 say,
                 aws,
+                pick,
             )
         }
     }
@@ -1330,8 +1357,19 @@ mod flow_tests {
             amd.split_whitespace()
                 .any(|word| word == (NOW + 900).to_string())
         );
-        // PHASE B: the windows host is sent nothing until `send_horizon_on` exists.
-        assert_eq!(send_to(WIN_ID), "");
+        // The Windows host goes through its own rows: the PowerShell document, its own horizon
+        // command, and `--parameters` as the JSON value, never the shorthand.
+        let win = send_to(WIN_ID);
+        assert!(
+            win.contains(" --document-name AWS-RunPowerShellScript "),
+            "{win}"
+        );
+        let command = format!("{} {}", STAND_IN_HORIZON, NOW + 600);
+        assert!(
+            win.ends_with(&format!(" --parameters {{\"commands\":[\"{command}\"]}}")),
+            "{win}"
+        );
+        assert!(!win.contains("commands="), "{win}");
     }
 
     #[test]
@@ -1367,7 +1405,8 @@ mod flow_tests {
         let say = FakeSay::default();
         let report = w.run(&say, &aws).unwrap();
         assert_eq!((report.stopped, report.unexplained), (0, 1));
-        assert!(calls_for(&aws, WIN_ID).is_empty());
+        // Not stopped, and sent its horizon through its own rows, as a provisioning host is.
+        assert_eq!(calls_for(&aws, WIN_ID), ["ssm send-command"]);
         assert_eq!(
             say.progress.borrow()[0],
             format!(
@@ -1460,14 +1499,35 @@ mod flow_tests {
         )));
     }
 
-    /// A stand-in platform whose only row the horizon send reads is its Session Manager document.
+    /// A stand-in platform whose only rows the horizon send reads are its Session Manager document
+    /// and its horizon command, `<STAND_IN_HORIZON> <horizon>`.
     struct StandIn {
+        platform: &'static str,
         document: &'static str,
+    }
+
+    /// The stand-in's horizon command, before the horizon's digits.
+    const STAND_IN_HORIZON: &str = "stand-in horizon";
+
+    /// The stand-in for `windows/amd64` in every flow test: the PowerShell document, and a command
+    /// that holds a space, so the JSON value's form is the one that carries it whole.
+    static STAND_IN_WINDOWS: StandIn = StandIn {
+        platform: "windows/amd64",
+        document: "AWS-RunPowerShellScript",
+    };
+
+    /// The flow tests' pick: the stand-in for `windows/amd64`, and `for_platform`'s real rows for
+    /// every other platform, so both Linux platforms send today's text.
+    fn stand_in_pick(platform: &str) -> Option<&'static dyn HostPlatform> {
+        match platform {
+            "windows/amd64" => Some(&STAND_IN_WINDOWS),
+            other => agentspace_platforms::for_platform(other),
+        }
     }
 
     impl HostPlatform for StandIn {
         fn platform(&self) -> &'static str {
-            "example/one"
+            self.platform
         }
         fn image_parameter(&self) -> Option<&'static str> {
             None
@@ -1479,7 +1539,7 @@ mod flow_tests {
             &[]
         }
         fn login_user(&self) -> &'static str {
-            "ubuntu"
+            "agent"
         }
         fn ssm_document(&self) -> &'static str {
             self.document
@@ -1502,8 +1562,8 @@ mod flow_tests {
                 log_command: String::new(),
             }
         }
-        fn horizon_command(&self, _horizon: u64) -> Result<String, Failure> {
-            Err(failure("not used".to_string()))
+        fn horizon_command(&self, horizon: u64) -> Result<String, Failure> {
+            Ok(format!("{STAND_IN_HORIZON} {horizon}"))
         }
         fn grow_script(&self) -> Result<String, Failure> {
             Err(failure("not used".to_string()))
@@ -1517,34 +1577,40 @@ mod flow_tests {
     }
 
     #[test]
-    fn the_horizon_send_follows_the_platforms_document_and_phase_b_sends_no_other() {
-        // The shell document: today's send, byte for byte.
-        let aws = aws(Value::Null, ok);
-        send_horizon_for(
-            &aws,
-            Some(&StandIn {
-                document: "AWS-RunShellScript",
-            }),
-            ID,
-            7,
-        )
-        .unwrap();
-        let direct = aws_of(&[]);
-        send_horizon(&direct, ID, 7).unwrap();
-        assert_eq!(*aws.calls.borrow(), *direct.calls.borrow());
-        assert_eq!(operations(&aws), ["ssm send-command"]);
-        // The PowerShell document and a platform with no rows: nothing is sent (phase B).
+    fn the_horizon_send_is_the_platforms_rows_and_a_platform_with_none_fails_with_no_call() {
+        // Both Linux platforms' real rows: today's send, byte for byte.
+        for platform in ["linux/arm64", "linux/amd64"] {
+            let aws = aws(Value::Null, ok);
+            send_horizon_for(
+                &aws,
+                agentspace_platforms::for_platform(platform),
+                platform,
+                ID,
+                7,
+            )
+            .unwrap();
+            let direct = aws_of(&[]);
+            agentspace_box::send_horizon(&direct, ID, 7).unwrap();
+            assert_eq!(*aws.calls.borrow(), *direct.calls.borrow(), "{platform}");
+            assert_eq!(operations(&aws), ["ssm send-command"], "{platform}");
+        }
+        // Another document: its own command, as the JSON value.
         let aws = aws_of(&[]);
-        send_horizon_for(
-            &aws,
-            Some(&StandIn {
-                document: "AWS-RunPowerShellScript",
-            }),
-            ID,
-            7,
-        )
-        .unwrap();
-        send_horizon_for(&aws, None, ID, 7).unwrap();
+        send_horizon_for(&aws, Some(&STAND_IN_WINDOWS), "windows/amd64", ID, 7).unwrap();
+        assert_eq!(
+            *aws.calls.borrow(),
+            [format!(
+                "ssm send-command --instance-ids {ID} --document-name AWS-RunPowerShellScript --comment agentspace guard: lease horizon --parameters {{\"commands\":[\"{STAND_IN_HORIZON} 7\"]}}"
+            )]
+        );
+        // A platform with no rows (pin P10): no call, and the failure names the platform.
+        let aws = aws_of(&[]);
+        let failed = send_horizon_for(&aws, None, "windows/arm64", ID, 7).unwrap_err();
+        assert_eq!(
+            failed.message,
+            "agentspace: No Session Manager document or horizon command exists for the platform windows/arm64."
+        );
+        assert!(!is_sign_in(&failed));
         assert!(aws.calls.borrow().is_empty());
     }
 
@@ -1552,9 +1618,79 @@ mod flow_tests {
     fn the_real_rows_of_each_supported_platform_pick_their_documents() {
         let document =
             |platform: &str| agentspace_platforms::for_platform(platform).map(|p| p.ssm_document());
-        assert_eq!(document("linux/arm64"), Some(SHELL_DOCUMENT));
-        assert_eq!(document("linux/amd64"), Some(SHELL_DOCUMENT));
+        assert_eq!(document("linux/arm64"), Some("AWS-RunShellScript"));
+        assert_eq!(document("linux/amd64"), Some("AWS-RunShellScript"));
         assert_eq!(document("windows/amd64"), Some("AWS-RunPowerShellScript"));
         assert_eq!(document("windows/arm64"), None);
+    }
+
+    /// Pin P10 (operator.md, guard, step 7): a record whose platform `for_platform` does not know
+    /// is decided as any host is. Due and unexplained, it is stopped, so it never runs unbounded.
+    /// Running and explained, its horizon send fails its part with the failed-send line, naming the
+    /// host by its host name. The run is the release one, `execute`, whose rows are
+    /// `for_platform`'s alone.
+    #[test]
+    fn a_record_whose_platform_has_no_seam_is_stopped_when_due_and_its_send_fails_its_part() {
+        const ODD_ID: &str = "i-0123456789abcdef7";
+        const ODD_HOST: &str = "agentspace.windows-arm64";
+        let records = vec![
+            record("swimcoach", None, "agentbox", BOX_ID),
+            record(
+                "agentspace",
+                Some("windows/arm64"),
+                "agentspace-windows-arm64-host-agentspace",
+                ODD_ID,
+            ),
+        ];
+        let old = NOW - 100_000;
+        let release = |w: &World, say: &FakeSay, aws: &FakeAws| {
+            let state_dir = w.state_dir();
+            execute(
+                &Input {
+                    ctx: &w.ctx,
+                    state_dir: &state_dir,
+                    now: NOW,
+                },
+                say,
+                aws,
+            )
+        };
+
+        // No live lease, and due: stopped, and sent nothing.
+        let w = World::new();
+        w.seed(&records, &[]);
+        let aws = aws_of(&[(BOX_ID, "stopped", old), (ODD_ID, "running", old)]);
+        let say = FakeSay::default();
+        let report = release(&w, &say, &aws).unwrap();
+        assert_eq!((report.running, report.stopped, report.failed), (1, 1, 0));
+        assert_eq!(calls_for(&aws, ODD_ID), ["ec2 stop-instances"]);
+        assert_eq!(
+            say.progress.borrow()[0],
+            format!("Stopping the host of '{ODD_HOST}' ({ODD_ID}): no live lease explains it.")
+        );
+
+        // A live lease on its platform explains it: not stopped, and its send fails its part.
+        let w = World::new();
+        w.seed(
+            &records,
+            &[lease_on("windows/arm64", "ready", Some(NOW + 1800))],
+        );
+        let aws = aws_of(&[(BOX_ID, "stopped", old), (ODD_ID, "running", old)]);
+        let say = FakeSay::default();
+        let report = release(&w, &say, &aws).unwrap();
+        assert_eq!((report.running, report.stopped, report.failed), (1, 0, 1));
+        assert!(calls_for(&aws, ODD_ID).is_empty(), "No call names it");
+        let line = format!(
+            "Could not send the lease horizon to {ODD_ID}: No Session Manager document or horizon command exists for the platform windows/arm64."
+        );
+        assert_eq!(
+            *say.warnings.borrow(),
+            [format!("agentspace: Host '{ODD_HOST}': {line}")]
+        );
+        let log = w.log();
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert!(log[0].ends_with(&format!(
+            "Z host={ODD_HOST} failed step=horizon reason={line}"
+        )));
     }
 }

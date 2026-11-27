@@ -457,9 +457,10 @@ fn two_hosts_of_one_project_on_two_platforms_are_each_reached_by_their_own_lease
 }
 
 /// The same for a `windows/amd64` lease and a `linux/arm64` one: each reaches its own host, the
-/// Windows host's record coming first or last. **It holds only once the start-and-wait step runs
-/// on a Windows host** (E0.12-T03-S03's platform-aware start, which this story's phase B moves
-/// `up` to): until then a Windows host fails as a failed `up` does, whatever the lookup chose.
+/// Windows host's record coming first or last. `up` starts every host through its platform's rows
+/// (`agentspace_box::start_and_wait_on`), so **it holds only once `agentspace-windows`' patch check
+/// row is built** (E0.12-T03-S06): until then that row's refusal fails a Windows host as a failed
+/// `up` does, whatever the lookup chose.
 #[test]
 fn a_windows_lease_reaches_the_windows_host_of_its_project() {
     let a = arm_host("ready", Some(ARM_ID));
@@ -645,8 +646,8 @@ fn an_operator_alias_names_the_host_by_its_project_and_platform() {
 }
 
 /// `agentspace-host.<project>.windows-amd64` is the project's `windows/amd64` record, whichever
-/// order the registry holds the three records in. **It holds only once the start-and-wait step
-/// runs on a Windows host** (see `a_windows_lease_reaches_the_windows_host_of_its_project`).
+/// order the registry holds the three records in. **It holds only once `agentspace-windows`' patch
+/// check row is built** (see `a_windows_lease_reaches_the_windows_host_of_its_project`).
 #[test]
 fn an_operator_alias_names_the_windows_host_of_its_project() {
     for (order, reg) in three_hosts_in_each_order() {
@@ -745,7 +746,7 @@ fn a_hosts_missing_instance_id_is_read_from_its_own_platforms_stack_and_written_
 }
 
 /// The same for a Windows host, whose stack is `agentspace-windows-amd64-host-orchard`. **It holds
-/// only once the start-and-wait step runs on a Windows host.**
+/// only once `agentspace-windows`' patch check row is built** (E0.12-T03-S06).
 #[test]
 fn a_windows_hosts_missing_instance_id_is_read_from_its_own_stack_and_written_into_its_record_alone()
  {

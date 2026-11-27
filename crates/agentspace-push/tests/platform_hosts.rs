@@ -25,12 +25,23 @@ mod win_support;
 use agentspace_operator_api::{
     Bootstrap, CallerFailure, Failure, HostPlatform, PatchMessages, SyncPlan,
 };
-use agentspace_push::{
-    BAD_HOST, Outcome, host_name_is_valid, remote_command, stamp_path, stamp_path_for,
-};
+use agentspace_push::{BAD_HOST, Outcome, host_name_is_valid, stamp_path, stamp_path_for};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use win_support::*;
+
+/// Today's remote half for `zone`: the `linux/arm64` row of the platform seam,
+/// `remote_command(push_script(zone))`, where the push's own copy was before phase B (pin P1 of
+/// v0.12-T03).
+fn remote_command(zone: &str) -> String {
+    let platform = agentspace_platforms::for_platform("linux/arm64").expect("linux/arm64");
+    let script = platform
+        .push_script(zone)
+        .expect("the Linux row gives a script");
+    platform
+        .remote_command(&script)
+        .expect("the Linux row gives a command")
+}
 
 const WINDOWS_ID: &str = "Mountain Standard Time";
 const WIN_HOST: &str = "alpha.windows-amd64";

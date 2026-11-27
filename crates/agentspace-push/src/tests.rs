@@ -13,6 +13,20 @@ const URL: &str = "http://127.0.0.1:8811";
 const ID: &str = "i-0123456789abcdef0";
 const ZONE: &str = "America/New_York";
 
+/// The push's remote half for `zone` on today's box: the `linux/arm64` row of the seam,
+/// `remote_command(push_script(zone))`, which the push sends on both Linux platforms (operator.md,
+/// The platform seam). The tests below keep their assertions as they were before the push's own
+/// copy went (pin P1 of v0.12-T03).
+fn remote_command(zone: &str) -> String {
+    let platform = agentspace_platforms::for_platform("linux/arm64").expect("linux/arm64");
+    let script = platform
+        .push_script(zone)
+        .expect("the Linux row gives a script");
+    platform
+        .remote_command(&script)
+        .expect("the Linux row gives a command")
+}
+
 /// A `Say` that records what a real one would print, rewriting warnings in caller mode as the pin
 /// says.
 struct Recorder {

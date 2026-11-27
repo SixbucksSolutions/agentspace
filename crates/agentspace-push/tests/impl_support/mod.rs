@@ -13,6 +13,20 @@
 
 use agentspace_push::{Context, Say};
 use std::cell::RefCell;
+
+/// The push's remote half for `zone` on today's box: the `linux/arm64` row of the platform seam,
+/// `remote_command(push_script(zone))`, which the push sends on both Linux platforms (operator.md,
+/// The platform seam). It stands where the push's own copy, `agentspace_push::remote_command`, was
+/// before v0.12-T03, so each test's assertion is unchanged (pin P1 of v0.12-T03).
+pub fn remote_command(zone: &str) -> String {
+    let platform = agentspace_platforms::for_platform("linux/arm64").expect("linux/arm64");
+    let script = platform
+        .push_script(zone)
+        .expect("the Linux row gives a script");
+    platform
+        .remote_command(&script)
+        .expect("the Linux row gives a command")
+}
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -44,8 +44,10 @@
 //! - The steps, for a caller that needs one alone: [`receipt_path`], [`parse_receipt`] and
 //!   [`Receipt`]; [`credential_path`], [`parse_credential_blob`] and [`read_token`];
 //!   [`check_zone`], the zone's guard; [`content`]; [`stamp`], [`stamp_path`], [`stamp_path_for`],
-//!   [`parse_stamp_file`] and [`stamp_file_bytes`]; [`alias_is_valid`], [`remote_command`] and
-//!   [`ssh_args`].
+//!   [`parse_stamp_file`] and [`stamp_file_bytes`]; [`alias_is_valid`] and [`ssh_args`]. The
+//!   remote half is the host's platform's row of the seam, `remote_command(push_script(zone))`,
+//!   on every platform, both Linux ones included (D101's change at T03's start): this crate keeps
+//!   no copy of its text.
 //! - The warnings' texts, as a person's command prints them: [`COULD_NOT_READ`], [`NO_ZONE`],
 //!   [`TIMED_OUT`], [`NOT_CONFIRMED`], [`zone_not_taken`], [`COULD_NOT_SEND`], [`BAD_ALIAS`] and [`BAD_HOST`];
 //!   and the progress line [`SENDING`]. In caller mode, [`Say`] rewrites `the instance`.
@@ -87,7 +89,7 @@ mod text;
 mod zone;
 
 pub use agentspace_operator_api::{Context, Say};
-pub use boxside::{alias_is_valid, remote_command, ssh_args};
+pub use boxside::{alias_is_valid, ssh_args};
 pub use credential::{parse_credential_blob, read_token};
 pub use receipt::{Receipt, parse_receipt};
 pub use relay::{HOST_READY_LINE, SshStderr, StderrFilter, StderrSink};
@@ -470,15 +472,16 @@ fn project_is_valid(project: &str) -> bool {
     bytes.len() <= 32 && edge(first) && edge(last) && bytes.iter().all(|&b| edge(b) || b == b'-')
 }
 
-/// The normalized platform a name part names, `<os>-<arch>` for `<os>/<arch>`, when it is the name
-/// part of a supported platform other than `linux/arm64` (operator.md, A host's platform and its
-/// names: `linux/arm64` never appears in a name). The supported platforms are the ones
-/// `agentspace_platforms::for_platform` serves, so no list of them is kept here; a name part is
-/// compared exactly, so an upper-case one, `linux-arm64` and `windows-arm64` name none.
+/// The normalized platform a name part names: exactly `linux-amd64` or `windows-amd64`, the name
+/// parts of D91's two non-default platforms, written `<os>-<arch>` (operator.md, A host's platform
+/// and its names: `linux/arm64` never appears in a name; pin P3 of v0.12-T03). A name part is
+/// compared exactly, so `linux-arm64`, an upper-case one and `windows-arm64` name none.
 fn platform_of_name_part(part: &str) -> Option<&'static str> {
-    let (os, arch) = part.split_once('-')?;
-    let platform = agentspace_platforms::for_platform(&format!("{os}/{arch}"))?.platform();
-    (platform != LINUX_ARM64 && platform.replace('/', "-") == part).then_some(platform)
+    match part {
+        "linux-amd64" => Some("linux/amd64"),
+        "windows-amd64" => Some("windows/amd64"),
+        _ => None,
+    }
 }
 
 /// A host name's project and normalized platform (operator.md, A host's platform and its names;
@@ -500,8 +503,8 @@ pub fn parse_host_name(name: &str) -> Option<(&str, &'static str)> {
 }
 
 /// Whether `name` is a host name ([`parse_host_name`]): a normalized project, optionally followed
-/// by `.` and the name part of a supported platform other than `linux/arm64` (pin P3 of
-/// v0.12-T03, proposed). A host's name MUST pass this before it is a folder name.
+/// by `.` and `linux-amd64` or `windows-amd64`, and never `linux-arm64` as a suffix (pin P3 of
+/// v0.12-T03). A host's name MUST pass this before it is a folder name.
 pub fn host_name_is_valid(name: &str) -> bool {
     parse_host_name(name).is_some()
 }
@@ -515,13 +518,11 @@ pub fn host_platform(host: Option<&str>) -> Option<&'static str> {
     }
 }
 
-/// Whether the push to a host of `platform` still runs today's Linux code, byte for byte, rather
-/// than the platform's rows of the seam. **For the dev lead, phase B of E0.12-T03-S04:** once
-/// E0.12-T03-S03's first pull request gives both Linux platforms their `push_zone` and
-/// `push_script` rows, this goes and every platform takes its zone and remote half from the seam,
-/// so no Linux step keeps a second copy of its text (D101's change at T03's start).
-fn runs_todays_linux_push(platform: &dyn HostPlatform) -> bool {
-    matches!(platform.platform(), "linux/arm64" | "linux/amd64")
+/// Whether a host of `platform` is given the laptop's Windows zone ID (operator.md, The token push
+/// to a Windows host; D96): a Windows host alone. Both Linux rows of `push_zone` ignore it, so it
+/// is not read from the system for them.
+fn takes_windows_zone(platform: &dyn HostPlatform) -> bool {
+    platform.platform().starts_with("windows/")
 }
 
 /// The receipt, the token, and so the content; `Err` is the outcome when they cannot be had.
@@ -641,14 +642,14 @@ pub fn push_with_host_zone(
 ///
 /// **The laptop's side is the same on every platform** (operator.md, The token push to a Windows
 /// host): the reads, the stamp, the ssh, its limits, what the laptop checks and every warning.
-/// What differs:
-/// - **The zone.** Both Linux platforms keep the IANA name `seams.zone` gives, guarded by
-///   [`check_zone`], as before v0.12. Any other platform's is its `push_zone(windows_zone, iana)`,
-///   `windows_zone` being asked only then; a row that fails gives the empty zone, which is not
-///   sent, as on Linux. The stamp covers the zone as sent.
-/// - **The remote command.** Both Linux platforms keep [`remote_command`]. Any other platform's is
-///   its `remote_command(push_script(zone))`; a row that fails warns [`COULD_NOT_SEND`] after the
-///   `Sending` line, as any other failure to send does, and records nothing.
+/// What differs is the platform's rows alone, taken the same way on every platform:
+/// - **The zone** is its `push_zone(windows_zone, iana)`, `iana` being the name `seams.zone`
+///   gives, guarded by [`check_zone`]. Both Linux rows return `iana`, as before v0.12. `windows_zone`
+///   is asked only for a Windows host, and is the empty string for any other. A row that fails
+///   gives the empty zone, which is not sent, as on Linux. The stamp covers the zone as sent.
+/// - **The remote command** is its `remote_command(push_script(zone))`; a row that fails warns
+///   [`COULD_NOT_SEND`] after the `Sending` line, as any other failure to send does, and records
+///   nothing.
 #[allow(clippy::too_many_arguments)]
 pub fn push_on(
     ctx: &Context,
@@ -691,15 +692,18 @@ pub fn push_on(
         Err(o) => return warn(COULD_NOT_READ, o),
     };
     // The zone is already mapped and checked; step 3's check again is the guard before it goes on
-    // the command line. A host not on Linux takes its own row's zone, from the laptop's Windows
-    // zone ID (D96).
+    // the command line. Every platform's zone is its own row's, from the IANA name and, on a
+    // Windows host, the laptop's Windows zone ID (D96), read only for a host that is given it. A
+    // row that fails, such as the Windows row's refusal of an ID (its NO_ZONE failure), is the
+    // empty zone: NO_ZONE's warning, and the push goes on without a zone (architect, 2026-11-26,
+    // for v0.12-T03, P9's readings).
     let iana = check_zone((seams.zone)().as_deref());
-    let zone = if runs_todays_linux_push(platform) {
-        iana
+    let windows_zone = if takes_windows_zone(platform) {
+        windows_zone().unwrap_or_default()
     } else {
-        let windows_zone = windows_zone().unwrap_or_default();
-        platform.push_zone(&windows_zone, &iana).unwrap_or_default()
+        String::new()
     };
+    let zone = platform.push_zone(&windows_zone, &iana).unwrap_or_default();
     let computed = stamp(instance_id, &zone, &content);
     let path = stamp_path_for(ctx, host);
     if !is_due(seams.files, &path, &computed, forced) {
@@ -711,16 +715,14 @@ pub fn push_on(
     if zone.is_empty() {
         say.warning(NO_ZONE);
     }
-    let command = if runs_todays_linux_push(platform) {
-        remote_command(&zone)
-    } else {
-        match platform
-            .push_script(&zone)
-            .and_then(|script| platform.remote_command(&script))
-        {
-            Ok(command) => command,
-            Err(_) => return warn(COULD_NOT_SEND, Outcome::CouldNotSend),
-        }
+    // The remote half is the platform's row on every platform, both Linux ones included: the
+    // seam's text, byte for byte what the push sent before v0.12 on Linux (pin P1 of v0.12-T03).
+    let command = match platform
+        .push_script(&zone)
+        .and_then(|script| platform.remote_command(&script))
+    {
+        Ok(command) => command,
+        Err(_) => return warn(COULD_NOT_SEND, Outcome::CouldNotSend),
     };
     let args = ssh_args(alias, &command);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
