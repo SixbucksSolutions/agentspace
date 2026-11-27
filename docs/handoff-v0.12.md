@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Live, as of v0.12-T02's close, 5:03pm Mountain on 2026-11-26.** Started at T01's close and
+> **Live, as of v0.12-T03's close, 9:34pm Mountain on 2026-11-26.** Started at T01's close and
 > refreshed at each turn's close, as v0.11's was. Where this file and AGENTS.md, the board or
 > decisions.md disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -22,13 +22,13 @@ and this file adds only what v0.12 has changed or learned.
   its cards in Ready For Review, 2 h 13 min of its 3.5 h. The architect's T03 prep is merged too
   (#185): the platform seam `HostPlatform` in `agentspace-operator-api`, the `agentspace-windows`
   skeleton and `box/windows/`'s eleven placeholders (D101).
-- **`main` is red by design, 30 crate tests and 22 conformance cases, all T03's** (T02's baseline,
-  `cargo test --workspace --locked --no-fail-fast` on be8e844, and #186's merge check):
-  `create`'s help block, 7 crate tests and the 22 lease CLI cases, from #181, for E0.12-T03-S01;
-  and **every** operator help block, 23 crate tests, since T01-S04 gave each `-Platform` and P60
-  changed guard's, for E0.12-T03-S02 (#0255 lists them). #183 turned #178's four reds green.
-  Nothing else is red.
-- **Next is T03, on Terry's word.** No turn starts without it.
+- **T03, the programs on both tracks, is closed**: eight PRs merged (#188, #189 to #195), its cards
+  in Ready For Review, 4 h 27 min of its 5.5 h (extended an hour on Terry's word). The second prep,
+  `agentspace-platforms` with `for_platform` (#187), went in at its start.
+- **`main` has no red test by design**: S02's workspace run on #195's head exited 0, and the 30
+  help-block reds T01 left are green (S01's 7, S02's 23). Two tests fail only under load, carded as
+  #0268 in Backlog for Terry to place.
+- **Next is T04, conformance and #0244, on Terry's word.** No turn starts without it.
 - **Nothing is running but the architect's duties**: the board watcher, the swimcoach reporter with
   the `v0.12` milestone, and no dev lead, host or lease.
 
@@ -37,6 +37,7 @@ and this file adds only what v0.12 has changed or learned.
 | Turn | Stories | Started | Closed | PRs | Length used | What it left |
 |---|---|---|---|---|---|---|
 | T01, the specs and the spike | #0245 to #0249 | 11:51am, 2026-11-26 | 2:40pm, 2026-11-26 | #178 (S02), #181 (S01), #177 (S03), #180 (S05), all 2:30pm to 2:32pm; #179 (S04) 2:38pm | 2:49 of 3.5 h | lease-api.md for three platforms; state.md and schemas/state keyed by host; driver.md and keeper.md; operator.md's shared parts and conformance.md; the spike's record; P1 to P60 ruled; 29 launches |
+| T03, the programs, both tracks | #0254 to #0260 | 5:07pm, 2026-11-26 | 9:34pm, 2026-11-26 | #188 (S03 part 1) 6:42pm; #192 (S01) 7:43pm; #189, #191, #190, #193 (S06, S07, S05, S04) 8:26pm; #194 (S03 part 2) 8:51pm; #195 (S02) 9:33pm | 4:27 of 5.5 h | The platform seam built: both Linux rows and Windows' in `agentspace-platforms` and `agentspace-windows`; driver and CLI by platform; the operator's `-Platform`; sync, deploy, provision and credentials by host; ProxyCommand, guard, push and zone by host; one holder per host; `box/windows/`'s host agent with 300-odd PowerShell tests; agentbox's change set shown empty live; P1 to P18 ruled; 34 launches |
 | T02, the foundations and the Windows spec | #0250 to #0253 | 2:50pm, 2026-11-26 | 5:03pm, 2026-11-26 | #182 (S03) 3:28pm; #183 (S01) 4:01pm; #184 (S04) 4:35pm; #186 (S02) 5:02pm; the T03 prep #185 5:02pm | 2:13 of 3.5 h | Hosts keyed by project and platform in `agentspace-hosts`, `-state` and `-alias`; #0228's one walk; D78 in the idle check with #0192's and #0193's box tests (259 OK); operator.md's "Windows hosts", README's Windows sign-in and conformance.md's Windows plan; P1 to P18 ruled; 27 launches |
 
 ## What the spike found
@@ -79,6 +80,9 @@ test seams.
 | "Lay out v0.12", with the turns and peak subagents per turn printed | 2026-11-26 | D101 |
 | "Start T01" | 2026-11-26 | This file |
 | "Start T02" | 2026-11-26 | This file |
+| "Start T03" | 2026-11-26 | This file |
+| "Yes extend": T03 to 5.5 h, the release to 21.5 h | 2026-11-26 | D101's change |
+| "AWS login refreshed", for T03's change-set check | 2026-11-26 | #0256 |
 | Yes to the spike's temporary alias file in his `agentspace.d` | 2026-11-26 | #0249's comment |
 | "you can kill the watcher no need to wait", for the cleared session's orphan watcher | 2026-11-26 | Done at the session's start |
 
@@ -102,13 +106,19 @@ test seams.
 | T02: a doc's `*_CMD` test seam turned the keeper's whole-docs seam scan red | architect.md, A turn that writes specs, v0.12-T02 |
 | T02: an archive build sharing the worktree's target folder overwrote its artifacts | architect.md, A turn that builds, v0.12-T02 |
 | T02: the architect's anchor checker read a four-backtick line as a fence, and its file copy joined lines | Its review checks; not repeated |
+| T03: cross-story calls, not files, set the schedule: two phase B launches, an early merge (P16) and an order change (P18) | architect.md, A turn that builds, v0.12-T03 |
+| T03: seam and API gaps found only by implementers (P9, P11, P12), and two crates no story owned (credential, driver-api) | architect.md, Breaking an epic into stories |
+| T03: a change-set brief said a parameter was new that the box already had at another value | architect.md, A turn that builds, v0.12-T03 |
+| T03: the AWS sign-in expired mid-turn and held one check | Start here, step 5, and architect.md |
+| T03: a dev lead wrote launch times without reading the clock | The slip list |
 
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| Archive T02's dev lead, then remove the empty worktree folders `v0.12-t02-s02` and `v0.12-t02-s04` it holds | The architect, once its turn ends | `.claude\worktrees\` |
-| T03 starts on Terry's word; its prep is merged (#185), and every T03 card carries the seam and the seam-name rule | Terry, then the architect | #0254 to #0260 |
+| T04 starts on Terry's word | Terry, then the architect | #0261 to #0265 |
+| Archive T03's dev lead, then remove the held empty folder `.claude\worktrees0.12-t03-s01` | The architect | `.claude\worktrees\` |
+| #0268, two tests flaky under load | Terry places it; the architect recommends T04-S05, the whole-suite story, which runs every suite under the gate's load anyway | Backlog |
 | Before T05: the observer script, rebuilt from runs/e0.09-t05-s01.md | The architect | `scripts\live\` |
 | The desktop app's session on Windows, with Git Bash; and the rest of operator.md's "What T05-S02 measures": patch time on an older image, sessions across an sshd restart, the push's stdin under Windows PowerShell 5.1, winget over SSH, `PATH` in new sessions, Windows' background CPU against the 6 CPU-second idle limit, that Windows Update schedules no restart, and that sync's patch wait on a first boot answers within its wait | E0.12-T05-S02 | operator.md, What T05-S02 measures |
 | Done in T02: the archive of T01's dev lead and its folders; D7's `::1` note, now in operator.md's Windows section (#184) | | |

@@ -468,6 +468,37 @@ deliberately red tests green.** A dev lead's brief carries these.
   7:23am to 8:10am, the build story beside it from 7:27am to its PR at 10:30am, inside 4.5 hours, in
   15 subagent launches with a peak of 4 and none blocked.
 
+**Learned in v0.12-T03, 2026-11-26, seven stories building both tracks at once.**
+- **Cross-story calls set a build turn's schedule more than file ownership does.** T03's needed two
+  phase-B launches, an early merge alone (P16) and an order change (P18). At layout, list every call
+  a story makes into another story's crate and every test that needs another story's rows, and set
+  the phases and the merge order from that list before the turn starts.
+- **The architect's prep walks each seam row and each per-host step through every crate that touches
+  it**, and gives every crate a story's calls reach an owner: T03's implementers found SyncPlan's
+  missing rows (P9), LeaseRef's missing platform (P11) and two crates no story owned (credential,
+  driver-api; P11, P12), each a pin mid-turn. A field a story must add to an interface another
+  story's crates build goes in that story's branch, never on `main` mid-turn, where it would break
+  every other story's rebase (P11).
+- **A pinned interface whose implementations belong to two crates lives in a crate every caller can
+  reach.** The seam's Linux rows were pinned into `agentspace-sync`, which the push and the guard
+  sit below; the fix was `agentspace-platforms` (#187) at the turn's start.
+- **A change-set tasking reads the stack's own parameter keys first, and passes every existing key
+  with UsePreviousValue**: T03's brief called `RootVolumeGiB` new, where the box had it at 20 GiB
+  against a default of 8, and the checker caught it before anything was created.
+- **The combined merge check MAY run on the PRs that are ready while the rest are still in review**:
+  T03 merged four together at 8:26pm and the last two alone, each on its reviewer's run on a local
+  merge with what it needed, and on the architect's own run of its crates.
+- **A reviewer's workspace run on a local, unpushed merge with the stories it depends on shows the
+  dependent tests green before any merge**, and SHOULD be kept for every story the order puts after
+  another.
+- **A test of a folder another story fills in the same turn encodes the spec's rule, never the
+  folder's current content**: part 2's Windows sync test listed every file of `box/windows/` and broke
+  when S07's tests landed.
+- **Check the AWS sign-in by exit code again when a turn's first AWS step is near**, not only at its
+  start: good at 5:07pm, it had expired by 7:40pm.
+- **`cargo fmt -p` without `--check` reformats another owner's untracked files**: every tasking says
+  `--check` only, and `rustfmt` on one's own files.
+
 **Learned in v0.12-T02, 2026-11-26, a foundations turn beside a spec story.**
 - **A change to a type other crates build is not additive while it adds a public field**: `Host`'s
   `platform` broke eight struct literals in five crates (pin P2). Before ruling a change additive,
