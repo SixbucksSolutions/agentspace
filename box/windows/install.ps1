@@ -53,6 +53,14 @@ function Write-AgentspaceError([string]$Text) {
     [Console]::Error.WriteLine($Text)
 }
 
+# Whether an account name is the host's own user agent (pin P17): the local machine's account,
+# <computer name>\agent, the computer name read from the process, compared whole and
+# case-insensitively, as Windows compares account names. A domain's agent, or any other \agent, is
+# not it. It MUST stay pure, since the account guard calls it.
+function Test-AgentspaceHostAgent([string]$AccountName) {
+    [string]::Equals($AccountName, ([Environment]::MachineName + '\agent'), [StringComparison]::OrdinalIgnoreCase)
+}
+
 function Get-AgentspaceUnixNow {
     return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 }
@@ -106,9 +114,10 @@ if ($underSeam -and $env:AGENTSPACE_INSTALL_ONLY -cne 'sshd-config') {
 
 # The account guard (pin P13): without its seam it changes the machine it runs on, so it runs only
 # as the host's user agent, as sync runs it, and a run as anyone else, a test that left its seam
-# unset among them, changes nothing. It MUST stay the first statement after the seam's detection,
-# with nothing before it that writes, makes, starts or logs anything.
-if (-not $underSeam -and -not [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.EndsWith('\agent', [StringComparison]::OrdinalIgnoreCase)) {
+# unset among them, changes nothing. The account is compared whole with the local machine's agent,
+# never as any \agent (pin P17). It MUST stay the first statement after the seam's detection, with
+# nothing before it that writes, makes, starts or logs anything.
+if (-not $underSeam -and -not (Test-AgentspaceHostAgent ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name))) {
     Write-AgentspaceError ($scriptName + ': without its test seam it runs only as agent; nothing was done')
     exit 1
 }

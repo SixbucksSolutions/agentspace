@@ -5,9 +5,27 @@
 # is older than the newest. It never updates PowerShell 7, under which it runs: the bootstrap, run
 # again by a person, does that. Claude Code updates itself. Each failure is logged and the next tool
 # is tried, and it writes one Tools: line to C:\ProgramData\agentspace\patch.log with each tool's
-# version. It has no test seam: what it does is a live check's (docs/conformance.md).
+# version. It has no test seam: what it does is a live check's (docs/conformance.md). So it runs only
+# as SYSTEM, as the patch run starts it, and refuses anyone else before it does anything (pins P13
+# and P17 of v0.12-T03).
 
 $ErrorActionPreference = 'Stop'
+$scriptName = 'agentspace-tools'
+
+function Write-AgentspaceError([string]$Text) {
+    [Console]::Error.WriteLine($Text)
+}
+
+# The account guard (pins P13 and P17): it has no seam, and it upgrades the packages of the machine
+# it runs on, so it runs only as SYSTEM (S-1-5-18), as the patch run starts it, and a run as anyone
+# else, a test or a person on the laptop among them, changes nothing. It MUST stay the first
+# statement after $ErrorActionPreference, with nothing before it that writes, makes, starts or logs
+# anything.
+if ([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18') {
+    Write-AgentspaceError ($scriptName + ': without its test seam it runs only as SYSTEM; nothing was done')
+    exit 1
+}
+
 $ProgressPreference = 'SilentlyContinue'
 $logPath = 'C:\ProgramData\agentspace\patch.log'
 $userAgent = @{ 'User-Agent' = 'agentspace-tools' }
