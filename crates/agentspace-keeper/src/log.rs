@@ -1,7 +1,8 @@
 //! Log lines (docs/keeper.md, Log lines; docs/state.md, The keeper's logs).
 
+use agentspace_hosts::HostKey;
 use agentspace_keeper_api::Clock;
-use agentspace_keeper_files::{holder_ssh_log_file, holder_ssh_log_rotated_file};
+use agentspace_keeper_files::{holder_ssh_log_file_keyed, holder_ssh_log_rotated_file_keyed};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -65,7 +66,7 @@ pub(crate) fn pass_line(
 }
 
 /// One pass line with its host: `<time> <action> lease=<lease> alias=<alias> pid=<pid>[
-/// host=<project>][ reason=<reason>]`, without its LF (keeper.md, A pass's line). `host=` comes
+/// host=<host name>][ reason=<reason>]`, without its LF (keeper.md, A pass's line). `host=` comes
 /// after `pid` and before `reason`, so every field v0.06 wrote keeps its place; which lines carry
 /// it is the caller's.
 pub(crate) fn pass_line_host(
@@ -150,13 +151,17 @@ fn open_append(path: &Path) -> io::Result<fs::File> {
 }
 
 /// Rotates a host's holder log when it is larger than 1 MiB: renames `board-holder-ssh.log` (the
-/// box, `None`) or `board-holder-ssh.<project>.log` to the same name with `.1`, replacing any
-/// older one. Says whether it was rotated. A failure to rotate is no rotation, and is not
-/// reported (keeper.md, The holder's log).
-pub(crate) fn rotate_ssh_log(state_dir: &Path, project: Option<&str>) -> bool {
-    let from = state_dir.join(holder_ssh_log_file(project));
+/// box) or `board-holder-ssh.<host name>.log` to the same name with `.1`, replacing any older one.
+/// Says whether it was rotated. A failure to rotate is no rotation, and is not reported
+/// (keeper.md, The holder's log).
+pub(crate) fn rotate_ssh_log(state_dir: &Path, host: &HostKey) -> bool {
+    let from = state_dir.join(holder_ssh_log_file_keyed(host));
     let due = fs::metadata(&from).is_ok_and(|m| m.is_file() && m.len() > ROTATE_ABOVE);
-    due && fs::rename(&from, state_dir.join(holder_ssh_log_rotated_file(project))).is_ok()
+    due && fs::rename(
+        &from,
+        state_dir.join(holder_ssh_log_rotated_file_keyed(host)),
+    )
+    .is_ok()
 }
 
 #[cfg(test)]

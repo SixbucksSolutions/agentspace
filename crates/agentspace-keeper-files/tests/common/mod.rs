@@ -119,6 +119,44 @@ pub fn parse_holder_record(bytes: &[u8]) -> Option<HolderRecord> {
     kf::parse_holder_record(bytes)
 }
 
+/// The holder record's bytes for the holder on `host`, as a writer MUST write them (docs/state.md,
+/// The holder record): `platform` last, and only off `linux/arm64`. `Err` is a refusal.
+pub fn holder_record_bytes_for(
+    r: &HolderRecord,
+    host: &agentspace_hosts::HostKey,
+) -> Result<Vec<u8>, String> {
+    kf::serialize_holder_record_keyed(r, host).map_err(|e| e.0)
+}
+
+/// A reader's view of a holder record's bytes as the record of the holder on `host`: `None` is
+/// "no record", which a record of another platform is.
+pub fn parse_holder_record_for(
+    bytes: &[u8],
+    host: &agentspace_hosts::HostKey,
+) -> Option<HolderRecord> {
+    kf::parse_holder_record_keyed(bytes, host)
+}
+
+/// The host a holder record's file name is for, `None` when the name is no host's record.
+pub fn host_of_record_file(name: &str) -> Option<agentspace_hosts::HostKey> {
+    kf::host_of_holder_record_file(name)
+}
+
+/// The host a holder log's file name is for, `None` when the name is no host's log.
+pub fn host_of_log_file(name: &str) -> Option<agentspace_hosts::HostKey> {
+    kf::host_of_holder_ssh_log_file(name)
+}
+
+/// A host's record file, its temporary file for `hex`, its log and the log's rotation.
+pub fn host_files(host: &agentspace_hosts::HostKey) -> [String; 4] {
+    [
+        kf::holder_record_file_keyed(host),
+        kf::holder_record_tmp_file_keyed(host, "ab12"),
+        kf::holder_ssh_log_file_keyed(host),
+        kf::holder_ssh_log_rotated_file_keyed(host),
+    ]
+}
+
 /// The request's bytes. The writer is strict to the schema, so a request that does not meet the
 /// schema (a test of the reader's refusals) is written here the way a writer without that check
 /// would, compact with one LF. A request that does meet the schema and that the writer refuses

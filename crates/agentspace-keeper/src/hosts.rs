@@ -1,14 +1,19 @@
-//! Hosts: the host registry, which host a lease is on, and the other hosts' files the state folder
-//! holds (docs/keeper.md, Hosts; Which host a lease is on; The hosts of a pass; The holder's log).
+//! Hosts: the host registry, which host a lease is on, the order of a pass's turns, and the other
+//! hosts' files the state folder holds (docs/keeper.md, Hosts; A host's key and name; Which host a
+//! lease is on; The hosts of a pass; The holder's log).
+//!
+//! RFC 2119 keywords in this module's comments, and the capitals are load-bearing.
+//!
+//! **From v0.12 a host is keyed by its project and its platform** (D91), as
+//! `agentspace_hosts::HostKey` (D101), and the keeper holds one holder per host. The box is
+//! swimcoach's `linux/arm64` host, [`HostKey::is_box`]: a valid registry's one `agentbox` record
+//! is always swimcoach's, with no platform but `linux/arm64` (state.md, The host registry), so the
+//! key alone tells the box from every other host.
 
-use agentspace_hosts::{BOX_PROJECT, Hosts, HostsError, Target, is_box, target_for};
-use agentspace_keeper_files::{is_project_name, project_of_holder_record_file};
+use agentspace_hosts::{BOX_PROJECT, HostKey, Hosts, HostsError, Target, target_for_keyed};
+use agentspace_keeper_files::{host_of_holder_record_file, host_of_holder_ssh_log_file};
+use std::collections::HashSet;
 use std::path::Path;
-
-/// A host, as a pass and a keeper key it: `None` for the box, `Some(project)` for another host.
-/// Its order is the order of a pass's turns: the box first, then the others in the ordinal order
-/// of their projects.
-pub(crate) type HostKey = Option<String>;
 
 /// The registry, read whole, without its lock, from `<home>\.agentspace\hosts.json` (keeper.md,
 /// Hosts). A missing file is the box alone. The error is the `<error>` of keeper.md's reason
@@ -38,24 +43,47 @@ fn unreadable_error(home: &Path) -> String {
     format!("Windows error {n}.")
 }
 
-/// The box's project: the `project` of the registry's record whose stack is `agentbox`, which a
-/// valid registry always holds and which is always `swimcoach` (state.md, The host registry).
-pub(crate) fn box_project(hosts: &Hosts) -> String {
-    hosts
-        .hosts
-        .iter()
-        .find(|h| is_box(h))
-        .map_or_else(|| BOX_PROJECT.to_string(), |h| h.project.clone())
+/// The box's key: swimcoach's `linux/arm64` host (D43, D55, D91).
+pub(crate) fn box_key() -> HostKey {
+    HostKey::linux_arm64(BOX_PROJECT)
 }
 
-/// The host a ready lease of `project` is on (keeper.md, Which host a lease is on; D55's last
-/// row): the project's host when its record is `ready` and is not the box's, and the box
-/// otherwise.
-pub(crate) fn host_of(hosts: &Hosts, project: &str) -> HostKey {
-    match target_for(hosts, project) {
-        Target::Host(p) => Some(p.to_string()),
-        Target::Box => None,
+/// The host a ready lease of `project` on `platform` is on, or `None` when it is on no host
+/// (keeper.md, Which host a lease is on; D55's last row; architect, 2026-11-26, for v0.12-T01,
+/// pin P13): the host keyed by the lease's project and platform when the registry's record of that
+/// key is `ready` and is not the box's; otherwise the box for a `linux/arm64` lease, and no host
+/// for a lease of any other platform. Both are compared exactly, as stored.
+pub(crate) fn host_of(hosts: &Hosts, project: &str, platform: &str) -> Option<HostKey> {
+    let key = HostKey::new(project, platform);
+    match target_for_keyed(hosts, &key)? {
+        Target::Host(_) => Some(key),
+        Target::Box => Some(box_key()),
     }
+}
+
+/// The hosts of a pass, each once, in the order of their turns (keeper.md, The hosts of a pass;
+/// A host's key and name; architect, 2026-11-26, for v0.12-T01, pin P46): the box first, always;
+/// then every other host of `hosts` that the registry holds, in the order of its record in
+/// `hosts.json`; then every one it does not hold, in the ordinal order of its host name. No rule
+/// sorts a host the registry holds by its key.
+pub(crate) fn turn_order(registry: &Hosts, hosts: &[HostKey]) -> Vec<HostKey> {
+    let wanted: HashSet<&HostKey> = hosts.iter().collect();
+    let mut order = vec![box_key()];
+    let mut placed: HashSet<HostKey> = HashSet::from([box_key()]);
+    for record in &registry.hosts {
+        let key = record.key();
+        if wanted.contains(&key) && placed.insert(key.clone()) {
+            order.push(key);
+        }
+    }
+    let mut rest: Vec<&HostKey> = hosts.iter().filter(|k| !placed.contains(*k)).collect();
+    rest.sort_by_key(|k| k.host_name());
+    for key in rest {
+        if placed.insert(key.clone()) {
+            order.push(key.clone());
+        }
+    }
+    order
 }
 
 /// The names in the state folder, those that are not UTF-8 left out. The error is the
@@ -84,45 +112,33 @@ fn listing_error(e: &std::io::Error) -> String {
     )
 }
 
-/// The projects of the other hosts' records among `names` (keeper.md, The hosts of a pass, item
-/// 3): each `board-holder.<project>.json` whose `<project>`, taken in lowercase, is a normalized
-/// project and not `box_project`. Sorted ordinally, each once.
-pub(crate) fn record_projects(names: &[String], box_project: &str) -> Vec<String> {
-    let mut projects: Vec<String> = names
+/// The hosts among `names` that `of` finds, the box's left out, each once, in the ordinal order
+/// of their host names.
+fn hosts_named(names: &[String], of: fn(&str) -> Option<HostKey>) -> Vec<HostKey> {
+    let mut hosts: Vec<HostKey> = names
         .iter()
-        .filter_map(|n| project_of_holder_record_file(n))
-        .filter(|p| p != box_project)
+        .filter_map(|n| of(n))
+        .filter(|k| !k.is_box())
         .collect();
-    projects.sort_unstable();
-    projects.dedup();
-    projects
+    hosts.sort_by_key(HostKey::host_name);
+    hosts.dedup();
+    hosts
 }
 
-/// The project of a file named `board-holder-ssh.<project>.log`, in lowercase, or `None` for any
-/// other name: the name compared without regard to case, and `<project>` a normalized project.
-fn project_of_ssh_log_file(name: &str) -> Option<String> {
-    if !name.is_ascii() {
-        return None;
-    }
-    let lower = name.to_ascii_lowercase();
-    let project = lower
-        .strip_prefix("board-holder-ssh.")?
-        .strip_suffix(".log")?;
-    is_project_name(project).then(|| project.to_string())
+/// The other hosts' records among `names` (keeper.md, The hosts of a pass, item 3): each
+/// `board-holder.<host name>.json` whose `<host name>`, taken in lowercase, is a project, or a
+/// project, a `.` and `linux-amd64` or `windows-amd64`, and is not the box's. In the ordinal order
+/// of their host names, each once.
+pub(crate) fn record_hosts(names: &[String]) -> Vec<HostKey> {
+    hosts_named(names, host_of_holder_record_file)
 }
 
-/// The projects of the other hosts' holder logs among `names` (keeper.md, The holder's log): each
-/// `board-holder-ssh.<project>.log` whose `<project>` is a normalized project and not the box's,
-/// matched as a record's name is. Sorted ordinally, each once.
-pub(crate) fn ssh_log_projects(names: &[String]) -> Vec<String> {
-    let mut projects: Vec<String> = names
-        .iter()
-        .filter_map(|n| project_of_ssh_log_file(n))
-        .filter(|p| p != BOX_PROJECT)
-        .collect();
-    projects.sort_unstable();
-    projects.dedup();
-    projects
+/// The other hosts' holder logs among `names` (keeper.md, The holder's log): each
+/// `board-holder-ssh.<host name>.log` whose `<host name>` is a host's name and not the box's,
+/// matched as a record's name is, in the ordinal order of the host names, each once. The registry
+/// is not read yet when they are rotated, so its file order cannot order them.
+pub(crate) fn ssh_log_hosts(names: &[String]) -> Vec<HostKey> {
+    hosts_named(names, host_of_holder_ssh_log_file)
 }
 
 #[cfg(test)]
@@ -131,12 +147,21 @@ mod tests {
     use agentspace_hosts::{Host, HostState};
 
     fn registry(records: &[(&str, &str, HostState)]) -> Hosts {
+        registry_on(
+            &records
+                .iter()
+                .map(|(p, s, st)| (*p, None, *s, *st))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn registry_on(records: &[(&str, Option<&str>, &str, HostState)]) -> Hosts {
         Hosts {
             hosts: records
                 .iter()
-                .map(|(project, stack, state)| Host {
+                .map(|(project, platform, stack, state)| Host {
                     last_success_at: None,
-                    platform: None,
+                    platform: platform.map(str::to_string),
                     project: (*project).to_string(),
                     stack: (*stack).to_string(),
                     state: *state,
@@ -148,32 +173,147 @@ mod tests {
         }
     }
 
+    fn arm(p: &str) -> Option<HostKey> {
+        Some(HostKey::linux_arm64(p))
+    }
+
     #[test]
-    fn a_lease_is_on_its_projects_ready_host_and_else_on_the_box() {
+    fn a_linux_arm64_lease_is_on_its_projects_ready_host_and_else_on_the_box() {
         let hosts = registry(&[
             ("swimcoach", "agentbox", HostState::Ready),
             ("demo", "agentspace-host-demo", HostState::Ready),
             ("made", "agentspace-host-made", HostState::Creating),
             ("bad", "agentspace-host-bad", HostState::Failed),
         ]);
-        assert_eq!(host_of(&hosts, "demo"), Some("demo".to_string()));
-        assert_eq!(host_of(&hosts, "swimcoach"), None);
-        assert_eq!(host_of(&hosts, "made"), None);
-        assert_eq!(host_of(&hosts, "bad"), None);
-        assert_eq!(host_of(&hosts, "none"), None);
-        assert_eq!(box_project(&hosts), "swimcoach");
-        assert_eq!(host_of(&Hosts::seed(), "demo"), None);
+        let on = |p: &str| host_of(&hosts, p, "linux/arm64");
+        assert_eq!(on("demo"), arm("demo"));
+        assert_eq!(on("swimcoach"), Some(box_key()));
+        assert_eq!(on("made"), Some(box_key()));
+        assert_eq!(on("bad"), Some(box_key()));
+        assert_eq!(on("none"), Some(box_key()));
+        assert_eq!(
+            host_of(&Hosts::seed(), "demo", "linux/arm64"),
+            Some(box_key())
+        );
+        assert!(box_key().is_box());
+    }
+
+    /// keeper.md, Which host a lease is on: a lease is on its own platform's host, and the box
+    /// fallback is `linux/arm64`'s alone (D91; pin P13).
+    #[test]
+    fn a_lease_is_on_its_own_platforms_host_and_another_platform_never_on_the_box() {
+        let hosts = registry_on(&[
+            ("swimcoach", None, "agentbox", HostState::Ready),
+            ("demo", None, "agentspace-host-demo", HostState::Ready),
+            (
+                "demo",
+                Some("windows/amd64"),
+                "agentspace-windows-amd64-host-demo",
+                HostState::Ready,
+            ),
+            (
+                "demo",
+                Some("linux/amd64"),
+                "agentspace-linux-amd64-host-demo",
+                HostState::Creating,
+            ),
+            (
+                "swimcoach",
+                Some("windows/amd64"),
+                "agentspace-windows-amd64-host-swimcoach",
+                HostState::Ready,
+            ),
+        ]);
+        assert_eq!(host_of(&hosts, "demo", "linux/arm64"), arm("demo"));
+        assert_eq!(
+            host_of(&hosts, "demo", "windows/amd64"),
+            Some(HostKey::new("demo", "windows/amd64"))
+        );
+        assert_eq!(host_of(&hosts, "demo", "linux/amd64"), None);
+        assert_eq!(host_of(&hosts, "other", "windows/amd64"), None);
+        assert_eq!(host_of(&hosts, "demo", "linux/amd64/v3"), None);
+        assert_eq!(
+            host_of(&hosts, "swimcoach", "windows/amd64"),
+            Some(HostKey::new("swimcoach", "windows/amd64"))
+        );
+        assert_eq!(host_of(&hosts, "swimcoach", "linux/arm64"), Some(box_key()));
+        assert_eq!(host_of(&Hosts::seed(), "demo", "windows/amd64"), None);
+        // A record with an explicit linux/arm64 is the same host as one without the member.
+        let explicit = registry_on(&[
+            ("swimcoach", None, "agentbox", HostState::Ready),
+            (
+                "demo",
+                Some("linux/arm64"),
+                "agentspace-host-demo",
+                HostState::Ready,
+            ),
+        ]);
+        assert_eq!(host_of(&explicit, "demo", "linux/arm64"), arm("demo"));
+    }
+
+    /// keeper.md, The hosts of a pass (pin P46): the box first, then the registry's hosts in its
+    /// file order, then the rest by host name.
+    #[test]
+    fn the_turns_follow_the_registrys_file_order_then_host_names() {
+        let hosts = registry_on(&[
+            (
+                "q",
+                Some("linux/amd64"),
+                "agentspace-linux-amd64-host-q",
+                HostState::Ready,
+            ),
+            ("swimcoach", None, "agentbox", HostState::Ready),
+            ("p", None, "agentspace-host-p", HostState::Ready),
+            ("q", None, "agentspace-host-q", HostState::Creating),
+            (
+                "p",
+                Some("linux/amd64"),
+                "agentspace-linux-amd64-host-p",
+                HostState::Ready,
+            ),
+        ]);
+        let p_amd = HostKey::new("p", "linux/amd64");
+        let q_amd = HostKey::new("q", "linux/amd64");
+        let z_win = HostKey::new("z", "windows/amd64");
+        let wanted = vec![
+            z_win.clone(),
+            HostKey::linux_arm64("y"),
+            p_amd.clone(),
+            HostKey::linux_arm64("q"),
+            box_key(),
+            HostKey::linux_arm64("p"),
+            q_amd.clone(),
+            HostKey::linux_arm64("p"),
+        ];
+        assert_eq!(
+            turn_order(&hosts, &wanted),
+            vec![
+                box_key(),
+                q_amd,
+                HostKey::linux_arm64("p"),
+                HostKey::linux_arm64("q"),
+                p_amd,
+                HostKey::linux_arm64("y"),
+                z_win,
+            ]
+        );
+        assert_eq!(turn_order(&Hosts::seed(), &[]), vec![box_key()]);
     }
 
     #[test]
-    fn records_and_logs_are_found_by_name_and_the_boxs_project_is_left_out() {
+    fn records_and_logs_are_found_by_host_name_and_the_boxs_is_left_out() {
         let names: Vec<String> = [
             "board-holder.json",
             "board-holder.demo.json",
             "BOARD-HOLDER.Zed.JSON",
             "board-holder.swimcoach.json",
+            "board-holder.swimcoach.windows-amd64.json",
+            "board-holder.demo.windows-amd64.json",
+            "board-holder.demo.linux-arm64.json",
+            "board-holder.demo.windows-arm64.json",
+            "board-holder.demo.windows-amd64.extra.json",
+            "board-holder.demo.-amd64.json",
             "board-holder.-bad.json",
-            "board-holder.a.b.json",
             "board-holder.demo.json.0a1b.tmp",
             "board-holder-ssh.log",
             "board-holder-ssh.log.1",
@@ -181,13 +321,30 @@ mod tests {
             "board-holder-ssh.demo.log.1",
             "board-holder-ssh.SwimCoach.log",
             "board-holder-ssh.alpha.log",
+            "board-holder-ssh.alpha.linux-amd64.log",
+            "board-holder-ssh.alpha.linux-arm64.log",
             "leases.json",
         ]
         .iter()
         .map(|s| (*s).to_string())
         .collect();
-        assert_eq!(record_projects(&names, "swimcoach"), vec!["demo", "zed"]);
-        assert_eq!(ssh_log_projects(&names), vec!["alpha", "demo"]);
+        assert_eq!(
+            record_hosts(&names),
+            vec![
+                HostKey::linux_arm64("demo"),
+                HostKey::new("demo", "windows/amd64"),
+                HostKey::new("swimcoach", "windows/amd64"),
+                HostKey::linux_arm64("zed"),
+            ]
+        );
+        assert_eq!(
+            ssh_log_hosts(&names),
+            vec![
+                HostKey::linux_arm64("alpha"),
+                HostKey::new("alpha", "linux/amd64"),
+                HostKey::linux_arm64("demo"),
+            ]
+        );
     }
 
     #[test]

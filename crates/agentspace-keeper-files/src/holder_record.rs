@@ -1,19 +1,42 @@
-//! The holder record, `<state folder>\board-holder.json` (state.md, The holder record).
+//! The holder record, `<state folder>\board-holder.json` for the box, and a file of the same form
+//! for each other host (state.md, The holder record; Another host's holder).
+//!
+//! RFC 2119 keywords in this module's comments, and the capitals are load-bearing.
 
 use crate::NotValid;
 use crate::json::{Schema, file_bytes, is_time, is_valid, object, read_value, why_not_valid};
+use agentspace_hosts::{HostKey, LINUX_ARM64};
 use agentspace_keeper_api::HolderRecord;
 use serde_json::Value;
 
 /// The highest PID a record names (state.md, The holder record).
 const MAX_PID: u64 = 2_147_483_647;
 
-/// The record's bytes, as a writer MUST write them: strict to the schema (`lease_id` a normalized
-/// version 4 UUID, `alias` `agentspace-<project>-<8 hex digits>`), compact, in the order `pid`,
-/// `process_started_at`, `lease_id`, `alias`, then one LF. A record that would not validate is
-/// refused, and nothing is produced.
+/// The record's bytes for a `linux/arm64` host, the box's included: what
+/// [`serialize_holder_record_keyed`] gives for a `linux/arm64` host, so with no `platform` member
+/// and byte for byte what v0.11 wrote (state.md, The holder record; pin P16).
 pub fn serialize_holder_record(record: &HolderRecord) -> Result<Vec<u8>, NotValid> {
-    let doc = object([
+    serialize_on(record, LINUX_ARM64)
+}
+
+/// The record's bytes for the holder on `host`, as a writer MUST write them: strict to the schema
+/// (`lease_id` a normalized version 4 UUID, `alias` `agentspace-<project>-<8 hex digits>`),
+/// compact, in the order `pid`, `process_started_at`, `lease_id`, `alias`, then `platform`, then
+/// one LF. **`platform` is written only for a host that is not `linux/arm64`**, as the host's
+/// platform, so every `linux/arm64` record keeps v0.11's bytes (state.md, The holder record;
+/// keeper.md, A host's key and name; architect, 2026-11-26, for v0.12-T01, pins P5, P14 and P16).
+/// A record that would not validate, a platform out of the schema's form included, is refused,
+/// and nothing is produced.
+pub fn serialize_holder_record_keyed(
+    record: &HolderRecord,
+    host: &HostKey,
+) -> Result<Vec<u8>, NotValid> {
+    serialize_on(record, &host.platform)
+}
+
+/// The writer of both: `platform` is the host's, compared exactly with `linux/arm64`.
+fn serialize_on(record: &HolderRecord, platform: &str) -> Result<Vec<u8>, NotValid> {
+    let mut doc = object([
         ("pid", Value::from(record.pid)),
         (
             "process_started_at",
@@ -22,6 +45,11 @@ pub fn serialize_holder_record(record: &HolderRecord) -> Result<Vec<u8>, NotVali
         ("lease_id", Value::from(record.lease_id.as_str())),
         ("alias", Value::from(record.alias.as_str())),
     ]);
+    if platform != LINUX_ARM64
+        && let Value::Object(members) = &mut doc
+    {
+        members.insert("platform".to_string(), Value::from(platform));
+    }
     if !is_valid(Schema::Holder, &doc) {
         return Err(why_not_valid(Schema::Holder, &doc, "The holder record"));
     }
@@ -65,7 +93,28 @@ pub(crate) fn is_alias(s: &str) -> bool {
 /// UTF-8 byte order mark and a member the schema does not name, which it ignores; and it keeps
 /// `lease_id` as stored, for the keeper to compare without regard to ASCII case (state.md, The
 /// holder record; architect, 2026-11-19, for E0.06-T01-S07).
+///
+/// **It reads the record of a `linux/arm64` host**, as `board-holder.json` and
+/// `board-holder.<project>.json` are (state.md, The holder record): it is what
+/// [`parse_holder_record_keyed`] gives for a `linux/arm64` host, so a record written before v0.12,
+/// with no `platform`, is read as `linux/arm64`'s, and one whose `platform` names another platform
+/// is no record.
 pub fn parse_holder_record(bytes: &[u8]) -> Option<HolderRecord> {
+    parse_on(bytes, LINUX_ARM64)
+}
+
+/// Reads the bytes of the record of the holder on `host`, as [`parse_holder_record`] reads one,
+/// with one more rule (state.md, The holder record; keeper.md, A host's key and name; architect,
+/// 2026-11-26, for v0.12-T01, pins P5 and P16): **a record whose platform is not `host`'s is no
+/// record**. Its platform is its `platform` member, compared exactly, or `linux/arm64` when the
+/// member is absent, so an explicit `"platform":"linux/arm64"` reads as an absent one, and a
+/// `platform` that is not a string, `null` included, is no record.
+pub fn parse_holder_record_keyed(bytes: &[u8], host: &HostKey) -> Option<HolderRecord> {
+    parse_on(bytes, &host.platform)
+}
+
+/// The reader of both: `platform` is the platform of the host the file is named for.
+fn parse_on(bytes: &[u8], platform: &str) -> Option<HolderRecord> {
     let doc = read_value(bytes)?;
     let o = doc.as_object()?;
     let pid = o
@@ -78,6 +127,13 @@ pub fn parse_holder_record(bytes: &[u8]) -> Option<HolderRecord> {
         .filter(|s| is_time(s, 3))?;
     let lease_id = o.get("lease_id")?.as_str().filter(|s| is_uuid(s))?;
     let alias = o.get("alias")?.as_str().filter(|s| is_alias(s))?;
+    let recorded = match o.get("platform") {
+        None => LINUX_ARM64,
+        Some(v) => v.as_str()?,
+    };
+    if recorded != platform {
+        return None;
+    }
     Some(HolderRecord {
         pid: u32::try_from(pid).ok()?,
         process_started_at: started.to_string(),
@@ -108,6 +164,88 @@ mod tests {
              \"lease_id\":\"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d\",\
              \"alias\":\"agentspace-demo-0a1b2c3d\"}\n"
         );
+    }
+
+    fn windows() -> HostKey {
+        HostKey::new("demo", "windows/amd64")
+    }
+
+    /// state.md, The holder record: a writer writes `platform` last, and only for a host that is
+    /// not `linux/arm64` (pin P16).
+    #[test]
+    fn platform_is_written_last_and_only_off_linux_arm64() {
+        let arm = serialize_holder_record_keyed(&record(), &HostKey::linux_arm64("demo")).unwrap();
+        assert_eq!(arm, serialize_holder_record(&record()).unwrap());
+        assert!(!String::from_utf8(arm).unwrap().contains("platform"));
+        let win = serialize_holder_record_keyed(&record(), &windows()).unwrap();
+        assert_eq!(
+            String::from_utf8(win).unwrap(),
+            "{\"pid\":4242,\"process_started_at\":\"2026-11-19T04:05:06.123Z\",\
+             \"lease_id\":\"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d\",\
+             \"alias\":\"agentspace-demo-0a1b2c3d\",\"platform\":\"windows/amd64\"}\n"
+        );
+        // A platform out of the schema's form is refused.
+        for bad in ["linux/aarch64", "Windows/amd64", "linux/amd64/v3", ""] {
+            assert!(
+                serialize_holder_record_keyed(&record(), &HostKey::new("demo", bad)).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    /// state.md, The holder record: a record is read only as the record of a host of its own
+    /// platform, `linux/arm64` when the member is absent; an explicit `linux/arm64` is the same as
+    /// none (pins P5 and P16).
+    #[test]
+    fn a_record_is_read_only_for_a_host_of_its_own_platform() {
+        let old = serialize_holder_record(&record()).unwrap();
+        let arm = HostKey::linux_arm64("demo");
+        assert_eq!(parse_holder_record_keyed(&old, &arm), Some(record()));
+        assert_eq!(parse_holder_record(&old), Some(record()));
+        assert_eq!(parse_holder_record_keyed(&old, &windows()), None);
+
+        let win = serialize_holder_record_keyed(&record(), &windows()).unwrap();
+        assert_eq!(parse_holder_record_keyed(&win, &windows()), Some(record()));
+        assert_eq!(parse_holder_record_keyed(&win, &arm), None);
+        assert_eq!(parse_holder_record(&win), None);
+        assert_eq!(
+            parse_holder_record_keyed(&win, &HostKey::new("demo", "linux/amd64")),
+            None
+        );
+
+        let explicit = doc_with_platform("\"linux/arm64\"");
+        assert_eq!(parse_holder_record(explicit.as_bytes()), Some(read_good()));
+        assert_eq!(
+            parse_holder_record_keyed(explicit.as_bytes(), &windows()),
+            None
+        );
+        for bad in [
+            "null",
+            "7",
+            "\"Windows/amd64\"",
+            "\"windows/amd64\\n\"",
+            "[]",
+        ] {
+            let text = doc_with_platform(bad);
+            assert_eq!(
+                parse_holder_record_keyed(text.as_bytes(), &windows()),
+                None,
+                "{bad}"
+            );
+            assert_eq!(parse_holder_record(text.as_bytes()), None, "{bad}");
+        }
+    }
+
+    fn doc_with_platform(platform: &str) -> String {
+        let m = good();
+        format!(
+            "{{\"pid\":{},\"process_started_at\":{},\"lease_id\":{},\"alias\":{},\"platform\":{platform}}}\n",
+            m[0], m[1], m[2], m[3]
+        )
+    }
+
+    fn read_good() -> HolderRecord {
+        read_with(0, "7").unwrap()
     }
 
     #[test]

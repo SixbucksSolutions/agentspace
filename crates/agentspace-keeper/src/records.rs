@@ -2,18 +2,27 @@
 //! The holder record; Another host's holder; Replacing a file).
 
 use crate::Records;
+use crate::hosts::box_key;
+use agentspace_hosts::HostKey;
 use agentspace_keeper_api::HolderRecord;
-use agentspace_keeper_files::{holder_record_file, parse_holder_record, serialize_holder_record};
+use agentspace_keeper_files::{
+    holder_record_file_keyed, parse_holder_record_keyed, serialize_holder_record_keyed,
+};
 use agentspace_state::write_atomically;
 use std::io::ErrorKind;
 use std::path::Path;
 
 /// The real [`Records`]: `<state folder>\board-holder.json` for the box, and
-/// `<state folder>\board-holder.<project>.json` for another host, each in the same form.
+/// `<state folder>\board-holder.<host name>.json` for another host, each in the same form
+/// (state.md, Another host's holder; pin P12).
 ///
 /// - **A read is the tolerant one of state.md**: a record that is missing, cannot be read, cannot
-///   be parsed, or whose members do not have their forms is no record (`None`).
-/// - **A write is strict to the schema, and atomic**: the bytes are `serialize_holder_record`'s,
+///   be parsed, or whose members do not have their forms is no record (`None`), and so is one
+///   whose platform, `linux/arm64` when it holds none, is not the platform of the host its file is
+///   named for (keeper.md, Trusting the record, item 1; pins P5 and P16). So a record written
+///   before v0.12 is read as a `linux/arm64` host's.
+/// - **A write is strict to the schema, and atomic**: the bytes are
+///   `serialize_holder_record_keyed`'s, with `platform` only for a host that is not `linux/arm64`,
 ///   and they replace the file with `write_atomically`, so a reader never sees half a record. A
 ///   record the schema refuses is not written.
 /// - **A removal of a record that is already gone is `Ok`.**
@@ -32,38 +41,38 @@ impl FileRecords {
 
 impl Records for FileRecords {
     fn read(&self, state_dir: &Path) -> Option<HolderRecord> {
-        read_file(state_dir, None)
+        read_file(state_dir, &box_key())
     }
 
     fn write(&self, state_dir: &Path, record: &HolderRecord) -> Result<(), String> {
-        write_file(state_dir, None, record)
+        write_file(state_dir, &box_key(), record)
     }
 
     fn remove(&self, state_dir: &Path) -> Result<(), String> {
-        remove_file(state_dir, None)
+        remove_file(state_dir, &box_key())
     }
 }
 
-/// A host's record file, read tolerantly: `None` for the box, `Some(project)` for another host.
-pub(crate) fn read_file(state_dir: &Path, project: Option<&str>) -> Option<HolderRecord> {
-    let bytes = std::fs::read(state_dir.join(holder_record_file(project))).ok()?;
-    parse_holder_record(&bytes)
+/// A host's record file, read tolerantly, as the record of a host of `host`'s platform.
+pub(crate) fn read_file(state_dir: &Path, host: &HostKey) -> Option<HolderRecord> {
+    let bytes = std::fs::read(state_dir.join(holder_record_file_keyed(host))).ok()?;
+    parse_holder_record_keyed(&bytes, host)
 }
 
 /// Writes a host's record file atomically, strict to the schema.
 pub(crate) fn write_file(
     state_dir: &Path,
-    project: Option<&str>,
+    host: &HostKey,
     record: &HolderRecord,
 ) -> Result<(), String> {
-    let bytes = serialize_holder_record(record).map_err(|e| e.0)?;
-    write_atomically(&state_dir.join(holder_record_file(project)), &bytes)
+    let bytes = serialize_holder_record_keyed(record, host).map_err(|e| e.0)?;
+    write_atomically(&state_dir.join(holder_record_file_keyed(host)), &bytes)
         .map_err(|e| e.to_string())
 }
 
 /// Removes a host's record file; one already gone is `Ok`.
-pub(crate) fn remove_file(state_dir: &Path, project: Option<&str>) -> Result<(), String> {
-    match std::fs::remove_file(state_dir.join(holder_record_file(project))) {
+pub(crate) fn remove_file(state_dir: &Path, host: &HostKey) -> Result<(), String> {
+    match std::fs::remove_file(state_dir.join(holder_record_file_keyed(host))) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -206,16 +215,91 @@ mod tests {
     fn another_hosts_record_is_its_own_file_and_leaves_the_boxs_alone() {
         let dir = state();
         let records = FileRecords::new();
+        let demo = HostKey::linux_arm64("demo");
         records
-            .write_host(dir.path(), Some("demo"), &record())
+            .write_host(dir.path(), &demo, &record())
             .expect("It is written");
         assert!(dir.path().join("board-holder.demo.json").is_file());
         assert!(!file(&dir).exists());
-        assert_eq!(records.read_host(dir.path(), Some("demo")), Some(record()));
-        assert_eq!(records.read_host(dir.path(), None), None);
+        assert_eq!(records.read_host(dir.path(), &demo), Some(record()));
+        assert_eq!(records.read_host(dir.path(), &box_key()), None);
         assert_eq!(records.read(dir.path()), None);
-        assert_eq!(records.remove_host(dir.path(), Some("demo")), Ok(()));
+        assert_eq!(records.remove_host(dir.path(), &demo), Ok(()));
         assert!(!dir.path().join("board-holder.demo.json").exists());
-        assert_eq!(records.remove_host(dir.path(), Some("demo")), Ok(()));
+        assert_eq!(records.remove_host(dir.path(), &demo), Ok(()));
+    }
+
+    /// keeper.md, A host's key and name: two hosts of one project have two records, and a host of
+    /// another platform's record names its platform; a `linux/arm64` record stays v0.11's bytes
+    /// (pins P12, P14 and P16).
+    #[test]
+    fn two_hosts_of_one_project_have_two_records_and_only_off_linux_arm64_one_names_its_platform() {
+        let dir = state();
+        let records = FileRecords::new();
+        let arm = HostKey::linux_arm64("demo");
+        let win = HostKey::new("demo", "windows/amd64");
+        let mut other = record();
+        other.pid = 77;
+        records.write_host(dir.path(), &arm, &record()).unwrap();
+        records.write_host(dir.path(), &win, &other).unwrap();
+        let arm_file = dir.path().join("board-holder.demo.json");
+        let win_file = dir.path().join("board-holder.demo.windows-amd64.json");
+        assert!(
+            !std::fs::read_to_string(&arm_file)
+                .unwrap()
+                .contains("platform")
+        );
+        assert!(
+            std::fs::read_to_string(&win_file)
+                .unwrap()
+                .ends_with(",\"platform\":\"windows/amd64\"}\n")
+        );
+        assert_eq!(records.read_host(dir.path(), &arm), Some(record()));
+        assert_eq!(records.read_host(dir.path(), &win), Some(other.clone()));
+        records.remove_host(dir.path(), &win).unwrap();
+        assert!(!win_file.exists());
+        assert_eq!(records.read_host(dir.path(), &arm), Some(record()));
+        // The box's project on another platform is another host, never the box.
+        let swim_win = HostKey::new("swimcoach", "windows/amd64");
+        records.write_host(dir.path(), &swim_win, &other).unwrap();
+        assert!(
+            dir.path()
+                .join("board-holder.swimcoach.windows-amd64.json")
+                .is_file()
+        );
+        assert_eq!(records.read(dir.path()), None);
+    }
+
+    /// keeper.md, Trusting the record, item 1: a record whose platform is not its file's host's is
+    /// no record, and a record written before v0.12, with no `platform`, is `linux/arm64`'s (pin
+    /// P16).
+    #[test]
+    fn a_record_whose_platform_is_not_its_files_is_no_record_and_an_old_one_is_linux_arm64s() {
+        let dir = state();
+        let records = FileRecords::new();
+        let win = HostKey::new("demo", "windows/amd64");
+        let old = "{\"pid\":4242,\"process_started_at\":\"2026-11-19T04:05:06.123Z\",\"lease_id\":\"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d\",\"alias\":\"agentspace-demo-0a1b2c3d\"}\n";
+        std::fs::write(dir.path().join("board-holder.demo.json"), old).unwrap();
+        std::fs::write(file(&dir), old).unwrap();
+        std::fs::write(dir.path().join("board-holder.demo.windows-amd64.json"), old).unwrap();
+        assert_eq!(
+            records.read_host(dir.path(), &HostKey::linux_arm64("demo")),
+            Some(record())
+        );
+        assert_eq!(records.read(dir.path()), Some(record()));
+        assert_eq!(records.read_host(dir.path(), &win), None);
+        let amd = old.replace("}\n", ",\"platform\":\"linux/amd64\"}\n");
+        std::fs::write(
+            dir.path().join("board-holder.demo.windows-amd64.json"),
+            &amd,
+        )
+        .unwrap();
+        assert_eq!(records.read_host(dir.path(), &win), None);
+        let explicit = old.replace("}\n", ",\"platform\":\"linux/arm64\"}\n");
+        std::fs::write(dir.path().join("board-holder.demo.json"), &explicit).unwrap();
+        assert_eq!(
+            records.read_host(dir.path(), &HostKey::linux_arm64("demo")),
+            Some(record())
+        );
     }
 }

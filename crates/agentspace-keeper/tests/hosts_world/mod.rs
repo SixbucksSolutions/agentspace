@@ -100,16 +100,36 @@ pub struct Lease {
     pub project: String,
     pub id: String,
     pub expires: String,
+    /// The lease's normalized platform (`linux/arm64` unless `Lease::on` says otherwise).
+    pub platform: String,
 }
 
 impl Lease {
     /// The lease `n` of `project`; its ID starts with the 8 hex digits of `n`, so a lower `n` is a
     /// lower ID in ordinal order.
     pub fn new(project: &str, n: u32, expires: &str) -> Lease {
+        Lease::on("linux/arm64", project, n, expires)
+    }
+
+    /// The lease `n` of `project` on `platform`, a normalized platform (D91). The ID is made as
+    /// `Lease::new` makes it, so two leases of one project on two platforms have two IDs when
+    /// their `n` differ.
+    pub fn on(platform: &str, project: &str, n: u32, expires: &str) -> Lease {
         Lease {
             project: project.to_string(),
             id: format!("{n:08x}-1111-4222-8333-444455556666"),
             expires: expires.to_string(),
+            platform: platform.to_string(),
+        }
+    }
+
+    /// The profile and the SSH user a lease of this platform has (lease-api.md, Profile and
+    /// Fields; D93, D95).
+    fn profile_and_user(&self) -> (&'static str, &'static str) {
+        if self.platform == "windows/amd64" {
+            ("agent-windows", "agent")
+        } else {
+            ("agent-linux", "ubuntu")
         }
     }
 
@@ -120,29 +140,31 @@ impl Lease {
 
     /// The lease as a stored record, in state `ready`.
     pub fn json(&self) -> Value {
+        let (profile, user) = self.profile_and_user();
         json!({
             "id": self.id,
             "project": self.project,
             "state": "ready",
-            "platform": "linux/arm64",
-            "profile": "agent-linux",
+            "platform": self.platform,
+            "profile": profile,
             "size": "m",
             "ttl_seconds": 3600,
             "created_at": "2026-11-19T10:00:00Z",
             "driver": "ec2",
             "expires_at": self.expires,
-            "ssh": {"host_alias": self.alias(), "user": "ubuntu"}
+            "ssh": {"host_alias": self.alias(), "user": user}
         })
     }
 
     /// The same lease, released: its record keeps its `expires_at`.
     pub fn released_json(&self) -> Value {
+        let (profile, _) = self.profile_and_user();
         json!({
             "id": self.id,
             "project": self.project,
             "state": "released",
-            "platform": "linux/arm64",
-            "profile": "agent-linux",
+            "platform": self.platform,
+            "profile": profile,
             "size": "m",
             "ttl_seconds": 3600,
             "created_at": "2026-11-19T10:00:00Z",
@@ -345,6 +367,37 @@ impl World {
         self.registry_raw(&bytes);
     }
 
+    /// A registry with the box (`ready`) and these hosts, each as `(project, platform, state)`,
+    /// in this file order (keeper.md, A host's key and name; state.md, A host's platform and
+    /// names). A `linux/arm64` record has no `platform` member and the stack
+    /// `agentspace-host-<p>`; a host of any other platform has the member and the stack
+    /// `agentspace-<os>-<arch>-host-<p>` (D91).
+    pub fn registry_hosts(&self, hosts: &[(&str, &str, &str)]) {
+        let mut records = vec![json!({"project": BOX, "stack": "agentbox", "state": "ready"})];
+        for (project, platform, state) in hosts {
+            if *platform == "linux/arm64" {
+                records.push(json!({
+                    "project": project,
+                    "stack": format!("agentspace-host-{project}"),
+                    "state": state
+                }));
+            } else {
+                records.push(json!({
+                    "project": project,
+                    "platform": platform,
+                    "stack": format!(
+                        "agentspace-{}-host-{project}",
+                        platform.replace('/', "-")
+                    ),
+                    "state": state
+                }));
+            }
+        }
+        let mut bytes = serde_json::to_vec(&json!({"version": 0, "hosts": records})).unwrap();
+        bytes.push(b'\n');
+        self.registry_raw(&bytes);
+    }
+
     pub fn registry_raw(&self, bytes: &[u8]) {
         std::fs::create_dir_all(self.agentspace_dir()).unwrap();
         std::fs::write(self.registry_path(), bytes).unwrap();
@@ -393,6 +446,39 @@ impl World {
             alias: lease.alias(),
         };
         std::fs::write(self.record_path(project), World::record_text(pid, lease)).unwrap();
+        self.add_process(&rec, lifetime);
+        rec
+    }
+
+    /// A record file's text as v0.12 writes it for a host that is not `linux/arm64`: v0.06's
+    /// members, then `platform` last (state.md, The holder record).
+    pub fn record_text_with_platform(pid: u32, lease: &Lease, platform: &str) -> String {
+        format!(
+            "{{\"pid\":{pid},\"process_started_at\":\"{STARTED_AT}\",\"lease_id\":\"{}\",\"alias\":\"{}\",\"platform\":\"{platform}\"}}\n",
+            lease.id,
+            lease.alias()
+        )
+    }
+
+    /// A holder the keeper did not start, as `adopt` makes one, with `text` as the record file
+    /// named for `host`: a host name, where `None` is the box's `board-holder.json`, `Some("p")`
+    /// is `board-holder.p.json` and `Some("p.windows-amd64")` is
+    /// `board-holder.p.windows-amd64.json`.
+    pub fn adopt_text(
+        &self,
+        host: Option<&str>,
+        pid: u32,
+        lease: &Lease,
+        lifetime: Option<Duration>,
+        text: &str,
+    ) -> HolderRecord {
+        let rec = HolderRecord {
+            pid,
+            process_started_at: STARTED_AT.to_string(),
+            lease_id: lease.id.clone(),
+            alias: lease.alias(),
+        };
+        std::fs::write(self.record_path(host), text).unwrap();
         self.add_process(&rec, lifetime);
         rec
     }

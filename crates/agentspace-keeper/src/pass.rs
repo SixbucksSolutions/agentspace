@@ -4,14 +4,14 @@
 use crate::Deps;
 use crate::args::check_ssh_exe;
 use crate::hosts::{
-    HostKey, box_project, host_of, list_state_folder, read_registry, record_projects,
-    ssh_log_projects,
+    box_key, host_of, list_state_folder, read_registry, record_hosts, ssh_log_hosts, turn_order,
 };
 use crate::log::{Logger, pass_line, pass_line_host, rotate_ssh_log};
+use agentspace_hosts::HostKey;
 use agentspace_keeper_api::{HolderRecord, Query, StartRequest, Started, Stopped, Taken};
-use agentspace_keeper_files::holder_ssh_log_file;
+use agentspace_keeper_files::holder_ssh_log_file_keyed;
 use agentspace_state::{Record, StoreError};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
@@ -95,9 +95,10 @@ pub(crate) struct Passed {
 }
 
 /// What a keeper gives its pass: the holder it tracks on each host, and whether a host's
-/// hold-off is running (keeper.md, Watching). A one-pass run gives nothing.
+/// hold-off is running (keeper.md, Watching). A one-pass run gives nothing. A host is keyed by its
+/// project and its platform (D91), the box by [`box_key`].
 pub(crate) struct Tracking<'a> {
-    pub tracked: &'a BTreeMap<HostKey, HolderRecord>,
+    pub tracked: &'a HashMap<HostKey, HolderRecord>,
     pub held_off: &'a dyn Fn(&HostKey) -> bool,
 }
 
@@ -117,9 +118,9 @@ struct PassTime {
 /// Runs one pass (keeper.md, The order of a pass), logging its lines to `board-holder.log` in
 /// the state folder and to `stdout`. `ctx.tracked`, when given, is the holder tracked on the box.
 pub fn run_pass(ctx: &PassContext, deps: &Deps, stdout: &mut dyn Write) -> PassReport {
-    let mut tracked = BTreeMap::new();
+    let mut tracked = HashMap::new();
     if let Some(t) = ctx.tracked {
-        tracked.insert(None, t.clone());
+        tracked.insert(box_key(), t.clone());
     }
     let never = |_: &HostKey| false;
     let keeping = Tracking {
@@ -228,20 +229,22 @@ fn locked_pass(
     }
 
     // Step 3: the holders' logs, the box's first, then each other host's found by listing the
-    // state folder. A failure to rotate, to list, or to log the rotation does not stop the pass.
-    if rotate_ssh_log(ctx.state_dir, None) {
+    // state folder, in the ordinal order of their host names, since the registry is not read yet
+    // (keeper.md, The holder's log; pin P46). A failure to rotate, to list, or to log the rotation
+    // does not stop the pass.
+    if rotate_ssh_log(ctx.state_dir, &box_key()) {
         let _ = log.log(&pass_line(time, "rotated", "", "", "", None));
     }
     if let Ok(names) = list_state_folder(ctx.state_dir) {
-        for project in ssh_log_projects(&names) {
-            if rotate_ssh_log(ctx.state_dir, Some(&project)) {
+        for host in ssh_log_hosts(&names) {
+            if rotate_ssh_log(ctx.state_dir, &host) {
                 let _ = log.log(&pass_line_host(
                     time,
                     "rotated",
                     "",
                     "",
                     "",
-                    Some(&project),
+                    Some(&host.host_name()),
                     None,
                 ));
             }
@@ -291,25 +294,30 @@ fn locked_pass(
             );
         }
     };
-    let box_name = box_project(&registry);
-
-    // Step 6: the ready leases, each with its host.
+    // Step 6: the ready leases, each with its host, keyed by the lease's project and platform
+    // (keeper.md, Which host a lease is on; D91). A lease on no host, one of a platform other than
+    // `linux/arm64` with no `ready` host of its own, is chosen for no host's holder and gets no
+    // line (pin P13).
     let ready: Vec<(HostKey, Ready)> = leases
         .iter()
-        .filter_map(|r| Ready::from(r, when.secs).map(|l| (host_of(&registry, &r.project), l)))
+        .filter_map(|r| {
+            let lease = Ready::from(r, when.secs)?;
+            Some((host_of(&registry, &r.project, &r.platform)?, lease))
+        })
         .collect();
 
     // Step 7: the hosts of the pass. The box always; each host a ready lease is on; each other
-    // host whose record is in the state folder; and each host a keeper tracks a holder on.
+    // host whose record is in the state folder; and each host a keeper tracks a holder on. The
+    // box's turn comes first, then the registry's hosts in its file order, then the others in the
+    // ordinal order of their host names (pin P46).
     let names = match list_state_folder(ctx.state_dir) {
         Ok(names) => names,
         Err(e) => return fail(pass_error(time, &e), log),
     };
-    let mut hosts: BTreeSet<HostKey> = BTreeSet::new();
-    hosts.insert(None);
-    hosts.extend(ready.iter().map(|(h, _)| h.clone()));
-    hosts.extend(record_projects(&names, &box_name).into_iter().map(Some));
-    hosts.extend(keeping.tracked.keys().cloned());
+    let mut wanted: Vec<HostKey> = ready.iter().map(|(h, _)| h.clone()).collect();
+    wanted.extend(record_hosts(&names));
+    wanted.extend(keeping.tracked.keys().cloned());
+    let hosts = turn_order(&registry, &wanted);
 
     // Step 8: each host's turn, one at a time, the box's first. A turn that fails, or meets an
     // error, ends only that turn.
@@ -321,10 +329,7 @@ fn locked_pass(
             .filter(|(h, _)| h == host)
             .map(|(_, l)| l)
             .collect();
-        let who = Who {
-            files: host.as_deref(),
-            name: host.as_deref().unwrap_or(&box_name),
-        };
+        let who = Who::of(host);
         let tracked = keeping.tracked.get(host);
         let outcome = turn(
             ctx,
@@ -359,21 +364,28 @@ fn locked_pass(
     Passed {
         action,
         turns,
-        hosts: Some(hosts.into_iter().collect()),
+        hosts: Some(hosts),
         exit_code,
     }
 }
 
-/// The host a turn is about: the files it names (`None` for the box), and its project, which its
-/// lines name.
+/// The host a turn is about: its key, which names its files, and its host name, which its lines
+/// name (keeper.md, A host's key and name; pin P12).
 struct Who<'a> {
-    files: Option<&'a str>,
-    name: &'a str,
+    key: &'a HostKey,
+    name: String,
 }
 
-impl Who<'_> {
-    /// A line of this host's turn (keeper.md, A pass's line): `host=<project>` on every line of a
-    /// host that is not the box, and on the box's lines that name a holder only.
+impl<'a> Who<'a> {
+    fn of(key: &'a HostKey) -> Who<'a> {
+        Who {
+            key,
+            name: key.host_name(),
+        }
+    }
+
+    /// A line of this host's turn (keeper.md, A pass's line): `host=<host name>` on every line of
+    /// a host that is not the box, and on the box's lines that name a holder only.
     #[allow(clippy::too_many_arguments)]
     fn line(
         &self,
@@ -385,7 +397,7 @@ impl Who<'_> {
         names_holder: bool,
         reason: Option<&str>,
     ) -> String {
-        let host = (self.files.is_some() || names_holder).then_some(self.name);
+        let host = (!self.key.is_box() || names_holder).then_some(self.name.as_str());
         pass_line_host(time, action, lease, alias, pid, host, reason)
     }
 
@@ -420,13 +432,13 @@ fn turn(
     held_off: bool,
 ) -> Outcome {
     // Step 8.1: a record that names no trusted holder is removed, and its process left alone.
-    let trusted = match deps.records.read_host(ctx.state_dir, who.files) {
+    let trusted = match deps.records.read_host(ctx.state_dir, who.key) {
         None => None,
         Some(record) => {
             if is_trusted(&record, ctx.ssh_exe, deps) {
                 Some(record)
             } else {
-                if let Err(e) = deps.records.remove_host(ctx.state_dir, who.files) {
+                if let Err(e) = deps.records.remove_host(ctx.state_dir, who.key) {
                     // An untrusted record that cannot be removed is an error the pass does not
                     // handle: it ends this host's turn with this line, and the run exits 1
                     // (keeper.md, Exit codes; The order of a pass).
@@ -579,7 +591,7 @@ fn stop(ctx: &PassContext, deps: &Deps, time: &str, who: &Who, record: HolderRec
         // After a stop a failed removal is not reported, and the line stays as it is: the next
         // pass removes the record, which then names no running holder (keeper.md, Exit codes;
         // architect, 2026-11-19, for E0.06-T01-S06).
-        let _ = deps.records.remove_host(ctx.state_dir, who.files);
+        let _ = deps.records.remove_host(ctx.state_dir, who.key);
     }
     match reason {
         None => Outcome {
@@ -663,11 +675,11 @@ fn start(ctx: &PassContext, deps: &Deps, time: &str, who: &Who, lease: &Ready) -
         return failed(None, &format!("The holder could not be started: {why}"));
     }
     // The holder's log is its host's (keeper.md, The handshake, steps 1 and 7; architect,
-    // 2026-11-21, for v0.07-T03): another host's start MUST name `board-holder-ssh.<project>.log`
-    // in the state folder, and the box's MUST name none, so its request is v0.06's byte for byte.
-    let host_log = who
-        .files
-        .map(|project| ctx.state_dir.join(holder_ssh_log_file(Some(project))));
+    // 2026-11-21, for v0.07-T03): another host's start MUST name
+    // `board-holder-ssh.<host name>.log` in the state folder (pin P12), and the box's MUST name
+    // none, so its request is v0.06's byte for byte.
+    let host_log =
+        (!who.key.is_box()).then(|| ctx.state_dir.join(holder_ssh_log_file_keyed(who.key)));
     let req = StartRequest {
         state_dir: ctx.state_dir,
         profile: ctx.profile,
@@ -684,7 +696,7 @@ fn start(ctx: &PassContext, deps: &Deps, time: &str, who: &Who, lease: &Ready) -
         // for E0.06-T01-S06).
         Started::Failed(reason) => return failed(None, &reason),
     };
-    if let Err(e) = deps.records.write_host(ctx.state_dir, who.files, &holder) {
+    if let Err(e) = deps.records.write_host(ctx.state_dir, who.key, &holder) {
         // An unrecorded holder could never be stopped later, so it is stopped at once. A stop
         // that found `All`, `Gone` or `TreeLeft` counts as the holder gone; after anything else
         // it runs unrecorded (architect, 2026-11-19, for E0.06-T01-S06).
