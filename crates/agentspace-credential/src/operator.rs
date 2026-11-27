@@ -4,7 +4,15 @@
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
 //! - **The files are in `<home>\.agentspace\hosts\<project>\`**: `id_ed25519`, `id_ed25519.pub` and
-//!   `id_ed25519-cert.pub`. `home` is the caller's, `USERPROFILE`, as for a lease.
+//!   `id_ed25519-cert.pub`. `home` is the caller's, `USERPROFILE`, as for a lease. **From v0.12 the
+//!   folder is `hosts\<host name>\`** (D91; docs/state.md, "A host's folder"), and
+//!   [`ensure_operator_key_for`] and [`sign_operator_certificate_for`] take the host's name and,
+//!   for the certificate, its principal, the login user the platform seam gives (pin P12 of
+//!   v0.12-T03). The project-only pair keeps its signature and its bytes, and means `linux/arm64`,
+//!   whose host name is its project: principal `ubuntu`, key ID `operator-<project>`.
+//! - **A host name MUST be one of D91's**, a project as the host registry names it, or that project,
+//!   `.` and `linux-amd64` or `windows-amd64`; `linux-arm64` names no host. Anything else is refused
+//!   in agentspace's own words, and nothing is read or written.
 //! - **This module takes no lock.** The caller holds the host registry lock around
 //!   [`ensure_operator_key`], so two commands never make two keys (state.md, "The operator's key
 //!   and certificate"). [`sign_operator_certificate`] needs no lock: each call signs a copy under
@@ -39,6 +47,10 @@ const TTL_SECONDS: u32 = 3600;
 
 const BAD_PROJECT: &str =
     "The host's project cannot be used to name its folder. Nothing was changed.";
+const BAD_HOST_NAME: &str =
+    "The host's name cannot be used to name its folder. Nothing was changed.";
+const BAD_PRINCIPAL: &str =
+    "The host's login user cannot be used in a certificate. Nothing was changed.";
 const KEY_NOT_MADE: &str =
     "The operator's key for the host could not be made. Nothing was changed; try again.";
 /// A file where a folder of the host's path belongs; `{}` is that file, home-relative.
@@ -63,6 +75,37 @@ fn valid_project(project: &str) -> bool {
         && bytes.last().is_some_and(plain)
 }
 
+/// The platform part of every host name but a `linux/arm64` host's, which is its project alone
+/// (D91; pin P3 of v0.12-T03).
+const HOST_NAME_PLATFORMS: [&str; 2] = ["linux-amd64", "windows-amd64"];
+
+/// A host's name as D91 gives it: a project as the host registry names it, for a `linux/arm64`
+/// host; or that project, `.` and `linux-amd64` or `windows-amd64`. `linux-arm64` is no suffix,
+/// since `linux/arm64` never appears in a name.
+fn valid_host_name(host_name: &str) -> bool {
+    match host_name.split_once('.') {
+        None => valid_project(host_name),
+        Some((project, platform)) => {
+            valid_project(project) && HOST_NAME_PLATFORMS.contains(&platform)
+        }
+    }
+}
+
+/// A login user as a certificate's one principal: 1 to 32 characters, a lowercase letter or `_`
+/// first, then lowercase letters, digits, `_` and `-` (`ubuntu`, `agent`).
+fn valid_principal(principal: &str) -> bool {
+    let bytes = principal.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 32
+        && bytes
+            .first()
+            .is_some_and(|b| b.is_ascii_lowercase() || *b == b'_')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_' || *b == b'-')
+}
+
+/// The host's folder; `project` is its host name, which is checked first by every caller.
 fn host_dir(home: &Path, project: &str) -> PathBuf {
     agentspace_dir(home).join("hosts").join(project)
 }
@@ -147,10 +190,31 @@ fn check_existing(project: &str, key_path: &Path) -> Result<(), CredFailure> {
 ///    every file this call made is deleted.
 ///
 /// **It takes no lock; the caller MUST hold the host registry lock.**
+///
+/// It is the `linux/arm64` host's: [`ensure_operator_key_for`] with the project as the host's
+/// name, but that a project which is not one is refused with this function's own message.
 pub fn ensure_operator_key(home: &Path, project: &str) -> Result<bool, CredFailure> {
     if !valid_project(project) {
         return Err(fail(BAD_PROJECT));
     }
+    ensure_key_in(home, project)
+}
+
+/// [`ensure_operator_key`] for the host `host_name` (D91; pin P12 of v0.12-T03): its folder is
+/// `<home>\.agentspace\hosts\<host name>\`, and its key's comment `agentspace host <host name>`.
+/// A host name that is not one of D91's is refused, reading and writing nothing. A `linux/arm64`
+/// host's name is its project, which gives [`ensure_operator_key`]'s files exactly.
+///
+/// **It takes no lock; the caller MUST hold the host registry lock.**
+pub fn ensure_operator_key_for(home: &Path, host_name: &str) -> Result<bool, CredFailure> {
+    if !valid_host_name(host_name) {
+        return Err(fail(BAD_HOST_NAME));
+    }
+    ensure_key_in(home, host_name)
+}
+
+/// The steps of [`ensure_operator_key`] for a host name already checked.
+fn ensure_key_in(home: &Path, project: &str) -> Result<bool, CredFailure> {
     let dir = host_dir(home, project);
     if fs::create_dir_all(&dir).is_err() || !dir.is_dir() {
         // A file where `.agentspace`, `hosts` or the host's folder belongs is a person's to move;
@@ -288,11 +352,50 @@ fn write_key(
 ///    it is left and not reported.
 ///
 /// `now` is Unix seconds. **It takes no lock.**
+///
+/// It is the `linux/arm64` host's: [`sign_operator_certificate_for`] with the project as the host's
+/// name and `ubuntu` as the principal, its checks in its own order (the CA first).
 pub fn sign_operator_certificate(home: &Path, project: &str, now: i64) -> Result<i64, CredFailure> {
     let ca_private = load_ca(home).map_err(ca_failure)?;
     if !valid_project(project) {
         return Err(fail(BAD_PROJECT));
     }
+    sign_in(home, &ca_private, project, PRINCIPAL, now)
+}
+
+/// [`sign_operator_certificate`] for the host `host_name`, with `principal` as the certificate's
+/// one principal (D91, D95; pin P12 of v0.12-T03): the caller's login user, from the platform
+/// seam's `login_user`, `ubuntu` on both Linux platforms and `agent` on `windows/amd64`. The key ID
+/// is `operator-<host name>`, and the certificate's comment `agentspace host <host name>`.
+///
+/// A host name that is not one of D91's, or a principal that is not a login user's name, is
+/// refused before anything is read, and nothing is written. Then it is
+/// [`sign_operator_certificate`]'s steps, so a `linux/arm64` host's certificate, signed with
+/// `ubuntu`, is that function's in every field.
+pub fn sign_operator_certificate_for(
+    home: &Path,
+    host_name: &str,
+    principal: &str,
+    now: i64,
+) -> Result<i64, CredFailure> {
+    if !valid_host_name(host_name) {
+        return Err(fail(BAD_HOST_NAME));
+    }
+    if !valid_principal(principal) {
+        return Err(fail(BAD_PRINCIPAL));
+    }
+    let ca_private = load_ca(home).map_err(ca_failure)?;
+    sign_in(home, &ca_private, host_name, principal, now)
+}
+
+/// Steps 2 to 5 of [`sign_operator_certificate`], for a host name and a principal already checked.
+fn sign_in(
+    home: &Path,
+    ca_private: &[u8],
+    project: &str,
+    principal: &str,
+    now: i64,
+) -> Result<i64, CredFailure> {
     let valid_before = now
         .checked_add(i64::from(TTL_SECONDS))
         .ok_or_else(|| fail(SIGN_FAILED))?;
@@ -310,8 +413,8 @@ pub fn sign_operator_certificate(home: &Path, project: &str, now: i64) -> Result
     let cert_name = format!("sign-{hex}-cert.pub");
     let steps = sign_steps(
         &dir,
-        &ca_private,
-        project,
+        ca_private,
+        (project, principal),
         now,
         (public_name.as_str(), cert_name.as_str()),
     );
@@ -355,7 +458,7 @@ fn missing_key_file(project: &str, name: &str) -> String {
 fn sign_steps(
     dir: &Path,
     ca_private: &[u8],
-    project: &str,
+    (project, principal): (&str, &str),
     now: i64,
     (public_name, cert_name): (&str, &str),
 ) -> Result<(), ()> {
@@ -374,7 +477,7 @@ fn sign_steps(
         ca_private,
         &public_bytes,
         &format!("operator-{project}"),
-        PRINCIPAL,
+        principal,
         now,
         TTL_SECONDS,
         &format!("agentspace host {project}"),

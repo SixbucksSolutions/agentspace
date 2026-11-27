@@ -35,9 +35,11 @@ const MAX_NAME: usize = 255;
 /// file MUST NOT name (operator.md, deploy, step 2).
 const DEPLOYS_OWN_PARAMETER: &str = "SshPublicKey";
 /// The stack parameters `deploy` sets itself for a host that is not the box, which the file MUST
-/// NOT name either: on the box either would change the `agentbox` stack's names or its first
-/// boot, whose change set MUST stay empty (operator.md, deploy, step 2; D44).
-const DEPLOYS_OWN_FOR_A_HOST: [&str; 2] = ["HostName", "CaPublicKey"];
+/// NOT name either: on the box any would change the `agentbox` stack's names or its first boot,
+/// whose change set MUST stay empty (operator.md, deploy, step 2; D44). From v0.12 `HostOs` is
+/// one, which `deploy` passes when it creates a `windows/amd64` stack (operator.md, The
+/// template's Windows first boot; N2; pin P15 of v0.12-T02).
+const DEPLOYS_OWN_FOR_A_HOST: [&str; 3] = ["HostName", "CaPublicKey", "HostOs"];
 
 /// The member no program reads (operator.md, deploy, step 2; D67, D71): the file is still checked
 /// as a whole, but its `InstanceType` is not passed to any stack and not read for any use, so a
@@ -451,11 +453,12 @@ mod tests {
         );
     }
 
-    /// `deploy` sets `HostName` and `CaPublicKey` itself for a host, and on the box either would
-    /// change its change set, so a file that names either is refused.
+    /// `deploy` sets `HostName`, `CaPublicKey` and, for a `windows/amd64` stack it creates,
+    /// `HostOs` itself for a host, and on the box any would change its change set, so a file that
+    /// names any of them is refused.
     #[test]
-    fn a_file_that_names_host_name_or_ca_public_key_is_refused() {
-        for name in ["HostName", "CaPublicKey"] {
+    fn a_file_that_names_host_name_ca_public_key_or_host_os_is_refused() {
+        for name in ["HostName", "CaPublicKey", "HostOs"] {
             let text = format!(r#"{{"version":0,"parameters":{{"VpcId":"v","{name}":"x"}}}}"#);
             assert_eq!(
                 reason(&text),
@@ -465,7 +468,10 @@ mod tests {
             );
         }
         assert!(
-            parse(br#"{"version":0,"parameters":{"Hostname":"x","CaPublicKeys":"y"}}"#).is_ok()
+            parse(
+                br#"{"version":0,"parameters":{"Hostname":"x","CaPublicKeys":"y","HostOS":"z"}}"#
+            )
+            .is_ok()
         );
     }
 

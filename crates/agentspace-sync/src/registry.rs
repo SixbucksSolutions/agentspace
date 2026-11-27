@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 
 use agentspace_box::{CacheRead, InstanceIdCache, cache_bytes, parse_cache};
 use agentspace_hosts::{
-    BOX_STACK, Host, Hosts, HostsError, Target, host_for, hosts_lock_path, hosts_path, is_box,
+    BOX_STACK, Host, HostKey, Hosts, HostsError, Target, host_for, host_for_keyed, hosts_lock_path,
+    hosts_path, is_box,
 };
 use agentspace_operator_api::{CallerFailure, Failure};
 
@@ -79,6 +80,29 @@ pub(crate) fn lock(home: &Path) -> Result<agentspace_hosts::HostsLock, Failure> 
     agentspace_hosts::lock(home).map_err(|e| change_failure(home, &e))
 }
 
+/// The "has no host" failure for the host `key` (operator.md, From the command line): for a
+/// `linux/arm64` host `agentspace: Project '<project>' has no host; provision -Host <project> makes
+/// one.`, as before v0.12, and for a host of another platform the host named by its host name and
+/// its command given `-Platform`: `agentspace: Project '<host name>' has no host; provision -Host
+/// <project> -Platform <platform> makes one.` (Messages; pins P12 and P44 of v0.12-T01).
+pub(crate) fn no_host_keyed(key: &HostKey) -> Failure {
+    failure(format!(
+        "agentspace: Project '{}' has no host; provision -Host {} makes one.",
+        key.host_name(),
+        host_flags(key)
+    ))
+}
+
+/// What follows `-Host ` in a command line a message suggests for the host `key`: its project, and
+/// for a host not on `linux/arm64` ` -Platform <platform>` after it (operator.md, Messages).
+pub(crate) fn host_flags(key: &HostKey) -> String {
+    if key.is_linux_arm64() {
+        key.project.clone()
+    } else {
+        format!("{} -Platform {}", key.project, key.platform)
+    }
+}
+
 /// The record `target` names. The box is the record whose stack is `agentbox`, and `-Host` for the
 /// box's own project is the box (operator.md, From the command line). A project with no record
 /// fails with the "has no host" message.
@@ -90,24 +114,44 @@ pub(crate) fn find(hosts: &Hosts, target: Target<'_>) -> Result<Host, Failure> {
             .find(|h| h.stack == BOX_STACK)
             .cloned()
             .ok_or_else(|| failure("agentspace: The host registry holds no box record.".into())),
-        Target::Host(project) => host_for(hosts, project).cloned().ok_or_else(|| {
-            failure(format!(
-                "agentspace: Project '{project}' has no host; provision -Host {project} makes one."
-            ))
-        }),
+        Target::Host(project) => host_for(hosts, project)
+            .cloned()
+            .ok_or_else(|| no_host_keyed(&HostKey::linux_arm64(project))),
     }
 }
 
-/// Sets `project`'s record's `instance_id` to `id`, or removes it for `None`, under `hosts.lock`,
-/// and changes nothing else in it. A file that is missing starts from the box's record, which a
-/// first change writes with the change.
+/// The record of the host `key` (D91): a `linux/arm64` key's is [`find`]'s for its target, so the
+/// box's key finds the box's record; any other key's is the record whose project and platform are
+/// the key's, and none is the "has no host" message for that host. A record of the project on
+/// another platform never stands in.
+pub(crate) fn find_keyed(hosts: &Hosts, key: &HostKey) -> Result<Host, Failure> {
+    match crate::linux_arm64_target(key) {
+        Some(target) => find(hosts, target),
+        None => host_for_keyed(hosts, key)
+            .cloned()
+            .ok_or_else(|| no_host_keyed(key)),
+    }
+}
+
+/// Sets `project`'s `linux/arm64` record's `instance_id` to `id`, or removes it for `None`:
+/// [`set_instance_id_keyed`] of its key.
+#[cfg(test)]
 pub(crate) fn set_instance_id(home: &Path, project: &str, id: Option<&str>) -> Result<(), Failure> {
+    set_instance_id_keyed(home, &HostKey::linux_arm64(project), id)
+}
+
+/// Sets the host `key`'s record's `instance_id` to `id`, or removes it for `None`, under
+/// `hosts.lock`, and changes nothing else in it. A file that is missing starts from the box's
+/// record, which a first change writes with the change.
+pub(crate) fn set_instance_id_keyed(
+    home: &Path,
+    key: &HostKey,
+    id: Option<&str>,
+) -> Result<(), Failure> {
     let held = lock(home)?;
     let mut hosts = read(home)?;
-    let Some(record) = hosts.hosts.iter_mut().find(|h| h.project == project) else {
-        return Err(failure(format!(
-            "agentspace: Project '{project}' has no host; provision -Host {project} makes one."
-        )));
+    let Some(record) = hosts.hosts.iter_mut().find(|h| h.is_for(key)) else {
+        return Err(no_host_keyed(key));
     };
     let wanted = id.map(str::to_string);
     if record.instance_id == wanted && hosts_path(home).is_file() {
@@ -117,50 +161,84 @@ pub(crate) fn set_instance_id(home: &Path, project: &str, id: Option<&str>) -> R
     agentspace_hosts::write(home, &hosts, &held).map_err(|e| change_failure(home, &e))
 }
 
-/// Removes `project`'s record's `instance_type`, or sets it, under `hosts.lock`, changing nothing
-/// else in the record (docs/state.md, The instance type; pins P11, P26 and P30). A missing file
-/// starts from the seed document and is written, never from the implied record (pin P31).
+/// Removes `project`'s `linux/arm64` record's `instance_type`, or sets it:
+/// [`set_instance_type_keyed`] of its key.
+#[cfg(test)]
 pub(crate) fn set_instance_type(
     home: &Path,
     project: &str,
     instance_type: Option<&str>,
 ) -> Result<(), Failure> {
-    agentspace_hosts::set_instance_type(home, project, instance_type)
-        .map_err(|e| record_failure(home, project, &e))
+    set_instance_type_keyed(home, &HostKey::linux_arm64(project), instance_type)
 }
 
-/// Sets or removes `project`'s record's `instance_id` and `instance_type` together, in one write,
-/// under `hosts.lock`, and nothing else of any record (docs/state.md, The instance type, steps 2
-/// and 4; pins P11, P23 and P30).
+/// Removes the host `key`'s record's `instance_type`, or sets it, under `hosts.lock`, changing
+/// nothing else in the record (docs/state.md, The instance type; pins P11, P26 and P30). A missing
+/// file starts from the seed document and is written, never from the implied record (pin P31).
+pub(crate) fn set_instance_type_keyed(
+    home: &Path,
+    key: &HostKey,
+    instance_type: Option<&str>,
+) -> Result<(), Failure> {
+    agentspace_hosts::set_instance_type_keyed(home, key, instance_type)
+        .map_err(|e| record_failure(home, key, &e))
+}
+
+/// [`set_instance_keyed`] of `project`'s `linux/arm64` key.
+#[cfg(test)]
 pub(crate) fn set_instance(
     home: &Path,
     project: &str,
     instance_id: Option<&str>,
     instance_type: Option<&str>,
 ) -> Result<(), Failure> {
-    agentspace_hosts::set_instance(home, project, instance_id, instance_type)
-        .map_err(|e| record_failure(home, project, &e))
+    set_instance_keyed(
+        home,
+        &HostKey::linux_arm64(project),
+        instance_id,
+        instance_type,
+    )
 }
 
-/// Sets `project`'s record's `last_success_at` to `at`, under `hosts.lock` alone, changing nothing
-/// else of any record (docs/operator.md, provision, step 9's end; D77; pin P23). A failure is the
-/// registry's message, as every other change's is.
+/// Sets or removes the host `key`'s record's `instance_id` and `instance_type` together, in one
+/// write, under `hosts.lock`, and nothing else of any record (docs/state.md, The instance type,
+/// steps 2 and 4; pins P11, P23 and P30).
+pub(crate) fn set_instance_keyed(
+    home: &Path,
+    key: &HostKey,
+    instance_id: Option<&str>,
+    instance_type: Option<&str>,
+) -> Result<(), Failure> {
+    agentspace_hosts::set_instance_keyed(home, key, instance_id, instance_type)
+        .map_err(|e| record_failure(home, key, &e))
+}
+
+/// [`set_last_success_at_keyed`] of `project`'s `linux/arm64` key.
+#[cfg(test)]
 pub(crate) fn set_last_success_at(home: &Path, project: &str, at: &str) -> Result<(), Failure> {
-    agentspace_hosts::set_last_success_at(home, project, at)
-        .map_err(|e| record_failure(home, project, &e))
+    set_last_success_at_keyed(home, &HostKey::linux_arm64(project), at)
 }
 
-/// The failure of a change to one project's record: a project with no record is the "has no host"
+/// Sets the host `key`'s record's `last_success_at` to `at`, under `hosts.lock` alone, changing
+/// nothing else of any record (docs/operator.md, provision, step 9's end; D77; pin P23). A failure
+/// is the registry's message, as every other change's is.
+pub(crate) fn set_last_success_at_keyed(
+    home: &Path,
+    key: &HostKey,
+    at: &str,
+) -> Result<(), Failure> {
+    agentspace_hosts::set_last_success_at_keyed(home, key, at)
+        .map_err(|e| record_failure(home, key, &e))
+}
+
+/// The failure of a change to one host's record: a host with no record is the "has no host"
 /// message, any other error is the registry's.
-fn record_failure(home: &Path, project: &str, error: &HostsError) -> Failure {
+fn record_failure(home: &Path, key: &HostKey, error: &HostsError) -> Failure {
     match error {
-        HostsError::Unwritable(agentspace_hosts::Failure::NoSuchRecord) => failure(format!(
-            "agentspace: Project '{project}' has no host; provision -Host {project} makes one."
-        )),
+        HostsError::Unwritable(agentspace_hosts::Failure::NoSuchRecord) => no_host_keyed(key),
         _ => change_failure(home, error),
     }
 }
-
 /// The instance-ID cache over a host's record, which `agentspace-box` reads and writes through
 /// (operator.md, The host registry, as the operator uses it).
 ///
@@ -168,7 +246,7 @@ fn record_failure(home: &Path, project: &str, error: &HostsError) -> Failure {
 /// reports a file that cannot be opened: it gives only the record's ID or a missing one.
 pub(crate) struct RegistryCache {
     home: PathBuf,
-    project: String,
+    key: HostKey,
     path: PathBuf,
     instance_id: Option<String>,
 }
@@ -177,7 +255,7 @@ impl RegistryCache {
     pub(crate) fn new(home: &Path, host: &Host) -> RegistryCache {
         RegistryCache {
             home: home.to_path_buf(),
-            project: host.project.clone(),
+            key: host.key(),
             path: hosts_path(home),
             instance_id: host.instance_id.clone(),
         }
@@ -198,7 +276,7 @@ impl InstanceIdCache for RegistryCache {
 
     fn write(&self, bytes: &[u8]) -> Result<(), Failure> {
         match parse_cache(bytes) {
-            Some(id) => set_instance_id(&self.home, &self.project, Some(&id)),
+            Some(id) => set_instance_id_keyed(&self.home, &self.key, Some(&id)),
             None => Err(cannot_write(&self.path)),
         }
     }

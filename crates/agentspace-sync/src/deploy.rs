@@ -27,8 +27,8 @@
 use std::path::{Path, PathBuf};
 
 use agentspace_ca::CaEnv;
-use agentspace_hosts::{Host, Hosts, HostsLock};
-use agentspace_operator_api::{Aws, AwsError, Call, Context, Failure, Output, Say};
+use agentspace_hosts::{Host, HostKey, Hosts, HostsLock};
+use agentspace_operator_api::{Aws, AwsError, Call, Context, Failure, HostPlatform, Output, Say};
 use serde_json::Value;
 
 use crate::files::{self, Places};
@@ -62,19 +62,12 @@ pub(crate) fn write_hosts(home: &Path, hosts: &Hosts, held: &HostsLock) -> Resul
         .map_err(|_| files::cannot_write(&agentspace_hosts::hosts_path(home)))
 }
 
-/// `agentspace: Project '<project>' has no host; provision -Host <project> makes one.`
-pub(crate) fn no_host(project: &str) -> Failure {
-    step_failed(&format!(
-        "agentspace: Project '{project}' has no host; provision -Host {project} makes one."
-    ))
-}
-
-/// Changes `project`'s record under `hosts.lock`, held from before the read the change starts
+/// Changes the host `key`'s record under `hosts.lock`, held from before the read the change starts
 /// from until after the file is replaced. `change` returns whether it changed anything; nothing
-/// is written when it did not. A project with no record fails with [`no_host`].
+/// is written when it did not. A host with no record fails with the "has no host" message.
 pub(crate) fn change_record(
     home: &Path,
-    project: &str,
+    key: &HostKey,
     change: impl FnOnce(&mut Host) -> bool,
 ) -> Result<(), Failure> {
     let held = registry::lock(home)?;
@@ -82,8 +75,8 @@ pub(crate) fn change_record(
     let record = hosts
         .hosts
         .iter_mut()
-        .find(|h| h.project == project)
-        .ok_or_else(|| no_host(project))?;
+        .find(|h| h.is_for(key))
+        .ok_or_else(|| registry::no_host_keyed(key))?;
     if change(record) {
         write_hosts(home, &hosts, &held)?;
     }
@@ -112,7 +105,8 @@ pub(crate) fn box_stack(
 
     // Step 4's removal, then steps 3 and 4.
     let stack = agentspace_hosts::BOX_STACK;
-    remove_type_before_deploy(&home, agentspace_hosts::BOX_PROJECT, instance_type)?;
+    let box_key = HostKey::linux_arm64(agentspace_hosts::BOX_PROJECT);
+    remove_type_before_deploy(&home, &box_key, instance_type)?;
     say.progress(&format!("Deploying stack '{stack}' in {REGION}..."), None);
     let mut overrides = vec![format!("SshPublicKey={key}")];
     overrides.extend(
@@ -127,7 +121,7 @@ pub(crate) fn box_stack(
     run_deploy(&places, stack, Some(&overrides), aws, seams)?;
 
     // Step 5.
-    refresh_instance(ctx, agentspace_hosts::BOX_PROJECT, stack, say, aws)
+    refresh_instance(ctx, &box_key, stack, say, aws)
 }
 
 /// Step 4's first act: with an `InstanceType` to pass, the record's `instance_type` is removed
@@ -139,18 +133,18 @@ pub(crate) fn box_stack(
 /// before `cloudformation deploy`.
 fn remove_type_before_deploy(
     home: &Path,
-    project: &str,
+    key: &HostKey,
     instance_type: Option<&str>,
 ) -> Result<(), Failure> {
     if instance_type.is_some() {
-        registry::set_instance_type(home, project, None)?;
+        registry::set_instance_type_keyed(home, key, None)?;
     }
     Ok(())
 }
 
-/// A host's existence check and steps 1 to 5 (operator.md, deploy), for a host that is not the
-/// box. `instance_type` is `-InstanceType`'s value, or a provisioning run's. Returns the instance
-/// ID.
+/// [`host_stack_keyed`] for `project`'s `linux/arm64` host, which passes no image and no platform
+/// parameter, as before v0.12.
+#[cfg(test)]
 pub(crate) fn host_stack(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -160,16 +154,50 @@ pub(crate) fn host_stack(
     aws: &dyn Aws,
     seams: &Seams,
 ) -> Result<String, Failure> {
+    host_stack_keyed(
+        ctx,
+        ca_env,
+        &HostKey::linux_arm64(project),
+        &agentspace_platforms::LINUX_ARM64,
+        instance_type,
+        say,
+        aws,
+        seams,
+    )
+}
+
+/// A host's existence check and steps 1 to 5 (operator.md, deploy), for the host `key`, which is
+/// not the box, on `platform`, its seam. `instance_type` is `-InstanceType`'s value, or a
+/// provisioning run's. Returns the instance ID.
+///
+/// **A stack it creates on a platform whose seam names an image parameter** reads the image with
+/// one `ssm get-parameter` after the CA check and before any call that changes anything, and
+/// passes `ImageId=<image>` after `CaPublicKey`, then the platform's other creation parameters in
+/// order, then `InstanceType=<type>` last: `-InstanceType`'s, or the platform's new stack type
+/// (step 3; pins P41 and P43 of v0.12-T01). **A stack it updates is given none of them.** A
+/// `linux/arm64` host passes none, byte for byte as before v0.12.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn host_stack_keyed(
+    ctx: &Context,
+    ca_env: &CaEnv,
+    key: &HostKey,
+    platform: &dyn HostPlatform,
+    instance_type: Option<&str>,
+    say: &dyn Say,
+    aws: &dyn Aws,
+    seams: &Seams,
+) -> Result<String, Failure> {
     let places = Places::new(ctx);
     let home = full_home(ctx);
     let hosts = read_hosts(&home)?;
-    let record = agentspace_hosts::host_for(&hosts, project).ok_or_else(|| no_host(project))?;
+    let record = agentspace_hosts::host_for_keyed(&hosts, key)
+        .ok_or_else(|| registry::no_host_keyed(key))?;
     let stack = record.stack.clone();
 
-    let overrides = match existence(aws, &stack, project)? {
+    let overrides = match existence(aws, &stack, &registry::host_flags(key))? {
         Existence::Create => {
             // Steps 1 and 2.
-            let key = read_public_key(&places)?;
+            let public_key = read_public_key(&places)?;
             let path = places.stack_parameters();
             let parameters = params::read(&path)?;
             let find = |name: &str| {
@@ -187,14 +215,29 @@ pub(crate) fn host_stack(
             // Step 3: the CA check, then its public key without its comment.
             (seams.ca_check)(ctx, ca_env)?;
             let ca_key = ca_key_for_stack(&places.ca_public_key())?;
+            // Then, for a platform whose seam names one, the image, read once, now (pin P43).
+            let image = match platform.image_parameter() {
+                Some(parameter) => Some(read_image(aws, parameter)?),
+                None => None,
+            };
             let mut overrides = vec![
-                format!("SshPublicKey={key}"),
+                format!("SshPublicKey={public_key}"),
                 format!("SubnetId={subnet}"),
                 format!("VpcId={vpc}"),
                 format!("HostName={stack}"),
                 format!("CaPublicKey={ca_key}"),
             ];
-            if let Some(t) = instance_type {
+            if let Some(image) = image {
+                overrides.push(format!("ImageId={image}"));
+            }
+            overrides.extend(
+                platform
+                    .new_stack_extra_parameters()
+                    .iter()
+                    .map(|p| p.to_string()),
+            );
+            // `InstanceType` last: `-InstanceType`'s, or the platform's type for a new stack.
+            if let Some(t) = instance_type.or(platform.new_stack_instance_type()) {
                 overrides.push(format!("InstanceType={t}"));
             }
             Some(overrides)
@@ -203,16 +246,54 @@ pub(crate) fn host_stack(
     };
 
     // Step 4: the type's removal, then the deploy.
-    remove_type_before_deploy(&home, project, instance_type)?;
+    remove_type_before_deploy(&home, key, instance_type)?;
     say.progress(&format!("Deploying stack '{stack}' in {REGION}..."), None);
     run_deploy(&places, &stack, overrides.as_deref(), aws, seams)?;
 
     // Step 5.
-    refresh_instance(ctx, project, &stack, say, aws)
+    refresh_instance(ctx, key, &stack, say, aws)
+}
+
+/// Step 3's image read (operator.md, deploy, step 3; Calls by command; pins P43 and P59 of
+/// v0.12-T01): one `ssm get-parameter --name <parameter>` (JSON), whose `Parameter.Value` MUST be a
+/// string of the form `^ami-[0-9a-f]{8}([0-9a-f]{9})?\z`. A failed call fails under AWS failures,
+/// #0034's sign-in message first; an answer with no such value fails with `agentspace: Unexpected
+/// answer from ssm get-parameter: no Parameter.Value.`, which holds no part of the answer. **The
+/// image ID is never put in a message**: it reaches `cloudformation deploy`'s arguments alone.
+pub(crate) fn read_image(aws: &dyn Aws, parameter: &str) -> Result<String, Failure> {
+    let answer = aws
+        .call(&Call {
+            service: "ssm",
+            operation: "get-parameter",
+            args: &["--name", parameter],
+            output: Output::Json,
+        })
+        .map_err(Failure::from)?;
+    answer
+        .pointer("/Parameter/Value")
+        .and_then(Value::as_str)
+        .filter(|value| is_image_id(value))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            step_failed("agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.")
+        })
+}
+
+/// Whether `text` is an image ID as `deploy` takes one: `ami-`, then 8 or 17 lowercase hex digits,
+/// and nothing after them, a line break included.
+pub(crate) fn is_image_id(text: &str) -> bool {
+    text.strip_prefix("ami-").is_some_and(|hex| {
+        (hex.len() == 8 || hex.len() == 17)
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
 }
 
 /// The existence check: `cloudformation describe-stacks --stack-name <stack>`, read for
-/// `Stacks[0].StackStatus` alone (operator.md, deploy; P17 and P19).
+/// `Stacks[0].StackStatus` alone (operator.md, deploy; P17 and P19). `project` is what the
+/// `ROLLBACK_COMPLETE` message's `provision -Host` takes: the project, then ` -Platform
+/// <platform>` for a host not on `linux/arm64` (Messages; pins P12 and P44 of v0.12-T01).
 pub(crate) fn existence(aws: &dyn Aws, stack: &str, project: &str) -> Result<Existence, Failure> {
     let answer = match aws.call(&Call {
         service: "cloudformation",
@@ -345,13 +426,13 @@ fn run_deploy(
 /// - A failed call, lock or write leaves no instance ID and no type in the record.
 fn refresh_instance(
     ctx: &Context,
-    project: &str,
+    key: &HostKey,
     stack: &str,
     say: &dyn Say,
     aws: &dyn Aws,
 ) -> Result<String, Failure> {
     let home = full_home(ctx);
-    registry::set_instance(&home, project, None, None)?;
+    registry::set_instance_keyed(&home, key, None, None)?;
     let answer = aws
         .call(&Call {
             service: "cloudformation",
@@ -363,12 +444,12 @@ fn refresh_instance(
     // The one answer is read for both, through the same reading of `InstanceId` as every command's.
     let instance_id = agentspace_box::instance_id_from_stack(&Answer(&answer), stack)?;
     let Some(instance_type) = instance_type_parameter(&answer) else {
-        registry::set_instance(&home, project, Some(&instance_id), None)?;
+        registry::set_instance_keyed(&home, key, Some(&instance_id), None)?;
         return Err(step_failed(&format!(
             "agentspace: Stack '{stack}' has no InstanceType parameter."
         )));
     };
-    registry::set_instance(&home, project, Some(&instance_id), Some(&instance_type))?;
+    registry::set_instance_keyed(&home, key, Some(&instance_id), Some(&instance_type))?;
     say.progress(&format!("Instance: {instance_id}"), None);
     Ok(instance_id)
 }
@@ -474,5 +555,48 @@ mod tests {
         );
         assert_eq!(ca_key_from_text("ssh-ed25519\nAAAAC3Nz"), None);
         assert_eq!(ca_key_from_text(""), None);
+    }
+
+    #[test]
+    fn a_rollback_complete_hosts_command_names_its_platform_off_linux_arm64() {
+        let key = HostKey::new("example", "linux/amd64");
+        let m = decide(
+            "ROLLBACK_COMPLETE",
+            &key.stack_name(),
+            &registry::host_flags(&key),
+        )
+        .unwrap_err()
+        .message;
+        assert!(m.contains(
+            "delete-stack --region us-west-2 --stack-name agentspace-linux-amd64-host-example"
+        ));
+        assert!(m.ends_with(
+            "'agentspace-operator provision -Host example -Platform linux/amd64' again."
+        ));
+        assert_eq!(
+            registry::host_flags(&HostKey::linux_arm64("example")),
+            "example"
+        );
+    }
+
+    #[test]
+    fn an_image_id_is_ami_and_8_or_17_lowercase_hex_digits_alone() {
+        for ok in ["ami-0a0a0a0a", "ami-0123456789abcdef0"] {
+            assert!(is_image_id(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "ami-",
+            "ami-0a0a0a0",
+            "ami-0a0a0a0a0",
+            "ami-0A0A0A0A",
+            "ami-0a0a0a0g",
+            "ami-0a0a0a0a\n",
+            " ami-0a0a0a0a",
+            "ami-0123456789abcdef01",
+            "i-0a0a0a0a",
+        ] {
+            assert!(!is_image_id(bad), "{bad:?}");
+        }
     }
 }

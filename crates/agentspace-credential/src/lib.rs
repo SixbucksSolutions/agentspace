@@ -34,7 +34,10 @@ pub use lease::{
     CaFailure, CredFailure, Issued, RenewGuard, ca_failure_message, check_ca, issue,
     remove_lease_folder, renew,
 };
-pub use operator::{ensure_operator_key, sign_operator_certificate};
+pub use operator::{
+    ensure_operator_key, ensure_operator_key_for, sign_operator_certificate,
+    sign_operator_certificate_for,
+};
 
 use ssh_key::certificate::{Builder, CertType};
 use ssh_key::rand_core::OsRng;

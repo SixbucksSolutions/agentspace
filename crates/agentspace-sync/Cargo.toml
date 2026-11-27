@@ -2,9 +2,8 @@
 name = "agentspace-sync"
 version = "0.6.0"
 edition.workspace = true
-description = "The operator's sync and deploy, with the stack's template and box/system embedded (docs/operator.md; D37, D42)"
+description = "The operator's sync and deploy, with the stack's template embedded, each host's steps from the platform seam (docs/operator.md; D37, D42, D101)"
 publish = false
-build = "build.rs"
 
 [lib]
 name = "agentspace_sync"
@@ -32,8 +31,8 @@ agentspace-credential = { path = "../agentspace-credential" }
 # provision; D48, D55).
 agentspace-driver-api = { path = "../agentspace-driver-api" }
 agentspace-driver-ec2 = { path = "../agentspace-driver-ec2" }
-# The platform seam's "not built" answer, for the entry points that take a host key (operator.md,
-# The platform seam; D101). It depends on no crate that depends on this one.
+# The platform seam: for_platform, which picks each host's rows, and the Linux rows themselves
+# (operator.md, The platform seam; D101). It depends on no crate that depends on this one.
 agentspace-platforms = { path = "../agentspace-platforms" }
 # The versions already in Cargo.lock. serde: only DeserializeSeed and Visitor, for the
 # repeated-member check of the stack parameters file. jsonschema: the stack parameters schema,
@@ -56,3 +55,6 @@ windows-sys = { version = "=0.61.2", default-features = false, features = ["Win3
 # program, so that no start can wait at a modal dialog under any runner (#0227, #0225). The
 # library forbids unsafe code, its tests included, so they cannot call SetErrorMode themselves.
 agentspace-launch = { path = "../agentspace-launch" }
+# Reads back a host's operator certificate in host.rs's unit tests: its key ID and principal. The
+# version agentspace-credential already uses.
+ssh-key = { version = "=0.6.7", default-features = false, features = ["alloc", "ed25519"] }

@@ -129,6 +129,8 @@ struct FakeAws {
     send: RefCell<Result<Value, AwsError>>,
     /// The patch check's answer, the invocation's trimmed stdout.
     answer: RefCell<&'static str>,
+    /// `ssm get-parameter`'s answer, a platform's image (a made-up ID).
+    image: RefCell<Result<Value, AwsError>>,
 }
 
 impl Default for FakeAws {
@@ -152,6 +154,7 @@ impl Default for FakeAws {
             }]}]}))),
             send: RefCell::new(Ok(json!({"Command": {"CommandId": "c-0123"}}))),
             answer: RefCell::new("patched"),
+            image: RefCell::new(Ok(json!({"Parameter": {"Value": "ami-0a0a0a0a"}}))),
         }
     }
 }
@@ -178,6 +181,7 @@ impl Aws for FakeAws {
                 Ok(json!({"InstanceInformationList": [{"PingStatus": "Online"}]}))
             }
             ("ssm", "send-command") => self.send.borrow().clone(),
+            ("ssm", "get-parameter") => self.image.borrow().clone(),
             ("ssm", "get-command-invocation") => Ok(json!({
                 "Status": "Success",
                 "StandardOutputContent": format!("{}\n", self.answer.borrow())
@@ -430,13 +434,15 @@ impl World {
         agentspace_hosts::write(&home, &hosts, &held).unwrap();
     }
 
-    /// The nine calls of operator.md's table, as [`FakeRemote`] records them.
+    /// The nine calls of operator.md's table, as [`FakeRemote`] records them, each remote command
+    /// the seam's `linux/arm64` row (E0.12-T03-S03 part 2 deleted this crate's copies; pin P1).
     fn table(&self) -> Vec<String> {
         let home = std::path::absolute(self.home()).unwrap();
         let op = self.operator();
         let ssh = "ssh -o ClearAllForwardings=yes agentspace |";
+        let rows = linux_rows();
         vec![
-            format!("{ssh} {}", crate::steps::REMOVE_STAGING),
+            format!("{ssh} {}", rows.clear_command.as_deref().unwrap()),
             format!(
                 "scp -o ClearAllForwardings=yes -q -r {} agentspace:/tmp/agentspace-system",
                 op.join("system").display()
@@ -448,8 +454,8 @@ impl World {
                     .join("agentspace_ca.pub")
                     .display()
             ),
-            format!("{ssh} {}", crate::steps::INSTALL),
-            format!("{ssh} {}", crate::steps::MAKE_CLAUDE_FOLDER),
+            format!("{ssh} {}", rows.install_command),
+            format!("{ssh} {}", rows.claude_folder_command),
             format!(
                 "scp -o ClearAllForwardings=yes -q {} agentspace:.claude/CLAUDE.md",
                 home.join(".claude").join("CLAUDE.md").display()
@@ -458,9 +464,23 @@ impl World {
                 "scp -o ClearAllForwardings=yes -q {} agentspace:/tmp/localswim",
                 op.join("localswim-linux-arm64").display()
             ),
-            format!("{ssh} {}", crate::steps::INSTALL_LOCALSWIM),
+            format!("{ssh} {}", rows.localswim_install_command),
         ]
     }
+}
+
+/// The seam's `linux/arm64` sync row, whose remote commands `sync` sends to the box.
+fn linux_rows() -> agentspace_operator_api::SyncPlan {
+    use agentspace_operator_api::HostPlatform;
+    agentspace_platforms::LINUX_ARM64.sync_plan().unwrap()
+}
+
+/// The seam's `linux/arm64` patch question, which `sync`'s patch wait sends to the box.
+fn linux_question() -> String {
+    use agentspace_operator_api::HostPlatform;
+    agentspace_platforms::LINUX_ARM64
+        .patch_check_command()
+        .unwrap()
 }
 
 const READY: &str = "progress: Ready: i-1234567890abcdef0";
@@ -490,7 +510,7 @@ fn patch_calls(calls: &[String]) -> Vec<String> {
         .filter(|c| c.starts_with("ssm "))
         .map(|c| match c.split_once("commands=") {
             Some((head, question)) => {
-                assert_eq!(question, agentspace_box::PATCH_QUESTION);
+                assert_eq!(question, linux_question());
                 format!("{head}commands=")
             }
             None => c.clone(),
@@ -1229,6 +1249,36 @@ fn no_test_calls_the_pinned_pair_but_the_rigs_guarded_two() {
         }
     }
 
+    // The four entry points by host key (E0.12-T03-S03) take the real seams as the pinned pair
+    // does, on every platform, a `linux/arm64` key included, and the rig has no guarded entry for
+    // them: no test MAY call one, in any file, by any path or none. A test goes through its
+    // `_keyed_using` twin. The scan finds such a call through a path, and passes over the twin.
+    assert_eq!(
+        calls_of(
+            "sink_keyed",
+            "    agentspace_sync::sink_keyed(&ctx, &ca, &key, s, a, r);\n    sink_keyed_using(x);\n    sink_keyed(y);\n"
+        ),
+        vec![
+            "1: agentspace_sync::sink_keyed(&ctx, &ca, &key, s, a, r);",
+            "3: sink_keyed(y);"
+        ]
+    );
+    for keyed in [
+        "sync_keyed",
+        "deploy_keyed",
+        "bootstrap_keyed",
+        "provision_keyed",
+    ] {
+        for (path, text) in &files {
+            let file = name_of(path);
+            let calls = calls_of(keyed, text);
+            assert!(
+                calls.is_empty(),
+                "No test MAY call {keyed}, which finds the real go: {file}: {calls:?}"
+            );
+        }
+    }
+
     // Each guarded entry runs the guard first, and the guard holds the child to an empty PATH.
     let rig = &files
         .iter()
@@ -1563,6 +1613,62 @@ fn a_hosts_deadline_hint_names_its_own_alias_and_the_boxs_stays() {
     );
 }
 
+/// A host of another platform is reached over its own alias, by its host name, and its deadline
+/// hint names that alias with its platform's log command (operator.md, From the command line; The
+/// platform seam, the patch messages row).
+#[test]
+fn a_hosts_plan_and_hint_are_its_platforms() {
+    let w = World::new("sync-hint-platform");
+    let places = crate::files::Places::new(&w.ctx);
+    for (platform, alias, log) in [
+        (
+            "linux/amd64",
+            "agentspace-host.demo.linux-amd64",
+            "journalctl -u agentspace-patch",
+        ),
+        (
+            "windows/amd64",
+            "agentspace-host.demo.windows-amd64",
+            "cat C:/ProgramData/agentspace/patch.log",
+        ),
+    ] {
+        let key = agentspace_hosts::HostKey::new("demo", platform);
+        let host = agentspace_hosts::Host::new(&key, agentspace_hosts::HostState::Ready);
+        let plan = crate::syncing::Plan::for_record(&places, &host);
+        assert_eq!(plan.alias, alias);
+        assert!(!plan.is_box);
+        assert_eq!(plan.platform().unwrap().platform(), platform);
+        let message = format!(
+            "agentspace: i-1234567890abcdef0 was not ready within 15 minutes; check: ssh agentspace {log}"
+        );
+        let failure = Failure {
+            message: message.clone(),
+            caller: CallerFailure::NotReady,
+        };
+        assert_eq!(
+            plan.hint(failure).message,
+            message.replace("ssh agentspace ", &format!("ssh {alias} "))
+        );
+    }
+    // swimcoach's linux/amd64 host is not the box.
+    let key = agentspace_hosts::HostKey::new("swimcoach", "linux/amd64");
+    let host = agentspace_hosts::Host::new(&key, agentspace_hosts::HostState::Ready);
+    let plan = crate::syncing::Plan::for_record(&places, &host);
+    assert!(!plan.is_box);
+    assert_eq!(plan.alias, "agentspace-host.swimcoach.linux-amd64");
+    // A record of a platform with no seam is refused when its part runs.
+    let key = agentspace_hosts::HostKey::new("demo", "windows/arm64");
+    let host = agentspace_hosts::Host::new(&key, agentspace_hosts::HostState::Ready);
+    let plan = crate::syncing::Plan::for_record(&places, &host);
+    assert_eq!(
+        plan.platform().err().map(|f| f.message),
+        Some(
+            "agentspace: Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64."
+                .to_string()
+        )
+    );
+}
+
 #[test]
 fn the_commands_folder_is_removed_as_the_command_ends() {
     let dir = Scratch::new("folder-removed");
@@ -1725,6 +1831,166 @@ mod host_deploy_and_provision {
         assert!(aws.calls()[1].ends_with(&format!(
             "--tags | project={STACK} | --parameter-overrides | InstanceType=m9g.2xlarge"
         )));
+    }
+
+    /// Seeds the box's record and `PROJECT`'s host on `platform`, `creating`.
+    fn seed_on(w: &World, platform: &str) -> agentspace_hosts::HostKey {
+        let key = agentspace_hosts::HostKey::new(PROJECT, platform);
+        let home = home(w);
+        let mut hosts = agentspace_hosts::Hosts::seed();
+        hosts
+            .hosts
+            .push(agentspace_hosts::Host::new(&key, HostState::Creating));
+        let held = agentspace_hosts::lock(&home).unwrap();
+        agentspace_hosts::write(&home, &hosts, &held).unwrap();
+        key
+    }
+
+    fn keyed_stack(
+        w: &World,
+        aws: &ScriptedAws,
+        key: &agentspace_hosts::HostKey,
+        instance_type: Option<&str>,
+        say: &FakeSay,
+    ) -> Result<String, Failure> {
+        let platform = agentspace_platforms::for_platform(&key.platform).unwrap();
+        w.run(|seams| {
+            crate::deploy::host_stack_keyed(
+                &w.ctx,
+                &CaEnv::default(),
+                key,
+                platform,
+                instance_type,
+                say,
+                aws,
+                seams,
+            )
+        })
+    }
+
+    /// A stack `deploy` creates on `linux/amd64` or `windows/amd64` reads the platform's image once,
+    /// after the existence check and the CA's, and before any call that changes anything, and
+    /// passes `ImageId=<image>` after `CaPublicKey`, the platform's other creation parameters in
+    /// order, then `InstanceType` last (operator.md, deploy, step 3; The platform seam). The image
+    /// ID is in no line `deploy` prints.
+    #[test]
+    fn a_new_stack_on_another_platform_gets_its_image_parameters_and_type() {
+        for (platform, parameter, stack, extras) in [
+            (
+                "linux/amd64",
+                "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+                "agentspace-linux-amd64-host-example",
+                "",
+            ),
+            (
+                "windows/amd64",
+                "/aws/service/ami-windows-latest/Windows_Server-2025-English-Full-Base",
+                "agentspace-windows-amd64-host-example",
+                " | RootVolumeGiB=30 | HostOs=windows",
+            ),
+        ] {
+            let w = with_ca(World::new("host-create-platform").with_deploy_files());
+            let key = seed_on(&w, platform);
+            let aws = ScriptedAws::new(vec![missing(), outputs()]);
+            let say = FakeSay::default();
+            assert_eq!(keyed_stack(&w, &aws, &key, None, &say).unwrap(), ID);
+            let calls = aws.calls();
+            assert_eq!(
+                calls[0],
+                format!("cloudformation describe-stacks [json] --stack-name | {stack}")
+            );
+            assert_eq!(
+                calls[1],
+                format!("ssm get-parameter [json] --name | {parameter}")
+            );
+            assert!(calls[2].ends_with(&format!(
+                "--tags | project={stack} | --parameter-overrides | SshPublicKey=ssh-ed25519 AAAAkey me@laptop | \
+                 SubnetId=SUBNET_Y | VpcId=VPC_X | HostName={stack} | CaPublicKey=ssh-ed25519 AAAAcakey | \
+                 ImageId=ami-0a0a0a0a{extras} | InstanceType=m8a.xlarge"
+            )), "{}", calls[2]);
+            assert_eq!(calls.len(), 4);
+            assert!(
+                say.lines().iter().all(|l| !l.contains("ami-")),
+                "{:?}",
+                say.lines()
+            );
+
+            // `-InstanceType` takes the type's place, last.
+            let w = with_ca(World::new("host-create-platform-sized").with_deploy_files());
+            let key = seed_on(&w, platform);
+            let aws = ScriptedAws::new(vec![missing(), outputs()]);
+            keyed_stack(&w, &aws, &key, Some("m8a.2xlarge"), &FakeSay::default()).unwrap();
+            assert!(aws.calls()[2].ends_with(&format!(
+                "ImageId=ami-0a0a0a0a{extras} | InstanceType=m8a.2xlarge"
+            )));
+
+            // An update passes no image, no platform parameter and no platform type.
+            let w = World::new("host-update-platform");
+            let key = seed_on(&w, platform);
+            let aws = ScriptedAws::new(vec![status("UPDATE_COMPLETE"), outputs()]);
+            keyed_stack(&w, &aws, &key, None, &FakeSay::default()).unwrap();
+            let calls = aws.calls();
+            assert!(calls.iter().all(|c| !c.contains("get-parameter")));
+            assert!(
+                calls[1].ends_with(&format!("--tags | project={stack}")),
+                "{}",
+                calls[1]
+            );
+        }
+    }
+
+    /// A failed or malformed image read fails `deploy` before any call that changes anything, with
+    /// AWS's failure or the "no Parameter.Value" message, which holds nothing of the answer.
+    #[test]
+    fn an_image_that_cannot_be_read_fails_before_any_change() {
+        for (answer, message) in [
+            (
+                Ok(json!({"Parameter": {"Value": "ami-0A0A0A0A"}})),
+                "agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.",
+            ),
+            (
+                Ok(json!({"Parameter": {"Value": "ami-0a0a0a0a\n"}})),
+                "agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.",
+            ),
+            (
+                Ok(json!({"Parameter": {}})),
+                "agentspace: Unexpected answer from ssm get-parameter: no Parameter.Value.",
+            ),
+            (Err(AwsError::SignIn), SIGN_IN_MESSAGE),
+            (
+                Err(AwsError::Failed("ParameterNotFound".into())),
+                "agentspace: ParameterNotFound",
+            ),
+        ] {
+            let w = with_ca(World::new("host-image-bad").with_deploy_files());
+            let key = seed_on(&w, "linux/amd64");
+            let aws = ScriptedAws::new(vec![missing(), outputs()]);
+            *aws.inner.image.borrow_mut() = answer;
+            let failure =
+                keyed_stack(&w, &aws, &key, Some("m8a.large"), &FakeSay::default()).unwrap_err();
+            assert_eq!(failure.message, message);
+            assert!(!failure.message.contains("0A0A"));
+            let calls = aws.calls();
+            assert_eq!(calls.len(), 2, "{calls:?}");
+            assert!(calls[1].starts_with("ssm get-parameter"));
+        }
+    }
+
+    /// A record of another platform never stands in for a project's host: the `linux/arm64`
+    /// record of `PROJECT` alone gives `linux/amd64`'s deploy the "has no host" message.
+    #[test]
+    fn another_platforms_host_with_no_record_has_no_host() {
+        let w = World::new("host-no-amd64");
+        w.seed_registry(None, &[(PROJECT, HostState::Ready)]);
+        let key = agentspace_hosts::HostKey::new(PROJECT, "linux/amd64");
+        let aws = ScriptedAws::new(vec![]);
+        assert_eq!(
+            keyed_stack(&w, &aws, &key, None, &FakeSay::default())
+                .unwrap_err()
+                .message,
+            "agentspace: Project 'example.linux-amd64' has no host; provision -Host example -Platform linux/amd64 makes one."
+        );
+        assert!(aws.calls().is_empty());
     }
 
     #[test]

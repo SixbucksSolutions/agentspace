@@ -10,11 +10,13 @@
 //!   E0.07-T03-S03 to build. Their signatures are the pin, and a change to them is the
 //!   architect's.
 //! - [`sync_keyed`], [`deploy_keyed`], [`bootstrap_keyed`] and [`provision_keyed`]: the same four
-//!   commands for a host named by its [`HostKey`] (D101; the dev lead's pin P2 for E0.12-T03-S03).
+//!   commands for a host named by its [`HostKey`] (D91, D101; the dev lead's pin P2 for
+//!   E0.12-T03-S03), on every supported platform, each step a platform supplies taken from the
+//!   platform seam through `agentspace_platforms::for_platform` (operator.md, The platform seam).
 //!   A `linux/arm64` key is today's command, the box's key [`Target::Box`] and any other
-//!   project's `Target::Host`; every other platform answers `agentspace_platforms::NOT_BUILT`
-//!   until E0.12-T03-S03's second part builds it. Each has a hidden `<name>_using` twin over
-//!   `Seams`.
+//!   project's `Target::Host`, byte for byte. Each has a hidden `<name>_using` twin over `Seams`.
+//!   The functions that take a [`Target`] or a project keep their signatures, and mean
+//!   `linux/arm64`.
 //! - `sync_using` and `deploy_using`, the same over `Seams`, and `Seams::real_except_go`, which
 //!   gives them the operator's own clock, CA check and push with a `go` finder and a localswim
 //!   folder of the test's: hidden from the docs, for tests alone, since `go`, the localswim
@@ -29,16 +31,19 @@
 //!   after it run. **Between rows 4 and 5 it waits for the host's patch run** (`patch_wait.rs`;
 //!   The patch wait): `patched` goes on, `failed` warns and goes on, and the 30-minute deadline
 //!   fails the command.
-//! - **The template and `box\system` are the repository's own, embedded at build time byte for
-//!   byte** (D37's addendum), and written out under `%USERPROFILE%\.agentspace\operator` just
-//!   before the call that reads them. What is sent to the box at run time, every remote command,
-//!   is this crate's own, written from operator.md's steps (D34).
+//! - **The template is the repository's own, embedded at build time byte for byte** (D37's
+//!   addendum), and a host's files (`box\system`, or `box\windows`) are its platform's, from the
+//!   seam's sync row; each is written out under `%USERPROFILE%\.agentspace\operator` just before
+//!   the call that reads it. **Every remote command, script and host path a platform supplies is
+//!   the seam's**, and this crate keeps no second copy of any (D101): its own text is the steps'
+//!   order, their messages and their checks.
 //! - **Every program this crate starts gets its environment through `agentspace-run`'s
 //!   `prepare_child_env`**: the AWS CLI, ssh and scp through the pinned [`Aws`] and [`Remote`],
 //!   `go` through this crate's build, and the push's ssh through `agentspace-push`.
 //! - **`sync` and `bootstrap` reach a host that is not the box over its own alias**,
-//!   `agentspace-host.<project>`, written with the operator's key and a fresh one-hour certificate
-//!   (`host.rs`), and reach the box over `agentspace`, as in v0.06. **`sync_all`** is `sync -All`
+//!   `agentspace-host.<host name>`, written with the operator's key and a fresh one-hour
+//!   certificate whose principal is the platform's login user (`host.rs`), and reach the box over
+//!   `agentspace`, as in v0.06. **`sync_all`** is `sync -All`
 //!   (`syncing.rs`). Each command writes what it sends into a folder of its own under the
 //!   operator's, removed as the command ends (`folder.rs`).
 //! - **Every `deploy` that is not a provisioning run's own deploy step MUST take its host's
@@ -79,7 +84,7 @@ use std::path::{Path, PathBuf};
 
 use agentspace_box::{Clock, SystemClock};
 use agentspace_ca::CaEnv;
-use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, Remote, Say};
+use agentspace_operator_api::{Aws, CallerFailure, Context, Failure, HostPlatform, Remote, Say};
 
 use files::Places;
 use folder::CommandFolder;
@@ -320,25 +325,17 @@ pub fn deploy_target_sized_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    // The host is looked up first (a registry that is not valid, or a project with no record, is
-    // refused before anything), then its `provision.lock` is tried without waiting and held for the
-    // whole life of this `deploy`, its `sync` step included (operator.md, deploy; D67's change
-    // note; pin P34). `-Host swimcoach` is the box in every respect (operator.md, From the command
-    // line), so the box's lock is `hosts\swimcoach\provision.lock` either way.
-    let home = deploy::full_home(ctx);
-    let hosts = deploy::read_hosts(&home)?;
-    let record = registry::find(&hosts, target)?;
-    let is_box = registry::is_box_record(&record);
-    let _held = provision::take_person_lock(&home, &record.project)?;
-    if is_box {
-        // Steps 1 to 5, then step 6: sync, as if run with deploy's own -Quiet; its failure is
-        // deploy's.
-        deploy::box_stack(ctx, instance_type, say, aws, seams)?;
-        sync_target_using(ctx, ca_env, Target::Box, say, aws, remote, seams)
-    } else {
-        deploy::host_stack(ctx, ca_env, &record.project, instance_type, say, aws, seams)?;
-        sync_target_using(ctx, ca_env, target, say, aws, remote, seams)
-    }
+    // The target's `linux/arm64` key: the box's is swimcoach's, whose record is the box's.
+    deploy_keyed_using(
+        ctx,
+        ca_env,
+        &key_of(target),
+        instance_type,
+        say,
+        aws,
+        remote,
+        seams,
+    )
 }
 
 /// `operator bootstrap` (docs/operator.md, bootstrap): runs the embedded toolchain bootstrap on
@@ -389,8 +386,9 @@ pub fn provision(
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    let env = |name: &str| std::env::var_os(name);
-    with_real_seams(|seams| provision::run(ctx, ca_env, project, say, aws, remote, seams, &env))
+    with_real_seams(|seams| {
+        provision::run(ctx, ca_env, project, say, aws, remote, seams, &PROCESS_ENV)
+    })
 }
 
 /// [`provision`] over [`Seams`]. Step 9's driver context is built from the context's home alone:
@@ -412,18 +410,36 @@ pub fn provision_using(
     provision::run(ctx, ca_env, project, say, aws, remote, seams, &none)
 }
 
-/// The answer of a `_keyed` entry point for a key whose platform is not built yet: a host that is
-/// not `linux/arm64` (E0.12-T03-S03, part 1).
-fn not_built() -> Failure {
-    Failure {
-        message: agentspace_platforms::NOT_BUILT.to_string(),
-        caller: CallerFailure::NotAvailable,
-    }
+/// A variable of the process's environment, which step 9's driver context of the pinned
+/// [`provision`] and [`provision_keyed`] reads: AGENTSPACE_STATE_DIR, AGENTSPACE_SSH_DIR and
+/// AGENTSPACE_PROXY_COMMAND (operator.md, Environment variables).
+const PROCESS_ENV: fn(&str) -> Option<std::ffi::OsString> = |name: &str| std::env::var_os(name);
+
+/// The platforms agentspace supports, as the unsupported platform's message lists them.
+const SUPPORTED: &str = "linux/arm64, linux/amd64 and windows/amd64";
+
+/// The seam of `platform` (operator.md, The platform seam), picked by
+/// `agentspace_platforms::for_platform` alone, or the unsupported platform's message for a
+/// platform agentspace has no seam for (operator.md, Command line, the `-Platform` row), each
+/// control character in it written `?`.
+pub(crate) fn seam_for(platform: &str) -> Result<&'static dyn HostPlatform, Failure> {
+    agentspace_platforms::for_platform(platform).ok_or_else(|| {
+        let shown: String = platform
+            .chars()
+            .map(|c| if c.is_control() { '?' } else { c })
+            .collect();
+        Failure {
+            message: format!(
+                "agentspace: Platform '{shown}' is not supported; agentspace supports {SUPPORTED}."
+            ),
+            caller: CallerFailure::NotAvailable,
+        }
+    })
 }
 
 /// The [`Target`] of a `linux/arm64` key: the box's key is [`Target::Box`], and any other
 /// project's is `Target::Host(<project>)`. `None` for a key on any other platform.
-fn linux_arm64_target(key: &HostKey) -> Option<Target<'_>> {
+pub(crate) fn linux_arm64_target(key: &HostKey) -> Option<Target<'_>> {
     if key.is_box() {
         Some(Target::Box)
     } else if key.is_linux_arm64() {
@@ -433,9 +449,18 @@ fn linux_arm64_target(key: &HostKey) -> Option<Target<'_>> {
     }
 }
 
-/// [`sync`] for the host `key` names (D101). A `linux/arm64` key is [`sync`] of its [`Target`];
-/// a key on any other platform answers `agentspace_platforms::NOT_BUILT` with
-/// [`CallerFailure::NotAvailable`], before anything is read or run.
+/// The `linux/arm64` key a [`Target`] names: the box is swimcoach's.
+pub(crate) fn key_of(target: Target<'_>) -> HostKey {
+    match target {
+        Target::Box => HostKey::linux_arm64(agentspace_hosts::BOX_PROJECT),
+        Target::Host(project) => HostKey::linux_arm64(project),
+    }
+}
+
+/// [`sync`] for the host `key` names (D91, D101): its record is the one whose project and
+/// platform are the key's, and every step its platform supplies is the seam's (operator.md, sync;
+/// The platform seam). A `linux/arm64` key is [`sync`] of its [`Target`], byte for byte. A
+/// platform agentspace has no seam for is refused before anything is read or run.
 pub fn sync_keyed(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -444,10 +469,9 @@ pub fn sync_keyed(
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    let target = linux_arm64_target(key).ok_or_else(not_built)?;
     // [`sync`]'s own body, since the pinned pair is called by the integration rig alone (tests.rs,
     // `no_test_calls_the_pinned_pair_but_the_rigs_guarded_two`).
-    with_real_seams(|seams| sync_target_using(ctx, ca_env, target, say, aws, remote, seams))
+    with_real_seams(|seams| sync_keyed_using(ctx, ca_env, key, say, aws, remote, seams))
 }
 
 /// [`sync_keyed`] over [`Seams`].
@@ -461,11 +485,13 @@ pub fn sync_keyed_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    let target = linux_arm64_target(key).ok_or_else(not_built)?;
-    sync_target_using(ctx, ca_env, target, say, aws, remote, seams)
+    syncing::sync_key(ctx, ca_env, key, say, aws, remote, seams).map(|_| ())
 }
 
-/// [`deploy_with_instance_type`] for the host `key` names (D101), as [`sync_keyed`] picks it.
+/// [`deploy_with_instance_type`] for the host `key` names (D91, D94, D101): a stack it creates on a
+/// platform whose seam names an image parameter is given that image, read once with
+/// `ssm get-parameter`, the platform's other creation parameters, and its instance type when no
+/// `instance_type` is given (operator.md, deploy, step 3). A `linux/arm64` key is today's.
 pub fn deploy_keyed(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -475,8 +501,9 @@ pub fn deploy_keyed(
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    let target = linux_arm64_target(key).ok_or_else(not_built)?;
-    deploy_with_instance_type(ctx, ca_env, target, instance_type, say, aws, remote)
+    with_real_seams(|seams| {
+        deploy_keyed_using(ctx, ca_env, key, instance_type, say, aws, remote, seams)
+    })
 }
 
 /// [`deploy_keyed`] over [`Seams`].
@@ -492,11 +519,30 @@ pub fn deploy_keyed_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    let target = linux_arm64_target(key).ok_or_else(not_built)?;
-    deploy_target_sized_using(ctx, ca_env, target, instance_type, say, aws, remote, seams)
+    let platform = seam_for(&key.platform)?;
+    // The host is looked up first (a registry that is not valid, or a host with no record, is
+    // refused before anything), then its `provision.lock` is tried without waiting and held for the
+    // whole life of this `deploy`, its `sync` step included (operator.md, deploy; D67's change
+    // note; pin P34). `-Host swimcoach` is the box in every respect (operator.md, From the command
+    // line), so the box's lock is `hosts\swimcoach\provision.lock` either way.
+    let home = deploy::full_home(ctx);
+    let hosts = deploy::read_hosts(&home)?;
+    let record = registry::find_keyed(&hosts, key)?;
+    let is_box = registry::is_box_record(&record);
+    let _held = provision::take_person_lock_keyed(&home, key)?;
+    if is_box {
+        // Steps 1 to 5, then step 6: sync, as if run with deploy's own -Quiet; its failure is
+        // deploy's.
+        deploy::box_stack(ctx, instance_type, say, aws, seams)?;
+    } else {
+        deploy::host_stack_keyed(ctx, ca_env, key, platform, instance_type, say, aws, seams)?;
+    }
+    sync_keyed_using(ctx, ca_env, key, say, aws, remote, seams)
 }
 
-/// [`bootstrap`] for the host `key` names (D101), as [`sync_keyed`] picks it.
+/// [`bootstrap`] for the host `key` names (D91, D101): the platform's bootstrap, on stdin on both
+/// Linux platforms, and copied with one `scp` then run by one ssh on `windows/amd64` (operator.md,
+/// bootstrap on a Windows host). A `linux/arm64` key is today's.
 pub fn bootstrap_keyed(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -505,8 +551,7 @@ pub fn bootstrap_keyed(
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    let target = linux_arm64_target(key).ok_or_else(not_built)?;
-    bootstrap(ctx, ca_env, target, say, aws, remote)
+    with_real_seams(|seams| bootstrap_keyed_using(ctx, ca_env, key, say, aws, remote, seams))
 }
 
 /// [`bootstrap_keyed`] over [`Seams`].
@@ -520,13 +565,12 @@ pub fn bootstrap_keyed_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    let target = linux_arm64_target(key).ok_or_else(not_built)?;
-    bootstrap_using(ctx, ca_env, target, say, aws, remote, seams)
+    bootstrap::run_key(ctx, ca_env, key, say, aws, remote, seams)
 }
 
-/// [`provision`] for the host `key` names (D101): a `linux/arm64` key is [`provision`] of its
-/// project, and a key on any other platform answers `agentspace_platforms::NOT_BUILT` with
-/// [`CallerFailure::NotAvailable`], before anything is read or run.
+/// [`provision`] for the host `key` names (D91, D101): every step acts on that host alone, its
+/// record, its folder's log and lock, its stack and its platform's steps (operator.md,
+/// provision). A `linux/arm64` key is [`provision`] of its project.
 pub fn provision_keyed(
     ctx: &Context,
     ca_env: &CaEnv,
@@ -535,13 +579,13 @@ pub fn provision_keyed(
     aws: &dyn Aws,
     remote: &dyn Remote,
 ) -> Result<(), Failure> {
-    if !key.is_linux_arm64() {
-        return Err(not_built());
-    }
-    provision(ctx, ca_env, &key.project, say, aws, remote)
+    with_real_seams(|seams| {
+        provision::run_keyed(ctx, ca_env, key, say, aws, remote, seams, &PROCESS_ENV)
+    })
 }
 
-/// [`provision_keyed`] over [`Seams`].
+/// [`provision_keyed`] over [`Seams`], with step 9's driver context built from the context's home
+/// alone, as [`provision_using`]'s is.
 #[doc(hidden)]
 pub fn provision_keyed_using(
     ctx: &Context,
@@ -552,10 +596,8 @@ pub fn provision_keyed_using(
     remote: &dyn Remote,
     seams: &Seams,
 ) -> Result<(), Failure> {
-    if !key.is_linux_arm64() {
-        return Err(not_built());
-    }
-    provision_using(ctx, ca_env, &key.project, say, aws, remote, seams)
+    let none = |_: &str| None;
+    provision::run_keyed(ctx, ca_env, key, say, aws, remote, seams, &none)
 }
 
 /// A failure of one of `sync`'s or `deploy`'s own steps, with its exact message.
@@ -654,7 +696,7 @@ pub fn deploy_using(
 #[cfg(test)]
 mod keyed_tests {
     //! The `_keyed` entry points of E0.12-T03-S03's part 1: a `linux/arm64` key is today's
-    //! command for its target, and a key on any other platform is not built yet.
+    //! command for its target, and a key on any other platform names its own host.
 
     use std::cell::RefCell;
 
@@ -751,11 +793,11 @@ mod keyed_tests {
         )
     }
 
-    fn not_built_failure() -> Option<(String, CallerFailure)> {
-        Some((
-            agentspace_platforms::NOT_BUILT.to_string(),
-            CallerFailure::NotAvailable,
-        ))
+    /// Writes the project list into the context's home.
+    fn write_projects(ctx: &Context, text: &str) {
+        let path = agentspace_hosts::projects_path(&deploy::full_home(ctx));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
     }
 
     #[test]
@@ -775,6 +817,8 @@ mod keyed_tests {
             );
             assert_eq!(linux_arm64_target(&HostKey::new("demo", platform)), None);
         }
+        assert_eq!(key_of(Target::Box), HostKey::linux_arm64("swimcoach"));
+        assert_eq!(key_of(Target::Host("demo")), HostKey::linux_arm64("demo"));
     }
 
     /// Each `_keyed` twin of a `linux/arm64` key does what today's function does for its target,
@@ -829,7 +873,10 @@ mod keyed_tests {
         assert_eq!(keyed.0, today.0, "provision's failure");
         assert_eq!(keyed.1, today.1, "provision's AWS calls");
         assert!(keyed.0.is_some(), "provision with no registry fails");
-        assert_ne!(keyed.0, not_built_failure());
+        assert_ne!(
+            keyed.0.as_ref().map(|(m, _)| m.as_str()),
+            Some(agentspace_platforms::NOT_BUILT)
+        );
 
         // The box and another project differ, so each comparison above names its own target.
         let the_box = outcome(&dir, |c, s, a, r, seams| {
@@ -841,18 +888,33 @@ mod keyed_tests {
         assert_ne!(the_box, other);
     }
 
-    /// Every `_keyed` entry point, public and hidden, answers `NOT_BUILT` for a key on another
-    /// platform, before any call, ssh, scp or line. The public four refuse before they reach the
-    /// real seams; with every AWS call failing, none could reach `go` or step 9's environment.
+    /// A key on another platform reads its own record and no other: with only the box's record,
+    /// swimcoach's and demo's `linux/amd64` and `windows/amd64` hosts have none, and each command
+    /// but `provision` fails with the "has no host" message naming the host by its host name and
+    /// its `provision` command with `-Platform`, before any call, ssh, scp or line (operator.md,
+    /// From the command line; Messages). The box's record never stands in for one.
     #[test]
-    fn a_key_on_another_platform_is_not_built_yet() {
-        let scratch = Scratch::new("keyed-not-built");
+    fn a_key_on_another_platform_has_its_own_record_and_names_its_host() {
+        let scratch = Scratch::new("keyed-no-record");
         let dir = scratch.path().join("home-run");
         let ca = CaEnv::default();
-        for platform in ["linux/amd64", "windows/amd64"] {
+        for (platform, part) in [
+            ("linux/amd64", "linux-amd64"),
+            ("windows/amd64", "windows-amd64"),
+        ] {
             for project in ["swimcoach", "demo"] {
                 let key = HostKey::new(project, platform);
-                let want: Outcome = (not_built_failure(), vec![], vec![], vec![]);
+                let want: Outcome = (
+                    Some((
+                        format!(
+                            "agentspace: Project '{project}.{part}' has no host; provision -Host {project} -Platform {platform} makes one."
+                        ),
+                        CallerFailure::CouldNotReach,
+                    )),
+                    vec![],
+                    vec![],
+                    vec![],
+                );
                 let runs: Vec<Outcome> = vec![
                     outcome(&dir, |c, s, a, r, seams| {
                         sync_keyed_using(c, &ca, &key, s, a, r, seams)
@@ -863,20 +925,111 @@ mod keyed_tests {
                     outcome(&dir, |c, s, a, r, seams| {
                         bootstrap_keyed_using(c, &ca, &key, s, a, r, seams)
                     }),
-                    outcome(&dir, |c, s, a, r, seams| {
-                        provision_keyed_using(c, &ca, &key, s, a, r, seams)
-                    }),
-                    outcome(&dir, |c, s, a, r, _| sync_keyed(c, &ca, &key, s, a, r)),
-                    outcome(&dir, |c, s, a, r, _| {
-                        deploy_keyed(c, &ca, &key, Some("m8a.large"), s, a, r)
-                    }),
-                    outcome(&dir, |c, s, a, r, _| bootstrap_keyed(c, &ca, &key, s, a, r)),
-                    outcome(&dir, |c, s, a, r, _| provision_keyed(c, &ca, &key, s, a, r)),
                 ];
                 for (n, run) in runs.into_iter().enumerate() {
                     assert_eq!(run, want, "{project} on {platform}, entry {n}");
                 }
             }
         }
+    }
+
+    /// A platform agentspace has no seam for is refused by every `_keyed` entry point with the
+    /// unsupported platform's message, before anything is read or run.
+    #[test]
+    fn a_key_on_an_unsupported_platform_is_refused_before_anything() {
+        let scratch = Scratch::new("keyed-unsupported");
+        let dir = scratch.path().join("home-run");
+        let ca = CaEnv::default();
+        let key = HostKey::new("demo", "windows/arm64");
+        let want: Outcome = (
+            Some((
+                "agentspace: Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.".to_string(),
+                CallerFailure::NotAvailable,
+            )),
+            vec![],
+            vec![],
+            vec![],
+        );
+        let runs: Vec<Outcome> = vec![
+            outcome(&dir, |c, s, a, r, seams| {
+                sync_keyed_using(c, &ca, &key, s, a, r, seams)
+            }),
+            outcome(&dir, |c, s, a, r, seams| {
+                deploy_keyed_using(c, &ca, &key, None, s, a, r, seams)
+            }),
+            outcome(&dir, |c, s, a, r, seams| {
+                bootstrap_keyed_using(c, &ca, &key, s, a, r, seams)
+            }),
+            outcome(&dir, |c, s, a, r, seams| {
+                provision_keyed_using(c, &ca, &key, s, a, r, seams)
+            }),
+        ];
+        for (n, run) in runs.into_iter().enumerate() {
+            assert_eq!(run, want, "entry {n}");
+        }
+        assert!(!dir.join("home").join(".agentspace").exists());
+    }
+
+    /// `provision` on another platform checks the project list by platform (operator.md,
+    /// provision, step 1): an entry that does not approve the platform is refused, naming the
+    /// project and the platform, writing nothing; one that approves it goes on to its run.
+    #[test]
+    fn provision_checks_the_project_list_by_platform() {
+        let scratch = Scratch::new("keyed-provision-list");
+        let ca = CaEnv::default();
+        let key = HostKey::new("demo", "linux/amd64");
+
+        let dir = scratch.path().join("home-refused");
+        let refused = outcome(&dir, |c, s, a, r, seams| {
+            write_projects(
+                c,
+                r#"{"version":0,"projects":[{"name":"demo","approved":"2026-11-20"}]}"#,
+            );
+            provision_keyed_using(c, &ca, &key, s, a, r, seams)
+        });
+        let list = agentspace_hosts::projects_path(&deploy::full_home(&ctx_in(&dir)));
+        assert_eq!(
+            refused.0,
+            Some((
+                format!(
+                    "agentspace: Project 'demo' has no host on linux/amd64, and {} does not approve that platform for it, so no host is made for it.",
+                    list.display()
+                ),
+                CallerFailure::CouldNotReach,
+            ))
+        );
+        assert!(refused.1.is_empty());
+        let hosts = dir.join("home").join(".agentspace").join("hosts");
+        assert!(!hosts.exists(), "A refused run writes no host's folder");
+
+        // Approved: the run begins in the host's own folder, by its host name.
+        let dir = scratch.path().join("home-approved");
+        let approved = outcome(&dir, |c, s, a, r, seams| {
+            write_projects(
+                c,
+                r#"{"version":0,"projects":[{"name":"demo","approved":"2026-11-20","platforms":[{"platform":"linux/amd64","approved":"2026-11-26"}]}]}"#,
+            );
+            provision_keyed_using(c, &ca, &key, s, a, r, seams)
+        });
+        assert!(approved.0.is_some());
+        assert!(
+            approved
+                .3
+                .contains(&"progress: Provisioning the host of 'demo.linux-amd64'...".to_string()),
+            "{:?}",
+            approved.3
+        );
+        let folder = dir.join("home").join(".agentspace").join("hosts");
+        assert!(
+            folder
+                .join("demo.linux-amd64")
+                .join("provision.log")
+                .is_file()
+        );
+        assert!(!folder.join("demo").exists());
+        let record = agentspace_hosts::read(&deploy::full_home(&ctx_in(&dir))).unwrap();
+        let host = agentspace_hosts::host_for_keyed(&record, &key).unwrap();
+        assert_eq!(host.stack, "agentspace-linux-amd64-host-demo");
+        assert_eq!(host.platform.as_deref(), Some("linux/amd64"));
     }
 }
