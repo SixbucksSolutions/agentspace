@@ -42,6 +42,7 @@ mod pass;
 mod records;
 mod watch;
 
+use agentspace_hosts::HostKey;
 use agentspace_keeper_api::{Clock, HolderRecord, Locks, Matcher, Processes, Starter};
 use std::path::Path;
 
@@ -52,18 +53,20 @@ pub use pass::{Action, PassContext, PassReport, run_pass};
 pub use records::FileRecords;
 
 /// The holder records: `<state folder>\board-holder.json` for the box (docs/state.md, The holder
-/// record), and `<state folder>\board-holder.<project>.json` for another host (state.md, Another
-/// host's holder).
+/// record), and `<state folder>\board-holder.<host name>.json` for another host (state.md, Another
+/// host's holder), whose host name is its project on `linux/arm64` and `<project>.<os>-<arch>` on
+/// any other platform (keeper.md, A host's key and name; pin P12).
 ///
 /// The real one is [`FileRecords`], over `agentspace-keeper-files` and `agentspace-state`
 /// (E0.06-T03-S04, #0129); a pass is tested against a fake.
 ///
 /// `read`, `write` and `remove` are the box's record, as in v0.06. The `_host` methods take the
-/// host as `agentspace-keeper-files` names one, `None` for the box and `Some(project)` for another
-/// host; a pass calls only them. Their defaults (E0.07-T03-S05) give the box's to the three
-/// methods above, and another host's to that host's real file in the state folder, so a fake of
-/// v0.06's three methods still serves the box, and another host's record is a file a test can
-/// see in its throwaway state folder.
+/// host by its `agentspace_hosts::HostKey`, its project and its platform (D91, D101), the box
+/// being swimcoach's `linux/arm64` host ([`agentspace_hosts::HostKey::is_box`]); a pass calls only
+/// them. Their defaults (E0.07-T03-S05) give the box's to the three methods above, and another
+/// host's to that host's real file in the state folder, so a fake of v0.06's three methods still
+/// serves the box, and another host's record is a file a test can see in its throwaway state
+/// folder. From v0.12 (E0.12-T03-S05) they take a `HostKey` in place of v0.11's `Option<&str>`.
 pub trait Records {
     /// The box's record, or `None` when there is none. A record that cannot be read or parsed,
     /// or whose members do not have their forms, MUST be read as `None` (state.md, The holder
@@ -75,30 +78,36 @@ pub trait Records {
     /// Removes the box's record. A record that is already gone MUST be `Ok`.
     fn remove(&self, state_dir: &Path) -> Result<(), String>;
 
-    /// A host's record, read as [`Records::read`] reads the box's.
-    fn read_host(&self, state_dir: &Path, project: Option<&str>) -> Option<HolderRecord> {
-        match project {
-            None => self.read(state_dir),
-            Some(_) => records::read_file(state_dir, project),
+    /// A host's record, read as [`Records::read`] reads the box's. A record whose platform,
+    /// `linux/arm64` when it holds none, is not `host`'s MUST be read as `None` (keeper.md,
+    /// Trusting the record, item 1).
+    fn read_host(&self, state_dir: &Path, host: &HostKey) -> Option<HolderRecord> {
+        if host.is_box() {
+            self.read(state_dir)
+        } else {
+            records::read_file(state_dir, host)
         }
     }
-    /// Writes a host's record, as [`Records::write`] writes the box's.
+    /// Writes a host's record, as [`Records::write`] writes the box's, with `platform` only for a
+    /// host that is not `linux/arm64` (keeper.md, A host's key and name; pin P16).
     fn write_host(
         &self,
         state_dir: &Path,
-        project: Option<&str>,
+        host: &HostKey,
         record: &HolderRecord,
     ) -> Result<(), String> {
-        match project {
-            None => self.write(state_dir, record),
-            Some(_) => records::write_file(state_dir, project, record),
+        if host.is_box() {
+            self.write(state_dir, record)
+        } else {
+            records::write_file(state_dir, host, record)
         }
     }
     /// Removes a host's record, as [`Records::remove`] removes the box's.
-    fn remove_host(&self, state_dir: &Path, project: Option<&str>) -> Result<(), String> {
-        match project {
-            None => self.remove(state_dir),
-            Some(_) => records::remove_file(state_dir, project),
+    fn remove_host(&self, state_dir: &Path, host: &HostKey) -> Result<(), String> {
+        if host.is_box() {
+            self.remove(state_dir)
+        } else {
+            records::remove_file(state_dir, host)
         }
     }
 }

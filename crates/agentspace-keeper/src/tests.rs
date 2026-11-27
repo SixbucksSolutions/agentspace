@@ -1570,3 +1570,159 @@ fn the_box_failing_its_turn_does_not_stop_another_hosts_turn() {
     assert!(lines[1].contains(&format!(" started lease={ID_B} ")));
     assert!(lines[1].ends_with(" host=alpha"));
 }
+
+// ---------------------------------------------------------------------------------------------
+// A host per project and platform (keeper.md, A host's key and name; Which host a lease is on;
+// The hosts of a pass; D91; E0.12-T03-S05).
+
+/// The box, alpha's `linux/arm64` host and alpha's `windows/amd64` host, all `ready`.
+const ALPHA_TWO_PLATFORMS: &str = r#"{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"alpha","stack":"agentspace-host-alpha","state":"ready"},{"project":"alpha","platform":"windows/amd64","stack":"agentspace-windows-amd64-host-alpha","state":"ready"}]}"#;
+
+/// A ready lease of `project` on `platform`.
+fn platform_lease(id: &str, project: &str, platform: &str, alias: &str) -> String {
+    project_lease(id, project, alias).replace(
+        r#""platform":"linux/arm64""#,
+        &format!(r#""platform":"{platform}""#),
+    )
+}
+
+/// A record's bytes as v0.11 wrote them, with no `platform`.
+fn old_record(pid: u32, lease: &str, alias: &str) -> String {
+    format!(
+        r#"{{"pid":{pid},"process_started_at":"{STARTED_AT}","lease_id":"{lease}","alias":"{alias}"}}"#
+    )
+}
+
+fn starts(w: &World) -> Vec<String> {
+    w.calls()
+        .into_iter()
+        .filter(|c| c.starts_with("start "))
+        .collect()
+}
+
+/// keeper.md, What the keeper does: a project's `linux/arm64` and `windows/amd64` leases are
+/// held by two holders, one through each platform's lease, and never by one (H19's one-pass part).
+#[test]
+fn two_hosts_of_one_project_each_get_a_holder_of_their_own() {
+    let (w, p) = (World::new(), Place::new());
+    write_registry(&p, ALPHA_TWO_PLATFORMS);
+    write_leases(
+        &p.state,
+        &[
+            platform_lease(ID_A, "alpha", "linux/arm64", ALIAS_A),
+            platform_lease(ID_B, "alpha", "windows/amd64", ALIAS_B),
+        ],
+    );
+    let r = pass(&w, &p);
+    assert_eq!(r.exit_code, 0);
+    assert_eq!(
+        starts(&w),
+        vec![format!("start {ID_A}"), format!("start {ID_B}")]
+    );
+    let log = p.log();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 3, "{log}");
+    assert_eq!(lines[0], format!("{NOW_TEXT} idle lease=- alias=- pid=-"));
+    assert!(lines[1].contains(&format!(" started lease={ID_A} ")));
+    assert!(lines[1].ends_with(" host=alpha"), "{log}");
+    assert!(lines[2].contains(&format!(" started lease={ID_B} ")));
+    assert!(lines[2].ends_with(" host=alpha.windows-amd64"), "{log}");
+    let arm = std::fs::read_to_string(p.state.join("board-holder.alpha.json")).unwrap();
+    assert!(!arm.contains("platform"), "{arm}");
+    let win =
+        std::fs::read_to_string(p.state.join("board-holder.alpha.windows-amd64.json")).unwrap();
+    assert!(win.ends_with(",\"platform\":\"windows/amd64\"}\n"), "{win}");
+    assert!(w.record.borrow().is_none(), "Nothing is the box's");
+}
+
+/// keeper.md, Which host a lease is on (pin P13): a lease of another platform with no `ready`
+/// host of its own is on no host, never on the box (H22).
+#[test]
+fn a_lease_of_another_platform_with_no_ready_host_is_on_no_host() {
+    let (w, p) = (World::new(), Place::new());
+    write_leases(
+        &p.state,
+        &[platform_lease(ID_A, "alpha", "windows/amd64", ALIAS_A)],
+    );
+    let r = pass(&w, &p);
+    assert_eq!(r.action, Action::Idle);
+    assert!(starts(&w).is_empty());
+    assert_eq!(p.log(), format!("{NOW_TEXT} idle lease=- alias=- pid=-\n"));
+    assert!(
+        !p.state
+            .join("board-holder.alpha.windows-amd64.json")
+            .exists()
+    );
+}
+
+/// keeper.md, A host's key and name (pins P5 and P16): a record written before v0.12 is read as
+/// its `linux/arm64` host's, and kept, while the same bytes in a `windows/amd64` host's file are
+/// no record, removed with their process left alone.
+#[test]
+fn an_old_record_is_read_as_linux_arm64s_and_is_no_record_of_another_platform() {
+    let (w, p) = (World::new(), Place::new());
+    write_registry(&p, ALPHA_TWO_PLATFORMS);
+    w.processes.borrow_mut().insert(20, running(STARTED_AT));
+    w.processes.borrow_mut().insert(30, running(STARTED_AT));
+    std::fs::write(
+        p.state.join("board-holder.alpha.json"),
+        old_record(20, ID_A, ALIAS_A),
+    )
+    .unwrap();
+    std::fs::write(
+        p.state.join("board-holder.alpha.windows-amd64.json"),
+        old_record(30, ID_B, ALIAS_B),
+    )
+    .unwrap();
+    write_leases(
+        &p.state,
+        &[
+            platform_lease(ID_A, "alpha", "linux/arm64", ALIAS_A),
+            platform_lease(ID_B, "alpha", "windows/amd64", ALIAS_B),
+        ],
+    );
+    let r = pass(&w, &p);
+    assert_eq!(r.exit_code, 0);
+    let log = p.log();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 3, "{log}");
+    assert_eq!(
+        lines[1],
+        format!("{NOW_TEXT} kept lease={ID_A} alias={ALIAS_A} pid=20 host=alpha")
+    );
+    // The windows record held no platform, so it was no record: removed, its process left, and a
+    // holder started through the lease.
+    assert!(
+        lines[2].contains(&format!(" started lease={ID_B} ")),
+        "{log}"
+    );
+    assert!(lines[2].ends_with(" host=alpha.windows-amd64"), "{log}");
+    assert!(!w.called("stop 30"));
+    assert_eq!(starts(&w), vec![format!("start {ID_B}")]);
+}
+
+/// keeper.md, The hosts of a pass (pin P46): the turns follow the registry's file order, never a
+/// sorted one (H20's shape).
+#[test]
+fn the_turns_follow_the_registrys_file_order() {
+    let (w, p) = (World::new(), Place::new());
+    write_registry(
+        &p,
+        r#"{"version":0,"hosts":[{"project":"swimcoach","stack":"agentbox","state":"ready"},{"project":"q","platform":"linux/amd64","stack":"agentspace-linux-amd64-host-q","state":"ready"},{"project":"p","stack":"agentspace-host-p","state":"ready"}]}"#,
+    );
+    write_leases(
+        &p.state,
+        &[
+            platform_lease(ID_A, "p", "linux/arm64", "agentspace-p-11111111"),
+            platform_lease(ID_B, "q", "linux/amd64", "agentspace-q-22222222"),
+        ],
+    );
+    pass(&w, &p);
+    let log = p.log();
+    let hosts: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains(" started "))
+        .filter_map(|l| l.rsplit(" host=").next())
+        .collect();
+    assert_eq!(hosts, vec!["q.linux-amd64", "p"], "{log}");
+}

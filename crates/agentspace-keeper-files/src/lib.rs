@@ -22,7 +22,9 @@
 //! | `Claim`, `serialize_claim`, `parse_claim` | The line of `board-holder-launch.<hex>.claim`: `launcher <pid>` or `abandoned`, then LF. |
 //! | `serialize_keeper_pid`, `keeper_pid_digits`, `parse_keeper_pid` | The PID line of `board-holder-keeper.lock`, and a second keeper's reading of it (`KEEPER_PID_READ_BYTES`). |
 //! | `HolderMatcher` | The pinned `agentspace_keeper_api::Matcher`: `holder_command`, `is_holder` and `self_check`, for the system's `<System32>` folder, plus `program` and `cmd_exe`. `split_command_line` is its splitter, as `CommandLineToArgvW` splits. |
-//! | `holder_record_file`, `holder_record_tmp_file`, `holder_ssh_log_file`, `holder_ssh_log_rotated_file`, `project_of_holder_record_file`, `is_project_name` | Each host's holder files by D55's names (state.md, Another host's holder). They take `Option<&str>`, the host's project: `None` is the box, whose names are v0.06's. A record's form is the same for every host, so `serialize_holder_record` and `parse_holder_record` serve them all. |
+//! | `holder_record_file`, `holder_record_tmp_file`, `holder_ssh_log_file`, `holder_ssh_log_rotated_file`, `project_of_holder_record_file`, `is_project_name` | Each `linux/arm64` host's holder files by D55's names (state.md, Another host's holder). They take `Option<&str>`, the host's project: `None` is the box, whose names are v0.06's. Each keeps its signature and its names from before v0.12. |
+//! | `serialize_holder_record_keyed`, `parse_holder_record_keyed` | From v0.12, the holder record of a host keyed by `agentspace_hosts::HostKey`, its project and platform (D91): a writer writes `platform` last and only off `linux/arm64`, and a reader takes a record whose platform, `linux/arm64` when absent, is not the host's as no record (state.md, The holder record; pins P5, P14 and P16). `serialize_holder_record` and `parse_holder_record` are the same for a `linux/arm64` host, so a record written before v0.12 is read as `linux/arm64`'s. |
+//! | `holder_record_file_keyed`, `holder_record_tmp_file_keyed`, `holder_ssh_log_file_keyed`, `holder_ssh_log_rotated_file_keyed`, `host_of_holder_record_file`, `host_of_holder_ssh_log_file`, `host_of_host_name` | From v0.12, each host's holder files by its host name, `<project>` or `<project>.<os>-<arch>` (state.md, A host's platform and names; pin P12), and the host a file's name or a host name gives (keeper.md, The hosts of a pass, item 3; pin P21). The box's names stay v0.06's. |
 //! | `NotValid` | Why a writer refused a document, or a strict reader refused a file. |
 //! | The file names | `HOLDER_RECORD_FILE`, `PASS_LOCK_FILE`, `KEEPER_LOCK_FILE`, `launch_request_file`, `claim_file`, `result_file`. |
 
@@ -35,10 +37,15 @@ mod launch;
 mod lock;
 mod matcher;
 
-pub use holder_record::{parse_holder_record, serialize_holder_record};
+pub use holder_record::{
+    parse_holder_record, parse_holder_record_keyed, serialize_holder_record,
+    serialize_holder_record_keyed,
+};
 pub use hosts::{
-    holder_record_file, holder_record_tmp_file, holder_ssh_log_file, holder_ssh_log_rotated_file,
-    is_project_name, project_of_holder_record_file,
+    holder_record_file, holder_record_file_keyed, holder_record_tmp_file,
+    holder_record_tmp_file_keyed, holder_ssh_log_file, holder_ssh_log_file_keyed,
+    holder_ssh_log_rotated_file, holder_ssh_log_rotated_file_keyed, host_of_holder_record_file,
+    host_of_holder_ssh_log_file, host_of_host_name, is_project_name, project_of_holder_record_file,
 };
 pub use launch::{
     Claim, LaunchRequest, LaunchResult, parse_claim, parse_launch_request, parse_launch_result,

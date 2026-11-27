@@ -27,12 +27,13 @@
 use crate::Deps;
 use crate::args::WatchOptions;
 use crate::guard::{self, GuardSetup, Outcome};
-use crate::hosts::HostKey;
+use crate::hosts::box_key;
 use crate::log::{Logger, pass_line};
 use crate::pass::{Action, PassContext, Tracking, run_pass_hosts};
+use agentspace_hosts::HostKey;
 use agentspace_keeper_api::{HolderRecord, Query, Taken};
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
@@ -70,9 +71,10 @@ struct HostState {
     hold_until: Option<Duration>,
 }
 
-/// The keeper's state.
+/// The keeper's state. A host is keyed by its project and its platform (D91), the box by
+/// [`box_key`].
 struct State {
-    hosts: BTreeMap<HostKey, HostState>,
+    hosts: HashMap<HostKey, HostState>,
     /// The hosts of the keeper's last pass, or the box alone before its first pass (keeper.md, The
     /// keeper's wait).
     keeper_hosts: Vec<HostKey>,
@@ -235,7 +237,7 @@ fn ended_wait(options: &WatchOptions, unproven: bool, failures: u32) -> Wait {
 }
 
 /// Sets a host's hold-off and logs its line: `grace seconds=<n>` or `backoff seconds=<n>`, with
-/// ` host=<project>` for a host that is not the box (keeper.md, A keeper's own lines). The hold-off
+/// ` host=<host name>` for a host that is not the box (keeper.md, A keeper's own lines). The hold-off
 /// replaces any running there, and is counted from when its line has been written, so the line's
 /// `<n>` is the whole seconds it has left then. A line that cannot be logged changes nothing; a
 /// panic while it is logged is the wait's error (keeper.md, Reasons), and the hold-off is set all
@@ -252,9 +254,11 @@ fn hold_off(
         Word::Grace => "grace",
         Word::Backoff => "backoff",
     };
-    let host = key
-        .as_deref()
-        .map_or_else(String::new, |p| format!(" host={p}"));
+    let host = if key.is_box() {
+        String::new()
+    } else {
+        format!(" host={}", key.host_name())
+    };
     let logged = guarded(|| {
         let line = own_line(deps, &format!("{word} seconds={}{host}", w.seconds));
         log_own(deps, state_dir, stdout, &line);
@@ -348,8 +352,8 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
     };
 
     let mut state = State {
-        hosts: BTreeMap::new(),
-        keeper_hosts: vec![None],
+        hosts: HashMap::new(),
+        keeper_hosts: vec![box_key()],
         guard_last: None,
     };
     let mut passes: u32 = 0;
@@ -367,7 +371,7 @@ pub(crate) fn watch(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write) -> i
         // 3. The pass, with the pass time taken now. It counts whether or not it ran to the end.
         // The monotonic time is read in the same guard: a holder this pass started or adopted is
         // tracked from the end of the pass.
-        let tracked: BTreeMap<HostKey, HolderRecord> = state
+        let tracked: HashMap<HostKey, HolderRecord> = state
             .hosts
             .iter()
             .filter_map(|(k, h)| h.tracked.as_ref().map(|t| (k.clone(), t.record.clone())))
@@ -609,18 +613,41 @@ enum Seen {
     Ended,
 }
 
-/// Step 1 of an iteration: the look at each host's tracked holder, the box's first, then the
-/// others in the ordinal order of their projects. A holder found ended sets its host's hold-off,
-/// counted from the look, and logs its line. Says whether the look set any hold-off.
+/// The hosts a look walks, each that the keeper tracks a holder on: the box first, then the others
+/// in the order their turns took in the keeper's last pass, which is `hosts.json`'s file order
+/// (keeper.md, Watching, step 1; architect, 2026-11-26, for v0.12-T01, pin P46). The look reads no
+/// file for that order. A holder is tracked only through a turn, so every tracked host was in the
+/// last pass; were one not, it would come last, in the ordinal order of its host name.
+fn look_order(state: &State) -> Vec<HostKey> {
+    let tracked = |k: &HostKey| state.hosts.get(k).is_some_and(|h| h.tracked.is_some());
+    let mut keys: Vec<HostKey> = state
+        .keeper_hosts
+        .iter()
+        .filter(|k| tracked(k))
+        .cloned()
+        .collect();
+    let mut rest: Vec<HostKey> = state
+        .hosts
+        .iter()
+        .filter(|(k, h)| h.tracked.is_some() && !keys.contains(k))
+        .map(|(k, _)| k.clone())
+        .collect();
+    rest.sort_by_key(HostKey::host_name);
+    keys.extend(rest);
+    if let Some(i) = keys.iter().position(HostKey::is_box) {
+        let boxed = keys.remove(i);
+        keys.insert(0, boxed);
+    }
+    keys
+}
+
+/// Step 1 of an iteration: the look at each host's tracked holder, in [`look_order`]. A holder
+/// found ended sets its host's hold-off, counted from the look, and logs its line. Says whether
+/// the look set any hold-off.
 fn look(keeping: &Keeping, deps: &Deps, stdout: &mut dyn Write, state: &mut State) -> bool {
     let options = &keeping.options;
     let proof = Duration::from_secs(u64::from(options.fast_failure_seconds));
-    let keys: Vec<HostKey> = state
-        .hosts
-        .iter()
-        .filter(|(_, h)| h.tracked.is_some())
-        .map(|(k, _)| k.clone())
-        .collect();
+    let keys = look_order(state);
     let mut set_any = false;
     for key in keys {
         let Some(tracked) = state.host(&key).tracked.as_ref() else {
