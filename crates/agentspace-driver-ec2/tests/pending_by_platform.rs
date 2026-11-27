@@ -348,6 +348,7 @@ fn a_get_of_a_pending_windows_lease_starts_the_run_with_five_arguments_and_the_s
         &LeaseRef {
             id: A,
             project: PROJECT,
+            platform: WIN,
         },
     )
     .expect("The check succeeds");
@@ -390,6 +391,7 @@ fn a_get_of_a_pending_lease_on_each_platform_starts_that_platforms_run() {
             &LeaseRef {
                 id: A,
                 project: PROJECT,
+                platform,
             },
         )
         .expect("The check succeeds");
@@ -421,6 +423,7 @@ fn another_platforms_recent_attempt_does_not_hold_this_platforms_run() {
         &LeaseRef {
             id: A,
             project: PROJECT,
+            platform: WIN,
         },
     )
     .expect("The check succeeds");
@@ -442,6 +445,7 @@ fn this_platforms_recent_attempt_holds_its_own_run() {
         &LeaseRef {
             id: A,
             project: PROJECT,
+            platform: WIN,
         },
     )
     .expect("The check succeeds");
@@ -464,6 +468,7 @@ fn a_get_of_a_pending_lease_on_a_platform_with_no_record_and_no_approval_starts_
         &LeaseRef {
             id: A,
             project: PROJECT,
+            platform: WIN,
         },
     )
     .expect("The check succeeds");
@@ -488,6 +493,7 @@ fn a_get_of_a_pending_lease_on_an_approved_platform_with_no_record_adds_its_reco
         &LeaseRef {
             id: A,
             project: PROJECT,
+            platform: WIN,
         },
     )
     .expect("The check succeeds");

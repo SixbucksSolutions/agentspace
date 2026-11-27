@@ -374,6 +374,7 @@ pub(crate) fn create_with(
         ctx: &ctx,
         id: &id,
         project: &req.project,
+        platform: &req.platform,
         ready,
     };
     let mut next = file;
@@ -425,6 +426,7 @@ struct Undo<'a> {
     ctx: &'a Context,
     id: &'a str,
     project: &'a str,
+    platform: &'a str,
     ready: bool,
 }
 
@@ -443,6 +445,7 @@ impl Undo<'_> {
         let lease = LeaseRef {
             id: self.id,
             project: self.project,
+            platform: self.platform,
         };
         let tail = match self.driver.release(self.ctx, &lease) {
             // lease-api.md's "Records unwritable after a ready place (`create`), its undo leaving

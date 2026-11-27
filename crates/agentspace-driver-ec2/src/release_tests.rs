@@ -145,6 +145,7 @@ impl World {
         LeaseRef {
             id: &self.id,
             project: "swim",
+            platform: "linux/arm64",
         }
     }
 

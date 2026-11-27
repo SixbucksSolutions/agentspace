@@ -788,6 +788,7 @@ fn a_renewed_windows_certificate_names_the_same_user_as_the_first() {
     let lease = LeaseRef {
         id: ID,
         project: PROJECT,
+        platform: WIN,
     };
     let renewal = d
         .renew(&fx.ctx, &lease, 7200)
@@ -813,8 +814,47 @@ fn a_windows_lease_is_released_with_its_files_removed() {
     let lease = LeaseRef {
         id: ID,
         project: PROJECT,
+        platform: WIN,
     };
     d.release(&fx.ctx, &lease)
         .expect("A Windows lease is released");
     assert!(!fx.has_files_of(PROJECT, ID));
+}
+
+#[test]
+fn renew_and_check_pending_take_the_platform_from_the_lease_ref_and_not_the_state_file() {
+    // Pin P11, architect, 2026-11-26, for v0.12-T03: `LeaseRef.platform` is the lease's stored
+    // platform, passed by the CLI, and the driver never reads it again from the lease state file.
+    // The state file here holds the lease as `linux/arm64`, which would sign for `ubuntu` and
+    // look for the arm64 host, while the reference says `windows/amd64`: renew signs for `agent`,
+    // and check_pending starts the windows/amd64 host's run.
+    let (fx, detach) = world();
+    fx.write_project_entries(&[PE::approving(PROJECT, &[WIN])]);
+    fx.write_hosts(&[H::ready(PROJECT).on(WIN).typed(U_M)]);
+    let d = fx.driver_with(&detach);
+    let got = fx.place_default_on(&d, PROJECT, ID, WIN, "m");
+    assert_ready_on(&fx, got, ID, WIN);
+    fx.write_leases(&[L::ready(ID, PROJECT)]);
+    assert_eq!(detach.count(), 0, "A ready place starts no run");
+    let lease = LeaseRef {
+        id: ID,
+        project: PROJECT,
+        platform: WIN,
+    };
+    let renewal = d
+        .renew(&fx.ctx, &lease, 7200)
+        .expect("A Windows lease renews");
+    renewal.commit();
+    assert_eq!(
+        cert_info(&fx.cert_of(ID)).principals,
+        ["agent"],
+        "The renewed certificate names the reference's platform's user"
+    );
+    d.check_pending(&fx.ctx, &lease)
+        .expect("The check succeeds");
+    assert_eq!(
+        detach.only().args,
+        run_args(PROJECT, WIN),
+        "The run is the reference's platform's"
+    );
 }

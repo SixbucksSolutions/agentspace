@@ -88,6 +88,7 @@ pub fn release(cmd: &ParsedCommand, world: &World<'_>) -> Result<Value, LeaseErr
         let lease = LeaseRef {
             id: &id,
             project: &record.project,
+            platform: &record.platform,
         };
         driver
             .check_release(&ctx, &lease)

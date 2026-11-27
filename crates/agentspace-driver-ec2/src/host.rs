@@ -355,14 +355,14 @@ pub fn check_pending(
     if !hosts::is_normalized_project(lease.project) {
         return Err(lookup(registry_why(HostsError::BadProject)));
     }
-    // The host of the lease's project on the platform stored in its record at place (pin P32),
-    // read from the lease state file without its lock, as `get` reads it (ops::stored_platform,
-    // for the dev lead). The file is never written here.
-    let platform = ops::stored_platform(ctx, lease).ok_or_else(|| lookup(LEASES_WHY))?;
+    // The host of the lease's project on the platform stored in its record at place, which the CLI
+    // passes in `lease.platform` and which is never read again from the lease state file (pins
+    // P32 and, for v0.12-T03, P11).
+    let platform = lease.platform;
     // A `pending` record on a platform the driver does not support, which only a hand edit makes,
     // has no host a run could make or size, so it starts nothing. For the dev lead: driver.md does
     // not name this case; this reading starts no run, as for any lease no run would place.
-    if supported(&platform).is_none() {
+    if supported(platform).is_none() {
         return Ok(());
     }
     let key = HostKey::new(lease.project, platform);
@@ -760,9 +760,14 @@ mod tests {
             );
         }
         fn check(&self, project: &str) -> Result<(), Failure> {
+            self.check_on(project, "linux/arm64")
+        }
+        /// `check_pending` for a lease whose stored platform, which the CLI passes, is `platform`.
+        fn check_on(&self, project: &str, platform: &str) -> Result<(), Failure> {
             let lease = LeaseRef {
                 id: "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90",
                 project,
+                platform,
             };
             check_pending(&self.ctx, &lease, &self.detach)
         }
@@ -1992,7 +1997,7 @@ mod tests {
         stored.id = "3f2a9c1e-5b7d-4a60-8c11-0d2e4f6a8b90".to_string();
         f.leases(&[live(stored)]);
         let leases_before = fs::read(f.ctx.state_dir.join("leases.json")).unwrap();
-        f.check("other").unwrap();
+        f.check_on("other", WIN).unwrap();
         let starts = f.starts();
         assert_eq!(starts.len(), 1);
         assert_eq!(starts[0].args, five(WIN));
@@ -2007,16 +2012,6 @@ mod tests {
                 .join("other.windows-amd64")
                 .is_dir()
         );
-    }
-
-    #[test]
-    fn check_pending_with_records_it_cannot_read_starts_nothing() {
-        let f = fx();
-        f.list_platforms(&[WIN]);
-        f.write("leases.json", "{");
-        assert!(f.check("other").is_err());
-        assert!(f.starts().is_empty());
-        assert_eq!(f.registry(), None);
     }
 
     #[test]

@@ -93,6 +93,7 @@ fn place_one(
     let lease = LeaseRef {
         id: &record.id,
         project: &record.project,
+        platform: &record.platform,
     };
     ops::remove_files(ctx, &lease)?;
     let ttl_seconds = u32::try_from(record.ttl_seconds)
@@ -195,6 +196,7 @@ pub fn place_pending(ctx: &Context, key: &HostKey) -> Result<PendingPlaced, Fail
             break;
         };
         let id = file.leases[index].id.clone();
+        let lease_platform = file.leases[index].platform.clone();
         tried.insert(id.clone());
         // A lease that fails here has had every file this call made for it removed already.
         match place_one(ctx, &file.leases[index], host) {
@@ -210,10 +212,17 @@ pub fn place_pending(ctx: &Context, key: &HostKey) -> Result<PendingPlaced, Fail
                         // The lease stays `pending`, so its files go as release removes them; what
                         // cannot be removed is named, and goes with the next placement's leftovers
                         // or the lease's release.
-                        let left = ops::remove_files(ctx, &LeaseRef { id: &id, project })
-                            .err()
-                            .map(|f| f.leftovers)
-                            .unwrap_or_default();
+                        let left = ops::remove_files(
+                            ctx,
+                            &LeaseRef {
+                                id: &id,
+                                project,
+                                platform: &lease_platform,
+                            },
+                        )
+                        .err()
+                        .map(|f| f.leftovers)
+                        .unwrap_or_default();
                         result
                             .unplaced
                             .push(Unplaced::Failed(write_failure(id, &e, &left)));
@@ -268,7 +277,13 @@ fn refuse(
     guard: &agentspace_state::LockGuard,
 ) -> Unplaced {
     let id = file.leases[index].id.clone();
-    if let Err(f) = ops::remove_files(ctx, &LeaseRef { id: &id, project }) {
+    let platform = file.leases[index].platform.clone();
+    let lease = LeaseRef {
+        id: &id,
+        project,
+        platform: &platform,
+    };
+    if let Err(f) = ops::remove_files(ctx, &lease) {
         return Unplaced::Failed(lease_failure(id, f));
     }
     let lease = &mut file.leases[index];

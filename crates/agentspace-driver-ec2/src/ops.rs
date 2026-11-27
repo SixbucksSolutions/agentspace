@@ -29,7 +29,6 @@ use agentspace_credential::{
     CredFailure, RenewGuard, issue, remove_lease_folder, renew as renew_guard,
 };
 use agentspace_driver_api::{Context, Failure, LeaseRef, PlaceRequest, Placed, Renewal};
-use agentspace_hosts::LINUX_ARM64;
 
 use crate::reasons::login_user;
 use crate::text::{
@@ -38,32 +37,6 @@ use crate::text::{
     transport_failed,
 };
 use crate::walk::{Walker, append_release_line, further_walk_due, release_line_text};
-
-/// The message of a renew whose lease's stored platform cannot be read, in the credential crate's
-/// words for a renew that failed.
-const RENEW_RECORDS_UNREAD: &str = "The lease's certificate could not be renewed: agentspace's lease records could not be read. Nothing was changed; try again.";
-
-/// The platform stored in the lease's record, read from the lease state file of the context's state
-/// folder, read-only and taking no lock: `Some` of the record's `platform` when a record of the
-/// lease's ID and project is there, `Some("linux/arm64")` when none is, a missing file among
-/// those, and `None` when the file cannot be read or does not validate.
-///
-/// For the dev lead (proposed pin): driver.md has the CLI pass the platform stored at place to
-/// renew and `check_pending` (pins P25 and P32), but the pinned `LeaseRef` carries only `id` and
-/// `project`, and a field on it is a change to `agentspace-driver-api` that every crate building
-/// one has to follow. Until it is pinned, the driver reads the same stored platform itself: renew
-/// runs under the lease state lock the CLI holds, and `get` takes none, so either reads what its
-/// CLI read, and neither writes. A lease with no record, which the CLI never asks either for, keeps
-/// the meaning every `LeaseRef` had before v0.12, `linux/arm64`.
-pub fn stored_platform(ctx: &Context, lease: &LeaseRef) -> Option<String> {
-    let file = agentspace_state::read(&ctx.state_dir).ok()?;
-    Some(
-        file.leases
-            .iter()
-            .find(|r| r.id == lease.id && r.project == lease.project)
-            .map_or_else(|| LINUX_ARM64.to_string(), |r| r.platform.clone()),
-    )
-}
 
 /// The comment of an alias file's owner mark line (state.md, "The alias file").
 const COMMENT: &str = "written by agentspace. Do not edit.";
@@ -278,16 +251,15 @@ impl Renewal for Held {
 
 /// Renew (driver.md, Renew a lease; Renew and release): the new certificate is signed for the
 /// login user of the platform stored in the lease's record, so a Windows lease's renewed
-/// certificate names `agent`, as its first did (D95; pins P19 and P25). How the stored platform is
-/// had is [`stored_platform`]'s.
+/// certificate names `agent`, as its first did (D95; pins P19 and P25). The platform is
+/// `lease.platform`, which the CLI passes and which is never read again from the lease state file
+/// (architect, 2026-11-26, for v0.12-T03, pin P11).
 pub fn renew(
     ctx: &Context,
     lease: &LeaseRef,
     ttl_seconds: u32,
 ) -> Result<Box<dyn Renewal>, Failure> {
-    let platform = stored_platform(ctx, lease)
-        .ok_or_else(|| failure(RENEW_RECORDS_UNREAD.to_string(), Vec::new()))?;
-    let guard = renew_guard(&ctx.home, lease.id, login_user(&platform), ttl_seconds)
+    let guard = renew_guard(&ctx.home, lease.id, login_user(lease.platform), ttl_seconds)
         .map_err(cred_failure)?;
     Ok(Box::new(Held { guard }))
 }
@@ -602,71 +574,6 @@ mod tests {
         }
     }
 
-    fn write_leases(c: &Context, records: &str) {
-        fs::create_dir_all(&c.state_dir).unwrap();
-        fs::write(
-            c.state_dir.join("leases.json"),
-            format!(r#"{{"version":0,"leases":[{records}]}}"#),
-        )
-        .unwrap();
-    }
-
-    fn pending_record(id: &str, project: &str, platform: &str) -> String {
-        format!(
-            r#"{{"id":"{id}","project":"{project}","state":"pending","platform":"{platform}","profile":"agent-windows","size":"m","ttl_seconds":3600,"created_at":"2026-11-26T00:00:00Z","driver":"ec2"}}"#
-        )
-    }
-
-    #[test]
-    fn the_stored_platform_is_the_records_and_linux_arm64_with_no_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let c = ctx(dir.path(), None);
-        let lease = LeaseRef {
-            id: ID,
-            project: "swim",
-        };
-        // No file: no record, so linux/arm64, the meaning every LeaseRef had before v0.12.
-        assert_eq!(stored_platform(&c, &lease).as_deref(), Some("linux/arm64"));
-        write_leases(
-            &c,
-            &[
-                pending_record(OTHER, "swim", "linux/amd64"),
-                pending_record(ID, "swim", "windows/amd64"),
-            ]
-            .join(","),
-        );
-        assert_eq!(
-            stored_platform(&c, &lease).as_deref(),
-            Some("windows/amd64")
-        );
-        let unknown = LeaseRef {
-            id: "bbbbbbbb-5b7d-4a60-8c11-0d2e4f6a8b90",
-            project: "swim",
-        };
-        assert_eq!(
-            stored_platform(&c, &unknown).as_deref(),
-            Some("linux/arm64")
-        );
-        fs::write(c.state_dir.join("leases.json"), "{").unwrap();
-        assert_eq!(stored_platform(&c, &lease), None);
-    }
-
-    #[test]
-    fn a_renew_whose_records_cannot_be_read_fails_before_anything_and_names_no_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let c = ctx(dir.path(), None);
-        write_leases(&c, "");
-        fs::write(c.state_dir.join("leases.json"), "{").unwrap();
-        let lease = LeaseRef {
-            id: ID,
-            project: "swim",
-        };
-        let f = renew(&c, &lease, 3600).err().unwrap();
-        assert_eq!(f.message, RENEW_RECORDS_UNREAD);
-        assert!(f.leftovers.is_empty());
-        assert!(!lease_dir(&c.home, ID).exists());
-    }
-
     #[test]
     fn no_ca_fails_with_the_no_ca_wording_and_leaves_nothing() {
         let dir = tempfile::tempdir().unwrap();
@@ -737,6 +644,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         assert!(check_release(&c, &lease).is_ok());
         assert!(scoped_release(&c, &lease).is_ok());
@@ -761,6 +669,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         let folder = lease_dir(&c.home, ID);
         fs::create_dir_all(&folder).unwrap();
@@ -780,6 +689,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         fs::create_dir_all(
             c.ssh_dir
@@ -798,6 +708,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         fs::create_dir_all(&c.ssh_dir).unwrap();
         fs::write(c.ssh_dir.join("agentspace.d"), b"x").unwrap();
@@ -815,6 +726,7 @@ mod tests {
         let lease = LeaseRef {
             id: ID,
             project: "swim",
+            platform: "linux/arm64",
         };
         fs::create_dir_all(c.home.join(".agentspace")).unwrap();
         fs::write(c.home.join(".agentspace").join("leases"), b"x").unwrap();

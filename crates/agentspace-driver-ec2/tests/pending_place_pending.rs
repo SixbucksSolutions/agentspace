@@ -580,6 +580,7 @@ fn a_placed_lease_is_renewed_and_released_like_any_ready_lease() {
     let lease = LeaseRef {
         id: A,
         project: PROJECT,
+        platform: "linux/arm64",
     };
     // Renew: a new certificate, the alias and the key unchanged.
     let alias_before = fs::read(fx.alias_file_of(PROJECT, A)).unwrap();
@@ -650,7 +651,11 @@ fn releasing_a_pending_lease_after_a_killed_placement_leaves_nothing() {
         fx.write_leases(&[L::pending(A, project)]);
         let hosts_before = fx.hosts_bytes();
         let d = fx.driver();
-        let lease = LeaseRef { id: A, project };
+        let lease = LeaseRef {
+            id: A,
+            project,
+            platform: "linux/arm64",
+        };
         d.check_release(&fx.ctx, &lease).expect("Checked");
         d.release(&fx.ctx, &lease).expect("A release works");
         assert!(
@@ -683,6 +688,7 @@ fn releasing_a_pending_lease_that_has_no_files_succeeds_and_makes_none() {
     let lease = LeaseRef {
         id: A,
         project: PROJECT,
+        platform: "linux/arm64",
     };
     d.check_release(&fx.ctx, &lease).expect("Checked");
     d.release(&fx.ctx, &lease).expect("A release works");
@@ -699,6 +705,7 @@ fn releasing_a_pending_lease_never_removes_a_foreign_alias_file() {
     let lease = LeaseRef {
         id: A,
         project: PROJECT,
+        platform: "linux/arm64",
     };
     let f = d
         .check_release(&fx.ctx, &lease)

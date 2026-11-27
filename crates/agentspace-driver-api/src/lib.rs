@@ -100,6 +100,12 @@ pub struct LeaseRef<'a> {
     pub id: &'a str,
     /// The project stored at place, from which the alias is built.
     pub project: &'a str,
+    /// The platform stored at place: the lease's normalized platform, which the CLI passes to
+    /// renew and `check_pending` as it passes its `project`, and never re-derives (driver.md,
+    /// Renew a lease and `check_pending`, the Platform rows; architect, 2026-11-26, for v0.12-T01,
+    /// pins P25 and P32). A lease whose record has none is `linux/arm64`'s, as state.md says
+    /// (architect, 2026-11-26, for v0.12-T03, pin P11).
+    pub platform: &'a str,
 }
 
 /// A failure at the boundary (driver.md, Failure).

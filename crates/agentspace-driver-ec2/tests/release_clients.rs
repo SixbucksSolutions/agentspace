@@ -93,6 +93,7 @@ impl Rel {
         LeaseRef {
             id: &self.id,
             project: PROJECT,
+            platform: "linux/arm64",
         }
     }
     fn alias_file(&self) -> PathBuf {
@@ -501,6 +502,7 @@ fn spared_child_runs_the_release() {
     let lease = LeaseRef {
         id: &id,
         project: PROJECT,
+        platform: "linux/arm64",
     };
     let driver = Ec2Driver::new().with_walk_under(var(CHILD_UNDER));
     let outcome = match driver.release(&ctx, &lease) {
