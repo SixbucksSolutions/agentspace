@@ -117,7 +117,7 @@ test seams.
 | What | Who acts | Where it goes |
 |---|---|---|
 | T04 starts on Terry's word | Terry, then the architect | #0261 to #0265 |
-| Archive T03's dev lead, then remove the held empty folder `.claude\worktrees0.12-t03-s01` | The architect | `.claude\worktrees\` |
+| Archive T03's dev lead, then remove the held empty folder `.claude\worktrees\v0.12-t03-s01` | The architect | `.claude\worktrees\` |
 | #0268, two tests flaky under load | Terry places it; the architect recommends T04-S05, the whole-suite story, which runs every suite under the gate's load anyway | Backlog |
 | Before T05: the observer script, rebuilt from runs/e0.09-t05-s01.md | The architect | `scripts\live\` |
 | The desktop app's session on Windows, with Git Bash; and the rest of operator.md's "What T05-S02 measures": patch time on an older image, sessions across an sshd restart, the push's stdin under Windows PowerShell 5.1, winget over SSH, `PATH` in new sessions, Windows' background CPU against the 6 CPU-second idle limit, that Windows Update schedules no restart, and that sync's patch wait on a first boot answers within its wait | E0.12-T05-S02 | operator.md, What T05-S02 measures |
