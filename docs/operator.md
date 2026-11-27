@@ -4239,6 +4239,11 @@ checks ([Command line](#command-line)):
      as for a stop, and is tried again at the next run (D57's change). A host whose Session Manager
      agent is not online yet, such as one started within the last minute, fails this way, and the
      next run sends it.
+   - **A host whose record names a platform agentspace has no seam for**, such as `windows/arm64`
+     (D98), is decided in step 6 as any host is, and stopped when no live lease explains it, so it
+     never runs unbounded; its send fails its part with the failed-send line above, naming the host
+     by its host name, since no document or command exists for it (architect, 2026-11-26, for
+     v0.12-T03, pin P10). Such a record SHOULD NOT exist: no program writes one.
    - **A horizon sent is not logged** (D63), and prints nothing.
 8. **Ends.** Unless `-Quiet` is given, it prints one closing line,
    `Hosts: <m>; running <r>, stopped <s>, unexplained <u>.`, where `<m>` is the registry's records,
