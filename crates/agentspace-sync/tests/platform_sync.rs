@@ -345,10 +345,10 @@ fn a_linux_amd64_sync_makes_the_calls_of_the_box_in_order_over_its_alias() {
             &describe_instances_args(ID3),
         );
         rig.check(
-            warnings_of_sync(&say).is_empty(),
+            say.warnings().is_empty(),
             &format!(
                 "sync MUST print no warning here; it warned {:?}",
-                warnings_of_sync(&say)
+                say.warnings()
             ),
         );
         check_environment(rig, &log);
@@ -499,11 +499,7 @@ fn a_linux_amd64_hosts_patch_wait_is_the_shell_documents_with_the_shorthand() {
                 .check(&checks[1])
                 .line(patched(ID3)),
         );
-        let got: Vec<String> = wait_timeline(&log)
-            .into_iter()
-            .filter(|l| *l != format!("warn: {PUSH_NAME_WARNING}"))
-            .collect();
-        rig.same_list("The wait", &got, &want);
+        rig.same_list("The wait", &wait_timeline(&log), &want);
         rig.check_ssm_args(&log, ID3);
     });
 }
@@ -523,7 +519,7 @@ fn a_linux_amd64_failed_patch_run_names_the_hosts_alias_in_its_warning() {
         );
         rig.same_list(
             "The warning: `agentspace` in the command is the host's alias",
-            &warnings_of_sync(&say),
+            &say.warnings(),
             &[failed_warning_text(ID3, &a)],
         );
         rig.same(
@@ -960,7 +956,7 @@ fn a_windows_failed_patch_run_names_the_patch_log_not_journalctl() {
         );
         rig.same_list(
             "The warning",
-            &warnings_of_sync(&say),
+            &say.warnings(),
             &[format!(
                 "agentspace: The patch run on {ID4} failed; sync goes on without it. Check: ssh {a} cat C:/ProgramData/agentspace/patch.log"
             )],

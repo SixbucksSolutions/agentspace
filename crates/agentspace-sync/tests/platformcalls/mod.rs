@@ -313,22 +313,6 @@ impl Rig {
     }
 }
 
-/// The push's warning for a host whose name the token push does not take yet: `agentspace-push`
-/// validates the host it is given as a project, so a name with a platform in it (`demo.linux-amd64`)
-/// warns until E0.12-T03-S04 makes the push take a host's name (pin P12 of v0.12-T01). It is that
-/// story's, and no test of sync's own rows judges it.
-pub const PUSH_NAME_WARNING: &str =
-    "agentspace: The host's name is not valid; the board will not work on that host this session.";
-
-/// The warnings `say` was given, but the push's warning for a host name it does not take yet
-/// ([`PUSH_NAME_WARNING`]).
-pub fn warnings_of_sync(say: &RecSay) -> Vec<String> {
-    say.warnings()
-        .into_iter()
-        .filter(|w| w != PUSH_NAME_WARNING)
-        .collect()
-}
-
 /// A throwaway home for a host on a platform: a CA, a public key, a parameters file that names
 /// `InstanceType` and `RootVolumeGiB` (which a new host's stack MUST NOT take from it), the
 /// ProxyCommand program beside the operator, and a registry holding the box and `recs`. `go` says
