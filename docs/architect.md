@@ -468,6 +468,39 @@ deliberately red tests green.** A dev lead's brief carries these.
   7:23am to 8:10am, the build story beside it from 7:27am to its PR at 10:30am, inside 4.5 hours, in
   15 subagent launches with a peak of 4 and none blocked.
 
+**Learned in v0.12-T04, 2026-11-27, the whole conformance suite with four stories writing cases.**
+- **A story whose edits auto mode refuses as "don't retry" goes to Needs Terry at once, with its cap
+  rule stated then**: what happens if he has not answered by the turn's cap. T04's S04 was refused at
+  11:35pm, and was T04's critical path from then. Its fallback (P19) and the cap rule (P21) came
+  three hours apart. The rule MUST come with the move to Needs Terry: the turn closes without the story
+  at the cap, and the story is carried with its own pull request and run record.
+- **A refusal's own text decides whether it MAY be re-sent** (pins P12 and P15). A refusal that names
+  an allowed form, such as "split it into plain, separate commands", is re-sent once in that form. A
+  "don't retry" refusal never is. The record names each re-send.
+- **The final lanes run on a local merge of the approved heads**, made with `git merge-tree
+  --write-tree` and `git commit-tree`, with no branch touched (pins P10, P19 and P20).
+  - The architect rebuilds each merge itself and compares the trees by `git rev-parse`.
+  - After each squash, the architect checks that `main`'s tree equals the merge it expects. T04's did,
+    at 5e650e3 after three merges and at 28a629c after the last.
+  - A lane that ran early on an earlier merge stands only if `git diff --name-only` between the two
+    merges touches none of its inputs, the build's among them.
+- **A pathspec with a `*` is written `:(glob)`**, since a plain one's `*` crosses `/`. The first diff
+  check listed an operator file under `conformance/*.ps1`. A check is shown to find a change before its
+  "none" is believed.
+- **A runner plan holds every run the spec names, from the start.** T04's first plan had no runner
+  for the empty-program run, which conformance.md's step 5 requires.
+- **A cited pin is grepped before a tasking goes out.** The architect cited "P49 of v0.12-T01" for
+  the rule P46 holds, and the dev lead caught it.
+- **A watch script lives outside a story's worktree.** A run watcher whose script was inside S05's
+  worktree held the folder, and its removal was refused, until the watcher stopped.
+- **A deadline timer reaches past the deadline it serves.** A clock watch that ends at the deadline
+  ends silent, and silence there reads as no news.
+- **A loop that proves a fix is read, not only counted.** T04's 20 of 20 took 6 seconds. That looked
+  too fast for the test, so the architect read the loop's command line, the binary's build time and
+  the `--exact` test name before accepting it.
+- **A dev lead waiting on Terry, or on a cap, answers each nudge `BLOCKED`.** Two such answers end the
+  watchdog, and the block goes to Terry. The cap ends it either way.
+
 **Learned in v0.12-T03, 2026-11-26, seven stories building both tracks at once.**
 - **Cross-story calls set a build turn's schedule more than file ownership does.** T03's needed two
   phase-B launches, an early merge alone (P16) and an order change (P18). At layout, list every call

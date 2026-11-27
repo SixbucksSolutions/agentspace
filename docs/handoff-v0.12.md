@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Live, as of v0.12-T03's close, 9:34pm Mountain on 2026-11-26.** Started at T01's close and
+> **Live, as of v0.12-T04's close, 4:01am Mountain on 2026-11-27.** Started at T01's close and
 > refreshed at each turn's close, as v0.11's was. Where this file and AGENTS.md, the board or
 > decisions.md disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -25,10 +25,18 @@ and this file adds only what v0.12 has changed or learned.
 - **T03, the programs on both tracks, is closed**: eight PRs merged (#188, #189 to #195), its cards
   in Ready For Review, 4 h 27 min of its 5.5 h (extended an hour on Terry's word). The second prep,
   `agentspace-platforms` with `for_platform` (#187), went in at its start.
-- **`main` has no red test by design**: S02's workspace run on #195's head exited 0, and the 30
-  help-block reds T01 left are green (S01's 7, S02's 23). Two tests fail only under load, carded as
-  #0268 and folded into T04-S05 (D102).
-- **Next is T04, conformance and #0244, on Terry's word.** No turn starts without it.
+- **T04, the whole conformance suite and #0268, is closed without S04**: four PRs merged (#196 to
+  #199), S01 to S03 and S05 in Ready For Review, 4 h 30 min of its 4.5 h. **The whole suite passes
+  against v0.12's build**: 110 file runs, 6,732 results, none failed or skipped; the empty program
+  makes all 50 lease CLI files exit 1; the crates (6,857 passed), fmt, clippy, the box's 259 and
+  `box\windows`' 308 pass ([runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md)). **#0268 is met**: two real
+  races fixed in test lines alone, each 20 of 20 under load.
+- **S04 (#0264), #0244's conformance masking, is carried out of T04 by pin P21** and is in Needs
+  Terry. Both of its one-line edits were refused by auto mode as "don't retry", so they need Terry
+  to approve each write in a default-mode session, or to say "hold". It runs on his word, with its
+  own pull request and run record, and its runner list is P19's (below).
+- **Next is T05, the install and the live checks, on Terry's word**, and S04 when he answers. No turn
+  starts without his word.
 - **Nothing is running but the architect's duties**: the board watcher, the swimcoach reporter with
   the `v0.12` milestone, and no dev lead, host or lease.
 
@@ -38,6 +46,7 @@ and this file adds only what v0.12 has changed or learned.
 |---|---|---|---|---|---|---|
 | T01, the specs and the spike | #0245 to #0249 | 11:51am, 2026-11-26 | 2:40pm, 2026-11-26 | #178 (S02), #181 (S01), #177 (S03), #180 (S05), all 2:30pm to 2:32pm; #179 (S04) 2:38pm | 2:49 of 3.5 h | lease-api.md for three platforms; state.md and schemas/state keyed by host; driver.md and keeper.md; operator.md's shared parts and conformance.md; the spike's record; P1 to P60 ruled; 29 launches |
 | T03, the programs, both tracks | #0254 to #0260 | 5:07pm, 2026-11-26 | 9:34pm, 2026-11-26 | #188 (S03 part 1) 6:42pm; #192 (S01) 7:43pm; #189, #191, #190, #193 (S06, S07, S05, S04) 8:26pm; #194 (S03 part 2) 8:51pm; #195 (S02) 9:33pm | 4:27 of 5.5 h | The platform seam built: both Linux rows and Windows' in `agentspace-platforms` and `agentspace-windows`; driver and CLI by platform; the operator's `-Platform`; sync, deploy, provision and credentials by host; ProxyCommand, guard, push and zone by host; one holder per host; `box/windows/`'s host agent with 300-odd PowerShell tests; agentbox's change set shown empty live; P1 to P18 ruled; 34 launches |
+| T04, the whole suite and #0268 | #0261 to #0265 | 11:25pm, 2026-11-26 | 3:55am, 2026-11-27 | #196 (S03), #197 (S01), #198 (S02), all 2:36am; #199 (S05) 3:55am; S04 (#0264) carried by P21 | 4:30 of 4.5 h | The lease CLI's M1 to M15, LP1 and LP2; the operator's W1 to W32 and four help copies; the keeper's H19 to H29; conformance.md crediting every v0.12 file; the whole-suite record; #0268's two races fixed; #0269 carded; P1 to P21 ruled; 27 launches |
 | T02, the foundations and the Windows spec | #0250 to #0253 | 2:50pm, 2026-11-26 | 5:03pm, 2026-11-26 | #182 (S03) 3:28pm; #183 (S01) 4:01pm; #184 (S04) 4:35pm; #186 (S02) 5:02pm; the T03 prep #185 5:02pm | 2:13 of 3.5 h | Hosts keyed by project and platform in `agentspace-hosts`, `-state` and `-alias`; #0228's one walk; D78 in the idle check with #0192's and #0193's box tests (259 OK); operator.md's "Windows hosts", README's Windows sign-in and conformance.md's Windows plan; P1 to P18 ruled; 27 launches |
 
 ## What the spike found
@@ -71,6 +80,25 @@ as a JSON value of `--parameters`, PowerShell 7 is always named by its full path
 test seam is never named `*_CMD`, and `agentspace-boot.ps1` and `agentspace-patch-check.ps1` get
 test seams.
 
+**T03's dev lead raised P1 to P18**, cited "for v0.12-T03, pin Pn", as handoff rows and
+operator.md's text record them.
+
+**T04's dev lead raised P1 to P21**, cited "for v0.12-T04, pin Pn" in conformance.md, operator.md
+and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
+- **P1:** one build of `main` at the turn's start serves every run, and the record shows the diff
+  from it to the final `main`.
+- **P10, P19 and P20:** the final lanes run on a local merge of the approved heads, made with
+  `git merge-tree --write-tree` and `git commit-tree`. A lane that ran early on an earlier merge
+  stands only if `git diff --name-only` between the two merges touches none of its inputs. That
+  check is shown first to find a change, and a pathspec with a `*` is written `:(glob)`.
+- **P14:** `^FAIL` is counted over the per-file logs, never the masked summary.
+- **P15:** `sync` never carries `box/windows/tests/` (operator.md).
+- **P12 and P15:** a refusal whose own text names an allowed form, such as "split it into plain,
+  separate commands", MAY be re-sent once in that form. A "don't retry" refusal never is.
+- **P19 and P21:** how S04 runs after the merge, and how T04 closed without it at the cap.
+- **S04's runner list:** `grep -l` for `harness.ps1` and `keeper-common.ps1` across `conformance\`,
+  plus the operator's lanes, every lane gated and every `.exit` read.
+
 ## Terry's orders in v0.12
 
 | Order | Given | Where it binds |
@@ -85,6 +113,9 @@ test seams.
 | "AWS login refreshed", for T03's change-set check | 2026-11-26 | #0256 |
 | Yes to the spike's temporary alias file in his `agentspace.d` | 2026-11-26 | #0249's comment |
 | "you can kill the watcher no need to wait", for the cleared session's orphan watcher | 2026-11-26 | Done at the session's start |
+| "Yes, fold into T04", for #0268 | 2026-11-26 | D102 |
+| "Start T04" | 2026-11-26 | This file |
+| No answer on S04's two masking edits by T04's cap, 3:55am | 2026-11-27 | P21: S04 carried, in Needs Terry |
 
 ## Lessons from v0.12 so far
 
@@ -111,14 +142,20 @@ test seams.
 | T03: a change-set brief said a parameter was new that the box already had at another value | architect.md, A turn that builds, v0.12-T03 |
 | T03: the AWS sign-in expired mid-turn and held one check | Start here, step 5, and architect.md |
 | T03: a dev lead wrote launch times without reading the clock | The slip list |
+| T04: a story whose edits auto mode refuses as "don't retry" became the critical path, waiting on Terry from 11:35pm to the cap | architect.md, A turn that builds, v0.12-T04 |
+| T04: the final lanes ran on local merges, and the early lane stood by a diff check whose first version was wrong (a pathspec `*` crosses `/`) | architect.md, A turn that builds, v0.12-T04; conformance.md, step 3 |
+| T04: the empty-program run was missing from the first runner plan | conformance.md, step 5 |
+| T04: the architect cited a pin by the wrong number (P49 for P46) | The slip list: a cited pin is grepped before a tasking goes out |
+| T04: a run watcher's script inside a story's worktree held the folder at removal | architect.md, A turn that builds, v0.12-T04 |
 
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| T04 starts on Terry's word | Terry, then the architect | #0261 to #0265 |
-| Archive T03's dev lead, then remove the held empty folder `.claude\worktrees\v0.12-t03-s01` | The architect | `.claude\worktrees\` |
-| #0268, two tests flaky under load | E0.12-T04-S05 (#0265), folded on Terry's word (D102) | #0051, archived |
+| S04 (#0264), #0244's masking: approve the two one-line edits per write in a default-mode session, or "hold" | Terry, then the architect | #0264, in Needs Terry; P19's runner list above |
+| T05 starts on Terry's word | Terry, then the architect | #0266, #0267 |
+| #0269, the keeper's handshake step 7 race #0268 found, to be placed | Terry; the architect suggests v1.0 (#0053) | Backlog |
+| Done in T04: #0268 (E0.12-T04-S05); T03's dev lead archived and its folders removed | | |
 | Before T05: the observer script, rebuilt from runs/e0.09-t05-s01.md | The architect | `scripts\live\` |
 | The desktop app's session on Windows, with Git Bash; and the rest of operator.md's "What T05-S02 measures": patch time on an older image, sessions across an sshd restart, the push's stdin under Windows PowerShell 5.1, winget over SSH, `PATH` in new sessions, Windows' background CPU against the 6 CPU-second idle limit, that Windows Update schedules no restart, and that sync's patch wait on a first boot answers within its wait | E0.12-T05-S02 | operator.md, What T05-S02 measures |
 | Done in T02: the archive of T01's dev lead and its folders; D7's `::1` note, now in operator.md's Windows section (#184) | | |
