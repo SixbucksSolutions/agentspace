@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use agentspace_operator_api::{
-    Aws, Call, CallerFailure, CallerLine, Failure, HostPlatform, Output, Say,
+    Aws, Call, CallerFailure, CallerLine, Failure, HostPlatform, Output, PatchMessages, Say,
 };
 use serde_json::Value;
 
@@ -98,16 +98,54 @@ pub fn start_and_wait_for(
     )
 }
 
+/// A platform's patch check, read from its rows before the step makes any call, so a row that
+/// fails ends the step with nothing sent (operator.md, The platform seam).
+pub(crate) struct PatchCheck {
+    /// The Session Manager document the question is sent through.
+    document: &'static str,
+    /// The `--parameters` value that carries the question.
+    parameters: String,
+    /// The phase message and the deadline's log command.
+    messages: PatchMessages,
+}
+
+impl PatchCheck {
+    /// The patch check of `platform`: [`HostPlatform::patch_check_command`] through
+    /// [`HostPlatform::ssm_document`], in the parameters [`run_command::parameters`] gives (on
+    /// Linux, `commands=<question>`, as before v0.12), and [`HostPlatform::patch_messages`].
+    pub(crate) fn of(platform: &dyn HostPlatform) -> Result<PatchCheck, Failure> {
+        let question = platform.patch_check_command()?;
+        Ok(PatchCheck {
+            document: platform.ssm_document(),
+            parameters: run_command::parameters(platform, &question),
+            messages: platform.patch_messages(),
+        })
+    }
+}
+
 /// [`start_and_wait_for`] on the host's `platform`: its patch check sends
 /// [`HostPlatform::patch_check_command`] through [`HostPlatform::ssm_document`], and its phase
 /// message and deadline are worded with [`HostPlatform::patch_messages`] (operator.md, The
-/// platform seam). On both Linux platforms every call and message is today's, byte for byte.
+/// platform seam). On both Linux platforms every call and message is today's, byte for byte. A
+/// platform whose patch check fails ends the step with that failure before any call.
 pub(crate) fn start_and_wait_for_on(
     aws: &dyn Aws,
     say: &dyn Say,
     clock: &dyn Clock,
     instance_id: &str,
     platform: &dyn HostPlatform,
+) -> Result<(), Failure> {
+    let check = PatchCheck::of(platform)?;
+    start_and_wait_with(aws, say, clock, instance_id, &check)
+}
+
+/// [`start_and_wait_for_on`] with the platform's patch check already read.
+pub(crate) fn start_and_wait_with(
+    aws: &dyn Aws,
+    say: &dyn Say,
+    clock: &dyn Clock,
+    instance_id: &str,
+    check: &PatchCheck,
 ) -> Result<(), Failure> {
     let id = instance_id;
     let state = describe_instance(aws, id, STATE_NAME)?;
@@ -141,7 +179,7 @@ pub(crate) fn start_and_wait_for_on(
     }
 
     if state != "running" || !running_long_enough(aws, clock, id)? {
-        wait(aws, say, clock, id, platform)?;
+        wait(aws, say, clock, id, check)?;
     }
 
     say.progress(&format!("Ready: {id}"), Some(CallerLine::Ready));
@@ -193,15 +231,15 @@ fn wait(
     say: &dyn Say,
     clock: &dyn Clock,
     id: &str,
-    platform: &dyn HostPlatform,
+    check: &PatchCheck,
 ) -> Result<(), Failure> {
-    let messages = platform.patch_messages();
+    let messages = &check.messages;
     let started = clock.now();
     let mut last: Option<&str> = None;
     loop {
         let message = if !session_manager_online(aws, id)? {
             WAITING_FOR_SESSION_MANAGER
-        } else if patch_pending(aws, clock, id, platform)? {
+        } else if patch_pending(aws, clock, id, check)? {
             messages.phase.as_str()
         } else {
             return Ok(());
@@ -262,17 +300,14 @@ fn session_manager_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 /// readable yet, and is polled again; one that has ended with no `StandardOutputContent` is the
 /// empty answer, which counts as ready (Q6).
 ///
-/// The question is the platform's [`HostPlatform::patch_check_command`], sent through its
-/// [`HostPlatform::ssm_document`] in the parameters [`run_command::parameters`] gives; on Linux,
-/// `commands=<question>`, as before v0.12.
+/// The question is the platform's, as [`PatchCheck::of`] read it: on Linux,
+/// `commands=<question>` through `AWS-RunShellScript`, as before v0.12.
 fn patch_pending(
     aws: &dyn Aws,
     clock: &dyn Clock,
     id: &str,
-    platform: &dyn HostPlatform,
+    check: &PatchCheck,
 ) -> Result<bool, Failure> {
-    let question = platform.patch_check_command()?;
-    let parameters = run_command::parameters(platform, &question);
     let sent = aws.call(&Call {
         service: "ssm",
         operation: "send-command",
@@ -280,11 +315,11 @@ fn patch_pending(
             "--instance-ids",
             id,
             "--document-name",
-            platform.ssm_document(),
+            check.document,
             "--comment",
             PATCH_COMMENT,
             "--parameters",
-            &parameters,
+            &check.parameters,
         ],
         output: Output::Json,
     })?;
@@ -1190,10 +1225,11 @@ esac\n";
         );
     }
 
-    /// A platform whose patch check fails ends the wait with that failure, sending nothing.
+    /// A platform whose patch check fails ends the step with that failure before any call: the
+    /// instance is neither read nor started, and nothing is printed.
     #[test]
-    fn a_failed_patch_check_command_ends_the_wait_with_its_failure() {
-        let aws = Script::new(vec![state("pending"), ping(Some("Online"))]);
+    fn a_failed_patch_check_command_ends_the_step_before_any_call() {
+        let aws = Script::new(vec![state("stopped")]);
         let f = fake();
         let platform = TestPlatform {
             document: "AWS-RunPowerShellScript",
@@ -1201,12 +1237,8 @@ esac\n";
         };
         let failure = start_and_wait_for_on(&aws, &f, &f, ID, &platform).unwrap_err();
         assert_eq!(failure.message, fake::FAILED);
-        assert!(
-            !aws.calls
-                .borrow()
-                .iter()
-                .any(|c| c.contains("send-command"))
-        );
-        assert!(aws.answers.borrow().is_empty());
+        assert!(aws.calls.borrow().is_empty(), "{:?}", aws.calls.borrow());
+        assert_eq!(aws.answers.borrow().len(), 1);
+        assert!(f.lines.borrow().is_empty());
     }
 }

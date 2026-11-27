@@ -111,7 +111,8 @@ pub fn start_and_wait(
 /// platforms every call and line is [`start_and_wait`]'s, byte for byte (`--parameters
 /// commands=<question>`); on a platform whose document is not `AWS-RunShellScript`, such as
 /// `AWS-RunPowerShellScript`, the parameters are the JSON value `{"commands":["<question>"]}`,
-/// never the shorthand (pins P17 and P18 of v0.12-T02).
+/// never the shorthand (pins P17 and P18 of v0.12-T02). A platform whose patch check fails ends
+/// the step with that failure before any call, the instance ID's read included.
 pub fn start_and_wait_on(
     aws: &dyn Aws,
     say: &dyn Say,
@@ -120,7 +121,102 @@ pub fn start_and_wait_on(
     stack: &str,
     platform: &dyn HostPlatform,
 ) -> Result<String, Failure> {
+    // The platform's patch check is read first: a row that fails ends the step before any call.
+    let check = wait::PatchCheck::of(platform)?;
     let id = instance_id(aws, cache, stack)?;
-    wait::start_and_wait_for_on(aws, say, clock, &id, platform)?;
+    wait::start_and_wait_with(aws, say, clock, &id, &check)?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::path::Path;
+
+    use agentspace_operator_api::{AwsError, Call, CallerLine, Mode};
+
+    use super::*;
+    use crate::run_command::fake::{self, TestPlatform};
+
+    /// An AWS CLI that records each call and refuses it.
+    #[derive(Default)]
+    struct Refusing(RefCell<Vec<String>>);
+
+    impl Aws for Refusing {
+        fn call(&self, call: &Call) -> Result<serde_json::Value, AwsError> {
+            self.0
+                .borrow_mut()
+                .push(format!("{} {}", call.service, call.operation));
+            Err(AwsError::Failed("refused by the test".to_string()))
+        }
+    }
+
+    /// A cache that counts its reads and writes, and is missing.
+    #[derive(Default)]
+    struct Counted(Cell<usize>);
+
+    impl InstanceIdCache for Counted {
+        fn path(&self) -> &Path {
+            Path::new("instance-id.json")
+        }
+        fn read(&self) -> CacheRead {
+            self.0.set(self.0.get() + 1);
+            CacheRead::Missing
+        }
+        fn write(&self, _: &[u8]) -> Result<(), Failure> {
+            self.0.set(self.0.get() + 1);
+            Ok(())
+        }
+    }
+
+    /// Records every line.
+    #[derive(Default)]
+    struct Lines(RefCell<Vec<String>>);
+
+    impl Say for Lines {
+        fn mode(&self) -> Mode {
+            Mode::Person
+        }
+        fn progress(&self, person: &str, _: Option<CallerLine>) {
+            self.0.borrow_mut().push(person.to_string());
+        }
+        fn warning(&self, person: &str) {
+            self.0.borrow_mut().push(person.to_string());
+        }
+        fn detail(&self, text: &str) {
+            self.0.borrow_mut().push(text.to_string());
+        }
+    }
+
+    /// A platform whose patch check fails ends `start_and_wait_on` with that failure before the
+    /// cache is read or any call is made; a platform whose check succeeds goes on to read the
+    /// cache and the stack, which this test's AWS refuses.
+    #[test]
+    fn a_failed_patch_check_ends_start_and_wait_on_before_the_cache_or_any_call() {
+        let (aws, cache, say) = (Refusing::default(), Counted::default(), Lines::default());
+        let clock = SystemClock::new();
+        let failing = TestPlatform {
+            document: "AWS-RunPowerShellScript",
+            fails: true,
+        };
+        let failure =
+            start_and_wait_on(&aws, &say, &clock, &cache, "agentbox", &failing).unwrap_err();
+        assert_eq!(failure.message, fake::FAILED);
+        assert_eq!(cache.0.get(), 0);
+        assert!(aws.0.borrow().is_empty());
+        assert!(say.0.borrow().is_empty());
+
+        let failure = start_and_wait_on(
+            &aws,
+            &say,
+            &clock,
+            &cache,
+            "agentbox",
+            &TestPlatform::powershell(),
+        )
+        .unwrap_err();
+        assert_ne!(failure.message, fake::FAILED);
+        assert!(cache.0.get() > 0);
+        assert!(!aws.0.borrow().is_empty());
+    }
 }

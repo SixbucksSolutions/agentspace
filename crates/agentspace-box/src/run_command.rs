@@ -158,6 +158,20 @@ mod tests {
         assert_eq!(parsed["commands"][0], command);
     }
 
+    /// Control characters are escaped in the JSON value, and the value reads back as the command.
+    #[test]
+    fn a_powershell_documents_json_value_escapes_control_characters() {
+        let command = "a\r\nb\tc\u{1}d\u{1f}e\u{7f}";
+        let value = parameters(&TestPlatform::powershell(), command);
+        assert_eq!(
+            value,
+            "{\"commands\":[\"a\\r\\nb\\tc\\u0001d\\u001fe\u{7f}\"]}"
+        );
+        assert!(!value.chars().any(|c| c.is_ascii_control() && c != '\u{7f}'));
+        let parsed: serde_json::Value = serde_json::from_str(&value).unwrap();
+        assert_eq!(parsed["commands"][0], command);
+    }
+
     #[test]
     fn any_document_but_the_shell_ones_gets_the_json_value() {
         let other = TestPlatform {
