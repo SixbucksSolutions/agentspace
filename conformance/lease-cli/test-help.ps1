@@ -66,6 +66,24 @@ try {
   $r = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--project', 'x', '--ttl=-h')
   $p = Get-ConformanceErrorProblems -Run $r -Code invalid_value -Field ttl
   Complete-ConformanceCheck -Name "lease-api.md#command-lines: $(Format-ConformanceLine @('lease', 'create', '--project', 'x', '--ttl=-h')) takes -h as the value, so the TTL is refused" -Problems $p
+  # create's help holds the three parts that changed in v0.12, byte for byte, written out here from lease-api.md's
+  # "Three parts of this help changed in v0.12" (D93; pin P24) and not read from the doc, so that a doc and a program
+  # that drifted together would still be caught. Each part is its lines, joined with a line feed.
+  $v012Parts = @(
+    @('  --platform <os/arch>  Default linux/arm64. Also accepts aarch64 for arm64,', '                        and x86_64 for amd64.'),
+    @('  --profile <name>      Default agent-linux, or agent-windows on windows/amd64.', '                        Accepts name or name@version.'),
+    @('In v2 only these can be met: linux/arm64 and linux/amd64 with agent-linux,', 'windows/amd64 with agent-windows, and the sizes s, m, l and xl on each.', 'Any other well-formed value gives an unsatisfiable lease, never a substitute.', 'So does a plan whose busiest turn, or the turn --turn names, no size holds.')
+  )
+  $r = Invoke-AgentspaceCli -ConformanceHome $h -Arguments @('lease', 'create', '--help')
+  $p = [System.Collections.Generic.List[string]]::new()
+  foreach ($part in $v012Parts) {
+    $want = ($part -join "`n") + "`n"
+    if (-not ([string]$r.Stdout).Contains($want)) { $p.Add("The help lacks this part, byte for byte: $(ConvertTo-ConformanceMasked ($part[0]))") }
+  }
+  foreach ($old in 'Default linux/arm64. Also accepts aarch64 for arm64.', 'Default agent-linux. Accepts name or name@version.', 'In v2 only linux/arm64, agent-linux and the sizes s, m, l and xl can be met.') {
+    if (([string]$r.Stdout).Contains($old)) { $p.Add("The help still holds the part v0.12 replaced: $old") }
+  }
+  Complete-ConformanceCheck -Name "lease-api.md#agentspace-lease-create: create's help holds the three parts v0.12 changed, written out byte for byte" -Problems $p
 } catch {
   Write-ConformanceResult -Name 'test-help.ps1: The check ran to its end without an unexpected error' -Status FAIL -Reason "$(ConvertTo-ConformanceMasked $_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
 } finally {

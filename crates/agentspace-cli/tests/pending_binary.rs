@@ -654,6 +654,9 @@ fn create_for_a_project_with_no_host_that_is_not_listed_answers_no_capacity() {
     );
 
     // An unsupported request lists its unsupported reasons alone, and writes no registry.
+    // windows/arm64 stays unsupported in v0.12 (D98); windows/amd64 is supported, so a project the
+    // list does not name gets no_capacity there, as on linux/arm64 (driver.md, Where it places a
+    // lease).
     let t = Throwaway::new();
     let run = t.run(&[
         "lease",
@@ -662,6 +665,28 @@ fn create_for_a_project_with_no_host_that_is_not_listed_answers_no_capacity() {
         "unlisted",
         "--platform",
         "windows/amd64",
+    ]);
+    let doc = stdout_doc(&run);
+    assert_eq!(doc["state"], "unsatisfiable");
+    assert_eq!(doc["profile"], "agent-windows");
+    assert_eq!(
+        doc["reasons"],
+        json!([{
+            "code": "no_capacity",
+            "message": "No capacity can be found for project 'unlisted': it has no host and is not on agentspace's project list."
+        }])
+    );
+    t.assert_not_started();
+    assert!(t.read("hosts.json").is_none());
+
+    let t = Throwaway::new();
+    let run = t.run(&[
+        "lease",
+        "create",
+        "--project",
+        "unlisted",
+        "--platform",
+        "windows/arm64",
     ]);
     let doc = stdout_doc(&run);
     let codes: Vec<&str> = doc["reasons"]

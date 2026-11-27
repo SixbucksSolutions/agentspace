@@ -316,7 +316,6 @@ fn a_pending_records_other_members_do_not_matter() {
     odd.created_at = "1999-01-01T00:00:00Z".to_string();
     odd.ttl_seconds = 60;
     odd.id = "not an id".to_string();
-    odd.platform = "windows/amd64".to_string();
     odd.profile = "other".to_string();
     odd.expires_at = Some("2000-01-01T00:00:00Z".to_string());
     odd.released_at = Some("2000-01-02T00:00:00Z".to_string());
@@ -507,7 +506,7 @@ mod reasons {
 
     #[test]
     fn an_unsupported_platform_with_a_supported_size_lists_the_platform_alone() {
-        // lease-api.md, Size, and driver.md, pin P9: `windows/amd64` with size `l` lists
+        // lease-api.md, Size, and driver.md, pin P9: `windows/arm64` with size `l` lists
         // `unsupported_platform` alone; a size is judged on its own.
         let (fx, detach) = world();
         for size in SIZES {
@@ -515,7 +514,7 @@ mod reasons {
                 &fx,
                 &detach,
                 "swimcoach",
-                "windows/amd64",
+                "windows/arm64",
                 "agent-linux",
                 size,
             );
@@ -527,14 +526,14 @@ mod reasons {
 
     #[test]
     fn an_unsupported_platform_with_xxl_lists_the_platform_then_the_size() {
-        // driver.md, Z2: with `--platform windows/amd64` as well, the reasons are
+        // driver.md, Z2: with `--platform windows/arm64` as well, the reasons are
         // `unsupported_platform` then `unsupported_size`, in the contract's order.
         let (fx, detach) = world();
         let reasons = unsatisfiable(
             &fx,
             &detach,
             "swimcoach",
-            "windows/amd64",
+            "windows/arm64",
             "agent-linux",
             "xxl",
         );
@@ -550,7 +549,7 @@ mod reasons {
             &fx,
             &detach,
             "swimcoach",
-            "linux/amd64",
+            "windows/arm64",
             "agent-linux@3",
             "xxl",
         );

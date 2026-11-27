@@ -1356,6 +1356,69 @@ fn placed(call: &Call) -> (String, u32) {
 }
 
 #[test]
+fn a_board_lease_gets_its_platforms_default_profile_as_a_plan_file_lease_does() {
+    // lease-api.md, Profile: "The default is the platform's whether or not a plan is given, from
+    // --plan or --epic" (D93). The same plan from the board and from a file asks the driver for
+    // the same platform and profile.
+    let cases = [
+        (vec![], "linux/arm64", "agent-linux"),
+        (
+            vec!["--platform", "linux/amd64"],
+            "linux/amd64",
+            "agent-linux",
+        ),
+        (
+            vec!["--platform", "windows/amd64"],
+            "windows/amd64",
+            "agent-windows",
+        ),
+        (
+            vec!["--platform", "windows/arm64"],
+            "windows/arm64",
+            "agent-linux",
+        ),
+        (
+            vec!["--platform", "windows/amd64", "--profile", "agent-linux"],
+            "windows/amd64",
+            "agent-linux",
+        ),
+    ];
+    let rig = Rig::new();
+    let file = rig.plan_file(&plan_a());
+    let mut problems = Vec::new();
+    for (more, platform, profile) in cases {
+        rig.h.clear();
+        let mut from_file = vec!["--plan", file.as_str()];
+        from_file.extend_from_slice(&more);
+        let a = rig.create(&from_file).lease_doc();
+        let b = rig.board_create(&more).lease_doc();
+        for (src, doc) in [("file", &a), ("board", &b)] {
+            if doc["platform"] != platform || doc["profile"] != profile {
+                problems.push(format!(
+                    "{more:?} ({src}): printed {} and {}",
+                    doc["platform"], doc["profile"]
+                ));
+            }
+        }
+        let asked: Vec<(String, String)> = rig
+            .place_calls()
+            .iter()
+            .map(|c| match c {
+                Call::Place {
+                    platform, profile, ..
+                } => (platform.clone(), profile.clone()),
+                other => panic!("Not a place call: {other:?}"),
+            })
+            .collect();
+        let want = (platform.to_string(), profile.to_string());
+        if asked != [want.clone(), want] {
+            problems.push(format!("{more:?}: the driver was asked {asked:?}"));
+        }
+    }
+    assert_no_problems(problems);
+}
+
+#[test]
 fn a_board_lease_of_each_turn_and_of_the_busiest_is_what_the_same_plan_given_with_plan_gives() {
     // lease-api.md, `create`: "the same plan gives the same lease from either source (D83): the
     // same size, `sized_for` and TTL", with `--turn` given for each turn and with none (the busiest).

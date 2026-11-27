@@ -473,6 +473,9 @@ pub struct H {
     /// `H::ready_untyped` is a record that predates v0.09, which meets no size.
     pub instance_type: Option<String>,
     pub attempt: Option<i64>,
+    /// The record's `platform`, written only when it is not `linux/arm64` (state.md, The host
+    /// registry; D91, D101), with the stack name D91's table gives it.
+    pub platform: Option<String>,
 }
 
 /// D65's `m`, the default size's type, and the type the registry's implied box record holds.
@@ -486,7 +489,14 @@ impl H {
             instance_id: None,
             instance_type: None,
             attempt: None,
+            platform: None,
         }
+    }
+    /// On this platform: a host of the project on `platform`, whose record carries `platform` and
+    /// the stack name of D91's table. `linux/arm64` is the record with no `platform`.
+    pub fn on(mut self, platform: &str) -> H {
+        self.platform = (platform != "linux/arm64").then(|| platform.to_string());
+        self
     }
     /// A `ready` record at the default size's type, `m9g.xlarge` (D65's `m`).
     pub fn ready(project: &str) -> H {
@@ -542,8 +552,19 @@ pub fn hosts_text_with(box_type: Option<&str>, extra: &[H]) -> String {
     }
     out.push('}');
     for h in extra {
+        let (member, stack) = match &h.platform {
+            None => (String::new(), format!("agentspace-host-{}", h.project)),
+            Some(platform) => (
+                format!(",\"platform\":\"{platform}\""),
+                format!(
+                    "agentspace-{}-host-{}",
+                    platform.replace('/', "-"),
+                    h.project
+                ),
+            ),
+        };
         out.push_str(&format!(
-            ",{{\"project\":\"{p}\",\"stack\":\"agentspace-host-{p}\",\"state\":\"{s}\"",
+            ",{{\"project\":\"{p}\"{member},\"stack\":\"{stack}\",\"state\":\"{s}\"",
             p = h.project,
             s = h.state
         ));
@@ -577,6 +598,10 @@ pub struct L {
     pub size: String,
     /// `expires_at`, as Unix seconds: a `ready` record's, or a `released` one's that was ready.
     pub expires: Option<i64>,
+    /// The platform the lease was placed on, `linux/arm64` unless a test says otherwise.
+    pub platform: String,
+    /// The profile it was placed with: `agent-linux`, or `agent-windows` on `windows/amd64`.
+    pub profile: String,
 }
 
 /// The message of D66's `no_capacity` for a project and a size, byte for byte as lease-api.md and
@@ -598,7 +623,15 @@ impl L {
             driver: Some("ec2".to_string()),
             size: "m".to_string(),
             expires: None,
+            platform: "linux/arm64".to_string(),
+            profile: "agent-linux".to_string(),
         }
+    }
+    /// On this platform, with its default profile, as the lease CLI records it (D93).
+    pub fn on(mut self, platform: &str) -> L {
+        self.platform = platform.to_string();
+        self.profile = default_profile(platform).to_string();
+        self
     }
     /// A `ready` lease, live for another hour, placed by the `ec2` driver.
     pub fn ready(id: &str, project: &str) -> L {
@@ -645,10 +678,12 @@ impl L {
     }
     pub fn json(&self) -> String {
         let mut out = format!(
-            "{{\"id\":\"{}\",\"project\":\"{}\",\"state\":\"{}\",\"platform\":\"linux/arm64\",\"profile\":\"agent-linux\",\"size\":\"{}\",\"ttl_seconds\":{},\"created_at\":\"{}\"",
+            "{{\"id\":\"{}\",\"project\":\"{}\",\"state\":\"{}\",\"platform\":\"{}\",\"profile\":\"{}\",\"size\":\"{}\",\"ttl_seconds\":{},\"created_at\":\"{}\"",
             self.id,
             self.project,
             self.state,
+            self.platform,
+            self.profile,
             self.size,
             self.ttl,
             iso(self.created_at)
@@ -658,8 +693,9 @@ impl L {
         }
         if self.state == "ready" {
             out.push_str(&format!(
-                ",\"ssh\":{{\"host_alias\":\"{}\",\"user\":\"ubuntu\"}}",
-                alias_for(&self.project, &self.id)
+                ",\"ssh\":{{\"host_alias\":\"{}\",\"user\":\"{}\"}}",
+                alias_for(&self.project, &self.id),
+                login_user_of(&self.platform)
             ));
         }
         if self.state == "unsatisfiable" {
@@ -778,3 +814,190 @@ pub fn plant_foreign_alias(fx: &Fx, project: &str, id: &str) -> Vec<u8> {
 pub fn expires_of(record: &serde_json::Value) -> i64 {
     epoch_of(record["expires_at"].as_str().expect("expires_at is text"))
 }
+
+// ---- Platforms (E0.12-T03-S01, #0254) ---------------------------------------------------------------
+
+/// The login user of a platform, from driver.md, What it supports: `agent` on `windows/amd64`, and
+/// `ubuntu` on both Linux platforms.
+pub fn login_user_of(platform: &str) -> &'static str {
+    if platform == "windows/amd64" {
+        "agent"
+    } else {
+        "ubuntu"
+    }
+}
+
+/// The profile a platform's lease has when none was named (lease-api.md, Profile).
+pub fn default_profile(platform: &str) -> &'static str {
+    if platform == "windows/amd64" {
+        "agent-windows"
+    } else {
+        "agent-linux"
+    }
+}
+
+/// A host's key name in agentspace's `known_hosts`, from D91's table: `agentspace-host.<project>`
+/// on `linux/arm64` and `agentspace-host.<project>.<os>-<arch>` on any other platform.
+pub fn host_key_name(project: &str, platform: &str) -> String {
+    if platform == "linux/arm64" {
+        format!("agentspace-host.{project}")
+    } else {
+        format!("agentspace-host.{project}.{}", platform.replace('/', "-"))
+    }
+}
+
+/// The alias file's bytes after the owner mark for a lease on a host that is not the box, on
+/// `platform`: the user is the platform's, and the host-key name is the host's own (state.md, A
+/// lease alias for a host that is not the box; D91).
+pub fn expected_alias_tail_on(fx: &Fx, id: &str, project: &str, platform: &str) -> String {
+    let home = fx.ctx.home.display().to_string();
+    let key = alias_path(&format!("{home}\\.agentspace\\leases\\{id}\\id_ed25519"));
+    let cert = alias_path(&format!(
+        "{home}\\.agentspace\\leases\\{id}\\id_ed25519-cert.pub"
+    ));
+    let alias = alias_for(project, id);
+    let proxy = match &fx.ctx.proxy_override {
+        Some(line) => line.replace('%', "%%"),
+        None => format!(
+            "\"{}\" {alias}",
+            fx.bin.join("agentspace-ssh-proxy.exe").display()
+        )
+        .replace('%', "%%"),
+    };
+    let known = alias_path(&format!("{home}\\.agentspace\\known_hosts"));
+    let name = host_key_name(project, platform);
+    let user = login_user_of(platform);
+    format!(
+        "Host {alias}\n  User {user}\n  IdentityFile \"{key}\"\n  CertificateFile \"{cert}\"\n  IdentitiesOnly yes\n  HostKeyAlias {name}\n  UserKnownHostsFile \"{known}\"\n  StrictHostKeyChecking yes\n  ProxyCommand {proxy}\n  ServerAliveInterval 30\n  ServerAliveCountMax 4\n  RemoteForward 127.0.0.1:8811 127.0.0.1:8811\n  RemoteForward 127.0.0.1:53147 127.0.0.1:53147\n"
+    )
+}
+
+/// The lease's alias file holds the owner mark, then exactly the form for a host that is not the
+/// box on `platform`, byte for byte.
+#[track_caller]
+pub fn assert_alias_bytes_on(fx: &Fx, id: &str, project: &str, platform: &str) {
+    let text = fs::read_to_string(fx.alias_file_of(project, id)).expect("The alias file exists");
+    let (first, rest) = text.split_once('\n').expect("The alias file has lines");
+    assert!(
+        first.starts_with(&format!("# agentspace lease {id}; ")) && !first.contains('\r'),
+        "The first line is not the owner mark"
+    );
+    assert_eq!(
+        rest,
+        expected_alias_tail_on(fx, id, project, platform),
+        "The alias file's bytes after the owner mark, on {platform}"
+    );
+}
+
+/// One entry of the project list a test writes.
+pub struct PE {
+    pub name: String,
+    /// `None` is an entry with no `platforms` member, which approves `linux/arm64` alone.
+    pub platforms: Option<Vec<String>>,
+}
+
+impl PE {
+    /// An entry with no `platforms`.
+    pub fn plain(name: &str) -> PE {
+        PE {
+            name: name.to_string(),
+            platforms: None,
+        }
+    }
+    /// An entry whose `platforms` lists exactly these.
+    pub fn approving(name: &str, platforms: &[&str]) -> PE {
+        PE {
+            name: name.to_string(),
+            platforms: Some(platforms.iter().map(|p| p.to_string()).collect()),
+        }
+    }
+    fn json(&self) -> String {
+        let mut out = format!("{{\"name\":\"{}\",\"approved\":\"2026-11-20\"", self.name);
+        if let Some(platforms) = &self.platforms {
+            let items: Vec<String> = platforms
+                .iter()
+                .map(|p| format!("{{\"platform\":\"{p}\",\"approved\":\"2026-11-26\"}}"))
+                .collect();
+            out.push_str(&format!(",\"platforms\":[{}]", items.join(",")));
+        }
+        out.push('}');
+        out
+    }
+}
+
+impl Fx {
+    /// Writes `projects.json` with these entries, in state.md's form.
+    pub fn write_project_entries(&self, entries: &[PE]) {
+        let items: Vec<String> = entries.iter().map(PE::json).collect();
+        fs::create_dir_all(agentspace_hosts::agentspace_dir(&self.home)).unwrap();
+        fs::write(
+            agentspace_hosts::projects_path(&self.home),
+            format!("{{\"version\":0,\"projects\":[{}]}}\n", items.join(",")).as_bytes(),
+        )
+        .unwrap();
+    }
+
+    /// The registry's record of `project` on `platform`, read through agentspace-hosts.
+    pub fn host_on(&self, project: &str, platform: &str) -> Option<agentspace_hosts::Host> {
+        let hosts = agentspace_hosts::read(&self.home).expect("The registry reads");
+        agentspace_hosts::host_for_keyed(&hosts, &agentspace_hosts::HostKey::new(project, platform))
+            .cloned()
+    }
+
+    /// Places a request for `project` on `platform` with `profile` and `size`, for the ID `id`.
+    pub fn place_on(
+        &self,
+        driver: &Ec2Driver,
+        project: &str,
+        id: &str,
+        platform: &str,
+        profile: &str,
+        size: &str,
+    ) -> Result<Placed, Failure> {
+        use agentspace_driver_api::Driver;
+        driver.place(
+            &self.ctx,
+            &self.request_for(project, id, platform, profile, size, 3600),
+        )
+    }
+
+    /// Places a request for `project` on `platform` with that platform's default profile.
+    pub fn place_default_on(
+        &self,
+        driver: &Ec2Driver,
+        project: &str,
+        id: &str,
+        platform: &str,
+        size: &str,
+    ) -> Result<Placed, Failure> {
+        self.place_on(
+            driver,
+            project,
+            id,
+            platform,
+            default_profile(platform),
+            size,
+        )
+    }
+}
+
+/// The arguments a run is started with: the three of `linux/arm64`'s, and, off `linux/arm64`, the
+/// five that add `-Platform` and the platform (driver.md, Starting a provisioning run).
+pub fn run_args(project: &str, platform: &str) -> Vec<String> {
+    let mut args = vec![
+        "provision".to_string(),
+        "-Host".to_string(),
+        project.to_string(),
+    ];
+    if platform != "linux/arm64" {
+        args.push("-Platform".to_string());
+        args.push(platform.to_string());
+    }
+    args
+}
+
+/// `<u:s>` to `<u:xl>` of driver.md's v0.12 cases, `m8a.large` to `m8a.4xlarge`.
+pub const U_S: &str = "m8a.large";
+pub const U_M: &str = "m8a.xlarge";
+pub const U_L: &str = "m8a.2xlarge";
+pub const U_XL: &str = "m8a.4xlarge";

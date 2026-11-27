@@ -609,10 +609,10 @@ fn sized_for_is_printed_as_create_set_it_in_every_state_by_every_command() {
     h.script_place(Ok(Placed::Unsatisfiable {
         reasons: vec![reason(
             "unsupported_platform",
-            "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only.",
+            "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.",
         )],
     }));
-    let c = create_plan(&lab, &plan_c, &["--platform", "windows/amd64"]).lease_doc();
+    let c = create_plan(&lab, &plan_c, &["--platform", "windows/arm64"]).lease_doc();
     let d = create_plan(&lab, &plan_d, &[]).lease_doc();
     let e = create_plan(&lab, &plan_e, &["--ttl", "1m"]).lease_doc();
     let f_created = create_plan(&lab, &plan_f, &[]).lease_doc();
@@ -843,6 +843,56 @@ fn the_other_flags_apply_to_a_plan_lease_as_they_do_without_a_plan() {
 }
 
 #[test]
+fn a_plan_lease_gets_its_platforms_default_profile_as_a_size_lease_does() {
+    // lease-api.md, Profile: "The default is the platform's whether or not a plan is given, from
+    // --plan or --epic" (D93). The driver is asked for the profile the CLI filled in.
+    let cases = [
+        (vec![], "linux/arm64", "agent-linux"),
+        (
+            vec!["--platform", "linux/amd64"],
+            "linux/amd64",
+            "agent-linux",
+        ),
+        (
+            vec!["--platform", "windows/amd64"],
+            "windows/amd64",
+            "agent-windows",
+        ),
+        (
+            vec!["--platform", "Windows/X86_64"],
+            "windows/amd64",
+            "agent-windows",
+        ),
+        (
+            vec!["--platform", "windows/arm64"],
+            "windows/arm64",
+            "agent-linux",
+        ),
+        (
+            vec!["--platform", "windows/amd64", "--profile", "agent-linux"],
+            "windows/amd64",
+            "agent-linux",
+        ),
+    ];
+    for (more, platform, profile) in cases {
+        let (lab, h) = installed_lab();
+        let doc = create_plan(&lab, &plan_with_agents(6), &more).lease_doc();
+        assert_eq!(doc["platform"], platform, "{more:?}");
+        assert_eq!(doc["profile"], profile, "{more:?}");
+        let calls = place_calls(&h);
+        assert_eq!(calls.len(), 1, "{more:?}");
+        assert!(
+            matches!(
+                &calls[0],
+                Call::Place { platform: p, profile: f, size, .. }
+                    if p == platform && f == profile && size == "m"
+            ),
+            "{more:?}: {calls:?}"
+        );
+    }
+}
+
+#[test]
 fn a_plan_that_fits_is_judged_by_the_driver_as_a_size_lease_of_the_size_picked() {
     // lease-api.md, `create`: no driver is given the plan, and a plan that fits but asks for what
     // cannot be met gets sized_for, the size picked, and the reasons a --size lease would get.
@@ -850,11 +900,11 @@ fn a_plan_that_fits_is_judged_by_the_driver_as_a_size_lease_of_the_size_picked()
     let reasons = vec![
         reason(
             "unsupported_platform",
-            "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only.",
+            "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.",
         ),
         reason(
             "unsupported_profile",
-            "Profile 'other' is not supported; v0 supports agent-linux with no version only.",
+            "Profile 'other' is not supported on platform 'windows/arm64'; agentspace supports agent-linux on linux/arm64 and linux/amd64, and agent-windows on windows/amd64, each with no version only.",
         ),
     ];
     h.script_place(Ok(Placed::Unsatisfiable { reasons }));
@@ -862,7 +912,7 @@ fn a_plan_that_fits_is_judged_by_the_driver_as_a_size_lease_of_the_size_picked()
     let doc = create_plan(
         &lab,
         &plan_with_agents(9),
-        &["--platform", "windows/amd64", "--profile", "other"],
+        &["--platform", "windows/arm64", "--profile", "other"],
     )
     .lease_doc();
     assert_eq!(doc["state"], "unsatisfiable");
@@ -955,7 +1005,7 @@ fn plan_too_large_is_alone_whatever_the_platform_the_profile_or_the_ttl() {
         (
             vec!["--platform", "windows/amd64"],
             "windows/amd64",
-            "agent-linux",
+            "agent-windows",
             28800,
         ),
         (
@@ -2564,7 +2614,7 @@ fn a_command_line_with_no_plan_prints_documents_that_validate_against_v0_and_v1(
         reasons: vec![
             reason(
                 "unsupported_platform",
-                "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only.",
+                "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.",
             ),
             reason(
                 "unsupported_size",
@@ -2579,7 +2629,7 @@ fn a_command_line_with_no_plan_prints_documents_that_validate_against_v0_and_v1(
             "--project",
             "swim",
             "--platform",
-            "windows/amd64",
+            "windows/arm64",
             "--size",
             "xxl",
         ]),

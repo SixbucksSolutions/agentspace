@@ -226,7 +226,7 @@ fn create_records_an_unsatisfiable_lease_with_exit_0() {
     let reasons = vec![
         reason(
             "unsupported_platform",
-            "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only.",
+            "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64.",
         ),
         reason(
             "unsupported_size",
@@ -240,16 +240,16 @@ fn create_records_an_unsatisfiable_lease_with_exit_0() {
         "--project",
         "swim",
         "--platform",
-        "Windows/AMD64",
+        "Windows/AARCH64",
         "--size",
         "xxl",
     ]);
     let doc = ran.lease_doc();
     let want = json!({
-        "id": ID1, "project": "swim", "state": "unsatisfiable", "platform": "windows/amd64",
+        "id": ID1, "project": "swim", "state": "unsatisfiable", "platform": "windows/arm64",
         "profile": "agent-linux", "size": "xxl", "ttl_seconds": 28800, "created_at": fmt_time(NOW),
         "reasons": [
-            {"code": "unsupported_platform", "message": "Platform 'windows/amd64' is not supported; v0 supports linux/arm64 only."},
+            {"code": "unsupported_platform", "message": "Platform 'windows/arm64' is not supported; agentspace supports linux/arm64, linux/amd64 and windows/amd64."},
             {"code": "unsupported_size", "message": "Size 'xxl' is not supported; v0 supports sizes s, m, l and xl."},
         ],
     });
