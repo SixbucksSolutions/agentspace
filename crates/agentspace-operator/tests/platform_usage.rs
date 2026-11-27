@@ -348,8 +348,9 @@ fn the_argument_after_platform_is_its_value_whatever_it_looks_like() {
         "status -Host x -Platform -Host",
         &platform_not_a_pair("-Host"),
     );
-    // `up` is the value, so no command is given.
-    assert_line_fails("-Platform up", &no_command());
+    // `up` is the value, and it is refused as one when it is read, before the line is seen to
+    // hold no command, which is found only once the whole line is read.
+    assert_line_fails("-Platform up", &platform_not_a_pair("up"));
     assert_line_fails("-Platform linux/amd64 -Host x", &no_command());
     // And a command after the value is the command.
     assert_line_fails("-Platform linux/amd64 status", PLATFORM_NEEDS_HOST);
