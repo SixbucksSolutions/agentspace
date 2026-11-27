@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use agentspace_box::{Clock, InstanceIdCache};
 use agentspace_ca::CaEnv;
-use agentspace_hosts::{BOX_PROJECT, Host as Record, HostState, Hosts, Target, host_alias, is_box};
+use agentspace_hosts::{Host as Record, HostKey, HostState, Hosts, Target, host_for_keyed, is_box};
 use agentspace_operator_api::{
-    Aws, Call, CallerFailure, Context, Failure, Output, Remote, SIGN_IN_MESSAGE, Say,
+    Aws, Call, CallerFailure, Context, Failure, HostPlatform, Output, Remote, SIGN_IN_MESSAGE, Say,
 };
 use serde_json::Value;
 
@@ -106,6 +106,98 @@ pub trait Reach {
         aws: &dyn Aws,
         remote: &dyn Remote,
     ) -> Result<(), Failure>;
+
+    /// The platform seam's rows for a normalized platform (operator.md, The platform seam), or
+    /// `None` for one agentspace does not support. The default is
+    /// [`agentspace_platforms::for_platform`], the one function that picks a host's rows (D101);
+    /// a test overrides it with a stand-in.
+    fn seam(&self, platform: &str) -> Option<&dyn HostPlatform> {
+        agentspace_platforms::for_platform(platform)
+    }
+
+    /// The operator's key, certificate and alias for the host `key`, which is not the box. The
+    /// default calls [`Reach::access`] for a `linux/arm64` host, and fails as not built for any
+    /// other, so a stand-in that implements only the project's methods keeps their meaning.
+    fn access_keyed(&self, ctx: &Context, env: &CaEnv, key: &HostKey) -> Result<(), Failure> {
+        if key.is_linux_arm64() {
+            self.access(ctx, env, &key.project)
+        } else {
+            Err(not_built())
+        }
+    }
+
+    /// `sync` of the host `key`. The default calls [`Reach::sync`] with the `linux/arm64` host's
+    /// [`Target`], and fails as not built for any other platform: a bare `Target` names a project
+    /// alone, so it MUST NOT carry a host of another platform (#183's review).
+    fn sync_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        match linux_arm64_target(key) {
+            Some(target) => self.sync(ctx, env, target, say, aws, remote),
+            None => Err(not_built()),
+        }
+    }
+
+    /// `deploy` of the host `key`, with `-InstanceType` when it was given; the default as
+    /// [`Reach::sync_keyed`]'s, over [`Reach::deploy`].
+    #[allow(clippy::too_many_arguments)]
+    fn deploy_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        instance_type: Option<&str>,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        match linux_arm64_target(key) {
+            Some(target) => self.deploy(ctx, env, target, instance_type, say, aws, remote),
+            None => Err(not_built()),
+        }
+    }
+
+    /// `bootstrap` of the host `key`; the default as [`Reach::sync_keyed`]'s, over
+    /// [`Reach::bootstrap`].
+    fn bootstrap_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        match linux_arm64_target(key) {
+            Some(target) => self.bootstrap(ctx, env, target, say, aws, remote),
+            None => Err(not_built()),
+        }
+    }
+
+    /// `provision -Host <project> [-Platform <platform>]` of the host `key`. The default calls
+    /// [`Reach::provision`] with the project for a `linux/arm64` host, and fails as not built for
+    /// any other platform.
+    fn provision_keyed(
+        &self,
+        ctx: &Context,
+        env: &CaEnv,
+        key: &HostKey,
+        say: &dyn Say,
+        aws: &dyn Aws,
+        remote: &dyn Remote,
+    ) -> Result<(), Failure> {
+        if key.is_linux_arm64() {
+            self.provision(ctx, env, &key.project, say, aws, remote)
+        } else {
+            Err(not_built())
+        }
+    }
     /// The state folder whose `leases.json` `status -All` reads: `AGENTSPACE_STATE_DIR` when it is
     /// set and not empty, made full, else `<home>\.agentspace` (operator.md, Environment
     /// variables). The default is the home's, for a stand-in that moves nothing.
@@ -150,15 +242,52 @@ pub struct Parts<'a> {
     pub reach: &'a dyn Reach,
 }
 
+/// The failure of a step whose platform's rows are not built yet: the seam skeleton's own
+/// (`agentspace_platforms::NOT_BUILT`), so a host of a platform no step serves yet fails before it
+/// is reached, rather than through another platform's step.
+pub(crate) fn not_built() -> Failure {
+    Failure {
+        message: agentspace_platforms::NOT_BUILT.to_string(),
+        caller: CallerFailure::NotAvailable,
+    }
+}
+
+/// The `linux/arm64` host `key` as a bare [`Target`], which names a project alone, or `None` for a
+/// host of any other platform, which a `Target` cannot name (#183's review). The box is swimcoach's
+/// `linux/arm64` host (D91).
+pub(crate) fn linux_arm64_target(key: &HostKey) -> Option<Target<'_>> {
+    if !key.is_linux_arm64() {
+        None
+    } else if key.is_box() {
+        Some(Target::Box)
+    } else {
+        Some(Target::Host(&key.project))
+    }
+}
+
+/// Whether the host's own steps are today's Linux steps: both Linux platforms share every step the
+/// operator runs itself (operator.md, The platform seam: "the two Linux columns share every row but
+/// the image, a new stack's instance type and `GOARCH`").
+// Phase A of E0.12-T03-S02: until agentspace-platforms' Linux rows are built (E0.12-T03-S03), a
+// Linux host keeps today's code byte for byte, and only another platform takes its rows from the
+// seam. Phase B takes every platform's rows from the seam and removes this.
+fn on_linux(key: &HostKey) -> bool {
+    key.platform.starts_with("linux/")
+}
+
 /// A host as a command sees it: its record, and what a command takes from it (operator.md, From
 /// the command line, "What a command takes from its host").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostRef {
     pub project: String,
+    /// The host's key, its project and its platform (D91): every step that names the host's folder,
+    /// alias, stack or record takes its name from it, never from the project alone.
+    pub key: HostKey,
     /// The record's `stack`: `agentbox` for the box.
     pub stack: String,
     /// The alias the host's own ssh, scp and push use: `agentspace` for the box (the user's own
-    /// entry), `agentspace-host.<project>` for every other host.
+    /// entry), `agentspace-host.<host name>` for every other host: `agentspace-host.<project>` on
+    /// `linux/arm64`, and `agentspace-host.<project>.<os>-<arch>` on any other platform (D91).
     pub alias: String,
     pub is_box: bool,
     pub state: HostState,
@@ -169,50 +298,63 @@ pub struct HostRef {
 impl HostRef {
     fn from_record(record: &Record) -> HostRef {
         let box_host = is_box(record);
+        let key = record.key();
         HostRef {
             project: record.project.clone(),
             stack: record.stack.clone(),
             alias: if box_host {
                 DEFAULT_ALIAS.to_string()
             } else {
-                host_alias(&record.project)
+                key.operator_alias()
             },
+            key,
             is_box: box_host,
             state: record.state,
             instance_id: record.instance_id.clone(),
         }
     }
 
-    /// The host as `sync`, `deploy` and `bootstrap` name it.
-    fn target(&self) -> Target<'_> {
-        if self.is_box {
-            Target::Box
-        } else {
-            Target::Host(&self.project)
-        }
+    /// The host's name: `<project>` on `linux/arm64`, `<project>.<os>-<arch>` on any other
+    /// platform (operator.md, A host's platform and its names).
+    pub fn host_name(&self) -> String {
+        self.key.host_name()
     }
 
-    /// The host as the token push names it for its stamp: `None` for the box.
-    fn stamp_host(&self) -> Option<&str> {
-        (!self.is_box).then_some(self.project.as_str())
+    /// The host as the token push names it for its stamp: `None` for the box, else the host's
+    /// folder's name, which is its project on `linux/arm64`.
+    fn stamp_host(&self) -> Option<String> {
+        (!self.is_box).then(|| self.key.folder_name())
     }
 }
 
-/// The record `-Host <project>` names, or the box's without `-Host`. A project with no record
-/// fails before any program starts or any AWS call is made (operator.md, From the command line).
-fn resolve(hosts: &Hosts, project: Option<&str>) -> Result<HostRef, Failure> {
-    let project = project.unwrap_or(BOX_PROJECT);
-    hosts
-        .hosts
-        .iter()
-        .find(|h| h.project == project)
+/// The record of the host `key` names: `-Host`'s project, or the box's without `-Host`, on the
+/// command's platform, both compared exactly (D91). A host with no record fails before any program
+/// starts or any AWS call is made (operator.md, From the command line), and a project's host on
+/// one platform never stands in for its host on another.
+fn resolve(hosts: &Hosts, key: &HostKey) -> Result<HostRef, Failure> {
+    host_for_keyed(hosts, key)
         .map(HostRef::from_record)
         .ok_or_else(|| Failure {
-            message: format!(
-                "agentspace: Project '{project}' has no host; provision -Host {project} makes one."
-            ),
+            message: no_host_message(key),
             caller: CallerFailure::Same,
         })
+}
+
+/// `agentspace: Project '<project>' has no host; provision -Host <project> makes one.`, byte for
+/// byte on `linux/arm64`; on any other platform the host is named by its host name, and
+/// ` -Platform <platform>` follows `-Host <project>` (operator.md, From the command line, Messages;
+/// pins P12 and P44 of v0.12-T01).
+fn no_host_message(key: &HostKey) -> String {
+    let project = &key.project;
+    if key.is_linux_arm64() {
+        format!("agentspace: Project '{project}' has no host; provision -Host {project} makes one.")
+    } else {
+        format!(
+            "agentspace: Project '{}' has no host; provision -Host {project} -Platform {} makes one.",
+            key.host_name(),
+            key.platform
+        )
+    }
 }
 
 /// How a command that did not fail with a message ended: the program's exit code, 0 or 1, is
@@ -260,10 +402,11 @@ fn dispatch_command(request: &Request, parts: &Parts) -> Result<(), Failure> {
     match request.command {
         Command::Ca => return parts.reach.ca(parts.ctx, parts.ca_env, parts.say),
         Command::Provision => {
-            return parts.reach.provision(
+            // The command line gives `provision` a `-Host` always, and `-Platform` or none.
+            return parts.reach.provision_keyed(
                 parts.ctx,
                 parts.ca_env,
-                request.host.as_deref().unwrap_or(BOX_PROJECT),
+                &request.host_key(),
                 parts.say,
                 parts.aws,
                 parts.remote,
@@ -286,7 +429,7 @@ fn dispatch_command(request: &Request, parts: &Parts) -> Result<(), Failure> {
         let hosts: Vec<HostRef> = registry.hosts.iter().map(HostRef::from_record).collect();
         return all(parts, request.command, &hosts);
     }
-    let host = resolve(&registry, request.host.as_deref())?;
+    let host = resolve(&registry, &request.host_key())?;
     match request.command {
         Command::Up => up(
             parts,
@@ -296,27 +439,27 @@ fn dispatch_command(request: &Request, parts: &Parts) -> Result<(), Failure> {
         Command::Down => down(parts, &host),
         Command::Status => status(parts, &host),
         Command::Grow => grow(parts, &host, request.gib),
-        Command::Sync => parts.reach.sync(
+        Command::Sync => parts.reach.sync_keyed(
             parts.ctx,
             parts.ca_env,
-            host.target(),
+            &host.key,
             parts.say,
             parts.aws,
             parts.remote,
         ),
-        Command::Deploy => parts.reach.deploy(
+        Command::Deploy => parts.reach.deploy_keyed(
             parts.ctx,
             parts.ca_env,
-            host.target(),
+            &host.key,
             request.instance_type.as_deref(),
             parts.say,
             parts.aws,
             parts.remote,
         ),
-        Command::Bootstrap => parts.reach.bootstrap(
+        Command::Bootstrap => parts.reach.bootstrap_keyed(
             parts.ctx,
             parts.ca_env,
-            host.target(),
+            &host.key,
             parts.say,
             parts.aws,
             parts.remote,
@@ -344,18 +487,23 @@ fn all(parts: &Parts, command: Command, hosts: &[HostRef]) -> Result<(), Failure
         .then(|| status::read_leases(&lease_dir, status::unix_seconds(parts.clock.utc_now())));
     let view = leases.as_ref().and_then(|read| read.as_ref().ok());
     for host in hosts {
+        // From v0.12 the line names the host by its host name, which is its project on
+        // `linux/arm64`, so that platform's line is unchanged (pins P12 and P44 of v0.12-T01).
         parts.report.report(&format!(
             "Host      {} ({}), {}",
-            host.project,
+            host.host_name(),
             host.stack,
             host.state.as_str()
         ));
         let part = match command {
             Command::Status => {
+                // A host off `linux/arm64` gets its platform first, before anything else of its
+                // part, a failure line included (D91; pin P57 of v0.12-T01).
+                report_platform(parts, host);
                 if host.instance_id.is_none() && host.state != HostState::Ready {
                     parts.report.report("Instance  none recorded");
                     if let Some(view) = view {
-                        parts.report.report(&view.leases_line(&host.project));
+                        parts.report.report(&view.leases_line(&host.key));
                     }
                     Ok(())
                 } else {
@@ -431,14 +579,13 @@ fn cause(message: &str) -> &str {
 /// certificate and alias for it**, whether or not the push is due. A failure there is a push
 /// failure: it names its cause, skips the push and fails nothing.
 pub fn up(parts: &Parts, host: &HostRef, alias: Option<&str>) -> Result<(), Failure> {
-    let cache = HostCache::new(&parts.ctx.home, &host.project);
-    let id = agentspace_box::start_and_wait(parts.aws, parts.say, parts.clock, &cache, &host.stack)
-        .map_err(|failure| for_host(failure, host))?;
+    let cache = HostCache::keyed(&parts.ctx.home, &host.key);
+    let id = start_and_wait(parts, host, &cache).map_err(|failure| for_host(failure, host))?;
     if parts.ctx.nested {
         return Ok(());
     }
     if !host.is_box
-        && let Err(failure) = parts.reach.access(parts.ctx, parts.ca_env, &host.project)
+        && let Err(failure) = parts.reach.access_keyed(parts.ctx, parts.ca_env, &host.key)
     {
         parts.say.warning(&format!(
             "agentspace: Could not send the localswim token, because {}; the board will not work on the host this session.",
@@ -451,25 +598,51 @@ pub fn up(parts: &Parts, host: &HostRef, alias: Option<&str>) -> Result<(), Fail
         parts.say,
         &id,
         alias.unwrap_or(&host.alias),
-        host.stamp_host(),
+        host.stamp_host().as_deref(),
     );
     Ok(())
 }
 
+/// `up`'s start and wait (operator.md, Starting the box and waiting for it), for the host's stack
+/// and its record's instance ID.
+// Phase A of E0.12-T03-S02: a Linux host keeps today's `agentspace_box::start_and_wait`, whose
+// patch check is both Linux platforms' (operator.md, The platform seam). A host of another
+// platform fails as not built before any AWS call, since today's check would ask it Linux's
+// question. Phase B calls `agentspace_box::start_and_wait_on(aws, say, clock, cache, stack,
+// platform)` with the host's seam for every platform.
+fn start_and_wait(parts: &Parts, host: &HostRef, cache: &HostCache) -> Result<String, Failure> {
+    if !on_linux(&host.key) {
+        return Err(not_built());
+    }
+    agentspace_box::start_and_wait(parts.aws, parts.say, parts.clock, cache, &host.stack)
+}
+
 /// The host's instance ID: from its record, or from its stack's output when the record has none,
-/// writing it into the record then.
+/// writing it into the record then. The record is the host's own, by its key.
 fn instance_id(parts: &Parts, host: &HostRef) -> Result<String, Failure> {
-    let cache = HostCache::new(&parts.ctx.home, &host.project);
+    let cache = HostCache::keyed(&parts.ctx.home, &host.key);
     agentspace_box::instance_id(parts.aws, &cache as &dyn InstanceIdCache, &host.stack)
 }
 
-/// The host's key, certificate and alias, for a host that is not the box. The box has none: it is
-/// reached through the user's own entry and key.
+/// The host's key, certificate and alias, for a host that is not the box, by its key. The box has
+/// none: it is reached through the user's own entry and key.
 fn sign(parts: &Parts, host: &HostRef) -> Result<(), Failure> {
     if host.is_box {
         return Ok(());
     }
-    parts.reach.access(parts.ctx, parts.ca_env, &host.project)
+    parts.reach.access_keyed(parts.ctx, parts.ca_env, &host.key)
+}
+
+/// `Platform  <platform>`, for a host off `linux/arm64`, the label padded to 10 characters: part of
+/// `status`'s report, so it prints whatever `-Quiet` says, and needs no AWS call. A `linux/arm64`
+/// host, the box included, gets none, so its report is byte for byte as v0.11's (D91; pin P57 of
+/// v0.12-T01).
+fn report_platform(parts: &Parts, host: &HostRef) {
+    if !host.key.is_linux_arm64() {
+        parts
+            .report
+            .report(&format!("Platform  {}", host.key.platform));
+    }
 }
 
 /// `down` (operator.md, down): stops the host, then, for a host that is not the box, writes its
@@ -648,6 +821,9 @@ fn ssm_online(aws: &dyn Aws, id: &str) -> Result<bool, Failure> {
 /// is not the box it then writes the host's alias and signs a fresh one-hour certificate**, and a
 /// failure there fails `status` after its report.
 pub fn status(parts: &Parts, host: &HostRef) -> Result<(), Failure> {
+    // A host off `linux/arm64` gets `Platform  <platform>` first, before the five, as `status -All`
+    // prints it (pin P57 of v0.12-T01).
+    report_platform(parts, host);
     // No lease state file is read, and no `LaunchTime`: the five lines alone, as before v0.07.
     report_status(parts, host, None)?;
     sign(parts, host)
@@ -675,7 +851,7 @@ fn report_status(parts: &Parts, host: &HostRef, leases: Option<&LeaseView>) -> R
     // The `LaunchTime` is read only for a host that gets a `Guard` line, and fails its part before
     // any line prints (operator.md, status -All).
     let launch_time = match leases {
-        Some(view) if view.needs_launch_time(&host.project, &instance.state) => Some(
+        Some(view) if view.needs_launch_time(&host.key, &instance.state) => Some(
             instance
                 .launch_time
                 .as_deref()
@@ -696,7 +872,7 @@ fn report_status(parts: &Parts, host: &HostRef, leases: Option<&LeaseView>) -> R
         parts.report.report(&line);
     }
     if let Some(view) = leases {
-        for line in view.lines(&host.project, &instance.state, launch_time, &|unix| {
+        for line in view.lines(&host.key, &instance.state, launch_time, &|unix| {
             parts.reach.clock_time(unix)
         }) {
             parts.report.report(&line);
@@ -720,6 +896,20 @@ const GROW_WAIT: Duration = Duration::from_secs(10);
 const GROW_REMOTE_COMMAND: &str = "sudo -n sh -c 'dev=$(findmnt -n -o SOURCE /); \
 disk=/dev/$(lsblk -n -o PKNAME $dev); part=$(cat /sys/class/block/${dev##*/}/partition); \
 growpart $disk $part; resize2fs $dev && df -h /'";
+
+/// `grow`'s remote step for the host: the platform's online grow (operator.md, The platform seam,
+/// the online grow row), in its remote command form.
+// Phase A of E0.12-T03-S02: both Linux platforms keep today's `GROW_REMOTE_COMMAND`, byte for byte;
+// any other platform takes its rows from its seam, `grow_script` wrapped by `remote_command`, and
+// a row's failure fails `grow` with the row's message, after the volume's change, which stands.
+// Phase B takes every platform's from its seam and deletes `GROW_REMOTE_COMMAND`.
+fn grow_remote_command(parts: &Parts, host: &HostRef) -> Result<String, Failure> {
+    if on_linux(&host.key) {
+        return Ok(GROW_REMOTE_COMMAND.to_string());
+    }
+    let seam = parts.reach.seam(&host.key.platform).ok_or_else(not_built)?;
+    seam.remote_command(&seam.grow_script()?)
+}
 
 /// `grow` (operator.md, grow): grows the host's root volume by `gib` GiB, and the root filesystem
 /// with it, online when the instance is running.
@@ -750,9 +940,10 @@ pub fn grow(parts: &Parts, host: &HostRef, gib: i32) -> Result<(), Failure> {
     if instance.state == "running" {
         parts.say.progress("Growing the filesystem online...", None);
         parts.clock.sleep(GROW_WAIT);
+        let command = grow_remote_command(parts, host)?;
         let exit = parts.remote.ssh(
             &["-o", "ClearAllForwardings=yes", &host.alias],
-            Some(GROW_REMOTE_COMMAND),
+            Some(&command),
         )?;
         if exit != 0 {
             return Err(Failure {

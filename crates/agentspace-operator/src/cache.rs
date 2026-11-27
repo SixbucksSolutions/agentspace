@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use agentspace_box::{CacheRead, InstanceIdCache, cache_bytes, parse_cache};
-use agentspace_hosts::{Hosts, HostsError, hosts_lock_path, hosts_path};
+use agentspace_hosts::{HostKey, Hosts, HostsError, hosts_lock_path, hosts_path};
 use agentspace_operator_api::{CallerFailure, Failure};
 
 fn could_not_reach(message: String) -> Failure {
@@ -63,16 +63,17 @@ pub(crate) fn read_registry(home: &Path) -> Result<Hosts, Failure> {
 
 /// Changes one record's `instance_id`, and nothing else in the registry, under `hosts.lock`: the
 /// lock is held from before the read until after the file is replaced, and is never held across an
-/// AWS call. `None` removes the member. A project with no record is left alone: the operator never
-/// adds a record outside `provision`.
+/// AWS call. `None` removes the member. A host with no record is left alone: the operator never
+/// adds a record outside `provision`. The record is the host `key`'s, its project and its platform
+/// compared exactly (D91), so a project's host on one platform never takes another's ID.
 pub(crate) fn set_instance_id(
     home: &Path,
-    project: &str,
+    key: &HostKey,
     instance_id: Option<&str>,
 ) -> Result<(), Failure> {
     let held = agentspace_hosts::lock(home).map_err(|e| registry_failure(home, e))?;
     let mut hosts = read_registry(home)?;
-    let Some(record) = hosts.hosts.iter_mut().find(|h| h.project == project) else {
+    let Some(record) = hosts.hosts.iter_mut().find(|h| h.is_for(key)) else {
         return Ok(());
     };
     record.instance_id = instance_id.map(str::to_string);
@@ -86,16 +87,21 @@ pub(crate) fn set_instance_id(
 #[derive(Debug, Clone)]
 pub struct HostCache {
     home: PathBuf,
-    project: String,
+    key: HostKey,
     path: PathBuf,
 }
 
 impl HostCache {
-    /// The cache of `project`'s record, under `home`.
+    /// The cache of the record of `project`'s `linux/arm64` host, under `home`.
     pub fn new(home: &Path, project: &str) -> Self {
+        Self::keyed(home, &HostKey::linux_arm64(project))
+    }
+
+    /// The cache of the record of the host `key`, its project and its platform, under `home`.
+    pub fn keyed(home: &Path, key: &HostKey) -> Self {
         Self {
             home: home.to_path_buf(),
-            project: project.to_string(),
+            key: key.clone(),
             path: hosts_path(home),
         }
     }
@@ -114,7 +120,7 @@ impl InstanceIdCache for HostCache {
             hosts
                 .hosts
                 .into_iter()
-                .find(|h| h.project == self.project)
+                .find(|h| h.is_for(&self.key))
                 .and_then(|h| h.instance_id)
         });
         match id {
@@ -132,7 +138,7 @@ impl InstanceIdCache for HostCache {
                 self.path.display()
             )));
         };
-        set_instance_id(&self.home, &self.project, Some(&id))
+        set_instance_id(&self.home, &self.key, Some(&id))
     }
 }
 

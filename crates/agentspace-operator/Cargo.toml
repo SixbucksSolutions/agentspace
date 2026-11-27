@@ -23,6 +23,8 @@ agentspace-sync = { path = "../agentspace-sync" }
 agentspace-state = { path = "../agentspace-state" }
 # The host registry, the host a command acts on, and a host's paths (D45, D49, D55).
 agentspace-hosts = { path = "../agentspace-hosts" }
+# The platform seam's rows of a host, picked by its platform with `for_platform` alone (D101).
+agentspace-platforms = { path = "../agentspace-platforms" }
 # -Host's value is a project in the lease CLI's form (operator.md, Command line).
 agentspace-values = { path = "../agentspace-values" }
 # The operator's key and certificate, and a host's operator alias (operator.md, How the operator
