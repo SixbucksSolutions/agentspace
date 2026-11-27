@@ -6,6 +6,11 @@
 #   only as SYSTEM (S-1-5-18), and install.ps1 only as agent. Otherwise each writes
 #   `<script>: without its test seam it runs only as <account>; nothing was done`, `<script>` its file
 #   name without .ps1, and exits 1, having done nothing.
+# - agentspace-tools.ps1, which has no seam and which the patch run starts as SYSTEM, gets the same
+#   guard, unconditional, with the same message form (architect, 2026-11-26, for v0.12-T03, pin P17,
+#   F5).
+# - install.ps1's agent is the whole account, <the local machine's name>\agent, compared
+#   case-insensitively, never any \agent: a domain's agent is refused (pin P17, F7).
 # - On a host, shutdown and sshd are named by full path, C:\Windows\System32\shutdown.exe and
 #   C:\Windows\System32\OpenSSH\sshd.exe, never by bare name.
 #
@@ -15,9 +20,12 @@
 #    before the guard there are only helper definitions, the seam's detection in its exact form
 #    ($seamNames holding the row's names in the table's order, $seamSet, $underSeam), and statements
 #    that can have no effect; the guard is the first top-level `if` whose condition is the account
-#    test in its exact form, with no else, and whose body is pure and ends `exit 1`. A statement is
-#    pure when every command in it is Where-Object or a helper defined before the guard whose body is
-#    pure, every method it calls is [Environment]::GetEnvironmentVariable, [string]::IsNullOrEmpty,
+#    test in its exact form, with no else, and whose body is pure and ends `exit 1`. A script with no
+#    seam, agentspace-tools.ps1 alone (pin P17), is held to a variant: no seam's detection, none of
+#    its three variables set before the guard, and the account test alone as the guard's condition,
+#    with no $underSeam in it. A statement is pure when every command in it is Where-Object or a
+#    helper defined before the guard whose body is pure, every method it calls is
+#    [Environment]::GetEnvironmentVariable, [string]::IsNullOrEmpty, [string]::Equals,
 #    [System.Security.Principal.WindowsIdentity]::GetCurrent, EndsWith or [Console]::Error.WriteLine,
 #    it redirects nothing to a file, uses no & or dot-source, and assigns only plain variables. So
 #    nothing before the guard writes a file, makes a folder, starts a program, logs a line, or calls
@@ -48,6 +56,14 @@
 #    unless it is the full path. The one string kept is a *-Service cmdlet's argument, which names the
 #    sshd service and starts no program.
 # 5. Full path: the scripts that start shutdown or sshd on a host name each by its full path.
+# 6. Account (pin P17, F7): install.ps1 is never run, as anyone. Its account test, the one definition of
+#    the helper its guard calls, a pure top-level statement before the guard, is taken from its parse
+#    tree alone, and evaluated in a fresh pwsh child behind the tripwires, each account name passed in
+#    as data: OTHERDOMAIN\agent, agent, <computer name>\agentx, <computer name>\Administrator and
+#    <computer name>X\agent are refused, and <computer name>\agent is accepted, in any case. The child
+#    builds every name holding the computer name itself, from [Environment]::MachineName, and prints
+#    only each case's label and its answer, so the name is never printed; a reason quoting the child's
+#    output goes through ConvertTo-ConformanceMasked. A plant proof runs with -Only '^Account'.
 #
 # The PATH stand-in for shutdown.exe that windows-test-common.ps1 puts on a child's PATH stays as a
 # third net, behind the tripwires; no case's verdict relies on it. The script's folder is -ScriptDir
@@ -68,6 +84,8 @@ $guarded = [ordered]@{
   'agentspace-patch' = @{ Account = 'SYSTEM'; Seam = @('AGENTSPACE_PATCH_STATE', 'AGENTSPACE_PATCH_FACTS') }
   'agentspace-boot' = @{ Account = 'SYSTEM'; Seam = @('AGENTSPACE_IDLE_STATE', 'AGENTSPACE_PATCH_STATE') }
   'install' = @{ Account = 'agent'; Seam = @('AGENTSPACE_INSTALL_ONLY', 'AGENTSPACE_SSHD_CONFIG', 'AGENTSPACE_SSHD_TEST_PROGRAM') }
+  # No seam (pin P17): its guard is unconditional.
+  'agentspace-tools' = @{ Account = 'SYSTEM'; Seam = @() }
 }
 $allScripts = @('agentspace-boot.ps1', 'agentspace-idle-check.ps1', 'agentspace-patch-check.ps1', 'agentspace-patch.ps1', 'agentspace-tools.ps1', 'bootstrap.ps1', 'install.ps1', 'localswim.ps1')
 $fullShutdown = 'C:\Windows\System32\shutdown.exe'
@@ -76,8 +94,14 @@ $fullSshd = 'C:\Windows\System32\OpenSSH\sshd.exe'
 # The account test each guard's condition MUST be, whitespace aside.
 $guardConditions = @{
   SYSTEM = '-not $underSeam -and [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne ''S-1-5-18'''
-  agent = '-not $underSeam -and -not [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.EndsWith(''\agent'', [StringComparison]::OrdinalIgnoreCase)'
+  agent = '-not $underSeam -and -not (Test-AgentspaceHostAgent ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name))'
 }
+# The same for a script with no seam, whose guard has no $underSeam to test.
+$guardConditionsUnseamed = @{
+  SYSTEM = '[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne ''S-1-5-18'''
+}
+# The helper install.ps1's guard calls, whose definition case 6 evaluates (pin P17).
+$accountHelper = 'Test-AgentspaceHostAgent'
 $seamSetText = '$seamSet = @($seamNames | Where-Object { -not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) })'
 $underSeamText = '$underSeam = ($seamSet.Count -eq $seamNames.Count)'
 
@@ -101,6 +125,7 @@ $script:WtPureKinds = @(
 $script:WtPureStatic = @{
   'GetEnvironmentVariable' = @('Environment', 'System.Environment')
   'IsNullOrEmpty' = @('string', 'System.String')
+  'Equals' = @('string', 'System.String')
   'GetCurrent' = @('System.Security.Principal.WindowsIdentity')
 }
 
@@ -165,8 +190,10 @@ function Get-WtImpurity {
 # The static rule's problems for one script; none when its guard comes before any statement that can
 # have an effect. It parses the file and runs nothing.
 function Get-WtGuardProblems {
-  param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Account, [Parameter(Mandatory)][string[]]$SeamNames)
+  param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Account, [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$SeamNames)
   $problems = [Collections.Generic.List[string]]::new()
+  # A script with no seam (pin P17) has no seam's detection, and its guard tests the account alone.
+  $unseamed = (@($SeamNames).Count -eq 0)
   $tokens = $null
   $parseErrors = $null
   $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
@@ -180,6 +207,8 @@ function Get-WtGuardProblems {
 
   # The guard: the first top-level if whose condition is the account test in its exact form.
   $wantCondition = $guardConditions[$Account]
+  if ($unseamed) { $wantCondition = $guardConditionsUnseamed[$Account] }
+  if ([string]::IsNullOrEmpty($wantCondition)) { $problems.Add(('This rule knows no account test for {0} with this seam' -f $Account)); return $problems.ToArray() }
   $guardAt = -1
   for ($i = 0; $i -lt $statements.Count; $i++) {
     $st = $statements[$i]
@@ -202,6 +231,8 @@ function Get-WtGuardProblems {
   $firstOther = $null
   $seamNamesText = '$seamNames = @(''' + ($SeamNames -join ''', ''') + ''')'
   $wanted = @($seamNamesText, $seamSetText, $underSeamText)
+  # With no seam nothing is wanted, so any statement that sets one of the three is flagged below.
+  if ($unseamed) { $wanted = @('', '', '') }
   $foundAt = @(-1, -1, -1)
   $watched = @('seamNames', 'seamSet', 'underSeam', 'ErrorActionPreference')
   for ($i = 0; $i -lt $guardAt; $i++) {
@@ -228,7 +259,9 @@ function Get-WtGuardProblems {
   }
   if ($null -eq $firstOther) { $problems.Add('Nothing comes before the guard: $ErrorActionPreference and the seam''s detection are missing') }
   $labels = @('$seamNames holding the row''s names in order', '$seamSet', '$underSeam')
-  for ($k = 0; $k -lt 3; $k++) { if ($foundAt[$k] -lt 0) { $problems.Add(('Before the guard, the seam''s detection MUST set {0} in its exact form' -f $labels[$k])) } }
+  if (-not $unseamed) {
+    for ($k = 0; $k -lt 3; $k++) { if ($foundAt[$k] -lt 0) { $problems.Add(('Before the guard, the seam''s detection MUST set {0} in its exact form' -f $labels[$k])) } }
+  }
   if ($foundAt[0] -ge 0 -and $foundAt[1] -ge 0 -and $foundAt[2] -ge 0 -and -not ($foundAt[0] -lt $foundAt[1] -and $foundAt[1] -lt $foundAt[2])) {
     $problems.Add('The seam''s detection MUST set $seamNames, then $seamSet, then $underSeam')
   }
@@ -275,6 +308,74 @@ function Get-WtBareCalls {
   }
   return $hits.ToArray()
 }
+
+# install.ps1's account test, from its parse tree alone (pin P17): the one definition of the helper its
+# guard calls, which MUST be a top-level statement before the guard and pure. It returns the
+# definition's text and the problems found, none when it can be evaluated; it runs nothing.
+function Get-WtAccountTest {
+  param([Parameter(Mandatory)][string]$Path)
+  $problems = [Collections.Generic.List[string]]::new()
+  $tokens = $null
+  $parseErrors = $null
+  $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+  if (@($parseErrors).Count -gt 0) { $problems.Add(('It does not parse: {0}' -f $parseErrors[0].Message)); return [pscustomobject]@{ Text = $null; Problems = $problems.ToArray() } }
+  $statements = @()
+  if ($null -ne $ast.EndBlock) { $statements = @($ast.EndBlock.Statements) }
+  $wantCondition = $guardConditions['agent']
+  $guardAt = -1
+  for ($i = 0; $i -lt $statements.Count; $i++) {
+    $st = $statements[$i]
+    if ($st -is [System.Management.Automation.Language.IfStatementAst] -and @($st.Clauses).Count -ge 1 -and (Format-WtAstText $st.Clauses[0].Item1) -ceq $wantCondition) { $guardAt = $i; break }
+  }
+  if ($guardAt -lt 0) { $problems.Add(('No top-level if tests the account as {0}' -f $wantCondition)) }
+  $defs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ieq $accountHelper }, $true))
+  if ($defs.Count -ne 1) {
+    $problems.Add(('{0} MUST be defined exactly once, and it is defined {1} times' -f $accountHelper, $defs.Count))
+    return [pscustomobject]@{ Text = $null; Problems = $problems.ToArray() }
+  }
+  $def = $defs[0]
+  $defAt = [Array]::IndexOf($statements, $def)
+  if ($defAt -lt 0 -or ($guardAt -ge 0 -and $defAt -ge $guardAt)) { $problems.Add(('{0}: {1} MUST be a top-level statement before the guard' -f (Format-WtAstWhere $def), $accountHelper)) }
+  # Pure, as the static rule defines it, and calling no other helper, so evaluating it alone can have
+  # no effect.
+  foreach ($part in (@($def.Parameters) + @($def.Body))) {
+    if ($null -eq $part) { continue }
+    foreach ($reason in (Get-WtImpurity -Ast $part -Helpers @{} -Seen @{})) { $problems.Add(('In {0}, {1}' -f $accountHelper, $reason)) }
+  }
+  return [pscustomobject]@{ Text = $def.Extent.Text; Problems = $problems.ToArray() }
+}
+
+# Case 6's accounts: each label, how the child builds its name (as-is, the data alone; machine, the
+# computer name then the data; machine-lower, the computer name in lower case then the data), and the
+# answer the account test MUST give, 1 accepted and 0 refused. No name here holds the computer name.
+$accountCases = [ordered]@{
+  'domain-agent' = @{ Kind = 'as-is'; Data = 'OTHERDOMAIN\agent'; Want = '0'; Title = 'refuses OTHERDOMAIN\agent, a domain''s agent' }
+  'local-agent' = @{ Kind = 'machine'; Data = '\agent'; Want = '1'; Title = 'accepts <computer name>\agent, the local machine''s agent' }
+  'local-agent-case' = @{ Kind = 'machine-lower'; Data = '\AGENT'; Want = '1'; Title = 'accepts the local machine''s agent written in another case' }
+  'bare-agent' = @{ Kind = 'as-is'; Data = 'agent'; Want = '0'; Title = 'refuses agent with no computer name' }
+  'local-agentx' = @{ Kind = 'machine'; Data = '\agentx'; Want = '0'; Title = 'refuses <computer name>\agentx' }
+  'local-admin' = @{ Kind = 'machine'; Data = '\Administrator'; Want = '0'; Title = 'refuses <computer name>\Administrator' }
+  'longer-domain-agent' = @{ Kind = 'machine'; Data = 'X\agent'; Want = '0'; Title = 'refuses <computer name>X\agent, a domain whose name starts with the computer name' }
+}
+# The child that evaluates the account test: it defines the helper from the definition's text alone,
+# builds each name, and prints each label with 1, 0, or x for an answer that is not one boolean. It
+# never prints a name.
+$accountProbeText = @'
+$ErrorActionPreference = 'Stop'
+. ([ScriptBlock]::Create([IO.File]::ReadAllText($env:WT_ACCOUNT_DEF)))
+foreach ($row in ($env:WT_ACCOUNT_CASES -split ';')) {
+  $parts = $row -split '\|', 3
+  $name = $parts[2]
+  if ($parts[1] -ceq 'machine') { $name = [Environment]::MachineName + $parts[2] }
+  elseif ($parts[1] -ceq 'machine-lower') { $name = [Environment]::MachineName.ToLowerInvariant() + $parts[2] }
+  $answer = @(& $env:WT_ACCOUNT_HELPER $name)
+  $mark = 'x'
+  if ($answer.Count -eq 1 -and $answer[0] -is [bool]) { if ($answer[0]) { $mark = '1' } else { $mark = '0' } }
+  '{0}|{1}' -f $parts[0], $mark
+}
+exit 0
+'@
+$script:WtAccountAnswers = $null
 
 # The throwaway home's contents, byte for byte, but for the bytes of PowerShell 7's own startup cache,
 # which every pwsh start rewrites before a script's first line runs; its name is kept.
@@ -412,6 +513,7 @@ try {
   foreach ($scriptBase in $guarded.Keys) {
     $baseCopy = $scriptBase
     $caseName = "Refusal: {0}.ps1 without its seam, as the laptop's own user, exits 1 with its message and does nothing" -f $baseCopy
+    if (@($guarded[$baseCopy].Seam).Count -eq 0) { $caseName = "Refusal: {0}.ps1, which has no seam, as the laptop's own user, exits 1 with its message and does nothing" -f $baseCopy }
     if (-not [string]::IsNullOrEmpty($global:WtOnly) -and $caseName -notmatch $global:WtOnly) { continue }
     if ($null -ne $notMe) {
       Write-ConformanceResult -Name $caseName -Status SKIPPED -Reason ($notMe + ', the account a guarded script runs as, so a run would not show the refusal')
@@ -472,6 +574,50 @@ try {
       $wantPath = $pairCopy[1]
       $named = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and [string]::Equals($n.Value, $wantPath, [StringComparison]::OrdinalIgnoreCase) }, $true))
       Assert-Wt ($named.Count -gt 0) ('{0} MUST name {1}' -f $pairCopy[0], $wantPath)
+    }
+  }
+
+  # --- 6. Account (pin P17, F7): install.ps1's account test, evaluated alone, never the script -------------------
+  Test-WtCase 'Account: install.ps1''s account test is found by its parse tree, pure, and evaluated alone in a fresh pwsh' {
+    $p = Join-Path $resolvedDir 'install.ps1'
+    Assert-WtScriptExists -Path $p
+    $test = Get-WtAccountTest -Path $p
+    if (@($test.Problems).Count -gt 0) { throw ('Not evaluated: ' + (@($test.Problems) -join '; ')) }
+    $defPath = Join-Path $testHome.Root 'p17-account-test.ps1'
+    $probePath = Join-Path $testHome.Root 'p17-account-probe.ps1'
+    $rows = @($accountCases.Keys | ForEach-Object { '{0}|{1}|{2}' -f $_, $accountCases[$_].Kind, $accountCases[$_].Data })
+    try {
+      Write-WtText -TestHome $testHome -Path $defPath -Text $test.Text
+      Write-WtText -TestHome $testHome -Path $probePath -Text $accountProbeText
+      $r = Invoke-WtTripwired -Arguments @('-File', $probePath) -Extra @{ WT_ACCOUNT_DEF = $defPath; WT_ACCOUNT_HELPER = $accountHelper; WT_ACCOUNT_CASES = ($rows -join ';') }
+      Assert-Wt (-not $r.TimedOut) 'The evaluation MUST end at once, and it timed out'
+      Assert-WtNoTripwire -Result $r
+      Assert-Wt ($r.ExitCode -eq 0) ('The evaluation exited {0}: {1}' -f $r.ExitCode, (ConvertTo-ConformanceMasked ([string]$r.Stderr)))
+      Assert-Wt ([string]::IsNullOrEmpty($r.Stderr)) ('The evaluation wrote on stderr: {0}' -f (ConvertTo-ConformanceMasked ([string]$r.Stderr)))
+      $answers = @{}
+      foreach ($line in @(Get-WtLines -Text $r.Stdout)) {
+        $pair = $line -split '\|', 2
+        if ($pair.Count -eq 2 -and $accountCases.Contains($pair[0]) -and -not $answers.ContainsKey($pair[0])) { $answers[$pair[0]] = $pair[1] }
+        else { throw ('The evaluation printed a line that is no case''s answer: {0}' -f (ConvertTo-ConformanceMasked $line)) }
+      }
+      $missing = @($accountCases.Keys | Where-Object { -not $answers.ContainsKey($_) })
+      Assert-Wt ($missing.Count -eq 0) ('The evaluation gave no answer for: {0}' -f ($missing -join ', '))
+      $script:WtAccountAnswers = $answers
+    } finally {
+      Remove-WtFile -TestHome $testHome -Path $defPath
+      Remove-WtFile -TestHome $testHome -Path $probePath
+    }
+  }
+  foreach ($label in $accountCases.Keys) {
+    $labelCopy = $label
+    Test-WtCase ("Account: install.ps1's account test {0}" -f $accountCases[$labelCopy].Title) {
+      Assert-Wt ($null -ne $script:WtAccountAnswers) 'Not shown: the account test was not evaluated in this run'
+      $got = $script:WtAccountAnswers[$labelCopy]
+      $wantMark = $accountCases[$labelCopy].Want
+      $words = @{ '1' = 'accepted (1)'; '0' = 'refused (0)'; 'x' = 'no single boolean (x)' }
+      $gotWord = $words[$got]
+      if ($null -eq $gotWord) { $gotWord = 'an answer that is none of 1, 0 and x' }
+      Assert-Wt ($got -ceq $wantMark) ('Case {0}: the account MUST be {1}, and it was {2}' -f $labelCopy, $words[$wantMark], $gotWord)
     }
   }
 
