@@ -915,6 +915,40 @@ fn one_platforms_failures_back_off_alone_while_the_other_platforms_holder_is_kep
     assert!(w.is_alive(200));
 }
 
+/// keeper.md, Watching, step 1 (pin P46): a look walks the hosts it tracks a holder on in the
+/// order their turns took in the keeper's last pass, which is `hosts.json`'s file order, never the
+/// ordinal order of their host names. `beta`'s `linux/amd64` host's record comes before `alpha`'s
+/// `linux/arm64` host's, and both holders end before the look at t60: its grace lines come in that
+/// file order, `beta.linux-amd64` before `alpha`, though `alpha` is first in ordinal order.
+#[test]
+fn a_look_walks_the_tracked_hosts_in_the_registrys_file_order() {
+    let w = World::new();
+    w.registry_hosts(&[("beta", LIN, "ready"), ("alpha", ARM, "ready")]);
+    let (b, a) = (Lease::on(LIN, "beta", 1, FAR), arm(2, FAR));
+    w.set_leases(&[a.clone(), b.clone()]);
+    // Each holder lives 45 seconds, so the look at t60 finds both gone.
+    w.plan(&b, World::hold(300, Some(secs(45))));
+    w.plan(&a, World::hold(200, Some(secs(45))));
+    let ran = w.watch(&["-MaxPasses", "3"]);
+    assert_eq!(ran.exit, 0);
+    assert_lines(
+        &w,
+        &ran,
+        vec![
+            idle(0, None),
+            started(0, "beta.linux-amd64", &b, 300),
+            started(0, "alpha", &a, 200),
+            idle(30, None),
+            kept(30, "beta.linux-amd64", &b, 300),
+            kept(30, "alpha", &a, 200),
+            // t60: the look finds both gone, and walks them in the registry's file order.
+            grace(60, 95, Some("beta.linux-amd64")),
+            grace(60, 95, Some("alpha")),
+            idle(60, None),
+        ],
+    );
+}
+
 /// H23, in a keeper. The `windows/amd64` host's lease expires at t90 while the `linux/arm64`
 /// host's stays ready: the pass stops the `windows/amd64` holder, `stopped ...
 /// host=alpha.windows-amd64`, and the keeper logs `grace seconds=95 host=alpha.windows-amd64` for
