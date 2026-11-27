@@ -117,6 +117,7 @@ dependencies = [
  "agentspace-box",
  "agentspace-hosts",
  "agentspace-operator-api",
+ "agentspace-platforms",
  "agentspace-state",
  "agentspace-zone",
  "serde_json",

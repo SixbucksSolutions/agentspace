@@ -7,6 +7,7 @@
 //! what it returns.
 
 use agentspace_box::{Described, DescribedState};
+use agentspace_hosts::HostKey;
 use agentspace_state::{Record, last_lease_end, lease_horizon, live_count};
 
 use crate::GRACE_SECONDS;
@@ -16,6 +17,17 @@ use crate::GRACE_SECONDS;
 pub struct HostToDecide {
     /// The host's project, as the registry records it.
     pub project: String,
+    /// The instance ID step 4 found.
+    pub instance_id: String,
+}
+
+/// A host the run found an instance ID for, with its platform (operator.md, guard, from v0.12; D91,
+/// D101). Its leases are its project's on its platform alone ([`decide_on`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostOnPlatform {
+    /// The host's key: the registry record's project and platform, a record without `platform`
+    /// being `linux/arm64`'s ([`agentspace_hosts::Host::key`]).
+    pub key: HostKey,
     /// The instance ID step 4 found.
     pub instance_id: String,
 }
@@ -98,6 +110,10 @@ pub enum Action {
 
 /// Decides every host in `hosts`, returning exactly one [`Action`] per host, in `hosts`' order.
 ///
+/// **The leases are taken as the host's own**: a lease of the host's project explains it, whatever
+/// its `platform` says, so a caller that holds every lease of the state file MUST use [`decide_on`],
+/// which picks each host's by its platform (operator.md, guard; D91). The run uses [`decide_on`].
+///
 /// - `leases` are the lease state file's records, read at `now`.
 /// - `ec2_states` is `describe_hosts`' answer; a host's instance is the element whose `id` is its
 ///   instance ID, and a host with none is [`Action::NotFound`].
@@ -113,55 +129,106 @@ pub fn decide(
 ) -> Vec<Action> {
     hosts
         .iter()
-        .map(|host| decide_host(host, leases, ec2_states, provision_held, now))
+        .map(|host| {
+            decide_host(
+                &host.project,
+                &host.instance_id,
+                leases,
+                ec2_states,
+                &|| provision_held(&host.project),
+                now,
+            )
+        })
         .collect()
 }
 
-/// One host's decision (operator.md, guard, steps 5 to 7).
-fn decide_host(
-    host: &HostToDecide,
+/// Decides every host in `hosts` by its project and its platform (operator.md, guard; D91, D101),
+/// returning exactly one [`Action`] per host, in `hosts`' order, each carrying its host's
+/// `project`.
+///
+/// - **A host's leases are the records of its project whose `platform` equals the host's platform**,
+///   both compared exactly as the normalized strings they are stored as, and a stored platform is
+///   never normalized (state.md, Live leases and the lease horizon; pin P29). So a running host
+///   whose project holds only live leases on another platform is unexplained, and its since, its
+///   stop time and its horizon are taken over the leases of its own platform alone.
+/// - `provision_held` is called with the host's key only for a host that is due, at most once per
+///   host, and never for any other host.
+/// - Every other argument is [`decide`]'s.
+pub fn decide_on(
+    hosts: &[HostOnPlatform],
     leases: &[Record],
     ec2_states: &[Described],
-    provision_held: &dyn Fn(&str) -> ProvisionLock,
+    provision_held: &dyn Fn(&HostKey) -> ProvisionLock,
+    now: i64,
+) -> Vec<Action> {
+    hosts
+        .iter()
+        .map(|host| {
+            let own: Vec<Record> = leases
+                .iter()
+                .filter(|lease| lease.platform == host.key.platform)
+                .cloned()
+                .collect();
+            decide_host(
+                &host.key.project,
+                &host.instance_id,
+                &own,
+                ec2_states,
+                &|| provision_held(&host.key),
+                now,
+            )
+        })
+        .collect()
+}
+
+/// One host's decision (operator.md, guard, steps 5 to 7). `leases` are the host's own, and `lock`
+/// tries its provisioning lock, called only when the host is due.
+fn decide_host(
+    project: &str,
+    instance_id: &str,
+    leases: &[Record],
+    ec2_states: &[Described],
+    lock: &dyn Fn() -> ProvisionLock,
     now: i64,
 ) -> Action {
-    let project = host.project.clone();
-    let instance_id = host.instance_id.clone();
+    let project_name = project.to_string();
+    let id = instance_id.to_string();
 
     // Step 5: the host's instance is the first element whose ID is its own. An ID EC2 does not
     // know is missing from the answer, which `describe_hosts` reports as `Unknown`.
     let state = ec2_states
         .iter()
-        .find(|described| described.id == host.instance_id)
+        .find(|described| described.id == instance_id)
         .map(|described| &described.state);
     let launch_time = match state {
         None | Some(DescribedState::Unknown) => {
             return Action::NotFound {
-                project,
-                instance_id,
+                project: project_name,
+                instance_id: id,
             };
         }
         Some(DescribedState::Unexpected { member }) => {
             return Action::Unexpected {
-                project,
-                instance_id,
+                project: project_name,
+                instance_id: id,
                 member: member.clone(),
             };
         }
         Some(DescribedState::Other { .. }) => {
             return Action::Nothing {
-                project,
-                instance_id,
+                project: project_name,
+                instance_id: id,
             };
         }
         Some(DescribedState::Running { launch_time }) => *launch_time,
     };
+    let (project, instance_id) = (project_name, id);
 
     // Step 7: the later of the project's horizon and the host's launch time (P12).
-    let horizon = lease_horizon(leases, &host.project, now, launch_time).max(launch_time);
+    let horizon = lease_horizon(leases, &project, now, launch_time).max(launch_time);
 
     // Step 6: a live lease explains the host, whatever it is doing.
-    if live_count(leases, &host.project, now) > 0 {
+    if live_count(leases, &project, now) > 0 {
         return Action::Explained {
             project,
             instance_id,
@@ -172,7 +239,7 @@ fn decide_host(
     // Unexplained: its since is the later of its launch time and the project's last lease end,
     // or its launch time alone, and its stop time is the since plus the grace.
     let since =
-        last_lease_end(leases, &host.project, now).map_or(launch_time, |end| end.max(launch_time));
+        last_lease_end(leases, &project, now).map_or(launch_time, |end| end.max(launch_time));
     let stop_at = since.saturating_add(GRACE_SECONDS);
     if now < stop_at {
         return Action::Unexplained {
@@ -184,7 +251,7 @@ fn decide_host(
     }
 
     // Due: the host's provisioning lock is tried once, and only now.
-    match provision_held(&host.project) {
+    match lock() {
         ProvisionLock::Held => Action::Provisioning {
             project,
             instance_id,
@@ -696,5 +763,256 @@ mod tests {
                 horizon: i64::MAX
             }]
         );
+    }
+
+    // A host by its project and its platform (operator.md, guard; D91, D101).
+
+    fn on(project: &str, platform: &str, id: &str) -> HostOnPlatform {
+        HostOnPlatform {
+            key: HostKey::new(project, platform),
+            instance_id: id.to_string(),
+        }
+    }
+
+    fn lease_on(
+        platform: &str,
+        project: &str,
+        state: &str,
+        expires: Option<i64>,
+        released: Option<i64>,
+    ) -> Record {
+        Record {
+            platform: platform.into(),
+            ..lease(project, state, expires, released)
+        }
+    }
+
+    /// Records each key it is asked about and answers `answer`.
+    struct KeyedLock {
+        asked: RefCell<Vec<HostKey>>,
+        answer: ProvisionLock,
+    }
+
+    impl KeyedLock {
+        fn new(answer: ProvisionLock) -> Self {
+            KeyedLock {
+                asked: RefCell::new(Vec::new()),
+                answer,
+            }
+        }
+
+        fn run(
+            &self,
+            hosts: &[HostOnPlatform],
+            leases: &[Record],
+            ec2: &[Described],
+            now: i64,
+        ) -> Vec<Action> {
+            let held = |key: &HostKey| {
+                self.asked.borrow_mut().push(key.clone());
+                self.answer.clone()
+            };
+            decide_on(hosts, leases, ec2, &held, now)
+        }
+    }
+
+    #[test]
+    fn a_live_lease_on_another_platform_explains_nothing() {
+        let lock = KeyedLock::new(ProvisionLock::Free);
+        // Two hosts of one project, a live lease on `linux/arm64` alone.
+        let hosts = [
+            on("p", "linux/arm64", A),
+            on("p", "windows/amd64", B),
+            on("p", "linux/amd64", C),
+        ];
+        let launch = NOW - 60;
+        let ec2 = [running(A, launch), running(B, launch), running(C, launch)];
+        let leases = [lease_on("linux/arm64", "p", "ready", Some(1800), None)];
+        let actions = lock.run(&hosts, &leases, &ec2, NOW);
+        assert_eq!(
+            actions,
+            [
+                Action::Explained {
+                    project: "p".into(),
+                    instance_id: A.into(),
+                    horizon: NOW + 1800
+                },
+                // Unexplained: the arm64 lease's expiry is not this host's horizon either.
+                Action::Unexplained {
+                    project: "p".into(),
+                    instance_id: B.into(),
+                    stop_at: launch + GRACE_SECONDS,
+                    horizon: launch
+                },
+                Action::Unexplained {
+                    project: "p".into(),
+                    instance_id: C.into(),
+                    stop_at: launch + GRACE_SECONDS,
+                    horizon: launch
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_host_is_explained_by_a_live_lease_on_its_own_platform_alone() {
+        let lock = KeyedLock::new(ProvisionLock::Free);
+        let hosts = [on("p", "windows/amd64", A), on("p", "linux/arm64", B)];
+        let launch = NOW - 100_000;
+        let ec2 = [running(A, launch), running(B, launch)];
+        // The windows lease is live for 100 s, the arm64 one for 5,000 s.
+        let leases = [
+            lease_on("windows/amd64", "p", "ready", Some(100), None),
+            lease_on("linux/arm64", "p", "ready", Some(5000), None),
+        ];
+        let actions = lock.run(&hosts, &leases, &ec2, NOW);
+        assert_eq!(
+            actions,
+            [
+                Action::Explained {
+                    project: "p".into(),
+                    instance_id: A.into(),
+                    horizon: NOW + 100
+                },
+                Action::Explained {
+                    project: "p".into(),
+                    instance_id: B.into(),
+                    horizon: NOW + 5000
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hosts_since_and_horizon_are_taken_over_its_own_platforms_leases() {
+        let lock = KeyedLock::new(ProvisionLock::Free);
+        let launch = NOW - 100_000;
+        let ec2 = [running(A, launch)];
+        // The windows host's last lease ended 600 s ago; a linux lease ended 100 s ago and another
+        // is released later still. Only the windows lease counts.
+        let leases = [
+            lease_on("windows/amd64", "p", "released", None, Some(-600)),
+            lease_on("linux/arm64", "p", "released", None, Some(-100)),
+            lease_on("linux/amd64", "p", "released", None, Some(-50)),
+        ];
+        let actions = lock.run(&[on("p", "windows/amd64", A)], &leases, &ec2, NOW);
+        assert_eq!(
+            actions,
+            [Action::Unexplained {
+                project: "p".into(),
+                instance_id: A.into(),
+                stop_at: NOW - 600 + GRACE_SECONDS,
+                horizon: NOW - 600
+            }]
+        );
+    }
+
+    #[test]
+    fn a_platform_is_compared_exactly_and_never_normalized() {
+        let lock = KeyedLock::new(ProvisionLock::Free);
+        let launch = NOW - 60;
+        for stored in [
+            "Linux/arm64",
+            "linux-arm64",
+            " linux/arm64",
+            "linux/aarch64",
+            "",
+        ] {
+            let leases = [lease_on(stored, "p", "ready", Some(1800), None)];
+            let actions = lock.run(
+                &[on("p", "linux/arm64", A)],
+                &leases,
+                &[running(A, launch)],
+                NOW,
+            );
+            assert!(
+                matches!(actions[0], Action::Unexplained { .. }),
+                "{stored:?}: {actions:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn another_projects_lease_on_the_same_platform_explains_nothing() {
+        let lock = KeyedLock::new(ProvisionLock::Free);
+        let leases = [lease_on(
+            "windows/amd64",
+            "other",
+            "ready",
+            Some(1800),
+            None,
+        )];
+        let actions = lock.run(
+            &[on("p", "windows/amd64", A)],
+            &leases,
+            &[running(A, NOW - 60)],
+            NOW,
+        );
+        assert!(
+            matches!(actions[0], Action::Unexplained { .. }),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn a_due_host_is_tried_by_its_key_so_two_platforms_have_their_own_lock() {
+        let launch = NOW - 100_000;
+        let ec2 = [running(A, launch), running(B, launch)];
+        let hosts = [on("p", "linux/arm64", A), on("p", "windows/amd64", B)];
+        let lock = KeyedLock::new(ProvisionLock::Held);
+        let actions = lock.run(&hosts, &[], &ec2, NOW);
+        assert!(
+            actions
+                .iter()
+                .all(|a| matches!(a, Action::Provisioning { .. }))
+        );
+        assert_eq!(
+            *lock.asked.borrow(),
+            [
+                HostKey::new("p", "linux/arm64"),
+                HostKey::new("p", "windows/amd64")
+            ]
+        );
+        // An explained host's lock is never tried.
+        let lock = KeyedLock::new(ProvisionLock::Held);
+        let leases = [lease_on("windows/amd64", "p", "pending", None, None)];
+        lock.run(&hosts, &leases, &ec2, NOW);
+        assert_eq!(*lock.asked.borrow(), [HostKey::new("p", "linux/arm64")]);
+    }
+
+    #[test]
+    fn the_platform_blind_decide_and_the_arm64_decide_on_agree_when_every_lease_is_the_hosts() {
+        let leases = [
+            lease_on("linux/arm64", "p", "released", None, Some(-600)),
+            lease_on("linux/arm64", "p", "ready", Some(-300), None),
+        ];
+        let launch = NOW - 5000;
+        let ec2 = [running(A, launch)];
+        let lock = Lock::new(ProvisionLock::Free);
+        let blind = lock.run(&[host("p", A)], &leases, &ec2, NOW);
+        let keyed = KeyedLock::new(ProvisionLock::Free).run(
+            &[on("p", "linux/arm64", A)],
+            &leases,
+            &ec2,
+            NOW,
+        );
+        assert_eq!(blind, keyed);
+    }
+
+    #[test]
+    fn decide_on_never_panics_on_extreme_times() {
+        let leases = [lease_on("windows/amd64", "p", "released", None, Some(-600))];
+        for launch in [i64::MIN, -1, 0, NOW, i64::MAX] {
+            for now in [i64::MIN, -1, 0, NOW, i64::MAX] {
+                let lock = KeyedLock::new(ProvisionLock::Free);
+                let actions = lock.run(
+                    &[on("p", "windows/amd64", A)],
+                    &leases,
+                    &[running(A, launch)],
+                    now,
+                );
+                assert_eq!(actions.len(), 1);
+            }
+        }
     }
 }

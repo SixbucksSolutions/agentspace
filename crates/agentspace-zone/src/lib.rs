@@ -13,6 +13,10 @@
 //! 3. The zone MUST pass the zone check ([`is_valid_zone`]). One that does not, or no zone at all,
 //!    is the empty zone, which this crate gives as `None`.
 //!
+//! A Windows host's zone is the laptop's Windows zone ID itself, never converted (operator.md, The
+//! token push to a Windows host; D96): [`windows_zone`] and [`laptop_windows_zone`] give it, checked
+//! by [`is_valid_windows_zone_id`] alone, with no CLDR table and no legacy map.
+//!
 //! The crate reads no environment variable and no file, writes to no stream, and never panics on
 //! bad input. Its two system reads are the laptop's own Windows zone ID ([`windows_zone_id`], from
 //! the system's time zone setting), which [`laptop_zone`] makes only when no override is given,
@@ -132,6 +136,62 @@ pub fn laptop_zone(override_value: Option<&str>) -> Option<String> {
     match override_value {
         Some(value) if !value.is_empty() => zone(None, Some(value)),
         _ => zone(windows_zone_id().as_deref(), None),
+    }
+}
+
+/// The Windows zone ID check (operator.md, The token push to a Windows host): whether `id` matches
+/// `^[A-Za-z][A-Za-z0-9 .+()-]{0,62}[A-Za-z0-9)]\z`, case-sensitively, where the letters are the
+/// ASCII letters alone.
+///
+/// So an ID is 2 to 64 characters, opens with a letter, holds only letters, digits, spaces and
+/// `.`, `+`, `(`, `)`, `-`, and ends with a letter, a digit or `)`: `Mountain Standard Time`,
+/// `UTC-02` and `Pacific Standard Time (Mexico)` pass; an IANA name such as `America/Denver`, a
+/// trailing newline, a trailing space or `-`, and any non-ASCII character do not.
+pub fn is_valid_windows_zone_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    // One opening letter, 0 to 62 middle characters, one closing character: 2 to 64 in all.
+    if !(2..=64).contains(&bytes.len()) {
+        return false;
+    }
+    let (first, rest) = (bytes[0], &bytes[1..]);
+    let (last, middle) = (rest[rest.len() - 1], &rest[..rest.len() - 1]);
+    first.is_ascii_alphabetic()
+        && (last.is_ascii_alphanumeric() || last == b')')
+        && middle.iter().all(|&b| {
+            b.is_ascii_alphanumeric() || matches!(b, b' ' | b'.' | b'+' | b'(' | b')' | b'-')
+        })
+}
+
+/// The zone the token push sends a Windows host, or `None` for the empty zone: the laptop's Windows
+/// zone ID itself, **never converted to an IANA name** and with no legacy map, since both ends are
+/// Windows (operator.md, The token push to a Windows host; D96).
+///
+/// - `windows_id` is the Windows ID of the zone the laptop is set to, as the caller read it, or
+///   `None` when it could not.
+/// - `override_value` is the value of `AGENTSPACE_TIMEZONE`, or `None` when it is unset. When it is
+///   set and not empty, its value takes the place of `windows_id`, as for a Linux host, and is
+///   used as it is. An empty one counts as unset, and a value that is only whitespace is used and
+///   fails the check.
+///
+/// Whichever supplies the ID, it MUST pass [`is_valid_windows_zone_id`]; one that does not gives
+/// `None`, the empty zone, which is not sent. The host's seam checks it again
+/// (`HostPlatform::push_zone`), so a caller MAY pass either to it.
+pub fn windows_zone(windows_id: Option<&str>, override_value: Option<&str>) -> Option<String> {
+    let id: &str = match override_value {
+        Some(value) if !value.is_empty() => value,
+        _ => windows_id?,
+    };
+    is_valid_windows_zone_id(id).then(|| id.to_owned())
+}
+
+/// The zone the token push sends a Windows host for this laptop: [`windows_zone`], with the laptop's
+/// Windows zone ID read from the system ([`windows_zone_id`]) only when it is needed, as
+/// [`laptop_zone`] reads it for a Linux host. The override is the caller's read of
+/// `AGENTSPACE_TIMEZONE`, and when it is set and not empty the system is not read.
+pub fn laptop_windows_zone(override_value: Option<&str>) -> Option<String> {
+    match override_value {
+        Some(value) if !value.is_empty() => windows_zone(None, Some(value)),
+        _ => windows_zone(windows_zone_id().as_deref(), None),
     }
 }
 
@@ -450,5 +510,147 @@ mod tests {
             assert!(is_valid_zone(name), "{id} -> {name}");
             assert!(is_valid_zone(map_legacy(name)), "{id} -> {name}");
         }
+    }
+
+    // The Windows host's zone: the laptop's Windows zone ID itself (operator.md, The token push to
+    // a Windows host; D96).
+
+    #[test]
+    fn a_windows_zone_id_passes_by_the_specs_pattern() {
+        for ok in [
+            "Mountain Standard Time",
+            "Pacific Standard Time (Mexico)",
+            "UTC-02",
+            "UTC",
+            "W. Europe Standard Time",
+            "Central Standard Time (Mexico)",
+            "Aa",
+            "A1",
+            "A)",
+        ] {
+            assert!(is_valid_windows_zone_id(ok), "{ok:?}");
+        }
+        for bad in [
+            "",
+            "A",
+            "9A",
+            " Mountain Standard Time",
+            "Mountain Standard Time ",
+            "Mountain Standard Time\n",
+            "UTC-",
+            "UTC+",
+            "A.",
+            "America/Denver",
+            "Zone;rm",
+            "Zone\"x\"",
+            "Zone'",
+            "Z\u{e9}one",
+            "A\u{ff21}",
+            "A\tB",
+            "(Mexico)",
+        ] {
+            assert!(!is_valid_windows_zone_id(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_windows_zone_id_is_at_most_64_characters() {
+        let at = |len: usize| format!("A{}B", " ".repeat(len - 2));
+        assert!(is_valid_windows_zone_id(&at(64)));
+        assert!(!is_valid_windows_zone_id(&at(65)));
+        assert!(is_valid_windows_zone_id(&at(2)));
+    }
+
+    /// The hand-written check agrees with the spec's own pattern, which the dev dependency compiles.
+    #[test]
+    fn the_windows_zone_check_agrees_with_the_specs_pattern() {
+        let pattern = regex::Regex::new(r"^[A-Za-z][A-Za-z0-9 .+()-]{0,62}[A-Za-z0-9)]\z").unwrap();
+        let alphabet = [
+            'A', 'z', '0', ' ', '.', '+', '(', ')', '-', '/', '\n', '\u{e9}',
+        ];
+        let mut samples = vec![String::new()];
+        for _ in 0..4 {
+            let next: Vec<String> = samples
+                .iter()
+                .flat_map(|s| alphabet.iter().map(move |c| format!("{s}{c}")))
+                .collect();
+            samples.extend(next);
+        }
+        for sample in samples.iter().chain(&[
+            "A".repeat(64),
+            "A".repeat(65),
+            format!("A{}B", " ".repeat(62)),
+        ]) {
+            assert_eq!(
+                is_valid_windows_zone_id(sample),
+                pattern.is_match(sample),
+                "{sample:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_windows_hosts_zone_is_the_windows_id_itself_and_never_converted() {
+        // Linux's zone converts the ID; Windows' keeps it.
+        assert_eq!(
+            zone(Some("Mountain Standard Time"), None).as_deref(),
+            Some("America/Denver")
+        );
+        assert_eq!(
+            windows_zone(Some("Mountain Standard Time"), None).as_deref(),
+            Some("Mountain Standard Time")
+        );
+        // An ID this crate's CLDR table has no row for is still the laptop's ID.
+        assert_eq!(zone(Some("Not A Real Time"), None), None);
+        assert_eq!(
+            windows_zone(Some("Not A Real Time"), None).as_deref(),
+            Some("Not A Real Time")
+        );
+    }
+
+    #[test]
+    fn a_windows_hosts_zone_takes_the_override_as_it_is_when_set_and_not_empty() {
+        assert_eq!(
+            windows_zone(Some("Mountain Standard Time"), Some("UTC-02")).as_deref(),
+            Some("UTC-02")
+        );
+        assert_eq!(
+            windows_zone(None, Some("Pacific Standard Time")).as_deref(),
+            Some("Pacific Standard Time")
+        );
+        // An empty override counts as unset; whitespace is a value, and fails the check.
+        assert_eq!(
+            windows_zone(Some("Mountain Standard Time"), Some("")).as_deref(),
+            Some("Mountain Standard Time")
+        );
+        assert_eq!(
+            windows_zone(Some("Mountain Standard Time"), Some(" ")),
+            None
+        );
+        // An IANA name fails the check, and the legacy map does not apply to it.
+        assert_eq!(windows_zone(None, Some("America/Denver")), None);
+        assert_eq!(windows_zone(None, Some("Asia/Calcutta")), None);
+    }
+
+    #[test]
+    fn no_windows_id_and_no_override_is_the_empty_zone() {
+        assert_eq!(windows_zone(None, None), None);
+        assert_eq!(windows_zone(None, Some("")), None);
+        assert_eq!(windows_zone(Some("Zone;rm"), None), None);
+    }
+
+    #[test]
+    fn the_laptops_windows_zone_reads_the_system_only_without_an_override() {
+        assert_eq!(
+            laptop_windows_zone(Some("UTC-02")).as_deref(),
+            Some("UTC-02")
+        );
+        assert_eq!(laptop_windows_zone(Some("America/Denver")), None);
+        // Without one, it is the system's ID checked, or nothing off Windows.
+        assert_eq!(
+            laptop_windows_zone(None),
+            windows_zone(windows_zone_id().as_deref(), None)
+        );
+        assert_eq!(laptop_windows_zone(Some("")), laptop_windows_zone(None));
     }
 }

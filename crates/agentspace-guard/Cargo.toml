@@ -17,6 +17,9 @@ agentspace-operator-api = { path = "../agentspace-operator-api" }
 agentspace-box = { path = "../agentspace-box" }
 agentspace-state = { path = "../agentspace-state" }
 agentspace-hosts = { path = "../agentspace-hosts" }
+# A host's platform rows, picked with `for_platform` and nothing else (D101; operator.md, The platform
+# seam): the horizon send's Session Manager document.
+agentspace-platforms = { path = "../agentspace-platforms" }
 # The one formatter of the guard's stop time (`local_clock_time`, `clock_time_at`).
 agentspace-zone = { path = "../agentspace-zone" }
 
