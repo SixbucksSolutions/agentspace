@@ -7,9 +7,10 @@
 # holder's log", and "Conformance cases for a host per project and platform", cases H19 to H29, written by
 # E0.12-T04-S03, card #0263; architect, 2026-11-26, for v0.12-T04, pin P9: all of them in this one file).
 # It checks behavior that v0.11's keeper, which knows one host per project, does not have, so it is expected
-# to FAIL against v0.11's keeper in every case but H24 and H29a, which describe what v0.11 already did (a name
-# with a dot in it is no record, and a registry with no platform in it reads as it did); a v0.12 keeper MUST
-# pass every line.
+# to FAIL against v0.11's keeper in every case but H29a, which describes what v0.11 already did (a registry
+# with no platform in it reads as it did). H24 describes what v0.11 already did too (a name with a dot in it
+# is no record), but its registry holds a windows/amd64 record, which v0.11's registry read refuses. A v0.12
+# keeper MUST pass every line.
 #
 # Each case runs against the program that AGENTSPACE_KEEPER_CMD names (or its default, through the harness)
 # with the keeper's own arguments unchanged: <program> -SshExe <stub> -Now <time>, or with -Watch. Each runs
@@ -78,8 +79,8 @@ if (-not $keeperCmd -or -not (Test-Path -LiteralPath $keeperCmd -PathType Leaf))
 Initialize-KeeperRun
 Initialize-HostsRun
 
-# A case whose id is not matched by -Case is not run.
-function Test-Selected([string]$Id) { $Id -like $Case }
+# A case whose id is not matched by -Case is not run; -Case H29 selects H29a and H29b.
+function Test-Selected([string]$Id) { $Id -like $Case -or $Id -like "$Case[a-z]" }
 
 $phArm = 'linux/arm64'
 $phLinux = 'linux/amd64'
@@ -203,9 +204,11 @@ try {
   if (Test-Selected 'H20') { Invoke-HostCase 'H20' 'keeper.md#the-hosts-of-a-pass' {
     # In file order after the box's: <q> linux/amd64, <p> linux/arm64, <q> linux/arm64, <p> linux/amd64. <p> (agentspace) is before <q> (zeta) in ordinal order.
     Write-Registry @((New-PhRecord $boxProject), (New-PhRecord $qProject $phLinux), (New-PhRecord $pProject), (New-PhRecord $qProject), (New-PhRecord $pProject $phLinux))
+    # The leases are written in the reverse of the registry's order, so that a keeper that took its turns in the
+    # lease state's order, or in any sorted order, gives another order than the one wanted.
     Write-Leases @(
-      (New-PhLease $qProject $phLinux 'd1' '2026-11-17T13:00:00Z'), (New-PhLease $pProject $phArm 'c1' '2026-11-17T13:00:00Z'),
-      (New-PhLease $qProject $phArm 'd2' '2026-11-17T13:00:00Z'), (New-PhLease $pProject $phLinux 'c2' '2026-11-17T13:00:00Z'))
+      (New-PhLease $pProject $phLinux 'c2' '2026-11-17T13:00:00Z'), (New-PhLease $qProject $phArm 'd2' '2026-11-17T13:00:00Z'),
+      (New-PhLease $pProject $phArm 'c1' '2026-11-17T13:00:00Z'), (New-PhLease $qProject $phLinux 'd1' '2026-11-17T13:00:00Z'))
     $pass = Invoke-CapturedPass $now 4
     Add-HostCheck ($pass.Code -eq 0) 'The pass exits 0' "The exit code was $($pass.Code)."
     Add-HostCheck $pass.Complete 'Four starts are made, each with its request, claim and result seen' "Starts seen: $(@($pass.Tokens).Count), in $($pass.Attempts) passes."
@@ -398,7 +401,7 @@ try {
     $log = Read-LogLines
     $backoffs = @(Get-HostBackoffs $log $hostWin)
     Add-HostCheck $got 'The keeper logs three backoff lines for the windows/amd64 host' "Backoff lines seen for it: $($backoffs.Count). The log ends: $(($log | Select-Object -Last 4) -join ' | ')"
-    Add-HostCheck ($backoffs.Count -ge 3 -and (($backoffs[0..2]) -join ',') -ceq '2,4,8') "The windows/amd64 host's backoff lines say seconds 2, 4, 8 (got $($backoffs -join ','))"
+    Add-HostCheck ($backoffs.Count -ge 3 -and (($backoffs[0..2]) -join ',') -ceq '2,4,8') "The windows/amd64 host's first three backoff lines say seconds 2, 4, 8" "Its backoff lines said seconds $($backoffs -join ',')."
     $holdOffLines = @($log | Where-Object { $_ -cmatch ' (backoff|grace) seconds=' })
     Add-HostCheck ($holdOffLines.Count -gt 0 -and @($holdOffLines | Where-Object { $_ -cmatch ' (backoff|grace) seconds=\d+ host=agentspace\.windows-amd64\z' }).Count -eq $holdOffLines.Count) 'Every backoff and grace line is the windows/amd64 host''s: none is the linux/arm64 host''s or the box''s' "Lines: $($holdOffLines -join ' | ')"
     # keeper.md's H9 row: each fast failure is a failed line or a started line whose holder a later look finds gone, followed by that host's next backoff line.
@@ -465,7 +468,8 @@ try {
       $after = @($recordNames | ForEach-Object { [IO.File]::ReadAllText((Join-Path $env:AGENTSPACE_STATE_DIR $_)) })
       Add-HostCheck ($keptOk -and ($after -join '|') -ceq ($before -join '|')) "$label`: A second pass keeps all three, in order, and changes no record" "Exit code $code. New lines: $($new -join ' | ')"
       # A third pass, with <p>'s lease released: <p>'s holder is stopped, the others kept.
-      $holdPid = [int](Read-HostRecord $pProject)['pid']
+      $recP = Read-HostRecord $pProject
+      $holdPid = if ($null -ne $recP) { [int]$recP['pid'] } else { 0 }
       Write-Leases @((New-PhLease $boxProject $phArm 'b1' '2026-11-17T13:00:00Z'), (New-PhLease $pProject $phArm 'c1' '2026-11-17T13:00:00Z' -Released), (New-PhLease $qProject $phArm 'd1' '2026-11-17T13:00:00Z'))
       $mark = $log.Count
       $recBox = Read-HostRecord $boxProject
