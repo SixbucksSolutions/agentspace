@@ -63,6 +63,39 @@ function Get-PlRefusedProblems {
   return , $p
 }
 
+# The problems with the box's alias file for a ready lease of $Alias and $Id: v0.06's bytes, exactly as state.md, "The alias
+# file", gives them for a lease on the box: UTF-8 with no byte order mark and no CR, the owner mark naming the lease, then
+# every line of the block, User ubuntu and HostKeyAlias agentspace among them, and no UserKnownHostsFile. Each path is built as
+# the program is told to write it: the home as text, `\` as `/` and `%` as `%%`. Never quotes the file.
+function Get-PlBoxAliasProblems {
+  param([Parameter(Mandatory)]$Lab, [Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)][string]$Alias)
+  $p = [System.Collections.Generic.List[string]]::new()
+  $utf8 = [Text.UTF8Encoding]::new($false)
+  $leaseDir = Get-CcLeaseDir $Lab $Id
+  $key = (Join-Path $leaseDir 'id_ed25519').Replace('\', '/').Replace('%', '%%')
+  $cert = (Join-Path $leaseDir 'id_ed25519-cert.pub').Replace('\', '/').Replace('%', '%%')
+  $want = (@("Host $Alias", '  User ubuntu', "  IdentityFile `"$key`"", "  CertificateFile `"$cert`"", '  IdentitiesOnly yes', '  HostKeyAlias agentspace',
+      '  StrictHostKeyChecking yes', "  ProxyCommand $($script:CcProxy.Replace('%', '%%'))", '  ServerAliveInterval 30', '  ServerAliveCountMax 4',
+      '  RemoteForward 127.0.0.1:8811 127.0.0.1:8811', '  RemoteForward 127.0.0.1:53147 127.0.0.1:53147') -join "`n") + "`n"
+  $path = Get-CcAliasPath $Lab $Alias
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $p.Add('There is no alias file for the lease'); return , $p }
+  $bytes = [IO.File]::ReadAllBytes($path)
+  if (Get-ConformanceHasBom $bytes) { $p.Add('The alias file starts with a byte order mark') }
+  if ($bytes -contains 13) { $p.Add('The alias file holds a CR') }
+  $nl = [Array]::IndexOf($bytes, [byte]10)
+  if ($nl -lt 0) { $p.Add('The alias file holds no LF'); return , $p }
+  if ($utf8.GetString($bytes, 0, $nl) -cnotmatch "\A# agentspace lease $([regex]::Escape($Id)); [^\r\n]+\z") { $p.Add('The first line is not the owner mark naming the lease, a semicolon and a comment') }
+  $rest = $utf8.GetString($bytes, $nl + 1, $bytes.Length - $nl - 1)
+  if ($rest -cne $want) {
+    $gotLines = @($rest -split "`n")
+    $wantLines = @($want -split "`n")
+    $at = 0
+    while ($at -lt $gotLines.Count -and $at -lt $wantLines.Count -and $gotLines[$at] -ceq $wantLines[$at]) { $at++ }
+    $p.Add("The lines after the owner mark are not v0.06's, first differing at the file's line $($at + 2)")
+  }
+  return , $p
+}
+
 # ---- M4 -----------------------------------------------------------------------------------------------------
 Use-PvLab -Name "M4 ($where): With the project's linux/arm64 record ready at the m type and an entry with no platforms," -Body {
   param($lab)
@@ -242,11 +275,7 @@ Use-PvLab -Name "M14 ($where): With no hosts.json and no projects.json," -Body {
     if ($run.Json['platform'] -cne $script:PlArm -or $run.Json['profile'] -cne 'agent-linux' -or $run.Json['ssh']['user'] -cne 'ubuntu') { $p.Add('The lease is not linux/arm64 with agent-linux and ubuntu') }
     $alias = [string]$run.Json['ssh']['host_alias']
     if ($alias -cnotmatch '\Aagentspace-swimcoach-[0-9a-f]{8}\z') { $p.Add('The host alias is not the project''s form') }
-    else {
-      $text = [IO.File]::ReadAllText((Get-CcAliasPath $lab $alias))
-      if (-not $text.Contains("`n  HostKeyAlias agentspace`n")) { $p.Add('The alias file does not hold v0.06''s HostKeyAlias agentspace line') }
-      if ($text.Contains('UserKnownHostsFile') -or $text.Contains('agentspace-host.')) { $p.Add('The alias file names a host other than the box') }
-    }
+    else { foreach ($x in (Get-PlBoxAliasProblems -Lab $lab -Id ([string]$run.Json['id']) -Alias $alias)) { $p.Add($x) } }
   } else { $p.Add('The create did not answer ready') }
   if (Test-Path -LiteralPath (Get-PvHostsPath $lab)) { $p.Add('hosts.json was made') }
   $results['a create for swimcoach with the default platform answers ready with v0.06''s alias bytes, as Z15, and leaves hosts.json absent'] = $p

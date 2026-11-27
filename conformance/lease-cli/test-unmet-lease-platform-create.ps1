@@ -81,16 +81,20 @@ Use-PvLab -Name "M15 (driver.md#renew-and-release, D95): A windows/amd64 lease m
   $hostsBefore = Get-PvHostsHash $lab
   $logPath = Join-Path $lab.StateDir 'release.log'
   $logBefore = if (Test-Path -LiteralPath $logPath -PathType Leaf) { @([IO.File]::ReadAllLines($logPath)).Count } else { 0 }
-  Start-Sleep -Milliseconds 1100
+  # The renew's expires_at is its own issue time plus the lease's TTL (lease-api.md, "Times"), read against this check's clock
+  # around the renew, never against the create's output. The wait keeps the create's expiry outside that window, slack included.
+  Start-Sleep -Milliseconds 2200
+  $renewStart = Get-CcNowSecond
   $renew = Invoke-PvLease -Lab $lab -Arguments @('renew', $id) -StandIn $standIn
+  $renewEnd = Get-CcNowSecond
   foreach ($x in (Get-ConformanceSuccessProblems -Run $renew)) { $p.Add("Renew: $x") }
   if ($renew.Json -is [hashtable]) {
     if ($renew.Json['state'] -cne 'ready') { $p.Add('Renew: the lease is not ready') }
     if ($renew.Json['ssh'] -isnot [hashtable] -or $renew.Json['ssh']['user'] -cne 'agent') { $p.Add('Renew: ssh.user is not agent') }
     if ($renew.Json['platform'] -cne 'windows/amd64' -or $renew.Json['profile'] -cne 'agent-windows') { $p.Add('Renew: the platform or the profile changed') }
-    $was = ConvertFrom-CcTime ([string]$made.Json['expires_at'])
-    $now = ConvertFrom-CcTime ([string]$renew.Json['expires_at'])
-    if ($now -le $was) { $p.Add('Renew: expires_at is not later than the first') }
+    if ($renew.Json['ttl_seconds'] -ne $made.Json['ttl_seconds']) { $p.Add('Renew: ttl_seconds is not the lease''s') }
+    $ttl = [double]$renew.Json['ttl_seconds']
+    if (-not (Test-PvTimeBetween -Time ([string]$renew.Json['expires_at']) -Before $renewStart.AddSeconds($ttl) -After $renewEnd.AddSeconds($ttl))) { $p.Add('Renew: expires_at is not the renew''s issue time plus the lease''s TTL') }
   }
   $release = Invoke-PvLease -Lab $lab -Arguments @('release', $id) -StandIn $standIn
   foreach ($x in (Get-ConformanceSuccessProblems -Run $release)) { $p.Add("Release: $x") }
