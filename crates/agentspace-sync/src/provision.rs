@@ -308,19 +308,18 @@ pub(crate) fn decide_type(
     now: i64,
 ) -> Option<&'static str> {
     decide_type_for(leases, &HostKey::linux_arm64(project), now)
-        .expect("A linux/arm64 host's type is decided")
 }
 
 /// What the run's deploy step decides from the leases at one reading's time (step 4.3) for the
 /// host `key`: **no type** when the project holds a live `ready` lease on the host's platform, an
 /// unexpired stored `ready` record of the project and platform, so the host keeps its size while a
 /// lease holds it (D66, D68's change note; pin P2(a); D91); otherwise the EC2 driver's
-/// `resize_target`, which the run never restates (D67).
+/// `resize_target_keyed` of the key, which the run never restates (D67; pin P7).
 pub(crate) fn decide_type_for(
     leases: &[agentspace_state::Record],
     key: &HostKey,
     now: i64,
-) -> Result<Option<&'static str>, Failure> {
+) -> Option<&'static str> {
     let held = leases.iter().any(|l| {
         l.project == key.project
             && l.platform == key.platform
@@ -328,23 +327,9 @@ pub(crate) fn decide_type_for(
             && agentspace_state::is_live(l, now)
     });
     if held {
-        return Ok(None);
+        return None;
     }
-    if key.is_linux_arm64() {
-        Ok(agentspace_driver_ec2::resize_target(leases, &key.project))
-    } else {
-        // P7: resize_target_keyed after E0.12-T03-S01 merges
-        Err(not_built())
-    }
-}
-
-/// The answer of a step this crate cannot build yet for a host not on `linux/arm64`: the EC2
-/// driver's keyed calls of pin P7, which E0.12-T03-S01 adds.
-fn not_built() -> Failure {
-    Failure {
-        message: agentspace_platforms::NOT_BUILT.to_string(),
-        caller: agentspace_operator_api::CallerFailure::NotAvailable,
-    }
+    agentspace_driver_ec2::resize_target_keyed(leases, key)
 }
 
 /// Step 4's first three steps for `project`'s `linux/arm64` host: [`find_type_for`] of its key.
@@ -378,7 +363,7 @@ pub(crate) fn find_type_for(
     crate::registry::set_instance_type_keyed(home, key, None)?;
     // 4.3: the leases, one reading's time.
     let leases = read_leases(&state_dir)?;
-    let found = decide_type_for(&leases, key, agentspace_state::now())?;
+    let found = decide_type_for(&leases, key, agentspace_state::now());
     // 4.4: released before any call to AWS.
     drop(lease_lock);
     Ok(found)
@@ -524,17 +509,13 @@ pub(crate) fn driver_context(
     })
 }
 
-/// The pinned name of the driver's step, the only one this crate calls, for the host `key`. `Err`
+/// The driver's keyed step, `place_pending_keyed`, for the host `key` (pin P7). `Err`
 /// is a failure of the whole call; one lease's failure is in the result's `failed`.
 fn place_pending(
     driver_ctx: &agentspace_driver_api::Context,
     key: &HostKey,
 ) -> Result<PendingPlaced, Failure> {
-    if !key.is_linux_arm64() {
-        // P7: place_pending_keyed after E0.12-T03-S01 merges
-        return Err(not_built());
-    }
-    agentspace_driver_ec2::place_pending(driver_ctx, &key.project).map_err(|f| Failure {
+    agentspace_driver_ec2::place_pending_keyed(driver_ctx, key).map_err(|f| Failure {
         message: format!("agentspace: {}", f.message),
         caller: agentspace_operator_api::CallerFailure::Same,
     })
@@ -894,8 +875,8 @@ mod tests {
         assert!(take_person_lock_keyed(&home, &HostKey::linux_arm64("example")).is_ok());
     }
 
-    /// The decision counts the leases of the host's own platform alone, and a host not on
-    /// `linux/arm64` answers `NOT_BUILT` until E0.12-T03-S01's keyed `resize_target` (pin P7).
+    /// The decision counts the leases of the host's own platform alone, and a host on any
+    /// platform is sized by the driver's `resize_target_keyed` of its key (pin P7).
     #[test]
     fn the_type_decision_counts_the_hosts_own_platform() {
         let lease = |platform: &str, state: &str| agentspace_state::Record {
@@ -927,7 +908,7 @@ mod tests {
             lease("linux/amd64", "ready"),
             lease("linux/arm64", "pending"),
         ];
-        let sized = decide_type_for(&other, &arm, now).unwrap();
+        let sized = decide_type_for(&other, &arm, now);
         assert!(sized.is_some());
         assert_eq!(
             sized,
@@ -937,12 +918,21 @@ mod tests {
             lease("linux/arm64", "ready"),
             lease("linux/arm64", "pending"),
         ];
-        assert_eq!(decide_type_for(&held, &arm, now).unwrap(), None);
+        assert_eq!(decide_type_for(&held, &arm, now), None);
+        // The linux/amd64 host is sized from its own column by its own pending lease, which the
+        // linux/arm64 host's ready lease does not hold.
         let amd = HostKey::new("example", "linux/amd64");
+        let mixed = [
+            lease("linux/arm64", "ready"),
+            lease("linux/amd64", "pending"),
+        ];
+        let amd_sized = decide_type_for(&mixed, &amd, now);
+        assert!(amd_sized.is_some());
         assert_eq!(
-            decide_type_for(&[], &amd, now).unwrap_err().message,
-            agentspace_platforms::NOT_BUILT
+            amd_sized,
+            agentspace_driver_ec2::resize_target_keyed(&mixed, &amd)
         );
+        assert_ne!(amd_sized, sized);
     }
 
     #[test]

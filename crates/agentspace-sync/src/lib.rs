@@ -696,7 +696,7 @@ pub fn deploy_using(
 #[cfg(test)]
 mod keyed_tests {
     //! The `_keyed` entry points of E0.12-T03-S03's part 1: a `linux/arm64` key is today's
-    //! command for its target, and a key on any other platform is not built yet.
+    //! command for its target, and a key on any other platform names its own host.
 
     use std::cell::RefCell;
 
