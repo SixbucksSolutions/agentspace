@@ -38,9 +38,9 @@ $seamNames = @('AGENTSPACE_INSTALL_ONLY', 'AGENTSPACE_SSHD_CONFIG', 'AGENTSPACE_
 $pwsh7Path = 'C:\Program Files\PowerShell\7\pwsh.exe'
 $powershell51Path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $gitBashPath = 'C:\Program Files\Git\bin\bash.exe'
-# sshd by name, from C:\Windows\System32\OpenSSH on the system PATH, so a test's tripwire first on
-# PATH would catch a start of it.
-$sshdExe = 'sshd'
+# sshd by its full path, never by name (pin P13). Under the seam it is never started: the stand-in
+# AGENTSPACE_SSHD_TEST_PROGRAM names takes its place.
+$sshdExe = 'C:\Windows\System32\OpenSSH\sshd.exe'
 $agentspaceDir = 'C:\ProgramData\agentspace'
 $hostSshdConfig = 'C:\ProgramData\ssh\sshd_config'
 $penaltyLine = 'PerSourcePenaltyExemptList 127.0.0.1,::1'
@@ -104,14 +104,13 @@ if ($underSeam -and $env:AGENTSPACE_INSTALL_ONLY -cne 'sshd-config') {
     exit 1
 }
 
-# Without its seam it changes the machine it runs on, so it runs only as the host's user agent, as
-# sync runs it: a run anywhere else, a test that left its seam unset among them, changes nothing.
-if (-not $underSeam) {
-    $runningAs = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    if (-not $runningAs.EndsWith('\agent', [StringComparison]::OrdinalIgnoreCase)) {
-        Write-AgentspaceError 'install.ps1: without its test seam it runs only as agent on a Windows host, from agentspace-operator sync; nothing was done'
-        exit 1
-    }
+# The account guard (pin P13): without its seam it changes the machine it runs on, so it runs only
+# as the host's user agent, as sync runs it, and a run as anyone else, a test that left its seam
+# unset among them, changes nothing. It MUST stay the first statement after the seam's detection,
+# with nothing before it that writes, makes, starts or logs anything.
+if (-not $underSeam -and -not [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.EndsWith('\agent', [StringComparison]::OrdinalIgnoreCase)) {
+    Write-AgentspaceError ($scriptName + ': without its test seam it runs only as agent; nothing was done')
+    exit 1
 }
 
 # 1. PowerShell 7, then the rest of this file under it.

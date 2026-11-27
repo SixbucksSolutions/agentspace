@@ -49,10 +49,12 @@ if ($seamSet.Count -gt 0 -and $seamSet.Count -lt $seamNames.Count) {
 }
 $underSeam = ($seamSet.Count -eq $seamNames.Count)
 
-# Without its seam it acts on the machine it runs on, so it runs only as SYSTEM, as its task runs
-# it: a run anywhere else, a test that left its seam unset among them, changes nothing.
+# The account guard (pin P13): without its seam it acts on the machine it runs on, so it runs only
+# as SYSTEM (S-1-5-18), as its task runs it, and a run as anyone else, a test that left its seam
+# unset among them, changes nothing. It MUST stay the first statement after the seam's detection,
+# with nothing before it that writes, makes, starts or logs anything.
 if (-not $underSeam -and [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18') {
-    Write-AgentspaceError ($scriptName + ': without its test seam it runs only as SYSTEM, from its scheduled task; nothing was done')
+    Write-AgentspaceError ($scriptName + ': without its test seam it runs only as SYSTEM; nothing was done')
     exit 1
 }
 
