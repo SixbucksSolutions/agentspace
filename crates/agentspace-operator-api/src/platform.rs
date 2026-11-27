@@ -70,10 +70,17 @@ pub struct SyncPlan {
     /// The remote command that clears the staging folder before the copy, in the same form, or
     /// `None` where the platform's install needs none.
     pub clear_command: Option<String>,
+    /// The remote command, in the platform's remote form, that makes the folder `CLAUDE.md` is
+    /// copied into (`mkdir -p ~/.claude` on Linux; `<home>\.claude` made on Windows) (pin P9 of
+    /// v0.12-T03).
+    pub claude_folder_command: String,
     /// Where `CLAUDE.md` is copied to, as `scp` names it.
     pub claude_md_path: String,
     /// The localswim CLI's build and install.
     pub localswim: LocalswimTarget,
+    /// Where `scp` puts the built CLI before `localswim_install_command` runs: `/tmp/localswim` on
+    /// Linux, `.agentspace-localswim.exe` in the login user's home on Windows (pin P9 of v0.12-T03).
+    pub localswim_staging: String,
     /// The remote command that installs the copied localswim CLI, in the platform's remote form.
     pub localswim_install_command: String,
 }
