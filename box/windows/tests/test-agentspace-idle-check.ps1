@@ -314,6 +314,20 @@ try {
     $t = Read-WtUnixLine -Path (Join-Path $c.State 'poweroff')
     Assert-Wt ($null -ne $t) 'poweroff MUST be written'
   }
+  # Pin P13 of v0.12-T03: on a host the check writes idle.log, and under its seam it writes none.
+  Test-WtCase 'Output: Under the seam no idle.log is written, after a power-off or an active run: the state folder holds its own files alone' {
+    foreach ($minutes in @(70, 10)) {
+      $c = New-WtIdle -TestHome $testHome
+      Set-WtLastActive -TestHome $testHome -Case $c -SecondsAgo ($minutes * 60)
+      if ($minutes -eq 10) { Set-WtIdleFacts -TestHome $testHome -Case $c -Change @{ ssh_connections = 1 } }
+      $r = Invoke-WtIdle -TestHome $testHome -Case $c -ScriptPath $scriptPath
+      Assert-WtEqual $r.ExitCode 0 'Exit code'
+      $logs = @(Get-ChildItem -LiteralPath $c.Dir -Recurse -Force -Name | Where-Object { $_ -match '(?i)(^|\\)idle\.log' })
+      Assert-Wt ($logs.Count -eq 0) ("No idle.log MAY be written under the seam: {0}" -f ($logs -join ', '))
+      $want = if ($minutes -eq 70) { 'busy,last-active,poweroff' } else { 'busy,last-active' }
+      Assert-WtEqual ((Get-WtNames -Path $c.State) -join ',') $want 'The state folder'
+    }
+  }
 
   # --- The seam is all or nothing -----------------------------------------------------------------------------
   $idleNames = @('AGENTSPACE_IDLE_STATE', 'AGENTSPACE_IDLE_CONF', 'AGENTSPACE_IDLE_FACTS')
