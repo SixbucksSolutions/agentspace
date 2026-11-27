@@ -2015,6 +2015,21 @@ mod tests {
     }
 
     #[test]
+    fn check_pending_on_an_unsupported_platform_starts_nothing_even_when_the_list_approves_it() {
+        // Pin P11 (architect, 2026-11-26, for v0.12-T03): a `pending` record of a platform the
+        // driver does not support starts nothing. The project list MAY approve such a platform, and
+        // approving it has no effect (state.md, The project list), so the list here approves it.
+        for platform in ["windows/arm64", "linux/amd64/v3"] {
+            let f = fx();
+            f.list_platforms(&[platform]);
+            f.check_on("other", platform).unwrap();
+            assert!(f.starts().is_empty(), "{platform}");
+            assert_eq!(f.registry(), None, "{platform}");
+            assert!(!hosts::hosts_dir(&f.ctx.home).exists(), "{platform}");
+        }
+    }
+
+    #[test]
     fn m13_a_list_that_cannot_be_read_fails_only_the_platform_with_no_host() {
         let mut f = fx_ca();
         f.ctx.proxy_override = Some("proxy %h".to_string());
