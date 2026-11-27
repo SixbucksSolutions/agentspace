@@ -3,20 +3,45 @@
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
-//! The architect's skeleton, committed before v0.12-T03 so that the operator's front
-//! (E0.12-T03-S02) can pick this platform while E0.12-T03-S06 builds it. The rows that are a
-//! constant hold operator.md's value already; every row that builds a script answers
-//! [`NOT_BUILT`] until S06 replaces it. Nothing here is called by a release build until S02 wires
-//! it.
+//! Each method is one row of operator.md's seam table, `windows/amd64`'s column, and returns data
+//! or text only: the operator and `agentspace-sync` run every program and every AWS call, and
+//! nothing here starts a program, reads a file at run time, writes anything or panics. The host
+//! agent's files, `box/windows/` but its `tests` folder, are carried in the crate by `build.rs`,
+//! and the bootstrap by `include_bytes!`, so the files E0.12-T03-S07 writes arrive by merge.
+//!
+//! Two of sync's nine rows on a Windows host have no field in [`SyncPlan`] as the trait is pinned:
+//! row 5's remote step, which makes sure `<home>\.claude` exists, and row 7's target,
+//! `.agentspace-localswim.exe`. For the dev lead, as a proposed pin: this crate gives them as
+//! [`Windows::make_claude_folder_command`] and [`LOCALSWIM_STAGED`] until the architect adds them
+//! to the seam.
 
 #![forbid(unsafe_code)]
 
 use agentspace_operator_api::{
-    Bootstrap, CallerFailure, Failure, HostPlatform, PatchMessages, SyncPlan,
+    Bootstrap, Failure, HostPlatform, LocalswimTarget, PatchMessages, ScriptDelivery, SyncPlan,
 };
 
-/// The skeleton's answer for a row it does not build yet.
-pub const NOT_BUILT: &str = "agentspace: windows/amd64 hosts are not built yet.";
+mod encoded;
+mod scripts;
+mod zone;
+
+pub use encoded::{MAX_LINE, PREFIX, TOO_LONG};
+pub use scripts::{LOCALSWIM_STAGED, PROGRAM_DATA};
+pub use zone::{NO_ZONE, is_windows_zone_id};
+
+include!(concat!(env!("OUT_DIR"), "/box_windows.rs"));
+
+/// `box/windows/bootstrap.ps1`, as it is in the checkout.
+const BOOTSTRAP: &[u8] = include_bytes!("../../../box/windows/bootstrap.ps1");
+
+/// The bootstrap's copy in the login user's home, as `scp` names it.
+pub const BOOTSTRAP_COPY: &str = ".agentspace-bootstrap.ps1";
+
+/// The staging folder in the login user's home, as `scp` and the remote commands name it.
+pub const STAGING: &str = ".agentspace-system";
+
+/// Where `CLAUDE.md` is copied to, in the login user's home, as `scp` names it.
+pub const CLAUDE_MD: &str = ".claude/CLAUDE.md";
 
 /// The `windows/amd64` platform.
 #[derive(Debug, Clone, Copy, Default)]
@@ -25,10 +50,12 @@ pub struct Windows;
 /// The one instance the operator picks for a `windows/amd64` host.
 pub static WINDOWS: Windows = Windows;
 
-fn not_built() -> Failure {
-    Failure {
-        message: NOT_BUILT.to_string(),
-        caller: CallerFailure::NotAvailable,
+impl Windows {
+    /// Sync on a Windows host, row 5's remote command, in the encoded form: make sure
+    /// `<home>\.claude` exists, a folder already there being no error and keeping its access
+    /// rules. Outside the trait until the seam carries it (see the crate's documentation).
+    pub fn make_claude_folder_command(&self) -> Result<String, Failure> {
+        encoded::remote_command(scripts::MAKE_CLAUDE_FOLDER)
     }
 }
 
@@ -57,20 +84,38 @@ impl HostPlatform for Windows {
         "AWS-RunPowerShellScript"
     }
 
-    fn remote_command(&self, _script: &str) -> Result<String, Failure> {
-        Err(not_built())
+    fn remote_command(&self, script: &str) -> Result<String, Failure> {
+        encoded::remote_command(script)
     }
 
     fn bootstrap(&self) -> Result<Bootstrap, Failure> {
-        Err(not_built())
+        Ok(Bootstrap {
+            script: BOOTSTRAP,
+            delivery: ScriptDelivery::CopyThenRun {
+                remote_name: BOOTSTRAP_COPY.to_string(),
+                remote_command: encoded::remote_command(&scripts::bootstrap_run())?,
+            },
+        })
     }
 
     fn sync_plan(&self) -> Result<SyncPlan, Failure> {
-        Err(not_built())
+        Ok(SyncPlan {
+            files: BOX_WINDOWS,
+            staging: STAGING.to_string(),
+            install_command: encoded::remote_command(&scripts::install())?,
+            clear_command: Some(encoded::remote_command(scripts::CLEAR_STAGING)?),
+            claude_md_path: CLAUDE_MD.to_string(),
+            localswim: LocalswimTarget {
+                goos: "windows",
+                goarch: "amd64",
+                file_name: "localswim-windows-amd64.exe",
+            },
+            localswim_install_command: encoded::remote_command(scripts::INSTALL_LOCALSWIM)?,
+        })
     }
 
     fn patch_check_command(&self) -> Result<String, Failure> {
-        Err(not_built())
+        Ok(scripts::PATCH_CHECK.to_string())
     }
 
     fn patch_messages(&self) -> PatchMessages {
@@ -81,19 +126,28 @@ impl HostPlatform for Windows {
         }
     }
 
-    fn horizon_command(&self, _horizon: u64) -> Result<String, Failure> {
-        Err(not_built())
+    fn horizon_command(&self, horizon: u64) -> Result<String, Failure> {
+        Ok(scripts::horizon(horizon))
     }
 
     fn grow_script(&self) -> Result<String, Failure> {
-        Err(not_built())
+        Ok(scripts::GROW.to_string())
     }
 
-    fn push_zone(&self, _windows_zone_id: &str, _iana: &str) -> Result<String, Failure> {
-        Err(not_built())
+    fn push_zone(&self, windows_zone_id: &str, _iana: &str) -> Result<String, Failure> {
+        zone::push_zone(windows_zone_id)
     }
 
-    fn push_script(&self, _zone: &str) -> Result<String, Failure> {
-        Err(not_built())
+    fn push_script(&self, zone: &str) -> Result<String, Failure> {
+        // An empty zone is no zone (What the box does, step 8). Any other is checked again here,
+        // since it goes inside the script, and a zone outside the pattern is refused rather than
+        // quoted.
+        if !zone.is_empty() && !is_windows_zone_id(zone) {
+            return Err(zone::no_zone());
+        }
+        Ok(scripts::push(zone))
     }
 }
+
+#[cfg(test)]
+mod tests;
