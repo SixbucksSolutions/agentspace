@@ -4,11 +4,16 @@
 //!
 //! RFC 2119 keywords, and the capitals are load-bearing.
 //!
+//! **From v0.12 a host is its project and its platform** (D91): every lookup below is by the
+//! host's key, a registry record without `platform` being `linux/arm64`'s.
+//!
 //! The host comes from the ProxyCommand's one argument, in this order:
 //! 1. **No argument: the box.**
-//! 2. **`agentspace-host.<project>`: that project's host**, whatever its state. A rest that is not a
-//!    normalized project name, and a project with no record, fail the connection.
-//! 3. **Any other argument, a lease alias** ([`lease_project`]): the lease state file is read
+//! 2. **`agentspace-host.<host name>`: that host**, whatever its state. The host name is
+//!    `<project>`, the project's `linux/arm64` host, or `<project>.<os>-<arch>`, its host on that
+//!    platform, the name part being `linux-amd64` or `windows-amd64` exactly (pins P1 and P12 of
+//!    v0.12-T01). A rest that is not a host name, and a host with no record, fail the connection.
+//! 3. **Any other argument, a lease alias** ([`lease_key`]): the lease state file is read
 //!    without its lock, retried on a sharing violation alone (pin P23), for the records that are the
 //!    alias's: the alias built from a record's `project` and `id`, or a stored `ready` record's
 //!    `ssh.host_alias` (pins P21 and P22). Their states are decided at one reading of the clock, a
@@ -17,8 +22,9 @@
 //!    state, **before the host registry is read** ([`choose`] comes after). No record, or no file,
 //!    is the box. A file that cannot be read or is not valid refuses an argument of lease alias
 //!    form ([`is_lease_alias_form`]), and sends any other argument to the box. A `ready` lease's
-//!    project is then looked up in the registry: a `ready` host that is not the box is that host,
-//!    and every other outcome is the box.
+//!    host, its record's `project` on its record's `platform`, is then looked up in the registry:
+//!    a `ready` host that is not the box is that host. Otherwise a `linux/arm64` lease reaches the
+//!    box, and a lease of any other platform is refused, with no tunnel (pin P13 of v0.12-T01).
 //!
 //! The ProxyCommand never writes the lease state file and never takes its lock.
 
@@ -28,7 +34,8 @@ use std::time::{Duration, Instant};
 
 use agentspace_box::{CacheRead, InstanceIdCache, cache_bytes, parse_cache};
 use agentspace_hosts::{
-    Host, Hosts, HostsError, Target, hosts_path, is_box, is_normalized_project, target_for,
+    Host, HostKey, Hosts, HostsError, Target, host_for_keyed, hosts_path, is_box,
+    is_normalized_project, target_for_keyed,
 };
 use agentspace_operator_api::{CallerFailure, Failure, Say};
 use agentspace_state::{Record, StateFile, StoreError, parse_time};
@@ -253,15 +260,28 @@ pub fn not_ready_refusal(alias: &str, state: LeaseState) -> Failure {
     refusal(line)
 }
 
+/// The refusal of a `ready` lease on a platform other than `linux/arm64` whose project has no
+/// `ready` record on that platform (operator.md, A lease that is not ready (#0229); pins P13 and
+/// P56 of v0.12-T01). Its lease is `ready`, so it names no state.
+pub fn no_ready_host_refusal(alias: &str) -> Failure {
+    refusal(format!(
+        "agentspace: The lease for {alias} has no ready host on its platform; no connection was opened."
+    ))
+}
+
 /// Decides `alias` from the records at `now` (pin P22): the first record that is the alias's and
-/// `ready` gives its project; when records are the alias's and none is `ready`, the alias is
-/// refused naming the last one's state; when none is, `None`.
-pub fn decide(leases: &[Record], alias: &str, now: i64) -> Result<Option<String>, Failure> {
+/// `ready` gives its host's key, the record's `project` and `platform` as stored (D91; pin P8 of
+/// v0.12-T01); when records are the alias's and none is `ready`, the alias is refused naming the
+/// last one's state; when none is, `None`.
+pub fn decide(leases: &[Record], alias: &str, now: i64) -> Result<Option<HostKey>, Failure> {
     let mut last = None;
     for record in leases.iter().filter(|r| is_the_alias(r, alias)) {
         let state = state_at(record, now);
         if state == LeaseState::Ready {
-            return Ok(Some(record.project.clone()));
+            return Ok(Some(HostKey::new(
+                record.project.clone(),
+                record.platform.clone(),
+            )));
         }
         last = Some(state);
     }
@@ -333,19 +353,19 @@ fn read_leases(
 }
 
 /// Step 3 of From the ProxyCommand for a lease alias, made before the host registry is read: the
-/// project of `alias`'s `ready` lease, or `None` for the box, or the refusal of a lease that is
-/// not `ready` (#0229; pins P21 to P23 and P27).
+/// key of `alias`'s `ready` lease's host, its project and platform, or `None` for the box, or the
+/// refusal of a lease that is not `ready` (#0229; pins P21 to P23 and P27; D91).
 ///
 /// `None` for no argument and for a host alias, which read nothing here. A file that cannot be
 /// read or is not valid gives `say` a line that names the file and the problem, which only
 /// `AGENTSPACE_DIAGNOSTIC` shows, then refuses an argument of lease alias form and sends any other
 /// to the box. The lease's state is decided at one reading of `clock`, taken once the read is made.
-pub fn lease_project(
+pub fn lease_key(
     alias: Option<&str>,
     state_dir: &Path,
     say: &dyn Say,
     clock: &dyn LeaseClock,
-) -> Result<Option<String>, Failure> {
+) -> Result<Option<HostKey>, Failure> {
     let Some(alias) = alias else {
         return Ok(None);
     };
@@ -368,37 +388,49 @@ pub fn lease_project(
     }
 }
 
+/// The host an operator alias's rest names (operator.md, From the ProxyCommand, step 2; pins P1 and
+/// P12 of v0.12-T01): a host name, `<project>` for the project's `linux/arm64` host or
+/// `<project>.<os>-<arch>` for its host on that platform, read by the push's own reading of a host
+/// name, so the ProxyCommand and the push stamp it chooses agree on every name. `None` for a rest
+/// that is not a host name: a project not in the normalized form, or a name part that is neither
+/// `linux-amd64` nor `windows-amd64`, `linux-arm64` and an upper-case one included.
+pub fn host_alias_key(rest: &str) -> Option<HostKey> {
+    let (project, platform) = agentspace_push::parse_host_name(rest)?;
+    Some(HostKey::new(project, platform))
+}
+
 /// The host the connection reaches (operator.md, From the ProxyCommand), from the registry the
 /// caller has already read and validated. `alias` is the ProxyCommand's argument, `None` for no
-/// argument, and `lease` is what [`lease_project`] found for it before the registry was read.
+/// argument, and `lease` is what [`lease_key`] found for it before the registry was read: the
+/// lease's host key, its record's project and platform.
+///
+/// A `ready` lease whose host record is `ready` reaches that host; a `linux/arm64` lease whose
+/// project has no `ready` record on `linux/arm64` reaches the box; and a lease of any other
+/// platform with no `ready` record on its platform is refused ([`no_ready_host_refusal`]), before
+/// anything is started (pin P13 of v0.12-T01).
 pub fn choose<'a>(
     alias: Option<&str>,
     hosts: &'a Hosts,
-    lease: Option<&str>,
+    lease: Option<&HostKey>,
 ) -> Result<&'a Host, Failure> {
     let Some(alias) = alias else {
         return the_box(hosts);
     };
-    if let Some(project) = alias.strip_prefix(HOST_ALIAS_PREFIX) {
-        let record = is_normalized_project(project)
-            .then(|| hosts.hosts.iter().find(|h| h.project == project))
-            .flatten();
+    if let Some(rest) = alias.strip_prefix(HOST_ALIAS_PREFIX) {
+        let record = host_alias_key(rest).and_then(|key| host_for_keyed(hosts, &key));
         return record.ok_or_else(|| {
             could_not_reach("agentspace: The host alias names no host in the registry.".to_string())
         });
     }
-    let Some(project) = lease else {
+    let Some(key) = lease else {
         return the_box(hosts);
     };
-    match target_for(hosts, project) {
-        Target::Host(project) => hosts
-            .hosts
-            .iter()
-            .find(|h| h.project == project)
-            .ok_or_else(|| {
-                could_not_reach("agentspace: The host registry changed while it was read.".into())
-            }),
-        Target::Box => the_box(hosts),
+    match target_for_keyed(hosts, key) {
+        Some(Target::Host(_)) => host_for_keyed(hosts, key).ok_or_else(|| {
+            could_not_reach("agentspace: The host registry changed while it was read.".into())
+        }),
+        Some(Target::Box) => the_box(hosts),
+        None => Err(no_ready_host_refusal(alias)),
     }
 }
 
@@ -415,11 +447,14 @@ pub fn choose<'a>(
 /// changes nothing else. It never replaces an ID and never adds a record. **A write that fails, or
 /// a registry that has become not valid by then, does not fail the connection**: it returns `Ok`,
 /// and the connection uses the ID it read.
+///
+/// **The record is found by the host's key, its project and its platform** (D91), so a write for one
+/// of a project's hosts never puts its ID into the project's host on another platform.
 #[derive(Debug, Clone)]
 pub struct HostCache {
     home: PathBuf,
     path: PathBuf,
-    project: String,
+    key: HostKey,
     instance_id: Option<String>,
 }
 
@@ -429,7 +464,7 @@ impl HostCache {
         HostCache {
             home: home.to_path_buf(),
             path: hosts_path(home),
-            project: host.project.clone(),
+            key: host.key(),
             instance_id: host.instance_id.clone(),
         }
     }
@@ -437,7 +472,7 @@ impl HostCache {
     fn record(&self, id: &str) -> Result<(), HostsError> {
         let held = agentspace_hosts::lock(&self.home)?;
         let mut hosts = agentspace_hosts::read(&self.home)?;
-        let Some(record) = hosts.hosts.iter_mut().find(|h| h.project == self.project) else {
+        let Some(record) = hosts.hosts.iter_mut().find(|h| h.is_for(&self.key)) else {
             return Ok(());
         };
         if record.instance_id.is_some() {
@@ -647,8 +682,8 @@ mod tests {
         say: &dyn Say,
         clock: &dyn LeaseClock,
     ) -> Result<&'a Host, Failure> {
-        let lease = lease_project(alias, dir, say, clock)?;
-        choose(alias, hosts, lease.as_deref())
+        let lease = lease_key(alias, dir, say, clock)?;
+        choose(alias, hosts, lease.as_ref())
     }
 
     /// A record of `project` whose built alias is `agentspace-<project>-<hex8>`, in `state`, with the
@@ -931,7 +966,7 @@ mod tests {
         for diagnostic in [false, true] {
             let (printer, cap) = say(diagnostic);
             let failure =
-                lease_project(Some("agentspace-x-cccccccc"), &dir.0, &printer, &clock).unwrap_err();
+                lease_key(Some("agentspace-x-cccccccc"), &dir.0, &printer, &clock).unwrap_err();
             assert_eq!(
                 failure,
                 refusal(
@@ -975,7 +1010,7 @@ mod tests {
         let (printer, cap) = say(true);
         let clock = FakeClock::before_expiry();
         let failure =
-            lease_project(Some("agentspace-x-cccccccc"), &dir.0, &printer, &clock).unwrap_err();
+            lease_key(Some("agentspace-x-cccccccc"), &dir.0, &printer, &clock).unwrap_err();
         assert_eq!(failure, unreadable_refusal("agentspace-x-cccccccc"));
         assert!(
             cap.text()
@@ -1055,7 +1090,7 @@ mod tests {
         let clock = FakeClock::at(expiry());
         for (alias, rest) in cases {
             let (printer, cap) = say(true);
-            let failure = lease_project(Some(alias), &dir.0, &printer, &clock).unwrap_err();
+            let failure = lease_key(Some(alias), &dir.0, &printer, &clock).unwrap_err();
             assert_eq!(
                 failure,
                 refusal(format!("agentspace: The lease for {alias} {rest}")),
@@ -1078,7 +1113,7 @@ mod tests {
         let alias = "agentspace-agentspace-44444444";
         assert_eq!(
             decide(std::slice::from_ref(&r), alias, expiry() - 1),
-            Ok(Some("agentspace".to_string()))
+            Ok(Some(HostKey::linux_arm64("agentspace")))
         );
         assert_eq!(
             decide(std::slice::from_ref(&r), alias, expiry()),
@@ -1111,12 +1146,12 @@ mod tests {
                 "agentspace-agentspace-55555555",
                 now
             ),
-            Ok(Some("agentspace".to_string()))
+            Ok(Some(HostKey::linux_arm64("agentspace")))
         );
         // A stored `ready` record by its `ssh.host_alias`.
         assert_eq!(
             decide(std::slice::from_ref(&built), "elsewhere", now),
-            Ok(Some("agentspace".to_string()))
+            Ok(Some(HostKey::linux_arm64("agentspace")))
         );
         // A record that is not stored `ready` is never found by an `ssh.host_alias`.
         let mut pending = record("agentspace", "66666666", "pending");
@@ -1165,11 +1200,11 @@ mod tests {
                 alias,
                 now
             ),
-            Ok(Some("agentspace".to_string()))
+            Ok(Some(HostKey::linux_arm64("agentspace")))
         );
         assert_eq!(
             decide(&[ready_b.clone(), ready_a.clone()], alias, now),
-            Ok(Some("other".to_string()))
+            Ok(Some(HostKey::linux_arm64("other")))
         );
         // None `ready`: the last one's state names the refusal.
         let pending = again(record("agentspace", "77777777", "pending"), 4);
@@ -1197,7 +1232,7 @@ mod tests {
         fresh.expires_at = Some("2026-11-20T12:00:00Z".to_string());
         assert_eq!(
             decide(&[ready_a, fresh], alias, late),
-            Ok(Some("agentspace".to_string()))
+            Ok(Some(HostKey::linux_arm64("agentspace")))
         );
     }
 
@@ -1215,8 +1250,8 @@ mod tests {
         let (printer, _) = say(false);
         let clock = FakeClock::before_expiry();
         assert_eq!(
-            lease_project(Some(alias), &dir.0, &printer, &clock),
-            Ok(Some("agentspace".to_string()))
+            lease_key(Some(alias), &dir.0, &printer, &clock),
+            Ok(Some(HostKey::linux_arm64("agentspace")))
         );
         assert_eq!(clock.nows.get(), 1);
     }
@@ -1258,7 +1293,7 @@ mod tests {
         let held = hold(&dir.0.join(LEASE_FILE));
         let (printer, cap) = say(true);
         let clock = FakeClock::before_expiry();
-        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        let failure = lease_key(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
         drop(held);
         assert_eq!(failure, unreadable_refusal(LEASE_A));
         assert_eq!(clock.pauses(), vec![RETRY_PAUSE, RETRY_PAUSE]);
@@ -1283,7 +1318,7 @@ mod tests {
         let held = hold(&dir.0.join(LEASE_FILE));
         let (printer, cap) = say(false);
         let clock = FakeClock::before_expiry();
-        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        let failure = lease_key(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
         drop(held);
         assert_eq!(failure, unreadable_refusal(LEASE_A));
         assert_eq!(clock.pauses().len(), 2);
@@ -1298,7 +1333,7 @@ mod tests {
         let held = hold(&dir.0.join(LEASE_FILE));
         let (printer, _) = say(false);
         let clock = FakeClock::before_expiry();
-        let found = lease_project(Some(NOT_LEASE_FORM), &dir.0, &printer, &clock);
+        let found = lease_key(Some(NOT_LEASE_FORM), &dir.0, &printer, &clock);
         drop(held);
         assert_eq!(found, Ok(None));
         assert_eq!(clock.pauses().len(), 2);
@@ -1318,7 +1353,7 @@ mod tests {
         *clock.on_pause.borrow_mut() = Box::new(move |_| {
             in_pause.borrow_mut().take();
         });
-        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        let failure = lease_key(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
         assert_eq!(failure, not_ready_refusal(LEASE_A, LeaseState::Released));
         assert_eq!(clock.pauses(), vec![RETRY_PAUSE]);
         assert_eq!(cap.text(), format!("{RETRY_LINE}\n"));
@@ -1338,7 +1373,7 @@ mod tests {
         *clock.on_pause.borrow_mut() = Box::new(move |_| {
             in_pause.borrow_mut().take();
         });
-        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        let failure = lease_key(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
         assert_eq!(failure, unreadable_refusal(LEASE_A));
         assert_eq!(clock.pauses().len(), 1);
         let text = cap.text();
@@ -1359,7 +1394,7 @@ mod tests {
         // would start at 1400, so it is never made.
         let mut clock = FakeClock::before_expiry();
         clock.per_pause_extra = Duration::from_millis(300);
-        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        let failure = lease_key(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
         drop(held);
         assert_eq!(failure, unreadable_refusal(LEASE_A));
         assert_eq!(clock.pauses().len(), 1);
@@ -1369,7 +1404,7 @@ mod tests {
         let (printer, _) = say(false);
         let mut clock = FakeClock::before_expiry();
         clock.per_pause_extra = Duration::from_millis(700);
-        let failure = lease_project(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
+        let failure = lease_key(Some(LEASE_A), &dir.0, &printer, &clock).unwrap_err();
         drop(held);
         assert_eq!(failure, unreadable_refusal(LEASE_A));
         assert_eq!(clock.pauses().len(), 1);
@@ -1380,10 +1415,7 @@ mod tests {
         let dir = Dir::new("missing");
         let (printer, cap) = say(true);
         let clock = FakeClock::before_expiry();
-        assert_eq!(
-            lease_project(Some(LEASE_A), &dir.0, &printer, &clock),
-            Ok(None)
-        );
+        assert_eq!(lease_key(Some(LEASE_A), &dir.0, &printer, &clock), Ok(None));
         assert!(clock.pauses().is_empty());
         assert_eq!(cap.text(), "");
     }
@@ -1520,5 +1552,170 @@ mod tests {
         // Bytes that are not an instance ID write nothing and also succeed.
         assert_eq!(cache.write(b"nonsense"), Ok(()));
         assert!(!hosts_path(&home.0).exists());
+    }
+
+    // A host by its project and platform (D91; operator.md, From the ProxyCommand; pins P8, P12 and
+    // P13 of v0.12-T01). Every registry below holds the project's host on the other platform first,
+    // so a lookup by the project alone would find the wrong record.
+
+    fn host_on(project: &str, platform: &str, state: HostState) -> Host {
+        Host::new(&HostKey::new(project, platform), state)
+    }
+
+    /// A `ready` lease of `project` on `platform` whose built alias is
+    /// `agentspace-<project>-<hex8>`.
+    fn lease_on(project: &str, platform: &str, hex8: &str) -> Record {
+        let mut r = record(project, hex8, "ready");
+        r.platform = platform.to_string();
+        r
+    }
+
+    fn platform_of_pick(result: Result<&Host, Failure>) -> (String, String) {
+        let host = result.unwrap();
+        (host.project.clone(), host.platform().to_string())
+    }
+
+    const WINDOWS_LEASE: &str = "agentspace-agentspace-0e1e2e3e";
+    const LINUX_LEASE: &str = "agentspace-agentspace-0a1a2a3a";
+
+    #[test]
+    fn a_host_alias_names_the_host_of_its_project_on_its_platform() {
+        let dir = Dir::new("hostaliasplatform");
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        let hosts = registry(&[
+            host_on("agentspace", "windows/amd64", HostState::Ready),
+            host_on("agentspace", "linux/amd64", HostState::Creating),
+            host("agentspace", HostState::Ready),
+        ]);
+        for (alias, platform) in [
+            ("agentspace-host.agentspace", "linux/arm64"),
+            ("agentspace-host.agentspace.windows-amd64", "windows/amd64"),
+            ("agentspace-host.agentspace.linux-amd64", "linux/amd64"),
+        ] {
+            assert_eq!(
+                platform_of_pick(pick(Some(alias), &hosts, &dir.0, &printer, &clock)),
+                ("agentspace".to_string(), platform.to_string()),
+                "{alias}"
+            );
+        }
+        assert_eq!(cap.text(), "");
+        // `linux/arm64` never appears in a name; another name part, or one with no record, fails.
+        let only_linux = registry(&[host("agentspace", HostState::Ready)]);
+        for alias in [
+            "agentspace-host.agentspace.linux-arm64",
+            "agentspace-host.agentspace.Windows-amd64",
+            "agentspace-host.agentspace.windows-arm64",
+            "agentspace-host.agentspace.windows-amd64",
+            "agentspace-host.swimcoach.linux-amd64",
+        ] {
+            let failure = pick(Some(alias), &only_linux, &dir.0, &printer, &clock).unwrap_err();
+            assert_eq!(failure.caller, CallerFailure::CouldNotReach, "{alias}");
+        }
+    }
+
+    #[test]
+    fn a_lease_reaches_the_ready_host_of_its_own_platform() {
+        let dir = Dir::new("leaseplatform");
+        write_leases(
+            &dir.0,
+            vec![
+                lease_on("agentspace", "windows/amd64", "0e1e2e3e"),
+                lease_on("agentspace", "linux/arm64", "0a1a2a3a"),
+            ],
+        );
+        let (printer, cap) = say(true);
+        let clock = FakeClock::before_expiry();
+        let hosts = registry(&[
+            host_on("agentspace", "windows/amd64", HostState::Ready),
+            host("agentspace", HostState::Ready),
+        ]);
+        assert_eq!(
+            platform_of_pick(pick(Some(WINDOWS_LEASE), &hosts, &dir.0, &printer, &clock)),
+            ("agentspace".to_string(), "windows/amd64".to_string())
+        );
+        assert_eq!(
+            platform_of_pick(pick(Some(LINUX_LEASE), &hosts, &dir.0, &printer, &clock)),
+            ("agentspace".to_string(), "linux/arm64".to_string())
+        );
+        assert_eq!(cap.text(), "");
+    }
+
+    #[test]
+    fn a_ready_lease_off_linux_arm64_with_no_ready_host_there_is_refused() {
+        let dir = Dir::new("noreadyplatform");
+        write_leases(
+            &dir.0,
+            vec![lease_on("agentspace", "windows/amd64", "0e1e2e3e")],
+        );
+        let clock = FakeClock::before_expiry();
+        let line = format!(
+            "agentspace: The lease for {WINDOWS_LEASE} has no ready host on its platform; no connection was opened."
+        );
+        for hosts in [
+            // The project's `ready` host is on `linux/arm64` alone.
+            registry(&[host("agentspace", HostState::Ready)]),
+            // Its host on the lease's platform is not `ready`.
+            registry(&[
+                host("agentspace", HostState::Ready),
+                host_on("agentspace", "windows/amd64", HostState::Creating),
+            ]),
+            registry(&[host_on("agentspace", "windows/amd64", HostState::Failed)]),
+        ] {
+            for diagnostic in [false, true] {
+                let (printer, cap) = say(diagnostic);
+                let failure =
+                    pick(Some(WINDOWS_LEASE), &hosts, &dir.0, &printer, &clock).unwrap_err();
+                assert_eq!(failure.message, line);
+                // The caller's line is the refusal itself, and the diagnostic adds nothing.
+                assert_eq!(failure.caller, CallerFailure::Same);
+                assert_eq!(cap.text(), "");
+            }
+        }
+        // The fallback to the box is `linux/arm64`'s alone: such a lease of `linux/arm64` with no
+        // `ready` host there reaches the box, though a `ready` host of its project's is on another
+        // platform.
+        write_leases(
+            &dir.0,
+            vec![lease_on("agentspace", "linux/arm64", "0a1a2a3a")],
+        );
+        let (printer, _) = say(false);
+        let hosts = registry(&[host_on("agentspace", "windows/amd64", HostState::Ready)]);
+        let chosen = pick(Some(LINUX_LEASE), &hosts, &dir.0, &printer, &clock).unwrap();
+        assert!(is_box(chosen));
+    }
+
+    #[test]
+    fn decide_gives_the_records_project_and_platform() {
+        let r = lease_on("agentspace", "windows/amd64", "0e1e2e3e");
+        assert_eq!(
+            decide(std::slice::from_ref(&r), WINDOWS_LEASE, expiry() - 1),
+            Ok(Some(HostKey::new("agentspace", "windows/amd64")))
+        );
+    }
+
+    #[test]
+    fn a_write_finds_its_record_by_project_and_platform() {
+        let home = Dir::new("cacheplatform");
+        {
+            let held = agentspace_hosts::lock(&home.0).unwrap();
+            let hosts = registry(&[
+                host_on("agentspace", "windows/amd64", HostState::Ready),
+                host("agentspace", HostState::Ready),
+            ]);
+            agentspace_hosts::write(&home.0, &hosts, &held).unwrap();
+        }
+        let linux = HostCache::new(&home.0, &host("agentspace", HostState::Ready));
+        linux.write(&cache_bytes(ID_A)).unwrap();
+        let windows = HostCache::new(
+            &home.0,
+            &host_on("agentspace", "windows/amd64", HostState::Ready),
+        );
+        windows.write(&cache_bytes(ID_B)).unwrap();
+        let after = agentspace_hosts::read(&home.0).unwrap();
+        assert_eq!(after.hosts[1].platform(), "windows/amd64");
+        assert_eq!(after.hosts[1].instance_id.as_deref(), Some(ID_B));
+        assert_eq!(after.hosts[2].platform(), "linux/arm64");
+        assert_eq!(after.hosts[2].instance_id.as_deref(), Some(ID_A));
     }
 }

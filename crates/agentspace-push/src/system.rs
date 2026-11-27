@@ -9,7 +9,7 @@
 use crate::relay::{Relay, SshStderr};
 use crate::{
     COULD_NOT_SEND, Context, FileRead, Files, Outcome, Say, Seams, SshResult, SshRun, Unprotect,
-    push_with_host, read_file,
+    push_with_host_zone, read_file,
 };
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -324,9 +324,12 @@ pub fn push_using_with(
     )
 }
 
-/// [`push_using_with`] for one host: `host` is `None` for the box, or `Some(project)` for another
-/// host, which keeps its own stamp ([`crate::stamp_path_for`]) and never reads or writes the box's
-/// (architect, 2026-11-20, for v0.07-T02).
+/// [`push_using_with`] for one host: `host` is `None` for the box, or `Some(host name)` for another
+/// host ([`crate::parse_host_name`]: `<project>` on `linux/arm64`, `<project>.<os>-<arch>` on any
+/// other platform), which keeps its own stamp ([`crate::stamp_path_for`]) and never reads or writes
+/// the box's (architect, 2026-11-20, for v0.07-T02). A host not on Linux is given the laptop's
+/// Windows zone ID, or `AGENTSPACE_TIMEZONE`'s value in its place, read only for it
+/// ([`crate::push_with_host_zone`]).
 #[allow(clippy::too_many_arguments)]
 pub fn push_using_with_host(
     ctx: &Context,
@@ -339,17 +342,41 @@ pub fn push_using_with_host(
     host: Option<&str>,
 ) -> Outcome {
     let ssh = configure(SystemSsh::with_lookup(ctx, Arc::clone(&lookup)));
-    let zone = move || {
-        let value = lookup(TIMEZONE_VAR).map(|v| v.to_string_lossy().into_owned());
-        agentspace_zone::laptop_zone(value.as_deref())
+    let override_value = {
+        let lookup = Arc::clone(&lookup);
+        move || lookup(TIMEZONE_VAR).map(|v| v.to_string_lossy().into_owned())
     };
+    let zone = || agentspace_zone::laptop_zone(override_value().as_deref());
+    let windows_zone = || laptop_windows_zone(override_value());
     let seams = Seams {
         files: &SystemFiles,
         unprotect: &DpapiUnprotect,
         ssh: &ssh,
         zone: &zone,
     };
-    push_with_host(ctx, say, instance_id, alias, forced, &seams, host)
+    push_with_host_zone(
+        ctx,
+        say,
+        instance_id,
+        alias,
+        forced,
+        &seams,
+        host,
+        &windows_zone,
+    )
+}
+
+/// The zone a host not on Linux is given, before its platform's row checks it (operator.md, The
+/// token push to a Windows host): `AGENTSPACE_TIMEZONE`'s value when it is set and not empty, and
+/// otherwise the Windows ID of the zone the laptop is set to at this moment, read afresh, never
+/// converted to an IANA name. `None` when neither gives one. **For the dev lead:** should
+/// `agentspace-zone` gain this rule as a function of its own (E0.12-T03-S04's zone half), the push
+/// SHOULD call that instead.
+fn laptop_windows_zone(override_value: Option<String>) -> Option<String> {
+    match override_value {
+        Some(value) if !value.is_empty() => Some(value),
+        _ => agentspace_zone::windows_zone_id(),
+    }
 }
 
 /// One token push (operator.md, The token push), as `up` and `sync` run it. **It never fails a
@@ -367,7 +394,7 @@ pub fn push(ctx: &Context, say: &dyn Say, instance_id: &str, alias: &str, forced
     push_to_host(ctx, say, instance_id, alias, forced, None);
 }
 
-/// [`push`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or `Some(project)`
+/// [`push`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or `Some(host name)`
 /// for another host, whose own stamp ([`crate::stamp_path_for`]) is the only one the push reads and
 /// writes, its folder created if missing (architect, 2026-11-20, for v0.07-T02). It never fails a
 /// command either.

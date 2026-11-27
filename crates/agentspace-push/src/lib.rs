@@ -21,8 +21,15 @@
 //! - [`push_with`]: one push, start to end, never failing; returns its [`Outcome`].
 //! - For a host other than the box (v0.07): [`push_to_host`], [`push_to_host_using`],
 //!   [`push_using_with_host`] and [`push_with_host`] are the push's entry points over a
-//!   `host: Option<&str>`, `None` for the box and `Some(project)` for another host, which keeps its
-//!   own stamp ([`stamp_path_for`]). A project that is not [`host_name_is_valid`] is refused.
+//!   `host: Option<&str>`, `None` for the box and `Some(host name)` for another host, which keeps
+//!   its own stamp ([`stamp_path_for`]). From v0.12 the host name is its folder's name,
+//!   `<project>` on `linux/arm64` and `<project>.<os>-<arch>` on any other platform (D91), and a
+//!   name that is not [`host_name_is_valid`] is refused.
+//! - A host's platform (v0.12, D91, D101): [`parse_host_name`] and [`host_platform`] read it from
+//!   the host's name, and the push takes the platform's rows from
+//!   `agentspace_platforms::for_platform` alone. [`push_with_host_zone`] adds the laptop's Windows
+//!   zone ID, which a host not on Linux is given, and [`push_on`] takes the platform as a
+//!   [`HostPlatform`], so a test MAY pass a stand-in.
 //! - [`Seams`], holding the three traits and the zone: [`Files`] (with [`FileRead`], and
 //!   [`StdFiles`], a portable `Files` that T02 MAY use or replace), [`Unprotect`] and [`SshRun`]
 //!   (with [`SshResult`]).
@@ -92,6 +99,7 @@ pub use system::{
 pub use zeroize::Zeroizing;
 pub use zone::check_zone;
 
+use agentspace_operator_api::HostPlatform;
 use boxside::Answer;
 use std::ffi::OsString;
 use std::fmt;
@@ -115,8 +123,9 @@ pub const COULD_NOT_SEND: &str = "agentspace: Could not send the localswim token
 /// line (architect, 2026-11-19, for E0.06-T01-S04).
 pub const BAD_ALIAS: &str = "agentspace: The SSH host alias for the localswim token is not valid; the board will not work on the box this session.";
 
-/// A host's name that is not the host registry's normalized form, which reached a push for a host
-/// (see [`host_name_is_valid`]). Its text names no path and no value.
+/// A host's name that is not a host name, which reached a push for a host (see
+/// [`host_name_is_valid`]), or a platform that is not the one the name names. Its text names no
+/// path and no value.
 pub const BAD_HOST: &str =
     "agentspace: The host's name is not valid; the board will not work on that host this session.";
 
@@ -376,11 +385,12 @@ pub enum Outcome {
     /// The stored stamp matches: nothing sent, nothing printed.
     NotDue,
     /// [`BAD_ALIAS`]: an alias that breaks `-Alias`'s rule. Nothing read, no [`SENDING`] line.
-    /// Also [`BAD_HOST`]: a host's name that is not the registry's normalized form, which is the
-    /// same kind of skip (a name that breaks its rule, refused before anything is read or written),
-    /// so it has no outcome of its own (architect to confirm, E0.07-T02-S04 review).
+    /// Also [`BAD_HOST`]: a host's name that is not a host name ([`host_name_is_valid`]), which is
+    /// the same kind of skip (a name that breaks its rule, refused before anything is read or
+    /// written), so it has no outcome of its own (architect to confirm, E0.07-T02-S04 review).
     BadAlias,
-    /// [`COULD_NOT_SEND`]: an ssh that could not be started, or a stamp that could not be written.
+    /// [`COULD_NOT_SEND`]: an ssh that could not be started, a stamp that could not be written, or
+    /// a platform's remote half that could not be made.
     CouldNotSend,
     /// [`TIMED_OUT`].
     TimedOut,
@@ -423,35 +433,95 @@ pub fn stamp_path(ctx: &Context) -> PathBuf {
 
 /// The stamp file's path for one host (docs/state.md, The push stamp; A host's push stamp; architect,
 /// 2026-11-20, for v0.07-T02). `None` is the box, whose stamp is v0.06's,
-/// `%USERPROFILE%\.agentspace\localswim-pushed.json`. `Some(project)` is that host's,
-/// `%USERPROFILE%\.agentspace\hosts\<project>\localswim-pushed.json`. `AGENTSPACE_STATE_DIR` moves
-/// neither. A push for a host MUST read and write its own stamp alone, never the box's.
+/// `%USERPROFILE%\.agentspace\localswim-pushed.json`. `Some(host name)` is that host's,
+/// `%USERPROFILE%\.agentspace\hosts\<host name>\localswim-pushed.json`, the host name being its
+/// folder's name: `<project>` on `linux/arm64`, and `<project>.<os>-<arch>` on every other platform
+/// (D91; operator.md, A host's platform and its names). `AGENTSPACE_STATE_DIR` moves neither. A push
+/// for a host MUST read and write its own stamp alone, never the box's nor another platform's.
 ///
-/// **The caller MUST pass a normalized project** ([`host_name_is_valid`]): this function does no
-/// check, and a project such as `..` or the empty string resolves to the box's stamp or into
-/// `hosts\` itself. The push entry points that take a host ([`push_with_host`] and the ones built on
-/// it) refuse any other name before they call it.
+/// **The caller MUST pass a valid host name** ([`host_name_is_valid`]): this function does no
+/// check, and a name such as `..` or the empty string resolves to the box's stamp or into `hosts\`
+/// itself. The push entry points that take a host ([`push_with_host`] and the ones built on it)
+/// refuse any other name before they call it.
 pub fn stamp_path_for(ctx: &Context, host: Option<&str>) -> PathBuf {
     let agentspace = ctx.home.join(".agentspace");
     match host {
         None => agentspace.join("localswim-pushed.json"),
-        Some(project) => agentspace
+        Some(name) => agentspace
             .join("hosts")
-            .join(project)
+            .join(name)
             .join("localswim-pushed.json"),
     }
 }
 
+/// The platform every host had before v0.12, the box's, and the one a host name without a `.`
+/// names (D91).
+pub const LINUX_ARM64: &str = "linux/arm64";
+
 /// Whether `project` is the host registry's normalized form, `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`
 /// with no trailing newline: 1 to 32 bytes of lowercase ASCII letters, digits and hyphens, that
-/// neither begin nor end with a hyphen. A project name MUST pass this before it is a folder name.
-pub fn host_name_is_valid(project: &str) -> bool {
+/// neither begin nor end with a hyphen.
+fn project_is_valid(project: &str) -> bool {
     let bytes = project.as_bytes();
     let edge = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
     let (Some(&first), Some(&last)) = (bytes.first(), bytes.last()) else {
         return false;
     };
     bytes.len() <= 32 && edge(first) && edge(last) && bytes.iter().all(|&b| edge(b) || b == b'-')
+}
+
+/// The normalized platform a name part names, `<os>-<arch>` for `<os>/<arch>`, when it is the name
+/// part of a supported platform other than `linux/arm64` (operator.md, A host's platform and its
+/// names: `linux/arm64` never appears in a name). The supported platforms are the ones
+/// `agentspace_platforms::for_platform` serves, so no list of them is kept here; a name part is
+/// compared exactly, so an upper-case one, `linux-arm64` and `windows-arm64` name none.
+fn platform_of_name_part(part: &str) -> Option<&'static str> {
+    let (os, arch) = part.split_once('-')?;
+    let platform = agentspace_platforms::for_platform(&format!("{os}/{arch}"))?.platform();
+    (platform != LINUX_ARM64 && platform.replace('/', "-") == part).then_some(platform)
+}
+
+/// A host name's project and normalized platform (operator.md, A host's platform and its names;
+/// architect, 2026-11-26, for v0.12-T01, pins P1 and P12), or `None` when `name` is not one.
+///
+/// A host name is `<project>` for a `linux/arm64` host, and `<project>.<os>-<arch>` for a host of
+/// any other supported platform. A project holds no `.`, so the last `.` always starts the
+/// platform's name part. The project MUST be in the normalized form, and the name part MUST be
+/// `linux-amd64` or `windows-amd64` exactly: the name parts of the supported platforms other than
+/// `linux/arm64`.
+pub fn parse_host_name(name: &str) -> Option<(&str, &'static str)> {
+    match name.rsplit_once('.') {
+        None => project_is_valid(name).then_some((name, LINUX_ARM64)),
+        Some((project, part)) => {
+            let platform = platform_of_name_part(part)?;
+            project_is_valid(project).then_some((project, platform))
+        }
+    }
+}
+
+/// Whether `name` is a host name ([`parse_host_name`]): a normalized project, optionally followed
+/// by `.` and the name part of a supported platform other than `linux/arm64` (pin P3 of
+/// v0.12-T03, proposed). A host's name MUST pass this before it is a folder name.
+pub fn host_name_is_valid(name: &str) -> bool {
+    parse_host_name(name).is_some()
+}
+
+/// The normalized platform of the host a push names: `linux/arm64` for the box (`None`), and the
+/// platform a valid host name names otherwise; `None` for a name that is not valid.
+pub fn host_platform(host: Option<&str>) -> Option<&'static str> {
+    match host {
+        None => Some(LINUX_ARM64),
+        Some(name) => parse_host_name(name).map(|(_, platform)| platform),
+    }
+}
+
+/// Whether the push to a host of `platform` still runs today's Linux code, byte for byte, rather
+/// than the platform's rows of the seam. **For the dev lead, phase B of E0.12-T03-S04:** once
+/// E0.12-T03-S03's first pull request gives both Linux platforms their `push_zone` and
+/// `push_script` rows, this goes and every platform takes its zone and remote half from the seam,
+/// so no Linux step keeps a second copy of its text (D101's change at T03's start).
+fn runs_todays_linux_push(platform: &dyn HostPlatform) -> bool {
+    matches!(platform.platform(), "linux/arm64" | "linux/amd64")
 }
 
 /// The receipt, the token, and so the content; `Err` is the outcome when they cannot be had.
@@ -505,10 +575,16 @@ pub fn push_with(
 }
 
 /// [`push_with`] for one host: `host` is `None` for the box, whose stamp is v0.06's, or
-/// `Some(project)` for another host, whose own stamp ([`stamp_path_for`]) is the only one the push
-/// reads and writes, its folder created if missing. Nothing else in the push changes (architect,
-/// 2026-11-20, for v0.07-T02). A `project` that is not [`host_name_is_valid`] is refused first:
-/// the [`BAD_HOST`] warning, [`Outcome::BadAlias`], and nothing read or written.
+/// `Some(host name)` for another host ([`parse_host_name`]), whose own stamp ([`stamp_path_for`])
+/// is the only one the push reads and writes, its folder created if missing (architect,
+/// 2026-11-20, for v0.07-T02). A `host` that is not [`host_name_is_valid`] is refused first: the
+/// [`BAD_HOST`] warning, [`Outcome::BadAlias`], and nothing read or written.
+///
+/// The host's platform comes from its name ([`host_platform`]), and its rows from
+/// `agentspace_platforms::for_platform` alone (D101). **A host not on Linux is given the laptop's
+/// Windows zone ID, which this entry point does not have**, so its zone is the empty zone here;
+/// [`push_on`] takes it, and the operator's own entry points ([`push_to_host`] and the ones built
+/// on it) read it from the system or `AGENTSPACE_TIMEZONE`.
 pub fn push_with_host(
     ctx: &Context,
     say: &dyn Say,
@@ -517,6 +593,73 @@ pub fn push_with_host(
     forced: bool,
     seams: &Seams,
     host: Option<&str>,
+) -> Outcome {
+    push_with_host_zone(ctx, say, instance_id, alias, forced, seams, host, &|| None)
+}
+
+/// [`push_with_host`], with `windows_zone` the laptop's Windows zone ID, or
+/// `AGENTSPACE_TIMEZONE`'s value in its place (operator.md, The token push to a Windows host),
+/// asked only for a host whose platform takes it. The platform is picked by
+/// `agentspace_platforms::for_platform` from the host's name.
+#[allow(clippy::too_many_arguments)]
+pub fn push_with_host_zone(
+    ctx: &Context,
+    say: &dyn Say,
+    instance_id: &str,
+    alias: &str,
+    forced: bool,
+    seams: &Seams,
+    host: Option<&str>,
+    windows_zone: &dyn Fn() -> Option<String>,
+) -> Outcome {
+    if ctx.nested && !forced {
+        return Outcome::Nested;
+    }
+    let Some(platform) = host_platform(host).and_then(agentspace_platforms::for_platform) else {
+        say.warning(BAD_HOST);
+        return Outcome::BadAlias;
+    };
+    push_on(
+        ctx,
+        say,
+        instance_id,
+        alias,
+        forced,
+        seams,
+        host,
+        platform,
+        windows_zone,
+    )
+}
+
+/// One push to `host` on `platform`, whose rows of the seam give the zone and the remote half
+/// (operator.md, The platform seam, the push's zone and remote half row; The token push to a
+/// Windows host). The operator's entry points pass the platform `agentspace_platforms::for_platform`
+/// gives for the host's name; a test MAY pass a stand-in. `platform` MUST be the host's own: one
+/// whose `platform()` is not the one `host`'s name names is refused as a bad host name is, before
+/// anything is read.
+///
+/// **The laptop's side is the same on every platform** (operator.md, The token push to a Windows
+/// host): the reads, the stamp, the ssh, its limits, what the laptop checks and every warning.
+/// What differs:
+/// - **The zone.** Both Linux platforms keep the IANA name `seams.zone` gives, guarded by
+///   [`check_zone`], as before v0.12. Any other platform's is its `push_zone(windows_zone, iana)`,
+///   `windows_zone` being asked only then; a row that fails gives the empty zone, which is not
+///   sent, as on Linux. The stamp covers the zone as sent.
+/// - **The remote command.** Both Linux platforms keep [`remote_command`]. Any other platform's is
+///   its `remote_command(push_script(zone))`; a row that fails warns [`COULD_NOT_SEND`] after the
+///   `Sending` line, as any other failure to send does, and records nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn push_on(
+    ctx: &Context,
+    say: &dyn Say,
+    instance_id: &str,
+    alias: &str,
+    forced: bool,
+    seams: &Seams,
+    host: Option<&str>,
+    platform: &dyn HostPlatform,
+    windows_zone: &dyn Fn() -> Option<String>,
 ) -> Outcome {
     let warn = |text: &str, outcome: Outcome| {
         say.warning(text);
@@ -528,10 +671,11 @@ pub fn push_with_host(
     if ctx.nested && !forced {
         return Outcome::Nested;
     }
-    // A host whose name is not the registry's normalized form is refused before anything is read
-    // or written: its name would otherwise reach a folder name (`..` is the box's stamp, the empty
-    // name is `hosts\` itself).
-    if host.is_some_and(|project| !host_name_is_valid(project)) {
+    // A host whose name is not a host name is refused before anything is read or written: its name
+    // would otherwise reach a folder name (`..` is the box's stamp, the empty name is `hosts\`
+    // itself). So is a platform that is not the one the name names, whose rows would push to the
+    // wrong kind of host under that host's stamp.
+    if host_platform(host) != Some(platform.platform()) {
         return warn(BAD_HOST, Outcome::BadAlias);
     }
     // An alias that breaks `-Alias`'s rule, if one ever reaches the push, warns its own fixed
@@ -547,8 +691,15 @@ pub fn push_with_host(
         Err(o) => return warn(COULD_NOT_READ, o),
     };
     // The zone is already mapped and checked; step 3's check again is the guard before it goes on
-    // the command line.
-    let zone = check_zone((seams.zone)().as_deref());
+    // the command line. A host not on Linux takes its own row's zone, from the laptop's Windows
+    // zone ID (D96).
+    let iana = check_zone((seams.zone)().as_deref());
+    let zone = if runs_todays_linux_push(platform) {
+        iana
+    } else {
+        let windows_zone = windows_zone().unwrap_or_default();
+        platform.push_zone(&windows_zone, &iana).unwrap_or_default()
+    };
     let computed = stamp(instance_id, &zone, &content);
     let path = stamp_path_for(ctx, host);
     if !is_due(seams.files, &path, &computed, forced) {
@@ -560,7 +711,17 @@ pub fn push_with_host(
     if zone.is_empty() {
         say.warning(NO_ZONE);
     }
-    let command = remote_command(&zone);
+    let command = if runs_todays_linux_push(platform) {
+        remote_command(&zone)
+    } else {
+        match platform
+            .push_script(&zone)
+            .and_then(|script| platform.remote_command(&script))
+        {
+            Ok(command) => command,
+            Err(_) => return warn(COULD_NOT_SEND, Outcome::CouldNotSend),
+        }
+    };
     let args = ssh_args(alias, &command);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (code, stdout) = match seams.ssh.run(&args, content.as_bytes()) {

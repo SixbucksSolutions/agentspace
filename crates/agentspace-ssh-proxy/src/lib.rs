@@ -16,12 +16,16 @@
 //!    it, before anything starts.
 //! 2. Puts the Session Manager plugin's folder and the AWS CLI's folder first on `PATH`, in that
 //!    order ([`proxy_path`]).
-//! 3. Finds the host from the argument ([`host`]: no argument is the box, `agentspace-host.<project>`
-//!    is that project's host, a lease alias is looked up in the lease state file, read without its
-//!    lock, and then its project's `ready` host or the box; a lease alias whose lease is not
-//!    `ready`, or an argument of lease alias form while the lease state file cannot be read or is
-//!    not valid, is refused with exit 1 before the host registry is read, #0229), then runs `up`'s
-//!    steps on that host in
+//! 3. Finds the host from the argument ([`host`]: no argument is the box,
+//!    `agentspace-host.<host name>` is that host, by its project and platform, a lease alias is
+//!    looked up in the lease state file, read without its lock, and then the `ready` host of its
+//!    record's project on its record's platform, or the box for a `linux/arm64` lease; a lease
+//!    alias whose lease is not `ready`, or an argument of lease alias form while the lease state
+//!    file cannot be read or is not valid, is refused with exit 1 before the host registry is read,
+//!    #0229, and a `ready` lease of another platform with no `ready` host there is refused once
+//!    the registry is read, D91 and pin P13 of v0.12-T01), then picks the host's platform seam
+//!    with `agentspace_platforms::for_platform` ([`platform_of`]), then runs `up`'s steps on that
+//!    host in
 //!    its own process, in caller mode (D42): the instance ID from the host's record in the host
 //!    registry or its stack, the start-and-wait step of `agentspace-box`, and, unless
 //!    `AGENTSPACE_NESTED` was set as the program started, the token push of `agentspace-push` over
@@ -64,9 +68,9 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use agentspace_box::{SystemClock, start_and_wait};
-use agentspace_hosts::{Host, host_for, is_box};
+use agentspace_hosts::{Host, host_for_keyed, is_box};
 use agentspace_operator::{DEFAULT_ALIAS, Parsed, Printer, context_from, diagnostic_from, parse};
-use agentspace_operator_api::{CallerFailure, Context, Failure, Mode, Say};
+use agentspace_operator_api::{CallerFailure, Context, Failure, HostPlatform, Mode, Say};
 use agentspace_push::{Lookup, SshStderr, StderrSink, push_to_host_using};
 use agentspace_run::Runner;
 
@@ -227,14 +231,17 @@ fn report(say: &Printer, failure: &Failure) {
 ///
 /// The push is unforced whether or not the host was started: its stamp alone decides whether it
 /// is due (operator.md, The stamp; #0167). Its ssh's stderr goes to `push_stderr`.
+#[allow(clippy::too_many_arguments)]
 fn up(
     ctx: &Context,
     say: &dyn Say,
     alias: &str,
     host: &Host,
+    platform: &dyn HostPlatform,
     env: &Arc<Env>,
     push_stderr: &SshStderr,
 ) -> Result<String, Failure> {
+    check_start_is_built(platform)?;
     let lookup_env = Arc::clone(env);
     let runner = Runner::with_lookup(ctx.clone(), move |name| lookup_env.get(name));
     let cache = HostCache::new(&ctx.home, host);
@@ -242,13 +249,21 @@ fn up(
     if !ctx.nested {
         let lookup_env = Arc::clone(env);
         let lookup: Arc<Lookup> = Arc::new(move |name| lookup_env.get(name));
-        // The box's push is `None`, v0.06's stamp; every other host has a stamp of its own (D50).
-        let push_host = (!is_box(host)).then_some(host.project.as_str());
+        // The box's push is `None`, v0.06's stamp; every other host has a stamp of its own, under
+        // its host name, which carries its platform (D50, D91).
+        let push_host = push_host_name(host);
         // The push never fails a command; a panic in it is the "Could not send" warning, which
         // `push_to_host_using` says itself.
-        let _ = push_to_host_using(ctx, say, &id, alias, false, push_host, lookup, &|ssh| {
-            ssh.with_stderr(push_stderr.clone())
-        });
+        let _ = push_to_host_using(
+            ctx,
+            say,
+            &id,
+            alias,
+            false,
+            push_host.as_deref(),
+            lookup,
+            &|ssh| ssh.with_stderr(push_stderr.clone()),
+        );
     }
     Ok(id)
 }
@@ -266,11 +281,56 @@ fn find_host(
 ) -> Result<(Context, Host), Failure> {
     let ctx = context_from(&|name| env.get(name))?;
     let state_dir = host::state_dir(env.get("AGENTSPACE_STATE_DIR"), &ctx.home);
-    let lease = host::lease_project(alias, &state_dir, say, clock)?;
+    let lease = host::lease_key(alias, &state_dir, say, clock)?;
     let hosts = agentspace_hosts::read(&ctx.home)
         .map_err(|error| host::registry_failure(&ctx.home, &error))?;
-    let found = host::choose(alias, &hosts, lease.as_deref())?.clone();
+    let found = host::choose(alias, &hosts, lease.as_ref())?.clone();
     Ok((ctx, found))
+}
+
+/// The platform seam of `host`, by its record's platform and through
+/// `agentspace_platforms::for_platform` alone (D101's change at T03's start). A record whose
+/// platform agentspace does not support fails as a failed `up` does in caller mode, before anything
+/// is started. **For the dev lead:** operator.md gives no text for that record, which only a
+/// person's edit of the registry makes (a writer adds a record only for a supported platform); the
+/// detail line here is this story's reading.
+pub fn platform_of(host: &Host) -> Result<&'static dyn HostPlatform, Failure> {
+    agentspace_platforms::for_platform(host.platform()).ok_or_else(|| Failure {
+        message: format!(
+            "agentspace: The host registry's record for {} names a platform agentspace does not support.",
+            host.project
+        ),
+        caller: CallerFailure::CouldNotReach,
+    })
+}
+
+/// The detail of a connection to a host whose platform's start-and-wait is not built yet.
+pub const START_NOT_BUILT: &str =
+    "agentspace: Starting and waiting for a host on this platform is not built yet.";
+
+/// Whether `up`'s start-and-wait step can run on `platform` today: `agentspace_box`'s
+/// `start_and_wait`, whose patch check is the Linux question sent with `AWS-RunShellScript`, the
+/// rows both Linux platforms share (operator.md, The platform seam). **For the dev lead, phase B of
+/// E0.12-T03-S04:** once E0.12-T03-S03's first pull request adds the platform-aware
+/// `start_and_wait_on`, every platform starts through it with its own patch check and document,
+/// and this goes. Until then a host of any other platform fails as a failed `up` does, before
+/// anything is started.
+pub fn check_start_is_built(platform: &dyn HostPlatform) -> Result<(), Failure> {
+    match platform.platform() {
+        "linux/arm64" | "linux/amd64" => Ok(()),
+        _ => Err(Failure {
+            message: START_NOT_BUILT.to_string(),
+            caller: CallerFailure::CouldNotReach,
+        }),
+    }
+}
+
+/// The host name the push to `host` keeps its stamp under: `None` for the box, whose stamp is
+/// v0.06's, and the host's folder name otherwise, `<project>` on `linux/arm64` and
+/// `<project>.<os>-<arch>` on any other platform (D50, D91; pin P3 of v0.12-T03). So two hosts of
+/// one project on two platforms never share a stamp.
+pub fn push_host_name(host: &Host) -> Option<String> {
+    (!is_box(host)).then(|| host.key().folder_name())
 }
 
 /// Steps 1 to 6. `Ok` is the exit code, which is the tunnel's.
@@ -303,6 +363,7 @@ fn proxy(
     // Steps 3 to 5, with standard output sent to standard error. The host is found after the alias
     // check.
     let (ctx, found) = find_host(alias.as_deref(), &env, say, &host::SystemLeaseClock::new())?;
+    let seam = platform_of(&found)?;
     let env = Arc::new(env);
     let mut stdout_guard = platform::StdoutGuard::new();
     let read_id = up(
@@ -310,15 +371,17 @@ fn proxy(
         say,
         alias.as_deref().unwrap_or(DEFAULT_ALIAS),
         &found,
+        seam,
         &env,
         push_stderr,
     )?;
-    // Step 5: the record's own ID, which the tunnel MUST target. Architect's to confirm: when the
-    // registry or the record cannot give one here, such as after a write of `up`'s that failed
-    // (which does not fail the connection), the ID `up` read is used rather than a failure.
+    // Step 5: the record's own ID, which the tunnel MUST target, the record being the host's by its
+    // project and platform (D91). Architect's to confirm: when the registry or the record cannot
+    // give one here, such as after a write of `up`'s that failed (which does not fail the
+    // connection), the ID `up` read is used rather than a failure.
     let id = agentspace_hosts::read(&ctx.home)
         .ok()
-        .and_then(|now| host_for(&now, &found.project).and_then(|h| h.instance_id.clone()))
+        .and_then(|now| host_for_keyed(&now, &found.key()).and_then(|h| h.instance_id.clone()))
         .unwrap_or(read_id);
     // The tunnel's standard output is the ProxyCommand's own.
     stdout_guard.restore();
@@ -622,5 +685,172 @@ mod tests {
         let env = Env::from_pairs([("USERPROFILE", "home")]);
         assert_eq!(env.get("USERPROFILE"), Some(OsString::from("home")));
         assert_eq!(env.get("PATH"), None);
+    }
+
+    // A host by its project and platform (D91, D101).
+
+    use agentspace_hosts::{HostKey, HostState, Hosts};
+
+    /// Step 3 in process, as [`go_home`] runs it, but with a valid host registry holding `hosts`,
+    /// so a lookup that gets past the lease chooses from it. Returns 0 and the chosen host's key
+    /// for a host found, and 1 and what was printed for a failure.
+    fn go_registry(
+        name: &str,
+        alias: &str,
+        leases: &[agentspace_state::Record],
+        hosts: &Hosts,
+    ) -> (i32, String, Option<HostKey>) {
+        let home = std::env::temp_dir().join(format!(
+            "agentspace-ssh-proxy-lib-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let state = home.join(".agentspace");
+        std::fs::create_dir_all(&state).unwrap();
+        {
+            let held = agentspace_hosts::lock(&home).unwrap();
+            agentspace_hosts::write(&home, hosts, &held).unwrap();
+        }
+        let file = agentspace_state::StateFile {
+            leases: leases.to_vec(),
+        };
+        std::fs::write(
+            state.join("leases.json"),
+            agentspace_state::serialize(&file).unwrap(),
+        )
+        .unwrap();
+        let env = Env::from_pairs([
+            ("USERPROFILE", home.clone().into_os_string()),
+            ("HOME", home.clone().into_os_string()),
+            ("LOCALAPPDATA", home.clone().into_os_string()),
+            ("APPDATA", home.clone().into_os_string()),
+            ("SystemRoot", home.join("no-system-root").into_os_string()),
+        ]);
+        let cap = Capture::default();
+        let say = Printer::new(Mode::Caller, false, true, Box::new(cap.clone()));
+        let found = match find_host(Some(alias), &env, &say, &FixedClock) {
+            Ok((_, host)) => (0, cap.text(), Some(host.key())),
+            Err(failure) => {
+                report(&say, &failure);
+                (1, cap.text(), None)
+            }
+        };
+        let _ = std::fs::remove_dir_all(&home);
+        found
+    }
+
+    /// A `ready` lease of `agentspace` on `platform`, alias `agentspace-agentspace-<hex8>`.
+    fn ready_on(platform: &str, hex8: &str) -> agentspace_state::Record {
+        let mut leases = agentspace_state::parse(&released_file()).unwrap().leases;
+        let mut record = leases.remove(0);
+        record.id = format!("{hex8}-0000-4000-8000-000000000001");
+        record.state = "ready".to_string();
+        record.released_at = None;
+        record.platform = platform.to_string();
+        record.ssh = Some(agentspace_state::Ssh {
+            host_alias: format!("agentspace-agentspace-{hex8}"),
+            user: "ubuntu".to_string(),
+        });
+        record
+    }
+
+    fn two_platforms() -> Hosts {
+        let mut hosts = Hosts::seed();
+        for platform in ["windows/amd64", "linux/arm64"] {
+            hosts.hosts.push(agentspace_hosts::Host::new(
+                &HostKey::new("agentspace", platform),
+                HostState::Ready,
+            ));
+        }
+        hosts
+    }
+
+    #[test]
+    fn two_leases_of_one_project_on_two_platforms_reach_two_hosts() {
+        let leases = [
+            ready_on("windows/amd64", "0e1e2e3e"),
+            ready_on("linux/arm64", "0a1a2a3a"),
+        ];
+        let hosts = two_platforms();
+        let (code, err, key) =
+            go_registry("twowin", "agentspace-agentspace-0e1e2e3e", &leases, &hosts);
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert_eq!(key, Some(HostKey::new("agentspace", "windows/amd64")));
+        let (code, err, key) = go_registry(
+            "twolinux",
+            "agentspace-agentspace-0a1a2a3a",
+            &leases,
+            &hosts,
+        );
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert_eq!(key, Some(HostKey::linux_arm64("agentspace")));
+        // Each host's push keeps its own stamp, under its own host name.
+        let windows = &hosts.hosts[1];
+        let linux = &hosts.hosts[2];
+        assert_eq!(
+            push_host_name(windows).as_deref(),
+            Some("agentspace.windows-amd64")
+        );
+        assert_eq!(push_host_name(linux).as_deref(), Some("agentspace"));
+        assert_eq!(
+            push_host_name(&hosts.hosts[0]),
+            None,
+            "The box's is v0.06's"
+        );
+    }
+
+    #[test]
+    fn a_ready_windows_lease_with_no_ready_windows_host_is_refused_with_its_one_line() {
+        let leases = [ready_on("windows/amd64", "0e1e2e3e")];
+        let mut hosts = Hosts::seed();
+        hosts.hosts.push(agentspace_hosts::Host::new(
+            &HostKey::linux_arm64("agentspace"),
+            HostState::Ready,
+        ));
+        // `AGENTSPACE_DIAGNOSTIC` is set in `go_registry`, and adds no line.
+        let (code, err, key) = go_registry(
+            "noreadywin",
+            "agentspace-agentspace-0e1e2e3e",
+            &leases,
+            &hosts,
+        );
+        assert_eq!(
+            (code, err.as_str()),
+            (
+                1,
+                "agentspace: The lease for agentspace-agentspace-0e1e2e3e has no ready host on its platform; no connection was opened.\n"
+            )
+        );
+        assert_eq!(key, None);
+    }
+
+    #[test]
+    fn the_start_is_built_for_both_linux_platforms_alone() {
+        for platform in ["linux/arm64", "linux/amd64"] {
+            let seam = agentspace_platforms::for_platform(platform).unwrap();
+            assert_eq!(check_start_is_built(seam), Ok(()), "{platform}");
+        }
+        let windows = agentspace_platforms::for_platform("windows/amd64").unwrap();
+        let failure = check_start_is_built(windows).unwrap_err();
+        assert_eq!(failure.caller, CallerFailure::CouldNotReach);
+        assert_eq!(failure.message, START_NOT_BUILT);
+    }
+
+    #[test]
+    fn a_record_on_a_platform_agentspace_does_not_support_cannot_be_reached() {
+        let supported = agentspace_hosts::Host::new(
+            &HostKey::new("agentspace", "windows/amd64"),
+            HostState::Ready,
+        );
+        assert_eq!(
+            platform_of(&supported).map(|seam| seam.platform()),
+            Ok("windows/amd64")
+        );
+        let other = agentspace_hosts::Host::new(
+            &HostKey::new("agentspace", "example/one"),
+            HostState::Ready,
+        );
+        let failure = platform_of(&other).map(|seam| seam.platform()).unwrap_err();
+        assert_eq!(failure.caller, CallerFailure::CouldNotReach);
     }
 }
