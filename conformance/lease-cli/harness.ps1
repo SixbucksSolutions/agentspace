@@ -168,7 +168,7 @@ function Start-ConformanceProcess {
     $p = [Diagnostics.Process]::Start($psi)
   } catch {
     return [pscustomobject]@{
-      ExitCode = -1; Stdout = ''; Stderr = "Could not start the program: $($_.Exception.Message)"
+      ExitCode = -1; Stdout = ''; Stderr = (ConvertTo-ConformanceMasked "Could not start the program: $($_.Exception.Message)")
       StdoutBytes = [byte[]]@(); StderrBytes = [byte[]]@(); TimedOut = $false
     }
   }
