@@ -246,7 +246,9 @@ function Test-WtCase {
   }
 }
 
-# What every seam-in-part case asserts: exit 1, the message on stderr, nothing written.
+# What every seam-in-part case asserts: exit 1, the message on stderr, nothing written. $Variables MUST
+# be the row's names in the order operator.md's table gives them: the message is one stderr line, the
+# row's names joined with ', ' in that order (pin P13 of v0.12-T03).
 function Assert-WtSeamRefusal {
   param([Parameter(Mandatory)]$Result, [Parameter(Mandatory)][string]$ScriptName, [Parameter(Mandatory)][string[]]$Variables)
   Assert-Wt ($Result.ExitCode -eq 1) ("A seam set in part MUST exit 1, got {0}. stderr: {1}" -f $Result.ExitCode, $Result.Stderr)
@@ -254,6 +256,8 @@ function Assert-WtSeamRefusal {
   Assert-Wt ($Result.Stderr.Contains($ScriptName + ': ')) ("stderr MUST start the message with '{0}: ': {1}" -f $ScriptName, $Result.Stderr)
   Assert-Wt ($Result.Stderr.Contains($tail)) ("stderr MUST end the message with '{0}': {1}" -f $tail.Trim(), $Result.Stderr)
   foreach ($v in $Variables) { Assert-Wt ($Result.Stderr.Contains($v)) ("The message MUST name {0}: {1}" -f $v, $Result.Stderr) }
+  $want = $ScriptName + ': ' + ($Variables -join ', ') + $tail
+  Assert-Wt (@(Get-WtLines -Text $Result.Stderr) -ccontains $want) ("stderr MUST hold the line '{0}', the row's names joined with ', ' in the table's order: {1}" -f $want, $Result.Stderr)
   Assert-Wt (-not $Result.Stdout.Contains('are set together')) 'The message MUST be on stderr, not stdout'
 }
 
