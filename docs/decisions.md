@@ -5132,6 +5132,14 @@ forms; T01's dev lead proposes any signature this table leaves open as a pin in 
 | The records | The spike's `docs/runs/e0.12-t01-s05.md`; the whole suite's `docs/runs/e0.12-t04-s05.md`; the live checks' `docs/runs/e0.12-t05-s01.md` and `-s02.md` |
 | Branches | `v0.12/e0.12-tnn-smm` (D29) |
 
+**Changed before v0.12-T03 (architect, 2026-11-26), at T03's start:** both Linux platforms' rows
+live in a new crate, `agentspace-platforms`, not in `agentspace-sync`, with `for_platform`, the one
+function every caller uses to pick a host's seam. The push sits below sync and the guard below the
+operator, so neither could reach rows kept in sync without a cycle. `agentspace-platforms`
+depends only on the seam and `agentspace-windows`. It was committed as a skeleton, its constant
+rows filled and its script rows answering "not built"; E0.12-T03-S03 (#0256) owns it in T03 and
+carries today's Linux steps into it unchanged.
+
 **Pinned as code before T03, by the architect:** one pull request adds the seam's trait to
 `agentspace-operator-api`, the `agentspace-windows` skeleton, and `box/windows/`'s placeholders,
 read and written by nothing, so T03's seven stories share no folder (crates/README.md), as #166 did
