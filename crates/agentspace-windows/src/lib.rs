@@ -8,12 +8,6 @@
 //! nothing here starts a program, reads a file at run time, writes anything or panics. The host
 //! agent's files, `box/windows/` but its `tests` folder, are carried in the crate by `build.rs`,
 //! and the bootstrap by `include_bytes!`, so the files E0.12-T03-S07 writes arrive by merge.
-//!
-//! Two of sync's nine rows on a Windows host have no field in [`SyncPlan`] as the trait is pinned:
-//! row 5's remote step, which makes sure `<home>\.claude` exists, and row 7's target,
-//! `.agentspace-localswim.exe`. For the dev lead, as a proposed pin: this crate gives them as
-//! [`Windows::make_claude_folder_command`] and [`LOCALSWIM_STAGED`] until the architect adds them
-//! to the seam.
 
 #![forbid(unsafe_code)]
 
@@ -26,7 +20,7 @@ mod scripts;
 mod zone;
 
 pub use encoded::{MAX_LINE, PREFIX, TOO_LONG};
-pub use scripts::{LOCALSWIM_STAGED, PROGRAM_DATA};
+pub use scripts::PROGRAM_DATA;
 pub use zone::{NO_ZONE, is_windows_zone_id};
 
 include!(concat!(env!("OUT_DIR"), "/box_windows.rs"));
@@ -49,15 +43,6 @@ pub struct Windows;
 
 /// The one instance the operator picks for a `windows/amd64` host.
 pub static WINDOWS: Windows = Windows;
-
-impl Windows {
-    /// Sync on a Windows host, row 5's remote command, in the encoded form: make sure
-    /// `<home>\.claude` exists, a folder already there being no error and keeping its access
-    /// rules. Outside the trait until the seam carries it (see the crate's documentation).
-    pub fn make_claude_folder_command(&self) -> Result<String, Failure> {
-        encoded::remote_command(scripts::MAKE_CLAUDE_FOLDER)
-    }
-}
 
 impl HostPlatform for Windows {
     fn platform(&self) -> &'static str {
@@ -104,12 +89,17 @@ impl HostPlatform for Windows {
             staging: STAGING.to_string(),
             install_command: encoded::remote_command(&scripts::install())?,
             clear_command: Some(encoded::remote_command(scripts::CLEAR_STAGING)?),
+            // Row 5: make sure `<home>\.claude` exists (pin P9 of v0.12-T03).
+            claude_folder_command: encoded::remote_command(scripts::MAKE_CLAUDE_FOLDER)?,
             claude_md_path: CLAUDE_MD.to_string(),
             localswim: LocalswimTarget {
                 goos: "windows",
                 goarch: "amd64",
                 file_name: "localswim-windows-amd64.exe",
             },
+            // Row 7's target in the login user's home, which row 8 installs from (pin P9 of
+            // v0.12-T03).
+            localswim_staging: ".agentspace-localswim.exe".to_string(),
             localswim_install_command: encoded::remote_command(scripts::INSTALL_LOCALSWIM)?,
         })
     }

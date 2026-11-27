@@ -29,8 +29,8 @@ const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 /// The one remote command line that runs `script` on a Windows host, or [`TOO_LONG`]'s failure.
 pub fn remote_command(script: &str) -> Result<String, Failure> {
     let mut units: Vec<u16> = script.encode_utf16().collect();
-    // For the dev lead: an empty script would leave the line ending in a bare `-EncodedCommand `,
-    // which PowerShell refuses, so it is sent as three spaces, which do nothing.
+    // An empty script goes as three spaces: an empty `-EncodedCommand` is refused, and three
+    // spaces are six bytes, which encode without `=` and do nothing.
     let pad = if units.is_empty() {
         3
     } else {

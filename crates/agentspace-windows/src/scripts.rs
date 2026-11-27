@@ -60,10 +60,6 @@ pub const MAKE_CLAUDE_FOLDER: &str = "$ErrorActionPreference = 'Stop'\n\
 try { [void][IO.Directory]::CreateDirectory((Join-Path $HOME '.claude')) } catch { exit 1 }\n\
 exit 0\n";
 
-/// Sync on a Windows host, row 7's target: the staged copy of the localswim CLI, in the login
-/// user's home, as `scp` names it.
-pub const LOCALSWIM_STAGED: &str = ".agentspace-localswim.exe";
-
 /// Sync on a Windows host, row 8: install `<home>\.agentspace-localswim.exe` as
 /// `C:\ProgramData\agentspace\localswim\localswim.exe`, creating the folder. A copy that is there,
 /// which may be running, is moved aside first to `localswim.exe.old`, since Windows refuses to

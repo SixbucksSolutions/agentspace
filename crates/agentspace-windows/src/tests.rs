@@ -25,7 +25,7 @@ fn every_encoded_row_fits_the_form() {
         plan.install_command,
         plan.clear_command.unwrap(),
         plan.localswim_install_command,
-        WINDOWS.make_claude_folder_command().unwrap(),
+        plan.claude_folder_command,
         WINDOWS
             .remote_command(&WINDOWS.grow_script().unwrap())
             .unwrap(),
@@ -41,6 +41,22 @@ fn every_encoded_row_fits_the_form() {
         assert!(line.len() <= MAX_LINE, "{} characters", line.len());
         assert!(!line.contains('='));
     }
+}
+
+/// Pin P9 of v0.12-T03: row 5's folder step is the script the run tests below run, encoded, and
+/// row 7's target is the name row 8's script installs from.
+#[test]
+fn sync_plans_claude_folder_step_and_localswim_staging_are_rows_5_and_7() {
+    let plan = WINDOWS.sync_plan().unwrap();
+    assert_eq!(
+        plan.claude_folder_command,
+        encoded::remote_command(scripts::MAKE_CLAUDE_FOLDER).unwrap()
+    );
+    assert_eq!(plan.localswim_staging, ".agentspace-localswim.exe");
+    assert!(
+        scripts::INSTALL_LOCALSWIM
+            .contains(&format!("Join-Path $HOME '{}'", plan.localswim_staging))
+    );
 }
 
 #[test]
@@ -384,7 +400,9 @@ mod run {
         let folder = dir.join("localswim");
         let script = scripts::INSTALL_LOCALSWIM
             .replace(r"C:\ProgramData\agentspace\localswim", &plain(&folder));
-        let staged = dir.join("home").join(LOCALSWIM_STAGED);
+        let staged = dir
+            .join("home")
+            .join(WINDOWS.sync_plan().unwrap().localswim_staging);
         std::fs::write(&staged, b"new").unwrap();
         assert_eq!(code(&run_at_home(&dir, &script, b"")), Some(0));
         assert_eq!(std::fs::read(folder.join("localswim.exe")).unwrap(), b"new");

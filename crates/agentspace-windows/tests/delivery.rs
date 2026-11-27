@@ -205,6 +205,29 @@ fn claude_md_goes_to_dot_claude_claude_md_in_the_home() {
 }
 
 #[test]
+fn the_claude_folder_step_makes_dot_claude_in_the_home_in_the_encoded_form() {
+    let command = plan().claude_folder_command;
+    assert!(command.starts_with(PREFIX), "the encoded form");
+    assert!(!command.contains('='));
+    assert!(command.len() <= MAX_LINE);
+    let script = script_of(&command);
+    assert!(script.contains("$HOME"), "in the login user's home");
+    assert!(script.contains("'.claude'"), "names .claude");
+    assert!(script.contains("CreateDirectory") || script.contains("New-Item"));
+    assert!(
+        !script.contains("Remove-Item"),
+        "never removes a folder there"
+    );
+}
+
+#[test]
+fn the_localswim_cli_is_staged_as_dot_agentspace_localswim_exe_where_the_install_reads_it() {
+    let plan = plan();
+    assert_eq!(plan.localswim_staging, ".agentspace-localswim.exe");
+    assert!(script_of(&plan.localswim_install_command).contains(&plan.localswim_staging));
+}
+
+#[test]
 fn the_localswim_cli_is_built_for_windows_amd64_into_the_exe() {
     let target = plan().localswim;
     assert_eq!(target.goos, "windows");
