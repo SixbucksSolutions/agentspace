@@ -637,15 +637,13 @@ the alias `agentspace-host.<project>.linux-amd64`. A Windows host's is
    `status -Host <project>` shows the host `ready`. Only a project listed in
    `%USERPROFILE%\.agentspace\projects.json` gets a host (D54), and adding one takes Terry's yes.
    A lease for the project answers `pending` until its host is ready.
-   - **Until card #0163 is fixed, a new host's first provisioning run fails at `sync`**: sync's
-     connections after its install wait out `up`'s 15-minute deadline until the host's launch is
-     20 minutes old, and the log ends `sync failed`. The lease stays `pending`. In E0.07-T05-S01
-     (2026-11-21) the first run failed about 34 minutes after it began
-     ([docs/runs/e0.07-t05-s01.md](docs/runs/e0.07-t05-s01.md), finding 2). Only a `lease create`
-     or `lease get` for the project starts the next run, at most one every 5 minutes from the last
-     run's start (D48), so whoever waits on the lease SHOULD run
-     `agentspace lease get <lease id>` once the log ends `sync failed`. That run made the host
-     `ready` in about 2 minutes.
+   - **A new host's first provisioning run waits out its first patch run in `sync`**, up to 30
+     minutes, and then makes the host `ready` (#0163, fixed by v0.08, D61; shown live in
+     [docs/runs/e0.08-t05-s01.md](docs/runs/e0.08-t05-s01.md)). Until then the run failed at `sync`
+     and needed a second run (E0.07-T05-S01, [docs/runs/e0.07-t05-s01.md](docs/runs/e0.07-t05-s01.md),
+     finding 2). A run that still ends `sync failed` is a finding. Only a `lease create` or
+     `lease get` for the project starts the next run, at most one every 5 minutes from the last
+     run's start (D48).
 3. **Sign the operator's one-hour certificate:**
 
    ```bat
