@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Live, as of 7:14am Mountain on 2026-11-27, after T04's close and S04's start.** Started at T01's close and
+> **Live, as of 7:40pm Eastern on 2026-11-27, after S04's close.** Started at T01's close and
 > refreshed at each turn's close, as v0.11's was. Where this file and AGENTS.md, the board or
 > decisions.md disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -31,24 +31,22 @@ and this file adds only what v0.12 has changed or learned.
   makes all 50 lease CLI files exit 1; the crates (6,857 passed), fmt, clippy, the box's 259 and
   `box\windows`' 308 pass ([runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md)). **#0268 is met**: two real
   races fixed in test lines alone, each 20 of 20 under load.
-- **S04 (#0264), #0244's conformance masking, was carried out of T04 by pin P21, and its edits are
-  made.** On Terry's "Approve per write" a default-mode dev lead made both one-line edits, each
-  approved by him, and pushed them as `415c9eb` on `v0.12/e0.12-t04-s04`. The commit changes exactly
-  `conformance/lease-cli/harness.ps1:171` and `conformance/keeper/keeper-common.ps1:644`, each now
-  through `ConvertTo-ConformanceMasked`. Its plants failed on `ff0356e` and passed on `415c9eb`.
-  **Its runs were stopped unfinished at 7:14am**, when Terry turned the computer off. The session is
-  archived, and #0264 is back in Ready For Work. The branch also holds `b8146e0`, the run record's
-  draft (`docs/runs/e0.12-t04-s04.md`): its change, plants and runner list are written, and it has no
-  lane numbers.
-- **What S04 still needs, on Terry's word:** a fresh dev lead in auto mode, started from the pushed
-  branch.
-  - It MUST NOT write either file again: auto mode refused those edits.
-  - It reruns P19's list, which is the whole suite, since the operator's 49 files load the harness
-    through `helpers.ps1`: the 109 files and the deadline case, gated, from the one build. That is
-    about 50 minutes.
-  - Then a reviewer, `docs/runs/e0.12-t04-s04.md`, and one PR.
-  - Start a session like this in auto mode, not default: default asked Terry about every git and
-    shell command, about 20 prompts, where only the two edits needed him.
+- **S04 (#0264), #0244's conformance masking, is merged**: PR #200, 7:37pm Eastern on 2026-11-27,
+  carried out of T04 by pin P21 and in Ready For Review.
+  - The two one-line edits were made in a default-mode session on Terry's "Approve per write", each
+    approved by him: `conformance/lease-cli/harness.ps1:171` and
+    `conformance/keeper/keeper-common.ps1:644`, each now through `ConvertTo-ConformanceMasked`. The
+    plants failed before the edits and passed after them.
+  - The runs were stopped at 7:14am when Terry turned the computer off. A fresh auto-mode dev lead
+    resumed them that evening from the pushed branch.
+  - The whole suite passes with every file's count equal to T04's: 109 files and 6,727 results, the
+    deadline case 5 of 5 ([runs/e0.12-t04-s04.md](runs/e0.12-t04-s04.md)).
+  - **Its reviewer found two more unmasked prints, carded as #0270** in Backlog for Terry to place:
+    the isolation guard's four refusal throws, and keeper-common.ps1:643's passed-through result
+    lines.
+  - **A session whose writes need Terry's approval is started in auto mode, never in default.** Only
+    the refused edits need him. Default asked him about every git and shell command, about 20
+    prompts.
 - **Next is T05, the install and the live checks, on Terry's word**, and S04 when he answers. No turn
   starts without his word.
 - **Nothing is running but the architect's duties**: the board watcher, the swimcoach reporter with
@@ -133,6 +131,7 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 | "Approve per write", for S04's two edits | 2026-11-27 | `415c9eb` |
 | "can we go back to aurto? i've had to approve like 20 things", for S04's session after its edits | 2026-11-27 | The short version: S04 in auto from then |
 | "land all work, need to turn computer off" | 2026-11-27 | S04's runs stopped at 7:14am; this file |
+| "Let's pick back up where we left off", for S04 | 2026-11-27 | PR #200 |
 
 ## Lessons from v0.12 so far
 
@@ -169,7 +168,8 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 
 | What | Who acts | Where it goes |
 |---|---|---|
-| S04 (#0264): its edits are pushed at `415c9eb`; its runs, review, record and PR remain | Terry's word, then the architect | #0264, in Ready For Work; branch `v0.12/e0.12-t04-s04`; the short version above |
+| #0270, the harness's other unmasked prints that S04's review found, to be placed | Terry; the architect suggests v1.0 (#0053) | Backlog |
+| Done: S04 (#0264), PR #200, 7:37pm Eastern on 2026-11-27 | | |
 | T05 starts on Terry's word | Terry, then the architect | #0266, #0267 |
 | #0269, the keeper's handshake step 7 race #0268 found, to be placed | Terry; the architect suggests v1.0 (#0053) | Backlog |
 | Done in T04: #0268 (E0.12-T04-S05); T03's dev lead archived and its folders removed | | |

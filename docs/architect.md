@@ -498,6 +498,12 @@ deliberately red tests green.** A dev lead's brief carries these.
 - **A loop that proves a fix is read, not only counted.** T04's 20 of 20 took 6 seconds. That looked
   too fast for the test, so the architect read the loop's command line, the binary's build time and
   the `--exact` test name before accepting it.
+- **A session whose writes need Terry's approval starts in auto mode, never default.** Only the writes
+  auto mode refused need him. S04's default-mode session asked him about every git and shell command,
+  about 20 prompts, and he asked for auto back.
+- **A runner script a stopped session wrote is parse-checked before it is reused.** S04's resumed
+  dev lead reused the first session's deadline runner, whose `$code:` was a parse error, and its run
+  exited 1 in a second.
 - **A dev lead waiting on Terry, or on a cap, answers each nudge `BLOCKED`.** Two such answers end the
   watchdog, and the block goes to Terry. The cap ends it either way.
 
