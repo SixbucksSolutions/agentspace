@@ -641,7 +641,7 @@ function Initialize-KeeperRegistryMode([string]$Registry, [string]$File, [hashta
       $line = [string]$_
       if ($line -match '^(\d+) passed, (\d+) failed, (\d+) skipped$') { $pass += [int]$Matches[1]; $fail += [int]$Matches[2]; $skip += [int]$Matches[3] }
       elseif ($line -match '^(PASS|FAIL|SKIPPED) ') { Write-Output "$line [H1 registry=$mode]" }
-      else { Write-Output $line }
+      else { Write-Output (ConvertTo-ConformanceMasked $line) }
     }
     $c = $LASTEXITCODE
     if ($c -eq 1 -or ($c -ne 0 -and $c -ne 2)) { $code = 1 } elseif ($c -eq 2 -and $code -eq 0) { $code = 2 }
