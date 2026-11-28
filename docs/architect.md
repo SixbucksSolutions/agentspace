@@ -629,6 +629,22 @@ reads before it prints it").
 - **A zone is named only as read with the clock**: a subagent called the laptop's zone Pacific, and
   it was Mountain.
 
+**Learned in v0.12-T05, 2026-11-27, a live turn that waited on Terry and closed with nothing live.**
+- **A live turn whose first steps need Terry starts only once he has done them, or says he is at the
+  keyboard for them.** T05 started on "Start T05" at 9:20pm while the AWS sign-in had expired. Its
+  install and drafts ran, but no live step could, and both stories were carried at their caps at
+  11:00pm and 12:15am. Check the sign-in by exit code, and put every early ask to him, before the
+  turn starts.
+- **A write to Terry's real state files is refused by auto mode as "don't retry"**, as the write to
+  `projects.json` was. The architect prepares that write as a script for Terry to run before the
+  turn. The script is tested on a throwaway home, prints counts only, keeps a before-copy and restores
+  it on any failed check.
+- **A carried live story keeps its worktree, with a `target\CARRIED.md`**: the branch head, the pins,
+  what is done, and what it needs first. Its drafted scripts are pushed to the branch under
+  `docs/runs/drafts/`, scanned, with no PR.
+- **The live kit's mask is checked against every platform the turn reaches.** It had no rule for a
+  Windows host's computer name until S02's drafter planted one (rule 16b).
+
 ## Reviewing a pull request
 
 **Ready For Review is the architect's claim that the work is fully good and in `main`** (AGENTS.md,

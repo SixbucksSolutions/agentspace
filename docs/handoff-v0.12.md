@@ -2,7 +2,7 @@
 
 RFC 2119 keywords; the capitals are load-bearing.
 
-> **Live, as of 7:40pm Eastern on 2026-11-27, after S04's close.** Started at T01's close and
+> **Live, as of 12:20am Eastern on 2026-11-28, after T05's close with both stories carried.** Started at T01's close and
 > refreshed at each turn's close, as v0.11's was. Where this file and AGENTS.md, the board or
 > decisions.md disagree, they win, and the disagreement is a bug to fix in this file.
 
@@ -47,8 +47,26 @@ and this file adds only what v0.12 has changed or learned.
   - **A session whose writes need Terry's approval is started in auto mode, never in default.** Only
     the refused edits need him. Default asked him about every git and shell command, about 20
     prompts.
-- **Next is T05, the install and the live checks, on Terry's word**, and S04 when he answers. No turn
-  starts without his word.
+- **T05, the install and the live checks, started at 9:20pm Eastern on 2026-11-27 and closed at its
+  stories' caps with both carried.**
+  - **The install is done:** v0.12's programs from `f1dd444`, and the keeper runs them (S01's wrappers
+    100 to 108, in `.claude\worktrees\v0.12-t05-s01\target\runs\installer\`).
+  - **No live check ran.** Two of Terry's steps never landed: the AWS sign-in, which expired and
+    answered 255 from 9:20pm to past midnight, and the project-list write.
+  - **Auto mode refused the project-list write as "don't retry",** so it is now Terry's to run:
+    `scripts\approve-v012-platforms.ps1`, tested on a throwaway home. It MUST be run by Terry, or
+    by the architect with his yes in a session whose write he approves.
+  - **Nothing live was made:** no AWS call, no lease and no host, and `projects.json` is unchanged.
+  - **The carried stories' drafts are pushed, with no PR:**
+    - S01 (#0266) as `937df31` on `v0.12/e0.12-t05-s01`, 39 files under
+      `docs/runs/drafts/e0.12-t05-s01/`;
+    - S02 (#0267) as `72c4b22` on `v0.12/e0.12-t05-s02`, 47 files under
+      `docs/runs/drafts/e0.12-t05-s02/`.
+  - **Both stories are in Needs Terry.** Their worktrees are kept, each with a `target\CARRIED.md`
+    saying where it stands. Their pins are P1 to P9 of v0.12-T05 (below).
+- **Next: T05's two carried checks, on Terry's word, once he is at the keyboard for them.** He runs the
+  project-list script and `aws login --remote` first, then the checks run, S01's and then S02's, with
+  his Windows sign-ins and the desktop-app session in S02.
 - **Nothing is running but the architect's duties**: the board watcher, the swimcoach reporter with
   the `v0.12` milestone, and no dev lead, host or lease.
 
@@ -58,6 +76,7 @@ and this file adds only what v0.12 has changed or learned.
 |---|---|---|---|---|---|---|
 | T01, the specs and the spike | #0245 to #0249 | 11:51am, 2026-11-26 | 2:40pm, 2026-11-26 | #178 (S02), #181 (S01), #177 (S03), #180 (S05), all 2:30pm to 2:32pm; #179 (S04) 2:38pm | 2:49 of 3.5 h | lease-api.md for three platforms; state.md and schemas/state keyed by host; driver.md and keeper.md; operator.md's shared parts and conformance.md; the spike's record; P1 to P60 ruled; 29 launches |
 | T03, the programs, both tracks | #0254 to #0260 | 5:07pm, 2026-11-26 | 9:34pm, 2026-11-26 | #188 (S03 part 1) 6:42pm; #192 (S01) 7:43pm; #189, #191, #190, #193 (S06, S07, S05, S04) 8:26pm; #194 (S03 part 2) 8:51pm; #195 (S02) 9:33pm | 4:27 of 5.5 h | The platform seam built: both Linux rows and Windows' in `agentspace-platforms` and `agentspace-windows`; driver and CLI by platform; the operator's `-Platform`; sync, deploy, provision and credentials by host; ProxyCommand, guard, push and zone by host; one holder per host; `box/windows/`'s host agent with 300-odd PowerShell tests; agentbox's change set shown empty live; P1 to P18 ruled; 34 launches |
+| T05, the install and the live checks | #0266, #0267 | 9:20pm Eastern, 2026-11-27 | 12:16am Eastern, 2026-11-28, both carried | None; drafts `937df31` (S01) and `72c4b22` (S02) pushed | 2:56 of 4.5 h | v0.12 installed; the observer rebuilt (38820f8); the mask's rule 16b (cdd6bac); both checks drafted and dry-run; README's #0163 note fixed (aa41b73); P1 to P9 ruled; no live step |
 | T04, the whole suite and #0268 | #0261 to #0265 | 11:25pm, 2026-11-26 | 3:55am, 2026-11-27 | #196 (S03), #197 (S01), #198 (S02), all 2:36am; #199 (S05) 3:55am; S04 (#0264) carried by P21 | 4:30 of 4.5 h | The lease CLI's M1 to M15, LP1 and LP2; the operator's W1 to W32 and four help copies; the keeper's H19 to H29; conformance.md crediting every v0.12 file; the whole-suite record; #0268's two races fixed; #0269 carded; P1 to P21 ruled; 27 launches |
 | T02, the foundations and the Windows spec | #0250 to #0253 | 2:50pm, 2026-11-26 | 5:03pm, 2026-11-26 | #182 (S03) 3:28pm; #183 (S01) 4:01pm; #184 (S04) 4:35pm; #186 (S02) 5:02pm; the T03 prep #185 5:02pm | 2:13 of 3.5 h | Hosts keyed by project and platform in `agentspace-hosts`, `-state` and `-alias`; #0228's one walk; D78 in the idle check with #0192's and #0193's box tests (259 OK); operator.md's "Windows hosts", README's Windows sign-in and conformance.md's Windows plan; P1 to P18 ruled; 27 launches |
 
@@ -111,6 +130,36 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 - **S04's runner list:** `grep -l` for `harness.ps1` and `keeper-common.ps1` across `conformance\`,
   plus the operator's lanes, every lane gated and every `.exit` read.
 
+**T05's dev lead raised P1 to P9**, cited "for v0.12-T05, pin Pn". They bind the carried checks:
+- **P1:** S01's leases go A at `m`, which makes the host, then B at `--size s` while A is ready.
+  - B answers `ready` at once on the larger host (D66, row 2), with no resizing run: no
+    `provision.log` line for B, read as a count.
+  - B is released first, then A.
+  - The guard's stop is attributed by its own `guard.log` line, against a baseline count taken before
+    the first lease.
+- **P2:** "works a card" means one comment on #0267, with fixed text, written by the agent in Terry's
+  desktop-app session through the host's `localswim` from Git Bash. It moves nothing, and it is read
+  back from the laptop as Bot, printing only its text and the count.
+- **P3:** TTLs are 4 h for the Windows lease and 2 h for each Linux lease, each released by hand as
+  its steps end.
+- **P4:** the project-list write is Terry's. The read-only check that follows is the schema
+  validator's exit code, the entry count and agentspace's platforms.
+- **P5:** the caps.
+  - S02 needed Terry's two gates by 11:00pm, and S01 by 12:15am.
+  - Inside S02, his sign-ins had to start by 11:30pm and his desktop session by midnight.
+  - A carried run sets new caps from its own start.
+- **P6:** one `sync -Host agentspace -Platform windows/amd64` by hand under the lease, before Terry's
+  sign-in, to show `install.ps1`'s lines.
+- **P7:** one transient SYSTEM task, `agentspace-t05-probe-*`, running `winget --version`. It is
+  removed in a `finally`, and its absence is checked.
+- **P8:** no direct test of Windows PowerShell 5.1 as the login shell. The host's files answer it, or
+  it is recorded as inconclusive.
+- **P9:** a likely defect to measure. `install.ps1` registers `agentspace-idle` with an AtStartup
+  trigger after the host has booted, so a new host may run no idle check on its first boot. If it is
+  confirmed, it is carded.
+- **Also ruled:** the records name no AWS region, and step 240 reads it at run time; the guard.log
+  baseline is 202 lines.
+
 ## Terry's orders in v0.12
 
 | Order | Given | Where it binds |
@@ -132,6 +181,7 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 | "can we go back to aurto? i've had to approve like 20 things", for S04's session after its edits | 2026-11-27 | The short version: S04 in auto from then |
 | "land all work, need to turn computer off" | 2026-11-27 | S04's runs stopped at 7:14am; this file |
 | "Let's pick back up where we left off", for S04 | 2026-11-27 | PR #200 |
+| "Start T05" | 2026-11-27 | This file; T05 carried at its caps |
 
 ## Lessons from v0.12 so far
 
@@ -163,11 +213,16 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 | T04: the empty-program run was missing from the first runner plan | conformance.md, step 5 |
 | T04: the architect cited a pin by the wrong number (P49 for P46) | The slip list: a cited pin is grepped before a tasking goes out |
 | T04: a run watcher's script inside a story's worktree held the folder at removal | architect.md, A turn that builds, v0.12-T04 |
+| T05: a turn whose live steps needed Terry early was started while he was away; it closed at its caps with nothing live | architect.md, Live checks, v0.12-T05 |
+| T05: auto mode refused the write to Terry's real `projects.json` as "don't retry" | architect.md, Live checks, v0.12-T05 |
+| T05: the mask had no rule for a Windows host's computer name | `scripts\live\mask.ps1`, rule 16b (cdd6bac) |
+| T05: a dev lead's message printed the commit identity's email address | The slip list |
 
 ## What is open
 
 | What | Who acts | Where it goes |
 |---|---|---|
+| T05-S01 (#0266) and T05-S02 (#0267), carried: Terry runs `scripts\approve-v012-platforms.ps1` and `aws login --remote`, then the checks run on his word | Terry, then the architect | Needs Terry; the short version above; each worktree's `target\CARRIED.md` |
 | #0270, the harness's other unmasked prints that S04's review found, to be placed | Terry; the architect suggests v1.0 (#0053) | Backlog |
 | Done: S04 (#0264), PR #200, 7:37pm Eastern on 2026-11-27 | | |
 | T05 starts on Terry's word | Terry, then the architect | #0266, #0267 |
