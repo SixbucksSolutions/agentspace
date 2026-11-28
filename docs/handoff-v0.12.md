@@ -50,7 +50,7 @@ and this file adds only what v0.12 has changed or learned.
 - **T05, the install and the live checks, started at 9:20pm Eastern on 2026-11-27 and closed at its
   stories' caps with both carried.**
   - **The install is done:** v0.12's programs from `f1dd444`, and the keeper runs them (S01's wrappers
-    100 to 108, in `.claude\worktrees\v0.12-t05-s01\target\runs\installer\`).
+    100 to 108, in `.claude\worktrees\t05-s01\target\runs\installer\`).
   - **No live check ran.** Two of Terry's steps never landed: the AWS sign-in, which expired and
     answered 255 from 9:20pm to past midnight, and the project-list write.
   - **Auto mode refused the project-list write as "don't retry",** so it is now Terry's to run:
@@ -62,8 +62,12 @@ and this file adds only what v0.12 has changed or learned.
       `docs/runs/drafts/e0.12-t05-s01/`;
     - S02 (#0267) as `72c4b22` on `v0.12/e0.12-t05-s02`, 47 files under
       `docs/runs/drafts/e0.12-t05-s02/`.
-  - **Both stories are in Needs Terry.** Their worktrees are kept, each with a `target\CARRIED.md`
-    saying where it stands. Their pins are P1 to P9 of v0.12-T05 (below).
+  - **Both stories are in Needs Terry.** Their worktrees are kept, `.claude\worktrees\t05-s01` and
+    `t05-s02`, each with a `target\CARRIED.md` saying where it stands. Their pins are P1 to P9 of
+    v0.12-T05 (below). Run files are also copied to the dev lead's notes folder, without the raw
+    `.out`, `.err` and `.cmd.ps1` files.
+  - **S02's step 341 passes no `--region` yet**, and MUST read `agentspace-run`'s region, as step 240
+    does, before it runs.
 - **Next: T05's two carried checks, on Terry's word, once he is at the keyboard for them.** He runs the
   project-list script and `aws login --remote` first, then the checks run, S01's and then S02's, with
   his Windows sign-ins and the desktop-app session in S02.
@@ -228,7 +232,7 @@ and [runs/e0.12-t04-s05.md](runs/e0.12-t04-s05.md). The ones a later turn needs:
 | T05 starts on Terry's word | Terry, then the architect | #0266, #0267 |
 | #0269, the keeper's handshake step 7 race #0268 found, to be placed | Terry; the architect suggests v1.0 (#0053) | Backlog |
 | Done in T04: #0268 (E0.12-T04-S05); T03's dev lead archived and its folders removed | | |
-| Before T05: the observer script, rebuilt from runs/e0.09-t05-s01.md | The architect | `scripts\live\` |
+| Done before T05: the observer script, rebuilt from runs/e0.09-t05-s01.md, with its proof (38820f8) | | `scripts\live\observe-once.ps1` |
 | The desktop app's session on Windows, with Git Bash; and the rest of operator.md's "What T05-S02 measures": patch time on an older image, sessions across an sshd restart, the push's stdin under Windows PowerShell 5.1, winget over SSH, `PATH` in new sessions, Windows' background CPU against the 6 CPU-second idle limit, that Windows Update schedules no restart, and that sync's patch wait on a first boot answers within its wait | E0.12-T05-S02 | operator.md, What T05-S02 measures |
 | Done in T02: the archive of T01's dev lead and its folders; D7's `::1` note, now in operator.md's Windows section (#184) | | |
 | Carried from handoff-v0.11.md: the "time to a prompt" spec; the two limits accepted in #169 and #170; #0190, #0082, #0109 and the footprint per project for v1.0; the empty `.claude\worktrees\rvmain` | As that file says | handoff-v0.11.md, What is open |
