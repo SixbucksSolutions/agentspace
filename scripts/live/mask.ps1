@@ -135,6 +135,10 @@ function ConvertTo-LiveMasked {
     # AROA for a role, AGPA for a group, and the rest) has 17 (v0.12-T01, 2026-11-26: the {16} form
     # missed a user's unique ID that `sts get-caller-identity` printed).
     $t = [regex]::Replace($t, '\b(?:AKIA|ASIA|AIDA|AROA|AGPA|ANPA|ANVA|AIPA|APKA)[A-Z0-9]{16,17}\b', '<access-key-id>')
+    # 16b (v0.12-T05). A Windows host's computer name, in either of the shapes an EC2 Windows image
+    # gives it: EC2AMAZ- and 7 more, or WIN- and 11 more, in any case (found by v0.12-T05-S02's drafter:
+    # rule 2 masks only the laptop's own name).
+    $t = [regex]::Replace($t, '(?<![A-Za-z0-9-])(?:EC2AMAZ-[A-Za-z0-9]{7}|WIN-[A-Za-z0-9]{11})(?![A-Za-z0-9])', '<win-host>', 'IgnoreCase')
     # 17. Runs of 32 or more token characters holding a digit, an uppercase and a lowercase letter.
     $t = [regex]::Replace($t, '[A-Za-z0-9_+/=-]{32,}', {
         param($m)
